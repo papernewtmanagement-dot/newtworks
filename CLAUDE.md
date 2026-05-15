@@ -15,20 +15,18 @@ This file is your briefing. Before touching any file in this repo, read this com
 | `docs/MODULE_DATA_WIRING.md` | Per-module: which Supabase tables each web app module reads, what to check when something doesn't render. The cheat sheet for "why is this module empty / wrong." |
 | `docs/PRODUCER_ROI_INSTALL.md` | Performance tab onboarding: SMVC/blended/lapse rates on `agency`, producer_production backfill, role-name conventions for `staff`. |
 | `docs/SELF_HEAL_GUIDE.md` | The "agent screenshots the error, their Claude fixes it" model. Background reading for the Settings — About tab. |
-| `docs/PROJECT_CLAUDE_SYSTEM_PROMPT_TEMPLATE.md` | The system prompt that gets installed into the agent's Project Claude after the technical install is complete. Project Claude (the install Claude) personalizes this and hands it back to Rebecca. |
+| `docs/PROJECT_CLAUDE_SYSTEM_PROMPT_TEMPLATE.md` | The system prompt that gets installed into the agent's Project Claude after the technical install is complete. Project Claude (the install Claude) personalizes this for the agent. |
 | `SCHEMA_NORMALIZATION_RUNBOOK.md` | Path A only. The bridge-view playbook for fitting the web app to an existing client database. |
 
 ---
 
 ## What This Repo Is
 
-This is the **BCC Web App** — a React/Vite application that gives Imaginary Farms LLC clients 
-a visual command center for their State Farm agency. It reads from their existing Supabase 
-database and displays real agency data across 10 modules.
+This is the **BCC Web App** — a React/Vite application that gives a State Farm agency
+a visual command center for their business. It reads from the agency's Supabase
+database and displays real agency data across 11 modules.
 
-**Live at:** Each client gets their own Vercel deployment  
-**Master repo:** github.com/cindarellabots-droid/bcc-master-template  
-**Owner:** Rebecca Coelho / Imaginary Farms LLC (The Claude Whisperer)
+**Live at:** This agency's Vercel deployment
 
 ---
 
@@ -51,9 +49,6 @@ Every client has ALL of these — the web app is Layer 5, added on top:
 ### PROCESS A — Existing Client
 Client already has Supabase + Composio set up.
 Adding GitHub + Vercel on top of working system.
-
-**Clients in this category:** Dominique Miles, Sherry Dennard, Alyssa Holloway, 
-Kellie Byers, Shantorra, Jasmine, Marlon, Scott Williams, Keith Thompson, Kenney
 
 **Critical:** Their Supabase schema was built BEFORE this web app existed.
 Table names WILL differ from what this app expects. 
@@ -115,7 +110,7 @@ VITE_USE_MOCK_DATA=false (production; set to true only for sales demos)
 
 ---
 
-## Hard-Learned Rules (from Dominique deployment — 8 hours of pain)
+## Hard-Learned Rules
 
 **1. IMPORTS ON LINE 1**  
 Vite silently drops entire modules if any comment appears before import statements.
@@ -255,7 +250,7 @@ export default function ModuleName() {
 
 This is the design choice that matters most for installs: **every new client install must seed the standard recipes into THEIR Supabase.** The recipes are not pre-configured anywhere outside the database. Project Claude builds them during onboarding using the templates in `docs/AUTOMATIONS_INSTALL.md`.
 
-**Standard recipe count: 12** (the canonical install set). Sourced from Keith Thompson's working production BCC, plus two new recipes added with the Producer ROI feature in May 2026: **Producer Production Report Processor** (monthly) and **Producer Underperformance Watcher** (daily). Earlier docs that say "10" or "14" are stale — 12 is correct.
+**Standard recipe count: 12** (the canonical install set). Includes the Producer ROI feature's two recipes: **Producer Production Report Processor** (monthly) and **Producer Underperformance Watcher** (daily). Earlier docs that say "10" or "14" are stale — 12 is correct.
 
 ### The runner — two pieces, one engine
 
@@ -269,7 +264,7 @@ Recipes don't run themselves. The engine that executes them lives in two pieces,
 
 2. **`supabase/functions/automation-runner/index.ts`** — Deno Edge Function that does the actual work:
    - Auth: validates the shared_secret against the recipe's agency in `settings`.
-   - Resolves Composio credentials from `settings` (agency-scoped — this is the master template's pattern, distinct from the IF ops project's `brand_kit` table).
+   - Resolves Composio credentials from `settings` (agency-scoped).
    - Calls Composio's `/api/v3/tools/execute` with the recipe's `composio_action` and `input_config`.
    - Optionally pipes the result through the Composio-hosted Groq LLM (`COMPOSIO_SEARCH_GROQ_CHAT`) for structured extraction when the recipe has a `groq_prompt`. No separate LLM API key required — uses `composio_api_key`.
    - Writes parsed records to the recipe's `output_table`.
@@ -371,36 +366,6 @@ Run in this order. Every migration is safe on existing databases — they all us
 
 ---
 
-
----
-
-## Ambassador vs Channel Partner — KNOW THE DIFFERENCE
-
-| Role | Person | Commission | On What |
-|---|---|---|---|
-| **Ambassador Partner** | Alyssa Holloway | 20% of ALL IF setup fees | Every client, every payment, regardless of referral source |
-| **Channel Partner** | Kellie Byers, Kim Yow | Commission on THEIR referrals only | Only clients they personally referred. Kellie has signed agreement, commissions tracked, money owed. |
-
-**Alyssa's commission is non-negotiable, permanent, and private.**  
-It NEVER appears in Channel Partner agreements or client-facing documents.  
-Alyssa and Kellie are also IF's founding clients (#1 and #2) and active State Farm agents.
-
-## Client Queue (as of April 29, 2026)
-
-| Client | Status | Notes |
-|---|---|---|
-| Dominique Miles | App live, training TBD | Her Claude fixing final issues |
-| **Alyssa Holloway** | **NEXT — Friday deadline** | Channel Partner, existing setup |
-| **Kellie Byers** | **Friday deadline** | Channel Partner, existing setup |
-| Sherry Dennard | training_scheduled | Paid $1,995, next after Alyssa/Kellie |
-| Scott Williams | queue | After Sherry |
-| Keith Thompson | queue | After Scott |
-
----
-
-
----
-
 ## Pre-flight Schema Audit (run BEFORE deploying the app)
 
 A client Claude or repo owner should run this single query against the client's Supabase project AFTER migrations 001–006 and BEFORE the first Vercel deploy. It verifies every table and view this app reads from is present.
@@ -459,21 +424,16 @@ WHERE grantee = 'anon' AND table_schema = 'public';
 -- If 0: run migration 005 immediately.
 ```
 
-## Imaginary Farms LLC Context
+## Product Context
 
-- Rebecca Coelho is the operator/co-founder
-- Matthew Cooper is the owner of record (non-compete + estate planning)
+- Product: BCC (Business Command Center) for State Farm agencies
 - Primary market: State Farm insurance agents
-- Product: BCC (Business Command Center) — setup fee $2,995 + $1,497.50 additional
-- Alyssa Holloway is Ambassador Partner — always receives 20% of ALL IF setup fees paid, regardless of referral source. NON-NEGOTIABLE and PRIVATE.
-- Commission structure is PRIVATE — never appears in external docs
-
-*Last updated: May 7, 2026 by Main Claude — Producer ROI feature shipped (HR & People → Performance tab) + ErrorBoundary across all modules + self-heal model in Settings → About + AIPP derived from producer_production. Master repo updated with: docs/PROJECT_CLAUDE_SYSTEM_PROMPT_TEMPLATE.md (the canonical Project Claude system prompt with placeholders), docs/AUTOMATIONS_INSTALL.md (recipes live in Supabase architecture, 14 standard recipes), docs/PRODUCER_ROI_INSTALL.md (Performance tab onboarding), docs/SELF_HEAL_GUIDE.md (Layer 1 vs Layer 2 connector model). Migration numbering cleaned up (no duplicate 008). 3 new hard-learned lessons logged.*
+- Each install: one agency, one Supabase project, one Vercel deployment
 
 
 ---
 
-## Known Schema Variant — chart_of_accounts (discovered Kellie Byers install, April 29 2026)
+## Known Schema Variant — chart_of_accounts (legacy schema variant)
 
 Some existing BCC clients have a legacy `chart_of_accounts` table with:
 - Integer PK (not UUID)
@@ -500,14 +460,14 @@ Add this to the schema gap check in Step 6 of Process A installs.
 
 ---
 
-## Known Issue — Vercel Hobby Plan Deploy Blocking (discovered Alyssa Holloway install, April 29 2026)
+## Known Issue — Vercel Hobby Plan Deploy Blocking
 
-**Problem:** Vercel Hobby plan blocks deployments from commits authored by collaborators (e.g. cindarellabots-droid). Only the repo OWNER can trigger auto-deploys on Hobby plan.
+**Problem:** Vercel Hobby plan blocks deployments from commits authored by collaborators. Only the repo OWNER can trigger auto-deploys on Hobby plan.
 
 **Symptom:** Vercel shows "Deployment was blocked because the commit author does not have contributing access to the project."
 
 **Fix — Add to Step 2 of every Process A/B install:**
-After Rebecca's Claude pushes the 29 files, instruct the client's Claude or repo owner to make one dummy commit directly in the GitHub web UI:
+After the initial push of the repo files, the repo OWNER must make one dummy commit directly in the GitHub web UI to trigger the first deploy:
 1. Go to the client's GitHub repo
 2. Open any file (e.g. README.md) → click pencil icon
 3. Don't change anything → click "Commit changes"
