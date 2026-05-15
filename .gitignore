@@ -1,0 +1,61 @@
+# ----------------------------------------------------------------------
+# .gitignore for the BCC web app (React/Vite + Supabase + Vercel)
+# ----------------------------------------------------------------------
+# Anything containing secrets, build output, or local IDE state must be
+# ignored. The web app's Supabase anon key, agency_id, and any service-role
+# keys live in env files — those must NEVER hit the repo.
+# ----------------------------------------------------------------------
+
+# Environment files (Supabase keys, agency_id, dev/local overrides)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# Node / build output
+node_modules/
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+
+# Vite cache
+.vite/
+
+# Vercel local state
+.vercel/
+
+# Supabase CLI local state (if anyone runs the CLI locally)
+supabase/.branches
+supabase/.temp
+supabase/.env
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+logs/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS / Windows / Linux junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test output
+coverage/
+.nyc_output/
+
+# Lockfiles from other package managers (keep package-lock.json only)
+# yarn.lock
+# pnpm-lock.yaml
