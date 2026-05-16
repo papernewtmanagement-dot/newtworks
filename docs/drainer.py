@@ -267,8 +267,21 @@ def _create_suspense_task(agency_id: str, je_id: str, txn: dict, txn_date: str) 
 def _process_parse_bank(agency_id: str, row: dict, parsed: dict) -> dict:
     txns = parsed.get("transactions") or []
     je_count = 0; suspense_count = 0; skipped = 0
-    source_account = "QBO-007"  # v1 fallback
     doc_id = row.get("document_id")
+    # Look up the source account from the documents row that triggered this
+    # parse. The Edge Function's insertSourceDocument() persists the resolved
+    # source_account_code at intake; falling back to QBO-007 only if missing
+    # (e.g. legacy rows from before migration 020).
+    source_account = "QBO-007"
+    if doc_id:
+        _doc = _sql(f"""
+            SELECT source_account_code
+            FROM documents
+            WHERE id = {_sql_escape(doc_id)}
+            LIMIT 1;
+        """)
+        if _doc and _doc[0].get("source_account_code"):
+            source_account = _doc[0]["source_account_code"]
     for t in txns:
         if not isinstance(t.get("amount"), (int, float)) or not t.get("date"): continue
         payee = str(t.get("payee") or "").strip()
