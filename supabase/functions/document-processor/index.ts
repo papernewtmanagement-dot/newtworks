@@ -34,6 +34,10 @@ import { sb, getSetting, jsonResponse } from "./lib/supabase.ts";
 import { callComposio } from "./lib/composio.ts";
 import { classifyDocument, classifyBankTxn, DocType } from "./classifier.ts";
 import { parseBankStatement } from "./parsers/bank.ts";
+import { parseCompRecap } from "./parsers/comp_recap.ts";
+import { parseDeductionStatement } from "./parsers/deduction.ts";
+import { parsePayrollRun } from "./parsers/payroll.ts";
+import { parseProductionReport } from "./parsers/production.ts";
 import { postJournalEntry } from "./gl-poster.ts";
 import { createSuspenseTask } from "./suspense.ts";
 
@@ -414,6 +418,159 @@ async function run(req: Request): Promise<Response> {
               documentId, fileName: att.fileName, fromEmail: att.fromEmail,
               docType, status: "processed",
               jeCount: result.jeCount, suspenseCount: result.suspenseCount,
+            });
+          }
+          break;
+        }
+        case "comp_recap_1h":
+        case "comp_recap_daily": {
+          const variant = docType === "comp_recap_1h" ? "1H" : "DAILY";
+          const extracted = await extractText(ctx, att, bytesB64);
+          if (!extracted.ok) {
+            await markDocument(documentId, "error", 0, [], extracted.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
+            });
+            break;
+          }
+          const r = await parseCompRecap({
+            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId, documentId,
+            recapVariant: variant as "1H" | "DAILY", statementText: extracted.text,
+          });
+          if (r.ok) {
+            await markDocument(documentId, "processed", r.written, ["comp_recap"],
+              `${r.written} comp_recap rows written`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            });
+          } else if (r.queued) {
+            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
+            });
+          } else {
+            await markDocument(documentId, "error", 0, [], r.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
+            });
+          }
+          break;
+        }
+        case "deduction_statement": {
+          const extracted = await extractText(ctx, att, bytesB64);
+          if (!extracted.ok) {
+            await markDocument(documentId, "error", 0, [], extracted.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
+            });
+            break;
+          }
+          const r = await parseDeductionStatement({
+            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId, documentId, statementText: extracted.text,
+          });
+          if (r.ok) {
+            await markDocument(documentId, "processed", r.written, ["comp_recap"],
+              `${r.written} deduction rows written`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            });
+          } else if (r.queued) {
+            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
+            });
+          } else {
+            await markDocument(documentId, "error", 0, [], r.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
+            });
+          }
+          break;
+        }
+        case "adp_payroll": {
+          const extracted = await extractText(ctx, att, bytesB64);
+          if (!extracted.ok) {
+            await markDocument(documentId, "error", 0, [], extracted.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
+            });
+            break;
+          }
+          const r = await parsePayrollRun({
+            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId, documentId, statementText: extracted.text,
+          });
+          if (r.ok) {
+            await markDocument(documentId, "processed", r.detailCount + 1,
+              ["payroll_runs", "payroll_detail"],
+              `payroll run ${r.run.pay_date}: ${r.detailCount} detail rows`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            });
+          } else if (r.queued) {
+            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
+            });
+          } else {
+            await markDocument(documentId, "error", 0, [], r.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
+            });
+          }
+          break;
+        }
+        case "commission_report":
+        case "team_production": {
+          const extracted = await extractText(ctx, att, bytesB64);
+          if (!extracted.ok) {
+            await markDocument(documentId, "error", 0, [], extracted.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
+            });
+            break;
+          }
+          const r = await parseProductionReport({
+            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId, documentId,
+            reportVariant: docType as "commission_report" | "team_production",
+            statementText: extracted.text,
+          });
+          if (r.ok) {
+            const note = r.unmatchedStaff.length > 0
+              ? `${r.written} rows written; ${r.unmatchedStaff.length} unmatched: ${r.unmatchedStaff.slice(0,5).join(", ")}`
+              : `${r.written} producer_production rows written`;
+            await markDocument(documentId, "processed", r.written, ["producer_production"], note);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            });
+          } else if (r.queued) {
+            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
+            });
+          } else {
+            await markDocument(documentId, "error", 0, [], r.error);
+            processed.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
             });
           }
           break;
