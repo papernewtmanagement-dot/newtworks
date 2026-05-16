@@ -1,14 +1,18 @@
 // =========================================================================
-// lib/llm.ts — v3 (direct Groq API)
+// lib/llm.ts  (v3 — direct Groq API)
 // =========================================================================
 // Single chokepoint for LLM calls inside the document-processor.
 //
-// CHANGE FROM v2: Bypasses COMPOSIO_SEARCH_GROQ_CHAT (which 404s for this
-// agency's composio_api_key) and calls Groq's OpenAI-compatible endpoint
-// directly with a dedicated groq_api_key stored in settings.
+// CHANGED IN v3: Switched from COMPOSIO_SEARCH_GROQ_CHAT (which 404s on this
+// agency's composio_api_key) to calling Groq's HTTPS endpoint directly using
+// a `groq_api_key` setting.
 //
-// Fallback path: if Groq is unreachable or returns non-JSON, the request is
-// queued in llm_parse_queue for workbench-side processing — same shape as v2.
+// Behavior on failure:
+//   1. Direct Groq call returns 4xx/5xx OR network error → fall through
+//   2. LLM returns non-JSON content → fall through
+//   3. Fall-through: INSERT into llm_parse_queue for workbench-side retry
+//
+// The queue path is now a true last resort, not the steady-state.
 // =========================================================================
 
 import { sb, stripFences, getSetting } from "./supabase.ts";
@@ -18,8 +22,8 @@ const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
 
 export interface ParseLLMOpts {
   agencyId: string;
-  composioApiKey: string;   // kept for signature compat — unused
-  composioUserId: string;   // kept for signature compat — unused
+  composioApiKey: string;     // kept for backward-compat with callers; unused here
+  composioUserId: string;     // kept for backward-compat with callers; unused here
   systemPrompt: string;
   userContent: string;
   documentId: string | null;
@@ -39,7 +43,7 @@ async function callGroqDirect(opts: {
   systemPrompt: string;
   userContent: string;
   maxTokens: number;
-}): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+}): Promise<{ ok: boolean; raw: string; error: string | null; httpStatus: number }> {
   try {
     const res = await fetch(GROQ_ENDPOINT, {
       method: "POST",
@@ -55,31 +59,41 @@ async function callGroqDirect(opts: {
         ],
         temperature: 0.1,
         max_tokens: opts.maxTokens,
-        response_format: { type: "json_object" },
+        // Groq supports response_format hinting for newer models; safe to omit.
       }),
     });
-
+    const text = await res.text();
     if (!res.ok) {
-      const txt = await res.text();
-      return { ok: false, error: `Groq HTTP ${res.status}: ${txt.slice(0, 300)}` };
+      return {
+        ok: false,
+        raw: "",
+        error: `Groq HTTP ${res.status}: ${text.slice(0, 400)}`,
+        httpStatus: res.status,
+      };
     }
-
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content ?? "";
-    if (!content) return { ok: false, error: "Groq returned empty content" };
-    return { ok: true, content };
+    let parsed: any;
+    try { parsed = JSON.parse(text); }
+    catch (e) {
+      return { ok: false, raw: text, error: `Groq returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
+    }
+    const content = parsed?.choices?.[0]?.message?.content ?? "";
+    if (!content || typeof content !== "string") {
+      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status };
+    }
+    return { ok: true, raw: content, error: null, httpStatus: res.status };
   } catch (e) {
-    return { ok: false, error: `Groq network error: ${(e as Error).message}` };
+    return { ok: false, raw: "", error: `Groq fetch failed: ${(e as Error).message}`, httpStatus: 0 };
   }
 }
 
 export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> {
-  // Step 1: try direct Groq call.
-  const groqApiKey = await getSetting(opts.agencyId, "groq_api_key");
+  // Step 1: load the Groq API key for this agency
+  const groqKey = await getSetting(opts.agencyId, "groq_api_key");
 
-  if (groqApiKey) {
+  // Step 2: try the direct Groq call (if key is present)
+  if (groqKey) {
     const llm = await callGroqDirect({
-      apiKey: groqApiKey,
+      apiKey: groqKey,
       model: opts.model ?? LLM_MODEL_DEFAULT,
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
@@ -87,17 +101,18 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
     });
 
     if (llm.ok) {
-      const cleaned = stripFences(llm.content);
+      const cleaned = stripFences(llm.raw);
       try {
         return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
       } catch (_e) {
-        // Got a response but couldn't parse as JSON. Fall through to queue.
+        // LLM returned non-JSON content. Fall through to queue with the raw
+        // content recorded as user_content so workbench can salvage it later.
       }
     }
-    // If !llm.ok, fall through to queue.
+    // Any failure path falls through to the queue below.
   }
 
-  // Step 2: queue for workbench-side processing.
+  // Step 3: queue for workbench-side processing (true last resort)
   const { data, error } = await sb
     .from("llm_parse_queue")
     .insert({
@@ -116,7 +131,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
     return {
       ok: false,
       queued: false,
-      error: `Groq failed AND queue insert failed: ${error?.message ?? "unknown"}`,
+      error: `Groq direct call failed AND queue insert failed: ${error?.message ?? "unknown"}`,
     };
   }
 
