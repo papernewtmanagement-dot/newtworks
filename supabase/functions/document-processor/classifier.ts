@@ -4,8 +4,10 @@
 // 1. classifyBankTxn(): matches a bank transaction against
 //    gl_classification_rules (priority-ordered). The catch-all SUSPENSE rule
 //    guarantees a result.
-// 2. classifyDocument(): determines the docType from filename + sender
-//    BEFORE bank transactions are even parsed.
+// 2. classifyDocument(): determines the docType from filename + sender.
+//    Rules try sender-based matches first, then fall back to filename-only
+//    pattern matches so files extracted from zips classify correctly
+//    without sender context.
 // =========================================================================
 
 import { sb } from "./lib/supabase.ts";
@@ -13,7 +15,7 @@ import { sb } from "./lib/supabase.ts";
 export interface BankTxn {
   payee: string;
   memo: string;
-  signedAmount: number; // positive = in, negative = out
+  signedAmount: number;
   sourceAccountCode: string;
 }
 
@@ -118,6 +120,7 @@ export type DocType =
   | "adp_payroll"
   | "commission_report"
   | "team_production"
+  | "archive_bundle"
   | "skip";
 
 export interface DocClassifyInput {
@@ -127,32 +130,91 @@ export interface DocClassifyInput {
 }
 
 const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean }> = [
+  // ----- ARCHIVE — any .zip is unpacked, contents reclassified individually -----
+  { docType: "archive_bundle",
+    test: (i) => /\.zip$/i.test(i.fileName) },
+
+  // ----- BANK / CC STATEMENTS — sender drives classification -----
   { docType: "bank_statement_primary",
     test: (i) => /usbank|us[\s_-]?bank|usbank\.com/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
   { docType: "bank_statement_secondary",
-    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo)/i.test(i.fromEmail + " " + i.subject) &&
+    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark)/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
+
+  // ----- STATE FARM COMP RECAP — sender path (live SF emails) -----
   { docType: "comp_recap_1h",
     test: (i) => /statefarm|sf\s?agent|sf[\s.-]?ach/i.test(i.fromEmail + " " + i.subject) &&
                  /1h|hour|hourly/i.test(i.subject + " " + i.fileName) },
   { docType: "comp_recap_daily",
     test: (i) => /statefarm/i.test(i.fromEmail) &&
                  /comp\s?recap|daily\s?comp/i.test(i.subject + " " + i.fileName) },
+
+  // ----- STATE FARM COMP RECAP — filename-only fallback (zip contents,
+  //       Marie's forwarded emails). Pattern: "YY_MM_DD Compensation.pdf" -----
+  { docType: "comp_recap_daily",
+    test: (i) => /^\d{2}_\d{2}_\d{2}\s+Compensation\.pdf$/i.test(filenameBase(i.fileName)) },
+  { docType: "comp_recap_daily",
+    test: (i) => /Compensation\.pdf$/i.test(i.fileName) && /\d{2}_\d{2}_\d{2}/.test(i.fileName) },
+
+  // ----- DEDUCTION STATEMENT — sender path -----
   { docType: "deduction_statement",
     test: (i) => /statefarm/i.test(i.fromEmail) && /deduction/i.test(i.subject + " " + i.fileName) },
+  // ----- DEDUCTION STATEMENT — filename-only fallback for zip contents -----
+  { docType: "deduction_statement",
+    test: (i) => /^\d{2}_\d{2}_\d{2}\s+Deductions?(\s+Misc)?\.pdf$/i.test(filenameBase(i.fileName)) },
+  { docType: "deduction_statement",
+    test: (i) => /Deductions?(\s+Misc)?\.pdf$/i.test(i.fileName) && /\d{2}_\d{2}_\d{2}/.test(i.fileName) },
+
+  // ----- ADP / GUSTO PAYROLL — sender path -----
   { docType: "adp_payroll",
     test: (i) => /adp\.com|workforcenow|gusto/i.test(i.fromEmail + " " + i.subject) },
+  // ----- PAYROLL — filename-only fallback for zip contents -----
+  { docType: "adp_payroll",
+    test: (i) => /\b(payroll|paystub|pay[\s_-]?run|paycheck)\b/i.test(filenameBase(i.fileName)) },
+
+  // ----- COMMISSION REPORT (specific) -----
   { docType: "commission_report",
     test: (i) => /commission/i.test(i.subject + " " + i.fileName) &&
                  !/comp\s?recap/i.test(i.subject) },
+
+  // ----- TEAM PRODUCTION REPORT -----
   { docType: "team_production",
     test: (i) => /production\s?report|team\s?production/i.test(i.subject + " " + i.fileName) },
 ];
+
+function filenameBase(p: string): string {
+  // strip any leading folder prefix (e.g. "2025/25_03_11 Compensation.pdf")
+  const lastSlash = p.lastIndexOf("/");
+  return lastSlash >= 0 ? p.slice(lastSlash + 1) : p;
+}
 
 export function classifyDocument(input: DocClassifyInput): DocType {
   for (const r of docRules) {
     if (r.test(input)) return r.docType;
   }
   return "skip";
+}
+
+// ----- helpers used by orchestrator for zip contents -----
+
+/**
+ * Infer the document date (YYYY-MM-DD) from a filename of the form
+ * "YY_MM_DD Compensation.pdf" or "2025/25_03_11 Compensation.pdf".
+ * Returns null if no date pattern is found.
+ *
+ * Used for Drive folder routing and as a fallback when an extracted file
+ * has no email receivedAt to lean on.
+ */
+export function inferDateFromFilename(fileName: string): string | null {
+  const base = filenameBase(fileName);
+  const m = base.match(/(\d{2})_(\d{2})_(\d{2})/);
+  if (!m) return null;
+  const yy = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  const dd = parseInt(m[3], 10);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  // Two-digit years 00-79 → 2000s, 80-99 → 1900s (irrelevant for our purposes)
+  const yyyy = yy < 80 ? 2000 + yy : 1900 + yy;
+  return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
