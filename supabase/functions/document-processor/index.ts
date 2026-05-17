@@ -1,27 +1,31 @@
 // =========================================================================
 // document-processor / index.ts
 // =========================================================================
-// Edge Function entry point. Intended cron: */30 minutes.
+// Edge Function entry point. Cron: every 30 minutes.
 //
 // PURPOSE: Single unified document intake pipeline. Replaces the 12-recipe
-// approach with one orchestrator that handles every doc type uniformly.
+// approach with one orchestrator that handles every doc type uniformly,
+// including ZIP archives (which are unpacked and processed recursively).
 //
-// FLOW (per spec):
+// FLOW:
 //   1. fetchNewGmailAttachments()
 //   2. for each attachment:
-//        a. classifyDocument(filename, sender) → docType
-//        b. download
-//        c. uploadToDrive(folder for that docType)
-//        d. insertSourceDocument(...)
-//        e. switch(docType):
-//             bank_statement_*    → parseBank → write txns → postGL → suspense
-//             everything else     → stub: mark awaiting_parser_implementation
-//   3. return summary
+//        processOneAttachment(att, sourceLabel="gmail")
+//          a. classifyDocument(filename, sender) -> docType
+//          b. download (or use provided bytes when called recursively)
+//          c. if docType === "archive_bundle":
+//                unzip in memory; for each entry, call processOneAttachment(
+//                  inner, sourceLabel="gmail_zip:<outer>")
+//             else:
+//                upload to Drive in dated folder, insert document row,
+//                route to per-docType handler.
+//   3. return rolled-up summary
 //
 // CURRENT BUILD STATE:
-//   - Orchestrator: ✅
-//   - Bank statement path (full GL post + suspense loop): ✅
-//   - All other doc types: stub (parsers land in Phase 2)
+//   - Orchestrator: yes
+//   - Bank statement path (full GL post + suspense loop): yes
+//   - Comp recap / deduction / payroll / production parsers: yes
+//   - Zip unpacker: yes (this build)
 //
 // AUTH:
 //   POST body must include shared_secret matching the agency's
@@ -30,9 +34,15 @@
 
 // deno-lint-ignore-file no-explicit-any
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { BlobReader, ZipReader, Uint8ArrayWriter } from "jsr:@zip-js/zip-js@2";
 import { sb, getSetting, jsonResponse } from "./lib/supabase.ts";
 import { callComposio } from "./lib/composio.ts";
-import { classifyDocument, classifyBankTxn, DocType } from "./classifier.ts";
+import {
+  classifyDocument,
+  classifyBankTxn,
+  inferDateFromFilename,
+  DocType,
+} from "./classifier.ts";
 import { parseBankStatement } from "./parsers/bank.ts";
 import { parseCompRecap } from "./parsers/comp_recap.ts";
 import { parseDeductionStatement } from "./parsers/deduction.ts";
@@ -54,27 +64,49 @@ interface ProcessedAttachment {
   fileName: string;
   fromEmail: string;
   docType: DocType;
-  status: "processed" | "skipped" | "queued" | "error" | "stub_pending";
+  status:
+    | "processed"
+    | "skipped"
+    | "queued"
+    | "error"
+    | "stub_pending"
+    | "unpacked";
   jeCount: number;
   suspenseCount: number;
   error?: string;
   queueId?: string;
+  sourceLabel?: string; // "gmail" or "gmail_zip:<outer>"
+  innerCount?: number; // for archive_bundle: how many inner files processed
 }
+
+const MAX_ZIP_DEPTH = 2;
 
 // ---- Gmail intake ----------------------------------------------------------
 
-interface GmailAttachment {
-  messageId: string;
+interface AttachmentInput {
+  // Where this attachment came from. For Gmail intake: filled in below.
+  // For zip inner files: filled in from the outer + the inner filename.
+  messageId: string; // empty string for inner files
   fromEmail: string;
   subject: string;
-  receivedAt: string;
+  receivedAt: string; // ISO 8601
   fileName: string;
   mimeType: string;
-  attachmentId: string;
+
+  // Only one of attachmentId OR bytesB64 will be set.
+  // - Gmail-fetched outer attachments: attachmentId is set; bytesB64 is null.
+  // - Inner files from a zip: bytesB64 is set; attachmentId is null.
+  attachmentId: string | null;
+  bytesB64: string | null;
+
+  // For inner files only — name of the containing zip, for source labeling.
+  parentArchive?: string;
 }
 
-async function fetchNewGmailAttachments(ctx: RunCtx): Promise<GmailAttachment[]> {
-  const lookback = "newer_than:1d has:attachment";
+async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]> {
+  // Look back 7 days to catch anything we missed between cron ticks.
+  // Idempotency is enforced per-file inside the loop.
+  const lookback = "newer_than:7d has:attachment";
 
   const listRes = await callComposio({
     apiKey: ctx.composioApiKey,
@@ -87,15 +119,54 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<GmailAttachment[]>
   if (!listRes.ok) throw new Error(`Gmail fetch failed: ${listRes.error}`);
 
   const messages: any[] = listRes.data?.messages ?? listRes.data ?? [];
-  const attachments: GmailAttachment[] = [];
+  const attachments: AttachmentInput[] = [];
 
   for (const m of messages) {
     const headers = m?.payload?.headers ?? [];
-    const fromEmail = m?.from ?? headers.find((h: any) => h.name === "From")?.value ?? "";
-    const subject = m?.subject ?? headers.find((h: any) => h.name === "Subject")?.value ?? "";
-    const receivedAt = m?.internalDate
-      ? new Date(Number(m.internalDate)).toISOString()
-      : new Date().toISOString();
+    const fromEmail =
+      m?.from ?? m?.sender ??
+      headers.find((h: any) => h.name === "From")?.value ?? "";
+    const subject =
+      m?.subject ??
+      headers.find((h: any) => h.name === "Subject")?.value ?? "";
+    const receivedAt = m?.messageTimestamp ??
+      (m?.internalDate ? new Date(Number(m.internalDate)).toISOString()
+                       : new Date().toISOString());
+
+    // Composio's GMAIL_FETCH_EMAILS exposes attachments two ways depending on
+    // mode — attachmentList[] (new) or payload.parts[] (raw). Support both.
+    const list1 = m?.attachmentList as any[] | undefined;
+    if (Array.isArray(list1)) {
+      for (const a of list1) {
+        const filename = a?.filename;
+        const attId = a?.attachmentId;
+        if (!filename || !attId) continue;
+
+        // Idempotency: skip if already in documents (any upload_source that
+        // starts with "gmail" — outer or inner-from-zip).
+        const { data: existing } = await sb
+          .from("documents")
+          .select("id")
+          .eq("agency_id", ctx.agencyId)
+          .eq("file_name", filename)
+          .like("upload_source", "gmail%")
+          .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString())
+          .maybeSingle();
+        if (existing?.id) continue;
+
+        attachments.push({
+          messageId: m.messageId ?? m.id,
+          fromEmail, subject, receivedAt,
+          fileName: filename,
+          mimeType: a?.mimeType ?? "application/octet-stream",
+          attachmentId: attId,
+          bytesB64: null,
+        });
+      }
+      continue;
+    }
+
+    // Fallback: walk payload.parts
     const parts: any[] = m?.payload?.parts ?? m?.parts ?? [];
     for (const p of parts) {
       const filename = p?.filename;
@@ -103,41 +174,122 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<GmailAttachment[]>
       const attId = p?.body?.attachmentId;
       if (!attId) continue;
 
-      // Idempotency: skip if already in documents
       const { data: existing } = await sb
         .from("documents")
         .select("id")
         .eq("agency_id", ctx.agencyId)
         .eq("file_name", filename)
-        .eq("upload_source", "gmail")
-        .gte("uploaded_at", new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString())
+        .like("upload_source", "gmail%")
+        .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString())
         .maybeSingle();
       if (existing?.id) continue;
 
       attachments.push({
         messageId: m.id,
-        fromEmail,
-        subject,
-        receivedAt,
+        fromEmail, subject, receivedAt,
         fileName: filename,
         mimeType: p?.mimeType ?? "application/octet-stream",
         attachmentId: attId,
+        bytesB64: null,
       });
     }
   }
   return attachments;
 }
 
-async function downloadAttachment(ctx: RunCtx, att: GmailAttachment): Promise<string | null> {
+async function downloadAttachmentBytes(
+  ctx: RunCtx, att: AttachmentInput,
+): Promise<string | null> {
+  if (att.bytesB64) return att.bytesB64; // inner file already in hand
+  if (!att.attachmentId) return null;
+
+  // Composio's GMAIL_GET_ATTACHMENT returns an s3url to fetch the raw bytes.
   const res = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
     connectedAccountId: ctx.gmailAccountId,
     toolSlug: "GMAIL_GET_ATTACHMENT",
-    toolArguments: { message_id: att.messageId, attachment_id: att.attachmentId },
+    toolArguments: {
+      message_id: att.messageId,
+      attachment_id: att.attachmentId,
+      file_name: att.fileName,
+      user_id: "me",
+    },
   });
   if (!res.ok) return null;
+  const file = res.data?.file ?? res.data?.data?.file;
+  const s3url = file?.s3url;
+  if (s3url) {
+    try {
+      const r = await fetch(s3url);
+      if (!r.ok) return null;
+      const buf = new Uint8Array(await r.arrayBuffer());
+      // Base64-encode in chunks to avoid call-stack issues on large files.
+      let bin = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < buf.length; i += CHUNK) {
+        bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+      }
+      return btoa(bin);
+    } catch {
+      return null;
+    }
+  }
+  // Fallback for older Composio response shapes
   return res.data?.data ?? res.data?.bytes ?? null;
+}
+
+// ---- ZIP unpack ------------------------------------------------------------
+
+interface UnzippedEntry {
+  fileName: string; // basename only (folder prefix stripped)
+  bytesB64: string;
+  mimeType: string;
+}
+
+function guessMime(name: string): string {
+  const n = name.toLowerCase();
+  if (n.endsWith(".pdf")) return "application/pdf";
+  if (n.endsWith(".csv")) return "text/csv";
+  if (n.endsWith(".txt")) return "text/plain";
+  if (n.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (n.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (n.endsWith(".zip")) return "application/zip";
+  return "application/octet-stream";
+}
+
+async function unzipBytes(bytesB64: string): Promise<UnzippedEntry[]> {
+  const bin = atob(bytesB64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  const blob = new Blob([buf]);
+  const reader = new ZipReader(new BlobReader(blob));
+  const entries = await reader.getEntries();
+
+  const out: UnzippedEntry[] = [];
+  for (const entry of entries) {
+    if (entry.directory) continue;
+    if (!entry.getData) continue;
+    const data = await entry.getData(new Uint8ArrayWriter());
+    // Strip folder prefix from name
+    const lastSlash = entry.filename.lastIndexOf("/");
+    const baseName = lastSlash >= 0 ? entry.filename.slice(lastSlash + 1) : entry.filename;
+    if (!baseName || baseName.startsWith(".")) continue; // skip hidden / __MACOSX
+
+    // base64-encode entry bytes
+    let bin2 = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < data.length; i += CHUNK) {
+      bin2 += String.fromCharCode(...data.subarray(i, i + CHUNK));
+    }
+    out.push({
+      fileName: baseName,
+      bytesB64: btoa(bin2),
+      mimeType: guessMime(baseName),
+    });
+  }
+  await reader.close();
+  return out;
 }
 
 // ---- Drive upload ----------------------------------------------------------
@@ -151,11 +303,13 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   adp_payroll: "payroll",
   commission_report: "commission-reports",
   team_production: "team-production",
+  archive_bundle: "_archive-bundles",
   skip: "unsorted",
 };
 
 async function uploadToDrive(
-  ctx: RunCtx, att: GmailAttachment, bytesB64: string, docType: DocType, txnDate: string,
+  ctx: RunCtx, att: AttachmentInput, bytesB64: string,
+  docType: DocType, txnDate: string,
 ): Promise<{ driveFileId: string; driveUrl: string } | null> {
   if (!ctx.driveAccountId) return null;
   const folder = DRIVE_FOLDER_BY_DOCTYPE[docType];
@@ -184,9 +338,10 @@ async function uploadToDrive(
 // ---- documents row ---------------------------------------------------------
 
 async function insertSourceDocument(
-  ctx: RunCtx, att: GmailAttachment, docType: DocType,
+  ctx: RunCtx, att: AttachmentInput, docType: DocType,
   drive: { driveFileId: string; driveUrl: string } | null,
   sourceAccountCode: string | null,
+  uploadSource: string,
 ): Promise<string> {
   const { data, error } = await sb
     .from("documents")
@@ -194,7 +349,7 @@ async function insertSourceDocument(
       agency_id: ctx.agencyId,
       file_name: att.fileName,
       file_type: att.mimeType,
-      upload_source: "gmail",
+      upload_source: uploadSource,
       drive_file_id: drive?.driveFileId ?? null,
       drive_url: drive?.driveUrl ?? null,
       processing_status: "received",
@@ -203,7 +358,7 @@ async function insertSourceDocument(
       source_account_code: sourceAccountCode,
       uploaded_by: att.fromEmail,
       uploaded_at: att.receivedAt,
-      notes: `subject: ${att.subject}`,
+      notes: `subject: ${att.subject}${att.parentArchive ? ` | extracted_from: ${att.parentArchive}` : ""}`,
     })
     .select("id")
     .single();
@@ -227,18 +382,13 @@ async function markDocument(
 // ---- Text extraction -------------------------------------------------------
 
 async function extractText(
-  ctx: RunCtx, att: GmailAttachment, bytesB64: string,
+  ctx: RunCtx, att: AttachmentInput, bytesB64: string,
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   if (att.mimeType.startsWith("text/") || att.fileName.endsWith(".txt") || att.fileName.endsWith(".csv")) {
-    try {
-      const decoded = atob(bytesB64);
-      return { ok: true, text: decoded };
-    } catch (e) {
-      return { ok: false, error: `text decode failed: ${String(e)}` };
-    }
+    try { return { ok: true, text: atob(bytesB64) }; }
+    catch (e) { return { ok: false, error: `text decode failed: ${String(e)}` }; }
   }
 
-  // PDF path — try Composio's hosted PDF→text. If unavailable, caller queues.
   const res = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
@@ -246,16 +396,16 @@ async function extractText(
     toolSlug: "COMPOSIO_SEARCH_PDF_TO_TEXT",
     toolArguments: { file_base64: bytesB64 },
   });
-  if (!res.ok) return { ok: false, error: `pdf→text tool failed: ${res.error}` };
+  if (!res.ok) return { ok: false, error: `pdf-to-text tool failed: ${res.error}` };
   const text = res.data?.text ?? res.data?.content ?? "";
-  if (!text) return { ok: false, error: "pdf→text returned empty content" };
+  if (!text) return { ok: false, error: "pdf-to-text returned empty content" };
   return { ok: true, text };
 }
 
-// ---- Per-docType handlers --------------------------------------------------
+// ---- Bank handler ----------------------------------------------------------
 
 async function handleBankStatement(
-  ctx: RunCtx, att: GmailAttachment, documentId: string,
+  ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
 ): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string }> {
   const extracted = await extractText(ctx, att, bytesB64);
@@ -303,15 +453,8 @@ async function handleBankStatement(
   return { jeCount, suspenseCount };
 }
 
-async function handleStub(docType: DocType, documentId: string): Promise<void> {
-  await markDocument(
-    documentId, "awaiting_parser_implementation",
-    0, [], `Parser for ${docType} not yet implemented in this build`,
-  );
-}
-
-function resolveSourceAccount(fromEmail: string, subject: string): string {
-  const blob = (fromEmail + " " + subject).toLowerCase();
+function resolveSourceAccount(fromEmail: string, subject: string, fileName: string): string {
+  const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
   if (/usbank|us[\s_-]?bank/.test(blob)) return "QBO-007";
   if (/truist|trb/.test(blob)) return "QBO-004";
   if (/chase/.test(blob)) return "QBO-011";
@@ -323,11 +466,400 @@ function resolveSourceAccount(fromEmail: string, subject: string): string {
   return "QBO-007";
 }
 
+// ---- Per-attachment processor (reusable for outer + zip-inner files) -------
+
+async function processOneAttachment(
+  ctx: RunCtx,
+  att: AttachmentInput,
+  depth: number,
+  uploadSource: string,
+): Promise<ProcessedAttachment[]> {
+  const results: ProcessedAttachment[] = [];
+
+  const docType = classifyDocument({
+    fromEmail: att.fromEmail,
+    subject: att.subject,
+    fileName: att.fileName,
+  });
+
+  // Idempotency check: skip if this exact filename was already processed.
+  // (The fetcher already checks this for outer attachments; this catches
+  // inner-zip files where the fetcher hasn't seen them yet.)
+  if (depth > 0) {
+    const { data: existing } = await sb
+      .from("documents")
+      .select("id")
+      .eq("agency_id", ctx.agencyId)
+      .eq("file_name", att.fileName)
+      .like("upload_source", "gmail%")
+      .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString())
+      .maybeSingle();
+    if (existing?.id) {
+      results.push({
+        documentId: existing.id, fileName: att.fileName, fromEmail: att.fromEmail,
+        docType, status: "skipped", jeCount: 0, suspenseCount: 0,
+        sourceLabel: uploadSource,
+        error: "already_processed (idempotent)",
+      });
+      return results;
+    }
+  }
+
+  if (docType === "skip") {
+    results.push({
+      documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
+      docType, status: "skipped", jeCount: 0, suspenseCount: 0,
+      sourceLabel: uploadSource,
+    });
+    return results;
+  }
+
+  // Get bytes (downloads from Gmail for outer, uses in-hand bytes for inner)
+  const bytesB64 = await downloadAttachmentBytes(ctx, att);
+  if (!bytesB64) {
+    results.push({
+      documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
+      docType, status: "error", jeCount: 0, suspenseCount: 0,
+      sourceLabel: uploadSource,
+      error: "attachment_download_failed",
+    });
+    return results;
+  }
+
+  // ---- ZIP fork --------------------------------------------------------
+  if (docType === "archive_bundle") {
+    if (depth >= MAX_ZIP_DEPTH) {
+      results.push({
+        documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
+        docType, status: "skipped", jeCount: 0, suspenseCount: 0,
+        sourceLabel: uploadSource,
+        error: `nested_zip_too_deep (max ${MAX_ZIP_DEPTH})`,
+      });
+      return results;
+    }
+
+    // Archive the zip itself to Drive for completeness, then walk inner.
+    const txnDate = att.receivedAt.slice(0, 10);
+    const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate);
+    const documentId = await insertSourceDocument(
+      ctx, att, docType, drive, null, uploadSource,
+    );
+
+    let inner: UnzippedEntry[];
+    try {
+      inner = await unzipBytes(bytesB64);
+    } catch (e) {
+      await markDocument(documentId, "error", 0, [], `unzip failed: ${(e as Error).message}`);
+      results.push({
+        documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+        docType, status: "error", jeCount: 0, suspenseCount: 0,
+        sourceLabel: uploadSource,
+        error: `unzip_failed: ${(e as Error).message}`,
+      });
+      return results;
+    }
+
+    let processedCount = 0;
+    let jeRollup = 0;
+    let suspRollup = 0;
+
+    for (const entry of inner) {
+      // Pull a date from filename if possible — drives folder routing and
+      // ensures pre-cutover documents land in their historical month folder.
+      const inferred = inferDateFromFilename(entry.fileName);
+      const receivedAt = inferred
+        ? `${inferred}T12:00:00.000Z`
+        : att.receivedAt;
+
+      const innerAtt: AttachmentInput = {
+        messageId: "",
+        fromEmail: att.fromEmail,
+        subject: att.subject, // preserve outer subject for diagnostic visibility
+        receivedAt,
+        fileName: entry.fileName,
+        mimeType: entry.mimeType,
+        attachmentId: null,
+        bytesB64: entry.bytesB64,
+        parentArchive: att.fileName,
+      };
+
+      const innerResults = await processOneAttachment(
+        ctx, innerAtt, depth + 1, `gmail_zip:${att.fileName}`,
+      );
+      for (const r of innerResults) {
+        results.push(r);
+        if (r.status === "processed") processedCount += 1;
+        jeRollup += r.jeCount;
+        suspRollup += r.suspenseCount;
+      }
+    }
+
+    await markDocument(
+      documentId, "unpacked", inner.length, ["documents"],
+      `unpacked ${inner.length} files; ${processedCount} processed downstream`,
+    );
+
+    // Push a summary row for the zip itself
+    results.unshift({
+      documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+      docType: "archive_bundle", status: "unpacked",
+      jeCount: jeRollup, suspenseCount: suspRollup,
+      sourceLabel: uploadSource,
+      innerCount: inner.length,
+    });
+    return results;
+  }
+
+  // ---- Non-zip path: archive + parse -----------------------------------
+
+  // Prefer date inferred from filename (eg "25_03_11 Compensation.pdf");
+  // fall back to receivedAt. This is what puts pre-cutover docs in their
+  // historical Drive folder rather than today's folder.
+  const inferred = inferDateFromFilename(att.fileName);
+  const txnDate = inferred ?? att.receivedAt.slice(0, 10);
+
+  const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate);
+  const isBankStmt =
+    docType === "bank_statement_primary" ||
+    docType === "bank_statement_secondary";
+  const sourceAccountCode = isBankStmt
+    ? resolveSourceAccount(att.fromEmail, att.subject, att.fileName)
+    : null;
+  const documentId = await insertSourceDocument(
+    ctx, att, docType, drive, sourceAccountCode, uploadSource,
+  );
+
+  // Dispatch on docType
+  try {
+    switch (docType) {
+      case "bank_statement_primary":
+      case "bank_statement_secondary": {
+        const src = sourceAccountCode as string;
+        const r = await handleBankStatement(ctx, att, documentId, bytesB64, src);
+        if (r.queueId) {
+          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "queued", jeCount: 0, suspenseCount: 0,
+            queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else if (r.error) {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "processed", r.jeCount,
+            ["journal_entries", "journal_lines"],
+            `${r.jeCount} JEs posted, ${r.suspenseCount} in suspense`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed",
+            jeCount: r.jeCount, suspenseCount: r.suspenseCount,
+            sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+      case "comp_recap_1h":
+      case "comp_recap_daily": {
+        const variant = docType === "comp_recap_1h" ? "1H" : "DAILY";
+        const ex = await extractText(ctx, att, bytesB64);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await parseCompRecap({
+          agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId, documentId,
+          recapVariant: variant as "1H" | "DAILY", statementText: ex.text,
+        });
+        if (r.ok) {
+          await markDocument(documentId, "processed", r.written, ["comp_recap"],
+            `${r.written} comp_recap rows written`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else if (r.queued) {
+          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "queued", jeCount: 0, suspenseCount: 0,
+            queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+      case "deduction_statement": {
+        const ex = await extractText(ctx, att, bytesB64);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await parseDeductionStatement({
+          agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId, documentId, statementText: ex.text,
+        });
+        if (r.ok) {
+          await markDocument(documentId, "processed", r.written, ["comp_recap"],
+            `${r.written} deduction rows written`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else if (r.queued) {
+          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "queued", jeCount: 0, suspenseCount: 0,
+            queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+      case "adp_payroll": {
+        const ex = await extractText(ctx, att, bytesB64);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await parsePayrollRun({
+          agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId, documentId, statementText: ex.text,
+        });
+        if (r.ok) {
+          await markDocument(documentId, "processed", r.detailCount + 1,
+            ["payroll_runs", "payroll_detail"],
+            `payroll run ${r.run.pay_date}: ${r.detailCount} detail rows`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else if (r.queued) {
+          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "queued", jeCount: 0, suspenseCount: 0,
+            queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+      case "commission_report":
+      case "team_production": {
+        const ex = await extractText(ctx, att, bytesB64);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await parseProductionReport({
+          agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId, documentId,
+          reportVariant: docType as "commission_report" | "team_production",
+          statementText: ex.text,
+        });
+        if (r.ok) {
+          const note = r.unmatchedStaff.length > 0
+            ? `${r.written} rows; ${r.unmatchedStaff.length} unmatched: ${r.unmatchedStaff.slice(0,5).join(", ")}`
+            : `${r.written} producer_production rows written`;
+          await markDocument(documentId, "processed", r.written, ["producer_production"], note);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else if (r.queued) {
+          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "queued", jeCount: 0, suspenseCount: 0,
+            queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+      default: {
+        await markDocument(documentId, "awaiting_parser_implementation",
+          0, [], `Parser for ${docType} not yet implemented`);
+        results.push({
+          documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+          docType, status: "stub_pending", jeCount: 0, suspenseCount: 0,
+          sourceLabel: uploadSource,
+        });
+      }
+    }
+  } catch (e) {
+    await markDocument(documentId, "error", 0, [], (e as Error).message);
+    results.push({
+      documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+      docType, status: "error", jeCount: 0, suspenseCount: 0,
+      error: (e as Error).message, sourceLabel: uploadSource,
+    });
+  }
+
+  return results;
+}
+
 // ---- Main handler ----------------------------------------------------------
 
 async function run(req: Request): Promise<Response> {
   let body: any = {};
-  try { body = await req.json(); } catch { return jsonResponse({ ok: false, error: "invalid JSON body" }, 400); }
+  try { body = await req.json(); }
+  catch { return jsonResponse({ ok: false, error: "invalid JSON body" }, 400); }
 
   const agencyId = body?.agency_id as string;
   const sharedSecret = body?.shared_secret as string;
@@ -349,9 +881,9 @@ async function run(req: Request): Promise<Response> {
 
   const ctx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
   const startedAt = new Date().toISOString();
-  const processed: ProcessedAttachment[] = [];
+  const allResults: ProcessedAttachment[] = [];
 
-  let attachments: GmailAttachment[];
+  let attachments: AttachmentInput[];
   try {
     attachments = await fetchNewGmailAttachments(ctx);
   } catch (e) {
@@ -363,247 +895,24 @@ async function run(req: Request): Promise<Response> {
   }
 
   for (const att of attachments) {
-    try {
-      const docType = classifyDocument({
-        fromEmail: att.fromEmail, subject: att.subject, fileName: att.fileName,
-      });
-      if (docType === "skip") {
-        processed.push({
-          documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
-          docType, status: "skipped", jeCount: 0, suspenseCount: 0,
-        });
-        continue;
-      }
-
-      const bytesB64 = await downloadAttachment(ctx, att);
-      if (!bytesB64) {
-        processed.push({
-          documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
-          docType, status: "error", jeCount: 0, suspenseCount: 0,
-          error: "attachment download failed",
-        });
-        continue;
-      }
-
-      const txnDate = att.receivedAt.slice(0, 10);
-      const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate);
-      const isBankStmt = docType === "bank_statement_primary" || docType === "bank_statement_secondary";
-      const sourceAccountCode = isBankStmt ? resolveSourceAccount(att.fromEmail, att.subject) : null;
-      const documentId = await insertSourceDocument(ctx, att, docType, drive, sourceAccountCode);
-
-      switch (docType) {
-        case "bank_statement_primary":
-        case "bank_statement_secondary": {
-          const src = sourceAccountCode as string;
-          const result = await handleBankStatement(ctx, att, documentId, bytesB64, src);
-          if (result.queueId) {
-            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${result.queueId}`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: result.queueId,
-            });
-          } else if (result.error) {
-            await markDocument(documentId, "error", 0, [], result.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: result.error,
-            });
-          } else {
-            await markDocument(
-              documentId, "processed", result.jeCount,
-              ["journal_entries", "journal_lines"],
-              `${result.jeCount} JEs posted, ${result.suspenseCount} in suspense`,
-            );
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "processed",
-              jeCount: result.jeCount, suspenseCount: result.suspenseCount,
-            });
-          }
-          break;
-        }
-        case "comp_recap_1h":
-        case "comp_recap_daily": {
-          const variant = docType === "comp_recap_1h" ? "1H" : "DAILY";
-          const extracted = await extractText(ctx, att, bytesB64);
-          if (!extracted.ok) {
-            await markDocument(documentId, "error", 0, [], extracted.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
-            });
-            break;
-          }
-          const r = await parseCompRecap({
-            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
-            composioUserId: ctx.composioUserId, documentId,
-            recapVariant: variant as "1H" | "DAILY", statementText: extracted.text,
-          });
-          if (r.ok) {
-            await markDocument(documentId, "processed", r.written, ["comp_recap"],
-              `${r.written} comp_recap rows written`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "processed", jeCount: 0, suspenseCount: 0,
-            });
-          } else if (r.queued) {
-            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
-            });
-          } else {
-            await markDocument(documentId, "error", 0, [], r.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
-            });
-          }
-          break;
-        }
-        case "deduction_statement": {
-          const extracted = await extractText(ctx, att, bytesB64);
-          if (!extracted.ok) {
-            await markDocument(documentId, "error", 0, [], extracted.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
-            });
-            break;
-          }
-          const r = await parseDeductionStatement({
-            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
-            composioUserId: ctx.composioUserId, documentId, statementText: extracted.text,
-          });
-          if (r.ok) {
-            await markDocument(documentId, "processed", r.written, ["comp_recap"],
-              `${r.written} deduction rows written`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "processed", jeCount: 0, suspenseCount: 0,
-            });
-          } else if (r.queued) {
-            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
-            });
-          } else {
-            await markDocument(documentId, "error", 0, [], r.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
-            });
-          }
-          break;
-        }
-        case "adp_payroll": {
-          const extracted = await extractText(ctx, att, bytesB64);
-          if (!extracted.ok) {
-            await markDocument(documentId, "error", 0, [], extracted.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
-            });
-            break;
-          }
-          const r = await parsePayrollRun({
-            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
-            composioUserId: ctx.composioUserId, documentId, statementText: extracted.text,
-          });
-          if (r.ok) {
-            await markDocument(documentId, "processed", r.detailCount + 1,
-              ["payroll_runs", "payroll_detail"],
-              `payroll run ${r.run.pay_date}: ${r.detailCount} detail rows`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "processed", jeCount: 0, suspenseCount: 0,
-            });
-          } else if (r.queued) {
-            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
-            });
-          } else {
-            await markDocument(documentId, "error", 0, [], r.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
-            });
-          }
-          break;
-        }
-        case "commission_report":
-        case "team_production": {
-          const extracted = await extractText(ctx, att, bytesB64);
-          if (!extracted.ok) {
-            await markDocument(documentId, "error", 0, [], extracted.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: extracted.error,
-            });
-            break;
-          }
-          const r = await parseProductionReport({
-            agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
-            composioUserId: ctx.composioUserId, documentId,
-            reportVariant: docType as "commission_report" | "team_production",
-            statementText: extracted.text,
-          });
-          if (r.ok) {
-            const note = r.unmatchedStaff.length > 0
-              ? `${r.written} rows written; ${r.unmatchedStaff.length} unmatched: ${r.unmatchedStaff.slice(0,5).join(", ")}`
-              : `${r.written} producer_production rows written`;
-            await markDocument(documentId, "processed", r.written, ["producer_production"], note);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "processed", jeCount: 0, suspenseCount: 0,
-            });
-          } else if (r.queued) {
-            await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "queued", jeCount: 0, suspenseCount: 0, queueId: r.queueId,
-            });
-          } else {
-            await markDocument(documentId, "error", 0, [], r.error);
-            processed.push({
-              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-              docType, status: "error", jeCount: 0, suspenseCount: 0, error: r.error,
-            });
-          }
-          break;
-        }
-        default: {
-          await handleStub(docType, documentId);
-          processed.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "stub_pending", jeCount: 0, suspenseCount: 0,
-          });
-        }
-      }
-    } catch (e) {
-      processed.push({
-        documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
-        docType: "skip", status: "error",
-        jeCount: 0, suspenseCount: 0, error: (e as Error).message,
-      });
-    }
+    const results = await processOneAttachment(ctx, att, 0, "gmail");
+    allResults.push(...results);
   }
 
   const summary = {
     started_at: startedAt,
     finished_at: new Date().toISOString(),
     attachments_seen: attachments.length,
-    processed: processed.filter((p) => p.status === "processed").length,
-    skipped: processed.filter((p) => p.status === "skipped").length,
-    queued: processed.filter((p) => p.status === "queued").length,
-    errors: processed.filter((p) => p.status === "error").length,
-    stub_pending: processed.filter((p) => p.status === "stub_pending").length,
-    total_jes: processed.reduce((n, p) => n + p.jeCount, 0),
-    total_suspense: processed.reduce((n, p) => n + p.suspenseCount, 0),
-    items: processed,
+    items_total: allResults.length, // includes inner files from zips
+    processed: allResults.filter((p) => p.status === "processed").length,
+    skipped: allResults.filter((p) => p.status === "skipped").length,
+    queued: allResults.filter((p) => p.status === "queued").length,
+    errors: allResults.filter((p) => p.status === "error").length,
+    stub_pending: allResults.filter((p) => p.status === "stub_pending").length,
+    unpacked_zips: allResults.filter((p) => p.status === "unpacked").length,
+    total_jes: allResults.reduce((n, p) => n + p.jeCount, 0),
+    total_suspense: allResults.reduce((n, p) => n + p.suspenseCount, 0),
+    items: allResults,
   };
 
   return jsonResponse({ ok: true, summary });
