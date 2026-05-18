@@ -491,7 +491,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
       <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderLeft:`4px solid ${T.amber}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
         <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>⚠ AA05 Section I.P — Agent is liable for all staff activities</div>
         <div style={{ fontSize:11, color:"#92400E", lineHeight:1.6 }}>
-          You are contractually responsible for every action your staff takes on behalf of the agency. All staff performing licensed activities must hold active licenses. Unlicensed staff may not quote, bind, or solicit. Tyler Smith (family employee) requires W-2 at year-end — review with Steven Bonventre at Club Capital Tax.
+          You are contractually responsible for every action your staff takes on behalf of the agency. All staff performing licensed activities must hold active licenses. Unlicensed staff may not quote, bind, or solicit. Family employees require year-end W-2 review with your CPA.
         </div>
       </div>
 
@@ -1223,7 +1223,32 @@ const CommissionsSection = ({ commissions }) => (
 export default function HRPeople() {
   const { data: roi } = useProducerROI();
   const [section,     setSection]     = useState("overview");
-  const [applicants,  setApplicants]  = useState(MOCK_APPLICANTS);
+  const [applicants,  setApplicants]  = useState([]);
+
+  // Load applicants from live Supabase table. Empty result yields empty pipeline.
+  useEffect(() => {
+    if (!supabase || !AGENCY_ID) return;
+    let cancelled = false;
+    supabase
+      .from("applicants")
+      .select("id, first_name, last_name, email, phone, status, source, claude_score, claude_summary, interview_focus_doc, intake_received_at, created_at")
+      .eq("agency_id", AGENCY_ID)
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        // Normalize live data to the shape the UI expects.
+        const normalized = (data || []).map(a => ({
+          ...a,
+          position: a.position || "—",
+          interview_focus: a.interview_focus_doc || null,
+          interview_date: null,
+          interview_notes: null,
+          rating: null,
+        }));
+        setApplicants(normalized);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const updateApplicantStage = (id, newStatus) => {
     setApplicants(prev => prev.map(a => a.id === id ? {...a, status:newStatus} : a));
