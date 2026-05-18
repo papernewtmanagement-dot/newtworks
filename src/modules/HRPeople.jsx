@@ -3,35 +3,35 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
 // BCC HR & PEOPLE MODULE v1.0
-// Business Command Center — State Farm Agent Edition
-// Built by Imaginary Farms LLC · imaginary-farms.com
+// Business Command Center â State Farm Agent Edition
+// Built by Imaginary Farms LLC Â· imaginary-farms.com
 //
 // SECTIONS:
-//   1. Overview      — Pipeline summary, team snapshot, alerts
-//   2. Recruiting    — Kanban pipeline: New→Screen→Interview→Offer→Hired
-//   3. Applicants    — Full applicant list with Groq scores
-//   4. Onboarding    — Active onboarding checklists per new hire
-//   5. Staff         — Current team directory with licensing status
-//   6. Performance   — Monthly KPI tracking per staff member
-//   7. Commissions   — Commission structures and monthly calculations
+//   1. Overview      â Pipeline summary, team snapshot, alerts
+//   2. Recruiting    â Kanban pipeline: NewâScreenâInterviewâOfferâHired
+//   3. Applicants    â Full applicant list with Groq scores
+//   4. Onboarding    â Active onboarding checklists per new hire
+//   5. Staff         â Current team directory with licensing status
+//   6. Performance   â Monthly KPI tracking per staff member
+//   7. Commissions   â Commission structures and monthly calculations
 //
 // KEY AUTOMATION:
 //   Resume Scanner (Composio + Groq) auto-creates applicant
 //   records from Gmail, scores candidates 1-10, generates
-//   One Page Interview Focus — no manual data entry needed.
+//   One Page Interview Focus â no manual data entry needed.
 //
 // COMPLIANCE FLAGS:
-//   • Staff must be licensed before performing licensed activities
-//   • Family employees require year-end W-2 review with CPA
-//   • New hires must be notified to SF within required timeframe
-//   • Agent is liable for all staff activities (AA05 Section I.P)
+//   â¢ Staff must be licensed before performing licensed activities
+//   â¢ Family employees require year-end W-2 review with CPA
+//   â¢ New hires must be notified to SF within required timeframe
+//   â¢ Agent is liable for all staff activities (AA05 Section I.P)
 //
 // DATA: Reads applicants, staff, onboarding_checklists,
 //       staff_performance, commission_structures tables
 // ============================================================
 
 
-// ─── Design Tokens ────────────────────────────────────────────
+// âââ Design Tokens ââââââââââââââââââââââââââââââââââââââââââââ
 const T = {
   navy:    "#1B2B4B",
   blue:    "#2D7DD2",
@@ -58,7 +58,7 @@ const T = {
   white:   "#FFFFFF",
 };
 
-// ─── Pipeline Stage Config ────────────────────────────────────
+// âââ Pipeline Stage Config ââââââââââââââââââââââââââââââââââââ
 const STAGES = {
   new:       { label:"New",        color:T.slate500, bg:T.slate100, order:0 },
   screening: { label:"Screening",  color:T.blue,     bg:T.blueLt,  order:1 },
@@ -68,7 +68,7 @@ const STAGES = {
   rejected:  { label:"Rejected",   color:T.red,      bg:T.redLt,   order:5 },
 };
 
-// ─── Mock Data ────────────────────────────────────────────────
+// âââ Mock Data ââââââââââââââââââââââââââââââââââââââââââââââââ
 const MOCK_APPLICANTS = [
   {
     id:"ap1", first_name:"Jamie",  last_name:"Chen",
@@ -77,27 +77,27 @@ const MOCK_APPLICANTS = [
     status:"interview", source:"email_auto",
     claude_score:8,
     claude_summary:"Strong candidate with 3 years P&C experience at Allstate. Currently licensed in IL. Demonstrated production record of 85 new policies/month. Clean background. Minor concern: reason for leaving current role unclear.",
-    interview_focus:`ONE PAGE INTERVIEW FOCUS — Jamie Chen
+    interview_focus:`ONE PAGE INTERVIEW FOCUS â Jamie Chen
 
 STRENGTHS TO EXPLORE:
-1. P&C production record at Allstate — ask for specific monthly new business numbers and what drove them
-2. IL license status — verify current, in good standing, ask about plans to add WI/IN
-3. Customer retention approach — 3 years at same agency suggests loyalty; understand philosophy
+1. P&C production record at Allstate â ask for specific monthly new business numbers and what drove them
+2. IL license status â verify current, in good standing, ask about plans to add WI/IN
+3. Customer retention approach â 3 years at same agency suggests loyalty; understand philosophy
 
 CONCERNS TO PROBE:
-1. Reason for leaving Allstate — current role ended abruptly per resume gap; ask directly and assess answer
-2. Experience with life insurance — P&C heavy background; assess openness to cross-selling
-3. Salary expectations vs. commission structure — candidate may expect base salary
+1. Reason for leaving Allstate â current role ended abruptly per resume gap; ask directly and assess answer
+2. Experience with life insurance â P&C heavy background; assess openness to cross-selling
+3. Salary expectations vs. commission structure â candidate may expect base salary
 
 SUGGESTED QUESTIONS:
-1. Walk me through your average month at Allstate — how many new policies, what product mix?
+1. Walk me through your average month at Allstate â how many new policies, what product mix?
 2. What made you decide to leave your last agency, and what are you looking for in your next role?
 3. How do you approach customers who have coverage gaps they haven't asked about?
 4. Have you sold life insurance before? What's your comfort level with that conversation?
-5. Where do you see yourself in 2 years — still in sales, or are you interested in eventually running your own agency?
+5. Where do you see yourself in 2 years â still in sales, or are you interested in eventually running your own agency?
 
 RED FLAGS: Resume gap Apr-Aug 2025 unexplained. Probe during interview.
-LICENSING: IL P&C license verified active. Life license — confirm status.`,
+LICENSING: IL P&C license verified active. Life license â confirm status.`,
     intake_received_at:"Apr 26, 2026",
     interview_date:"Apr 29, 2026",
     interview_notes:"Phone screen completed Apr 27. Strong communication skills. Scheduled in-person for Apr 29.",
@@ -109,24 +109,24 @@ LICENSING: IL P&C license verified active. Life license — confirm status.`,
     position:"Office Manager",
     status:"screening", source:"email_auto",
     claude_score:7,
-    claude_summary:"Experienced office manager, 5 years in financial services operations. Not licensed — applying for unlicensed role. Strong organizational and systems background. Good cultural fit indicators.",
-    interview_focus:`ONE PAGE INTERVIEW FOCUS — Derek Washington
+    claude_summary:"Experienced office manager, 5 years in financial services operations. Not licensed â applying for unlicensed role. Strong organizational and systems background. Good cultural fit indicators.",
+    interview_focus:`ONE PAGE INTERVIEW FOCUS â Derek Washington
 
 STRENGTHS TO EXPLORE:
-1. Financial services operations background — directly relevant to agency management
-2. Systems experience — ask about CRM, scheduling, and workflow tools used
-3. 5 years tenure at prior employer — signals loyalty and stability
+1. Financial services operations background â directly relevant to agency management
+2. Systems experience â ask about CRM, scheduling, and workflow tools used
+3. 5 years tenure at prior employer â signals loyalty and stability
 
 CONCERNS TO PROBE:
-1. No insurance industry experience specifically — assess learning curve appetite
-2. Salary expectations — office manager roles have a wide range; align early
-3. Comfort with high-volume customer interaction — financial services may be less client-facing
+1. No insurance industry experience specifically â assess learning curve appetite
+2. Salary expectations â office manager roles have a wide range; align early
+3. Comfort with high-volume customer interaction â financial services may be less client-facing
 
 SUGGESTED QUESTIONS:
-1. Describe a typical day managing operations at your last firm — what were your top 3 responsibilities?
+1. Describe a typical day managing operations at your last firm â what were your top 3 responsibilities?
 2. What systems and tools do you use to stay organized across multiple priorities?
 3. Have you ever supported a licensed professional team? How did you handle questions you couldn't answer?
-4. What's your ideal work environment — autonomous or highly collaborative?
+4. What's your ideal work environment â autonomous or highly collaborative?
 5. What attracted you specifically to an insurance agency vs. other financial services roles?`,
     intake_received_at:"Apr 24, 2026",
     interview_date:null,
@@ -165,11 +165,11 @@ SUGGESTED QUESTIONS:
     position:"Licensed Sales Agent",
     status:"rejected", source:"email_auto",
     claude_score:4,
-    claude_summary:"Limited insurance experience. License lapsed 2 years ago — would require retesting. Cover letter indicated interest in office admin, not sales. Mismatch with role requirements.",
+    claude_summary:"Limited insurance experience. License lapsed 2 years ago â would require retesting. Cover letter indicated interest in office admin, not sales. Mismatch with role requirements.",
     interview_focus:null,
     intake_received_at:"Apr 19, 2026",
     interview_date:null,
-    interview_notes:"Reviewed profile — not a fit for current opening. License lapsed.",
+    interview_notes:"Reviewed profile â not a fit for current opening. License lapsed.",
     rating:null,
   },
 ];
@@ -182,7 +182,7 @@ const MOCK_STAFF = [
     email:"marcus@smithagency.com", phone:"(312) 555-0182",
     pay_type:"salary_plus_commission", pay_rate:52000,
     licensed:true, license_states:["IL","WI"],
-    notes:"Top producer. Life license pending — scheduled exam May 2026.",
+    notes:"Top producer. Life license pending â scheduled exam May 2026.",
     ytd_production:{ new_policies:68, retention_rate:91 },
   },
   {
@@ -202,9 +202,9 @@ const MOCK_STAFF = [
     email:"tyler@smithagency.com", phone:null,
     pay_type:"hourly", pay_rate:18,
     licensed:false, license_states:[],
-    notes:"Jane's son. Part-time 20hrs/wk. Below standard deduction — no FIT withheld. Flag for CPA at year-end W-2. Cannot perform licensed activities.",
+    notes:"Jane's son. Part-time 20hrs/wk. Below standard deduction â no FIT withheld. Flag for CPA at year-end W-2. Cannot perform licensed activities.",
     ytd_production:null,
-    compliance_flag:"Family employee — review W-2 treatment with CPA annually",
+    compliance_flag:"Family employee â review W-2 treatment with CPA annually",
   },
 ];
 
@@ -222,9 +222,9 @@ const MOCK_ONBOARDING = [
       { category:"compliance",  item:"Social media compliance training acknowledged",  completed:true,  due:"Day 14"  },
       { category:"systems",     item:"Agency management system access granted",        completed:true,  due:"Day 1"   },
       { category:"systems",     item:"SF systems training completed",                  completed:true,  due:"Day 30"  },
-      { category:"training",    item:"Product training — P&C lines",                  completed:true,  due:"Day 30"  },
-      { category:"training",    item:"Product training — Life insurance",              completed:false, due:"Day 60"  },
-      { category:"licensing",   item:"Life insurance license — exam scheduled",        completed:false, due:"May 2026"},
+      { category:"training",    item:"Product training â P&C lines",                  completed:true,  due:"Day 30"  },
+      { category:"training",    item:"Product training â Life insurance",              completed:false, due:"Day 60"  },
+      { category:"licensing",   item:"Life insurance license â exam scheduled",        completed:false, due:"May 2026"},
     ],
   },
 ];
@@ -261,7 +261,7 @@ const MOCK_COMMISSIONS = [
 ];
 
 
-// ─── Producer ROI Hook ───────────────────────────────────────
+// âââ Producer ROI Hook âââââââââââââââââââââââââââââââââââââââ
 function useProducerROI() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -305,7 +305,7 @@ function useProducerROI() {
         }
         const lapseRate = agency.lapse_rate_annual != null ? parseFloat(agency.lapse_rate_annual) : (computedLapse != null ? computedLapse : 10);
 
-        // Per-producer monthly gross pay from last 3 payroll runs (×2 for semi-monthly)
+        // Per-producer monthly gross pay from last 3 payroll runs (Ã2 for semi-monthly)
         const last3RunIds = new Set(payrollRuns.slice(0, 3).map(r => r.id));
         const grossByStaff = {};
         const runsCountByStaff = {};
@@ -402,6 +402,7 @@ function useProducerROI() {
           priorRenewals,
           currentRenewals,
           producerRows,
+          allActiveStaff: staff,
         });
       } catch (e) {
         console.error("Producer ROI load error:", e);
@@ -415,13 +416,13 @@ function useProducerROI() {
   return { data, loading };
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
+// âââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââ
 const scoreColor = (s) => s >= 8 ? T.green : s >= 6 ? T.amber : T.red;
 const scoreBg    = (s) => s >= 8 ? T.greenLt : s >= 6 ? T.amberLt : T.redLt;
 const pct = (a, t) => t ? Math.min(100, Math.round((a/t)*100)) : 0;
 const fmt = (n, unit) => unit === "dollars" ? "$"+n.toLocaleString() : unit === "percentage" ? n+"%" : n.toString();
 
-// ─── Shared Components ────────────────────────────────────────
+// âââ Shared Components ââââââââââââââââââââââââââââââââââââââââ
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
     {children}
@@ -432,7 +433,7 @@ const AskBtn = ({ context, size="normal" }) => (
   <button
     onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
     style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
+  >â¡ Ask Claude</button>
 );
 
 const ProgressBar = ({ value, max, color=T.blue, height=6 }) => (
@@ -446,7 +447,7 @@ const StageBadge = ({ status }) => {
   return <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:s.bg, color:s.color }}>{s.label}</span>;
 };
 
-// ─── Section: Overview ────────────────────────────────────────
+// âââ Section: Overview ââââââââââââââââââââââââââââââââââââââââ
 const HROverview = ({ applicants, staff, onboarding }) => {
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", email:"", phone:"", start_date:"", employment_type:"w2"});
@@ -488,9 +489,9 @@ const HROverview = ({ applicants, staff, onboarding }) => {
 
       {/* Compliance reminder */}
       <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderLeft:`4px solid ${T.amber}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
-        <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>⚠ AA05 Section I.P — Agent is liable for all staff activities</div>
+        <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>â  AA05 Section I.P â Agent is liable for all staff activities</div>
         <div style={{ fontSize:11, color:"#92400E", lineHeight:1.6 }}>
-          You are contractually responsible for every action your staff takes on behalf of the agency. All staff performing licensed activities must hold active licenses. Unlicensed staff may not quote, bind, or solicit. Tyler Smith (family employee) requires W-2 at year-end — review with Steven Bonventre at Club Capital Tax.
+          You are contractually responsible for every action your staff takes on behalf of the agency. All staff performing licensed activities must hold active licenses. Unlicensed staff may not quote, bind, or solicit. Tyler Smith (family employee) requires W-2 at year-end â review with Steven Bonventre at Club Capital Tax.
         </div>
       </div>
 
@@ -498,7 +499,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
         {/* Active Pipeline */}
         
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
-        <button onClick={()=>setShowAddEmployee(s=>!s)} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>➕ Add Employee</button>
+        <button onClick={()=>setShowAddEmployee(s=>!s)} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>â Add Employee</button>
       </div>
 
       {showAddEmployee && (
@@ -534,7 +535,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
               </div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:12, fontWeight:600, color:T.slate800 }}>{app.first_name} {app.last_name}</div>
-                <div style={{ fontSize:10, color:T.slate500 }}>{app.position} · {app.intake_received_at}</div>
+                <div style={{ fontSize:10, color:T.slate500 }}>{app.position} Â· {app.intake_received_at}</div>
               </div>
               <StageBadge status={app.status} />
             </div>
@@ -547,11 +548,11 @@ const HROverview = ({ applicants, staff, onboarding }) => {
           {staff.filter(s => s.is_active).map((member,i) => (
             <div key={member.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:i<staff.length-1?`1px solid ${T.slate100}`:"none" }}>
               <div style={{ width:32, height:32, borderRadius:8, background:member.licensed?T.greenLt:T.slate100, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:11, fontWeight:700, color:member.licensed?T.green:T.slate500 }}>
-                {member.first_name[0]}{member.last_name[0]}
+                {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
               </div>
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:12, fontWeight:600, color:T.slate800 }}>{member.first_name} {member.last_name}</div>
-                <div style={{ fontSize:10, color:T.slate500 }}>{member.role} · {member.employment_type.toUpperCase()}</div>
+                <div style={{ fontSize:10, color:T.slate500 }}>{member.role || "-"} Â· {(member.employment_type || "").toString().toUpperCase()}</div>
               </div>
               <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
                 {member.licensed
@@ -559,7 +560,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
                   : <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed</span>
                 }
                 {member.compliance_flag && (
-                  <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
+                  <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>â  CPA Flag</span>
                 )}
               </div>
             </div>
@@ -570,7 +571,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
   );
 };
 
-// ─── Section: Recruiting Pipeline ────────────────────────────
+// âââ Section: Recruiting Pipeline ââââââââââââââââââââââââââââ
 const RecruitingPipeline = ({ applicants, onUpdate }) => {
   const [selected, setSelected] = useState(null);
   const stages = ["new","screening","interview","offer","hired","rejected"];
@@ -615,7 +616,7 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
             <div>
               <div style={{ fontSize:16, fontWeight:700, color:T.slate900 }}>{selectedApp.first_name} {selectedApp.last_name}</div>
-              <div style={{ fontSize:12, color:T.slate500, marginTop:2 }}>{selectedApp.position} · Received {selectedApp.intake_received_at}</div>
+              <div style={{ fontSize:12, color:T.slate500, marginTop:2 }}>{selectedApp.position} Â· Received {selectedApp.intake_received_at}</div>
             </div>
             <div style={{ display:"flex", gap:8, alignItems:"center" }}>
               <div style={{ width:44, height:44, borderRadius:12, background:scoreBg(selectedApp.claude_score), display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -653,21 +654,21 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
           {/* Stage Actions */}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {selectedApp.status === "new" && (
-              <button onClick={() => onUpdate(selectedApp.id,"screening")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>→ Move to Screening</button>
+              <button onClick={() => onUpdate(selectedApp.id,"screening")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>â Move to Screening</button>
             )}
             {selectedApp.status === "screening" && (
-              <button onClick={() => onUpdate(selectedApp.id,"interview")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.amber, border:"none", borderRadius:7, cursor:"pointer" }}>→ Schedule Interview</button>
+              <button onClick={() => onUpdate(selectedApp.id,"interview")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.amber, border:"none", borderRadius:7, cursor:"pointer" }}>â Schedule Interview</button>
             )}
             {selectedApp.status === "interview" && (
               <>
-                <button onClick={() => onUpdate(selectedApp.id,"offer")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>→ Extend Offer</button>
-                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✗ Reject</button>
+                <button onClick={() => onUpdate(selectedApp.id,"offer")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>â Extend Offer</button>
+                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>â Reject</button>
               </>
             )}
             {selectedApp.status === "offer" && (
               <>
-                <button onClick={() => onUpdate(selectedApp.id,"hired")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>✓ Mark Hired</button>
-                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✗ Offer Declined</button>
+                <button onClick={() => onUpdate(selectedApp.id,"hired")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>â Mark Hired</button>
+                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>â Offer Declined</button>
               </>
             )}
           </div>
@@ -677,7 +678,7 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
   );
 };
 
-// ─── Section: Staff Directory ─────────────────────────────────
+// âââ Section: Staff Directory âââââââââââââââââââââââââââââââââ
 const StaffDirectory = ({ staff }) => {
   const [expanded, setExpanded] = useState(null);
 
@@ -690,7 +691,7 @@ const StaffDirectory = ({ staff }) => {
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => setExpanded(isExpanded?null:member.id)}>
               {/* Avatar */}
               <div style={{ width:48, height:48, borderRadius:12, background:member.licensed?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:member.licensed?T.white:T.slate500, flexShrink:0 }}>
-                {member.first_name[0]}{member.last_name[0]}
+                {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
               </div>
 
               <div style={{ flex:1 }}>
@@ -698,25 +699,25 @@ const StaffDirectory = ({ staff }) => {
                   <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{member.first_name} {member.last_name}</span>
                   {member.licensed
                     ? <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>Licensed</span>
-                    : <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed — cannot perform licensed activities</span>
+                    : <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed â cannot perform licensed activities</span>
                   }
                   {member.compliance_flag && (
-                    <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
+                    <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>â  CPA Flag</span>
                   )}
                 </div>
                 <div style={{ fontSize:12, color:T.slate500 }}>
-                  {member.role} · {member.employment_type === "w2" ? "W-2 Employee" : member.employment_type === "family" ? "Family Employee (W-2)" : "1099 Contractor"} · Since {member.start_date}
+                  {member.role || "-"} Â· {member.employment_type === "w2" ? "W-2 Employee" : member.employment_type === "family" ? "Family Employee (W-2)" : member.employment_type === "1099" ? "1099 Contractor" : (member.employment_type || "Employee")} Â· Since {member.start_date || "-"}
                 </div>
               </div>
 
               <div style={{ textAlign:"right", flexShrink:0 }}>
                 <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>
-                  {member.pay_type === "hourly" ? `$${member.pay_rate}/hr` : `$${member.pay_rate.toLocaleString()}/yr`}
+                  {member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase() === "hourly" ? `$${Number(member.pay_rate).toFixed(2)}/hr` : `$${Number(member.pay_rate).toLocaleString(undefined,{maximumFractionDigits:2})}/period`}
                 </div>
-                <div style={{ fontSize:10, color:T.slate400 }}>{member.pay_type.replace(/_/g," ")}</div>
+                <div style={{ fontSize:10, color:T.slate400 }}>{(member.pay_type || "-").toString().replace(/_/g," ").toLowerCase()}</div>
               </div>
 
-              <span style={{ color:T.slate400, fontSize:12 }}>{isExpanded?"▲":"▼"}</span>
+              <span style={{ color:T.slate400, fontSize:12 }}>{isExpanded?"â²":"â¼"}</span>
             </div>
 
             {isExpanded && (
@@ -724,8 +725,8 @@ const StaffDirectory = ({ staff }) => {
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:8, marginBottom:12 }}>
                   {[
                     { label:"Email",      value:member.email },
-                    { label:"Phone",      value:member.phone||"—" },
-                    { label:"Licensed States", value:member.license_states.length>0?member.license_states.join(", "):"None" },
+                    { label:"Phone",      value:member.phone||"â" },
+                    { label:"Licensed States", value:(member.license_states || []).length>0?(member.license_states || []).join(", "):"None" },
                     { label:"Start Date", value:member.start_date },
                   ].map((d,i) => (
                     <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
@@ -741,10 +742,10 @@ const StaffDirectory = ({ staff }) => {
                 )}
                 {member.compliance_flag && (
                   <div style={{ fontSize:11, color:"#92400E", background:T.amberLt, padding:"8px 10px", borderRadius:8, marginBottom:10 }}>
-                    ⚠ {member.compliance_flag}
+                    â  {member.compliance_flag}
                   </div>
                 )}
-                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_type} — ${member.pay_type==="hourly"?"$"+member.pay_rate+"/hr":"$"+member.pay_rate.toLocaleString()+"/yr"}\nLicensed: ${member.licensed?"Yes — "+member.license_states.join(", "):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicensed: ${member.licensed ? "Yes" + ((member.license_states||[]).length ? " - " + (member.license_states||[]).join(", ") : "") : "No"}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
               </div>
             )}
           </Card>
@@ -754,7 +755,7 @@ const StaffDirectory = ({ staff }) => {
   );
 };
 
-// ─── Section: Onboarding ─────────────────────────────────────
+// âââ Section: Onboarding âââââââââââââââââââââââââââââââââââââ
 const OnboardingSection = ({ onboarding }) => {
   const categoryColors = {
     licensing:  { color:T.green,  bg:T.greenLt  },
@@ -781,7 +782,7 @@ const OnboardingSection = ({ onboarding }) => {
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
               <div>
                 <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{record.staff_name}</div>
-                <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Started {record.start_date} · {record.days_employed} days employed · {record.template} template</div>
+                <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Started {record.start_date} Â· {record.days_employed} days employed Â· {record.template} template</div>
               </div>
               <div style={{ textAlign:"right" }}>
                 <div style={{ fontSize:22, fontWeight:700, color:pctDone===100?T.green:T.amber, letterSpacing:"-0.02em" }}>{pctDone}%</div>
@@ -801,7 +802,7 @@ const OnboardingSection = ({ onboarding }) => {
                   {items.map((item,i) => (
                     <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 0", borderBottom:i<items.length-1?`1px solid ${T.slate100}`:"none" }}>
                       <div style={{ width:18, height:18, borderRadius:4, background:item.completed?T.green:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                        {item.completed && <span style={{ color:T.white, fontSize:10 }}>✓</span>}
+                        {item.completed && <span style={{ color:T.white, fontSize:10 }}>â</span>}
                       </div>
                       <span style={{ flex:1, fontSize:12, color:item.completed?T.slate400:T.slate800, textDecoration:item.completed?"line-through":"none" }}>{item.item}</span>
                       <span style={{ fontSize:10, color:T.slate400, flexShrink:0 }}>{item.due}</span>
@@ -817,14 +818,14 @@ const OnboardingSection = ({ onboarding }) => {
   );
 };
 
-// ─── Section: Performance — Producer ROI ──────────────────────────────────
-// ─── Section: Performance — Producer ROI ──────────────────────
+// âââ Section: Performance â Producer ROI ââââââââââââââââââââââââââââââââââ
+// âââ Section: Performance â Producer ROI ââââââââââââââââââââââ
 const PerformanceSection = ({ roi }) => {
   if (!roi) {
     return (
       <Card>
         <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: T.slate500 }}>
-          Loading producer performance data…
+          Loading producer performance dataâ¦
         </div>
       </Card>
     );
@@ -846,7 +847,7 @@ const PerformanceSection = ({ roi }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
-      {/* ─── BOOK LAPSE RATE CARD ─────────────────────────────────── */}
+      {/* âââ BOOK LAPSE RATE CARD âââââââââââââââââââââââââââââââââââ */}
       <Card style={{ borderLeft: `4px solid ${T.blue}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
           <div>
@@ -862,13 +863,13 @@ const PerformanceSection = ({ roi }) => {
           <div style={{ background: T.slate50, padding: "10px 12px", borderRadius: 8 }}>
             <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Prior Year YTD Renewals</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-              {Number.isFinite(priorRenewals) ? "$" + Math.round(priorRenewals).toLocaleString() : "—"}
+              {Number.isFinite(priorRenewals) ? "$" + Math.round(priorRenewals).toLocaleString() : "â"}
             </div>
           </div>
           <div style={{ background: T.slate50, padding: "10px 12px", borderRadius: 8 }}>
             <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Current Year YTD Renewals</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-              {Number.isFinite(currentRenewals) ? "$" + Math.round(currentRenewals).toLocaleString() : "—"}
+              {Number.isFinite(currentRenewals) ? "$" + Math.round(currentRenewals).toLocaleString() : "â"}
             </div>
           </div>
           <div style={{ background: lapseRate > 15 ? T.redLt : lapseRate > 10 ? T.amberLt : T.greenLt, padding: "10px 12px", borderRadius: 8 }}>
@@ -894,26 +895,26 @@ const PerformanceSection = ({ roi }) => {
         </div>
       </Card>
 
-      {/* ─── PER-PRODUCER ROI ANALYSIS ───────────────────────────── */}
+      {/* âââ PER-PRODUCER ROI ANALYSIS âââââââââââââââââââââââââââââ */}
       {producerRows.map(p => <ProducerROICard key={p.staff_id} producer={p} smvcRate={smvcRate} blendedRate={blendedRate} lapseRate={lapseRate} />)}
 
-      {/* ─── ASSUMPTIONS FOOTER ──────────────────────────────────── */}
+      {/* âââ ASSUMPTIONS FOOTER ââââââââââââââââââââââââââââââââââââ */}
       <Card style={{ background: T.slate50, border: `1px dashed ${T.slate200}` }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 8 }}>Assumptions used in projections</div>
         <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.7 }}>
-          <div>• <strong>SMVC rate (P&C):</strong> {smvcRate.toFixed(2)}% — agent earns this percent of issued auto + fire premium per A005 agreement</div>
-          <div>• <strong>Blended rate (other):</strong> {blendedRate.toFixed(2)}% — blended commission for Life, Health, Financial Services</div>
-          <div>• <strong>Lapse rate:</strong> {lapseRate.toFixed(1)}% per year — applied as compounding annual decay to renewing cohorts</div>
-          <div>• <strong>Fully-loaded payroll:</strong> gross pay × 1.15 — covers FICA, FUTA, SUTA, WC</div>
-          <div>• <strong>Renewal start:</strong> month 13 — new business policies issued today start generating renewal commission 12 months from now</div>
-          <div>• <strong>Steady-state pace:</strong> 6-month rolling average of issued premium per producer</div>
+          <div>â¢ <strong>SMVC rate (P&C):</strong> {smvcRate.toFixed(2)}% â agent earns this percent of issued auto + fire premium per A005 agreement</div>
+          <div>â¢ <strong>Blended rate (other):</strong> {blendedRate.toFixed(2)}% â blended commission for Life, Health, Financial Services</div>
+          <div>â¢ <strong>Lapse rate:</strong> {lapseRate.toFixed(1)}% per year â applied as compounding annual decay to renewing cohorts</div>
+          <div>â¢ <strong>Fully-loaded payroll:</strong> gross pay Ã 1.15 â covers FICA, FUTA, SUTA, WC</div>
+          <div>â¢ <strong>Renewal start:</strong> month 13 â new business policies issued today start generating renewal commission 12 months from now</div>
+          <div>â¢ <strong>Steady-state pace:</strong> 6-month rolling average of issued premium per producer</div>
         </div>
       </Card>
     </div>
   );
 };
 
-// ─── Producer ROI Card — per-producer analysis with stacked cohort projection ───
+// âââ Producer ROI Card â per-producer analysis with stacked cohort projection âââ
 const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
   const persistency = 1 - lapseRate / 100;
 
@@ -935,13 +936,13 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
 
   // For each forward month index from producer.history.length onward (i.e., projection months),
   // compute total commission to agency = sum of (cohort_k's renewal commission at age = (month - k))
-  // Rules: at age 0 (same month as written), commission = full new-business commission (SMVC × pc + blended × other)
+  // Rules: at age 0 (same month as written), commission = full new-business commission (SMVC Ã pc + blended Ã other)
   //        at age 1-11 months, no additional commission yet (it's the same policies, paid once at issue under SF)
   //        at age 12+, the renewal commission kicks in, reduced by persistency^floor((age-12)/12 + 1)
   //
   // Simpler model that matches Rebecca's description:
   //   For month N going forward, projected commission = NEW commission this month +
-  //     for each cohort k written ≥12 months ago: cohort_k_commission × persistency^(years_since)
+  //     for each cohort k written â¥12 months ago: cohort_k_commission Ã persistency^(years_since)
   //   where years_since = floor((N - k) / 12)
 
   const forwardStartIdx = producer.history.length;
@@ -956,7 +957,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
     const newCommission = (cohortAtI.pcPremium * smvcRate / 100) + (cohortAtI.otherPremium * blendedRate / 100);
 
     // Renewal commission: only project this for FORWARD months. Historical bars show
-    // only what the producer actually earned (new business commission) — we don't
+    // only what the producer actually earned (new business commission) â we don't
     // retroactively simulate renewals that the producer didn't actually generate.
     let renewalCommission = 0;
     if (!isHistory) {
@@ -974,7 +975,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
                             totalCommission: newCommission + renewalCommission, isHistory });
   }
 
-  // Find breakeven month — first FORWARD month where totalCommission >= monthlyLoaded
+  // Find breakeven month â first FORWARD month where totalCommission >= monthlyLoaded
   const monthlyLoaded = producer.monthlyLoaded;
   let breakevenIdx = -1;
   for (let i = forwardStartIdx; i < projectionMonths.length; i++) {
@@ -986,7 +987,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
   const breakevenLabel = breakevenIdx >= 0 ? projectionMonths[breakevenIdx].label : null;
   const monthsToBreakeven = breakevenIdx >= 0 ? breakevenIdx - forwardStartIdx + 1 : null;
 
-  // Status pill — logic accounts for the difference between covering cost from
+  // Status pill â logic accounts for the difference between covering cost from
   // new business alone (rare for producers) vs needing renewal stack-up over time
   // (typical, expected, and what the projection chart visualizes).
   let status, statusColor, statusBg, statusText;
@@ -995,7 +996,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
   status = "On track"; statusColor = "#065F46"; statusBg = T.greenLt;
   statusText = "";
 
-  // Current month metrics — actual new-business commission this producer earned the agency THIS MONTH.
+  // Current month metrics â actual new-business commission this producer earned the agency THIS MONTH.
   // We deliberately do NOT add simulated renewal income here. Renewal commission in comp_recap is at
   // the AGENCY level, not tagged to a producer; attributing it back is misleading.
   // The renewal projection in the chart below shows what the cohort math says SHOULD build over time.
@@ -1009,13 +1010,13 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
     statusText = `New-business commission alone covers fully-loaded cost (${producer.name.split(" ")[0]} is a star producer)`;
   } else if (breakevenIdx < 0) {
     status = "Behind pace"; statusColor = "#991B1B"; statusBg = T.redLt;
-    statusText = `Not projected to break even within 24 months at current pace — production needs to increase or cost structure needs review`;
+    statusText = `Not projected to break even within 24 months at current pace â production needs to increase or cost structure needs review`;
   } else if (monthsToBreakeven <= 18) {
     status = "On track"; statusColor = "#065F46"; statusBg = T.greenLt;
-    statusText = `Cohort math projects renewals will cover fully-loaded cost in ${monthsToBreakeven} months (${breakevenLabel}) — within the 12-18 month target window`;
+    statusText = `Cohort math projects renewals will cover fully-loaded cost in ${monthsToBreakeven} months (${breakevenLabel}) â within the 12-18 month target window`;
   } else {
     status = "Slow ramp"; statusColor = "#92400E"; statusBg = T.amberLt;
-    statusText = `Cohort math projects breakeven in ${monthsToBreakeven} months (${breakevenLabel}) — outside the 18-month target. Consider production target adjustment.`;
+    statusText = `Cohort math projects breakeven in ${monthsToBreakeven} months (${breakevenLabel}) â outside the 18-month target. Consider production target adjustment.`;
   }
 
   // Chart dimensions
@@ -1032,12 +1033,12 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
         <div>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{producer.name}</div>
           <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-            {producer.role} · Started {producer.start_date} · Tenure {producer.tenureMonths} months
+            {producer.role} Â· Started {producer.start_date} Â· Tenure {producer.tenureMonths} months
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
           <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 10px", borderRadius: 20, background: statusBg, color: statusColor }}>{status}</span>
-          <AskBtn size="small" context={`Producer ROI analysis — ${producer.name}\nRole: ${producer.role}\nTenure: ${producer.tenureMonths} months\nMonthly issued premium (P&C avg): $${Math.round(producer.avgPC).toLocaleString()}\nMonthly issued premium (other avg): $${Math.round(producer.avgOther).toLocaleString()}\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNew-business commission this month: $${Math.round(currentNewCommission).toLocaleString()} (issued premium × SMVC rate)\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNet to agency this month (new-biz only): $${Math.round(currentNetToAgency).toLocaleString()}\nProjected breakeven (when renewal stack-up + new biz covers cost): ${breakevenLabel || "outside 24 months"}\nLapse rate applied: ${lapseRate.toFixed(1)}%\nSMVC rate: ${smvcRate.toFixed(2)}% on P&C, ${blendedRate.toFixed(2)}% blended on other lines\n\nIs this producer on track? Should I increase their production target? What should I be doing differently?`} />
+          <AskBtn size="small" context={`Producer ROI analysis â ${producer.name}\nRole: ${producer.role}\nTenure: ${producer.tenureMonths} months\nMonthly issued premium (P&C avg): $${Math.round(producer.avgPC).toLocaleString()}\nMonthly issued premium (other avg): $${Math.round(producer.avgOther).toLocaleString()}\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNew-business commission this month: $${Math.round(currentNewCommission).toLocaleString()} (issued premium Ã SMVC rate)\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNet to agency this month (new-biz only): $${Math.round(currentNetToAgency).toLocaleString()}\nProjected breakeven (when renewal stack-up + new biz covers cost): ${breakevenLabel || "outside 24 months"}\nLapse rate applied: ${lapseRate.toFixed(1)}%\nSMVC rate: ${smvcRate.toFixed(2)}% on P&C, ${blendedRate.toFixed(2)}% blended on other lines\n\nIs this producer on track? Should I increase their production target? What should I be doing differently?`} />
         </div>
       </div>
 
@@ -1054,17 +1055,17 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
         <div style={{ background: T.slate50, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>Other Lines Premium</div>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>${Math.round(cur.otherPremium).toLocaleString()}</div>
-          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Life · FS</div>
+          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Life Â· FS</div>
         </div>
         <div style={{ background: T.blueLt, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>New-Biz Commission</div>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.blue }}>${Math.round(currentNewCommission).toLocaleString()}</div>
-          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Premium × SMVC</div>
+          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Premium Ã SMVC</div>
         </div>
         <div style={{ background: T.amberLt, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>Fully-Loaded Cost</div>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#92400E" }}>${Math.round(monthlyLoaded).toLocaleString()}</div>
-          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Gross × 1.15</div>
+          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Gross Ã 1.15</div>
         </div>
         <div style={{ background: currentNetToAgency >= 0 ? T.greenLt : T.redLt, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>Net to Agency</div>
@@ -1078,7 +1079,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
       {/* 24-Month Projection Chart */}
       <div style={{ marginTop: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: T.slate800 }}>Commission Trajectory — 24 months back, 24 months forward</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.slate800 }}>Commission Trajectory â 24 months back, 24 months forward</div>
           <div style={{ display: "flex", gap: 12, fontSize: 10, color: T.slate500 }}>
             <span><span style={{ display: "inline-block", width: 10, height: 10, background: T.green, borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />New business</span>
             <span><span style={{ display: "inline-block", width: 10, height: 10, background: T.blue, borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />Renewals</span>
@@ -1114,7 +1115,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
               return (
                 <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: chartH, position: "relative" }}>
                   {isBreakeven && (
-                    <div style={{ position: "absolute", top: -4, fontSize: 14 }}>⭐</div>
+                    <div style={{ position: "absolute", top: -4, fontSize: 14 }}>â­</div>
                   )}
                   <div style={{ width: "85%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: chartH, opacity: m.isHistory ? 1 : 0.7 }}>
                     {renH > 0 && (
@@ -1129,7 +1130,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
             })}
           </div>
 
-          {/* X-axis labels — every 6th month */}
+          {/* X-axis labels â every 6th month */}
           <div style={{ display: "flex", gap: 1, marginTop: 4 }}>
             {projectionMonths.map((m, i) => (
               <div key={i} style={{ flex: 1, fontSize: 8, color: m.isHistory ? T.slate500 : T.slate400, textAlign: "center" }}>
@@ -1150,7 +1151,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
 
         {breakevenLabel && (
           <div style={{ marginTop: 10, padding: "10px 12px", background: T.greenLt, borderRadius: 8, fontSize: 11, color: "#065F46" }}>
-            <strong>⭐ Projected breakeven: {breakevenLabel}</strong> — at {producer.name.split(" ")[0]}&apos;s current 6-month avg of ${Math.round(producer.avgPC + producer.avgOther).toLocaleString()}/mo issued premium, the agency earns ${Math.round(producer.avgNewCommission).toLocaleString()}/mo in new-business commission. As renewals stack up over time (at {(100-lapseRate).toFixed(0)}% persistency), total monthly commission generated by {producer.name.split(" ")[0]}&apos;s book is projected to first cover their ${Math.round(monthlyLoaded).toLocaleString()}/mo fully-loaded cost in {monthsToBreakeven} months.
+            <strong>â­ Projected breakeven: {breakevenLabel}</strong> â at {producer.name.split(" ")[0]}&apos;s current 6-month avg of ${Math.round(producer.avgPC + producer.avgOther).toLocaleString()}/mo issued premium, the agency earns ${Math.round(producer.avgNewCommission).toLocaleString()}/mo in new-business commission. As renewals stack up over time (at {(100-lapseRate).toFixed(0)}% persistency), total monthly commission generated by {producer.name.split(" ")[0]}&apos;s book is projected to first cover their ${Math.round(monthlyLoaded).toLocaleString()}/mo fully-loaded cost in {monthsToBreakeven} months.
           </div>
         )}
         {!breakevenLabel && (
@@ -1164,7 +1165,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
 };
 
 
-// ─── Section: Commissions ─────────────────────────────────────
+// âââ Section: Commissions âââââââââââââââââââââââââââââââââââââ
 const CommissionsSection = ({ commissions }) => (
   <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
     {commissions.map(c => (
@@ -1172,7 +1173,7 @@ const CommissionsSection = ({ commissions }) => (
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
           <div>
             <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{c.staff_name}</div>
-            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{c.structure_name} · Effective {c.effective_date}</div>
+            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{c.structure_name} Â· Effective {c.effective_date}</div>
           </div>
           <div style={{ textAlign:"right" }}>
             <div style={{ fontSize:11, color:T.slate400, marginBottom:2 }}>This month</div>
@@ -1188,7 +1189,7 @@ const CommissionsSection = ({ commissions }) => (
             {c.tiers.map((tier,i) => (
               <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", background:T.slate50, borderRadius:8 }}>
                 <span style={{ fontSize:12, color:T.slate600, flex:1 }}>
-                  ${tier.min.toLocaleString()} {tier.max?`— $${tier.max.toLocaleString()}`:"and above"}
+                  ${tier.min.toLocaleString()} {tier.max?`â $${tier.max.toLocaleString()}`:"and above"}
                 </span>
                 <span style={{ fontSize:14, fontWeight:700, color:T.blue }}>{tier.rate}%</span>
               </div>
@@ -1218,7 +1219,7 @@ const CommissionsSection = ({ commissions }) => (
   </div>
 );
 
-// ─── Main HR Module ───────────────────────────────────────────
+// âââ Main HR Module âââââââââââââââââââââââââââââââââââââââââââ
 export default function HRPeople() {
   const { data: roi } = useProducerROI();
   const [section,     setSection]     = useState("overview");
@@ -1244,7 +1245,7 @@ export default function HRPeople() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>HR & People</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {MOCK_STAFF.filter(s=>s.is_active).length} active staff · {MOCK_APPLICANTS.filter(a=>!["hired","rejected"].includes(a.status)).length} applicants in pipeline · Resume scanner active
+            {(roi?.allActiveStaff || []).length} active staff Â· {applicants.filter(a=>!["hired","rejected"].includes(a.status)).length} applicants in pipeline Â· Resume scanner active
           </div>
         </div>
         <AskBtn context="Give me a complete HR review. How is my recruiting pipeline looking? Any compliance concerns with my current team? What HR actions should I take this week?" />
@@ -1260,12 +1261,12 @@ export default function HRPeople() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"    && <HROverview        applicants={applicants} staff={MOCK_STAFF} onboarding={MOCK_ONBOARDING} />}
+      {section === "overview"    && <HROverview        applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
       {section === "recruiting"  && <RecruitingPipeline applicants={applicants} onUpdate={updateApplicantStage} />}
-      {section === "staff"       && <StaffDirectory     staff={MOCK_STAFF} />}
-      {section === "onboarding"  && <OnboardingSection  onboarding={MOCK_ONBOARDING} />}
+      {section === "staff"       && <StaffDirectory     staff={roi?.allActiveStaff || []} />}
+      {section === "onboarding"  && <OnboardingSection  onboarding={[]} />}
       {section === "performance" && <PerformanceSection  roi={roi} />}
-      {section === "commissions" && <CommissionsSection  commissions={MOCK_COMMISSIONS} />}
+      {section === "commissions" && <CommissionsSection  commissions={[]} />}
     </div>
   );
 }
