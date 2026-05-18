@@ -5,29 +5,29 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
 // BCC SETTINGS MODULE v1.0
-// Business Command Center â State Farm Agent Edition
-// Built by Imaginary Farms LLC Â· imaginary-farms.com
+// Business Command Center — State Farm Agent Edition
+// Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
-//   1. Agency Profile   â Entity details, contact info, agent code
-//   2. Team Access      â User management, roles, invite flow
-//   3. Connected Accounts â Composio connections status
-//   4. BCC Configuration â Timezone, fiscal year, display prefs
-//   5. About            â Version info, built by, support
+//   1. Agency Profile   — Entity details, contact info, agent code
+//   2. Team Access      — User management, roles, invite flow
+//   3. Connected Accounts — Composio connections status
+//   4. BCC Configuration — Timezone, fiscal year, display prefs
+//   5. About            — Version info, built by, support
 //
 // ROLE LEVELS:
-//   Owner      â Full access to everything including settings
-//   Manager    â All modules except settings and financials
-//   Staff      â Tasks, social, calendar, documents
-//   Read Only  â View only on assigned modules
-//   Accountant â Financials and documents, read only by default
+//   Owner      — Full access to everything including settings
+//   Manager    — All modules except settings and financials
+//   Staff      — Tasks, social, calendar, documents
+//   Read Only  — View only on assigned modules
+//   Accountant — Financials and documents, read only by default
 //
 // DATA: Reads agency, users, settings, notification_preferences,
 //       social_accounts tables in Supabase
 // ============================================================
 
 
-// âââ Design Tokens ââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Design Tokens ────────────────────────────────────────────
 const T = {
   navy:    "#1B2B4B",
   blue:    "#2D7DD2",
@@ -54,7 +54,7 @@ const T = {
   white:   "#FFFFFF",
 };
 
-// âââ Role Config ââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Role Config ──────────────────────────────────────────────
 const ROLES = {
   owner:     { label:"Owner",      color:T.navy,   bg:T.slate100, description:"Full access including settings and all financial data" },
   manager:   { label:"Manager",    color:T.blue,   bg:T.blueLt,  description:"All modules except Settings. Can manage team." },
@@ -63,7 +63,7 @@ const ROLES = {
   accountant:{ label:"Accountant", color:T.purple, bg:T.purpleLt,description:"Financials and Documents read-only access" },
 };
 
-// âââ Mock Data ââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Mock Data ────────────────────────────────────────────────
 const MOCK_USERS = [
   { id:"u1", name:"Jane Smith",    email:"jane@smithagency.com",    role:"owner",     last_login:"Today 8:14 AM",    is_active:true,  is_current:true  },
   { id:"u2", name:"Marcus Thompson",email:"marcus@smithagency.com", role:"staff",     last_login:"Today 9:02 AM",    is_active:true,  is_current:false },
@@ -72,19 +72,19 @@ const MOCK_USERS = [
 ];
 
 const MOCK_CONNECTIONS = [
-  { id:"c1", platform:"Gmail",          icon:"ð§", status:"error",   account:"jane@smithagency.com",        last_sync:"Today 6:00 AM",    note:"OAuth token expired â reconnect required" },
+  { id:"c1", platform:"Gmail",          icon:"ð§", status:"error",   account:"jane@smithagency.com",        last_sync:"Today 6:00 AM",    note:"OAuth token expired — reconnect required" },
   { id:"c2", platform:"Google Drive",   icon:"ð", status:"healthy", account:"jane@smithagency.com",        last_sync:"Yesterday 11:00 PM",note:"Active" },
   { id:"c3", platform:"Google Calendar",icon:"ð", status:"healthy", account:"jane@smithagency.com",        last_sync:"Today 7:00 AM",    note:"Active" },
   { id:"c4", platform:"Facebook",       icon:"ð¥", status:"healthy", account:"Smith Insurance Agency Page", last_sync:"Yesterday 9:00 AM", note:"Active" },
   { id:"c5", platform:"LinkedIn",       icon:"ð¼", status:"healthy", account:"Jane Smith",                  last_sync:"Yesterday 12:00 PM",note:"Active" },
-  { id:"c6", platform:"Instagram",      icon:"ð¸", status:"manual",  account:"@smithinsurance",             last_sync:"N/A",              note:"Manual posting required â no API scheduling" },
+  { id:"c6", platform:"Instagram",      icon:"ð¸", status:"manual",  account:"@smithinsurance",             last_sync:"N/A",              note:"Manual posting required — no API scheduling" },
 ];
 
 const MOCK_AGENCY = {
   name:          "Smith Insurance Agency",
   owner_name:    "Jane Smith",
   entity_type:   "S-Corporation",
-  tax_id:        "â¢â¢-â¢â¢â¢1847",
+  tax_id:        "••-•••1847",
   sf_agent_code: "IL 22-441A",
   licensing_states:["IL","WI","IN"],
   primary_email: "jane@smithagency.com",
@@ -108,7 +108,7 @@ const MOCK_CONFIG = {
   dashboard_period:  "mtd",
 };
 
-// âââ Shared Components ââââââââââââââââââââââââââââââââââââââââ
+// ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
     {children}
@@ -171,7 +171,7 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
           </div>
         ) : (
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:12, color:T.slate600 }}>{val || "â"}</span>
+            <span style={{ fontSize:12, color:T.slate600 }}>{val || "—"}</span>
             {editable && (
               <button onClick={() => setEditing(true)}
                 style={{ fontSize:10, color:T.blue, background:"none", border:`1px solid ${T.slate200}`, borderRadius:6, padding:"3px 8px", cursor:"pointer" }}>Edit</button>
@@ -183,7 +183,7 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
   );
 };
 
-// âââ Invite Modal âââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Invite Modal ─────────────────────────────────────────────
 const InviteModal = ({ onSave, onCancel }) => {
   const [form, setForm] = useState({ email:"", name:"", role:"staff" });
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
@@ -238,7 +238,7 @@ const InviteModal = ({ onSave, onCancel }) => {
   );
 };
 
-// âââ Section: Agency Profile ââââââââââââââââââââââââââââââââââ
+// ─── Section: Agency Profile ──────────────────────────────────
 const AgencyProfile = ({ agency }) => (
   <Card>
     <SectionHeader title="Agency Profile" sub="Core agency information stored in your Supabase database" />
@@ -248,7 +248,7 @@ const AgencyProfile = ({ agency }) => (
     <FieldRow label="EIN / Tax ID"      value={agency.tax_id}       hint="Stored encrypted"          />
     <FieldRow label="SF Agent Code"     value={agency.sf_agent_code}                                  />
     <FieldRow label="Licensed States"   value={(agency.licensing_states || []).join(", ")}                   editable />
-    <FieldRow label="Primary Email"     value={agency.primary_email} hint="Personal â not @statefarm.com" editable />
+    <FieldRow label="Primary Email"     value={agency.primary_email} hint="Personal — not @statefarm.com" editable />
     <FieldRow label="Phone"             value={agency.phone}                                          editable />
     <FieldRow label="Address"           value={agency.address}                                        editable />
     <FieldRow label="Google Account"    value={agency.google_account} hint="Ties Vercel, Supabase, Composio" />
@@ -257,7 +257,7 @@ const AgencyProfile = ({ agency }) => (
   </Card>
 );
 
-// âââ Section: Team Access âââââââââââââââââââââââââââââââââââââ
+// ─── Section: Team Access ─────────────────────────────────────
 const TeamAccess = ({ users }) => {
   const [allUsers,    setAllUsers]    = useState(users);
   const [showInvite,  setShowInvite]  = useState(false);
@@ -321,7 +321,7 @@ const TeamAccess = ({ users }) => {
                   {user.is_current && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.navy, color:T.white }}>You</span>}
                   {user.pending   && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>Invite Pending</span>}
                 </div>
-                <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{user.email} Â· Last login: {user.last_login}</div>
+                <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{user.email} · Last login: {user.last_login}</div>
               </div>
 
               {/* Role */}
@@ -364,7 +364,7 @@ const TeamAccess = ({ users }) => {
   );
 };
 
-// âââ Section: Connected Accounts âââââââââââââââââââââââââââââ
+// ─── Section: Connected Accounts ─────────────────────────────
 const ConnectedAccounts = ({ connections }) => (
   <div>
     <SectionHeader title="Connected Accounts" sub="Composio manages all external connections. Reconnect any account that shows an error." />
@@ -393,7 +393,7 @@ const ConnectedAccounts = ({ connections }) => (
                 }[conn.status] }}>{conn.status === "healthy" ? "Connected" : conn.status === "error" ? "Error" : "Manual"}</span>
               </div>
               <div style={{ fontSize:11, color:T.slate600 }}>{conn.account}</div>
-              <div style={{ fontSize:10, color:conn.status==="error"?T.red:T.slate400, marginTop:2 }}>{conn.note} Â· Last sync: {conn.last_sync}</div>
+              <div style={{ fontSize:10, color:conn.status==="error"?T.red:T.slate400, marginTop:2 }}>{conn.note} · Last sync: {conn.last_sync}</div>
             </div>
             {conn.status === "error" && (
               <button style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:8, cursor:"pointer", flexShrink:0 }}>
@@ -401,7 +401,7 @@ const ConnectedAccounts = ({ connections }) => (
               </button>
             )}
             {conn.status === "healthy" && (
-              <div style={{ fontSize:11, color:T.green, fontWeight:600, flexShrink:0 }}>â Active</div>
+              <div style={{ fontSize:11, color:T.green, fontWeight:600, flexShrink:0 }}>✓ Active</div>
             )}
             {conn.status === "manual" && (
               <div style={{ fontSize:10, color:T.purple, fontWeight:600, flexShrink:0, maxWidth:120, textAlign:"right", lineHeight:1.4 }}>Manual posting required daily</div>
@@ -413,7 +413,7 @@ const ConnectedAccounts = ({ connections }) => (
   </div>
 );
 
-// âââ Section: BCC Configuration ââââââââââââââââââââââââââââââ
+// ─── Section: BCC Configuration ──────────────────────────────
 const BCCConfiguration = ({ config }) => {
   const [cfg, setCfg] = useState(config);
   const set = (k,v) => setCfg(c => ({...c,[k]:v}));
@@ -451,7 +451,7 @@ const BCCConfiguration = ({ config }) => {
         <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:14 }}>Financial Settings</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
           {[
-            { label:"Accounting Method",   value:cfg.accounting_method, hint:"Cash basis â do not change",  editable:false },
+            { label:"Accounting Method",   value:cfg.accounting_method, hint:"Cash basis — do not change",  editable:false },
             { label:"Fiscal Year Start",   value:cfg.fiscal_year_start, hint:"Calendar year Jan-Dec",       editable:false },
             { label:"Currency",            value:cfg.currency,          hint:"USD",                         editable:false },
             { label:"Timezone",            value:cfg.timezone,          hint:"Used for scheduling",          editable:true  },
@@ -507,7 +507,7 @@ const BCCConfiguration = ({ config }) => {
   );
 };
 
-// âââ Section: About âââââââââââââââââââââââââââââââââââââââââââ
+// ─── Section: About ───────────────────────────────────────────
 const About = ({ agency: agencyProp }) => {
   const agency = agencyProp || {};
   const [tab, setTab] = useState("stack");
@@ -523,21 +523,21 @@ const About = ({ agency: agencyProp }) => {
     {
       key: "supabase", name: "Supabase", role: "Database & Memory",
       accent: "#3ECF8E", letter: "S",
-      description: "Every number, document, staff record, automation log, and memory lives here. This is the brain of the BCC â all modules read and write from Supabase.",
+      description: "Every number, document, staff record, automation log, and memory lives here. This is the brain of the BCC — all modules read and write from Supabase.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://supabase.com/dashboard",
     },
     {
       key: "composio", name: "Composio", role: "Automation Engine",
       accent: "#8B5CF6", letter: "C",
-      description: "Runs all your automation recipes on schedule â comp recap intake, bank statements, payroll filing, daily briefing email, inbox cleanup, monthly close. Also gives Claude access to Gmail, Drive, Calendar, and GitHub.",
+      description: "Runs all your automation recipes on schedule — comp recap intake, bank statements, payroll filing, daily briefing email, inbox cleanup, monthly close. Also gives Claude access to Gmail, Drive, Calendar, and GitHub.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://app.composio.dev/",
     },
     {
       key: "drive", name: "Google Drive", role: "Document Archive",
       accent: "#FBBC04", letter: "D",
-      description: "Final resting place for every source document â comp recaps, deduction statements, bank statements, payroll reports, credit card statements. Automations file here automatically after processing.",
+      description: "Final resting place for every source document — comp recaps, deduction statements, bank statements, payroll reports, credit card statements. Automations file here automatically after processing.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://drive.google.com",
     },
@@ -565,7 +565,7 @@ const About = ({ agency: agencyProp }) => {
   ];
 
   const tabs = [
-    { id:"stack",     label:"â¡  Tech Stack" },
+    { id:"stack",     label:"⚡  Tech Stack" },
     { id:"how",       label:"â  How It Works" },
     { id:"connected", label:"â  Keep It Connected" },
   ];
@@ -582,8 +582,8 @@ const About = ({ agency: agencyProp }) => {
             </div>
             <div>
               <div style={{ fontSize:17, fontWeight:700, color:T.white }}>Business Command Center</div>
-              <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>State Farm Agent Edition Â· v1.0 Â· Built by Imaginary Farms LLC</div>
-              <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", marginTop:2 }}>imaginary-farms.com  Â·  The Claude Whisperer</div>
+              <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>State Farm Agent Edition · v1.0 · Built by Imaginary Farms LLC</div>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", marginTop:2 }}>imaginary-farms.com  ·  The Claude Whisperer</div>
             </div>
           </div>
           <div style={{ textAlign:"right" }}>
@@ -614,7 +614,7 @@ const About = ({ agency: agencyProp }) => {
       {tab === "stack" && (
         <>
           <div style={{ fontSize:12, color:T.slate600, padding:"4px 4px 0" }}>
-            All {components.length} components run under one Google account â <strong style={{ color:T.slate900 }}>{agency.google_account_email || agency.primary_email || "set in Agency Profile"}</strong>
+            All {components.length} components run under one Google account — <strong style={{ color:T.slate900 }}>{agency.google_account_email || agency.primary_email || "set in Agency Profile"}</strong>
           </div>
 
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -660,13 +660,13 @@ const About = ({ agency: agencyProp }) => {
               { step:"2", title:"Composio reads the inbox on schedule",
                 detail:"Hourly automation recipes scan for new statements, payroll runs, and SF comp recaps." },
               { step:"3", title:"Groq processes documents (free, no API key)",
-                detail:"Composio passes each document to Groq for structured extraction â line items, dates, amounts." },
+                detail:"Composio passes each document to Groq for structured extraction — line items, dates, amounts." },
               { step:"4", title:"Data lands in Supabase",
-                detail:"Extracted rows write to the right tables â journal_entries, comp_recap, payroll_detail, etc." },
+                detail:"Extracted rows write to the right tables — journal_entries, comp_recap, payroll_detail, etc." },
               { step:"5", title:"Original document files to Drive",
                 detail:"After processing, the original PDF/CSV moves to your Google Drive in the right folder." },
               { step:"6", title:"This BCC web app reads from Supabase",
-                detail:"Every module you see â Financials, Compliance, HR, Tasks â pulls live from Supabase." },
+                detail:"Every module you see — Financials, Compliance, HR, Tasks — pulls live from Supabase." },
               { step:"7", title:"Claude reads everything and advises",
                 detail:"Open Claude Chat from any module. Claude has read-access to your Supabase data and can answer questions, run analysis, draft reports, and write code changes." },
             ].map(s => (
@@ -697,7 +697,7 @@ const About = ({ agency: agencyProp }) => {
               </div>
             </div>
             <div style={{ fontSize:12, color:T.slate700, lineHeight:1.6, marginBottom:12 }}>
-              The BCC is designed to <strong>self-heal with your Claude as the operator</strong>. You should never have to remember which dashboard to log into, what to click, or what to do next when an alert pops up. Your Claude is your business partner â that includes maintenance.
+              The BCC is designed to <strong>self-heal with your Claude as the operator</strong>. You should never have to remember which dashboard to log into, what to click, or what to do next when an alert pops up. Your Claude is your business partner — that includes maintenance.
             </div>
             <div style={{ background:T.white, padding:"12px 14px", borderRadius:10, border:`1px solid ${T.slate200}` }}>
               <div style={{ fontSize:11, fontWeight:700, color:T.slate800, marginBottom:8 }}>The pattern, every time:</div>
@@ -705,12 +705,12 @@ const About = ({ agency: agencyProp }) => {
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
                   <div style={{ fontSize:18, marginBottom:4 }}>ð¸</div>
                   <strong style={{ color:T.slate900 }}>1. Screenshot the error</strong>
-                  <div style={{ marginTop:3, lineHeight:1.5 }}>Whatever you&apos;re seeing â alert banner, broken module, failed automation</div>
+                  <div style={{ marginTop:3, lineHeight:1.5 }}>Whatever you&apos;re seeing — alert banner, broken module, failed automation</div>
                 </div>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
                   <div style={{ fontSize:18, marginBottom:4 }}>ð¬</div>
                   <strong style={{ color:T.slate900 }}>2. Paste it to your Claude</strong>
-                  <div style={{ marginTop:3, lineHeight:1.5 }}>&quot;Help me fix this&quot; is enough â your Claude has full context on your stack</div>
+                  <div style={{ marginTop:3, lineHeight:1.5 }}>&quot;Help me fix this&quot; is enough — your Claude has full context on your stack</div>
                 </div>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
                   <div style={{ fontSize:18, marginBottom:4 }}>â</div>
@@ -725,7 +725,7 @@ const About = ({ agency: agencyProp }) => {
           <Card>
             <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:4 }}>What your Claude can reconnect</div>
             <div style={{ fontSize:11, color:T.slate500, marginBottom:14 }}>
-              Two layers â your Claude knows the difference and will tell you which one needs attention
+              Two layers — your Claude knows the difference and will tell you which one needs attention
             </div>
 
             {/* Layer 1: Claude.ai connectors */}
@@ -733,10 +733,10 @@ const About = ({ agency: agencyProp }) => {
               <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
                 <span style={{ fontSize:11, fontWeight:700, color:T.white, background:T.blue, padding:"2px 8px", borderRadius:10 }}>Layer 1</span>
                 <span style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Claude.ai connectors</span>
-                <span style={{ fontSize:11, color:T.slate500 }}>â the BCC&apos;s core systems</span>
+                <span style={{ fontSize:11, color:T.slate500 }}>— the BCC&apos;s core systems</span>
               </div>
               <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6, marginBottom:10 }}>
-                These four connectors live in <strong>Claude.ai â Settings â Connectors</strong>. They power your BCC&apos;s memory, gateway, code, and hosting:
+                These four connectors live in <strong>Claude.ai → Settings → Connectors</strong>. They power your BCC&apos;s memory, gateway, code, and hosting:
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:8 }}>
                 {[
@@ -764,10 +764,10 @@ const About = ({ agency: agencyProp }) => {
               <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
                 <span style={{ fontSize:11, fontWeight:700, color:T.white, background:T.purple || "#7C3AED", padding:"2px 8px", borderRadius:10 }}>Layer 2</span>
                 <span style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Composio integrations</span>
-                <span style={{ fontSize:11, color:T.slate500 }}>â the apps your BCC reaches out to</span>
+                <span style={{ fontSize:11, color:T.slate500 }}>— the apps your BCC reaches out to</span>
               </div>
               <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6, marginBottom:10 }}>
-                These integrations live inside <strong>Composio</strong> (Layer 1 reaches them on your behalf). When one disconnects â usually because an OAuth token expired â your Claude can generate a fresh authorization link for you:
+                These integrations live inside <strong>Composio</strong> (Layer 1 reaches them on your behalf). When one disconnects — usually because an OAuth token expired — your Claude can generate a fresh authorization link for you:
               </div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
                 {["Gmail", "Google Drive", "Google Calendar", "LinkedIn", "Facebook", "Instagram", "YouTube", "+ more"].map(app => (
@@ -775,7 +775,7 @@ const About = ({ agency: agencyProp }) => {
                 ))}
               </div>
               <div style={{ background:T.blueLt, padding:"10px 12px", borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
-                <strong>Just ask your Claude:</strong> &quot;Gmail looks disconnected â give me the Composio reauthorization link.&quot; Your Claude will produce the exact link to click. One screen, one OAuth prompt, done.
+                <strong>Just ask your Claude:</strong> &quot;Gmail looks disconnected — give me the Composio reauthorization link.&quot; Your Claude will produce the exact link to click. One screen, one OAuth prompt, done.
               </div>
             </div>
           </Card>
@@ -788,7 +788,7 @@ const About = ({ agency: agencyProp }) => {
               <li>The <strong>Automations Run Log</strong> shows recent runs as &quot;failed&quot; with an auth error</li>
               <li>You stop receiving the morning briefing</li>
               <li>New documents stop appearing in Drive after they hit Gmail</li>
-              <li>A module in your BCC suddenly shows &quot;Something went wrong&quot; â that&apos;s the ErrorBoundary catching something</li>
+              <li>A module in your BCC suddenly shows &quot;Something went wrong&quot; — that&apos;s the ErrorBoundary catching something</li>
             </ul>
             <div style={{ marginTop:12, padding:"10px 12px", background:T.amberLt, borderRadius:8, fontSize:11, color:"#92400E", lineHeight:1.6 }}>
               <strong>In every case:</strong> screenshot what you see, paste it to your Claude, and ask for help. Your Claude can read the screenshot, identify the issue, and either fix it directly or walk you through the fix in plain English.
@@ -809,7 +809,7 @@ const About = ({ agency: agencyProp }) => {
               }}>Composio Dashboard â</a>
             </div>
             <div style={{ marginTop:10, fontSize:10, color:T.slate500, lineHeight:1.5 }}>
-              ð¡ You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving â not managing infrastructure.
+              ð¡ You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
             </div>
           </Card>
         </div>
@@ -817,20 +817,20 @@ const About = ({ agency: agencyProp }) => {
 
       {/* Footer */}
       <Card style={{ textAlign:"center", padding:"18px 20px", background:T.slate50, border:"none" }}>
-        <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:4 }}>Built by Imaginary Farms LLC Â· The Claude Whisperer</div>
+        <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:4 }}>Built by Imaginary Farms LLC · The Claude Whisperer</div>
         <a href="https://imaginary-farms.com" target="_blank" rel="noopener noreferrer"
           style={{ fontSize:12, color:T.blue, textDecoration:"none", fontWeight:500 }}>
           imaginary-farms.com
         </a>
         <div style={{ marginTop:10, fontSize:11, color:T.slate500, lineHeight:1.5 }}>
-          You own everything. Your BCC is not a subscription. Your Vercel hosts the app Â· your GitHub holds the code Â· your Supabase stores your data Â· your Composio connects your accounts Â· your Claude.ai provides the intelligence.
+          You own everything. Your BCC is not a subscription. Your Vercel hosts the app · your GitHub holds the code · your Supabase stores your data · your Composio connects your accounts · your Claude.ai provides the intelligence.
         </div>
       </Card>
     </div>
   );
 };
 
-// âââ Main Settings Module âââââââââââââââââââââââââââââââââââââ
+// ─── Main Settings Module ─────────────────────────────────────
 export default function Settings() {
 
   const [agencyData, setAgencyData] = useState(null);
@@ -872,7 +872,7 @@ export default function Settings() {
       <div style={{ marginBottom:16 }}>
         <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Settings</div>
         <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-          Agency profile Â· Team access Â· Connected accounts Â· BCC configuration
+          Agency profile · Team access · Connected accounts · BCC configuration
         </div>
       </div>
 
