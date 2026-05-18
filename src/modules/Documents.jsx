@@ -5,26 +5,26 @@ import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
 // BCC DOCUMENTS MODULE v1.0
-// Business Command Center — State Farm Agent Edition
-// Built by Imaginary Farms LLC · imaginary-farms.com
+// Business Command Center â State Farm Agent Edition
+// Built by Imaginary Farms LLC Â· imaginary-farms.com
 //
 // SECTIONS:
-//   1. Overview     — Recent activity, storage summary, quick stats
-//   2. Library      — All documents, searchable, filterable by type
-//   3. Intake Log   — What was received, when, what it loaded
-//   4. Upload       — Dual path: database import or Claude chat
+//   1. Overview     â Recent activity, storage summary, quick stats
+//   2. Library      â All documents, searchable, filterable by type
+//   3. Intake Log   â What was received, when, what it loaded
+//   4. Upload       â Dual path: database import or Claude chat
 //
 // DUAL UPLOAD PATHS:
-//   Path A — Upload to Database
-//     → Triggers document importer
-//     → Groq classifies and routes to correct Supabase tables
-//     → Logged in documents table with tables_updated
-//     → Saved to Google Drive in correct folder
+//   Path A â Upload to Database
+//     â Triggers document importer
+//     â Groq classifies and routes to correct Supabase tables
+//     â Logged in documents table with tables_updated
+//     â Saved to Google Drive in correct folder
 //
-//   Path B — Upload to Claude Chat
-//     → Temporary context for current conversation
-//     → Not persisted to database unless Claude extracts data
-//     → Agent uses for quick analysis, one-off questions
+//   Path B â Upload to Claude Chat
+//     â Temporary context for current conversation
+//     â Not persisted to database unless Claude extracts data
+//     â Agent uses for quick analysis, one-off questions
 //
 // AUTO-INTAKE:
 //   Documents emailed to agency Gmail are automatically
@@ -35,7 +35,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ============================================================
 
 
-// ─── Design Tokens ────────────────────────────────────────────
+// âââ Design Tokens ââââââââââââââââââââââââââââââââââââââââââââ
 const T = {
   navy:    "#1B2B4B",
   blue:    "#2D7DD2",
@@ -62,21 +62,21 @@ const T = {
   white:   "#FFFFFF",
 };
 
-// ─── Document Type Config ─────────────────────────────────────
+// âââ Document Type Config âââââââââââââââââââââââââââââââââââââ
 const DOC_TYPES = {
-  comp_recap:     { label:"COMP_RECAP",      color:T.green,  bg:T.greenLt,  icon:"📊" },
-  payroll_export: { label:"Payroll Export",  color:T.blue,   bg:T.blueLt,   icon:"💼" },
-  bank_statement: { label:"Bank Statement",  color:T.teal,   bg:T.tealLt,   icon:"🏦" },
-  tax_document:   { label:"Tax Document",    color:T.amber,  bg:T.amberLt,  icon:"📋" },
-  resume:         { label:"Resume",          color:T.purple, bg:T.purpleLt, icon:"👤" },
-  aipp_report:    { label:"AIPP Report",     color:T.green,  bg:T.greenLt,  icon:"🎯" },
-  eo_insurance:   { label:"E&O Insurance",   color:T.red,    bg:T.redLt,    icon:"🛡️" },
-  license:        { label:"License",         color:T.navy,   bg:T.slate100, icon:"🪪" },
-  contract:       { label:"Contract",        color:T.navy,   bg:T.slate100, icon:"📜" },
-  other:          { label:"Other",           color:T.slate500,bg:T.slate100, icon:"📄" },
+  comp_recap:     { label:"COMP_RECAP",      color:T.green,  bg:T.greenLt,  icon:"ð" },
+  payroll_export: { label:"Payroll Export",  color:T.blue,   bg:T.blueLt,   icon:"ð¼" },
+  bank_statement: { label:"Bank Statement",  color:T.teal,   bg:T.tealLt,   icon:"ð¦" },
+  tax_document:   { label:"Tax Document",    color:T.amber,  bg:T.amberLt,  icon:"ð" },
+  resume:         { label:"Resume",          color:T.purple, bg:T.purpleLt, icon:"ð¤" },
+  aipp_report:    { label:"AIPP Report",     color:T.green,  bg:T.greenLt,  icon:"ð¯" },
+  eo_insurance:   { label:"E&O Insurance",   color:T.red,    bg:T.redLt,    icon:"ð¡ï¸" },
+  license:        { label:"License",         color:T.navy,   bg:T.slate100, icon:"ðªª" },
+  contract:       { label:"Contract",        color:T.navy,   bg:T.slate100, icon:"ð" },
+  other:          { label:"Other",           color:T.slate500,bg:T.slate100, icon:"ð" },
 };
 
-// ─── Mock Data ────────────────────────────────────────────────
+// âââ Mock Data ââââââââââââââââââââââââââââââââââââââââââââââââ
 const MOCK_DOCUMENTS = [
   {
     id:"d1",  file_name:"SF_COMP_April_2026.pdf",
@@ -111,7 +111,7 @@ const MOCK_DOCUMENTS = [
     tables_updated:["journal_entries"],
     records_created:18, uploaded_at:"Apr 15 2:58 PM",
     processed_at:"Apr 15 3:01 PM",
-    notes:"March bank statement. 18 of 21 transactions loaded. 3 pages could not be parsed — saved to Drive for manual review.",
+    notes:"March bank statement. 18 of 21 transactions loaded. 3 pages could not be parsed â saved to Drive for manual review.",
     size:"1.2 MB",
   },
   {
@@ -201,16 +201,16 @@ const MOCK_DOCUMENTS = [
 ];
 
 const MOCK_INTAKE_LOG = [
-  { id:"i1", date:"Apr 26", time:"2:28 PM", file:"SF_COMP_April_2026.pdf",     source:"Email — State Farm",          status:"complete", type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:5  },
-  { id:"i2", date:"Apr 26", time:"9:12 AM", file:"resume_jamie_chen.pdf",       source:"Email — Jamie Chen",          status:"complete", type:"resume",          tables:["applicants","documents"],       records:1  },
-  { id:"i3", date:"Apr 25", time:"10:14 AM",file:"april_payroll_export.csv",    source:"Email — Gusto",               status:"complete", type:"payroll_export",  tables:["payroll_runs","payroll_detail"],records:4  },
-  { id:"i4", date:"Apr 20", time:"4:15 PM", file:"mystery_document.pdf",        source:"Email — Unknown",             status:"failed",   type:null,              tables:[],                               records:0  },
-  { id:"i5", date:"Apr 15", time:"2:58 PM", file:"chase_march_statement.pdf",   source:"Email — Chase",               status:"partial",  type:"bank_statement",  tables:["journal_entries"],              records:18 },
-  { id:"i6", date:"Apr 5",  time:"11:20 AM",file:"SF_COMP_March_2026.pdf",      source:"Email — State Farm",          status:"complete", type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:4  },
-  { id:"i7", date:"Apr 1",  time:"3:45 PM", file:"q1_tax_estimate_2026.pdf",    source:"Email — Club Capital Tax",    status:"complete", type:"tax_document",    tables:["documents"],                    records:0  },
+  { id:"i1", date:"Apr 26", time:"2:28 PM", file:"SF_COMP_April_2026.pdf",     source:"Email â State Farm",          status:"complete", type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:5  },
+  { id:"i2", date:"Apr 26", time:"9:12 AM", file:"resume_jamie_chen.pdf",       source:"Email â Jamie Chen",          status:"complete", type:"resume",          tables:["applicants","documents"],       records:1  },
+  { id:"i3", date:"Apr 25", time:"10:14 AM",file:"april_payroll_export.csv",    source:"Email â Gusto",               status:"complete", type:"payroll_export",  tables:["payroll_runs","payroll_detail"],records:4  },
+  { id:"i4", date:"Apr 20", time:"4:15 PM", file:"mystery_document.pdf",        source:"Email â Unknown",             status:"failed",   type:null,              tables:[],                               records:0  },
+  { id:"i5", date:"Apr 15", time:"2:58 PM", file:"chase_march_statement.pdf",   source:"Email â Chase",               status:"partial",  type:"bank_statement",  tables:["journal_entries"],              records:18 },
+  { id:"i6", date:"Apr 5",  time:"11:20 AM",file:"SF_COMP_March_2026.pdf",      source:"Email â State Farm",          status:"complete", type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:4  },
+  { id:"i7", date:"Apr 1",  time:"3:45 PM", file:"q1_tax_estimate_2026.pdf",    source:"Email â Club Capital Tax",    status:"complete", type:"tax_document",    tables:["documents"],                    records:0  },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────
+// âââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââ
 const statusConfig = (s) => ({
   complete: { color:"#065F46", bg:T.greenLt, label:"Complete" },
   partial:  { color:"#92400E", bg:T.amberLt, label:"Partial"  },
@@ -220,12 +220,12 @@ const statusConfig = (s) => ({
 }[s] || { color:T.slate500, bg:T.slate100, label:s });
 
 const sourceConfig = (s) => ({
-  email_auto:    { label:"Auto — Email",    color:T.green,  icon:"📧" },
-  direct_upload: { label:"Manual Upload",   color:T.blue,   icon:"⬆️" },
-  drive:         { label:"Google Drive",    color:T.amber,  icon:"📁" },
-}[s] || { label:s, color:T.slate500, icon:"📄" });
+  email_auto:    { label:"Auto â Email",    color:T.green,  icon:"ð§" },
+  direct_upload: { label:"Manual Upload",   color:T.blue,   icon:"â¬ï¸" },
+  drive:         { label:"Google Drive",    color:T.amber,  icon:"ð" },
+}[s] || { label:s, color:T.slate500, icon:"ð" });
 
-// ─── Shared Components ────────────────────────────────────────
+// âââ Shared Components ââââââââââââââââââââââââââââââââââââââââ
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
     {children}
@@ -236,7 +236,7 @@ const AskBtn = ({ context, size="normal" }) => (
   <button
     onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
     style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
+  >â¡ Ask Claude</button>
 );
 
 const DocTypeBadge = ({ type }) => {
@@ -248,7 +248,7 @@ const DocTypeBadge = ({ type }) => {
   );
 };
 
-// ─── Document Card ────────────────────────────────────────────
+// âââ Document Card ââââââââââââââââââââââââââââââââââââââââââââ
 const DocCard = ({ doc, onNavigate }) => {
   const [expanded, setExpanded] = useState(false);
   const sc  = statusConfig(doc.processing_type === "archive" ? "archive" : doc.processing_status);
@@ -275,7 +275,7 @@ const DocCard = ({ doc, onNavigate }) => {
           <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
             <DocTypeBadge type={doc.doc_type} />
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:src.color+"20", color:src.color }}>{src.icon} {src.label}</span>
-            <span style={{ fontSize:10, color:T.slate400 }}>{doc.uploaded_at} · {doc.size}</span>
+            <span style={{ fontSize:10, color:T.slate400 }}>{doc.uploaded_at} Â· {doc.size}</span>
           </div>
         </div>
 
@@ -284,7 +284,7 @@ const DocCard = ({ doc, onNavigate }) => {
           {doc.processing_type === "database_import" && doc.records_created > 0 && (
             <span style={{ fontSize:10, color:T.slate400 }}>{doc.records_created} records</span>
           )}
-          <span style={{ color:T.slate400, fontSize:11 }}>{expanded?"▲":"▼"}</span>
+          <span style={{ color:T.slate400, fontSize:11 }}>{expanded?"â²":"â¼"}</span>
         </div>
       </div>
 
@@ -293,7 +293,7 @@ const DocCard = ({ doc, onNavigate }) => {
           {/* Details Grid */}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:8, marginTop:10, marginBottom:12 }}>
             {[
-              { label:"File Type",     value:doc.file_type.toUpperCase() },
+              { label:"File Type",     value:(doc.file_type || "").toString().toUpperCase() || "—" },
               { label:"Source",        value:src.label },
               { label:"Uploaded",      value:doc.uploaded_at },
               { label:"Processed",     value:doc.processed_at },
@@ -329,12 +329,12 @@ const DocCard = ({ doc, onNavigate }) => {
           {/* Status warnings */}
           {doc.processing_status === "partial" && (
             <div style={{ fontSize:11, color:"#92400E", background:T.amberLt, padding:"8px 10px", borderRadius:6, marginBottom:10 }}>
-              ⚠ Partial import — some pages could not be parsed. Check Google Drive for the saved file and review manually.
+              â  Partial import â some pages could not be parsed. Check Google Drive for the saved file and review manually.
             </div>
           )}
           {doc.processing_status === "failed" && (
             <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, padding:"8px 10px", borderRadius:6, marginBottom:10 }}>
-              🔴 Import failed — Groq could not classify this document. File saved to Google Drive. Review manually or re-upload with a clearer document.
+              ð´ Import failed â Groq could not classify this document. File saved to Google Drive. Review manually or re-upload with a clearer document.
             </div>
           )}
 
@@ -348,7 +348,7 @@ const DocCard = ({ doc, onNavigate }) => {
                   else alert("No Google Drive link available for this document.");
                 }}
                 style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.amber, background:T.amberLt, border:"none", borderRadius:7, cursor:"pointer" }}>
-                📁 Open in Drive
+                ð Open in Drive
               </button>
             )}
             <AskBtn size="small" context={`Document in my BCC:\nFile: ${doc.file_name}\nType: ${DOC_TYPES[doc.doc_type]?.label||doc.doc_type}\nSource: ${doc.upload_source}\nStatus: ${doc.processing_status}\nProcessed: ${doc.processed_at}\nTables updated: ${doc.tables_updated?.join(", ")||"None"}\nRecords created: ${doc.records_created}\nNotes: ${doc.notes}\n\nHelp me understand this document and verify the data was imported correctly. Are there any follow-up actions needed?`} />
@@ -359,7 +359,7 @@ const DocCard = ({ doc, onNavigate }) => {
   );
 };
 
-// ─── Section: Overview ────────────────────────────────────────
+// âââ Section: Overview ââââââââââââââââââââââââââââââââââââââââ
 const DocumentsOverview = ({ documents, onNavigate }) => {
   const complete = documents.filter(d => d.processing_status === "complete").length;
   const partial  = documents.filter(d => d.processing_status === "partial").length;
@@ -392,9 +392,9 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
       {/* Alerts for failed/partial */}
       {(failed > 0 || partial > 0) && (
         <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderLeft:`4px solid ${T.amber}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>⚠ Documents Needing Attention</div>
-          {failed  > 0 && <div style={{ fontSize:11, color:"#92400E", marginBottom:2 }}>• {failed} document{failed>1?"s":""} failed to import — review and re-upload</div>}
-          {partial > 0 && <div style={{ fontSize:11, color:"#92400E" }}>• {partial} document{partial>1?"s":""} partially imported — check Google Drive for unparsed pages</div>}
+          <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>â  Documents Needing Attention</div>
+          {failed  > 0 && <div style={{ fontSize:11, color:"#92400E", marginBottom:2 }}>â¢ {failed} document{failed>1?"s":""} failed to import â review and re-upload</div>}
+          {partial > 0 && <div style={{ fontSize:11, color:"#92400E" }}>â¢ {partial} document{partial>1?"s":""} partially imported â check Google Drive for unparsed pages</div>}
         </div>
       )}
 
@@ -413,7 +413,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
                 <span style={{ fontSize:20, flexShrink:0 }}>{dt.icon}</span>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:12, fontWeight:500, color:T.slate800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{doc.file_name}</div>
-                  <div style={{ fontSize:10, color:T.slate400 }}>{doc.uploaded_at} · {doc.size}</div>
+                  <div style={{ fontSize:10, color:T.slate400 }}>{doc.uploaded_at} Â· {doc.size}</div>
                 </div>
                 <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:sc.bg, color:sc.color, flexShrink:0 }}>{sc.label}</span>
               </div>
@@ -439,7 +439,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
 
           {/* How auto-intake works */}
           <div style={{ marginTop:14, padding:"10px 12px", background:T.blueLt, borderRadius:8, fontSize:11, color:T.slate600, lineHeight:1.6 }}>
-            📧 <strong>Auto-intake is active.</strong> Documents emailed to your Gmail are detected hourly, saved to Drive, classified by Groq, and loaded to the correct tables automatically.
+            ð§ <strong>Auto-intake is active.</strong> Documents emailed to your Gmail are detected hourly, saved to Drive, classified by Groq, and loaded to the correct tables automatically.
           </div>
         </Card>
       </div>
@@ -447,7 +447,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
   );
 };
 
-// ─── Section: Library ─────────────────────────────────────────
+// âââ Section: Library âââââââââââââââââââââââââââââââââââââââââ
 const DocumentLibrary = ({ documents }) => {
   const [typeFilter,   setTypeFilter]   = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -479,7 +479,7 @@ const DocumentLibrary = ({ documents }) => {
         <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
           style={{ padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
           <option value="all">All Sources</option>
-          <option value="email_auto">Auto — Email</option>
+          <option value="email_auto">Auto â Email</option>
           <option value="direct_upload">Manual Upload</option>
         </select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
@@ -506,7 +506,7 @@ const DocumentLibrary = ({ documents }) => {
   );
 };
 
-// ─── Section: Intake Log ──────────────────────────────────────
+// âââ Section: Intake Log ââââââââââââââââââââââââââââââââââââââ
 const IntakeLog = ({ log }) => (
   <Card>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
@@ -552,8 +552,8 @@ const IntakeLog = ({ log }) => (
               <td style={{ padding:"9px 8px" }}>
                 {item.type ? <span style={{ fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20, background:dt.bg, color:dt.color }}>{dt.icon} {dt.label}</span> : <span style={{ fontSize:10, color:T.slate400 }}>Unknown</span>}
               </td>
-              <td style={{ padding:"9px 8px", fontSize:10, color:T.slate500 }}>{item.tables.join(", ")||"—"}</td>
-              <td style={{ padding:"9px 8px", fontSize:11, fontWeight:600, color:T.slate900, textAlign:"center" }}>{item.records||"—"}</td>
+              <td style={{ padding:"9px 8px", fontSize:10, color:T.slate500 }}>{item.tables.join(", ")||"â"}</td>
+              <td style={{ padding:"9px 8px", fontSize:11, fontWeight:600, color:T.slate900, textAlign:"center" }}>{item.records||"â"}</td>
               <td style={{ padding:"9px 8px" }}><span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:sc.bg, color:sc.color }}>{sc.label}</span></td>
             </tr>
           );
@@ -563,7 +563,7 @@ const IntakeLog = ({ log }) => (
   </Card>
 );
 
-// ─── Section: Upload ──────────────────────────────────────────
+// âââ Section: Upload ââââââââââââââââââââââââââââââââââââââââââ
 const UploadSection = () => {
   const [uploadPath, setUploadPath] = useState(null);
   const [dragOver,   setDragOver]   = useState(false);
@@ -584,7 +584,7 @@ const UploadSection = () => {
             onMouseEnter={e => e.currentTarget.style.borderColor=T.green}
             onMouseLeave={e => e.currentTarget.style.borderColor=T.slate200}
           >
-            <div style={{ fontSize:32, marginBottom:12 }}>🗄️</div>
+            <div style={{ fontSize:32, marginBottom:12 }}>ðï¸</div>
             <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upload to Database</div>
             <div style={{ fontSize:12, color:T.slate500, lineHeight:1.7, marginBottom:12 }}>
               Document is processed by Groq, classified, and data is loaded to the correct Supabase tables. Saved permanently to Google Drive. Logged in your document library.
@@ -599,7 +599,7 @@ const UploadSection = () => {
             onMouseEnter={e => e.currentTarget.style.borderColor=T.blue}
             onMouseLeave={e => e.currentTarget.style.borderColor=T.slate200}
           >
-            <div style={{ fontSize:32, marginBottom:12 }}>💬</div>
+            <div style={{ fontSize:32, marginBottom:12 }}>ð¬</div>
             <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upload to Claude Chat</div>
             <div style={{ fontSize:12, color:T.slate500, lineHeight:1.7, marginBottom:12 }}>
               Document is passed to Claude as temporary conversation context. Not saved to your database unless Claude extracts and stores specific data. Use for quick analysis.
@@ -609,15 +609,15 @@ const UploadSection = () => {
         </div>
       )}
 
-      {/* Upload Path A — Database */}
+      {/* Upload Path A â Database */}
       {uploadPath === "database" && (
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
-              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>🗄️ Upload to Database</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>ðï¸ Upload to Database</div>
               <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Groq will classify and route data to correct tables</div>
             </div>
-            <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>← Back</button>
+            <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>â Back</button>
           </div>
 
           {/* Drop Zone */}
@@ -634,9 +634,9 @@ const UploadSection = () => {
             }}
             onClick={() => document.getElementById("file-input-db")?.click()}
           >
-            <div style={{ fontSize:36, marginBottom:8 }}>📂</div>
+            <div style={{ fontSize:36, marginBottom:8 }}>ð</div>
             <div style={{ fontSize:13, fontWeight:600, color:T.slate700, marginBottom:4 }}>Drop your document here or click to browse</div>
-            <div style={{ fontSize:11, color:T.slate400 }}>PDF, CSV, XLSX, DOCX — max 25MB</div>
+            <div style={{ fontSize:11, color:T.slate400 }}>PDF, CSV, XLSX, DOCX â max 25MB</div>
             <input id="file-input-db" type="file" accept=".pdf,.csv,.xlsx,.docx" style={{ display:"none" }} />
           </div>
 
@@ -671,15 +671,15 @@ const UploadSection = () => {
         </Card>
       )}
 
-      {/* Upload Path B — Claude Chat */}
+      {/* Upload Path B â Claude Chat */}
       {uploadPath === "chat" && (
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
-              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>💬 Upload to Claude Chat</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>ð¬ Upload to Claude Chat</div>
               <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Document becomes context for your next Claude conversation</div>
             </div>
-            <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>← Back</button>
+            <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>â Back</button>
           </div>
 
           {/* Drop Zone */}
@@ -696,9 +696,9 @@ const UploadSection = () => {
             }}
             onClick={() => document.getElementById("file-input-chat")?.click()}
           >
-            <div style={{ fontSize:36, marginBottom:8 }}>💬</div>
+            <div style={{ fontSize:36, marginBottom:8 }}>ð¬</div>
             <div style={{ fontSize:13, fontWeight:600, color:T.slate700, marginBottom:4 }}>Drop your document here or click to browse</div>
-            <div style={{ fontSize:11, color:T.slate400 }}>PDF, DOCX — max 10MB</div>
+            <div style={{ fontSize:11, color:T.slate400 }}>PDF, DOCX â max 10MB</div>
             <input id="file-input-chat" type="file" accept=".pdf,.docx" style={{ display:"none" }} />
           </div>
 
@@ -723,7 +723,7 @@ const UploadSection = () => {
             onClick={() => { window.open("https://claude.ai","_blank"); }}
             style={{ width:"100%", padding:"11px", fontSize:12, fontWeight:700, color:T.white, background:T.blue, border:"none", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
           >
-            ⚡ Open Claude.ai to upload and discuss this document
+            â¡ Open Claude.ai to upload and discuss this document
           </button>
         </Card>
       )}
@@ -731,9 +731,9 @@ const UploadSection = () => {
       {/* Email reminder */}
       {!uploadPath && (
         <div style={{ background:T.greenLt, border:`1px solid #BBF7D0`, borderLeft:`4px solid ${T.green}`, borderRadius:10, padding:"12px 16px" }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#065F46", marginBottom:4 }}>📧 Easier option: just email it</div>
+          <div style={{ fontSize:12, fontWeight:700, color:"#065F46", marginBottom:4 }}>ð§ Easier option: just email it</div>
           <div style={{ fontSize:11, color:"#065F46", lineHeight:1.6 }}>
-            The fastest way to get a document into your BCC is to email it to your agency Gmail. The Document Importer checks hourly and processes it automatically — no manual upload needed. COMP_RECAP, payroll exports, bank statements, resumes — just forward the email.
+            The fastest way to get a document into your BCC is to email it to your agency Gmail. The Document Importer checks hourly and processes it automatically â no manual upload needed. COMP_RECAP, payroll exports, bank statements, resumes â just forward the email.
           </div>
         </div>
       )}
@@ -741,7 +741,7 @@ const UploadSection = () => {
   );
 };
 
-// ─── Main Documents Module ────────────────────────────────────
+// âââ Main Documents Module ââââââââââââââââââââââââââââââââââââ
 export default function Documents() {
   const [section, setSection] = useState("overview");
   const { data: liveDocs, loading: docsLoading } = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
@@ -757,7 +757,7 @@ export default function Documents() {
     { id:"upload",   label:"Upload"     },
   ];
 
-  if (docsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading documents…</div>;
+  if (docsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading documentsâ¦</div>;
   if (documents.length === 0) return <EmptyState module="documents" />;
 
   return (
@@ -767,7 +767,7 @@ export default function Documents() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Documents</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {documents.length} documents · Auto-intake active · Groq processing · Google Drive filing
+            {documents.length} documents Â· Auto-intake active Â· Groq processing Â· Google Drive filing
           </div>
         </div>
         <AskBtn context="Review my document library. Are there any gaps in my financial document history? What documents should I have that I might be missing? What needs follow-up?" />
