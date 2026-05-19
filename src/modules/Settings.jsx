@@ -263,6 +263,7 @@ const AgencyProfile = ({ agency }) => (
 // ─── Section: Team Access ─────────────────────────────────────
 const TeamAccess = ({ users }) => {
   const [allUsers,    setAllUsers]    = useState(users);
+  useEffect(() => { setAllUsers(users); }, [users]);
   const [showInvite,  setShowInvite]  = useState(false);
   const [editingRole, setEditingRole] = useState(null);
 
@@ -419,6 +420,7 @@ const ConnectedAccounts = ({ connections }) => (
 // ─── Section: BCC Configuration ──────────────────────────────
 const BCCConfiguration = ({ config }) => {
   const [cfg, setCfg] = useState(config);
+  useEffect(() => { setCfg(config); }, [config]);
   const set = (k,v) => setCfg(c => ({...c,[k]:v}));
 
   return (
@@ -454,15 +456,15 @@ const BCCConfiguration = ({ config }) => {
         <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:14 }}>Financial Settings</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
           {[
-            { label:"Accounting Method",   value:cfg.accounting_method, hint:"Cash basis — do not change",  editable:false },
-            { label:"Fiscal Year Start",   value:cfg.fiscal_year_start, hint:"Calendar year Jan-Dec",       editable:false },
-            { label:"Currency",            value:cfg.currency,          hint:"USD",                         editable:false },
-            { label:"Timezone",            value:cfg.timezone,          hint:"Used for scheduling",          editable:true  },
+            { label:"Accounting Method",   key:"accounting_method", value:cfg.accounting_method, hint:"Cash basis — do not change",  editable:false },
+            { label:"Fiscal Year Start",   key:"fiscal_year_start", value:cfg.fiscal_year_start, hint:"Calendar year Jan-Dec",       editable:false },
+            { label:"Currency",            key:"currency",          value:cfg.currency,          hint:"USD",                         editable:false },
+            { label:"Timezone",            key:"timezone",          value:cfg.timezone,          hint:"Used for scheduling",          editable:true  },
           ].map(f => (
             <div key={f.label}>
               <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>{f.label.toUpperCase()}</label>
               {f.editable ? (
-                <input defaultValue={f.value}
+                <input value={f.value || ""} onChange={e => set(f.key, e.target.value)}
                   style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
               ) : (
                 <div style={{ padding:"8px 10px", fontSize:12, color:T.slate600, background:T.slate50, borderRadius:8, border:`1px solid ${T.slate200}` }}>{f.value}</div>
