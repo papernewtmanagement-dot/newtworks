@@ -196,7 +196,7 @@ const InviteModal = ({ onSave, onCancel }) => {
       <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:460, boxShadow:"0 20px 60px rgba(0,0,0,0.2)", overflow:"hidden" }}>
         <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>Invite Team Member</span>
-          <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:18, color:T.slate400, cursor:"pointer" }}>Ã</button>
+          <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:18, color:T.slate400, cursor:"pointer" }}>×</button>
         </div>
         <div style={{ padding:20 }}>
           {[
