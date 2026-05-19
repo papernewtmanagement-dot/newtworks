@@ -151,7 +151,10 @@ const Toggle = ({ value, onChange }) => (
 
 const FieldRow = ({ label, value, editable=false, onChange, type="text", hint }) => {
   const [editing, setEditing] = useState(false);
+  // Local editing buffer — initialized from value, reset whenever value changes
+  // (fixes stale-state bug where agency data arrived after first render)
   const [val, setVal] = useState(value);
+  useEffect(() => { setVal(value); }, [value]);
 
   return (
     <div style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 0", borderBottom:`1px solid ${T.slate100}` }}>
@@ -171,7 +174,7 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
           </div>
         ) : (
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:12, color:T.slate600 }}>{val || "—"}</span>
+            <span style={{ fontSize:12, color:T.slate600 }}>{(editing ? val : value) || "—"}</span>
             {editable && (
               <button onClick={() => setEditing(true)}
                 style={{ fontSize:10, color:T.blue, background:"none", border:`1px solid ${T.slate200}`, borderRadius:6, padding:"3px 8px", cursor:"pointer" }}>Edit</button>
@@ -847,11 +850,6 @@ export default function Settings() {
           supabase.from("settings").select("*").eq("agency_id", AGENCY_ID),
           supabase.from("users").select("*").eq("agency_id", AGENCY_ID),
         ]);
-        // Diagnostic logging — remove once Agency Profile is confirmed working live
-        console.log("[Settings] AGENCY_ID:", AGENCY_ID);
-        console.log("[Settings] agencyRes data:", agencyRes.data, "error:", agencyRes.error);
-        console.log("[Settings] settingsRes rows:", settingsRes.data?.length, "error:", settingsRes.error);
-        console.log("[Settings] usersRes rows:", usersRes.data?.length, "error:", usersRes.error);
         if (agencyRes.data) setAgencyData(agencyRes.data);
         else if (agencyRes.error) console.error("[Settings] agency fetch error:", agencyRes.error);
         if (settingsRes.data) setSettingsData(settingsRes.data);
