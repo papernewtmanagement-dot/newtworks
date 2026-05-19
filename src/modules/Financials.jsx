@@ -106,7 +106,7 @@ function useFinancialsData() {
           // AIPP — real schema
           supabase.from("aipp_tracking")
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
-            .order("program_year", { ascending: false }).limit(1).single(),
+            .order("program_year", { ascending: false }).limit(1).maybeSingle(),
 
           // ScoreBoard
           supabase.from("scoreboard_tracking")
