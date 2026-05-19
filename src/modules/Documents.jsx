@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
@@ -200,15 +200,6 @@ const MOCK_DOCUMENTS = [
   },
 ];
 
-const MOCK_INTAKE_LOG = [
-  { id:"i1", date:"Apr 26", time:"2:28 PM", file:"SF_COMP_April_2026.pdf",     source:"Email — State Farm",          status:"complete", type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:5  },
-  { id:"i2", date:"Apr 26", time:"9:12 AM", file:"resume_jamie_chen.pdf",       source:"Email — Jamie Chen",          status:"complete", type:"resume",          tables:["applicants","documents"],       records:1  },
-  { id:"i3", date:"Apr 25", time:"10:14 AM",file:"april_payroll_export.csv",    source:"Email — Gusto",               status:"complete", type:"payroll_export",  tables:["payroll_runs","payroll_detail"],records:4  },
-  { id:"i4", date:"Apr 20", time:"4:15 PM", file:"mystery_document.pdf",        source:"Email — Unknown",             status:"failed",   type:null,              tables:[],                               records:0  },
-  { id:"i5", date:"Apr 15", time:"2:58 PM", file:"chase_march_statement.pdf",   source:"Email — Chase",               status:"partial",  type:"bank_statement",  tables:["journal_entries"],              records:18 },
-  { id:"i6", date:"Apr 5",  time:"11:20 AM",file:"SF_COMP_March_2026.pdf",      source:"Email — State Farm",          status:"complete", type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:4  },
-  { id:"i7", date:"Apr 1",  time:"3:45 PM", file:"q1_tax_estimate_2026.pdf",    source:"Email — Club Capital Tax",    status:"complete", type:"tax_document",    tables:["documents"],                    records:0  },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────
 const statusConfig = (s) => ({
@@ -541,7 +532,12 @@ const IntakeLog = ({ log }) => (
         </tr>
       </thead>
       <tbody>
-        {log.map((item,i) => {
+        {(log || []).length === 0 && (
+          <tr><td colSpan={7} style={{ padding: "30px 8px", textAlign: "center", fontSize: 12, color: T.slate400 }}>
+            No documents processed yet. Imports will appear here as Composio receives them.
+          </td></tr>
+        )}
+        {(log || []).map((item,i) => {
           const dt = DOC_TYPES[item.type] || DOC_TYPES.other;
           const sc = statusConfig(item.status);
           return (
@@ -552,7 +548,7 @@ const IntakeLog = ({ log }) => (
               <td style={{ padding:"9px 8px" }}>
                 {item.type ? <span style={{ fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20, background:dt.bg, color:dt.color }}>{dt.icon} {dt.label}</span> : <span style={{ fontSize:10, color:T.slate400 }}>Unknown</span>}
               </td>
-              <td style={{ padding:"9px 8px", fontSize:10, color:T.slate500 }}>{item.tables.join(", ")||"—"}</td>
+              <td style={{ padding:"9px 8px", fontSize:10, color:T.slate500 }}>{(item.tables || []).join(", ")||"—"}</td>
               <td style={{ padding:"9px 8px", fontSize:11, fontWeight:600, color:T.slate900, textAlign:"center" }}>{item.records||"—"}</td>
               <td style={{ padding:"9px 8px" }}><span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:sc.bg, color:sc.color }}>{sc.label}</span></td>
             </tr>
@@ -750,6 +746,27 @@ export default function Documents() {
     ? liveDocs
     : useMockData ? MOCK_DOCUMENTS : [];
 
+  // ── Derived: Intake Log rows from documents table ────────────
+  // The intake log is just the documents table presented as a processing
+  // timeline. We map field names to what the IntakeLog component expects.
+  const intakeLog = useMemo(() => {
+    const src = (liveDocs && liveDocs.length > 0) ? liveDocs : [];
+    return src.map(d => {
+      const dt = d.uploaded_at ? new Date(d.uploaded_at) : null;
+      return {
+        id:      d.id,
+        date:    dt ? dt.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—",
+        time:    dt ? dt.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" }) : "",
+        file:    d.file_name || "—",
+        source:  (d.upload_source || "—").replace(/_/g, " "),
+        type:    d.groq_classification || d.file_type || null,
+        tables:  Array.isArray(d.tables_updated) ? d.tables_updated : [],
+        records: d.records_created || 0,
+        status:  d.processing_status || "—",
+      };
+    });
+  }, [liveDocs]);
+
   const sections = [
     { id:"overview", label:"Overview"   },
     { id:"library",  label:"Library"    },
@@ -785,7 +802,7 @@ export default function Documents() {
       {/* Section Content */}
       {section === "overview" && <DocumentsOverview documents={documents} />}
       {section === "library"  && <DocumentLibrary  documents={documents} />}
-      {section === "intake"   && <IntakeLog         log={MOCK_INTAKE_LOG} />}
+      {section === "intake"   && <IntakeLog         log={intakeLog} />}
       {section === "upload"   && <UploadSection />}
     </div>
   );
