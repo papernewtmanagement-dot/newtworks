@@ -72,12 +72,12 @@ const MOCK_USERS = [
 ];
 
 const MOCK_CONNECTIONS = [
-  { id:"c1", platform:"Gmail",          icon:"ð§", status:"error",   account:"jane@smithagency.com",        last_sync:"Today 6:00 AM",    note:"OAuth token expired — reconnect required" },
-  { id:"c2", platform:"Google Drive",   icon:"ð", status:"healthy", account:"jane@smithagency.com",        last_sync:"Yesterday 11:00 PM",note:"Active" },
-  { id:"c3", platform:"Google Calendar",icon:"ð", status:"healthy", account:"jane@smithagency.com",        last_sync:"Today 7:00 AM",    note:"Active" },
-  { id:"c4", platform:"Facebook",       icon:"ð¥", status:"healthy", account:"Smith Insurance Agency Page", last_sync:"Yesterday 9:00 AM", note:"Active" },
-  { id:"c5", platform:"LinkedIn",       icon:"ð¼", status:"healthy", account:"Jane Smith",                  last_sync:"Yesterday 12:00 PM",note:"Active" },
-  { id:"c6", platform:"Instagram",      icon:"ð¸", status:"manual",  account:"@smithinsurance",             last_sync:"N/A",              note:"Manual posting required — no API scheduling" },
+  { id:"c1", platform:"Gmail",          icon:"📧", status:"error",   account:"jane@smithagency.com",        last_sync:"Today 6:00 AM",    note:"OAuth token expired — reconnect required" },
+  { id:"c2", platform:"Google Drive",   icon:"📁", status:"healthy", account:"jane@smithagency.com",        last_sync:"Yesterday 11:00 PM",note:"Active" },
+  { id:"c3", platform:"Google Calendar",icon:"📅", status:"healthy", account:"jane@smithagency.com",        last_sync:"Today 7:00 AM",    note:"Active" },
+  { id:"c4", platform:"Facebook",       icon:"👥", status:"healthy", account:"Smith Insurance Agency Page", last_sync:"Yesterday 9:00 AM", note:"Active" },
+  { id:"c5", platform:"LinkedIn",       icon:"💼", status:"healthy", account:"Jane Smith",                  last_sync:"Yesterday 12:00 PM",note:"Active" },
+  { id:"c6", platform:"Instagram",      icon:"📸", status:"manual",  account:"@smithinsurance",             last_sync:"N/A",              note:"Manual posting required — no API scheduling" },
 ];
 
 const MOCK_AGENCY = {
@@ -566,8 +566,8 @@ const About = ({ agency: agencyProp }) => {
 
   const tabs = [
     { id:"stack",     label:"⚡  Tech Stack" },
-    { id:"how",       label:"â  How It Works" },
-    { id:"connected", label:"â  Keep It Connected" },
+    { id:"how",       label:"🔄 How It Works" },
+    { id:"connected", label:"🔗 Keep It Connected" },
   ];
 
   return (
@@ -688,7 +688,7 @@ const About = ({ agency: agencyProp }) => {
           {/* HERO: The self-heal model */}
           <Card style={{ borderLeft:`4px solid ${T.green}`, background:"linear-gradient(180deg, #F0FDF4 0%, #FFFFFF 60%)" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-              <span style={{ fontSize:24 }}>ð</span>
+              <span style={{ fontSize:24 }}>💚</span>
               <div>
                 <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>When something breaks, ask your Claude first</div>
                 <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
@@ -703,17 +703,17 @@ const About = ({ agency: agencyProp }) => {
               <div style={{ fontSize:11, fontWeight:700, color:T.slate800, marginBottom:8 }}>The pattern, every time:</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10, fontSize:11, color:T.slate600 }}>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>ð¸</div>
+                  <div style={{ fontSize:18, marginBottom:4 }}>📸</div>
                   <strong style={{ color:T.slate900 }}>1. Screenshot the error</strong>
                   <div style={{ marginTop:3, lineHeight:1.5 }}>Whatever you&apos;re seeing — alert banner, broken module, failed automation</div>
                 </div>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>ð¬</div>
+                  <div style={{ fontSize:18, marginBottom:4 }}>💬</div>
                   <strong style={{ color:T.slate900 }}>2. Paste it to your Claude</strong>
                   <div style={{ marginTop:3, lineHeight:1.5 }}>&quot;Help me fix this&quot; is enough — your Claude has full context on your stack</div>
                 </div>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>â</div>
+                  <div style={{ fontSize:18, marginBottom:4 }}>✅</div>
                   <strong style={{ color:T.slate900 }}>3. Follow the steps</strong>
                   <div style={{ marginTop:3, lineHeight:1.5 }}>Your Claude either fixes it directly or walks you through it click-by-click</div>
                 </div>
@@ -740,10 +740,10 @@ const About = ({ agency: agencyProp }) => {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:8 }}>
                 {[
-                  { name:"Supabase",  icon:"ð¾", role:"Persistent memory + database" },
-                  { name:"Composio",  icon:"ð", role:"Gateway to all your other tools" },
-                  { name:"GitHub",    icon:"ð¦", role:"BCC web app source code" },
-                  { name:"Vercel",    icon:"ð", role:"BCC web app hosting & deploys" },
+                  { name:"Supabase",  icon:"💾", role:"Persistent memory + database" },
+                  { name:"Composio",  icon:"🔌", role:"Gateway to all your other tools" },
+                  { name:"GitHub",    icon:"📦", role:"BCC web app source code" },
+                  { name:"Vercel",    icon:"🚀", role:"BCC web app hosting & deploys" },
                 ].map(c => (
                   <div key={c.name} style={{ background:T.slate50, padding:"10px 12px", borderRadius:8, border:`1px solid ${T.slate200}` }}>
                     <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
@@ -809,7 +809,7 @@ const About = ({ agency: agencyProp }) => {
               }}>Composio Dashboard </a>
             </div>
             <div style={{ marginTop:10, fontSize:10, color:T.slate500, lineHeight:1.5 }}>
-              ð¡ You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
+              💡 You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
             </div>
           </Card>
         </div>
@@ -847,7 +847,13 @@ export default function Settings() {
           supabase.from("settings").select("*").eq("agency_id", AGENCY_ID),
           supabase.from("users").select("*").eq("agency_id", AGENCY_ID),
         ]);
+        // Diagnostic logging — remove once Agency Profile is confirmed working live
+        console.log("[Settings] AGENCY_ID:", AGENCY_ID);
+        console.log("[Settings] agencyRes data:", agencyRes.data, "error:", agencyRes.error);
+        console.log("[Settings] settingsRes rows:", settingsRes.data?.length, "error:", settingsRes.error);
+        console.log("[Settings] usersRes rows:", usersRes.data?.length, "error:", usersRes.error);
         if (agencyRes.data) setAgencyData(agencyRes.data);
+        else if (agencyRes.error) console.error("[Settings] agency fetch error:", agencyRes.error);
         if (settingsRes.data) setSettingsData(settingsRes.data);
         if (usersRes.data) setUsersData(usersRes.data);
       } catch(e) { console.error("Settings load error:", e); }
@@ -877,17 +883,22 @@ export default function Settings() {
     entity_type:      agencyData.entity_type,
     tax_id:           agencyData.tax_id,
     sf_agent_code:    agencyData.state_farm_agent_code,
+    state_farm_agent_code: agencyData.state_farm_agent_code,
     licensing_states: agencyData.licensing_states || [],
     primary_email:    agencyData.primary_email,
     phone:            agencyData.phone,
     address:          agencyData.address,
     google_account:   agencyData.google_account_email,
+    google_account_email: agencyData.google_account_email,
     vercel_url:       agencyData.vercel_url,
     setup_date:       agencyData.setup_date,
   } : {
     name: "—", owner_name: "—", entity_type: "—", tax_id: "—",
-    sf_agent_code: "—", licensing_states: [], primary_email: "—",
-    phone: "—", address: "—", google_account: "—", vercel_url: "—", setup_date: "—",
+    sf_agent_code: "—", state_farm_agent_code: "—",
+    licensing_states: [], primary_email: "—",
+    phone: "—", address: "—",
+    google_account: "—", google_account_email: "—",
+    vercel_url: "—", setup_date: "—",
   };
 
   const liveUsers = (usersData || []).map(u => ({
