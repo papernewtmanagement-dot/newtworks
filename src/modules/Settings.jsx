@@ -642,7 +642,7 @@ const About = ({ agency: agencyProp }) => {
                     fontSize:12, fontWeight:600, color:T.blue, textDecoration:"none",
                     padding:"6px 12px", borderRadius:7, border:`1px solid ${T.slate200}`,
                     flexShrink:0, whiteSpace:"nowrap",
-                  }}>Open â</a>
+                  }}>Open </a>
                 </div>
               </Card>
             ))}
@@ -802,11 +802,11 @@ const About = ({ agency: agencyProp }) => {
               <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener noreferrer" style={{
                 fontSize:11, fontWeight:600, color:T.white, textDecoration:"none",
                 padding:"7px 12px", borderRadius:7, background:T.blue, display:"inline-block",
-              }}>Claude.ai Connectors â</a>
+              }}>Claude.ai Connectors </a>
               <a href="https://app.composio.dev/" target="_blank" rel="noopener noreferrer" style={{
                 fontSize:11, fontWeight:600, color:T.white, textDecoration:"none",
                 padding:"7px 12px", borderRadius:7, background:T.purple || "#7C3AED", display:"inline-block",
-              }}>Composio Dashboard â</a>
+              }}>Composio Dashboard </a>
             </div>
             <div style={{ marginTop:10, fontSize:10, color:T.slate500, lineHeight:1.5 }}>
               ð¡ You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
@@ -866,6 +866,75 @@ export default function Settings() {
     { id:"about",       label:"About"              },
   ];
 
+  // ─── Derived live data (replaces the MOCK_* constants) ─────────
+  const settingsMap = Object.fromEntries(
+    (settingsData || []).map(r => [r.setting_key, r.setting_value])
+  );
+
+  const liveAgency = agencyData ? {
+    name:             agencyData.name,
+    owner_name:       agencyData.owner_name,
+    entity_type:      agencyData.entity_type,
+    tax_id:           agencyData.tax_id,
+    sf_agent_code:    agencyData.state_farm_agent_code,
+    licensing_states: agencyData.licensing_states || [],
+    primary_email:    agencyData.primary_email,
+    phone:            agencyData.phone,
+    address:          agencyData.address,
+    google_account:   agencyData.google_account_email,
+    vercel_url:       agencyData.vercel_url,
+    setup_date:       agencyData.setup_date,
+  } : {
+    name: "—", owner_name: "—", entity_type: "—", tax_id: "—",
+    sf_agent_code: "—", licensing_states: [], primary_email: "—",
+    phone: "—", address: "—", google_account: "—", vercel_url: "—", setup_date: "—",
+  };
+
+  const liveUsers = (usersData || []).map(u => ({
+    id:         u.id,
+    name:       u.full_name || u.email || "Unnamed user",
+    email:      u.email,
+    role:       u.role || "staff",
+    last_login: u.last_login
+                  ? new Date(u.last_login).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })
+                  : "Never",
+    is_active:  u.is_active !== false,
+    is_current: false,
+  }));
+
+  // Connections derived from which composio account IDs / API keys are present
+  const connSpecs = [
+    { key:"composio_gmail_account_id",       platform:"Gmail",          account:liveAgency.google_account, note:"Connected via Composio" },
+    { key:"composio_googledrive_account_id", platform:"Google Drive",   account:liveAgency.google_account, note:"Connected via Composio" },
+    { key:"composio_api_key",                platform:"Composio",       account:"API key present",         note:"Action layer authorized"  },
+    { key:"groq_api_key",                    platform:"Groq",           account:"API key present",         note:"LLM parsing enabled"      },
+    { key:"supabase_url",                    platform:"Supabase",       account:liveAgency.name,           note:"Database connected"       },
+  ];
+  const liveConns = connSpecs
+    .filter(s => settingsMap[s.key])
+    .map((s, i) => ({
+      id:        `c${i+1}`,
+      platform:  s.platform,
+      icon:      "",
+      status:    "healthy",
+      account:   s.account,
+      last_sync: "—",
+      note:      s.note,
+    }));
+
+  const liveConfig = {
+    timezone:           settingsMap.timezone           || "America/Chicago",
+    fiscal_year_start:  settingsMap.fiscal_year_start  || "January 1",
+    accounting_method:  settingsMap.accounting_method  || "Cash Basis",
+    currency:           settingsMap.currency           || "USD",
+    briefing_time:      settingsMap.briefing_time      || "7:00 AM",
+    briefing_email:     settingsMap.briefing_email     || liveAgency.primary_email,
+    briefing_enabled:   settingsMap.briefing_enabled === "true",
+    aipp_target:        Number(settingsMap.aipp_target || 0),
+    aipp_year:          Number(settingsMap.aipp_year || new Date().getFullYear()),
+    dashboard_period:   settingsMap.dashboard_period   || "mtd",
+  };
+
   return (
     <div>
       {/* Module Header */}
@@ -886,11 +955,11 @@ export default function Settings() {
       </div>
 
       {/* Section Content */}
-      {section === "profile"     && <AgencyProfile      agency={MOCK_AGENCY} />}
-      {section === "team"        && <TeamAccess         users={MOCK_USERS} />}
-      {section === "connections" && <ConnectedAccounts  connections={MOCK_CONNECTIONS} />}
-      {section === "config"      && <BCCConfiguration   config={MOCK_CONFIG} />}
-      {section === "about"       && <About              agency={MOCK_AGENCY} />}
+      {section === "profile"     && <AgencyProfile      agency={liveAgency}     />}
+      {section === "team"        && <TeamAccess         users={liveUsers}       />}
+      {section === "connections" && <ConnectedAccounts  connections={liveConns} />}
+      {section === "config"      && <BCCConfiguration   config={liveConfig}     />}
+      {section === "about"       && <About              agency={liveAgency}     />}
     </div>
   );
 }
