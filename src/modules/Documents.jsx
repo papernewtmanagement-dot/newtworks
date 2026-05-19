@@ -64,16 +64,16 @@ const T = {
 
 // ─── Document Type Config ─────────────────────────────────────
 const DOC_TYPES = {
-  comp_recap:     { label:"COMP_RECAP",      color:T.green,  bg:T.greenLt,  icon:"ð" },
-  payroll_export: { label:"Payroll Export",  color:T.blue,   bg:T.blueLt,   icon:"ð¼" },
-  bank_statement: { label:"Bank Statement",  color:T.teal,   bg:T.tealLt,   icon:"ð¦" },
-  tax_document:   { label:"Tax Document",    color:T.amber,  bg:T.amberLt,  icon:"ð" },
-  resume:         { label:"Resume",          color:T.purple, bg:T.purpleLt, icon:"ð¤" },
-  aipp_report:    { label:"AIPP Report",     color:T.green,  bg:T.greenLt,  icon:"ð¯" },
-  eo_insurance:   { label:"E&O Insurance",   color:T.red,    bg:T.redLt,    icon:"ð¡️" },
-  license:        { label:"License",         color:T.navy,   bg:T.slate100, icon:"ðªª" },
-  contract:       { label:"Contract",        color:T.navy,   bg:T.slate100, icon:"ð" },
-  other:          { label:"Other",           color:T.slate500,bg:T.slate100, icon:"ð" },
+  comp_recap:     { label:"COMP_RECAP",      color:T.green,  bg:T.greenLt,  icon:"📊" },
+  payroll_export: { label:"Payroll Export",  color:T.blue,   bg:T.blueLt,   icon:"💼" },
+  bank_statement: { label:"Bank Statement",  color:T.teal,   bg:T.tealLt,   icon:"🏦" },
+  tax_document:   { label:"Tax Document",    color:T.amber,  bg:T.amberLt,  icon:"📋" },
+  resume:         { label:"Resume",          color:T.purple, bg:T.purpleLt, icon:"👤" },
+  aipp_report:    { label:"AIPP Report",     color:T.green,  bg:T.greenLt,  icon:"🎯" },
+  eo_insurance:   { label:"E&O Insurance",   color:T.red,    bg:T.redLt,    icon:"🛡️" },
+  license:        { label:"License",         color:T.navy,   bg:T.slate100, icon:"🪪" },
+  contract:       { label:"Contract",        color:T.navy,   bg:T.slate100, icon:"📜" },
+  other:          { label:"Other",           color:T.slate500,bg:T.slate100, icon:"📄" },
 };
 
 // ─── Mock Data ────────────────────────────────────────────────
@@ -211,10 +211,10 @@ const statusConfig = (s) => ({
 }[s] || { color:T.slate500, bg:T.slate100, label:s });
 
 const sourceConfig = (s) => ({
-  email_auto:    { label:"Auto — Email",    color:T.green,  icon:"ð§" },
-  direct_upload: { label:"Manual Upload",   color:T.blue,   icon:"â¬️" },
-  drive:         { label:"Google Drive",    color:T.amber,  icon:"ð" },
-}[s] || { label:s, color:T.slate500, icon:"ð" });
+  email_auto:    { label:"Auto — Email",    color:T.green,  icon:"📧" },
+  direct_upload: { label:"Manual Upload",   color:T.blue,   icon:"⬆️" },
+  drive:         { label:"Google Drive",    color:T.amber,  icon:"📁" },
+}[s] || { label:s, color:T.slate500, icon:"📄" });
 
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
@@ -325,7 +325,7 @@ const DocCard = ({ doc, onNavigate }) => {
           )}
           {doc.processing_status === "failed" && (
             <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, padding:"8px 10px", borderRadius:6, marginBottom:10 }}>
-              ð´ Import failed — Groq could not classify this document. File saved to Google Drive. Review manually or re-upload with a clearer document.
+              🔴 Import failed — Groq could not classify this document. File saved to Google Drive. Review manually or re-upload with a clearer document.
             </div>
           )}
 
@@ -339,7 +339,7 @@ const DocCard = ({ doc, onNavigate }) => {
                   else alert("No Google Drive link available for this document.");
                 }}
                 style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.amber, background:T.amberLt, border:"none", borderRadius:7, cursor:"pointer" }}>
-                ð Open in Drive
+                📁 Open in Drive
               </button>
             )}
             <AskBtn size="small" context={`Document in my BCC:\nFile: ${doc.file_name}\nType: ${DOC_TYPES[doc.doc_type]?.label||doc.doc_type}\nSource: ${doc.upload_source}\nStatus: ${doc.processing_status}\nProcessed: ${doc.processed_at}\nTables updated: ${doc.tables_updated?.join(", ")||"None"}\nRecords created: ${doc.records_created}\nNotes: ${doc.notes}\n\nHelp me understand this document and verify the data was imported correctly. Are there any follow-up actions needed?`} />
@@ -430,7 +430,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
 
           {/* How auto-intake works */}
           <div style={{ marginTop:14, padding:"10px 12px", background:T.blueLt, borderRadius:8, fontSize:11, color:T.slate600, lineHeight:1.6 }}>
-            ð§ <strong>Auto-intake is active.</strong> Documents emailed to your Gmail are detected hourly, saved to Drive, classified by Groq, and loaded to the correct tables automatically.
+            📧 <strong>Auto-intake is active.</strong> Documents emailed to your Gmail are detected hourly, saved to Drive, classified by Groq, and loaded to the correct tables automatically.
           </div>
         </Card>
       </div>
@@ -580,7 +580,7 @@ const UploadSection = () => {
             onMouseEnter={e => e.currentTarget.style.borderColor=T.green}
             onMouseLeave={e => e.currentTarget.style.borderColor=T.slate200}
           >
-            <div style={{ fontSize:32, marginBottom:12 }}>ð️</div>
+            <div style={{ fontSize:32, marginBottom:12 }}>🗄️</div>
             <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upload to Database</div>
             <div style={{ fontSize:12, color:T.slate500, lineHeight:1.7, marginBottom:12 }}>
               Document is processed by Groq, classified, and data is loaded to the correct Supabase tables. Saved permanently to Google Drive. Logged in your document library.
@@ -595,7 +595,7 @@ const UploadSection = () => {
             onMouseEnter={e => e.currentTarget.style.borderColor=T.blue}
             onMouseLeave={e => e.currentTarget.style.borderColor=T.slate200}
           >
-            <div style={{ fontSize:32, marginBottom:12 }}>ð¬</div>
+            <div style={{ fontSize:32, marginBottom:12 }}>💬</div>
             <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upload to Claude Chat</div>
             <div style={{ fontSize:12, color:T.slate500, lineHeight:1.7, marginBottom:12 }}>
               Document is passed to Claude as temporary conversation context. Not saved to your database unless Claude extracts and stores specific data. Use for quick analysis.
@@ -610,7 +610,7 @@ const UploadSection = () => {
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
-              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>ð️ Upload to Database</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>🗄️ Upload to Database</div>
               <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Groq will classify and route data to correct tables</div>
             </div>
             <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>← Back</button>
@@ -630,7 +630,7 @@ const UploadSection = () => {
             }}
             onClick={() => document.getElementById("file-input-db")?.click()}
           >
-            <div style={{ fontSize:36, marginBottom:8 }}>ð</div>
+            <div style={{ fontSize:36, marginBottom:8 }}>📂</div>
             <div style={{ fontSize:13, fontWeight:600, color:T.slate700, marginBottom:4 }}>Drop your document here or click to browse</div>
             <div style={{ fontSize:11, color:T.slate400 }}>PDF, CSV, XLSX, DOCX — max 25MB</div>
             <input id="file-input-db" type="file" accept=".pdf,.csv,.xlsx,.docx" style={{ display:"none" }} />
@@ -672,7 +672,7 @@ const UploadSection = () => {
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
-              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>ð¬ Upload to Claude Chat</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>💬 Upload to Claude Chat</div>
               <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Document becomes context for your next Claude conversation</div>
             </div>
             <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>← Back</button>
@@ -692,7 +692,7 @@ const UploadSection = () => {
             }}
             onClick={() => document.getElementById("file-input-chat")?.click()}
           >
-            <div style={{ fontSize:36, marginBottom:8 }}>ð¬</div>
+            <div style={{ fontSize:36, marginBottom:8 }}>💬</div>
             <div style={{ fontSize:13, fontWeight:600, color:T.slate700, marginBottom:4 }}>Drop your document here or click to browse</div>
             <div style={{ fontSize:11, color:T.slate400 }}>PDF, DOCX — max 10MB</div>
             <input id="file-input-chat" type="file" accept=".pdf,.docx" style={{ display:"none" }} />
@@ -727,7 +727,7 @@ const UploadSection = () => {
       {/* Email reminder */}
       {!uploadPath && (
         <div style={{ background:T.greenLt, border:`1px solid #BBF7D0`, borderLeft:`4px solid ${T.green}`, borderRadius:10, padding:"12px 16px" }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#065F46", marginBottom:4 }}>ð§ Easier option: just email it</div>
+          <div style={{ fontSize:12, fontWeight:700, color:"#065F46", marginBottom:4 }}>📧 Easier option: just email it</div>
           <div style={{ fontSize:11, color:"#065F46", lineHeight:1.6 }}>
             The fastest way to get a document into your BCC is to email it to your agency Gmail. The Document Importer checks hourly and processes it automatically — no manual upload needed. COMP_RECAP, payroll exports, bank statements, resumes — just forward the email.
           </div>
