@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
@@ -11,24 +11,8 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // this business lives here. Editable by owner or Claude.
 // Categories mirror persistent_memory table in Supabase.
 //
-// CATEGORIES:
-//   agency_profile      — Entity, licenses, contacts
-//   staff               — Team members and roles
-//   business_rules      — Rules Claude must always follow
-//   financial_context   — Accounting setup, CPA, comp structure
-//   goals               — Current targets and priorities
-//   relationships       — Key contacts and vendors
-//   compliance_notes    — Agent-specific compliance reminders
-//
-// DATA: Reads/writes persistent_memory table in Supabase
-// In production replace MOCK_MEMORY with:
-//   const { data } = await supabase
-//     .from('persistent_memory')
-//     .select('*')
-//     .eq('agency_id', agencyId)
-//     .eq('is_active', true)
-//     .order('category')
-// ============================================================
+// CATEGORIES (rendered dynamically from data):
+// The sidebar populates from whatever categories the persistent_memory table contains.
 
 
 // ─── Design Tokens ────────────────────────────────────────────
@@ -59,161 +43,30 @@ const T = {
   white:   "#FFFFFF",
 };
 
-// ─── Category Config ──────────────────────────────────────────
-const CATEGORIES = [
-  { id: "agency_profile",    label: "Agency Profile",    icon: "🏢", color: T.blue,   colorLt: T.blueLt,   description: "Entity details, licensing, contact information" },
-  { id: "staff",             label: "Staff & Team",      icon: "👥", color: T.purple, colorLt: T.purpleLt, description: "Team members, roles, employment details" },
-  { id: "business_rules",    label: "Business Rules",    icon: "⚙️", color: T.navy,   colorLt: T.slate100, description: "Rules Claude must always follow in every conversation" },
-  { id: "financial_context", label: "Financial Context", icon: "💰", color: T.green,  colorLt: T.greenLt,  description: "Accounting setup, CPA details, compensation structure" },
-  { id: "goals",             label: "Goals & Priorities",icon: "🎯", color: T.amber,  colorLt: T.amberLt,  description: "Current targets, priorities, milestones" },
-  { id: "relationships",     label: "Key Relationships", icon: "🤝", color: T.teal,   colorLt: T.tealLt,   description: "CPA, vendors, SF contacts, key business relationships" },
-  { id: "compliance_notes",  label: "Compliance Notes",  icon: "🛡️", color: T.red,    colorLt: T.redLt,    description: "Agency-specific compliance reminders and notes" },
-];
-
-// ─── Mock Data ────────────────────────────────────────────────
-const MOCK_MEMORY = [
-  // Agency Profile
-  {
-    id: "1", category: "agency_profile", title: "Agency Overview",
-    content: `Agency Name: Smith Insurance Agency
-Owner: Jane Smith
-Entity Type: S-Corporation
-SF Agent Code: IL 22-441A
-Licensed States: IL, WI, IN
-Primary Email: jane@smithagency.com
-Phone: (312) 555-0182
-Address: 1420 N. Michigan Ave, Suite 301, Chicago, IL 60610
-BCC Setup Date: April 15, 2026`,
-    added_by: "system", source: "initial_setup",
-  },
-  {
-    id: "2", category: "agency_profile", title: "Business Context",
-    content: `Jane has operated this agency since 2018. Prior career in banking gave her strong financial acumen. Agency focus is personal lines with a growing commercial book. Located in the suburban Chicago market, high competition area. Jane reviews her BCC every morning before 9AM and prefers direct, concise communication with bullet points for action items.`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Staff
-  {
-    id: "3", category: "staff", title: "Team Overview",
-    content: `Current Team (3 staff):
-
-1. Marcus Thompson — Licensed Sales Agent (W-2)
-   Start: Jan 2022 · Salary: $52,000 + commission
-   Licensed: IL, WI · Strong life insurance producer
-   Email: marcus@smithagency.com
-
-2. Priya Patel — Office Manager (W-2, unlicensed)
-   Start: Mar 2020 · Salary: $42,000
-   Handles operations, billing, client service
-   Email: priya@smithagency.com
-
-3. Tyler Smith — Part-time Support (W-2, family)
-   Start: Jun 2024 · Hourly: $18/hr
-   Jane's son. Works 20hrs/wk. Below standard deduction.
-   No FIT withheld. Flag for CPA at year-end for W-2.`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Business Rules
-  {
-    id: "4", category: "business_rules", title: "Accounting Rules",
-    content: `1. Cash basis ONLY — revenue counts when money hits the bank account. Never count pending or promised payments as current revenue.
-2. PFA (Policy Financing Arrangement) is NOT a business asset. It does not appear on the balance sheet. It is a SF compliance item only.
-3. Owner draws and S-Corp distributions are equity transactions — never expenses.
-4. Owner W-2 wages must reflect reasonable compensation for S-Corp — flag for CPA annually.
-5. Always reconcile COMP_RECAP to GL before closing a period.
-6. Tyler Smith (family employee) requires W-2 at year-end. No FIT withheld — below standard deduction threshold. Review with Steven Bonventre.
-7. S-Corp Medical premiums for Jane are tracked in account 6115 and added to W-2 Box 1.`,
-    added_by: "system", source: "if_standard_rules",
-  },
-  {
-    id: "5", category: "business_rules", title: "SF Compliance Rules",
-    content: `1. Never suggest social media content that promises specific rates or savings.
-2. All advertising must be pre-approved by SF before publishing.
-3. Required disclosures must appear on all marketing materials.
-4. Flag license renewal deadlines 60 days in advance.
-5. Flag E&O insurance renewal 90 days before expiration.
-6. PFA activity should be reviewed with CPA annually.
-7. No rebating or inducements to policyholders.
-8. Do not suggest content that could be confused with official SF corporate communications.`,
-    added_by: "system", source: "if_compliance_rules",
-  },
-  {
-    id: "6", category: "business_rules", title: "Communication Preferences",
-    content: `- Direct and concise. No fluff.
-- Use bullet points for action items.
-- Flag financial issues immediately — do not soften bad news.
-- Jane reviews BCC every morning before 9AM.
-- Prefers email briefings over in-app notifications for critical items.
-- When recommending actions, lead with the most important item.`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Financial Context
-  {
-    id: "7", category: "financial_context", title: "Accounting & Tax Setup",
-    content: `Entity: S-Corporation (elected 2019)
-Fiscal Year: Calendar Year (Jan–Dec)
-Accounting Method: Cash Basis
-Payroll Provider: Gusto (bi-weekly)
-CPA: Steven Bonventre at Club Capital Tax LLC
-CPA Email: steven@clubcapitaltax.com
-CPA Phone: (312) 555-0198
-Owner W-2 Salary: $85,000/year (reasonable comp)
-S-Corp Distributions: Separate from salary, tracked in equity
-S-Corp Medical: Jane's health insurance added to W-2 Box 1`,
-    added_by: "system", source: "discovery_call",
-  },
-  {
-    id: "8", category: "financial_context", title: "SF Compensation Structure",
-    content: `AIPP Target 2026: $142,000
-Prior Year AIPP Actual 2025: $138,200
-ScoreBoard Participation: Yes — targeting President level
-Primary Revenue Lines: Auto, Home, Life, Personal Articles
-Multi-State Comp: IL (primary), WI, IN — all comp reported on IL COMP_RECAP
-COMP_RECAP: Received monthly from SF, imported via Doc Importer`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Goals
-  {
-    id: "9", category: "goals", title: "2026 Goals",
-    content: `1. Hit AIPP target of $142,000 (currently at 47.5% — on track)
-2. Grow new business premium by 15% vs 2025
-3. Add one licensed team member by Q3 2026
-4. Achieve ScoreBoard President recognition
-5. Reduce operating expense ratio below 45%
-6. Complete full BCC data migration by end of April
-7. Launch social media content calendar — 4 posts/week`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Relationships
-  {
-    id: "10", category: "relationships", title: "Key Contacts",
-    content: `CPA: Steven Bonventre — Club Capital Tax LLC — steven@clubcapitaltax.com
-SF Field Leader: Michael Torres — michael.torres@statefarm.com (personal email on file)
-Payroll: Gusto support — support@gusto.com
-E&O Insurance: Hartford — policy #HRT-8821-IL — renews Aug 2026
-Attorney: Davis & Park LLC — Michelle Park — (312) 555-0211
-Landlord: Midwest Properties LLC — lease expires Dec 2027
-IT Support: TechForce Chicago — helpdesk@techforcechicago.com`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Compliance Notes
-  {
-    id: "11", category: "compliance_notes", title: "Agency-Specific Compliance Reminders",
-    content: `- IL license renewal due: October 2026 — also covers WI and IN non-resident
-- CE hours required: 24 hours IL by Oct 2026 — 14 hours completed as of Apr 2026
-- E&O renewal: August 2026 — flag 90 days out (May 2026)
-- Annual social media audit: Due by Nov 2026
-- Privacy notice distribution: Due by Nov 2026
-- W-2 filing: January 31, 2027 for 2026 tax year
-- Tyler Smith family employment: Review with Steven at year-end for proper W-2 treatment`,
-    added_by: "system", source: "discovery_call",
-  },
-];
+// ─── Category Metadata ────────────────────────────────────────
+// Visual config per known category. The sidebar is built dynamically from
+// whatever categories actually exist in the persistent_memory table — any
+// category not in this map gets DEFAULT_CATEGORY_META styling.
+const CATEGORY_META = {
+  agency_profile:    { label: "Agency Profile",    icon: "🏢", color: "#3B82F6", colorLt: "#DBEAFE", description: "Entity details, licensing, contact information",          order: 1 },
+  business_context:  { label: "Business Context",  icon: "🧭", color: "#0EA5E9", colorLt: "#E0F2FE", description: "Who the agent is and how the business operates",          order: 2 },
+  accounting_rules:  { label: "Accounting Rules",  icon: "📒", color: "#10B981", colorLt: "#D1FAE5", description: "Cash-basis rules, two-entity convention, GL conventions",  order: 3 },
+  financial_context: { label: "Financial Context", icon: "💰", color: "#10B981", colorLt: "#D1FAE5", description: "Accounting setup, CPA details, compensation structure",   order: 4 },
+  business_rules:    { label: "Business Rules",    icon: "⚙️", color: "#1E3A8A", colorLt: "#F1F5F9", description: "Rules Claude must always follow in every conversation",   order: 5 },
+  staff:             { label: "Staff & Team",      icon: "👥", color: "#A855F7", colorLt: "#FAF5FF", description: "Team members, roles, employment details",                 order: 6 },
+  goals:             { label: "Goals & Priorities",icon: "🎯", color: "#F59E0B", colorLt: "#FEF3C7", description: "Current targets, priorities, milestones",                 order: 7 },
+  relationships:     { label: "Key Relationships", icon: "🤝", color: "#14B8A6", colorLt: "#CCFBF1", description: "CPA, vendors, SF contacts, key business relationships",   order: 8 },
+  compliance_notes:  { label: "Compliance Notes",  icon: "🛡️", color: "#EF4444", colorLt: "#FEE2E2", description: "Agency-specific compliance reminders and notes",          order: 9 },
+  session_note:      { label: "Session Notes",     icon: "📝", color: "#64748B", colorLt: "#F1F5F9", description: "Working notes Claude wrote at the end of past sessions",  order: 99 },
+};
+const DEFAULT_CATEGORY_META = { label: null, icon: "📌", color: "#64748B", colorLt: "#F1F5F9", description: "", order: 50 };
+const metaFor = (id) => {
+  const m = CATEGORY_META[id] || DEFAULT_CATEGORY_META;
+  return { ...m, label: m.label || (id || "").replace(/_/g," ").replace(/\b\w/g, c => c.toUpperCase()) };
+};
+const ALL_CATEGORIES = Object.entries(CATEGORY_META)
+  .map(([id, m]) => ({ id, ...m }))
+  .sort((a, b) => (a.order || 50) - (b.order || 50));
 
 // ─── Shared Components ────────────────────────────────────────
 const AskBtn = ({ context, size = "normal" }) => (
@@ -510,49 +363,119 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
 
 // ─── Main Module ──────────────────────────────────────────────
 export default function PersistentMemory() {
-  const [memories,        setMemories]        = useState(MOCK_MEMORY);
+  const [memories,        setMemories]        = useState([]);
+  const [loading,         setLoading]          = useState(true);
+  const [saveError,       setSaveError]        = useState(null);
   const [activeCategory,  setActiveCategory]  = useState("all");
   const [editingItem,     setEditingItem]      = useState(null);
   const [showNewModal,    setShowNewModal]     = useState(false);
   const [searchQuery,     setSearchQuery]      = useState("");
 
-  // Counts per category
-  const counts = {
-    all: memories.filter(m => m.is_active !== false).length,
-    ...Object.fromEntries(
-      CATEGORIES.map(c => [c.id, memories.filter(m => m.category === c.id && m.is_active !== false).length])
-    ),
-  };
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!supabase || !AGENCY_ID) { setLoading(false); return; }
+      try {
+        const { data, error } = await supabase
+          .from("persistent_memory")
+          .select("*")
+          .eq("agency_id", AGENCY_ID)
+          .order("updated_at", { ascending: false });
+        if (cancelled) return;
+        if (error) console.error("[PersistentMemory] load error:", error);
+        setMemories(data || []);
+      } catch (e) {
+        if (!cancelled) console.error("[PersistentMemory] load exception:", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
-  // Filtered memories
-  const filtered = memories.filter(m => {
-    if (m.is_active === false) return false;
+  const activeMemories = useMemo(
+    () => (memories || []).filter(m => m.is_active !== false),
+    [memories]
+  );
+
+  const categories = useMemo(() => {
+    const present = Array.from(new Set(activeMemories.map(m => m.category).filter(Boolean)));
+    return present
+      .map(id => ({ id, ...metaFor(id) }))
+      .sort((a, b) => (a.order || 50) - (b.order || 50) || a.label.localeCompare(b.label));
+  }, [activeMemories]);
+
+  const counts = useMemo(() => ({
+    all: activeMemories.length,
+    ...Object.fromEntries(
+      categories.map(c => [c.id, activeMemories.filter(m => m.category === c.id).length])
+    ),
+  }), [activeMemories, categories]);
+
+  const filtered = useMemo(() => activeMemories.filter(m => {
     if (activeCategory !== "all" && m.category !== activeCategory) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q);
+      return (m.title || "").toLowerCase().includes(q) || (m.content || "").toLowerCase().includes(q);
     }
     return true;
-  });
+  }), [activeMemories, activeCategory, searchQuery]);
 
-  // Grouped by category for display
-  const grouped = CATEGORIES.reduce((acc, cat) => {
+  const grouped = useMemo(() => categories.reduce((acc, cat) => {
     const items = filtered.filter(m => m.category === cat.id);
     if (items.length) acc[cat.id] = items;
     return acc;
-  }, {});
+  }, {}), [filtered, categories]);
 
-  const handleSave = (item) => {
-    if (item.id) {
-      setMemories(prev => prev.map(m => m.id === item.id ? item : m));
+  const handleSave = async (item) => {
+    setSaveError(null);
+    if (!supabase || !AGENCY_ID) { setSaveError("Supabase not configured"); return; }
+    if (item.id && !String(item.id).startsWith("pending-")) {
+      const { data, error } = await supabase
+        .from("persistent_memory")
+        .update({
+          category: item.category,
+          title:    item.title,
+          content:  item.content,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", item.id)
+        .eq("agency_id", AGENCY_ID)
+        .select()
+        .maybeSingle();
+      if (error) { setSaveError(error.message); return; }
+      setMemories(prev => prev.map(m => m.id === item.id ? (data || { ...m, ...item }) : m));
     } else {
-      setMemories(prev => [...prev, { ...item, id: Date.now().toString(), added_by: "owner", source: "manual" }]);
+      const { data, error } = await supabase
+        .from("persistent_memory")
+        .insert([{
+          agency_id: AGENCY_ID,
+          category: item.category,
+          title:    item.title,
+          content:  item.content,
+          added_by: "agent_ui",
+          source:   "manual",
+          is_active: true,
+        }])
+        .select()
+        .maybeSingle();
+      if (error) { setSaveError(error.message); return; }
+      if (data) setMemories(prev => [data, ...prev]);
     }
     setEditingItem(null);
     setShowNewModal(false);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
+    setSaveError(null);
+    if (!supabase || !AGENCY_ID || !id) return;
+    const { error } = await supabase
+      .from("persistent_memory")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("agency_id", AGENCY_ID);
+    if (error) { setSaveError(error.message); return; }
     setMemories(prev => prev.map(m => m.id === id ? { ...m, is_active: false } : m));
     setEditingItem(null);
   };
@@ -611,8 +534,20 @@ export default function PersistentMemory() {
         </div>
       </div>
 
+      {saveError && (
+        <div style={{ marginBottom: 12, padding: "10px 14px", background: "#FEE2E2", border: "1px solid #FCA5A5", borderRadius: 8, fontSize: 12, color: "#991B1B" }}>
+          Could not save: {saveError}
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ padding: 40, textAlign: "center", fontSize: 13, color: T.slate500 }}>
+          Loading memory entries…
+        </div>
+      )}
+
       {/* Search */}
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 16, display: loading ? "none" : "block" }}>
         <input
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
@@ -629,11 +564,12 @@ export default function PersistentMemory() {
       </div>
 
       {/* Body — Sidebar + Cards */}
+      {!loading && (
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
 
         {/* Category Sidebar */}
         <CategorySidebar
-          categories={CATEGORIES}
+          categories={categories}
           activeCategory={activeCategory}
           counts={counts}
           onChange={setActiveCategory}
@@ -651,7 +587,7 @@ export default function PersistentMemory() {
           )}
 
           {activeCategory === "all"
-            ? CATEGORIES.map(cat => {
+            ? categories.map(cat => {
                 const items = grouped[cat.id];
                 if (!items?.length) return null;
                 return (
@@ -680,7 +616,7 @@ export default function PersistentMemory() {
                 );
               })
             : (() => {
-                const cat = CATEGORIES.find(c => c.id === activeCategory);
+                const cat = categories.find(c => c.id === activeCategory);
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {filtered.map(item => (
@@ -697,12 +633,13 @@ export default function PersistentMemory() {
           }
         </div>
       </div>
+      )}
 
       {/* Edit Modal */}
       {(editingItem || showNewModal) && (
         <EditModal
           item={editingItem}
-          categories={CATEGORIES}
+          categories={ALL_CATEGORIES}
           onSave={handleSave}
           onCancel={() => { setEditingItem(null); setShowNewModal(false); }}
           onDelete={handleDelete}
