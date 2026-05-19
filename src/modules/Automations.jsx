@@ -165,14 +165,6 @@ const MOCK_RUN_LOG = [
   { id:"l12", recipe_name:"Daily Briefing Email",     run_at:"Yesterday 6:01 AM",    status:"success", records_processed:1,  duration_seconds:11, output_summary:"Briefing email sent to jane@smithagency.com. Subject: Your Agency Snapshot — Sunday April 26." },
 ];
 
-const MOCK_CONNECTIONS = [
-  { id:"c1", platform:"Gmail",        icon:"📧", status:"error",   connected_account:"jane@smithagency.com", last_sync:"Today 6:00 AM",    note:"OAuth token expired — needs reconnection in Composio" },
-  { id:"c2", platform:"Google Drive", icon:"📁", status:"healthy", connected_account:"jane@smithagency.com", last_sync:"Yesterday 11:00 PM", note:"All Drive operations running normally" },
-  { id:"c3", platform:"Google Calendar",icon:"📅",status:"healthy",connected_account:"jane@smithagency.com", last_sync:"Today 7:00 AM",    note:"Calendar sync active" },
-  { id:"c4", platform:"Facebook",     icon:"👥", status:"healthy", connected_account:"Smith Insurance Agency Page", last_sync:"Yesterday 9:00 AM", note:"Page posting active" },
-  { id:"c5", platform:"LinkedIn",     icon:"💼", status:"healthy", connected_account:"Jane Smith",           last_sync:"Yesterday 12:00 PM", note:"Profile posting active" },
-  { id:"c6", platform:"Instagram",    icon:"📸", status:"manual",  connected_account:"@smithinsurance",      last_sync:"N/A",              note:"Instagram requires manual daily posting — no API scheduling available" },
-];
 
 const MOCK_BRIEFINGS = [
   {
@@ -189,14 +181,6 @@ const MOCK_BRIEFINGS = [
   },
 ];
 
-const MOCK_IMPORTS = [
-  { id:"i1", date:"Apr 25, 2026", file_name:"april_payroll_export.csv",   source:"Email from Gusto",            status:"complete", groq_type:"payroll_export",  tables:["payroll_runs","payroll_detail"], records:4 },
-  { id:"i2", date:"Apr 20, 2026", file_name:"SF_COMP_April_2026.pdf",     source:"Email from State Farm",       status:"complete", groq_type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:5 },
-  { id:"i3", date:"Apr 15, 2026", file_name:"chase_march_statement.pdf",  source:"Email from Chase",            status:"partial",  groq_type:"bank_statement",  tables:["journal_entries"],              records:18 },
-  { id:"i4", date:"Apr 10, 2026", file_name:"resume_marcus_t.pdf",        source:"Email from candidate",        status:"complete", groq_type:"resume",          tables:["applicants","documents"],       records:1  },
-  { id:"i5", date:"Apr 5, 2026",  file_name:"SF_COMP_March_2026.pdf",     source:"Email from State Farm",       status:"complete", groq_type:"comp_recap",      tables:["comp_recap","aipp_tracking"],   records:4  },
-  { id:"i6", date:"Apr 1, 2026",  file_name:"q1_tax_estimate_2026.pdf",   source:"Email from Club Capital Tax", status:"complete", groq_type:"tax_document",    tables:["documents"],                    records:0  },
-];
 
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
@@ -636,7 +620,7 @@ const DocImporter = ({ imports }) => {
                     </div>
                     <div style={{ background:T.slate50, borderRadius:8, padding:"8px 10px" }}>
                       <div style={{ fontSize:10, color:T.slate400, marginBottom:2 }}>Tables Updated</div>
-                      <div style={{ fontSize:11, fontWeight:500, color:T.slate700 }}>{doc.tables.join(", ")}</div>
+                      <div style={{ fontSize:11, fontWeight:500, color:T.slate700 }}>{(doc.tables || []).join(", ")}</div>
                     </div>
                   </div>
                   {doc.status === "partial" && (
@@ -644,7 +628,7 @@ const DocImporter = ({ imports }) => {
                       ⚠ Partial import — one or more pages could not be parsed. File saved to Google Drive for manual review.
                     </div>
                   )}
-                  <AskBtn size="small" context={`Document import record:\nFile: ${doc.file_name}\nDate: ${doc.date}\nSource: ${doc.source}\nGroq Classification: ${doc.groq_type}\nStatus: ${doc.status}\nRecords loaded: ${doc.records}\nTables updated: ${doc.tables.join(", ")}\n\nHelp me verify this import looks correct and identify any follow-up needed.`} />
+                  <AskBtn size="small" context={`Document import record:\nFile: ${doc.file_name}\nDate: ${doc.date}\nSource: ${doc.source}\nGroq Classification: ${doc.groq_type}\nStatus: ${doc.status}\nRecords loaded: ${doc.records}\nTables updated: ${(doc.tables || []).join(", ")}\n\nHelp me verify this import looks correct and identify any follow-up needed.`} />
                 </div>
               )}
             </div>
@@ -660,6 +644,8 @@ export default function Automations() {
   const [section, setSection] = useState("overview");
   const { data: liveRecipes, loading: recipesLoading } = useSupabaseTable("automation_recipes", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const { data: liveRunLog }   = useSupabaseTable("automation_run_log", AGENCY_ID, { orderBy: "run_at", ascending: false });
+  const { data: liveSettings } = useSupabaseTable("settings", AGENCY_ID);
+  const { data: liveDocs }     = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
 
   const [recipes, setRecipes] = useState(useMockData ? MOCK_RECIPES : []);
@@ -671,9 +657,78 @@ export default function Automations() {
     ? liveRunLog
     : useMockData ? MOCK_RUN_LOG : [];
 
-  const toggleRecipe = (id) => {
-    setRecipes(prev => prev.map(r => r.id === id ? { ...r, is_active: !r.is_active } : r));
+  // Persist recipe toggle to Supabase (was previously local-state-only — toggle
+  // would revert on page refresh).
+  const toggleRecipe = async (id) => {
+    const current = recipes.find(r => r.id === id);
+    const newState = !current?.is_active;
+    // Optimistic UI
+    setRecipes(prev => prev.map(r => r.id === id ? { ...r, is_active: newState } : r));
+    const { error } = await supabase
+      .from("automation_recipes")
+      .update({ is_active: newState })
+      .eq("id", id)
+      .eq("agency_id", AGENCY_ID);
+    if (error) {
+      console.error("[Automations] toggleRecipe failed:", error);
+      // Roll back optimistic update
+      setRecipes(prev => prev.map(r => r.id === id ? { ...r, is_active: current?.is_active } : r));
+    }
   };
+
+  // ── Derived: Connections from settings table ─────────────────
+  // The settings table has key/value pairs like composio_gmail_account_id,
+  // composio_googledrive_account_id, etc. For each known integration we
+  // check whether the corresponding key has a non-empty value, which means
+  // OAuth was completed. Missing/empty = needs connection.
+  const connections = useMemo(() => {
+    const settingsMap = Object.fromEntries(
+      (liveSettings || []).map(s => [s.setting_key, s.setting_value])
+    );
+    const has = (k) => Boolean(settingsMap[k]);
+    const specs = [
+      { id:"gmail",         platform:"Gmail",          icon:"📧", key:"composio_gmail_account_id",       account:"Google Workspace (Composio)", note:"Used by document importer and email archiver" },
+      { id:"drive",         platform:"Google Drive",   icon:"📁", key:"composio_googledrive_account_id", account:"Google Workspace (Composio)", note:"Where processed documents are filed" },
+      { id:"calendar",      platform:"Google Calendar",icon:"📅", key:"composio_googlecalendar_account_id", account:"Google Workspace (Composio)", note:"Used for scheduling reminders" },
+      { id:"facebook",      platform:"Facebook Pages", icon:"📘", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content" },
+      { id:"linkedin",      platform:"LinkedIn",       icon:"💼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content" },
+      { id:"instagram",     platform:"Instagram",      icon:"📷", key:"composio_instagram_account_id",   account:"Instagram (manual posting)",  note:"API only allows reminders — agent posts manually", manual:true },
+      { id:"composio",      platform:"Composio",       icon:"🧩", key:"composio_api_key",                 account:"API key configured",          note:"Action layer for all integrations" },
+      { id:"groq",          platform:"Groq",           icon:"⚡", key:"groq_api_key",                     account:"API key configured",          note:"LLM parsing for document classification" },
+    ];
+    return specs.map(s => {
+      const present = has(s.key);
+      const status = s.manual ? "manual" : (present ? "healthy" : "error");
+      return {
+        id: s.id,
+        platform: s.platform,
+        icon: s.icon,
+        status,
+        connected_account: present ? s.account : "Not connected",
+        last_sync: present ? "active" : "—",
+        note: s.manual
+          ? s.note
+          : (present ? s.note : "Ask Claude to connect this — say 'connect " + s.platform + "'"),
+      };
+    });
+  }, [liveSettings]);
+
+  // ── Derived: Doc importer history from documents table ───────
+  const imports = useMemo(() => {
+    return (liveDocs || []).map(d => {
+      const dt = d.uploaded_at ? new Date(d.uploaded_at) : null;
+      return {
+        id:        d.id,
+        date:      dt ? dt.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—",
+        file_name: d.file_name || "—",
+        source:    (d.upload_source || "—").replace(/_/g," "),
+        status:    d.processing_status || "unknown",
+        groq_type: d.groq_classification || d.file_type,
+        tables:    Array.isArray(d.tables_updated) ? d.tables_updated : [],
+        records:   d.records_created || 0,
+      };
+    });
+  }, [liveDocs]);
 
   if (recipesLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading automations…</div>;
   if (recipes.length === 0) return <EmptyState module="automations" />;
@@ -681,7 +736,7 @@ export default function Automations() {
   const sections = [
     { id:"overview",  label:"Overview"          },
     { id:"runlog",    label:"Run Log"            },
-    { id:"recipes",   label:"Recipes (10)"       },
+    { id:"recipes",   label:`Recipes (${recipes.length})`       },
     { id:"connections",label:"Connections"       },
     { id:"briefing",  label:"Daily Briefing"     },
     { id:"importer",  label:"Doc Importer"       },
@@ -694,7 +749,7 @@ export default function Automations() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Automations</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            10 active recipes · Composio executes · Groq processes · All results logged here
+            {recipes.length} active recipes · Composio executes · Groq processes · All results logged here
           </div>
         </div>
         <AskBtn context="I'm reviewing my BCC automations. Give me a health check — what's running well, what needs attention, and are there any automation improvements I should consider for my agency?" />
@@ -710,12 +765,12 @@ export default function Automations() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"    && <AutomationOverview recipes={recipes} runLog={runLog} connections={MOCK_CONNECTIONS} />}
+      {section === "overview"    && <AutomationOverview recipes={recipes} runLog={runLog} connections={connections} />}
       {section === "runlog"      && <RunLog runLog={runLog} />}
       {section === "recipes"     && <Recipes recipes={recipes} onToggle={toggleRecipe} />}
-      {section === "connections" && <Connections connections={MOCK_CONNECTIONS} />}
+      {section === "connections" && <Connections connections={connections} />}
       {section === "briefing"    && <DailyBriefingSection briefings={MOCK_BRIEFINGS} />}
-      {section === "importer"    && <DocImporter imports={MOCK_IMPORTS} />}
+      {section === "importer"    && <DocImporter imports={imports} />}
     </div>
   );
 }
