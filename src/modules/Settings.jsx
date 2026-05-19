@@ -848,7 +848,7 @@ export default function Settings() {
       if (!supabase || !AGENCY_ID) { setLoading(false); return; }
       try {
         const [agencyRes, settingsRes, usersRes] = await Promise.all([
-          supabase.from("agency").select("*").eq("id", AGENCY_ID).single(),
+          supabase.from("agency").select("*").eq("id", AGENCY_ID).maybeSingle(),
           supabase.from("settings").select("*").eq("agency_id", AGENCY_ID),
           supabase.from("users").select("*").eq("agency_id", AGENCY_ID),
         ]);
