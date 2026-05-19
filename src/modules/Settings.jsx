@@ -63,51 +63,6 @@ const ROLES = {
   accountant:{ label:"Accountant", color:T.purple, bg:T.purpleLt,description:"Financials and Documents read-only access" },
 };
 
-// ─── Mock Data ────────────────────────────────────────────────
-const MOCK_USERS = [
-  { id:"u1", name:"Jane Smith",    email:"jane@smithagency.com",    role:"owner",     last_login:"Today 8:14 AM",    is_active:true,  is_current:true  },
-  { id:"u2", name:"Marcus Thompson",email:"marcus@smithagency.com", role:"staff",     last_login:"Today 9:02 AM",    is_active:true,  is_current:false },
-  { id:"u3", name:"Priya Patel",   email:"priya@smithagency.com",   role:"manager",   last_login:"Yesterday 5:30 PM",is_active:true,  is_current:false },
-  { id:"u4", name:"Steven Bonventre",email:"steven@clubcapitaltax.com",role:"accountant",last_login:"Apr 14, 2026",  is_active:true,  is_current:false },
-];
-
-const MOCK_CONNECTIONS = [
-  { id:"c1", platform:"Gmail",          icon:"📧", status:"error",   account:"jane@smithagency.com",        last_sync:"Today 6:00 AM",    note:"OAuth token expired — reconnect required" },
-  { id:"c2", platform:"Google Drive",   icon:"📁", status:"healthy", account:"jane@smithagency.com",        last_sync:"Yesterday 11:00 PM",note:"Active" },
-  { id:"c3", platform:"Google Calendar",icon:"📅", status:"healthy", account:"jane@smithagency.com",        last_sync:"Today 7:00 AM",    note:"Active" },
-  { id:"c4", platform:"Facebook",       icon:"👥", status:"healthy", account:"Smith Insurance Agency Page", last_sync:"Yesterday 9:00 AM", note:"Active" },
-  { id:"c5", platform:"LinkedIn",       icon:"💼", status:"healthy", account:"Jane Smith",                  last_sync:"Yesterday 12:00 PM",note:"Active" },
-  { id:"c6", platform:"Instagram",      icon:"📸", status:"manual",  account:"@smithinsurance",             last_sync:"N/A",              note:"Manual posting required — no API scheduling" },
-];
-
-const MOCK_AGENCY = {
-  name:          "Smith Insurance Agency",
-  owner_name:    "Jane Smith",
-  entity_type:   "S-Corporation",
-  tax_id:        "••-•••1847",
-  sf_agent_code: "IL 22-441A",
-  licensing_states:["IL","WI","IN"],
-  primary_email: "jane@smithagency.com",
-  phone:         "(312) 555-0182",
-  address:       "1420 N. Michigan Ave, Suite 301, Chicago, IL 60610",
-  google_account:"jane@smithagency.com",
-  vercel_url:    "smith-insurance-bcc.vercel.app",
-  setup_date:    "April 15, 2026",
-};
-
-const MOCK_CONFIG = {
-  timezone:          "America/Chicago",
-  fiscal_year_start: "January 1",
-  accounting_method: "Cash Basis",
-  currency:          "USD",
-  briefing_time:     "6:00 AM",
-  briefing_email:    "jane@smithagency.com",
-  briefing_enabled:  true,
-  aipp_target:       142000,
-  aipp_year:         2026,
-  dashboard_period:  "mtd",
-};
-
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
