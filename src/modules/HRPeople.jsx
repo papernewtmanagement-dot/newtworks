@@ -273,7 +273,7 @@ function useProducerROI() {
         const currentMonth = new Date().getMonth() + 1;
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes] = await Promise.all([
-          supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual").eq("id", AGENCY_ID).single(),
+          supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual").eq("id", AGENCY_ID).maybeSingle(),
           supabase.from("staff").select("id, first_name, last_name, role, start_date, pay_rate, pay_type, employment_type, is_active, email, phone, notes, licensed, license_states, compliance_flag").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("staff_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("staff_id, gross_pay, payroll_run_id"),
@@ -305,7 +305,7 @@ function useProducerROI() {
         }
         const lapseRate = agency.lapse_rate_annual != null ? parseFloat(agency.lapse_rate_annual) : (computedLapse != null ? computedLapse : 10);
 
-        // Per-producer monthly gross pay from last 3 payroll runs (Ã2 for semi-monthly)
+        // Per-producer monthly gross pay from last 3 payroll runs (×2 for semi-monthly)
         const last3RunIds = new Set(payrollRuns.slice(0, 3).map(r => r.id));
         const grossByStaff = {};
         const runsCountByStaff = {};
@@ -905,7 +905,7 @@ const PerformanceSection = ({ roi }) => {
           <div>• <strong>SMVC rate (P&C):</strong> {smvcRate.toFixed(2)}% — agent earns this percent of issued auto + fire premium per A005 agreement</div>
           <div>• <strong>Blended rate (other):</strong> {blendedRate.toFixed(2)}% — blended commission for Life, Health, Financial Services</div>
           <div>• <strong>Lapse rate:</strong> {lapseRate.toFixed(1)}% per year — applied as compounding annual decay to renewing cohorts</div>
-          <div>• <strong>Fully-loaded payroll:</strong> gross pay Ã 1.15 — covers FICA, FUTA, SUTA, WC</div>
+          <div>• <strong>Fully-loaded payroll:</strong> gross pay × 1.15 — covers FICA, FUTA, SUTA, WC</div>
           <div>• <strong>Renewal start:</strong> month 13 — new business policies issued today start generating renewal commission 12 months from now</div>
           <div>• <strong>Steady-state pace:</strong> 6-month rolling average of issued premium per producer</div>
         </div>
@@ -936,13 +936,13 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
 
   // For each forward month index from producer.history.length onward (i.e., projection months),
   // compute total commission to agency = sum of (cohort_k's renewal commission at age = (month - k))
-  // Rules: at age 0 (same month as written), commission = full new-business commission (SMVC Ã pc + blended Ã other)
+  // Rules: at age 0 (same month as written), commission = full new-business commission (SMVC × pc + blended × other)
   //        at age 1-11 months, no additional commission yet (it's the same policies, paid once at issue under SF)
   //        at age 12+, the renewal commission kicks in, reduced by persistency^floor((age-12)/12 + 1)
   //
   // Simpler model that matches Rebecca's description:
   //   For month N going forward, projected commission = NEW commission this month +
-  //     for each cohort k written â¥12 months ago: cohort_k_commission Ã persistency^(years_since)
+  //     for each cohort k written ≥12 months ago: cohort_k_commission × persistency^(years_since)
   //   where years_since = floor((N - k) / 12)
 
   const forwardStartIdx = producer.history.length;
@@ -1038,7 +1038,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
           <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 10px", borderRadius: 20, background: statusBg, color: statusColor }}>{status}</span>
-          <AskBtn size="small" context={`Producer ROI analysis — ${producer.name}\nRole: ${producer.role}\nTenure: ${producer.tenureMonths} months\nMonthly issued premium (P&C avg): $${Math.round(producer.avgPC).toLocaleString()}\nMonthly issued premium (other avg): $${Math.round(producer.avgOther).toLocaleString()}\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNew-business commission this month: $${Math.round(currentNewCommission).toLocaleString()} (issued premium Ã SMVC rate)\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNet to agency this month (new-biz only): $${Math.round(currentNetToAgency).toLocaleString()}\nProjected breakeven (when renewal stack-up + new biz covers cost): ${breakevenLabel || "outside 24 months"}\nLapse rate applied: ${lapseRate.toFixed(1)}%\nSMVC rate: ${smvcRate.toFixed(2)}% on P&C, ${blendedRate.toFixed(2)}% blended on other lines\n\nIs this producer on track? Should I increase their production target? What should I be doing differently?`} />
+          <AskBtn size="small" context={`Producer ROI analysis — ${producer.name}\nRole: ${producer.role}\nTenure: ${producer.tenureMonths} months\nMonthly issued premium (P&C avg): $${Math.round(producer.avgPC).toLocaleString()}\nMonthly issued premium (other avg): $${Math.round(producer.avgOther).toLocaleString()}\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNew-business commission this month: $${Math.round(currentNewCommission).toLocaleString()} (issued premium × SMVC rate)\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNet to agency this month (new-biz only): $${Math.round(currentNetToAgency).toLocaleString()}\nProjected breakeven (when renewal stack-up + new biz covers cost): ${breakevenLabel || "outside 24 months"}\nLapse rate applied: ${lapseRate.toFixed(1)}%\nSMVC rate: ${smvcRate.toFixed(2)}% on P&C, ${blendedRate.toFixed(2)}% blended on other lines\n\nIs this producer on track? Should I increase their production target? What should I be doing differently?`} />
         </div>
       </div>
 
@@ -1060,12 +1060,12 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
         <div style={{ background: T.blueLt, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>New-Biz Commission</div>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.blue }}>${Math.round(currentNewCommission).toLocaleString()}</div>
-          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Premium Ã SMVC</div>
+          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Premium × SMVC</div>
         </div>
         <div style={{ background: T.amberLt, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>Fully-Loaded Cost</div>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#92400E" }}>${Math.round(monthlyLoaded).toLocaleString()}</div>
-          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Gross Ã 1.15</div>
+          <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>Gross × 1.15</div>
         </div>
         <div style={{ background: currentNetToAgency >= 0 ? T.greenLt : T.redLt, padding: "9px 11px", borderRadius: 8 }}>
           <div style={{ fontSize: 9, color: T.slate500, marginBottom: 3 }}>Net to Agency</div>
