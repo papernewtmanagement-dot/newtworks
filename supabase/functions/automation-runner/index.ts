@@ -293,6 +293,285 @@ async function writeOutput(opts: {
   return { inserted: data?.length ?? 0, updated: 0 };
 }
 
+
+// --- Daily Briefing composer ----------------------------------------------
+// Pulls live data from Supabase, formats markdown + HTML + KPI jsonb.
+// Called from the recipe branch when internal_handler === 'daily_briefing_composer'.
+// Output: { subject, body_html, body_markdown, kpis, sections_included, briefing_date }
+async function composeDailyBriefing(agencyId: string, recipientEmail: string): Promise<any> {
+  // Use America/Chicago for "today" - matches the 7am Central cron schedule
+  const now = new Date();
+  const chicagoStr = now.toLocaleString("en-US", { timeZone: "America/Chicago" });
+  const chiDate = new Date(chicagoStr);
+  const year = chiDate.getFullYear();
+  const month = chiDate.getMonth() + 1; // 1-12
+  const day = chiDate.getDate();
+  const briefingDate = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const weekdayName = chiDate.toLocaleDateString("en-US", { weekday: "long" });
+  const dateLabel = chiDate.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+
+  // Prior month for comparison
+  const priorMonth = month === 1 ? 12 : month - 1;
+  const priorYear = month === 1 ? year - 1 : year;
+
+  // --- Parallel data fetches ---
+  const [
+    mtdRes,
+    priorRes,
+    tasksRes,
+    alertsRes,
+    complianceRes,
+    staffRes,
+    aippRes,
+    producerRes,
+  ] = await Promise.all([
+    sb.from("comp_recap").select("amount").eq("agency_id", agencyId).eq("period_year", year).eq("period_month", month),
+    sb.from("comp_recap").select("amount").eq("agency_id", agencyId).eq("period_year", priorYear).eq("period_month", priorMonth),
+    sb.from("tasks").select("title,priority,due_date,status").eq("agency_id", agencyId).neq("status", "completed").order("priority").limit(10),
+    sb.from("alerts").select("title,severity,due_date").eq("agency_id", agencyId).eq("is_resolved", false).order("created_at", { ascending: false }).limit(10),
+    sb.from("compliance_calendar").select("title,due_date,status").eq("agency_id", agencyId).neq("status", "completed").gte("due_date", briefingDate).lte("due_date", `${year}-12-31`).order("due_date").limit(10),
+    sb.from("staff").select("id,licensed").eq("agency_id", agencyId).eq("is_active", true),
+    sb.from("aipp_tracking").select("program_year,target_amount,earned_ytd").eq("agency_id", agencyId).eq("program_year", year).maybeSingle(),
+    sb.from("producer_production").select("id").eq("agency_id", agencyId).eq("period_year", year).limit(1),
+  ]);
+
+  const mtdRevenue = (mtdRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const mtdLines = (mtdRes.data || []).length;
+  const priorRevenue = (priorRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const priorLines = (priorRes.data || []).length;
+  const eomProjection = day > 0 ? (mtdRevenue / day) * daysInMonth : 0;
+  const momDeltaPct = priorRevenue > 0 ? ((eomProjection - priorRevenue) / priorRevenue) * 100 : 0;
+
+  const openTasks = tasksRes.data || [];
+  const openTasksHigh = openTasks.filter((t: any) => t.priority === "high").length;
+  const topTasks = openTasks.slice(0, 5);
+
+  const activeAlerts = alertsRes.data || [];
+
+  const compliance = (complianceRes.data || []).filter((c: any) => {
+    const d = new Date(c.due_date);
+    const today = new Date(briefingDate);
+    const days = Math.round((d.getTime() - today.getTime()) / 86400000);
+    return days >= 0 && days <= 60;
+  });
+  const compliance14 = compliance.filter((c: any) => {
+    const days = Math.round((new Date(c.due_date).getTime() - new Date(briefingDate).getTime()) / 86400000);
+    return days <= 14;
+  });
+
+  const staff = staffRes.data || [];
+  const activeStaff = staff.length;
+  const staffLicensed = staff.filter((s: any) => s.licensed).length;
+
+  const aipp = aippRes.data;
+  const hasProducerData = (producerRes.data || []).length > 0;
+
+  // --- Format money ---
+  const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+  // --- Subject ---
+  const subject = `BCC Daily Briefing — ${weekdayName.slice(0,3)}, ${dateLabel} — MTD ${money(mtdRevenue)}, pacing ${money(eomProjection)}`;
+
+  // --- Build sections ---
+  const sectionsIncluded: string[] = ["greeting", "where_we_are"];
+
+  // Watching list - dynamic
+  const watching: string[] = [];
+  if (priorRevenue > 0 && momDeltaPct < -15) {
+    watching.push(`<strong>MTD pace vs ${priorMonth === 12 ? "December" : new Date(year, priorMonth-1, 1).toLocaleDateString("en-US", { month: "long" })}.</strong> We're tracking ${momDeltaPct.toFixed(0)}% vs last month — worth a real look if the gap holds through next week.`);
+  }
+  if (!aipp) {
+    watching.push(`<strong>AIPP tracking is empty for ${year}.</strong> No target set. When you've got 10 minutes, let's seed it so I can give you a "pace vs goal" reading every morning.`);
+  }
+  if (!hasProducerData) {
+    watching.push(`<strong>Producer Production table is empty.</strong> Once we backfill, I can give you a per-producer view in this briefing.`);
+  }
+
+  // --- Markdown body ---
+  let md = `# Good morning, Peter
+
+It's ${weekdayName}, ${dateLabel} — day ${day} of ${daysInMonth}. Coffee first, then the rundown.
+
+`;
+  md += `## Where we are this month
+
+**MTD revenue:** ${money(mtdRevenue)} across ${mtdLines} line items.
+
+`;
+  if (priorRevenue > 0) {
+    md += `Pacing toward roughly **${money(eomProjection)}** by month-end. Prior month closed at ${money(priorRevenue)} (${priorLines} lines), so we're tracking about **${momDeltaPct >= 0 ? "+" : ""}${momDeltaPct.toFixed(0)}%** vs last month.
+
+`;
+  } else {
+    md += `Pacing toward roughly **${money(eomProjection)}** by month-end.
+
+`;
+  }
+
+  if (topTasks.length > 0) {
+    sectionsIncluded.push("todays_priorities");
+    md += `## Today's priorities
+
+You've got **${openTasks.length} open tasks**, ${openTasksHigh} high-priority. Top of the pile:
+
+`;
+    topTasks.forEach((t: any, i: number) => {
+      md += `${i+1}. ${t.title}${t.priority === "high" ? " 🔴" : ""}
+`;
+    });
+    md += `
+`;
+  }
+
+  if (activeAlerts.length > 0) {
+    sectionsIncluded.push("active_alerts");
+    md += `## Active alerts
+
+`;
+    activeAlerts.slice(0, 5).forEach((a: any) => {
+      md += `- ${a.severity === "critical" ? "🔴" : a.severity === "high" ? "🟠" : "🟡"} ${a.title}
+`;
+    });
+    md += `
+`;
+  }
+
+  if (compliance.length > 0) {
+    sectionsIncluded.push("compliance_upcoming");
+    md += `## Compliance — coming up
+
+`;
+    compliance.slice(0, 5).forEach((c: any) => {
+      const days = Math.round((new Date(c.due_date).getTime() - new Date(briefingDate).getTime()) / 86400000);
+      const icon = days <= 7 ? "🔴" : days <= 14 ? "🟡" : "🟢";
+      md += `- ${icon} **In ${days} days (${c.due_date}):** ${c.title}
+`;
+    });
+    md += `
+`;
+  }
+
+  if (watching.length > 0) {
+    sectionsIncluded.push("what_im_watching");
+    md += `## What I'm watching
+
+`;
+    watching.forEach((w) => { md += `- ${w.replace(/<[^>]+>/g, "")}
+`; });
+    md += `
+`;
+  }
+
+  sectionsIncluded.push("what_to_ask_me");
+  md += `## What to ask me today
+
+- "Show me April's comp_recap by category"
+- "What's blocking the GL right now?"
+- "Set up AIPP tracking for ${year}"
+
+Going to be a good day. Talk soon.
+
+— Claude`;
+
+  // --- HTML body ---
+  const sfRed = "#c8102e";
+  let html = `<!DOCTYPE html><html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px; color: #1a1a1a; background: #fafafa; line-height: 1.55;">`;
+  html += `<h1 style="margin: 0 0 16px; font-size: 24px; color: ${sfRed};">Good morning, Peter</h1>`;
+  html += `<p style="font-size: 15px; color: #555;">${weekdayName}, ${dateLabel} — day ${day} of ${daysInMonth}. Coffee first, then the rundown.</p>`;
+
+  html += `<h2 style="margin-top: 28px; font-size: 18px; border-bottom: 2px solid ${sfRed}; padding-bottom: 6px;">Where we are this month</h2>`;
+  html += `<p><strong>MTD revenue:</strong> ${money(mtdRevenue)} across ${mtdLines} line items.</p>`;
+  if (priorRevenue > 0) {
+    const priorMonthName = new Date(priorYear, priorMonth-1, 1).toLocaleDateString("en-US", { month: "long" });
+    html += `<p>Pacing toward roughly <strong>${money(eomProjection)}</strong> by month-end. ${priorMonthName} closed at ${money(priorRevenue)} (${priorLines} lines), so we're tracking about <strong>${momDeltaPct >= 0 ? "+" : ""}${momDeltaPct.toFixed(0)}%</strong> vs last month.</p>`;
+  } else {
+    html += `<p>Pacing toward roughly <strong>${money(eomProjection)}</strong> by month-end.</p>`;
+  }
+
+  html += `<table style="width:100%; border-collapse: collapse; margin: 16px 0; background: white; border-radius: 8px; overflow: hidden;">`;
+  html += `<tr style="background: #f0f0f0;"><th style="text-align:left; padding: 10px 14px;">Metric</th><th style="text-align:right; padding: 10px 14px;">Today</th></tr>`;
+  const row = (k: string, v: string) => `<tr><td style="padding: 8px 14px; border-top:1px solid #eee;">${k}</td><td style="text-align:right; padding: 8px 14px; border-top:1px solid #eee;">${v}</td></tr>`;
+  html += row("MTD revenue", `<strong>${money(mtdRevenue)}</strong>`);
+  html += row("EOM projection", money(eomProjection));
+  if (priorRevenue > 0) html += row("Prior month actual", money(priorRevenue));
+  html += row("Open tasks", `${openTasks.length} (${openTasksHigh} high)`);
+  html += row("Active alerts", String(activeAlerts.length));
+  html += row("Active staff", `${activeStaff} (${staffLicensed} licensed)`);
+  html += `</table>`;
+
+  if (topTasks.length > 0) {
+    html += `<h2 style="margin-top: 28px; font-size: 18px; border-bottom: 2px solid ${sfRed}; padding-bottom: 6px;">Today's priorities</h2>`;
+    html += `<p>You've got <strong>${openTasks.length} open tasks</strong>, ${openTasksHigh} high-priority. Top of the pile:</p><ol>`;
+    topTasks.forEach((t: any) => {
+      html += `<li>${t.priority === "high" ? "<strong>🔴 " : ""}${t.title}${t.priority === "high" ? "</strong>" : ""}</li>`;
+    });
+    html += `</ol>`;
+  }
+
+  if (activeAlerts.length > 0) {
+    html += `<h2 style="margin-top: 28px; font-size: 18px; border-bottom: 2px solid ${sfRed}; padding-bottom: 6px;">Active alerts</h2><ul>`;
+    activeAlerts.slice(0, 5).forEach((a: any) => {
+      const icon = a.severity === "critical" ? "🔴" : a.severity === "high" ? "🟠" : "🟡";
+      html += `<li>${icon} ${a.title}</li>`;
+    });
+    html += `</ul>`;
+  }
+
+  if (compliance.length > 0) {
+    html += `<h2 style="margin-top: 28px; font-size: 18px; border-bottom: 2px solid ${sfRed}; padding-bottom: 6px;">Compliance — coming up</h2><ul>`;
+    compliance.slice(0, 5).forEach((c: any) => {
+      const days = Math.round((new Date(c.due_date).getTime() - new Date(briefingDate).getTime()) / 86400000);
+      const color = days <= 7 ? "#dc2626" : days <= 14 ? "#d97706" : "#059669";
+      html += `<li><strong style="color:${color};">In ${days} days (${c.due_date}):</strong> ${c.title}</li>`;
+    });
+    html += `</ul>`;
+  }
+
+  if (watching.length > 0) {
+    html += `<h2 style="margin-top: 28px; font-size: 18px; border-bottom: 2px solid ${sfRed}; padding-bottom: 6px;">What I'm watching</h2><ul>`;
+    watching.forEach((w) => { html += `<li>${w}</li>`; });
+    html += `</ul>`;
+  }
+
+  html += `<h2 style="margin-top: 28px; font-size: 18px; border-bottom: 2px solid ${sfRed}; padding-bottom: 6px;">What to ask me today</h2>`;
+  html += `<ul><li><em>"Show me ${priorMonth === 12 ? "December" : new Date(year, priorMonth-1, 1).toLocaleDateString("en-US", { month: "long" })}'s comp_recap by category"</em></li>`;
+  html += `<li><em>"What's blocking the GL right now?"</em></li>`;
+  html += `<li><em>"Set up AIPP tracking for ${year}"</em></li></ul>`;
+
+  html += `<p style="margin-top: 32px; color: #888; font-size: 13px;">Going to be a good day. Talk soon.<br/>— Claude</p>`;
+  html += `<hr style="border:none; border-top:1px solid #e5e5e5; margin:32px 0 12px;">`;
+  html += `<p style="color:#aaa; font-size: 11px;">Generated by Paper Newt BCC — ${recipientEmail}</p>`;
+  html += `</body></html>`;
+
+  const kpis = {
+    mtd_revenue: Number(mtdRevenue.toFixed(2)),
+    mtd_line_count: mtdLines,
+    eom_projection: Number(eomProjection.toFixed(2)),
+    prior_month_revenue: Number(priorRevenue.toFixed(2)),
+    mom_delta_pct: Number(momDeltaPct.toFixed(1)),
+    open_tasks_total: openTasks.length,
+    open_tasks_high: openTasksHigh,
+    active_alerts: activeAlerts.length,
+    compliance_due_30d: compliance.length,
+    compliance_due_14d: compliance14.length,
+    active_staff: activeStaff,
+    staff_licensed: staffLicensed,
+    aipp_target: aipp?.target_amount ?? null,
+    aipp_earned_ytd: aipp?.earned_ytd ?? null,
+    has_producer_data: hasProducerData,
+  };
+
+  return {
+    briefing_date: briefingDate,
+    subject,
+    body_markdown: md,
+    body_html: html,
+    kpis,
+    sections_included: sectionsIncluded,
+  };
+}
+
 // --- core executor ------------------------------------------------------
 
 async function executeRecipe(
@@ -360,6 +639,64 @@ async function executeRecipe(
         triggered_by: triggeredBy,
         error: null,
       };
+    }
+
+
+    // --- Daily Briefing composer branch ---
+    // Recipes flagged with internal_handler='daily_briefing_composer' compose their
+    // email body dynamically from live Supabase data before the standard Gmail send.
+    if (recipe.internal_handler === 'daily_briefing_composer') {
+      try {
+        const inputCfg = recipe.input_config || {};
+        const recipientEmail = inputCfg.recipient_email || 'paper.newt.management@gmail.com';
+        const composed = await composeDailyBriefing(agencyId, recipientEmail);
+
+        // Upsert into briefings table BEFORE sending so the row exists even if Gmail fails.
+        const { error: briefingErr } = await sb.from('briefings').upsert({
+          agency_id: agencyId,
+          briefing_date: composed.briefing_date,
+          sent_at: new Date().toISOString(),
+          delivered: false,
+          recipient_email: recipientEmail,
+          subject: composed.subject,
+          body_markdown: composed.body_markdown,
+          body_html: composed.body_html,
+          kpis: composed.kpis,
+          sections_included: composed.sections_included,
+        }, { onConflict: 'agency_id,briefing_date' });
+        if (briefingErr) {
+          console.error('[daily_briefing_composer] briefings upsert failed:', briefingErr.message);
+        }
+
+        // Rewrite input_config so the existing Gmail send path uses the composed content.
+        recipe.input_config = {
+          ...inputCfg,
+          recipient_email: recipientEmail,
+          subject: composed.subject,
+          body: composed.body_html,
+          is_html: true,
+        };
+        outputSummary = `Composed briefing for ${composed.briefing_date} (${composed.kpis.mtd_line_count} comp lines, ${composed.kpis.open_tasks_total} tasks, ${composed.kpis.compliance_due_30d} compliance items)`;
+      } catch (composeErr) {
+        // Compose failure should NOT block the daily email. Fall through to the
+        // configured input_config (smoke-test body) so something still ships.
+        const msg = composeErr instanceof Error ? composeErr.message : String(composeErr);
+        console.error('[daily_briefing_composer] FAILED, falling back to static body:', msg);
+        await telegram(agencyId, `🟡 <b>Daily briefing composer failed</b>\n${msg.slice(0, 300)}\n\nFallback body will be sent.`);
+        // Mark sections_included so we know the fallback fired
+        await sb.from('briefings').upsert({
+          agency_id: agencyId,
+          briefing_date: new Date().toISOString().slice(0,10),
+          sent_at: new Date().toISOString(),
+          delivered: false,
+          recipient_email: recipe.input_config?.recipient_email || 'paper.newt.management@gmail.com',
+          subject: recipe.input_config?.subject || 'BCC Daily Briefing (fallback)',
+          body_markdown: '_Composer failed; static body was sent. See automation_run_log for details._',
+          body_html: recipe.input_config?.body || '',
+          kpis: { compose_error: msg.slice(0, 500) },
+          sections_included: ['fallback'],
+        }, { onConflict: 'agency_id,briefing_date' });
+      }
     }
 
     // --- Resolve credentials ---
