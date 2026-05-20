@@ -225,11 +225,13 @@ const AskBtn = ({ context, size="normal" }) => (
 );
 
 // ─── Section: Overview ────────────────────────────────────────
-const AutomationOverview = ({ recipes, runLog, connections }) => {
+const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
   const active    = recipes.filter(r => r.is_active).length;
   const failed    = runLog.filter(r => r.status === "failed").length;
   const partial   = runLog.filter(r => r.status === "partial").length;
   const connError = connections.filter(c => c.status === "error").length;
+  const qStuck    = queueStats?.stuckCount || 0;
+  const qStuckHrs = queueStats?.stuckOldestHours || 0;
 
   const recentRuns = runLog.slice(0, 8);
 
@@ -242,10 +244,15 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
           { label:"Failed (Recent)",    value:failed,   color:failed>0?T.red:T.green,  border:failed>0?T.red:T.green },
           { label:"Partial Runs",       value:partial,  color:partial>0?T.amber:T.green, border:partial>0?T.amber:T.green },
           { label:"Connection Issues",  value:connError,color:connError>0?T.red:T.green, border:connError>0?T.red:T.green },
+          { label:"Stuck in LLM Queue", value:qStuck,
+            color: qStuck>0 && qStuckHrs>=2 ? T.red : (qStuck>0 ? T.amber : T.green),
+            border:qStuck>0 && qStuckHrs>=2 ? T.red : (qStuck>0 ? T.amber : T.green),
+            subtitle: qStuck>0 ? `oldest: ${qStuckHrs}h ago` : "all clear" },
         ].map((k,i) => (
           <div key={i} style={{ background:T.white, border:`1px solid ${T.slate200}`, borderTop:`3px solid ${k.border}`, borderRadius:12, padding:"14px 16px" }}>
             <div style={{ fontSize:11, color:T.slate500, fontWeight:500, marginBottom:6 }}>{k.label}</div>
             <div style={{ fontSize:24, fontWeight:700, color:k.color, letterSpacing:"-0.02em" }}>{k.value}</div>
+            {k.subtitle && <div style={{ fontSize:10, color:T.slate400, marginTop:3 }}>{k.subtitle}</div>}
           </div>
         ))}
       </div>
@@ -258,6 +265,18 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
           {failed > 0 && <div style={{ fontSize:12, color:"#991B1B" }}>• Daily Briefing failed today — check Run Log for details.</div>}
           <div style={{ marginTop:8 }}>
             <AskBtn size="small" context="My BCC has automation failures: Gmail OAuth token expired causing Daily Briefing to fail. Help me understand what steps I need to take to reconnect Gmail in Composio and get my Daily Briefing running again." />
+          </div>
+        </div>
+      )}
+
+      {/* Stuck-in-Queue Alert — fires when anything has been pending >= 2 hours */}
+      {qStuck > 0 && qStuckHrs >= 2 && (
+        <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderLeft:`4px solid ${T.amber}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>⏳ LLM Queue Backlog</div>
+          <div style={{ fontSize:12, color:"#92400E", marginBottom:2 }}>• {qStuck} item{qStuck===1?"":"s"} stuck in the LLM parse queue. Oldest is {qStuckHrs} hours old.</div>
+          <div style={{ fontSize:11, color:"#92400E", marginTop:2 }}>The drainer is a manual workbench process — ask Claude to "drain the queue" to clear it.</div>
+          <div style={{ marginTop:8 }}>
+            <AskBtn size="small" context="My BCC has stuck items in the llm_parse_queue. Drain the queue using docs/drainer.py and tell me what processed, what failed, and why." />
           </div>
         </div>
       )}
@@ -300,6 +319,44 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
           ))}
         </Card>
       </div>
+
+      {/* LLM Parse Queue Health — wired to llm_parse_queue table */}
+      <Card style={{ marginTop:12 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>LLM parse queue</div>
+          <div style={{ fontSize:10, color:T.slate400 }}>document processor → workbench drainer → comp_recap / payroll</div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10, marginBottom:12 }}>
+          {[
+            { label:"Pending",    value:queueStats?.pending    || 0, color:(queueStats?.pending||0)>0?T.amber:T.slate500 },
+            { label:"Processing", value:queueStats?.processing || 0, color:(queueStats?.processing||0)>0?T.blue:T.slate500 },
+            { label:"Succeeded",  value:queueStats?.succeeded  || 0, color:T.green },
+            { label:"Failed",     value:queueStats?.failed     || 0, color:(queueStats?.failed||0)>0?T.red:T.slate500 },
+          ].map((s,i) => (
+            <div key={i} style={{ background:T.slate50||"#F8FAFC", border:`1px solid ${T.slate200}`, borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
+              <div style={{ fontSize:10, color:T.slate500, fontWeight:500, marginBottom:4 }}>{s.label}</div>
+              <div style={{ fontSize:20, fontWeight:700, color:s.color }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+        {queueStats?.recent && queueStats.recent.length > 0 && (
+          <>
+            <div style={{ fontSize:11, fontWeight:600, color:T.slate600, marginTop:6, marginBottom:6 }}>Most recent in queue</div>
+            {queueStats.recent.slice(0, 5).map((q, i) => (
+              <div key={q.id || i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"6px 0", borderBottom:i<4?`1px solid ${T.slate100}`:"none" }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12, fontWeight:500, color:T.slate800, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{q.file_name || q.doc_type || "—"}</div>
+                  <div style={{ fontSize:10, color:T.slate400 }}>{q.doc_type || "—"} · {q.purpose || "—"} · attempt {q.attempts || 0}</div>
+                </div>
+                <StatusPill status={q.status === "succeeded" ? "success" : (q.status === "processing" ? "pending" : q.status)} />
+              </div>
+            ))}
+          </>
+        )}
+        {(!queueStats?.recent || queueStats.recent.length === 0) && (
+          <div style={{ fontSize:11, color:T.slate400, textAlign:"center", padding:"12px 0" }}>Queue is empty — nothing waiting to be processed</div>
+        )}
+      </Card>
     </div>
   );
 };
@@ -646,6 +703,8 @@ export default function Automations() {
   const { data: liveRunLog }   = useSupabaseTable("automation_run_log", AGENCY_ID, { orderBy: "run_at", ascending: false });
   const { data: liveSettings } = useSupabaseTable("settings", AGENCY_ID);
   const { data: liveDocs }     = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
+  const { data: liveBriefings } = useSupabaseTable("briefings", AGENCY_ID, { orderBy: "briefing_date", ascending: false });
+  const { data: liveQueue }     = useSupabaseTable("llm_parse_queue", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
 
   const [recipes, setRecipes] = useState(useMockData ? MOCK_RECIPES : []);
@@ -730,6 +789,51 @@ export default function Automations() {
     });
   }, [liveDocs]);
 
+  // ── Derived: Briefings from briefings table ──────────────────
+  const briefings = useMemo(() => {
+    return (liveBriefings || []).map(b => {
+      const dt = b.briefing_date ? new Date(b.briefing_date + "T00:00:00") : null;
+      const sentDt = b.sent_at ? new Date(b.sent_at) : null;
+      return {
+        id: b.id,
+        date: dt ? dt.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—",
+        sent_at: sentDt ? sentDt.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", hour12:true }) : "—",
+        delivered: !!b.delivered,
+        opened: !!b.opened,
+        subject: b.subject || "—",
+        content: b.body_markdown || b.body_html?.replace(/<[^>]+>/g, "") || "—",
+      };
+    });
+  }, [liveBriefings]);
+
+  // ── Derived: LLM queue health — anything stuck is loud ──────
+  const queueStats = useMemo(() => {
+    const rows = liveQueue || [];
+    const byStatus = { pending:0, processing:0, succeeded:0, failed:0 };
+    let stuckOldest = null;
+    const now = Date.now();
+    rows.forEach(r => {
+      const k = r.status in byStatus ? r.status : "pending";
+      byStatus[k] = (byStatus[k] || 0) + 1;
+      if ((r.status === "pending" || r.status === "processing") && r.created_at) {
+        const ageHours = (now - new Date(r.created_at).getTime()) / 3600000;
+        if (!stuckOldest || ageHours > stuckOldest.ageHours) {
+          stuckOldest = { ageHours, file_name: r.file_name, doc_type: r.doc_type };
+        }
+      }
+    });
+    return {
+      pending: byStatus.pending,
+      processing: byStatus.processing,
+      succeeded: byStatus.succeeded,
+      failed: byStatus.failed,
+      stuckCount: byStatus.pending + byStatus.processing,
+      stuckOldestHours: stuckOldest ? Math.round(stuckOldest.ageHours * 10) / 10 : 0,
+      stuckOldestFile: stuckOldest ? stuckOldest.file_name : null,
+      recent: rows.slice(0, 10),
+    };
+  }, [liveQueue]);
+
   if (recipesLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading automations…</div>;
   if (recipes.length === 0) return <EmptyState module="automations" />;
 
@@ -765,11 +869,11 @@ export default function Automations() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"    && <AutomationOverview recipes={recipes} runLog={runLog} connections={connections} />}
+      {section === "overview"    && <AutomationOverview recipes={recipes} runLog={runLog} connections={connections} queueStats={queueStats} />}
       {section === "runlog"      && <RunLog runLog={runLog} />}
       {section === "recipes"     && <Recipes recipes={recipes} onToggle={toggleRecipe} />}
       {section === "connections" && <Connections connections={connections} />}
-      {section === "briefing"    && <DailyBriefingSection briefings={MOCK_BRIEFINGS} />}
+      {section === "briefing"    && <DailyBriefingSection briefings={briefings.length > 0 ? briefings : (useMockData ? MOCK_BRIEFINGS : [])} />}
       {section === "importer"    && <DocImporter imports={imports} />}
     </div>
   );
