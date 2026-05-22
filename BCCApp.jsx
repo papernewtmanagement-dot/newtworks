@@ -11,6 +11,7 @@ import AlertsNotifications from "./src/modules/AlertsNotifications.jsx";
 import Documents from "./src/modules/Documents.jsx";
 import HRPeople from "./src/modules/HRPeople.jsx";
 import Settings from "./src/modules/Settings.jsx";
+import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -90,6 +91,7 @@ const NAV_ITEMS = [
   { id: "tasks",       label: "Tasks & Goals",    icon: "check",       roles: ["owner","manager","staff","readonly"] },
   { id: "alerts",      label: "Alerts",           icon: "bell",        roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "documents",   label: "Documents",        icon: "folder",      roles: ["owner","manager","accountant"] },
+  { id: "monthlyclose", label: "Monthly Close",    icon: "calendar",    roles: ["owner","manager","accountant"] },
   { id: "hr",          label: "HR & People",      icon: "users",       roles: ["owner","manager"] },
   { id: "chat",        label: "Claude Chat",      icon: "message",     roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "settings",    label: "Settings",         icon: "settings",    roles: ["owner"] },
@@ -109,6 +111,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     check:      <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
     bell:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
     folder:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>,
+    calendar:   <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
     users:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
     message:    <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
     settings:   <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>,
@@ -376,6 +379,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     documents:   <ErrorBoundary name="Documents"><Documents /></ErrorBoundary>,
+    monthlyclose:<ErrorBoundary name="Monthly Close"><MonthlyClose /></ErrorBoundary>,
     hr:          <ErrorBoundary name="HR & People"><HRPeople /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
