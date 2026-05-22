@@ -79,13 +79,15 @@ function useProducerROI() {
         const currentYear  = new Date().getFullYear();
         const currentMonth = new Date().getMonth() + 1;
 
-        const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes] = await Promise.all([
-          supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual").eq("id", AGENCY_ID).maybeSingle(),
+        const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
+          supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
           supabase.from("staff").select("id, first_name, last_name, role, start_date, pay_rate, pay_type, employment_type, is_active, email, phone, notes, licensed, license_states, compliance_flag").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("staff_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("staff_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
           supabase.from("comp_recap").select("period_year, period_month, comp_type, comp_category, amount").eq("agency_id", AGENCY_ID),
+          supabase.from("v_aipp_projection").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
+          supabase.from("aipp_tracking").select("*").eq("agency_id", AGENCY_ID).order("program_year",{ascending:false}).limit(1),
         ]);
 
         const agency = agencyRes.data || {};
@@ -110,7 +112,9 @@ function useProducerROI() {
         if (priorRenewals > 0) {
           computedLapse = Math.max(0, Math.min(50, (1 - currentRenewals / priorRenewals) * 100));
         }
-        const lapseRate = agency.lapse_rate_annual != null ? parseFloat(agency.lapse_rate_annual) : (computedLapse != null ? computedLapse : 10);
+        const lapseRate = agency.lapse_rate_annual != null
+          ? (parseFloat(agency.lapse_rate_annual) <= 1 ? parseFloat(agency.lapse_rate_annual) * 100 : parseFloat(agency.lapse_rate_annual))
+          : (computedLapse != null ? computedLapse : 10);
 
         // Per-producer monthly gross pay from last 3 payroll runs (×2 for semi-monthly)
         const last3RunIds = new Set(payrollRuns.slice(0, 3).map(r => r.id));
@@ -128,8 +132,16 @@ function useProducerROI() {
           monthlyGrossByStaff[sid] = (total / runs) * 2;
         }
 
-        const smvc = parseFloat(agency.smvc_rate_pc) || 10;
-        const blended = parseFloat(agency.blended_rate_other) || 9;
+        // Rates in the agency table are stored as decimals (e.g. 0.10 = 10%).
+        // The Performance UI works in PERCENT, so normalize: a value <= 1 is a
+        // decimal fraction and gets ×100; a value > 1 is already a percent.
+        const toPct = (v, dflt) => {
+          const n = parseFloat(v);
+          if (!Number.isFinite(n) || n <= 0) return dflt;
+          return n <= 1 ? n * 100 : n;
+        };
+        const smvc = toPct(agency.smvc_rate_pc, 10);
+        const blended = toPct(agency.blended_rate_other, 9);
 
         // Group production by staff/year/month
         const prodByKey = {};
@@ -199,6 +211,10 @@ function useProducerROI() {
           };
         });
 
+        // AIPP projection (server-side view) + tracking baseline
+        const aipp = aippRes?.data || null;
+        const aippTracking = (aippTrackRes?.data && aippTrackRes.data[0]) || null;
+
         setData({
           agency,
           smvcRate: smvc,
@@ -206,10 +222,14 @@ function useProducerROI() {
           lapseRate,
           lapseRateComputed: computedLapse,
           lapseRateOverride: agency.lapse_rate_annual != null,
+          ratesAreDefaults: agency.rates_are_defaults === true,
           priorRenewals,
           currentRenewals,
           producerRows,
           allActiveStaff: staff,
+          aipp,
+          aippTracking,
+          hasProductionData: production.length > 0,
         });
       } catch (e) {
         console.error("Producer ROI load error:", e);
@@ -626,6 +646,83 @@ const OnboardingSection = ({ onboarding }) => {
 };
 
 // ─── Section: Performance — Producer ROI ──────────────────────────────────
+// ─── AIPP Projection Card ─────────────────────────────────────
+// AIPP = 5% of qualifying NEW P&C premium issued, paid each January.
+// Eligibility: 60+ months (5 yrs) service; continues up to 240 months (20 yrs).
+// Base = NEW PREMIUM ISSUED (auto/fire/small-health), NOT commissions.
+// Sourced from v_aipp_projection (server-side), which needs producer_production rows.
+const AippProjectionCard = ({ aipp, aippTracking, hasProductionData }) => {
+  const money = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
+  const hasProjection = aipp && Number(aipp.qualifying_premium_ytd) > 0;
+
+  const target = aippTracking ? Number(aippTracking.target_amount) : null;
+  const ratePct = aipp ? (Number(aipp.aipp_rate) * 100) : 5;
+
+  return (
+    <Card style={{ borderLeft: `4px solid ${T.green}` }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+        <div>
+          <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>AIPP Projection</div>
+          <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
+            {ratePct.toFixed(0)}% of qualifying NEW P&amp;C premium issued · paid each January
+          </div>
+        </div>
+        <AskBtn size="small" context={hasProjection
+          ? `My AIPP projection for ${aipp.program_year}:\nQualifying new P&C premium YTD (through month ${aipp.through_month}): ${money(aipp.qualifying_premium_ytd)}\nProjected full-year qualifying premium: ${money(aipp.projected_full_year_premium)}\nAIPP earned YTD: ${money(aipp.aipp_earned_ytd)}\nProjected AIPP payout: ${money(aipp.aipp_projected_payout)} (paid ~${aipp.projected_payout_date})\n\nAm I on pace? Which product lines should I push to lift this?`
+          : `I do not yet have producer production data loaded, so my AIPP projection is empty. AIPP is 5% of qualifying NEW P&C premium issued, paid each January. What should I do to get my production reports flowing so this projects automatically?`} />
+      </div>
+
+      {hasProjection ? (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:10 }}>
+            <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Qualifying Premium YTD</div>
+              <div style={{ fontSize:16, fontWeight:700, color:T.slate900 }}>{money(aipp.qualifying_premium_ytd)}</div>
+              <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>through month {aipp.through_month}</div>
+            </div>
+            <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Projected Full-Year Premium</div>
+              <div style={{ fontSize:16, fontWeight:700, color:T.slate900 }}>{money(aipp.projected_full_year_premium)}</div>
+            </div>
+            <div style={{ background:T.greenLt, padding:"10px 12px", borderRadius:8 }}>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>AIPP Earned YTD</div>
+              <div style={{ fontSize:16, fontWeight:700, color:"#065F46" }}>{money(aipp.aipp_earned_ytd)}</div>
+            </div>
+            <div style={{ background:T.blueLt, padding:"10px 12px", borderRadius:8 }}>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Projected Payout</div>
+              <div style={{ fontSize:16, fontWeight:700, color:"#1E40AF" }}>{money(aipp.aipp_projected_payout)}</div>
+              <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>~{aipp.projected_payout_date}</div>
+            </div>
+          </div>
+          {target ? (
+            <div style={{ marginTop:12 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.slate600, marginBottom:5 }}>
+                <span>Pace vs target ({money(target)})</span>
+                <span>{Math.min(999, Math.round((Number(aipp.aipp_projected_payout)/target)*100))}%</span>
+              </div>
+              <ProgressBar value={Number(aipp.aipp_projected_payout)} max={target}
+                color={Number(aipp.aipp_projected_payout) >= target ? T.green : T.amber} height={8} />
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div style={{ padding:"14px 14px", background:T.slate50, borderRadius:8, fontSize:12, color:T.slate600, lineHeight:1.6 }}>
+          <div style={{ fontWeight:600, color:T.slate700, marginBottom:4 }}>Awaiting production data</div>
+          No producer production has been loaded yet, so there is nothing to project. Once your monthly
+          Producer Production Report is emailed in, the document importer files it and this projection fills
+          in automatically — 5% of qualifying new P&amp;C premium, compounding toward your next-January payout.
+          {aippTracking ? <div style={{ marginTop:6 }}>Target on file for {aippTracking.program_year}: <strong>{money(aippTracking.target_amount)}</strong>.</div> : null}
+        </div>
+      )}
+
+      <div style={{ marginTop:12, padding:"10px 12px", background:T.greenLt, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.5 }}>
+        <strong>Eligibility:</strong> requires 60+ months (5 years) of service and continues up to 240 months (20 years).
+        The base is new premium <em>issued</em> on qualifying P&amp;C lines — not commission earned.
+      </div>
+    </Card>
+  );
+};
+
 // ─── Section: Performance — Producer ROI ──────────────────────
 const PerformanceSection = ({ roi }) => {
   if (!roi) {
@@ -639,20 +736,30 @@ const PerformanceSection = ({ roi }) => {
   }
 
   const { smvcRate, blendedRate, lapseRate, lapseRateComputed, lapseRateOverride,
-          priorRenewals, currentRenewals, producerRows } = roi;
+          priorRenewals, currentRenewals, producerRows,
+          ratesAreDefaults, aipp, aippTracking, hasProductionData } = roi;
 
-  if (producerRows.length === 0) {
-    return (
-      <Card>
-        <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: T.slate500 }}>
-          No producers (LSPs / Financial Services Specialists) found in your staff list.
-        </div>
-      </Card>
-    );
-  }
+  const noProducers = producerRows.length === 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* ─── AIPP PROJECTION CARD ─────────────────────────────────── */}
+      <AippProjectionCard aipp={aipp} aippTracking={aippTracking} hasProductionData={hasProductionData} />
+
+      {ratesAreDefaults && (
+        <div style={{ padding: "9px 13px", background: T.amberLt, border: `1px solid ${T.amber}`, borderRadius: 8, fontSize: 11.5, color: "#92400E", lineHeight: 1.5 }}>
+          <strong>Estimated rates in use.</strong> SMVC, blended, and lapse rates below are placeholder defaults until your actual AA05 numbers are confirmed. Tell your Claude your real P&C SMVC rate to lock these in.
+        </div>
+      )}
+
+      {noProducers && (
+        <Card>
+          <div style={{ padding: "16px 0", textAlign: "center", fontSize: 13, color: T.slate500 }}>
+            No producers (Producer / LSP / Financial Services Specialist) found in your staff list for the per-producer ROI projection.
+          </div>
+        </Card>
+      )}
 
       {/* ─── BOOK LAPSE RATE CARD ─────────────────────────────────── */}
       <Card style={{ borderLeft: `4px solid ${T.blue}` }}>
@@ -703,7 +810,7 @@ const PerformanceSection = ({ roi }) => {
       </Card>
 
       {/* ─── PER-PRODUCER ROI ANALYSIS ───────────────────────────── */}
-      {producerRows.map(p => <ProducerROICard key={p.staff_id} producer={p} smvcRate={smvcRate} blendedRate={blendedRate} lapseRate={lapseRate} />)}
+      {!noProducers && producerRows.map(p => <ProducerROICard key={p.staff_id} producer={p} smvcRate={smvcRate} blendedRate={blendedRate} lapseRate={lapseRate} />)}
 
       {/* ─── ASSUMPTIONS FOOTER ──────────────────────────────────── */}
       <Card style={{ background: T.slate50, border: `1px dashed ${T.slate200}` }}>
