@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
@@ -161,18 +161,34 @@ const StatBar = ({ value, max, color }) => (
 );
 
 // ─── Section: Overview ────────────────────────────────────────
-const SocialOverview = ({ posts, analytics }) => {
+const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
   // Dynamic today filter — formats current date as "Mon DD" to match post date format
   const todayLabel = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const todayPosts = posts.filter(p => p.date === todayLabel);
-  const scheduledThisWeek = posts.filter(p => p.status === "scheduled" || p.status === "draft").length;
-  const failedRecent = posts.filter(p => p.status === "failed").length;
-  const manualNeeded = posts.filter(p => p.status === "scheduled" && p.requires_manual).length;
+  const todayPosts = (posts || []).filter(p => p.date === todayLabel);
+  const scheduledThisWeek = (posts || []).filter(p => p.status === "scheduled" || p.status === "draft").length;
+  const failedPosts = (posts || []).filter(p => p.status === "failed");
+  const failedRecent = failedPosts.length;
+  const manualNeeded = (posts || []).filter(p => p.status === "scheduled" && p.requires_manual).length;
 
+  const pct = (now, prev) => prev > 0 ? Math.round(((now - prev) / prev) * 100) : 0;
   const weekChange = {
-    reach: Math.round(((analytics.this_week.total_reach - analytics.last_week.total_reach) / analytics.last_week.total_reach) * 100),
-    likes: Math.round(((analytics.this_week.total_likes - analytics.last_week.total_likes) / analytics.last_week.total_likes) * 100),
+    reach: pct(analytics.this_week.total_reach, analytics.last_week.total_reach),
+    likes: pct(analytics.this_week.total_likes, analytics.last_week.total_likes),
   };
+
+  // Empty state — no content yet. Don't show a wall of zeros that looks broken.
+  if (loaded && (posts || []).length === 0) {
+    return (
+      <div style={{ textAlign:"center", padding:"48px 24px" }}>
+        <div style={{ fontSize:40, marginBottom:12 }}>📱</div>
+        <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>No social content yet</div>
+        <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto 16px", lineHeight:1.6 }}>
+          Your content calendar is empty. Head to the <strong>Create Content</strong> tab to build your first compliance-aware post, or ask Claude to draft a week of content for you.
+        </div>
+        <AskBtn context="My social media content calendar is empty. Draft me a week of compliance-aware posts following the 80/20 rule across my content pillars (Educate, Community, Connect, Celebrate, Invite). Save them to my content_calendar as drafts." />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -207,7 +223,7 @@ const SocialOverview = ({ posts, analytics }) => {
       {failedRecent > 0 && (
         <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#991B1B", marginBottom:2 }}>⚠️ Failed post detected</div>
-          <div style={{ fontSize:11, color:"#991B1B" }}>1 Instagram post failed on Apr 25. Review the calendar and repost manually.</div>
+          <div style={{ fontSize:11, color:"#991B1B" }}>{failedRecent} {failedRecent===1?"post":"posts"} failed to publish{failedPosts[0]?.date?` (most recent: ${failedPosts[0].platform} on ${failedPosts[0].date})`:""}. Review the calendar and repost manually.</div>
         </div>
       )}
 
@@ -219,7 +235,7 @@ const SocialOverview = ({ posts, analytics }) => {
       </div>
 <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Today — Monday April 27</span>
+            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Today — {new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" })}</span>
             <AskBtn size="small" context={`Today's social media posts:\n${todayPosts.map(p=>`${p.platform.toUpperCase()} at ${p.time}: "${p.caption}" — Status: ${p.status}${p.requires_manual?" (MANUAL POSTING REQUIRED)":""}`).join("\n")}\n\nHelp me review today's content for compliance and engagement quality. Check against the 80/20 rule and the pre-post checklist.`} />
           </div>
           {todayPosts.length === 0 ? (
@@ -293,12 +309,12 @@ const SocialOverview = ({ posts, analytics }) => {
 };
 
 // ─── Section: Content Calendar ────────────────────────────────
-const ContentCalendar = ({ posts }) => {
+const ContentCalendar = ({ posts, loaded }) => {
   const [platformFilter, setPlatformFilter] = useState("all");
   const [statusFilter,   setStatusFilter]   = useState("all");
   const [expanded,       setExpanded]       = useState(null);
 
-  const filtered = useMemo(() => posts.filter(p => {
+  const filtered = useMemo(() => (posts || []).filter(p => {
     if (platformFilter !== "all" && p.platform !== platformFilter) return false;
     if (statusFilter   !== "all" && p.status   !== statusFilter)   return false;
     return true;
@@ -311,10 +327,25 @@ const ContentCalendar = ({ posts }) => {
     return acc;
   }, {});
 
+  // Sort dates newest-first by parsing the "Mon DD" label against the current year
+  const yr = new Date().getFullYear();
   const dates = Object.keys(grouped).sort((a,b) => {
-    const order = ["Apr 30","Apr 29","Apr 28","Apr 27","Apr 26","Apr 25","Apr 24"];
-    return order.indexOf(a) - order.indexOf(b);
+    const da = new Date(`${a} ${yr}`), db = new Date(`${b} ${yr}`);
+    return (isNaN(db) ? 0 : db.getTime()) - (isNaN(da) ? 0 : da.getTime());
   });
+
+  if (loaded && (posts || []).length === 0) {
+    return (
+      <div style={{ textAlign:"center", padding:"48px 24px" }}>
+        <div style={{ fontSize:40, marginBottom:12 }}>🗓️</div>
+        <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>Your calendar is empty</div>
+        <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto 16px", lineHeight:1.6 }}>
+          Once you create or schedule posts, they'll appear here grouped by date. Use the Create Content tab to get started.
+        </div>
+        <AskBtn context="Draft and schedule a week of compliance-aware social posts to my content calendar, following the 80/20 rule." />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -418,8 +449,21 @@ const ContentCalendar = ({ posts }) => {
 };
 
 // ─── Section: Analytics ───────────────────────────────────────
-const Analytics = ({ analytics }) => {
-  const maxReach = Math.max(...analytics.by_platform.map(p => p.reach));
+const Analytics = ({ analytics, loaded }) => {
+  const reaches = (analytics.by_platform || []).map(p => p.reach);
+  const maxReach = reaches.length ? Math.max(...reaches) : 0;
+
+  if (loaded && (analytics.by_platform || []).length === 0 && analytics.this_week.total_posts === 0) {
+    return (
+      <div style={{ textAlign:"center", padding:"48px 24px" }}>
+        <div style={{ fontSize:40, marginBottom:12 }}>📊</div>
+        <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>No analytics yet</div>
+        <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto", lineHeight:1.6 }}>
+          Analytics populate automatically as your posts publish and gather engagement. Once you've posted content and recorded reach, likes, comments, and shares, this tab will show your weekly performance by platform and content pillar.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -693,6 +737,101 @@ Please draft a complete, compliant post ready to publish. Include:
 // ─── Main Social Media Module ─────────────────────────────────
 export default function SocialMedia() {
   const [section, setSection] = useState("overview");
+  const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
+
+  // ── Live data from content_calendar + social_accounts ───────
+  const [liveCalendar, setLiveCalendar] = useState([]);
+  const [liveAccounts, setLiveAccounts] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [{ data: cal }, { data: acct }] = await Promise.all([
+        supabase.from("content_calendar").select("*").eq("agency_id", AGENCY_ID).order("scheduled_date", { ascending: false }),
+        supabase.from("social_accounts").select("*").eq("agency_id", AGENCY_ID),
+      ]);
+      if (cancelled) return;
+      setLiveCalendar(Array.isArray(cal) ? cal : []);
+      setLiveAccounts(Array.isArray(acct) ? acct : []);
+      setLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Map content_calendar rows -> the shape the components expect
+  const livePosts = useMemo(() => {
+    return (liveCalendar || []).map(r => {
+      const d = r.scheduled_date ? new Date(r.scheduled_date + "T00:00:00") : null;
+      const t = r.scheduled_time
+        ? new Date("1970-01-01T" + r.scheduled_time).toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", hour12:true })
+        : "";
+      const hasEng = (r.engagement_likes || r.engagement_comments || r.engagement_shares || r.engagement_reach);
+      return {
+        id: r.id,
+        platform: r.platform || "facebook",
+        date: d ? d.toLocaleDateString("en-US", { month:"short", day:"numeric" }) : "—",
+        time: t,
+        status: r.status || "draft",
+        pillar: r.pillar || "educate",
+        caption: r.caption || "",
+        requires_manual: !!r.requires_manual,
+        engagement: hasEng ? {
+          likes: r.engagement_likes || 0,
+          comments: r.engagement_comments || 0,
+          shares: r.engagement_shares || 0,
+          reach: r.engagement_reach || 0,
+        } : null,
+      };
+    });
+  }, [liveCalendar]);
+
+  // Compute analytics from real posts (this week vs last week, by platform, by pillar)
+  const liveAnalytics = useMemo(() => {
+    const posted = (liveCalendar || []).filter(r => r.status === "posted");
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7*864e5);
+    const twoWeeksAgo = new Date(now.getTime() - 14*864e5);
+    const inRange = (r, a, b) => {
+      if (!r.scheduled_date) return false;
+      const d = new Date(r.scheduled_date + "T00:00:00");
+      return d >= a && d < b;
+    };
+    const sum = (rows, f) => rows.reduce((acc, r) => acc + (r[f] || 0), 0);
+    const thisWeek = posted.filter(r => inRange(r, weekAgo, now));
+    const lastWeek = posted.filter(r => inRange(r, twoWeeksAgo, weekAgo));
+    const mkAgg = rows => ({
+      total_posts: rows.length,
+      total_reach: sum(rows, "engagement_reach"),
+      total_likes: sum(rows, "engagement_likes"),
+      total_comments: sum(rows, "engagement_comments"),
+      total_shares: sum(rows, "engagement_shares"),
+    });
+    const platforms = ["facebook","instagram","linkedin","twitter"];
+    const by_platform = platforms.map(p => {
+      const rows = thisWeek.filter(r => r.platform === p);
+      return {
+        platform: p, posts: rows.length,
+        reach: sum(rows, "engagement_reach"), likes: sum(rows, "engagement_likes"),
+        comments: sum(rows, "engagement_comments"), shares: sum(rows, "engagement_shares"),
+        best_post: rows.length ? (rows.slice().sort((a,b)=>(b.engagement_reach||0)-(a.engagement_reach||0))[0].caption || "").slice(0,28) : "—",
+      };
+    }).filter(p => p.posts > 0);
+    const pillars = ["educate","community","connect","celebrate","invite"];
+    const by_pillar = pillars.map(pl => {
+      const rows = thisWeek.filter(r => (r.pillar || "") === pl);
+      return {
+        pillar: pl, posts: rows.length,
+        avg_reach: rows.length ? Math.round(sum(rows,"engagement_reach")/rows.length) : 0,
+        avg_likes: rows.length ? Math.round(sum(rows,"engagement_likes")/rows.length) : 0,
+      };
+    }).filter(p => p.posts > 0);
+    return { this_week: mkAgg(thisWeek), last_week: mkAgg(lastWeek), by_platform, by_pillar };
+  }, [liveCalendar]);
+
+  // Production shows live data (even when empty). Dev mode can fall back to mock.
+  const posts = (livePosts.length > 0 || !useMockData) ? livePosts : MOCK_POSTS;
+  const analytics = (liveCalendar.length > 0 || !useMockData) ? liveAnalytics : MOCK_ANALYTICS;
 
   const sections = [
     { id:"overview",  label:"Overview"      },
@@ -704,15 +843,25 @@ export default function SocialMedia() {
 
   const [editingPost, setEditingPost] = useState(null);
   const [showScheduler, setShowScheduler] = useState(false);
-  const [newPost, setNewPost] = useState({platform:"facebook", content:"", post_date:"", status:"draft"});
+  const [newPost, setNewPost] = useState({platform:"facebook", caption:"", pillar:"educate", scheduled_date:"", scheduled_time:"", status:"draft"});
 
   const savePost = async (post) => {
-    const { error } = await supabase.from("content_calendar").upsert([{
-      ...post,
+    // Normalize editor/scheduler field names to the real content_calendar schema.
+    const row = {
       agency_id: AGENCY_ID,
-      updated_at: new Date().toISOString()
-    }]);
-    if (!error) { setEditingPost(null); setShowScheduler(false); window.location.reload(); }
+      platform: post.platform || "facebook",
+      caption: post.caption ?? post.content ?? "",
+      pillar: post.pillar || "educate",
+      scheduled_date: post.scheduled_date || post.post_date || post.date || null,
+      scheduled_time: post.scheduled_time || post.time || null,
+      status: post.status || "draft",
+      requires_manual: post.platform === "instagram" ? true : !!post.requires_manual,
+      updated_at: new Date().toISOString(),
+    };
+    if (post.id) row.id = post.id;  // upsert existing
+    const { error } = await supabase.from("content_calendar").upsert([row]);
+    if (error) { console.error("[SocialMedia] savePost failed:", error); alert("Could not save post: " + error.message); return; }
+    setEditingPost(null); setShowScheduler(false); window.location.reload();
   };
 
   const approvePost = async (postId) => {
@@ -744,9 +893,9 @@ export default function SocialMedia() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"  && <SocialOverview  posts={MOCK_POSTS} analytics={MOCK_ANALYTICS} />}
-      {section === "calendar"  && <ContentCalendar  posts={MOCK_POSTS} />}
-      {section === "analytics" && <Analytics        analytics={MOCK_ANALYTICS} />}
+      {section === "overview"  && <SocialOverview  posts={posts} analytics={analytics} accounts={liveAccounts} loaded={loaded} />}
+      {section === "calendar"  && <ContentCalendar  posts={posts} loaded={loaded} />}
+      {section === "analytics" && <Analytics        analytics={analytics} loaded={loaded} />}
       {section === "platforms" && <PlatformGuide />}
       {section === "create"    && <CreateContent />}
     </div>
