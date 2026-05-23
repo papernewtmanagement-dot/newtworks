@@ -227,7 +227,10 @@ const AskBtn = ({ context, size="normal" }) => (
 // ─── Section: Overview ────────────────────────────────────────
 const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
   const active    = recipes.filter(r => r.is_active).length;
-  const failed    = runLog.filter(r => r.status === "failed").length;
+  const _recentMs = Date.now() - 48 * 60 * 60 * 1000;
+  const _isRecent = (r) => { const t = Date.parse(r.run_at || r.created_at || ""); return Number.isFinite(t) && t >= _recentMs; };
+  const recentFailures = (runLog || []).filter(r => r.status === "failed" && _isRecent(r));
+  const failed    = recentFailures.length;
   const partial   = runLog.filter(r => r.status === "partial").length;
   const connError = connections.filter(c => c.status === "error").length;
   const qStuck    = queueStats?.stuckCount || 0;
@@ -261,10 +264,12 @@ const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
       {(failed > 0 || connError > 0) && (
         <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#991B1B", marginBottom:4 }}>⚠️ Action Required</div>
-          {connError > 0 && <div style={{ fontSize:12, color:"#991B1B", marginBottom:2 }}>• Gmail connection error — OAuth token expired. Go to Connections tab to reconnect.</div>}
-          {failed > 0 && <div style={{ fontSize:12, color:"#991B1B" }}>• Daily Briefing failed today — check Run Log for details.</div>}
+          {connError > 0 && <div style={{ fontSize:12, color:"#991B1B", marginBottom:2 }}>• {connError} connector{connError>1?"s":""} not connected — see Connections tab. (Expected for connectors you haven't set up yet.)</div>}
+          {recentFailures.slice(0,3).map((r,idx) => (
+            <div key={idx} style={{ fontSize:12, color:"#991B1B", marginBottom:2 }}>• {(r.recipe_name || "A recipe")} failed — {(r.error_message || "see Run Log").slice(0,120)}</div>
+          ))}
           <div style={{ marginTop:8 }}>
-            <AskBtn size="small" context="My BCC has automation failures: Gmail OAuth token expired causing Daily Briefing to fail. Help me understand what steps I need to take to reconnect Gmail in Composio and get my Daily Briefing running again." />
+            <AskBtn size="small" context="My BCC Automations Overview is showing recent failures or connection issues. Help me understand what steps I need to take to reconnect Gmail in Composio and get my Daily Briefing running again." />
           </div>
         </div>
       )}
@@ -714,7 +719,7 @@ export default function Automations() {
 
   const runLog = (liveRunLog && liveRunLog.length > 0)
     ? liveRunLog
-    : useMockData ? MOCK_RUN_LOG : [];
+    : [];  // never fall back to mock run-log in production — empty is honest, mock shows false alerts
 
   // Persist recipe toggle to Supabase (was previously local-state-only — toggle
   // would revert on page refresh).
