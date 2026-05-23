@@ -754,6 +754,8 @@ export default function Automations() {
       { id:"gmail",         platform:"Gmail",          icon:"📧", key:"composio_gmail_account_id",       account:"Google Workspace (Composio)", note:"Used by document importer and email archiver" },
       { id:"drive",         platform:"Google Drive",   icon:"📁", key:"composio_googledrive_account_id", account:"Google Workspace (Composio)", note:"Where processed documents are filed" },
       { id:"calendar",      platform:"Google Calendar",icon:"📅", key:"composio_googlecalendar_account_id", account:"Google Workspace (Composio)", note:"Used for scheduling reminders" },
+      { id:"github",        platform:"GitHub",         icon:"🐙", key:"composio_github_account_id",     account:"papernewtmanagement-dot",     note:"Code repo for the BCC web app — reads/writes app code" },
+      { id:"supabase",      platform:"Supabase",       icon:"🗄️", key:"composio_supabase_account_id",   account:"BCC project database",        note:"The agency database — all BCC data lives here" },
       { id:"facebook",      platform:"Facebook Pages", icon:"📘", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content" },
       { id:"linkedin",      platform:"LinkedIn",       icon:"💼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content" },
       { id:"instagram",     platform:"Instagram",      icon:"📷", key:"composio_instagram_account_id",   account:"Instagram (manual posting)",  note:"API only allows reminders — agent posts manually", manual:true },
