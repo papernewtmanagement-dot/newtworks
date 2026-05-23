@@ -199,6 +199,7 @@ const StatusPill = ({ status }) => {
     manual:  { bg:T.purpleLt, color:"#5B21B6", label:"Manual"  },
     complete:{ bg:T.greenLt,  color:"#065F46", label:"Complete"},
     pending: { bg:T.blueLt,   color:"#1E40AF", label:"Pending" },
+  notset:  { bg:T.slate100, color:"#475569", label:"Not set up" },
   };
   const s = map[status] || { bg:T.slate100, color:T.slate500, label:status };
   return <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:s.bg, color:s.color, whiteSpace:"nowrap" }}>{s.label}</span>;
@@ -750,34 +751,60 @@ export default function Automations() {
       (liveSettings || []).map(s => [s.setting_key, s.setting_value])
     );
     const has = (k) => Boolean(settingsMap[k]);
+    // Engine health signal anon can legitimately read: did anything succeed
+    // in the run log in the last 24h? Used for composio/groq (derived) since
+    // their API-key rows are no longer anon-readable after security hardening.
+    const engineHealthy = (liveRunLog || []).some(r => {
+      if (r.status !== "success" || !r.run_at) return false;
+      return (Date.now() - new Date(r.run_at).getTime()) < 24 * 3600000;
+    });
     const specs = [
       { id:"gmail",         platform:"Gmail",          icon:"📧", key:"composio_gmail_account_id",       account:"Google Workspace (Composio)", note:"Used by document importer and email archiver" },
       { id:"drive",         platform:"Google Drive",   icon:"📁", key:"composio_googledrive_account_id", account:"Google Workspace (Composio)", note:"Where processed documents are filed" },
       { id:"calendar",      platform:"Google Calendar",icon:"📅", key:"composio_googlecalendar_account_id", account:"Google Workspace (Composio)", note:"Used for scheduling reminders" },
       { id:"github",        platform:"GitHub",         icon:"🐙", key:"composio_github_account_id",     account:"papernewtmanagement-dot",     note:"Code repo for the BCC web app — reads/writes app code" },
       { id:"supabase",      platform:"Supabase",       icon:"🗄️", key:"composio_supabase_account_id",   account:"BCC project database",        note:"The agency database — all BCC data lives here" },
-      { id:"facebook",      platform:"Facebook Pages", icon:"📘", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content" },
-      { id:"linkedin",      platform:"LinkedIn",       icon:"💼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content" },
+      { id:"facebook",      platform:"Facebook Pages", icon:"📘", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content", setupLater:true },
+      { id:"linkedin",      platform:"LinkedIn",       icon:"💼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content", setupLater:true },
       { id:"instagram",     platform:"Instagram",      icon:"📷", key:"composio_instagram_account_id",   account:"Instagram (manual posting)",  note:"API only allows reminders — agent posts manually", manual:true },
-      { id:"composio",      platform:"Composio",       icon:"🧩", key:"composio_api_key",                 account:"API key configured",          note:"Action layer for all integrations" },
-      { id:"groq",          platform:"Groq",           icon:"⚡", key:"groq_api_key",                     account:"API key configured",          note:"LLM parsing for document classification" },
+      // Composio + Groq are the always-on engine. Their secrets are no longer
+      // anon-readable (security hardening), so health is derived from whether
+      // automations actually succeeded recently — a signal anon CAN see — not
+      // from probing for an API key value the dashboard is no longer allowed to read.
+      { id:"composio",      platform:"Composio",       icon:"🧩", key:"composio_api_key",                 account:"Action layer (live)",         note:"Action layer for all integrations", derived:true },
+      { id:"groq",          platform:"Groq",           icon:"⚡", key:"groq_api_key",                     account:"LLM parsing (live)",          note:"LLM parsing for document classification", derived:true },
     ];
     return specs.map(s => {
       const present = has(s.key);
-      const status = s.manual ? "manual" : (present ? "healthy" : "error");
-      return {
-        id: s.id,
-        platform: s.platform,
-        icon: s.icon,
-        status,
-        connected_account: present ? s.account : "Not connected",
-        last_sync: present ? "active" : "—",
-        note: s.manual
-          ? s.note
-          : (present ? s.note : "Ask Claude to connect this — say 'connect " + s.platform + "'"),
-      };
+      // Engine connectors (composio/groq): health derived from recent runs,
+      //   not from reading a secret the dashboard can no longer see.
+      // Social connectors flagged setupLater: neutral "not set up", not "error".
+      // Manual (instagram): unchanged.
+      let status, connected_account, last_sync, note;
+      if (s.manual) {
+        status = "manual";
+        connected_account = present ? s.account : "Not connected";
+        last_sync = present ? "active" : "—";
+        note = s.note;
+      } else if (s.derived) {
+        status = engineHealthy ? "healthy" : "error";
+        connected_account = engineHealthy ? s.account : "No recent successful runs";
+        last_sync = engineHealthy ? "active" : "—";
+        note = engineHealthy ? s.note : "No automations have succeeded in the last 24h — ask Claude to check the run log";
+      } else if (s.setupLater && !present) {
+        status = "notset";
+        connected_account = "Not set up yet";
+        last_sync = "—";
+        note = "Optional — set up when you're ready. Ask Claude to 'connect " + s.platform + "'";
+      } else {
+        status = present ? "healthy" : "error";
+        connected_account = present ? s.account : "Not connected";
+        last_sync = present ? "active" : "—";
+        note = present ? s.note : "Ask Claude to connect this — say 'connect " + s.platform + "'";
+      }
+      return { id: s.id, platform: s.platform, icon: s.icon, status, connected_account, last_sync, note };
     });
-  }, [liveSettings]);
+  }, [liveSettings, liveRunLog]);
 
   // ── Derived: Doc importer history from documents table ───────
   const imports = useMemo(() => {
@@ -820,8 +847,8 @@ export default function Automations() {
     let stuckOldest = null;
     const now = Date.now();
     rows.forEach(r => {
-      const k = r.status in byStatus ? r.status : "pending";
-      byStatus[k] = (byStatus[k] || 0) + 1;
+      const k = r.status in byStatus ? r.status : null;
+      if (k) byStatus[k] = (byStatus[k] || 0) + 1;
       if ((r.status === "pending" || r.status === "processing") && r.created_at) {
         const ageHours = (now - new Date(r.created_at).getTime()) / 3600000;
         if (!stuckOldest || ageHours > stuckOldest.ageHours) {
