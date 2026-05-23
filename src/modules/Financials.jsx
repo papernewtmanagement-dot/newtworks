@@ -78,12 +78,12 @@ function useFinancialsData() {
             .limit(200),
 
           // Bank
-          supabase.from("bank_accounts")
-            .select("account_name, current_balance, as_of_date, account_type, account_number_last4, institution"),
+          supabase.from("v_bank_balances")
+            .select("account_name, current_balance:current_balance_derived, needs_review, last_entry_date"),
 
           // Credit
-          supabase.from("credit_accounts")
-            .select("account_name, current_balance, updated_at, account_type, account_number_last4, credit_limit, available_credit, interest_rate, minimum_payment, payment_due_day, institution"),
+          supabase.from("v_card_balances")
+            .select("account_name, current_balance:current_balance_derived, institution, needs_review, last_entry_date"),
 
           // GL
           supabase.from("journal_lines")
