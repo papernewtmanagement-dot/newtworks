@@ -212,7 +212,8 @@ function useFinancialsData() {
         const creditAccounts = (ccRows.data || []).map(c => ({
           name:    c.account_name,
           balance: parseFloat(c.current_balance || 0),
-          asOf:    c.updated_at,
+          asOf:    c.last_entry_date,
+          needsReview: c.needs_review,
           type:    c.account_type,
           last4:   c.account_number_last4,
           limit:   parseFloat(c.credit_limit || 0) || null,
@@ -235,7 +236,8 @@ function useFinancialsData() {
           bankAccounts: (bankRows.data || []).map(b => ({
             name: b.account_name,
             balance: parseFloat(b.current_balance||0),
-            asOf: b.as_of_date,
+            asOf: b.last_entry_date,
+            needsReview: b.needs_review,
             type: b.account_type,
             last4: b.account_number_last4,
             institution: b.institution,
@@ -740,15 +742,15 @@ const BankSection = ({ data }) => {
           <Card key={i}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700 }}>{a.name}</div>
-              <Pill type={a.reconciled ? "success" : "warning"}>
-                {a.reconciled ? "Reconciled" : "Pending"}
-              </Pill>
+              {a.needsReview ? (
+                <Pill type="warning">Review</Pill>
+              ) : null}
             </div>
             <div style={{ fontSize: 24, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
               {fmt(a.balance)}
             </div>
             <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>
-              As of {a.asOf} · ••••{a.last4}
+              {a.asOf ? `As of ${a.asOf}` : "Ledger-derived balance"}
             </div>
           </Card>
         ))}
@@ -772,7 +774,7 @@ const CreditSection = ({ data }) => {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
         <KPICard label="Total Debt Exposure" value={fmt(totalDebt)} color={T.red} border={T.red} />
         <KPICard label="Available Credit" value={fmt(totalAvailable)} color={T.green} border={T.green} />
-        <KPICard label="Next Payment Due" value="May 1" sub="SBA Loan — $1,847" border={T.amber} />
+        <KPICard label="Accounts Tracked" value={String((data.creditAccounts || []).length)} sub="Balances from ledger" border={T.amber} />
       </div>
 
       {(data.creditAccounts || []).map((a, i) => (
@@ -781,8 +783,11 @@ const CreditSection = ({ data }) => {
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{a.name}</div>
               <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"} · ••••{a.last4} · {a.rate}% APR
+                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"}{a.rate ? ` · ${a.rate}% APR` : ""}
               </div>
+              {a.needsReview ? (
+                <div style={{ marginTop: 4 }}><Pill type="warning">Review</Pill></div>
+              ) : null}
             </div>
             <AskBtn context={`${a.name}: Balance ${fmt(a.balance)}, Rate ${a.rate}%, Payment due on the ${a.dueDay}. Minimum payment: ${fmt(a.payment)}. Help me think about this debt.`} />
           </div>
@@ -798,14 +803,18 @@ const CreditSection = ({ data }) => {
                 <div style={{ fontSize: 16, fontWeight: 700, color: T.green }}>{fmt(a.limit - a.balance)}</div>
               </div>
             )}
+            {a.payment ? (
             <div>
               <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Min Payment</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: T.amber }}>{fmt(a.payment)}</div>
             </div>
+            ) : null}
+            {a.dueDay ? (
             <div>
               <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Due Date</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800 }}>May {a.dueDay}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800 }}>Day {a.dueDay}</div>
             </div>
+            ) : null}
           </div>
 
           {a.limit && (
