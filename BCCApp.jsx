@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from "react";
+ import { useState, useEffect, createContext, useContext } from "react";
 
 import Dashboard from "./src/modules/Dashboard.jsx";
 import Financials from "./src/modules/Financials.jsx";
@@ -20,7 +20,6 @@ import DemoBanner from "./src/components/DemoBanner.jsx";
 // ============================================================
 // BCC APP SHELL v1.0
 // Business Command Center — State Farm Agent Edition
-// Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // ARCHITECTURE:
 // ┌─────────────────────────────────────────────────────┐
@@ -550,11 +549,7 @@ export default function BCCApp() {
 
             {/* Footer */}
             <div style={css.footer}>
-              Built by Imaginary Farms LLC &nbsp;·&nbsp; The Claude Whisperer &nbsp;·&nbsp;
-              <a href="https://imaginary-farms.com" target="_blank" rel="noopener noreferrer"
-                style={{ color: TOKENS.slate400, textDecoration: "none" }}>
-                imaginary-farms.com
-              </a>
+              {agency.name} &nbsp;·&nbsp; Business Command Center
             </div>
           </main>
         </div>
