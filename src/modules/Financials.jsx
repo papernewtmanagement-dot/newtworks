@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+ import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
@@ -62,7 +62,7 @@ function useFinancialsData() {
         const [
           isRows, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
-          aippRow, scoreboardRows,
+          aippRow, scoreboardRows, balanceSheetRows,
         ] = await Promise.all([
           // Income statement view
           supabase.from("v_income_statement")
@@ -111,6 +111,10 @@ function useFinancialsData() {
           supabase.from("scoreboard_tracking")
             .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(20),
+
+          // Balance Sheet — anchored to QBO 4/30/2026 opening balances + post-4/30 GL activity
+          supabase.from("v_balance_sheet_anchored")
+            .select("account_code, account_name, account_type, anchor_0430, activity_since_0430, balance_current"),
         ]);
 
         const isData = isRows.data || [];
@@ -221,6 +225,27 @@ function useFinancialsData() {
           dueDay:  c.payment_due_day,
         }));
 
+        // Balance Sheet — group anchored rows by type, with totals
+        const bsRows = (balanceSheetRows.data || []).map(r => ({
+          code:    r.account_code,
+          name:    r.account_name,
+          type:    r.account_type,
+          anchor:  parseFloat(r.anchor_0430 || 0),
+          activity:parseFloat(r.activity_since_0430 || 0),
+          balance: parseFloat(r.balance_current || 0),
+        }));
+        const bsGroup = (t) => bsRows.filter(r => r.type === t).sort((a,b) => a.code.localeCompare(b.code));
+        const bsSum   = (t) => bsRows.filter(r => r.type === t).reduce((s,r) => s + r.balance, 0);
+        const balanceSheet = {
+          assets:      bsGroup("asset"),
+          liabilities: bsGroup("liability"),
+          equity:      bsGroup("equity"),
+          totalAssets:      Math.round(bsSum("asset")),
+          totalLiabilities: Math.round(bsSum("liability")),
+          totalEquity:      Math.round(bsSum("equity")),
+          asOfLabel: monthYearLabel(currentMonth, currentYear),
+        };
+
         setData({
           currentYear,
           currentMonth,
@@ -258,6 +283,7 @@ function useFinancialsData() {
             credit:      parseFloat(g.credit || 0),
           })),
           payroll,
+          balanceSheet,
         });
       } catch(e) {
         console.error("Financials load error:", e);
@@ -293,6 +319,7 @@ let MOCK = {
   aipp: { year: new Date().getFullYear(), target:0, earned:0, projected:0, priorYear:0, hasData:false, monthlyEarned: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(m=>({month:m,amount:0})) },
   scoreboard: [],
   bankAccounts:[],creditAccounts:[],glEntries:[],payroll:[],
+  balanceSheet:{ assets:[], liabilities:[], equity:[], totalAssets:0, totalLiabilities:0, totalEquity:0, asOfLabel:"" },
 };
 
 
@@ -871,6 +898,62 @@ const CreditSection = ({ data }) => {
   );
 };
 
+// ─── Section: Balance Sheet ───────────────────────────────────
+const BalanceSheetSection = ({ data }) => {
+  const bs = data?.balanceSheet || { assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0, asOfLabel: "" };
+  const assets = Array.isArray(bs.assets) ? bs.assets : [];
+  const liabilities = Array.isArray(bs.liabilities) ? bs.liabilities : [];
+  const equity = Array.isArray(bs.equity) ? bs.equity : [];
+  const totalLE = (bs.totalLiabilities || 0) + (bs.totalEquity || 0);
+  const ties = Math.abs((bs.totalAssets || 0) - totalLE) < 1;
+
+  const Row = ({ name, amount, bold, indent }) => (
+    <tr style={{ background: bold ? T.slate50 : "transparent" }}>
+      <td style={{ padding: "7px 8px", fontSize: 12, color: indent ? T.slate600 : T.slate800, paddingLeft: indent ? 24 : 8, fontWeight: bold ? 700 : 400 }}>{name}</td>
+      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 700 : 400, color: amount < 0 ? T.red : bold ? T.slate900 : T.slate700 }}>{fmt(Math.round(amount))}</td>
+    </tr>
+  );
+
+  return (
+    <Card>
+      <CardHeader
+        title="Balance Sheet"
+        sub={`Anchored to 4/30/2026 close + live GL · As of ${bs.asOfLabel || "current"}`}
+        action={<AskBtn context={`My balance sheet: Total Assets ${fmt(bs.totalAssets)}, Total Liabilities ${fmt(bs.totalLiabilities)}, Total Equity ${fmt(bs.totalEquity)}. Help me understand my financial position.`} />}
+      />
+
+      {!ties && (
+        <div style={{ marginBottom: 12, padding: "8px 12px", background: T.amberLt, borderRadius: 8, fontSize: 11, color: "#92400E", borderLeft: `3px solid ${T.amber}` }}>
+          Note: Assets do not currently equal Liabilities + Equity. This indicates GL activity awaiting reconciliation.
+        </div>
+      )}
+
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          <Row name="ASSETS" bold />
+          {assets.map((r,i) => <Row key={`a${i}`} name={r.name} amount={r.balance} indent />)}
+          <Row name="Total Assets" amount={bs.totalAssets} bold />
+
+          <tr><td colSpan={2} style={{ padding: "6px 0" }} /></tr>
+
+          <Row name="LIABILITIES" bold />
+          {liabilities.map((r,i) => <Row key={`l${i}`} name={r.name} amount={r.balance} indent />)}
+          <Row name="Total Liabilities" amount={bs.totalLiabilities} bold />
+
+          <tr><td colSpan={2} style={{ padding: "6px 0" }} /></tr>
+
+          <Row name="EQUITY" bold />
+          {equity.map((r,i) => <Row key={`e${i}`} name={r.name} amount={r.balance} indent />)}
+          <Row name="Total Equity" amount={bs.totalEquity} bold />
+
+          <tr><td colSpan={2} style={{ padding: "2px 0", borderTop: `2px solid ${T.slate800}` }} /></tr>
+          <Row name="Total Liabilities + Equity" amount={totalLE} bold />
+        </tbody>
+      </table>
+    </Card>
+  );
+};
+
 // ─── Section: General Ledger ──────────────────────────────────
 const GLSection = ({ data }) => (
   <Card>
@@ -903,6 +986,144 @@ const GLSection = ({ data }) => (
   </Card>
 );
 
+// ─── CPA-Style Print Package ──────────────────────────────────
+// Browser-native print: hidden on screen, shown only when printing.
+const PRINT_CSS = `
+@media screen { .bcc-print-package { display: none !important; } }
+@media print {
+  body * { visibility: hidden !important; }
+  .bcc-print-package, .bcc-print-package * { visibility: visible !important; }
+  .bcc-print-package { position: absolute; left: 0; top: 0; width: 100%; display: block !important; padding: 0; }
+  .bcc-print-page { page-break-after: always; padding: 32px 36px; }
+  .bcc-print-page:last-child { page-break-after: auto; }
+  .bcc-no-print { display: none !important; }
+  @page { size: letter portrait; margin: 0.5in; }
+}
+`;
+
+const PrintTable = ({ title, sub, rows, cols }) => (
+  <div style={{ marginBottom: 22 }}>
+    <div style={{ fontSize: 15, fontWeight: 700, color: "#0F172A", marginBottom: 2 }}>{title}</div>
+    {sub && <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>{sub}</div>}
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+      <thead>
+        <tr style={{ borderBottom: "2px solid #334155" }}>
+          {cols.map((c,i) => (
+            <th key={i} style={{ padding: "5px 6px", textAlign: i === 0 ? "left" : "right", color: "#475569", fontWeight: 600 }}>{c}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r,i) => (
+          <tr key={i} style={{ borderBottom: "1px solid #E2E8F0", background: r.bold ? "#F8FAFC" : "transparent" }}>
+            {r.cells.map((cell,j) => (
+              <td key={j} style={{ padding: "5px 6px", textAlign: j === 0 ? "left" : "right", fontWeight: r.bold ? 700 : 400, paddingLeft: (j === 0 && r.indent) ? 20 : 6, color: (typeof cell === "number" && cell < 0) ? "#EF4444" : "#1E293B" }}>
+                {typeof cell === "number" ? fmt(Math.round(cell)) : cell}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+const PrintPackage = ({ data, periodLabel }) => {
+  const d = data || {};
+  const s = d.summary || {};
+  const pl = d.pl || { income: [], expenses: [] };
+  const bs = d.balanceSheet || { assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0 };
+  const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const periodName = d.currentMonth ? monthYearLabel(d.currentMonth, d.currentYear) : "Current Period";
+
+  // P&L rows (month / quarter / YTD)
+  const incomeRows = (pl.income || []);
+  const expenseRows = (pl.expenses || []);
+  const totIncMTD = incomeRows.reduce((a,r)=>a+(r.mtd||0),0), totIncQTD = incomeRows.reduce((a,r)=>a+(r.qtd||0),0), totIncYTD = incomeRows.reduce((a,r)=>a+(r.ytd||0),0);
+  const totExpMTD = expenseRows.reduce((a,r)=>a+(r.mtd||0),0), totExpQTD = expenseRows.reduce((a,r)=>a+(r.qtd||0),0), totExpYTD = expenseRows.reduce((a,r)=>a+(r.ytd||0),0);
+  const qN = d.quarterStart ? Math.floor((d.quarterStart-1)/3)+1 : "";
+
+  const plRows = [
+    { cells: ["INCOME","","",""], bold: true },
+    ...incomeRows.map(r => ({ cells: [r.name, r.mtd, r.qtd, r.ytd], indent: true })),
+    { cells: ["Total Income", totIncMTD, totIncQTD, totIncYTD], bold: true },
+    { cells: ["",""], bold: false },
+    { cells: ["EXPENSES","","",""], bold: true },
+    ...expenseRows.map(r => ({ cells: [r.name, r.mtd, r.qtd, r.ytd], indent: true })),
+    { cells: ["Total Expenses", totExpMTD, totExpQTD, totExpYTD], bold: true },
+    { cells: ["NET INCOME", totIncMTD-totExpMTD, totIncQTD-totExpQTD, totIncYTD-totExpYTD], bold: true },
+  ];
+
+  const bsTotalLE = (bs.totalLiabilities||0)+(bs.totalEquity||0);
+  const bsRows = [
+    { cells: ["ASSETS",""], bold: true },
+    ...(bs.assets||[]).map(r => ({ cells: [r.name, r.balance], indent: true })),
+    { cells: ["Total Assets", bs.totalAssets], bold: true },
+    { cells: ["",""] },
+    { cells: ["LIABILITIES",""], bold: true },
+    ...(bs.liabilities||[]).map(r => ({ cells: [r.name, r.balance], indent: true })),
+    { cells: ["Total Liabilities", bs.totalLiabilities], bold: true },
+    { cells: ["",""] },
+    { cells: ["EQUITY",""], bold: true },
+    ...(bs.equity||[]).map(r => ({ cells: [r.name, r.balance], indent: true })),
+    { cells: ["Total Equity", bs.totalEquity], bold: true },
+    { cells: ["Total Liabilities + Equity", bsTotalLE], bold: true },
+  ];
+
+  const bankRows = (d.bankAccounts||[]).map(a => ({ cells: [a.name, a.balance] }));
+  bankRows.push({ cells: ["Total Cash Position", (d.bankAccounts||[]).reduce((x,a)=>x+(a.balance||0),0)], bold: true });
+
+  const creditRows = (d.creditAccounts||[]).map(a => ({ cells: [a.name, a.balance] }));
+  creditRows.push({ cells: ["Total Debt Exposure", (d.creditAccounts||[]).reduce((x,a)=>x+(a.balance||0),0)], bold: true });
+
+  return (
+    <div className="bcc-print-package">
+      <style>{PRINT_CSS}</style>
+
+      {/* Cover Page */}
+      <div className="bcc-print-page" style={{ textAlign: "center", paddingTop: 180 }}>
+        <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Peter Story State Farm Agency</div>
+        <div style={{ fontSize: 18, color: "#334155", marginBottom: 40 }}>Financial Statements Package</div>
+        <div style={{ fontSize: 15, color: "#475569", marginBottom: 4 }}>Period: {periodName}</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis · Calendar year · All figures in USD</div>
+        <div style={{ fontSize: 11, color: "#94A3B8" }}>Prepared {today}</div>
+        <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>Business Command Center</div>
+        <div style={{ marginTop: 80, fontSize: 10, color: "#94A3B8", maxWidth: 420, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 }}>
+          This package contains the Profit &amp; Loss Statement, Balance Sheet, Bank Account balances,
+          and Credit &amp; Debt balances. Balance Sheet is anchored to the 4/30/2026 QuickBooks close
+          plus subsequent general-ledger activity.
+        </div>
+      </div>
+
+      {/* P&L Page */}
+      <div className="bcc-print-page">
+        <PrintTable
+          title="Profit & Loss Statement"
+          sub={`Cash basis · ${d.currentYear || ""}`}
+          cols={["Account", periodName, `Q${qN} ${d.currentYear||""}`, `YTD ${d.currentYear||""}`]}
+          rows={plRows}
+        />
+      </div>
+
+      {/* Balance Sheet Page */}
+      <div className="bcc-print-page">
+        <PrintTable
+          title="Balance Sheet"
+          sub={`As of ${bs.asOfLabel || periodName} · anchored to 4/30/2026 close + GL activity`}
+          cols={["Account", "Balance"]}
+          rows={bsRows}
+        />
+      </div>
+
+      {/* Bank + Credit Page */}
+      <div className="bcc-print-page">
+        <PrintTable title="Bank Accounts" sub="Ledger-derived balances" cols={["Account","Balance"]} rows={bankRows} />
+        <PrintTable title="Credit & Debt" sub="Outstanding balances" cols={["Account","Balance"]} rows={creditRows} />
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
   const [section, setSection] = useState("overview");
@@ -918,6 +1139,7 @@ export default function Financials() {
     { id: "payroll",   label: "Payroll"         },
     { id: "bank",      label: "Bank Accounts"   },
     { id: "credit",    label: "Credit & Debt"   },
+    { id: "balsheet",  label: "Balance Sheet"   },
     { id: "gl",        label: "General Ledger"  },
   ];
 
@@ -931,7 +1153,21 @@ export default function Financials() {
             Cash basis · Calendar year · All figures in USD
           </div>
         </div>
-        <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }} className="bcc-no-print">
+          <button
+            onClick={() => window.print()}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              background: T.white, color: T.slate700,
+              border: `1px solid ${T.slate200}`, borderRadius: 7,
+              padding: "6px 12px", fontSize: 11, fontWeight: 600,
+              cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >
+            🖨 Print / Save PDF
+          </button>
+          <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
+        </div>
       </div>
 
       {/* Section Navigation */}
@@ -961,7 +1197,11 @@ export default function Financials() {
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
       {section === "credit"   && <CreditSection data={MOCK} />}
+      {section === "balsheet" && <BalanceSheetSection data={MOCK} />}
       {section === "gl"       && <GLSection data={MOCK} />}
+
+      {/* CPA-style print package — hidden on screen, rendered for print/PDF */}
+      <PrintPackage data={MOCK} periodLabel={period} />
     </div>
   );
 }
