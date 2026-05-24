@@ -2,9 +2,8 @@ import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC FINANCIALS MODULE v1.0
+// BCC FINANCIALS MODULE v1.1
 // Business Command Center — State Farm Agent Edition
-// Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
 //   1. Overview        — Summary cards + revenue trend chart
@@ -16,9 +15,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 //   7. Credit & Debt   — Cards, loans, lines of credit
 //   8. General Ledger  — Full transaction ledger
 //
-// DATA: Reads from Supabase via props (passed from BCCApp)
-// In production replace MOCK_DATA with Supabase queries:
-//   const { data } = await supabase.from('comp_recap')...
+// DATA: Reads live from Supabase views/tables via useFinancialsData().
 // ============================================================
 
 
@@ -47,6 +44,8 @@ const T = {
   slate900:"#0F172A",
   white:   "#FFFFFF",
 };
+
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 // ─── Live Supabase Data Hook ─────────────────────────────────
 function useFinancialsData() {
@@ -115,10 +114,9 @@ function useFinancialsData() {
         ]);
 
         const isData = isRows.data || [];
-        const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
         // Monthly chart
-        const monthlyRevenue = months.map((m, i) => {
+        const monthlyRevenue = MONTHS.map((m, i) => {
           const mo = i + 1;
           const rev = isData.filter(r => r.month === mo && r.account_type === "income").reduce((s,r) => s + parseFloat(r.amount||0), 0);
           const exp = isData.filter(r => r.month === mo && r.account_type === "expense").reduce((s,r) => s + parseFloat(r.amount||0), 0);
@@ -154,7 +152,7 @@ function useFinancialsData() {
         const compRecaps = compRecapsRaw.map(r => ({
           period_year:  r.period_year,
           period_month: r.period_month,
-          period_label: `${months[r.period_month-1]} ${r.period_year}`,
+          period_label: `${MONTHS[r.period_month-1]} ${r.period_year}`,
           comp_type:    r.comp_type,
           comp_category: r.comp_category,
           description:  r.description || `${r.comp_type} — ${r.comp_category}`,
@@ -171,14 +169,15 @@ function useFinancialsData() {
           earned:        parseFloat(aippRaw.earned_ytd)           || 0,
           projected:     parseFloat(aippRaw.projected_full_year)  || 0,
           priorYear:     0, // schema does not track prior year; show 0 unless populated
-          monthlyEarned: months.map((m,i) => {
+          hasData:       true,
+          monthlyEarned: MONTHS.map((m,i) => {
             const mo = i + 1;
             const earned = compRecapsRaw
               .filter(r => r.period_year === currentYear && r.period_month === mo && r.is_aipp_eligible)
               .reduce((s,r) => s + parseFloat(r.amount || 0), 0);
             return { month: m, amount: Math.round(earned) };
           }),
-        } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, monthlyEarned: months.map(m => ({month:m, amount:0})) };
+        } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
 
         // ScoreBoard — alias to {metric, actual, target, pct}
         const scoreboard = (scoreboardRows.data || []).map(s => ({
@@ -223,9 +222,15 @@ function useFinancialsData() {
         }));
 
         setData({
+          currentYear,
+          currentMonth,
+          quarterStart,
           summary: {
             revenueMTD: Math.round(revMTD), revenueQTD: Math.round(revQTD), revenueYTD: Math.round(revYTD),
-            expensesMTD: Math.round(expMTD), netIncomeMTD: Math.round(revMTD - expMTD), netIncomeYTD: Math.round(revYTD - expYTD),
+            expensesMTD: Math.round(expMTD), expensesQTD: Math.round(expQTD), expensesYTD: Math.round(expYTD),
+            netIncomeMTD: Math.round(revMTD - expMTD),
+            netIncomeQTD: Math.round(revQTD - expQTD),
+            netIncomeYTD: Math.round(revYTD - expYTD),
             priorYearYTD: 442434,
           },
           monthlyRevenue,
@@ -271,14 +276,21 @@ function useFinancialsData() {
 const fmt = (n) => { const v = Number(n); if (!Number.isFinite(v)) return "—"; if (v === 0) return "—"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 }); };
 const pct  = (n, t) => t ? Math.round((n / t) * 100) : 0;
 const yoy  = (curr, prior) => prior ? (((curr - prior) / prior) * 100).toFixed(1) : null;
+const monthYearLabel = (monthIdx1, year) => {
+  if (!monthIdx1 || !year) return "";
+  return `${MONTHS[monthIdx1 - 1]} ${year}`;
+};
 
 // ─── Data Store (populated by Financials component with live data) ────────────
 let MOCK = {
-  summary: { revenueMTD:0,revenueQTD:0,revenueYTD:0,expensesMTD:0,netIncomeMTD:0,netIncomeYTD:0,priorYearYTD:0 },
+  currentYear: new Date().getFullYear(),
+  currentMonth: new Date().getMonth() + 1,
+  quarterStart: Math.floor((new Date().getMonth()) / 3) * 3 + 1,
+  summary: { revenueMTD:0,revenueQTD:0,revenueYTD:0,expensesMTD:0,expensesQTD:0,expensesYTD:0,netIncomeMTD:0,netIncomeQTD:0,netIncomeYTD:0,priorYearYTD:0 },
   monthlyRevenue: Array(12).fill(0).map((_,i)=>({month:["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i],revenue:0,expenses:0})),
   pl:{income:[],expenses:[]},
   compRecaps:[],
-  aipp: { year: new Date().getFullYear(), target:0, earned:0, projected:0, priorYear:0, monthlyEarned: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(m=>({month:m,amount:0})) },
+  aipp: { year: new Date().getFullYear(), target:0, earned:0, projected:0, priorYear:0, hasData:false, monthlyEarned: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(m=>({month:m,amount:0})) },
   scoreboard: [],
   bankAccounts:[],creditAccounts:[],glEntries:[],payroll:[],
 };
@@ -389,7 +401,7 @@ const MiniBarChart = ({ data }) => {
             {d.revenue > 0 && (
               <div style={{
                 width: "60%", background: T.blue, borderRadius: "2px 2px 0 0",
-                height: `${(d.revenue / maxVal) * barH}px`,
+                height: `${maxVal ? (d.revenue / maxVal) * barH : 0}px`,
                 transition: "height 0.6s ease",
               }} />
             )}
@@ -422,6 +434,13 @@ const ProgressBar = ({ value, max, color = T.blue, height = 8 }) => {
 const OverviewSection = ({ period, setPeriod, data }) => {
   const d = data?.summary || {};
   const yoyPct = yoy(d.revenueYTD || 0, d.priorYearYTD || 0);
+  const curMonthLabel = monthYearLabel(data?.currentMonth, data?.currentYear);
+
+  // Period-correct figures
+  const revenue  = period==="mtd" ? d.revenueMTD  : period==="qtd" ? d.revenueQTD  : d.revenueYTD;
+  const expenses = period==="mtd" ? d.expensesMTD : period==="qtd" ? d.expensesQTD : d.expensesYTD;
+  const netIncome= period==="mtd" ? d.netIncomeMTD: period==="qtd" ? d.netIncomeQTD: d.netIncomeYTD;
+  const expRatio = revenue ? Math.round((expenses / revenue) * 100) + "%" : "—";
 
   return (
     <div>
@@ -431,33 +450,36 @@ const OverviewSection = ({ period, setPeriod, data }) => {
           active={period}
           onChange={setPeriod}
         />
-        <AskBtn context={`My agency financials — ${period.toUpperCase()}: Revenue $${period==="mtd"?d.revenueMTD:period==="qtd"?d.revenueQTD:d.revenueYTD}, Expenses $${period==="mtd"?d.expensesMTD:"N/A"}, Net Income $${period==="mtd"?d.netIncomeMTD:d.netIncomeYTD}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
+        <AskBtn context={`My agency financials — ${period.toUpperCase()}: Revenue $${revenue}, Expenses $${expenses}, Net Income $${netIncome}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
-        <KPICard label="Revenue" value={fmt(period==="mtd"?d.revenueMTD:period==="qtd"?d.revenueQTD:d.revenueYTD)} sub={period==="ytd"?`↑ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
-        <KPICard label="Expenses" value={fmt(period==="mtd"?d.expensesMTD:period==="qtd"?Math.round(d.expensesMTD*3.1):Math.round(d.expensesMTD*4))} sub="Cash basis" border={T.amber} />
-        <KPICard label="Net Income" value={fmt(period==="mtd"?d.netIncomeMTD:period==="qtd"?Math.round(d.netIncomeMTD*2.9):d.netIncomeYTD)} color={T.green} border={T.green} />
-        <KPICard label="Expense Ratio" value={Math.round((d.expensesMTD/d.revenueMTD)*100) + "%"} sub="Target: <45%" border={T.slate200} />
+        <KPICard label="Revenue" value={fmt(revenue)} sub={period==="ytd"?`↑ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
+        <KPICard label="Expenses" value={fmt(expenses)} sub="Cash basis" border={T.amber} />
+        <KPICard label="Net Income" value={fmt(netIncome)} color={netIncome >= 0 ? T.green : T.red} border={netIncome >= 0 ? T.green : T.red} />
+        <KPICard label="Expense Ratio" value={expRatio} sub="Target: <45%" border={T.slate200} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 12 }}>
         <Card>
-          <CardHeader title="Monthly revenue — 2026" sub="Blue bars = revenue · Gray = no data yet" />
+          <CardHeader title={`Monthly revenue — ${data?.currentYear || ""}`} sub="Blue bars = revenue · Gray = no data yet" />
           <MiniBarChart data={data.monthlyRevenue} />
         </Card>
 
         <Card>
-          <CardHeader title="Income breakdown — April 2026" />
-          {(Array.isArray(data?.pl?.income) ? data.pl.income : []).map((item, i) => (
+          <CardHeader title={`Income breakdown — ${curMonthLabel}`} />
+          {(Array.isArray(data?.pl?.income) ? data.pl.income : []).filter(item => (item.mtd || 0) !== 0).map((item, i) => (
             <div key={i} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
                 <span style={{ color: T.slate600 }}>{item.name}</span>
                 <span style={{ fontWeight: 600, color: T.slate900 }}>{fmt(item.mtd)}</span>
               </div>
-              <ProgressBar value={item.mtd || 0} max={data?.summary?.revenueMTD || 1} color={item.code?.startsWith("41") ? T.green : T.blue} />
+              <ProgressBar value={item.mtd || 0} max={data?.summary?.revenueMTD || 1} color={T.blue} />
             </div>
           ))}
+          {(Array.isArray(data?.pl?.income) ? data.pl.income : []).filter(item => (item.mtd || 0) !== 0).length === 0 && (
+            <div style={{ fontSize: 11, color: T.slate400, padding: "8px 0" }}>No income recorded yet for {curMonthLabel}.</div>
+          )}
         </Card>
       </div>
     </div>
@@ -474,6 +496,10 @@ const PLSection = ({ data }) => {
   const totalIncomeYTD  = incomeRows.reduce((s,r) => s + (r?.ytd || 0), 0);
   const totalExpYTD     = expenseRows.reduce((s,r) => s + (r?.ytd || 0), 0);
 
+  const curMonthLabel = monthYearLabel(data?.currentMonth, data?.currentYear);
+  const qLabel = data?.quarterStart ? `Q${Math.floor((data.quarterStart - 1) / 3) + 1} ${data?.currentYear || ""}` : "Quarter";
+  const ytdLabel = `YTD ${data?.currentYear || ""}`;
+
   const TRow = ({ label, mtd, qtd, ytd, bold, indent, isTotal, isNeg }) => (
     <tr style={{ background: isTotal ? T.slate50 : "transparent" }}>
       <td style={{ padding: "7px 8px", fontSize: 12, color: indent ? T.slate600 : T.slate800, paddingLeft: indent ? 24 : 8, fontWeight: bold ? 600 : 400 }}>{label}</td>
@@ -487,17 +513,17 @@ const PLSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Profit & Loss Statement"
-        sub="Cash basis · Calendar year 2026"
-        action={<AskBtn context={`My P&L: YTD Revenue $${totalIncomeYTD}, YTD Expenses $${totalExpYTD}, Net Income $${totalIncomeYTD - totalExpYTD}. Expense ratio ${Math.round((totalExpYTD/totalIncomeYTD)*100)}%. Help me analyze my profitability and identify areas to improve.`} />}
+        sub={`Cash basis · Calendar year ${data?.currentYear || ""}`}
+        action={<AskBtn context={`My P&L: YTD Revenue $${totalIncomeYTD}, YTD Expenses $${totalExpYTD}, Net Income $${totalIncomeYTD - totalExpYTD}. Expense ratio ${totalIncomeYTD ? Math.round((totalExpYTD/totalIncomeYTD)*100) : 0}%. Help me analyze my profitability and identify areas to improve.`} />}
       />
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
               <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left" }}>Account</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Apr 2026</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Q1 2026</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>YTD 2026</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{curMonthLabel}</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{qLabel}</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{ytdLabel}</th>
             </tr>
           </thead>
           <tbody>
@@ -600,6 +626,7 @@ const AIPPSection = ({ data }) => {
   const earned     = aippData.earned     || 0;
   const projected  = aippData.projected  || 0;
   const priorYear  = aippData.priorYear  || 0;
+  const hasAippData = !!aippData.hasData && target > 0;
   const monthlyEarned = Array.isArray(aippData.monthlyEarned) ? aippData.monthlyEarned : [];
   const scoreboard    = Array.isArray(data?.scoreboard) ? data.scoreboard : [];
   const achievement = pct(earned, target);
@@ -615,77 +642,92 @@ const AIPPSection = ({ data }) => {
             title={`AIPP ${year} — Annual Incentive Progress`}
             action={<AskBtn context={`AIPP ${year}: Target $${target}, Earned YTD $${earned}, Achievement ${achievement}%, Projected $${projected}, Prior Year $${priorYear}. Am I on track? What do I need to focus on?`} />}
           />
-          <div style={{ fontSize: 32, fontWeight: 700, color: T.green, letterSpacing: "-0.03em", marginBottom: 4 }}>
-            {achievement}%
-          </div>
-          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-            {fmt(earned)} earned of {fmt(target)} target
-          </div>
-          <ProgressBar value={earned} max={target} color={T.green} height={10} />
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.slate400, marginTop: 6, marginBottom: 16 }}>
-            <span>Jan {year}</span><span>Dec {year}</span>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            {[
-              { label: "Earned YTD",    value: fmt(earned),    color: T.green },
-              { label: "Projected",     value: fmt(projected), color: projPct >= 95 ? T.green : T.amber },
-              { label: "Prior Year",    value: fmt(priorYear), color: T.slate500 },
-            ].map((s,i) => (
-              <div key={i} style={{ background: T.slate50, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>{s.label}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.value}</div>
+          {hasAippData ? (
+            <>
+              <div style={{ fontSize: 32, fontWeight: 700, color: T.green, letterSpacing: "-0.03em", marginBottom: 4 }}>
+                {achievement}%
               </div>
-            ))}
-          </div>
+              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
+                {fmt(earned)} earned of {fmt(target)} target
+              </div>
+              <ProgressBar value={earned} max={target} color={T.green} height={10} />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.slate400, marginTop: 6, marginBottom: 16 }}>
+                <span>Jan {year}</span><span>Dec {year}</span>
+              </div>
 
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned — {year}</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {monthlyEarned.map((m,i) => (
-                <div key={i} style={{ flex: 1, background: T.blueLt, borderRadius: 6, padding: "6px 4px", textAlign: "center" }}>
-                  <div style={{ fontSize: 9, color: T.slate500 }}>{m.month}</div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: T.blue, marginTop: 2 }}>{fmt(m.amount)}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {[
+                  { label: "Earned YTD",    value: fmt(earned),    color: T.green },
+                  { label: "Projected",     value: fmt(projected), color: projPct >= 95 ? T.green : T.amber },
+                  { label: "Prior Year",    value: fmt(priorYear), color: T.slate500 },
+                ].map((s,i) => (
+                  <div key={i} style={{ background: T.slate50, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                    <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>{s.label}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned — {year}</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {monthlyEarned.map((m,i) => (
+                    <div key={i} style={{ flex: 1, background: T.blueLt, borderRadius: 6, padding: "6px 4px", textAlign: "center" }}>
+                      <div style={{ fontSize: 9, color: T.slate500 }}>{m.month}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: T.blue, marginTop: 2 }}>{fmt(m.amount)}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+            </>
+          ) : (
+            <div style={{ padding: "8px 0" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700, marginBottom: 6 }}>Awaiting AIPP program data</div>
+              <div style={{ fontSize: 12, color: T.slate500, lineHeight: 1.5 }}>
+                AIPP projection turns on once the {year} program-year target and producer production
+                are loaded. AIPP is 5% of qualifying new P&amp;C premium issued (Auto/Fire, plus small Health),
+                paid each January, for agents with 60+ months of service.
+              </div>
             </div>
-          </div>
+          )}
         </Card>
 
         {/* ScoreBoard */}
         <Card>
           <CardHeader
-            title="ScoreBoard Metrics — 2026"
+            title={`ScoreBoard Metrics — ${year}`}
             sub="Progress toward performance recognition"
-            action={<AskBtn context="My ScoreBoard metrics for 2026: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention." />}
+            action={<AskBtn context={`My ScoreBoard metrics for ${year}: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention.`} />}
           />
-          {scoreboard.map((m, i) => (
-            <div key={i} style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: T.slate700 }}>{m.metric}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, color: T.slate500 }}>{m.actual}/{m.target}</span>
-                  <Pill type={m.pct >= 100 ? "success" : m.pct >= 75 ? "warning" : "danger"}>
-                    {m.pct}%
-                  </Pill>
+          {scoreboard.length > 0 ? (
+            scoreboard.map((m, i) => (
+              <div key={i} style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: T.slate700 }}>{m.metric}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: T.slate500 }}>{m.actual}/{m.target}</span>
+                    <Pill type={m.pct >= 100 ? "success" : m.pct >= 75 ? "warning" : "danger"}>
+                      {m.pct}%
+                    </Pill>
+                  </div>
                 </div>
+                <ProgressBar
+                  value={m.actual}
+                  max={m.target}
+                  color={m.pct >= 100 ? T.green : m.pct >= 75 ? T.amber : T.red}
+                  height={6}
+                />
               </div>
-              <ProgressBar
-                value={m.actual}
-                max={m.target}
-                color={m.pct >= 100 ? T.green : m.pct >= 75 ? T.amber : T.red}
-                height={6}
-              />
+            ))
+          ) : (
+            <div style={{ padding: "8px 0" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700, marginBottom: 6 }}>No ScoreBoard metrics loaded yet</div>
+              <div style={{ fontSize: 12, color: T.slate500, lineHeight: 1.5 }}>
+                ScoreBoard tracking populates once {year} benchmarks and current production are entered.
+                Life &amp; Health production in Q3/Q4 lifts next year's Auto/Fire ScoreBoard multiplier.
+              </div>
             </div>
-          ))}
-          <div style={{
-            marginTop: 16, padding: "10px 12px",
-            background: T.slate50, borderRadius: 8,
-            fontSize: 11, color: T.slate600,
-            borderLeft: `3px solid ${T.amber}`,
-          }}>
-            Retention rate is above target — excellent. New Business Policies at 48% needs attention to hit ScoreBoard recognition level.
-          </div>
+          )}
         </Card>
       </div>
     </div>
@@ -923,4 +965,3 @@ export default function Financials() {
     </div>
   );
 }
-
