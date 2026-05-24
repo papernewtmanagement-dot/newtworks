@@ -74,7 +74,7 @@ function useFinancialsData() {
             .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scoreboard_eligible")
             .order("period_year", { ascending: false })
             .order("period_month", { ascending: false })
-            .limit(200),
+            .limit(2000),   // 16+ months of twice-monthly recaps ~800 rows; cap well above row count so no period is hidden
 
           // Bank
           supabase.from("v_bank_balances")
@@ -96,7 +96,7 @@ function useFinancialsData() {
           // Payroll runs (header)
           supabase.from("payroll_runs")
             .select("id, pay_period_start, pay_period_end, pay_date, payroll_provider, gross_payroll, employer_taxes, net_payroll, status")
-            .order("pay_date", { ascending: false }).limit(12),
+            .order("pay_date", { ascending: false }).limit(200),   // show full payroll history; YTD totals on this tab sum these rows
 
           // Payroll detail (per-employee)
           supabase.from("payroll_detail")
