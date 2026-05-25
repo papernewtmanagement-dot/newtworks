@@ -489,13 +489,13 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
             {selectedApp.status === "interview" && (
               <>
                 <button onClick={() => onUpdate(selectedApp.id,"offer")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>→ Extend Offer</button>
-                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>â Reject</button>
+                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Reject</button>
               </>
             )}
             {selectedApp.status === "offer" && (
               <>
                 <button onClick={() => onUpdate(selectedApp.id,"hired")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>✓ Mark Hired</button>
-                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>â Offer Declined</button>
+                <button onClick={() => onUpdate(selectedApp.id,"rejected")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Offer Declined</button>
               </>
             )}
           </div>
@@ -508,14 +508,106 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
 // ─── Section: Staff Directory ─────────────────────────────────
 const StaffDirectory = ({ staff }) => {
   const [expanded, setExpanded] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  // Local overlay of edits so saved changes show immediately without a full reload
+  const [overrides, setOverrides] = useState({});
+
+  const startEdit = (member) => {
+    setSaveError("");
+    setEditingId(member.id);
+    setForm({
+      first_name: member.first_name || "",
+      last_name: member.last_name || "",
+      role: member.role || "",
+      employment_type: member.employment_type || "",
+      email: member.email || "",
+      phone: member.phone || "",
+      pay_type: member.pay_type || "",
+      pay_rate: member.pay_rate ?? "",
+      pay_frequency: member.pay_frequency || "",
+      licensed: member.licensed === true,
+      license_states: Array.isArray(member.license_states) ? member.license_states.join(", ") : "",
+      start_date: member.start_date || "",
+      compliance_flag: member.compliance_flag || "",
+      notes: member.notes || "",
+    });
+  };
+
+  const cancelEdit = () => { setEditingId(null); setForm({}); setSaveError(""); };
+
+  const saveEdit = async (id) => {
+    if (saving) return;
+    setSaving(true);
+    setSaveError("");
+    // Build the update payload, coercing types to match the staff table.
+    const payload = {
+      first_name: form.first_name.trim(),
+      last_name: form.last_name.trim(),
+      role: form.role.trim() || null,
+      employment_type: form.employment_type.trim() || null,
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+      pay_type: form.pay_type.trim() || null,
+      pay_rate: form.pay_rate === "" || form.pay_rate == null ? null : Number(form.pay_rate),
+      pay_frequency: form.pay_frequency.trim() || null,
+      licensed: form.licensed === true,
+      license_states: form.license_states.trim()
+        ? form.license_states.split(",").map(s => s.trim()).filter(Boolean)
+        : [],
+      start_date: form.start_date || null,
+      compliance_flag: form.compliance_flag.trim() || null,
+      notes: form.notes.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (!payload.first_name || !payload.last_name) {
+      setSaveError("First and last name are required.");
+      setSaving(false);
+      return;
+    }
+    if (payload.pay_rate != null && !Number.isFinite(payload.pay_rate)) {
+      setSaveError("Pay rate must be a number.");
+      setSaving(false);
+      return;
+    }
+    try {
+      if (!supabase) { setSaveError("No database connection."); setSaving(false); return; }
+      const { error } = await supabase
+        .from("staff")
+        .update(payload)
+        .eq("id", id)
+        .eq("agency_id", AGENCY_ID);
+      if (error) {
+        setSaveError(error.message || "Save failed. You may need to be signed in.");
+        setSaving(false);
+        return;
+      }
+      // Apply locally so the change is visible immediately.
+      setOverrides(prev => ({ ...prev, [id]: payload }));
+      setEditingId(null);
+      setForm({});
+    } catch (e) {
+      setSaveError(e?.message || "Unexpected error while saving.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputStyle = { padding:"8px 10px", borderRadius:6, border:`1px solid ${T.slate200}`, fontSize:12, width:"100%", boxSizing:"border-box", background:T.white, color:T.slate800 };
+  const labelStyle = { fontSize:9, color:T.slate400, marginBottom:3, display:"block" };
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      {staff.filter(s => s.is_active).map(member => {
+      {staff.filter(s => s.is_active).map(raw => {
+        // Merge any saved override on top of the loaded row.
+        const member = overrides[raw.id] ? { ...raw, ...overrides[raw.id] } : raw;
         const isExpanded = expanded === member.id;
+        const isEditing = editingId === member.id;
         return (
           <Card key={member.id} style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
-            <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => setExpanded(isExpanded?null:member.id)}>
+            <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
               {/* Avatar */}
               <div style={{ width:48, height:48, borderRadius:12, background:member.licensed?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:member.licensed?T.white:T.slate500, flexShrink:0 }}>
                 {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
@@ -547,14 +639,14 @@ const StaffDirectory = ({ staff }) => {
               <span style={{ color:T.slate400, fontSize:12 }}>{isExpanded?"▲":"▼"}</span>
             </div>
 
-            {isExpanded && (
+            {isExpanded && !isEditing && (
               <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.slate100}` }}>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:8, marginBottom:12 }}>
                   {[
-                    { label:"Email",      value:member.email },
+                    { label:"Email",      value:member.email||"—" },
                     { label:"Phone",      value:member.phone||"—" },
                     { label:"Licensed States", value:(member.license_states || []).length>0?(member.license_states || []).join(", "):"None" },
-                    { label:"Start Date", value:member.start_date },
+                    { label:"Start Date", value:member.start_date||"—" },
                   ].map((d,i) => (
                     <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
                       <div style={{ fontSize:9, color:T.slate400, marginBottom:2 }}>{d.label}</div>
@@ -572,7 +664,64 @@ const StaffDirectory = ({ staff }) => {
                     ⚠ {member.compliance_flag}
                   </div>
                 )}
-                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicensed: ${member.licensed ? "Yes" + ((member.license_states||[]).length ? " - " + (member.license_states||[]).join(", ") : "") : "No"}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startEdit(member); }}
+                    style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}>
+                    ✏️ Edit
+                  </button>
+                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicensed: ${member.licensed ? "Yes" + ((member.license_states||[]).length ? " - " + (member.license_states||[]).join(", ") : "") : "No"}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                </div>
+              </div>
+            )}
+
+            {isEditing && (
+              <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.blue}` }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.navy, marginBottom:12 }}>Edit {member.first_name} {member.last_name}</div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                  <div><label style={labelStyle}>First name *</label><input style={inputStyle} value={form.first_name} onChange={e=>setForm({...form, first_name:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Last name *</label><input style={inputStyle} value={form.last_name} onChange={e=>setForm({...form, last_name:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Role / Title</label><input style={inputStyle} value={form.role} onChange={e=>setForm({...form, role:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Employment type</label><input style={inputStyle} value={form.employment_type} onChange={e=>setForm({...form, employment_type:e.target.value})} placeholder="Full Time / 1099 / family" /></div>
+                  <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={e=>setForm({...form, email:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={form.phone} onChange={e=>setForm({...form, phone:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Pay type</label>
+                    <select style={inputStyle} value={form.pay_type} onChange={e=>setForm({...form, pay_type:e.target.value})}>
+                      <option value="">—</option>
+                      <option value="SALARY">SALARY</option>
+                      <option value="HOURLY">HOURLY</option>
+                    </select>
+                  </div>
+                  <div><label style={labelStyle}>Pay rate</label><input style={inputStyle} type="number" step="0.01" value={form.pay_rate} onChange={e=>setForm({...form, pay_rate:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Pay frequency</label><input style={inputStyle} value={form.pay_frequency} onChange={e=>setForm({...form, pay_frequency:e.target.value})} placeholder="weekly / biweekly / semimonthly" /></div>
+                  <div><label style={labelStyle}>Start date</label><input style={inputStyle} type="date" value={form.start_date || ""} onChange={e=>setForm({...form, start_date:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Licensed states (comma-separated)</label><input style={inputStyle} value={form.license_states} onChange={e=>setForm({...form, license_states:e.target.value})} placeholder="TX, NM" /></div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, paddingTop:18 }}>
+                    <input id={`lic-${member.id}`} type="checkbox" checked={form.licensed} onChange={e=>setForm({...form, licensed:e.target.checked})} style={{ width:16, height:16 }} />
+                    <label htmlFor={`lic-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>Licensed</label>
+                  </div>
+                </div>
+                <div style={{ marginBottom:10 }}>
+                  <label style={labelStyle}>Compliance flag (leave blank if none)</label>
+                  <input style={inputStyle} value={form.compliance_flag} onChange={e=>setForm({...form, compliance_flag:e.target.value})} placeholder="e.g. Family employee — year-end W-2 review" />
+                </div>
+                <div style={{ marginBottom:12 }}>
+                  <label style={labelStyle}>Notes</label>
+                  <textarea style={{ ...inputStyle, resize:"vertical", minHeight:56, fontFamily:"inherit", lineHeight:1.5 }} rows={2} value={form.notes} onChange={e=>setForm({...form, notes:e.target.value})} />
+                </div>
+
+                {saveError && (
+                  <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
+                    {saveError}
+                  </div>
+                )}
+
+                <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+                  <button onClick={cancelEdit} disabled={saving} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:"none", borderRadius:7, cursor:saving?"not-allowed":"pointer" }}>Cancel</button>
+                  <button onClick={() => saveEdit(member.id)} disabled={saving} style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:saving?T.slate400:T.navy, border:"none", borderRadius:7, cursor:saving?"not-allowed":"pointer" }}>
+                    {saving ? "Saving…" : "Save Changes"}
+                  </button>
+                </div>
               </div>
             )}
           </Card>
@@ -1029,7 +1178,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
               return (
                 <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: chartH, position: "relative" }}>
                   {isBreakeven && (
-                    <div style={{ position: "absolute", top: -4, fontSize: 14 }}>â­</div>
+                    <div style={{ position: "absolute", top: -4, fontSize: 14 }}>⭐</div>
                   )}
                   <div style={{ width: "85%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: chartH, opacity: m.isHistory ? 1 : 0.7 }}>
                     {renH > 0 && (
@@ -1065,7 +1214,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
 
         {breakevenLabel && (
           <div style={{ marginTop: 10, padding: "10px 12px", background: T.greenLt, borderRadius: 8, fontSize: 11, color: "#065F46" }}>
-            <strong>â­ Projected breakeven: {breakevenLabel}</strong> — at {producer.name.split(" ")[0]}&apos;s current 6-month avg of ${Math.round(producer.avgPC + producer.avgOther).toLocaleString()}/mo issued premium, the agency earns ${Math.round(producer.avgNewCommission).toLocaleString()}/mo in new-business commission. As renewals stack up over time (at {(100-lapseRate).toFixed(0)}% persistency), total monthly commission generated by {producer.name.split(" ")[0]}&apos;s book is projected to first cover their ${Math.round(monthlyLoaded).toLocaleString()}/mo fully-loaded cost in {monthsToBreakeven} months.
+            <strong>⭐ Projected breakeven: {breakevenLabel}</strong> — at {producer.name.split(" ")[0]}&apos;s current 6-month avg of ${Math.round(producer.avgPC + producer.avgOther).toLocaleString()}/mo issued premium, the agency earns ${Math.round(producer.avgNewCommission).toLocaleString()}/mo in new-business commission. As renewals stack up over time (at {(100-lapseRate).toFixed(0)}% persistency), total monthly commission generated by {producer.name.split(" ")[0]}&apos;s book is projected to first cover their ${Math.round(monthlyLoaded).toLocaleString()}/mo fully-loaded cost in {monthsToBreakeven} months.
           </div>
         )}
         {!breakevenLabel && (
