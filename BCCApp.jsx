@@ -36,6 +36,14 @@ import DemoBanner from "./src/components/DemoBanner.jsx";
 // │  Claude.ai opens in a new tab with context.         │
 // └─────────────────────────────────────────────────────┘
 //
+// AUTH (Path 1 — login gates the UI):
+//   The whole app is wrapped in an auth gate. On mount we check for a
+//   Supabase session. No session -> Login screen only. Has session ->
+//   the full app renders unchanged. Data reads still use anon grants
+//   underneath (untouched), so there is no blank-screen risk. Being
+//   logged in (authenticated role) is what unlocks writes such as the
+//   staff edit form.
+//
 // ENVIRONMENT VARIABLES NEEDED (.env):
 //   VITE_SUPABASE_URL=https://[project].supabase.co
 //   VITE_SUPABASE_ANON_KEY=[anon key]
@@ -348,6 +356,102 @@ const AskClaudeBtn = ({ context, size = "normal" }) => {
   );
 };
 
+// ─── Login Screen ─────────────────────────────────────────────────────────────
+// Path 1 auth: this gates the UI. The data layer (anon reads) is untouched,
+// so there is no blank-screen risk. Signing in (authenticated role) is what
+// unlocks writes such as the staff edit form.
+const LoginScreen = ({ onSignedIn }) => {
+  const [email, setEmail]       = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy]         = useState(false);
+  const [error, setError]       = useState("");
+
+  const submit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
+    setError("");
+    const em = email.trim();
+    if (!em || !password) { setError("Enter your email and password."); return; }
+    if (!supabase) { setError("Auth is not configured. Check Supabase connection."); return; }
+    setBusy(true);
+    try {
+      const { data, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: em,
+        password,
+      });
+      if (signInErr) {
+        setError(signInErr.message || "Sign in failed. Check your email and password.");
+        setBusy(false);
+        return;
+      }
+      if (data?.session) {
+        if (onSignedIn) onSignedIn(data.session);
+      } else {
+        setError("Sign in did not return a session. Try again.");
+        setBusy(false);
+      }
+    } catch (err) {
+      setError(err?.message || "Unexpected error during sign in.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+      background: TOKENS.navy, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", padding: 20,
+    }}>
+      <div style={{
+        width: "100%", maxWidth: 380, background: TOKENS.white,
+        borderRadius: 16, padding: "32px 30px",
+        boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+      }}>
+        {/* Logo + heading */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
+          <div style={{ width: 44, height: 44, background: TOKENS.blue, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+            <Icon name="lightning" size={22} color={TOKENS.white} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Business Command Center</div>
+          <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4 }}>Sign in to continue</div>
+        </div>
+
+        <form onSubmit={submit}>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>Email</label>
+          <input
+            type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username" placeholder="you@example.com"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 14, background: TOKENS.white }}
+          />
+
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>Password</label>
+          <input
+            type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password" placeholder="••••••••"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 16, background: TOKENS.white }}
+          />
+
+          {error && (
+            <div style={{ fontSize: 12, color: "#991B1B", background: TOKENS.redLt, border: `1px solid #FECACA`, borderRadius: 8, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 }}>
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit" disabled={busy}
+            style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, color: TOKENS.white, background: busy ? TOKENS.slate400 : TOKENS.blue, border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer", transition: "background 0.15s" }}
+          >
+            {busy ? "Signing in…" : "Sign In"}
+          </button>
+        </form>
+
+        <div style={{ fontSize: 10, color: TOKENS.slate400, textAlign: "center", marginTop: 18, lineHeight: 1.6 }}>
+          Accounts are created by your administrator.<br />Contact your agency owner for access.
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Module Placeholders ──────────────────────────────────────────────────────
 // Each will be replaced with full module builds in subsequent steps
 
@@ -406,12 +510,49 @@ const ModuleRouter = ({ active, onNavigate }) => {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function BCCApp() {
+  // ── Auth gate state (Path 1) ──────────────────────────────────────────────
+  // authState: "checking" | "out" | "in"
+  const [authState, setAuthState] = useState("checking");
+  const [sessionEmail, setSessionEmail] = useState("");
+
   const [activeModule, setActiveModule] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agency, setAgency] = useState(MOCK_AGENCY);
 
+  // Check for an existing session on mount, and subscribe to auth changes.
   useEffect(() => {
+    let mounted = true;
+    if (!supabase) {
+      // No client at all — fail open to the app (data still reads via anon),
+      // rather than locking the user out of a misconfigured build.
+      setAuthState("in");
+      return;
+    }
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const session = data?.session || null;
+      setSessionEmail(session?.user?.email || "");
+      setAuthState(session ? "in" : "out");
+    }).catch(() => {
+      if (mounted) setAuthState("out");
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setSessionEmail(session?.user?.email || "");
+      setAuthState(session ? "in" : "out");
+    });
+
+    return () => {
+      mounted = false;
+      sub?.subscription?.unsubscribe?.();
+    };
+  }, []);
+
+  // Load real agency once we're past the auth gate.
+  useEffect(() => {
+    if (authState !== "in") return;
     if (!supabase || !AGENCY_ID) return;
     supabase
       .from("agency")
@@ -428,13 +569,36 @@ export default function BCCApp() {
             initials: (data.owner_name || MOCK_AGENCY.user.name)
               .split(" ").map(n => n[0]).join("").toUpperCase(),
             role: "owner",
-            email: data.primary_email || MOCK_AGENCY.user.email,
+            email: data.primary_email || sessionEmail || MOCK_AGENCY.user.email,
           },
           alerts: MOCK_AGENCY.alerts,
         });
       });
-  }, []);
+  }, [authState, sessionEmail]);
 
+  const handleSignOut = async () => {
+    setUserMenuOpen(false);
+    try {
+      if (supabase) await supabase.auth.signOut();
+    } catch (e) {
+      // ignore — onAuthStateChange will still flip us to "out"
+    }
+    setAuthState("out");
+  };
+
+  // ── Auth gate render ───────────────────────────────────────────────────────
+  if (authState === "checking") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.slate50, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", fontSize: 13, color: TOKENS.slate500 }}>
+        Loading…
+      </div>
+    );
+  }
+  if (authState === "out") {
+    return <LoginScreen onSignedIn={() => setAuthState("in")} />;
+  }
+
+  // ── Authenticated app (unchanged below) ────────────────────────────────────
   const visibleNav = NAV_ITEMS.filter(n => n.roles.includes(agency.user.role));
 
   return (
@@ -481,7 +645,7 @@ export default function BCCApp() {
                   boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 200,
                 }}>
                   <div style={{ padding: "8px 10px", fontSize: 11, color: TOKENS.slate500, borderBottom: `1px solid ${TOKENS.slate200}`, marginBottom: 4 }}>
-                    {agency.user.email}
+                    {sessionEmail || agency.user.email}
                   </div>
                   {["Profile", "Notification Settings", "Team Access"].map(item => (
                     <div key={item} style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.slate700, cursor: "pointer", borderRadius: 6 }}
@@ -490,7 +654,10 @@ export default function BCCApp() {
                     </div>
                   ))}
                   <div style={{ borderTop: `1px solid ${TOKENS.slate200}`, marginTop: 4, paddingTop: 4 }}>
-                    <div style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.red, cursor: "pointer", borderRadius: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                    <div
+                      style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.red, cursor: "pointer", borderRadius: 6, display: "flex", alignItems: "center", gap: 8 }}
+                      onClick={handleSignOut}
+                    >
                       <Icon name="logout" size={13} color={TOKENS.red} /> Sign out
                     </div>
                   </div>
