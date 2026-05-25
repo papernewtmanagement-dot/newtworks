@@ -1,12 +1,11 @@
-import { useState, useMemo, useEffect } from "react";
+ import { useState, useMemo, useEffect } from "react";
 import { AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
 // BCC DOCUMENTS MODULE v1.0
-// Business Command Center — State Farm Agent Edition
-// Built by Imaginary Farms LLC · imaginary-farms.com
+// Peter Story State Farm · Business Command Center
 //
 // SECTIONS:
 //   1. Overview     — Recent activity, storage summary, quick stats
@@ -242,6 +241,8 @@ const DocTypeBadge = ({ type }) => {
 // ─── Document Card ────────────────────────────────────────────
 const DocCard = ({ doc, onNavigate }) => {
   const [expanded, setExpanded] = useState(false);
+  // Drive link: real column is drive_url (already a full URL), fall back to drive_file_id
+  const driveUrl = doc.drive_url || (doc.drive_file_id ? `https://drive.google.com/file/d/${doc.drive_file_id}/view` : null);
   const sc  = statusConfig(doc.processing_type === "archive" ? "archive" : doc.processing_status);
   const src = sourceConfig(doc.upload_source);
   const dt  = DOC_TYPES[doc.doc_type] || DOC_TYPES.other;
@@ -289,7 +290,7 @@ const DocCard = ({ doc, onNavigate }) => {
               { label:"Uploaded",      value:doc.uploaded_at },
               { label:"Processed",     value:doc.processed_at },
               { label:"Import Type",   value:doc.processing_type === "database_import" ? "Database Import" : doc.processing_type === "archive" ? "Archived" : "Claude Context" },
-              { label:"Records Created",value:doc.records_created.toString() },
+              { label:"Records Created",value:(doc.records_created ?? 0).toString() },
             ].map((d,i) => (
               <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
                 <div style={{ fontSize:9, color:T.slate400, marginBottom:2 }}>{d.label}</div>
@@ -331,16 +332,16 @@ const DocCard = ({ doc, onNavigate }) => {
 
           {/* Actions */}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {(doc.drive_url || doc.google_drive_file_id) && (
-              <button 
-                onClick={() => {
-                  const url = doc.drive_url || (doc.google_drive_file_id ? `https://drive.google.com/file/d/${doc.google_drive_file_id}/view` : null);
-                  if (url) window.open(url, "_blank");
-                  else alert("No Google Drive link available for this document.");
-                }}
+            {driveUrl ? (
+              <button
+                onClick={() => window.open(driveUrl, "_blank", "noopener,noreferrer")}
                 style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.amber, background:T.amberLt, border:"none", borderRadius:7, cursor:"pointer" }}>
-                📁 Open in Drive
+                📁 View in Google Drive
               </button>
+            ) : (
+              <span style={{ padding:"6px 14px", fontSize:11, fontWeight:500, color:T.slate400, background:T.slate100, borderRadius:7 }}>
+                📁 Not yet filed in Drive
+              </span>
             )}
             <AskBtn size="small" context={`Document in my BCC:\nFile: ${doc.file_name}\nType: ${DOC_TYPES[doc.doc_type]?.label||doc.doc_type}\nSource: ${doc.upload_source}\nStatus: ${doc.processing_status}\nProcessed: ${doc.processed_at}\nTables updated: ${doc.tables_updated?.join(", ")||"None"}\nRecords created: ${doc.records_created}\nNotes: ${doc.notes}\n\nHelp me understand this document and verify the data was imported correctly. Are there any follow-up actions needed?`} />
           </div>
@@ -807,4 +808,3 @@ export default function Documents() {
     </div>
   );
 }
-
