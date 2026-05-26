@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+ import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // eslint-disable-next-line no-unused-vars
 // import { useState } from "react";
@@ -222,10 +222,41 @@ const TeamAccess = ({ users }) => {
   const [showInvite,  setShowInvite]  = useState(false);
   const [editingRole, setEditingRole] = useState(null);
 
-  const handleInvite = (form) => {
+  // INTERIM invite: writes a placeholder users row to Supabase, scoped to the
+  // agency. auth_user_id stays null => the person shows as "Invite Pending" and
+  // cannot log in until their auth account is created in the Supabase dashboard
+  // and linked. (The full edge-function version that also sends the login email
+  // is queued for after Composio is back.)
+  const handleInvite = async (form) => {
+    const row = {
+      agency_id:  AGENCY_ID,
+      email:      form.email.trim(),
+      full_name:  form.name.trim(),
+      role:       form.role || "staff",
+      is_active:  true,
+      invited_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("users")
+      .insert(row)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[Settings] invite insert error:", error);
+      alert("Could not save invite: " + (error?.message || "unknown error"));
+      return;
+    }
+
     setAllUsers(prev => [...prev, {
-      id:`u${Date.now()}`, name:form.name, email:form.email,
-      role:form.role, last_login:"Never", is_active:true, is_current:false, pending:true,
+      id:         data?.id,
+      name:       data?.full_name || data?.email || "Unnamed user",
+      email:      data?.email,
+      role:       data?.role || "staff",
+      last_login: "Never",
+      is_active:  data?.is_active !== false,
+      is_current: false,
+      pending:    true,
     }]);
     setShowInvite(false);
   };
@@ -602,7 +633,7 @@ const About = ({ agency: agencyProp }) => {
                     fontSize:12, fontWeight:600, color:T.blue, textDecoration:"none",
                     padding:"6px 12px", borderRadius:7, border:`1px solid ${T.slate200}`,
                     flexShrink:0, whiteSpace:"nowrap",
-                  }}>Open </a>
+                  }}>Open </a>
                 </div>
               </Card>
             ))}
@@ -762,11 +793,11 @@ const About = ({ agency: agencyProp }) => {
               <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener noreferrer" style={{
                 fontSize:11, fontWeight:600, color:T.white, textDecoration:"none",
                 padding:"7px 12px", borderRadius:7, background:T.blue, display:"inline-block",
-              }}>Claude.ai Connectors </a>
+              }}>Claude.ai Connectors </a>
               <a href="https://app.composio.dev/" target="_blank" rel="noopener noreferrer" style={{
                 fontSize:11, fontWeight:600, color:T.white, textDecoration:"none",
                 padding:"7px 12px", borderRadius:7, background:T.purple || "#7C3AED", display:"inline-block",
-              }}>Composio Dashboard </a>
+              }}>Composio Dashboard </a>
             </div>
             <div style={{ marginTop:10, fontSize:10, color:T.slate500, lineHeight:1.5 }}>
               💡 You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
