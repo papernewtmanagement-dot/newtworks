@@ -364,7 +364,11 @@ const NewTaskModal = ({ onSave, onCancel }) => {
 const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
   const open       = tasks.filter(t => t.status !== "completed");
   const critical   = open.filter(t => t.priority === "critical");
-  const dueThisWeek= open.filter(t => daysUntil(t.due_date) <= 7);
+  const dueThisWeek= open.filter(t => {
+    if (!t.due_date) return false;            // no due date -> not "due this week"
+    const d = daysUntil(t.due_date);
+    return Number.isFinite(d) && d <= 7 && d >= -14;  // upcoming within a week, or overdue up to 2 weeks
+  });
   const overdue    = open.filter(t => isOverdue(t.due_date));
   const completedThisMonth = tasks.filter(t => t.status === "completed").length;
 
@@ -639,9 +643,19 @@ export default function TasksGoals({ onNavigate }) {
   const [tasks, setTasks] = useState(useMockData ? MOCK_TASKS : []);
   useEffect(() => {
     if (liveTasks && liveTasks.length > 0) {
-      // Alias schema fields so existing render code (task.module, task.due_date, etc.) keeps working
+      // Alias schema fields so existing render code (task.module, task.due_date, etc.) keeps working.
+      // IMPORTANT: the DB status vocabulary is open/closed; this module's render
+      // code checks for "completed"/"in_progress". Normalize here at the source so
+      // counts, the Completed tab, the Open filter, and badges all stay consistent.
+      const normStatus = (s) => {
+        const v = (s || "").toLowerCase();
+        if (["closed","done","complete","completed"].includes(v)) return "completed";
+        if (["in_progress","in progress","active","doing"].includes(v)) return "in_progress";
+        return "open";
+      };
       setTasks(liveTasks.map(t => ({
         ...t,
+        status:       normStatus(t.status),
         module:       t.module_reference || t.module || "general",
         due_date:     t.due_date ? new Date(t.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
         completed_at: t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
@@ -656,11 +670,22 @@ export default function TasksGoals({ onNavigate }) {
   if (tasksLoading || goalsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading tasks and goals…</div>;
   if (tasks.length === 0 && goals.length === 0) return <EmptyState module="tasks" />;
 
-  const completeTask = (id) => {
+  const completeTask = async (id) => {
+    // Optimistic UI: flip to completed locally.
+    const prevSnapshot = tasks;
     setTasks(prev => prev.map(t => t.id === id
       ? { ...t, status:"completed", completed_at:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) }
       : t
     ));
+    // Persist to Supabase (DB status vocabulary is 'closed').
+    if (supabase && typeof id === "string") {
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status:"closed", completed_at:new Date().toISOString() })
+        .eq("id", id)
+        .eq("agency_id", AGENCY_ID);
+      if (error) { console.error("[TasksGoals] completeTask failed:", error); setTasks(prevSnapshot); }
+    }
   };
 
   const addTask = (task) => setTasks(prev => [task, ...prev]);
