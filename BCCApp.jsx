@@ -452,6 +452,77 @@ const LoginScreen = ({ onSignedIn }) => {
   );
 };
 
+// ─── Set Password Screen (invite / recovery deep links) ──────────────────────
+// When a teammate clicks the invite or password-reset email, Supabase puts a
+// session in the URL hash and fires onAuthStateChange. We show this screen so
+// they can set their password, then drop them into the app.
+const SetPasswordScreen = ({ email, onDone }) => {
+  const [pw, setPw]   = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
+    setError("");
+    if (pw.length < 8) { setError("Password must be at least 8 characters."); return; }
+    if (pw !== pw2) { setError("Passwords don't match."); return; }
+    if (!supabase) { setError("Auth is not configured."); return; }
+    setBusy(true);
+    try {
+      const { error: updErr } = await supabase.auth.updateUser({ password: pw });
+      if (updErr) { setError(updErr.message || "Could not set password."); setBusy(false); return; }
+      // Mark the profile active now that they've completed setup.
+      try {
+        const { data: who } = await supabase.auth.getUser();
+        if (who?.user?.id) {
+          await supabase.from("users")
+            .update({ invite_status: "active", last_login: new Date().toISOString() })
+            .eq("auth_user_id", who.user.id);
+        }
+      } catch (_) { /* non-fatal */ }
+      // Clear the hash tokens from the URL and enter the app.
+      try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
+      if (onDone) onDone();
+    } catch (err) {
+      setError(err?.message || "Unexpected error.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.navy, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 380, background: TOKENS.white, borderRadius: 16, padding: "32px 30px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
+          <div style={{ width: 44, height: 44, background: TOKENS.blue, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+            <Icon name="lightning" size={22} color={TOKENS.white} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Welcome to your BCC</div>
+          <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4, textAlign: "center" }}>
+            {email ? <>Set a password for <strong>{email}</strong></> : "Set a password to finish setting up your account"}
+          </div>
+        </div>
+        <form onSubmit={submit}>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>New Password</label>
+          <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" placeholder="At least 8 characters"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 14, background: TOKENS.white }} />
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>Confirm Password</label>
+          <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" placeholder="••••••••"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 16, background: TOKENS.white }} />
+          {error && (
+            <div style={{ fontSize: 12, color: "#991B1B", background: TOKENS.redLt, border: `1px solid #FECACA`, borderRadius: 8, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 }}>{error}</div>
+          )}
+          <button type="submit" disabled={busy}
+            style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, color: TOKENS.white, background: busy ? TOKENS.slate400 : TOKENS.blue, border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer" }}>
+            {busy ? "Saving…" : "Set Password & Continue"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // ─── Module Placeholders ──────────────────────────────────────────────────────
 // Each will be replaced with full module builds in subsequent steps
 
@@ -514,6 +585,12 @@ export default function BCCApp() {
   // authState: "checking" | "out" | "in"
   const [authState, setAuthState] = useState("checking");
   const [sessionEmail, setSessionEmail] = useState("");
+  // When arriving via an invite or password-reset link, force a set-password step.
+  const [needsPassword, setNeedsPassword] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const h = window.location.hash || "";
+    return /type=(invite|recovery|signup)/.test(h);
+  });
 
   const [activeModule, setActiveModule] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -538,9 +615,14 @@ export default function BCCApp() {
       if (mounted) setAuthState("out");
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
       setSessionEmail(session?.user?.email || "");
+      // Supabase fires PASSWORD_RECOVERY for recovery links; invite links land
+      // as a normal signed-in session but with type=invite in the URL hash.
+      if (event === "PASSWORD_RECOVERY") setNeedsPassword(true);
+      const hash = (typeof window !== "undefined" && window.location.hash) || "";
+      if (/type=(invite|recovery|signup)/.test(hash)) setNeedsPassword(true);
       setAuthState(session ? "in" : "out");
     });
 
@@ -627,6 +709,10 @@ export default function BCCApp() {
   }
   if (authState === "out") {
     return <LoginScreen onSignedIn={() => setAuthState("in")} />;
+  }
+  // Invite / recovery deep link: make them set a password before entering.
+  if (needsPassword) {
+    return <SetPasswordScreen email={sessionEmail} onDone={() => { setNeedsPassword(false); setAuthState("in"); }} />;
   }
 
   // ── Authenticated app (unchanged below) ────────────────────────────────────
