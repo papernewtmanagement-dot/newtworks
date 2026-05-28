@@ -550,30 +550,61 @@ export default function BCCApp() {
     };
   }, []);
 
-  // Load real agency once we're past the auth gate.
+  // allowed_modules for the logged-in user. null = all modules (owner/manager
+  // default). An array means "only these module ids are visible".
+  const [allowedModules, setAllowedModules] = useState(null);
+
+  // Load real agency + the logged-in user's BCC profile once past the auth gate.
   useEffect(() => {
     if (authState !== "in") return;
     if (!supabase || !AGENCY_ID) return;
-    supabase
-      .from("agency")
-      .select("name, state_farm_agent_code, owner_name, primary_email")
-      .eq("id", AGENCY_ID)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) return; // graceful fallback to MOCK_AGENCY
-        setAgency({
-          name: data.name || MOCK_AGENCY.name,
-          agentCode: data.state_farm_agent_code || MOCK_AGENCY.agentCode,
-          user: {
-            name: data.owner_name || MOCK_AGENCY.user.name,
-            initials: (data.owner_name || MOCK_AGENCY.user.name)
-              .split(" ").map(n => n[0]).join("").toUpperCase(),
-            role: "owner",
-            email: data.primary_email || sessionEmail || MOCK_AGENCY.user.email,
-          },
-          alerts: MOCK_AGENCY.alerts,
-        });
+
+    async function loadProfile() {
+      // Agency basics
+      const { data: ag } = await supabase
+        .from("agency")
+        .select("name, state_farm_agent_code, owner_name, primary_email")
+        .eq("id", AGENCY_ID)
+        .single();
+
+      // The signed-in user's own row — drives role + module visibility.
+      // Match on email (case-insensitive) since that's what auth gives us.
+      let profile = null;
+      const email = (sessionEmail || "").toLowerCase();
+      if (email) {
+        const { data: rows } = await supabase
+          .from("users")
+          .select("full_name, role, allowed_modules, email")
+          .eq("agency_id", AGENCY_ID)
+          .ilike("email", email)
+          .limit(1);
+        profile = (rows && rows[0]) || null;
+      }
+
+      const role = profile?.role || "owner"; // fallback: treat unknown as owner
+      // allowed_modules: null/empty for owner & manager = full access.
+      const mods = (role === "owner" || role === "manager")
+        ? null
+        : (Array.isArray(profile?.allowed_modules) && profile.allowed_modules.length > 0
+            ? profile.allowed_modules
+            : null);
+      setAllowedModules(mods);
+
+      const displayName = profile?.full_name || ag?.owner_name || MOCK_AGENCY.user.name;
+      setAgency({
+        name: ag?.name || MOCK_AGENCY.name,
+        agentCode: ag?.state_farm_agent_code || MOCK_AGENCY.agentCode,
+        user: {
+          name: displayName,
+          initials: (displayName || "?").split(" ").map(n => n?.[0] || "").join("").toUpperCase().slice(0,2),
+          role,
+          email: profile?.email || ag?.primary_email || sessionEmail || MOCK_AGENCY.user.email,
+        },
+        alerts: MOCK_AGENCY.alerts,
       });
+    }
+
+    loadProfile().catch(e => console.error("[BCCApp] profile load error:", e));
   }, [authState, sessionEmail]);
 
   const handleSignOut = async () => {
@@ -599,7 +630,13 @@ export default function BCCApp() {
   }
 
   // ── Authenticated app (unchanged below) ────────────────────────────────────
-  const visibleNav = NAV_ITEMS.filter(n => n.roles.includes(agency.user.role));
+  const visibleNav = NAV_ITEMS.filter(n => {
+    if (!n.roles.includes(agency.user.role)) return false;
+    // If allowed_modules is set (non-owner/manager with explicit module list),
+    // only show those modules. Settings always restricted to owner via roles.
+    if (Array.isArray(allowedModules)) return allowedModules.includes(n.id);
+    return true;
+  });
 
   return (
     <AppContext.Provider value={{ agency, activeModule, setActiveModule }}>
