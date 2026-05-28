@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     // Caller's BCC profile — must be owner/manager of the target agency
     const { data: callerRow, error: callerRowErr } = await admin
       .from("users")
-      .select("agency_id, role")
+      .select("id, agency_id, role")
       .eq("auth_user_id", who.user.id)
       .maybeSingle();
     if (callerRowErr) return json({ error: "Could not verify caller", detail: callerRowErr.message }, 500);
@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
       role,
       allowed_modules: allowedModules,
       auth_user_id: authUserId,
-      invited_by: callerRow ? who.user.id : null,
+      invited_by: callerRow.id,  // FK -> public.users.id (NOT auth uid)
       invited_at: new Date().toISOString(),
       is_active: true,
       invite_status: "invited",
