@@ -63,6 +63,30 @@ const ROLES = {
   accountant:{ label:"Accountant", color:T.purple, bg:T.purpleLt,description:"Financials and Documents read-only access" },
 };
 
+// Canonical module list — ids MUST match NAV_ITEMS in BCCApp.jsx.
+// Used by the invite flow to grant module-level access per teammate.
+const MODULES = [
+  { id:"dashboard",   label:"Dashboard"     },
+  { id:"financials",  label:"Financials"    },
+  { id:"memory",      label:"Memory"        },
+  { id:"compliance",  label:"Compliance"    },
+  { id:"automations", label:"Automations"   },
+  { id:"social",      label:"Social Media"  },
+  { id:"tasks",       label:"Tasks & Goals" },
+  { id:"alerts",      label:"Alerts"        },
+  { id:"documents",   label:"Documents"     },
+  { id:"monthlyclose",label:"Monthly Close" },
+  { id:"hr",          label:"HR & People"   },
+  { id:"chat",        label:"Claude Chat"   },
+];
+
+// Sensible default module sets per role (owner/manager = all -> null).
+const DEFAULT_MODULES_BY_ROLE = {
+  staff:      ["dashboard","social","tasks","alerts","documents","chat"],
+  readonly:   ["dashboard","tasks","alerts","chat"],
+  accountant: ["dashboard","financials","documents","monthlyclose","alerts","chat"],
+};
+
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
@@ -142,14 +166,32 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
 };
 
 // ─── Invite Modal ─────────────────────────────────────────────
-const InviteModal = ({ onSave, onCancel }) => {
+const InviteModal = ({ onSave, onCancel, sending }) => {
   const [form, setForm] = useState({ email:"", name:"", role:"staff" });
+  // Module selection. Initialize from the role default; owner/manager = all.
+  const [mods, setMods] = useState(() => DEFAULT_MODULES_BY_ROLE["staff"] || []);
+  const [touchedMods, setTouchedMods] = useState(false);
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
+
+  const pickRole = (key) => {
+    set("role", key);
+    // If the admin hasn't manually edited modules yet, refresh to the role default.
+    if (!touchedMods) {
+      if (key === "manager") setMods(MODULES.map(m => m.id));
+      else setMods(DEFAULT_MODULES_BY_ROLE[key] || []);
+    }
+  };
+  const toggleMod = (id) => {
+    setTouchedMods(true);
+    setMods(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const valid = form.email.trim() && form.name.trim() && mods.length > 0;
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
-      <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:460, boxShadow:"0 20px 60px rgba(0,0,0,0.2)", overflow:"hidden" }}>
-        <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
+        <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, background:T.white }}>
           <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>Invite Team Member</span>
           <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:18, color:T.slate400, cursor:"pointer" }}>×</button>
         </div>
@@ -168,11 +210,8 @@ const InviteModal = ({ onSave, onCancel }) => {
             <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>ACCESS ROLE</label>
             <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
               {Object.entries(ROLES).filter(([k]) => k !== "owner").map(([key, role]) => (
-                <div
-                  key={key}
-                  onClick={() => set("role", key)}
-                  style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 12px", borderRadius:9, cursor:"pointer", border:`2px solid ${form.role===key?role.color:T.slate200}`, background:form.role===key?role.bg:T.white }}
-                >
+                <div key={key} onClick={() => pickRole(key)}
+                  style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 12px", borderRadius:9, cursor:"pointer", border:`2px solid ${form.role===key?role.color:T.slate200}`, background:form.role===key?role.bg:T.white }}>
                   <div style={{ width:16, height:16, borderRadius:"50%", border:`2px solid ${form.role===key?role.color:T.slate300}`, background:form.role===key?role.color:"transparent", flexShrink:0, marginTop:1 }} />
                   <div>
                     <div style={{ fontSize:12, fontWeight:600, color:form.role===key?role.color:T.slate800 }}>{role.label}</div>
@@ -182,14 +221,41 @@ const InviteModal = ({ onSave, onCancel }) => {
               ))}
             </div>
           </div>
+          {/* Module access */}
+          <div style={{ marginBottom:4 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600 }}>MODULE ACCESS</label>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => { setTouchedMods(true); setMods(MODULES.map(m=>m.id)); }}
+                  style={{ fontSize:10, color:T.blue, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>Select all</button>
+                <button onClick={() => { setTouchedMods(true); setMods([]); }}
+                  style={{ fontSize:10, color:T.slate400, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>Clear</button>
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6 }}>
+              {MODULES.map(m => {
+                const on = mods.includes(m.id);
+                return (
+                  <div key={m.id} onClick={() => toggleMod(m.id)}
+                    style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, cursor:"pointer", border:`1px solid ${on?T.navy:T.slate200}`, background:on?T.slate100:T.white }}>
+                    <div style={{ width:14, height:14, borderRadius:4, border:`2px solid ${on?T.navy:T.slate300}`, background:on?T.navy:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      {on && <span style={{ color:T.white, fontSize:9, lineHeight:1 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize:11, color:on?T.slate900:T.slate600, fontWeight:on?600:500 }}>{m.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize:10, color:T.slate400, marginTop:6 }}>{mods.length} module{mods.length===1?"":"s"} selected. They will see only these tabs.</div>
+          </div>
         </div>
-        <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8 }}>
-          <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
+        <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8, position:"sticky", bottom:0, background:T.white }}>
+          <button onClick={onCancel} disabled={sending} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
           <button
-            onClick={() => form.email.trim() && form.name.trim() && onSave(form)}
-            disabled={!form.email.trim() || !form.name.trim()}
-            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.email.trim()&&form.name.trim()?T.navy:"#94A3B8", border:"none", borderRadius:7, cursor:"pointer" }}
-          >Send Invite</button>
+            onClick={() => valid && !sending && onSave({ ...form, allowed_modules: mods })}
+            disabled={!valid || sending}
+            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:(valid&&!sending)?T.navy:"#94A3B8", border:"none", borderRadius:7, cursor:(valid&&!sending)?"pointer":"default" }}
+          >{sending ? "Sending…" : "Send Invite"}</button>
         </div>
       </div>
     </div>
@@ -221,44 +287,66 @@ const TeamAccess = ({ users }) => {
   useEffect(() => { setAllUsers(users); }, [users]);
   const [showInvite,  setShowInvite]  = useState(false);
   const [editingRole, setEditingRole] = useState(null);
+  const [sending,     setSending]     = useState(false);
 
-  // INTERIM invite: writes a placeholder users row to Supabase, scoped to the
-  // agency. auth_user_id stays null => the person shows as "Invite Pending" and
-  // cannot log in until their auth account is created in the Supabase dashboard
-  // and linked. (The full edge-function version that also sends the login email
-  // is queued for after Composio is back.)
+  // Real invite: calls the invite-team-member edge function, which (1) sends a
+  // Supabase Auth invite email with a magic link, and (2) upserts the users row
+  // with role + allowed_modules. The caller's JWT is forwarded so the function
+  // can verify the caller is an owner/manager before inviting.
   const handleInvite = async (form) => {
-    const row = {
-      agency_id:  AGENCY_ID,
-      email:      form.email.trim(),
-      full_name:  form.name.trim(),
-      role:       form.role || "staff",
-      is_active:  true,
-      invited_at: new Date().toISOString(),
-    };
-    const { data, error } = await supabase
-      .from("users")
-      .insert(row)
-      .select()
-      .single();
+    setSending(true);
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token;
+      if (!token) { alert("Your session expired — please sign in again."); setSending(false); return; }
 
-    if (error) {
-      console.error("[Settings] invite insert error:", error);
-      alert("Could not save invite: " + (error?.message || "unknown error"));
-      return;
+      const baseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const resp = await fetch(`${baseUrl}/functions/v1/invite-team-member`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email:           form.email.trim(),
+          full_name:       form.name.trim(),
+          role:            form.role || "staff",
+          allowed_modules: form.allowed_modules || null,
+          redirect_to:     window.location.origin + "/welcome",
+        }),
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok || !result.ok) {
+        console.error("[Settings] invite error:", result);
+        alert("Could not send invite: " + (result.detail || result.error || `HTTP ${resp.status}`));
+        setSending(false);
+        return;
+      }
+
+      // Optimistic add to the visible list as a pending invite.
+      setAllUsers(prev => {
+        const without = prev.filter(u => (u.email || "").toLowerCase() !== form.email.trim().toLowerCase());
+        return [...without, {
+          id:         result.auth_user_id || form.email.trim(),
+          name:       form.name.trim(),
+          email:      form.email.trim(),
+          role:       form.role || "staff",
+          allowed_modules: form.allowed_modules || null,
+          last_login: "Never",
+          is_active:  true,
+          is_current: false,
+          pending:    true,
+        }];
+      });
+      setShowInvite(false);
+      alert(`Invite email sent to ${form.email.trim()}. They'll get a link to set their password and sign in.`);
+    } catch (e) {
+      console.error("[Settings] invite exception:", e);
+      alert("Could not send invite: " + (e?.message || "unknown error"));
+    } finally {
+      setSending(false);
     }
-
-    setAllUsers(prev => [...prev, {
-      id:         data?.id,
-      name:       data?.full_name || data?.email || "Unnamed user",
-      email:      data?.email,
-      role:       data?.role || "staff",
-      last_login: "Never",
-      is_active:  data?.is_active !== false,
-      is_current: false,
-      pending:    true,
-    }]);
-    setShowInvite(false);
   };
 
   const handleRevoke = (id) => {
@@ -312,6 +400,11 @@ const TeamAccess = ({ users }) => {
                   {user.pending   && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>Invite Pending</span>}
                 </div>
                 <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{user.email} · Last login: {user.last_login}</div>
+                <div style={{ fontSize:10, color:T.slate400, marginTop:2 }}>
+                  {user.role === "owner" || user.role === "manager" || !Array.isArray(user.allowed_modules)
+                    ? "Access: all modules"
+                    : `Access: ${user.allowed_modules.length} module${user.allowed_modules.length===1?"":"s"}`}
+                </div>
               </div>
 
               {/* Role */}
@@ -349,7 +442,7 @@ const TeamAccess = ({ users }) => {
         })}
       </Card>
 
-      {showInvite && <InviteModal onSave={handleInvite} onCancel={() => setShowInvite(false)} />}
+      {showInvite && <InviteModal onSave={handleInvite} onCancel={() => setShowInvite(false)} sending={sending} />}
     </div>
   );
 };
@@ -379,19 +472,27 @@ const ConnectedAccounts = ({ connections }) => (
                 <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, ...{
                   healthy:{ background:T.greenLt, color:"#065F46" },
                   error:  { background:T.redLt,   color:"#991B1B" },
+                  notset: { background:T.slate100,color:T.slate500 },
                   manual: { background:T.purpleLt,color:"#5B21B6" },
-                }[conn.status] }}>{conn.status === "healthy" ? "Connected" : conn.status === "error" ? "Error" : "Manual"}</span>
+                }[conn.status] }}>{conn.status === "healthy" ? "Connected" : conn.status === "error" ? "Needs reconnect" : conn.status === "notset" ? "Not set up" : "Manual"}</span>
               </div>
               <div style={{ fontSize:11, color:T.slate600 }}>{conn.account}</div>
               <div style={{ fontSize:10, color:conn.status==="error"?T.red:T.slate400, marginTop:2 }}>{conn.note} · Last sync: {conn.last_sync}</div>
             </div>
             {conn.status === "error" && (
-              <button style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:8, cursor:"pointer", flexShrink:0 }}>
-                Reconnect
-              </button>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 }}>
+                <a href="https://app.composio.dev" target="_blank" rel="noopener noreferrer"
+                   style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:8, cursor:"pointer", textDecoration:"none" }}>
+                  Reconnect in Composio
+                </a>
+                <span style={{ fontSize:9, color:T.slate400 }}>then tell Claude to re-sync</span>
+              </div>
             )}
             {conn.status === "healthy" && (
               <div style={{ fontSize:11, color:T.green, fontWeight:600, flexShrink:0 }}>✓ Active</div>
+            )}
+            {conn.status === "notset" && (
+              <div style={{ fontSize:10, color:T.slate400, fontWeight:600, flexShrink:0, maxWidth:130, textAlign:"right", lineHeight:1.4 }}>Connect when ready</div>
             )}
             {conn.status === "manual" && (
               <div style={{ fontSize:10, color:T.purple, fontWeight:600, flexShrink:0, maxWidth:120, textAlign:"right", lineHeight:1.4 }}>Manual posting required daily</div>
@@ -827,21 +928,24 @@ export default function Settings() {
   const [agencyData, setAgencyData] = useState(null);
   const [settingsData, setSettingsData] = useState([]);
   const [usersData, setUsersData] = useState([]);
+  const [runLogData, setRunLogData] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadSettings() {
       if (!supabase || !AGENCY_ID) { setLoading(false); return; }
       try {
-        const [agencyRes, settingsRes, usersRes] = await Promise.all([
+        const [agencyRes, settingsRes, usersRes, runLogRes] = await Promise.all([
           supabase.from("agency").select("*").eq("id", AGENCY_ID).maybeSingle(),
           supabase.from("settings").select("*").eq("agency_id", AGENCY_ID),
           supabase.from("users").select("*").eq("agency_id", AGENCY_ID),
+          supabase.from("automation_run_log").select("status, run_at").eq("agency_id", AGENCY_ID).order("run_at", { ascending: false }).limit(50),
         ]);
         if (agencyRes.data) setAgencyData(agencyRes.data);
         else if (agencyRes.error) console.error("[Settings] agency fetch error:", agencyRes.error);
         if (settingsRes.data) setSettingsData(settingsRes.data);
         if (usersRes.data) setUsersData(usersRes.data);
+        if (runLogRes.data) setRunLogData(runLogRes.data);
       } catch(e) { console.error("Settings load error:", e); }
       finally { setLoading(false); }
     }
@@ -896,28 +1000,58 @@ export default function Settings() {
                   ? new Date(u.last_login).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })
                   : "Never",
     is_active:  u.is_active !== false,
+    allowed_modules: Array.isArray(u.allowed_modules) ? u.allowed_modules : null,
+    pending:    u.invite_status === "invited" || u.invite_status === "pending" || !u.auth_user_id,
     is_current: false,
   }));
 
-  // Connections derived from which composio account IDs / API keys are present
+  // ── Connections: live status ────────────────────────────────────────────
+  // An OAuth connection is "connected" when its composio_<x>_account_id is
+  // present in settings. The Composio/Groq engine is "healthy" when something
+  // has succeeded in the run log within the last 24h (a signal anon can read).
+  const _engineHealthy = (runLogData || []).some(r =>
+    r.status === "success" && r.run_at &&
+    (Date.now() - new Date(r.run_at).getTime()) < 24 * 3600000
+  );
+  const _lastSuccess = (runLogData || []).find(r => r.status === "success")?.run_at || null;
+  const _syncLabel = _lastSuccess
+    ? new Date(_lastSuccess).toLocaleString("en-US", { dateStyle:"medium", timeStyle:"short" })
+    : "—";
+
   const connSpecs = [
-    { key:"composio_gmail_account_id",       platform:"Gmail",          account:liveAgency.google_account, note:"Connected via Composio" },
-    { key:"composio_googledrive_account_id", platform:"Google Drive",   account:liveAgency.google_account, note:"Connected via Composio" },
-    { key:"composio_api_key",                platform:"Composio",       account:"API key present",         note:"Action layer authorized"  },
-    { key:"groq_api_key",                    platform:"Groq",           account:"API key present",         note:"LLM parsing enabled"      },
-    { key:"supabase_url",                    platform:"Supabase",       account:liveAgency.name,           note:"Database connected"       },
+    { key:"composio_gmail_account_id",          icon:"📧", platform:"Gmail",           account:liveAgency.google_account || "Google Workspace", note:"Email intake + archiver" },
+    { key:"composio_googledrive_account_id",    icon:"📁", platform:"Google Drive",    account:liveAgency.google_account || "Google Workspace", note:"Where documents are filed" },
+    { key:"composio_googlecalendar_account_id", icon:"📅", platform:"Google Calendar", account:liveAgency.google_account || "Google Workspace", note:"Scheduling + reminders" },
+    { key:"composio_github_account_id",         icon:"🐙", platform:"GitHub",          account:"papernewtmanagement-dot",   note:"BCC app code repository" },
+    { key:"composio_supabase_account_id",       icon:"🗄️", platform:"Supabase",        account:liveAgency.name || "BCC database", note:"The agency database" },
+    { key:"composio_facebook_account_id",       icon:"📘", platform:"Facebook Pages",  account:"Facebook Business",         note:"Auto-posts approved content", setupLater:true },
+    { key:"composio_linkedin_account_id",       icon:"💼", platform:"LinkedIn",        account:"LinkedIn Profile",          note:"Auto-posts approved content", setupLater:true },
+    { key:"composio_instagram_account_id",      icon:"📷", platform:"Instagram",       account:"Instagram (manual)",        note:"API allows reminders only", manual:true },
   ];
-  const liveConns = connSpecs
-    .filter(s => settingsMap[s.key])
-    .map((s, i) => ({
+  const liveConns = connSpecs.map((s, i) => {
+    const present = Boolean(settingsMap[s.key]);
+    let status;
+    if (s.manual) status = "manual";
+    else if (present) status = "healthy";
+    else status = s.setupLater ? "notset" : "error";
+    return {
       id:        `c${i+1}`,
       platform:  s.platform,
-      icon:      "",
-      status:    "healthy",
-      account:   s.account,
-      last_sync: "—",
+      icon:      s.icon,
+      status,
+      account:   present ? s.account : (s.setupLater ? "Not connected yet (optional)" : "Not connected"),
+      last_sync: (present && !s.manual) ? _syncLabel : "—",
       note:      s.note,
-    }));
+    };
+  });
+  // Always-on engine row (Composio action layer + Groq parsing)
+  liveConns.push({
+    id:"engine", platform:"Composio + Groq Engine", icon:"⚙️",
+    status: _engineHealthy ? "healthy" : (settingsMap["composio_api_key"] ? "error" : "error"),
+    account: settingsMap["composio_api_key"] ? "API key present" : "API key missing",
+    last_sync: _engineHealthy ? _syncLabel : "—",
+    note: _engineHealthy ? "Action layer + LLM parsing active" : "No successful runs in last 24h — ask Claude to check",
+  });
 
   const liveConfig = {
     timezone:           settingsMap.timezone           || "America/Chicago",
