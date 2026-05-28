@@ -228,11 +228,19 @@ const AskBtn = ({ context, size="normal" }) => (
 // ─── Section: Overview ────────────────────────────────────────
 const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
   const active    = recipes.filter(r => r.is_active).length;
-  const _recentMs = Date.now() - 48 * 60 * 60 * 1000;
-  const _isRecent = (r) => { const t = Date.parse(r.run_at || r.created_at || ""); return Number.isFinite(t) && t >= _recentMs; };
-  const recentFailures = (runLog || []).filter(r => r.status === "failed" && _isRecent(r));
+  // Action Required must reflect CURRENT state, not history. A recipe that
+  // failed this morning but succeeded since is NOT a current problem. So we
+  // look only at each recipe's MOST RECENT run: if that run failed, it's a
+  // live failure worth surfacing. runLog arrives newest-first (ordered by
+  // run_at desc), so the first row we see per recipe_id is its latest run.
+  const _latestByRecipe = {};
+  for (const r of (runLog || [])) {
+    const key = r.recipe_id || r.recipe_name;
+    if (key && !(key in _latestByRecipe)) _latestByRecipe[key] = r;
+  }
+  const recentFailures = Object.values(_latestByRecipe).filter(r => r.status === "failed");
   const failed    = recentFailures.length;
-  const partial   = runLog.filter(r => r.status === "partial").length;
+  const partial   = Object.values(_latestByRecipe).filter(r => r.status === "partial").length;
   const connError = connections.filter(c => c.status === "error").length;
   const qStuck    = queueStats?.stuckCount || 0;
   const qStuckHrs = queueStats?.stuckOldestHours || 0;
