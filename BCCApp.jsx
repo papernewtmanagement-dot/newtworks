@@ -12,6 +12,7 @@ import Documents from "./src/modules/Documents.jsx";
 import HRPeople from "./src/modules/HRPeople.jsx";
 import Settings from "./src/modules/Settings.jsx";
 import MonthlyClose from "./src/modules/MonthlyClose.jsx";
+import CashRegister from "./src/modules/CashRegister.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -99,6 +100,7 @@ const NAV_ITEMS = [
   { id: "alerts",      label: "Alerts",           icon: "bell",        roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "documents",   label: "Documents",        icon: "folder",      roles: ["owner","manager","accountant"] },
   { id: "monthlyclose", label: "Monthly Close",    icon: "calendar",    roles: ["owner","manager","accountant"] },
+  { id: "cashregister", label: "Cash Register",    icon: "creditCard",  roles: ["owner","manager","accountant"] },
   { id: "hr",          label: "HR & People",      icon: "users",       roles: ["owner","manager"] },
   { id: "chat",        label: "Claude Chat",      icon: "message",     roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "settings",    label: "Settings",         icon: "settings",    roles: ["owner"] },
@@ -554,6 +556,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     documents:   <ErrorBoundary name="Documents"><Documents /></ErrorBoundary>,
     monthlyclose:<ErrorBoundary name="Monthly Close"><MonthlyClose /></ErrorBoundary>,
+    cashregister:<ErrorBoundary name="Cash Register"><CashRegister /></ErrorBoundary>,
     hr:          <ErrorBoundary name="HR & People"><HRPeople /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
