@@ -426,7 +426,7 @@ function WeeklySnapshotSection({ snapshots, weeklyView }) {
             <div style={{ background:T.navy, padding:"12px 18px",
                           display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span style={{ color:T.white, fontWeight:700, fontSize:14 }}>
-                Week ending {new Date(wk + "T00:00:00").toLocaleDateString("en-US", {month:"short",day:"numeric",year:"numeric"})}
+                Week ending {new Date(wk).toLocaleDateString("en-US", {month:"short",day:"numeric",year:"numeric"})}
               </span>
               <span style={{ fontSize:12, color:"rgba(255,255,255,0.6)" }}>
                 {rows.reduce((s,r)=>s+(r.txn_count||0),0)} transactions
