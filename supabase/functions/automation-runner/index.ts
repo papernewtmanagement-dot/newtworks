@@ -331,7 +331,7 @@ async function composeDailyBriefing(agencyId: string, recipientEmail: string): P
     sb.from("tasks").select("title,priority,due_date,status").eq("agency_id", agencyId).neq("status", "completed").order("priority").limit(10),
     sb.from("alerts").select("title,severity,due_date").eq("agency_id", agencyId).eq("is_resolved", false).order("created_at", { ascending: false }).limit(10),
     sb.from("compliance_calendar").select("title,due_date,status").eq("agency_id", agencyId).neq("status", "completed").gte("due_date", briefingDate).lte("due_date", `${year}-12-31`).order("due_date").limit(10),
-    sb.from("staff").select("id,licensed").eq("agency_id", agencyId).eq("is_active", true),
+    sb.from("staff").select("id,license_pc,license_lh,license_ips").eq("agency_id", agencyId).eq("is_active", true),
     sb.from("aipp_tracking").select("program_year,target_amount,earned_ytd").eq("agency_id", agencyId).eq("program_year", year).maybeSingle(),
     sb.from("producer_production").select("id").eq("agency_id", agencyId).eq("period_year", year).limit(1),
   ]);
@@ -362,7 +362,7 @@ async function composeDailyBriefing(agencyId: string, recipientEmail: string): P
 
   const staff = staffRes.data || [];
   const activeStaff = staff.length;
-  const staffLicensed = staff.filter((s: any) => s.licensed).length;
+  const staffLicensed = staff.filter((s: any) => s.license_pc || s.license_lh || s.license_ips).length;
 
   const aipp = aippRes.data;
   const hasProducerData = (producerRes.data || []).length > 0;
