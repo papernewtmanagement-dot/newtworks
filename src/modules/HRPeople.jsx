@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
+
+// Returns true if a staff member holds any one of the three license types.
+const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_ips));
 // ============================================================
 // BCC HR & PEOPLE MODULE v1.0
 // Business Command Center — State Farm Agent Edition
@@ -81,7 +84,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("staff").select("id, first_name, last_name, role, start_date, pay_rate, pay_type, employment_type, is_active, email, phone, notes, licensed, license_states, compliance_flag").eq("agency_id", AGENCY_ID),
+          supabase.from("staff").select("id, first_name, last_name, role, start_date, pay_rate, pay_type, employment_type, is_active, email, phone, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("staff_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("staff_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -374,7 +377,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>Current team</div>
           {staff.filter(s => s.is_active).map((member,i) => (
             <div key={member.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:i<staff.length-1?`1px solid ${T.slate100}`:"none" }}>
-              <div style={{ width:32, height:32, borderRadius:8, background:member.licensed?T.greenLt:T.slate100, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:11, fontWeight:700, color:member.licensed?T.green:T.slate500 }}>
+              <div style={{ width:32, height:32, borderRadius:8, background:hasAnyLicense(member)?T.greenLt:T.slate100, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:11, fontWeight:700, color:hasAnyLicense(member)?T.green:T.slate500 }}>
                 {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
               </div>
               <div style={{ flex:1 }}>
@@ -382,10 +385,15 @@ const HROverview = ({ applicants, staff, onboarding }) => {
                 <div style={{ fontSize:10, color:T.slate500 }}>{member.role || "-"} · {(member.employment_type || "").toString().toUpperCase()}</div>
               </div>
               <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
-                {member.licensed
-                  ? <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>Licensed</span>
-                  : <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed</span>
-                }
+                {hasAnyLicense(member) ? (
+                  <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent:"flex-end" }}>
+                    {member.license_pc && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>P&amp;C</span>}
+                    {member.license_lh && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:"#DBEAFE", color:"#1E40AF" }}>L&amp;H</span>}
+                    {member.license_ips && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6" }}>IPS</span>}
+                  </div>
+                ) : (
+                  <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed</span>
+                )}
                 {member.compliance_flag && (
                   <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
                 )}
@@ -528,7 +536,9 @@ const StaffDirectory = ({ staff }) => {
       pay_type: member.pay_type || "",
       pay_rate: member.pay_rate ?? "",
       pay_frequency: member.pay_frequency || "",
-      licensed: member.licensed === true,
+      license_pc: member.license_pc === true,
+      license_lh: member.license_lh === true,
+      license_ips: member.license_ips === true,
       license_states: Array.isArray(member.license_states) ? member.license_states.join(", ") : "",
       start_date: member.start_date || "",
       compliance_flag: member.compliance_flag || "",
@@ -553,7 +563,9 @@ const StaffDirectory = ({ staff }) => {
       pay_type: form.pay_type.trim() || null,
       pay_rate: form.pay_rate === "" || form.pay_rate == null ? null : Number(form.pay_rate),
       pay_frequency: form.pay_frequency.trim() || null,
-      licensed: form.licensed === true,
+      license_pc: form.license_pc === true,
+      license_lh: form.license_lh === true,
+      license_ips: form.license_ips === true,
       license_states: form.license_states.trim()
         ? form.license_states.split(",").map(s => s.trim()).filter(Boolean)
         : [],
@@ -609,17 +621,22 @@ const StaffDirectory = ({ staff }) => {
           <Card key={member.id} style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
               {/* Avatar */}
-              <div style={{ width:48, height:48, borderRadius:12, background:member.licensed?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:member.licensed?T.white:T.slate500, flexShrink:0 }}>
+              <div style={{ width:48, height:48, borderRadius:12, background:hasAnyLicense(member)?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:hasAnyLicense(member)?T.white:T.slate500, flexShrink:0 }}>
                 {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
               </div>
 
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
                   <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{member.first_name} {member.last_name}</span>
-                  {member.licensed
-                    ? <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>Licensed</span>
-                    : <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed — cannot perform licensed activities</span>
-                  }
+                  {hasAnyLicense(member) ? (
+                    <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                      {member.license_pc && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>P&amp;C</span>}
+                      {member.license_lh && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:"#DBEAFE", color:"#1E40AF" }}>L&amp;H</span>}
+                      {member.license_ips && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6" }}>IPS</span>}
+                    </div>
+                  ) : (
+                    <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed — cannot perform licensed activities</span>
+                  )}
                   {member.compliance_flag && (
                     <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
                   )}
@@ -670,7 +687,7 @@ const StaffDirectory = ({ staff }) => {
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}>
                     ✏️ Edit
                   </button>
-                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicensed: ${member.licensed ? "Yes" + ((member.license_states||[]).length ? " - " + (member.license_states||[]).join(", ") : "") : "No"}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicenses: ${[member.license_pc && "P&C", member.license_lh && "L&H", member.license_ips && "IPS"].filter(Boolean).join(", ") || "None"}${((member.license_states||[]).length ? " (states: " + (member.license_states||[]).join(", ") + ")" : "")}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
                 </div>
               </div>
             )}
@@ -696,9 +713,19 @@ const StaffDirectory = ({ staff }) => {
                   <div><label style={labelStyle}>Pay frequency</label><input style={inputStyle} value={form.pay_frequency} onChange={e=>setForm({...form, pay_frequency:e.target.value})} placeholder="weekly / biweekly / semimonthly" /></div>
                   <div><label style={labelStyle}>Start date</label><input style={inputStyle} type="date" value={form.start_date || ""} onChange={e=>setForm({...form, start_date:e.target.value})} /></div>
                   <div><label style={labelStyle}>Licensed states (comma-separated)</label><input style={inputStyle} value={form.license_states} onChange={e=>setForm({...form, license_states:e.target.value})} placeholder="TX, NM" /></div>
-                  <div style={{ display:"flex", alignItems:"center", gap:8, paddingTop:18 }}>
-                    <input id={`lic-${member.id}`} type="checkbox" checked={form.licensed} onChange={e=>setForm({...form, licensed:e.target.checked})} style={{ width:16, height:16 }} />
-                    <label htmlFor={`lic-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>Licensed</label>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6, paddingTop:18 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <input id={`lpc-${member.id}`} type="checkbox" checked={form.license_pc===true} onChange={e=>setForm({...form, license_pc:e.target.checked})} style={{ width:16, height:16 }} />
+                      <label htmlFor={`lpc-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>P&amp;C license</label>
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <input id={`llh-${member.id}`} type="checkbox" checked={form.license_lh===true} onChange={e=>setForm({...form, license_lh:e.target.checked})} style={{ width:16, height:16 }} />
+                      <label htmlFor={`llh-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>L&amp;H license</label>
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <input id={`lips-${member.id}`} type="checkbox" checked={form.license_ips===true} onChange={e=>setForm({...form, license_ips:e.target.checked})} style={{ width:16, height:16 }} />
+                      <label htmlFor={`lips-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>IPS license</label>
+                    </div>
                   </div>
                 </div>
                 <div style={{ marginBottom:10 }}>
