@@ -100,7 +100,7 @@ const NAV_ITEMS = [
   { id: "social",    label: "Social",      icon: "share",        roles: ["owner","manager","staff"] },
   { id: "automations", label: "Automations",       icon: "zap",          roles: ["owner","manager"] },
   { id: "memory",    label: "Memory",            icon: "brain",        roles: ["owner","manager"] },
-  { id: "principles", label: "Core Principles",   icon: "book",         roles: ["owner","manager"] },
+  { id: "principles", label: "Principles",   icon: "book",         roles: ["owner","manager"] },
   { id: "settings",  label: "Settings",          icon: "settings",     roles: ["owner"] },
 ];
 
