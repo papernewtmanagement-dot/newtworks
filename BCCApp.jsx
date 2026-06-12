@@ -93,11 +93,11 @@ const MOCK_AGENCY = {
 const NAV_ITEMS = [
     { id: "dashboard", label: "Dashboard",         icon: "grid",         roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "alerts",    label: "Alerts",            icon: "bell",         roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "tasks",     label: "Tasks & Goals",     icon: "check",        roles: ["owner","manager","staff","readonly"] },
+  { id: "tasks",     label: "Tasks",     icon: "check",        roles: ["owner","manager","staff","readonly"] },
   { id: "chat",      label: "Claude",            icon: "message",      roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "financials", label: "Financials",        icon: "dollar",       roles: ["owner","manager","accountant"] },
   { id: "hr",        label: "Team",              icon: "users",        roles: ["owner","manager"] },
-  { id: "social",    label: "Social Media",      icon: "share",        roles: ["owner","manager","staff"] },
+  { id: "social",    label: "Social",      icon: "share",        roles: ["owner","manager","staff"] },
   { id: "automations", label: "Automations",       icon: "zap",          roles: ["owner","manager"] },
   { id: "memory",    label: "Memory",            icon: "brain",        roles: ["owner","manager"] },
   { id: "principles", label: "Core Principles",   icon: "book",         roles: ["owner","manager"] },
