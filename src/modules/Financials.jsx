@@ -1,5 +1,8 @@
  import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import CashRegister from "./CashRegister.jsx";
+import Documents from "./Documents.jsx";
+import MonthlyClose from "./MonthlyClose.jsx";
 
 // ============================================================
 // BCC FINANCIALS MODULE v1.1
@@ -1131,7 +1134,7 @@ export default function Financials() {
   const { data: liveData, loading } = useFinancialsData();
   if (liveData) MOCK = liveData;
 
-  const sections = [
+  const viewSections = [
     { id: "overview",  label: "Overview"        },
     { id: "pl",        label: "P&L"             },
     { id: "comp",      label: "COMP_RECAP"      },
@@ -1142,6 +1145,12 @@ export default function Financials() {
     { id: "balsheet",  label: "Balance Sheet"   },
     { id: "gl",        label: "General Ledger"  },
   ];
+  const toolSections = [
+    { id: "cashregister", label: "Cash Register" },
+    { id: "documents",    label: "Documents"     },
+    { id: "monthlyclose", label: "Monthly Close" },
+  ];
+  const sections = [...viewSections, ...toolSections];
 
   return (
     <div>
@@ -1176,16 +1185,21 @@ export default function Financials() {
         background: T.slate100, borderRadius: 10,
         padding: 4, marginBottom: 18,
       }}>
-        {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{
-            padding: "7px 14px", fontSize: 12,
-            fontWeight: section === s.id ? 600 : 400,
-            color: section === s.id ? T.slate900 : T.slate500,
-            background: section === s.id ? T.white : "transparent",
-            border: "none", borderRadius: 7, cursor: "pointer",
-            transition: "all 0.12s",
-            boxShadow: section === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-          }}>{s.label}</button>
+        {sections.map((s, idx) => (
+          <span key={s.id} style={{ display: "contents" }}>
+            {idx === viewSections.length && (
+              <div aria-hidden="true" style={{ width: 1, alignSelf: "stretch", background: T.slate300, margin: "4px 6px", opacity: 0.6 }} />
+            )}
+            <button onClick={() => setSection(s.id)} style={{
+              padding: "7px 14px", fontSize: 12,
+              fontWeight: section === s.id ? 600 : 400,
+              color: section === s.id ? T.slate900 : T.slate500,
+              background: section === s.id ? T.white : "transparent",
+              border: "none", borderRadius: 7, cursor: "pointer",
+              transition: "all 0.12s",
+              boxShadow: section === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            }}>{s.label}</button>
+          </span>
         ))}
       </div>
 
@@ -1199,6 +1213,11 @@ export default function Financials() {
       {section === "credit"   && <CreditSection data={MOCK} />}
       {section === "balsheet" && <BalanceSheetSection data={MOCK} />}
       {section === "gl"       && <GLSection data={MOCK} />}
+
+      {/* Operational financial tools (folded in from former top-nav items) */}
+      {section === "cashregister" && <CashRegister />}
+      {section === "documents"    && <Documents />}
+      {section === "monthlyclose" && <MonthlyClose />}
 
       {/* CPA-style print package — hidden on screen, rendered for print/PDF */}
       <PrintPackage data={MOCK} periodLabel={period} />

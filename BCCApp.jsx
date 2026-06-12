@@ -91,21 +91,17 @@ const MOCK_AGENCY = {
 
 // ─── Navigation Config ────────────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { id: "dashboard",   label: "Dashboard",       icon: "grid",        roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "financials",  label: "Financials",       icon: "dollar",      roles: ["owner","manager","accountant"] },
-  { id: "compliance",  label: "Compliance",       icon: "shield",      roles: ["owner","manager"] },
-  { id: "automations", label: "Automations",      icon: "zap",         roles: ["owner","manager"] },
-  { id: "social",      label: "Social Media",     icon: "share",       roles: ["owner","manager","staff"] },
-  { id: "tasks",       label: "Tasks & Goals",    icon: "check",       roles: ["owner","manager","staff","readonly"] },
-  { id: "alerts",      label: "Alerts",           icon: "bell",        roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "documents",   label: "Documents",        icon: "folder",      roles: ["owner","manager","accountant"] },
-  { id: "monthlyclose", label: "Monthly Close",    icon: "calendar",    roles: ["owner","manager","accountant"] },
-  { id: "cashregister", label: "Cash Register",    icon: "creditCard",  roles: ["owner","manager","accountant"] },
-  { id: "hr",          label: "HR & People",      icon: "users",       roles: ["owner","manager"] },
-  { id: "chat",        label: "Claude Chat",      icon: "message",     roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "memory",      label: "Memory",           icon: "brain",       roles: ["owner","manager"] },
-  { id: "principles",  label: "Core Principles",  icon: "book",        roles: ["owner","manager"] },
-  { id: "settings",    label: "Settings",         icon: "settings",    roles: ["owner"] },
+    { id: "dashboard", label: "Dashboard",         icon: "grid",         roles: ["owner","manager","staff","readonly","accountant"] },
+  { id: "alerts",    label: "Alerts",            icon: "bell",         roles: ["owner","manager","staff","readonly","accountant"] },
+  { id: "tasks",     label: "Tasks & Goals",     icon: "check",        roles: ["owner","manager","staff","readonly"] },
+  { id: "chat",      label: "Claude",            icon: "message",      roles: ["owner","manager","staff","readonly","accountant"] },
+  { id: "financials", label: "Financials",        icon: "dollar",       roles: ["owner","manager","accountant"] },
+  { id: "hr",        label: "Team",              icon: "users",        roles: ["owner","manager"] },
+  { id: "social",    label: "Social Media",      icon: "share",        roles: ["owner","manager","staff"] },
+  { id: "automations", label: "Automations",       icon: "zap",          roles: ["owner","manager"] },
+  { id: "memory",    label: "Memory",            icon: "brain",        roles: ["owner","manager"] },
+  { id: "principles", label: "Core Principles",   icon: "book",         roles: ["owner","manager"] },
+  { id: "settings",  label: "Settings",          icon: "settings",     roles: ["owner"] },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -547,27 +543,23 @@ const ComingSoon = ({ module }) => (
 // ─── Module Router ────────────────────────────────────────────────────────────
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
-// for the Claude Chat module which connects to Claude.ai externally.
+// for the Claude module which connects to Claude.ai externally.
 const ModuleRouter = ({ active, onNavigate }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
-    compliance:  <ErrorBoundary name="Compliance"><ComplianceCenter /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
-    documents:   <ErrorBoundary name="Documents"><Documents /></ErrorBoundary>,
-    monthlyclose:<ErrorBoundary name="Monthly Close"><MonthlyClose /></ErrorBoundary>,
-    cashregister:<ErrorBoundary name="Cash Register"><CashRegister /></ErrorBoundary>,
     hr:          <ErrorBoundary name="HR & People"><HRPeople /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex:1, gap:16, padding:40, textAlign:"center" }}>
         <div style={{ fontSize:40 }}>💬</div>
-        <div style={{ fontSize:18, fontWeight:700, color:TOKENS.slate900 }}>Claude Chat</div>
+        <div style={{ fontSize:18, fontWeight:700, color:TOKENS.slate900 }}>Claude</div>
         <div style={{ fontSize:13, color:TOKENS.slate500, maxWidth:360, lineHeight:1.7 }}>
           Your Claude.ai account is your intelligence layer. Open it in a new tab and your BCC data is already in context through your Project instructions.
         </div>

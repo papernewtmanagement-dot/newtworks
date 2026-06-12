@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import ComplianceCenter from "./ComplianceCenter.jsx";
 
 // ============================================================
 // BCC CORE PRINCIPLES MODULE v1.0
@@ -164,7 +165,7 @@ const AskBtn = ({ context, label = "Ask Claude about this", size = "normal" }) =
 );
 
 // ─── Module ───────────────────────────────────────────────────
-export default function CorePrinciples() {
+function PrinciplesView() {
   const [principles, setPrinciples] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -427,6 +428,62 @@ What I'd like to discuss:
         <div style={{ fontSize: 11, color: T.slate500 }}>
           Copies this principle to your clipboard and opens Claude.ai. Paste, then ask away.
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Outer Tabbed Shell ───────────────────────────────────────
+// Top-level Core Principles module: governs all session behavior
+// (principles tab) AND hosts the operational compliance tooling
+// (compliance tab — wraps the existing ComplianceCenter module).
+export default function CorePrinciples() {
+  const [outerTab, setOuterTab] = useState("principles");
+  const tabs = [
+    { id: "principles", label: "Principles",        icon: "📜" },
+    { id: "compliance", label: "Compliance Center", icon: "⚖️" },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: T.slate50, minHeight: 0 }}>
+      {/* Outer tab bar */}
+      <div style={{ display: "flex", gap: 2, padding: "10px 16px 0 16px", background: T.white, borderBottom: `1px solid ${T.slate200}`, flexShrink: 0 }}>
+        {tabs.map(t => {
+          const isActive = outerTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setOuterTab(t.id)}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "9px 16px 11px 16px",
+                fontSize: 13, fontWeight: 600,
+                color: isActive ? T.slate900 : T.slate500,
+                background: "transparent",
+                border: "none",
+                borderBottom: isActive ? `2px solid ${T.navy}` : "2px solid transparent",
+                marginBottom: -1,
+                cursor: "pointer",
+                transition: "color 0.15s",
+              }}
+              onMouseOver={(e) => { if (!isActive) e.currentTarget.style.color = T.slate700; }}
+              onMouseOut={(e) => { if (!isActive) e.currentTarget.style.color = T.slate500; }}
+            >
+              <span style={{ fontSize: 14, lineHeight: 1 }}>{t.icon}</span>
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Active tab content */}
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {outerTab === "principles" && <PrinciplesView />}
+        {outerTab === "compliance" && (
+          <div style={{ padding: 18 }}>
+            <ComplianceCenter />
+          </div>
+        )}
       </div>
     </div>
   );
