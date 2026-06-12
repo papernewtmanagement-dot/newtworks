@@ -84,7 +84,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("staff").select("id, first_name, last_name, role, start_date, pay_rate, pay_type, employment_type, is_active, email, phone, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
+          supabase.from("staff").select("id, first_name, last_name, role, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email, phone, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("staff_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("staff_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -94,7 +94,7 @@ function useProducerROI() {
         ]);
 
         const agency = agencyRes.data || {};
-        const staff  = (staffRes.data || []).filter(s => s.is_active !== false);
+        const staff  = (staffRes.data || []).filter(s => s.is_active !== false && !s.archived_at);
         const production = prodRes.data || [];
         const payrollDetail = payrollDetailRes.data || [];
         const payrollRuns = payrollRunsRes.data || [];
@@ -280,7 +280,7 @@ const StageBadge = ({ status }) => {
 // ─── Section: Overview ────────────────────────────────────────
 const HROverview = ({ applicants, staff, onboarding }) => {
   const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", email:"", phone:"", start_date:"", employment_type:"w2"});
+  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email:"", phone:"", start_date:"", employment_type:"w2"});
 
   const saveEmployee = async () => {
     if (!newEmployee.first_name || !newEmployee.last_name) return;
@@ -288,7 +288,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
       await supabase.from("staff").insert({ ...newEmployee, agency_id: AGENCY_ID, is_active: true });
     }
     setShowAddEmployee(false);
-    setNewEmployee({first_name:"", last_name:"", role:"", email:"", phone:"", start_date:"", employment_type:"w2"});
+    setNewEmployee({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email:"", phone:"", start_date:"", employment_type:"w2"});
   };
 
   const active      = applicants.filter(a => !["hired","rejected"].includes(a.status));
@@ -338,7 +338,25 @@ const HROverview = ({ applicants, staff, onboarding }) => {
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <input placeholder="First name *" value={newEmployee.first_name} onChange={e=>setNewEmployee({...newEmployee,first_name:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <input placeholder="Last name *" value={newEmployee.last_name} onChange={e=>setNewEmployee({...newEmployee,last_name:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input placeholder="Role / Title" value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
+            <select value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
+              <option value="">Role *</option>
+              <option value="Acquisition">Acquisition</option>
+              <option value="Inside Sales">Inside Sales</option>
+              <option value="Reception">Reception</option>
+              <option value="Support">Support</option>
+              <option value="Owner">Owner</option>
+            </select>
+            <select value={newEmployee.role_level} onChange={e=>setNewEmployee({...newEmployee,role_level:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
+              <option value="">Role level (optional)</option>
+              <option value="Account Manager">Account Manager</option>
+              <option value="Account Associate">Account Associate</option>
+              <option value="Support">Support</option>
+              <option value="Owner">Owner</option>
+            </select>
+            <select value={newEmployee.category} onChange={e=>setNewEmployee({...newEmployee,category:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
+              <option value="agency">Agency team</option>
+              <option value="admin">Admin team</option>
+            </select>
             <input placeholder="Email" value={newEmployee.email} onChange={e=>setNewEmployee({...newEmployee,email:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <input placeholder="Phone" value={newEmployee.phone} onChange={e=>setNewEmployee({...newEmployee,phone:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <input type="date" placeholder="Start date" value={newEmployee.start_date} onChange={e=>setNewEmployee({...newEmployee,start_date:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
@@ -530,6 +548,8 @@ const StaffDirectory = ({ staff }) => {
       first_name: member.first_name || "",
       last_name: member.last_name || "",
       role: member.role || "",
+      role_level: member.role_level || "",
+      category: member.category || "agency",
       employment_type: member.employment_type || "",
       email: member.email || "",
       phone: member.phone || "",
@@ -557,6 +577,8 @@ const StaffDirectory = ({ staff }) => {
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
       role: form.role.trim() || null,
+      role_level: (form.role_level || "").trim() || null,
+      category: (form.category || "agency").trim() || "agency",
       employment_type: form.employment_type.trim() || null,
       email: form.email.trim() || null,
       phone: form.phone.trim() || null,
@@ -642,7 +664,7 @@ const StaffDirectory = ({ staff }) => {
                   )}
                 </div>
                 <div style={{ fontSize:12, color:T.slate500 }}>
-                  {member.role || "-"} · {member.employment_type === "w2" ? "W-2 Employee" : member.employment_type === "family" ? "Family Employee (W-2)" : member.employment_type === "1099" ? "1099 Contractor" : (member.employment_type || "Employee")} · Since {member.start_date || "-"}
+                  {member.role || "-"}{member.role_level ? ` · ${member.role_level}` : ""} · {member.employment_type === "w2" ? "W-2 Employee" : member.employment_type === "family" ? "Family Employee (W-2)" : member.employment_type === "1099" ? "1099 Contractor" : (member.employment_type || "Employee")} · Since {member.start_date || "-"}
                 </div>
               </div>
 
@@ -687,7 +709,7 @@ const StaffDirectory = ({ staff }) => {
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}>
                     ✏️ Edit
                   </button>
-                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicenses: ${[member.license_pc && "P&C", member.license_lh && "L&H", member.license_ips && "IPS"].filter(Boolean).join(", ") || "None"}${((member.license_states||[]).length ? " (states: " + (member.license_states||[]).join(", ") + ")" : "")}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}${member.role_level ? " · " + member.role_level : ""}\nTeam: ${member.category || "agency"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicenses: ${[member.license_pc && "P&C", member.license_lh && "L&H", member.license_ips && "IPS"].filter(Boolean).join(", ") || "None"}${((member.license_states||[]).length ? " (states: " + (member.license_states||[]).join(", ") + ")" : "")}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
                 </div>
               </div>
             )}
@@ -698,7 +720,31 @@ const StaffDirectory = ({ staff }) => {
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
                   <div><label style={labelStyle}>First name *</label><input style={inputStyle} value={form.first_name} onChange={e=>setForm({...form, first_name:e.target.value})} /></div>
                   <div><label style={labelStyle}>Last name *</label><input style={inputStyle} value={form.last_name} onChange={e=>setForm({...form, last_name:e.target.value})} /></div>
-                  <div><label style={labelStyle}>Role / Title</label><input style={inputStyle} value={form.role} onChange={e=>setForm({...form, role:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Role (function)</label>
+                    <select style={inputStyle} value={form.role} onChange={e=>setForm({...form, role:e.target.value})}>
+                      <option value="">—</option>
+                      <option value="Acquisition">Acquisition</option>
+                      <option value="Inside Sales">Inside Sales</option>
+                      <option value="Reception">Reception</option>
+                      <option value="Support">Support</option>
+                      <option value="Owner">Owner</option>
+                    </select>
+                  </div>
+                  <div><label style={labelStyle}>Role level (position)</label>
+                    <select style={inputStyle} value={form.role_level || ""} onChange={e=>setForm({...form, role_level:e.target.value})}>
+                      <option value="">—</option>
+                      <option value="Account Manager">Account Manager</option>
+                      <option value="Account Associate">Account Associate</option>
+                      <option value="Support">Support</option>
+                      <option value="Owner">Owner</option>
+                    </select>
+                  </div>
+                  <div><label style={labelStyle}>Team category</label>
+                    <select style={inputStyle} value={form.category || "agency"} onChange={e=>setForm({...form, category:e.target.value})}>
+                      <option value="agency">Agency team</option>
+                      <option value="admin">Admin team</option>
+                    </select>
+                  </div>
                   <div><label style={labelStyle}>Employment type</label><input style={inputStyle} value={form.employment_type} onChange={e=>setForm({...form, employment_type:e.target.value})} placeholder="Full Time / 1099 / family" /></div>
                   <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={e=>setForm({...form, email:e.target.value})} /></div>
                   <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={form.phone} onChange={e=>setForm({...form, phone:e.target.value})} /></div>
