@@ -13,6 +13,7 @@ import HRPeople from "./src/modules/HRPeople.jsx";
 import Settings from "./src/modules/Settings.jsx";
 import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
+import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -92,6 +93,7 @@ const MOCK_AGENCY = {
 const NAV_ITEMS = [
   { id: "dashboard",   label: "Dashboard",       icon: "grid",        roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "financials",  label: "Financials",       icon: "dollar",      roles: ["owner","manager","accountant"] },
+  { id: "principles",  label: "Core Principles",  icon: "book",        roles: ["owner","manager"] },
   { id: "memory",      label: "Memory",           icon: "brain",       roles: ["owner","manager"] },
   { id: "compliance",  label: "Compliance",       icon: "shield",      roles: ["owner","manager"] },
   { id: "automations", label: "Automations",      icon: "zap",         roles: ["owner","manager"] },
@@ -127,6 +129,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     settings:   <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>,
     chevronLeft:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="15 18 9 12 15 6"/></svg>,
     chevronRight:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="9 18 15 12 9 6"/></svg>,
+    book:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
     logout:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
     menu:       <svg style={s} viewBox="0 0 24 24" {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     x:          <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
@@ -549,6 +552,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
+    principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     compliance:  <ErrorBoundary name="Compliance"><ComplianceCenter /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
