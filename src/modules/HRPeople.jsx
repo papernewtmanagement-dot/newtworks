@@ -84,9 +84,9 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("staff").select("id, first_name, last_name, role, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email, phone, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
-          supabase.from("producer_production").select("staff_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
-          supabase.from("payroll_detail").select("staff_id, gross_pay, payroll_run_id"),
+          supabase.from("team").select("id, first_name, last_name, role, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
+          supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
+          supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
           supabase.from("comp_recap").select("period_year, period_month, comp_type, comp_category, amount").eq("agency_id", AGENCY_ID),
           supabase.from("v_aipp_projection").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
@@ -125,8 +125,8 @@ function useProducerROI() {
         const runsCountByStaff = {};
         for (const d of payrollDetail) {
           if (!last3RunIds.has(d.payroll_run_id)) continue;
-          grossByStaff[d.staff_id] = (grossByStaff[d.staff_id] || 0) + parseFloat(d.gross_pay || 0);
-          runsCountByStaff[d.staff_id] = (runsCountByStaff[d.staff_id] || 0) + 1;
+          grossByStaff[d.team_member_id] = (grossByStaff[d.team_member_id] || 0) + parseFloat(d.gross_pay || 0);
+          runsCountByStaff[d.team_member_id] = (runsCountByStaff[d.team_member_id] || 0) + 1;
         }
         const monthlyGrossByStaff = {};
         for (const sid of Object.keys(grossByStaff)) {
@@ -149,7 +149,7 @@ function useProducerROI() {
         // Group production by staff/year/month
         const prodByKey = {};
         for (const p of production) {
-          const k = `${p.staff_id}|${p.period_year}|${p.period_month}`;
+          const k = `${p.team_member_id}|${p.period_year}|${p.period_month}`;
           if (!prodByKey[k]) prodByKey[k] = { pc_premium: 0, other_premium: 0, policies: 0 };
           if (p.line_of_business === "auto" || p.line_of_business === "fire") {
             prodByKey[k].pc_premium += parseFloat(p.premium_issued || 0);
@@ -198,7 +198,7 @@ function useProducerROI() {
           const tenureMonths = Math.max(0, Math.round((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 30.42)));
 
           return {
-            staff_id: s.id,
+            team_member_id: s.id,
             name: `${s.first_name} ${s.last_name}`,
             role: s.role,
             start_date: s.start_date,
@@ -285,10 +285,10 @@ const HROverview = ({ applicants, staff, onboarding }) => {
   const saveEmployee = async () => {
     if (!newEmployee.first_name || !newEmployee.last_name) return;
     if (supabase) {
-      await supabase.from("staff").insert({ ...newEmployee, agency_id: AGENCY_ID, is_active: true });
+      await supabase.from("team").insert({ ...newEmployee, agency_id: AGENCY_ID, is_active: true });
     }
     setShowAddEmployee(false);
-    setNewEmployee({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email:"", phone:"", start_date:"", employment_type:"w2"});
+    setNewEmployee({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2"});
   };
 
   const active      = applicants.filter(a => !["hired","rejected"].includes(a.status));
@@ -609,7 +609,7 @@ const StaffDirectory = ({ staff }) => {
     try {
       if (!supabase) { setSaveError("No database connection."); setSaving(false); return; }
       const { error } = await supabase
-        .from("staff")
+        .from("team")
         .update(payload)
         .eq("id", id)
         .eq("agency_id", AGENCY_ID);
@@ -827,10 +827,10 @@ const OnboardingSection = ({ onboarding }) => {
         }, {});
 
         return (
-          <Card key={record.staff_id}>
+          <Card key={record.team_member_id}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
               <div>
-                <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{record.staff_name}</div>
+                <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{record.team_member_name}</div>
                 <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Started {record.start_date} · {record.days_employed} days employed · {record.template} template</div>
               </div>
               <div style={{ textAlign:"right" }}>
@@ -1032,7 +1032,7 @@ const PerformanceSection = ({ roi }) => {
       </Card>
 
       {/* ─── PER-PRODUCER ROI ANALYSIS ───────────────────────────── */}
-      {!noProducers && producerRows.map(p => <ProducerROICard key={p.staff_id} producer={p} smvcRate={smvcRate} blendedRate={blendedRate} lapseRate={lapseRate} />)}
+      {!noProducers && producerRows.map(p => <ProducerROICard key={p.team_member_id} producer={p} smvcRate={smvcRate} blendedRate={blendedRate} lapseRate={lapseRate} />)}
 
       {/* ─── ASSUMPTIONS FOOTER ──────────────────────────────────── */}
       <Card style={{ background: T.slate50, border: `1px dashed ${T.slate200}` }}>
@@ -1308,7 +1308,7 @@ const CommissionsSection = ({ commissions }) => (
       <Card key={c.id}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
           <div>
-            <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{c.staff_name}</div>
+            <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{c.team_member_name}</div>
             <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{c.structure_name} · Effective {c.effective_date}</div>
           </div>
           <div style={{ textAlign:"right" }}>
@@ -1349,7 +1349,7 @@ const CommissionsSection = ({ commissions }) => (
           </div>
         )}
 
-        <AskBtn size="small" context={`Commission structure review:\nStaff: ${c.staff_name}\nStructure: ${c.structure_name}\nThis month earned: $${c.this_month}\nYTD earned: $${c.ytd_earned}\nTiers: ${c.tiers.map(t=>`$${t.min}-${t.max||"+"} at ${t.rate}%`).join(", ")}\n\nHelp me verify this commission calculation is correct and review if the structure still makes sense given current production levels.`} />
+        <AskBtn size="small" context={`Commission structure review:\nTeam member: ${c.team_member_name}\nStructure: ${c.structure_name}\nThis month earned: $${c.this_month}\nYTD earned: $${c.ytd_earned}\nTiers: ${c.tiers.map(t=>`$${t.min}-${t.max||"+"} at ${t.rate}%`).join(", ")}\n\nHelp me verify this commission calculation is correct and review if the structure still makes sense given current production levels.`} />
       </Card>
     ))}
   </div>

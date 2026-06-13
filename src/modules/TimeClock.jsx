@@ -168,7 +168,7 @@ function KioskView() {
     if (!selected) return;
     setBusy(true);
     const { data, error } = await supabase.rpc("time_clock_punch", {
-      p_staff_id: selected.staff_id,
+      p_staff_id: selected.team_member_id,
       p_pin: fullPin,
     });
     setBusy(false);
@@ -204,7 +204,7 @@ function KioskView() {
       <div className={`rounded-2xl p-8 text-center ${isIn ? "bg-emerald-50 border border-emerald-200" : "bg-sky-50 border border-sky-200"}`}>
         <div className={`text-5xl mb-3 ${isIn ? "text-emerald-600" : "text-sky-600"}`}>✓</div>
         <div className="text-xl font-semibold text-slate-900">
-          {result.staff_name} {isIn ? "clocked in" : "clocked out"}
+          {result.team_member_name} {isIn ? "clocked in" : "clocked out"}
         </div>
         <div className="text-sm text-slate-600 mt-1">
           at {fmtTime(result.at)}
@@ -246,9 +246,9 @@ function KioskView() {
             <div className="mb-3 text-center text-sm text-rose-600">
               {result.error === "invalid_pin" && "Wrong PIN. Try again."}
               {result.error === "pin_not_set" && "PIN not set. See Peter."}
-              {result.error === "inactive_staff" && "Account inactive."}
+              {result.error === "inactive_team_member" && "Account inactive."}
               {result.error === "not_hourly" && "Not an hourly position."}
-              {!["invalid_pin", "pin_not_set", "inactive_staff", "not_hourly"].includes(result.error)
+              {!["invalid_pin", "pin_not_set", "inactive_team_member", "not_hourly"].includes(result.error)
                 && (result.message || "Something went wrong.")}
             </div>
           )}
@@ -296,7 +296,7 @@ function KioskView() {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {(staff || []).map((s) => (
         <button
-          key={s.staff_id}
+          key={s.team_member_id}
           onClick={() => pickStaff(s)}
           className={`rounded-xl border p-5 text-left transition shadow-sm hover:shadow ${
             s.is_clocked_in
@@ -372,14 +372,14 @@ function AdminView({ userId }) {
 
   useEffect(() => { loadEntries(); }, [loadEntries]);
 
-  // group entries by staff_id, then by day-of-week
+  // group entries by team_member_id, then by day-of-week
   const byStaff = useMemo(() => {
     const map = new Map();
     for (const s of staff || []) {
-      map.set(s.staff_id, { staff: s, days: Array.from({ length: 7 }, () => []) });
+      map.set(s.team_member_id, { staff: s, days: Array.from({ length: 7 }, () => []) });
     }
     for (const e of entries || []) {
-      const bucket = map.get(e.staff_id);
+      const bucket = map.get(e.team_member_id);
       if (!bucket) continue;
       const dayIdx = (new Date(e.clock_in_at).getDay()); // 0 = Sun
       bucket.days[dayIdx].push(e);
@@ -413,7 +413,7 @@ function AdminView({ userId }) {
               (staff || [])
                 .filter((s) => s.is_clocked_in)
                 .map((s) => (
-                  <div key={s.staff_id} className="inline-flex items-center gap-2 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-sm">
+                  <div key={s.team_member_id} className="inline-flex items-center gap-2 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-sm">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                     <span className="font-medium text-emerald-900">{s.first_name} {s.last_name}</span>
                     <span className="text-emerald-700">
@@ -445,7 +445,7 @@ function AdminView({ userId }) {
         <div className="space-y-4">
           {Array.from(byStaff.values()).map(({ staff: s, days }) => (
             <EmployeeWeekCard
-              key={s.staff_id}
+              key={s.team_member_id}
               staff={s}
               days={days}
               weekStart={weekStart}
@@ -648,7 +648,7 @@ function CreateEntryModal({ staff: s, userId, onClose, onSaved }) {
     setSaving(true); setErr(null);
     const payload = {
       agency_id: AGENCY_ID,
-      staff_id: s.staff_id,
+      team_member_id: s.team_member_id,
       clock_in_at: new Date(inAt).toISOString(),
       clock_out_at: outAt ? new Date(outAt).toISOString() : null,
       notes: notes || null,
@@ -694,7 +694,7 @@ function SetPinModal({ staff: s, onClose, onSaved }) {
     if (pin !== confirm) { setErr("PINs don't match."); return; }
     setSaving(true);
     const { data, error } = await supabase.rpc("time_clock_set_pin", {
-      p_staff_id: s.staff_id,
+      p_staff_id: s.team_member_id,
       p_pin: pin,
     });
     setSaving(false);

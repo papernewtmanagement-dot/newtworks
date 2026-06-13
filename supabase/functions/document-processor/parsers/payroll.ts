@@ -11,7 +11,7 @@ import { sb } from "../lib/supabase.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 
 export interface PayrollDetailRow {
-  staff_name: string;       // used to resolve staff_id via staff table
+  staff_name: string;       // used to resolve team_member_id via team table
   gross_pay: number;
   federal_tax: number;
   state_tax: number;
@@ -135,14 +135,14 @@ export async function parsePayrollRun(opts: {
     .single();
   if (runErr || !runRow) return { ok: false, queued: false, error: `payroll_runs insert failed: ${runErr?.message ?? "unknown"}` };
 
-  // Resolve staff names → staff_id (best-effort, null if no match)
+  // Resolve staff names → team_member_id (best-effort, null if no match)
   const detailRows = [];
   for (const d of rawDetails) {
     const staffName = String(d?.staff_name ?? "").trim();
     if (!staffName) continue;
     let staffId: string | null = null;
     const { data: matchedStaff } = await sb
-      .from("staff")
+      .from("team")
       .select("id")
       .eq("agency_id", opts.agencyId)
       .ilike("name", staffName)
@@ -152,7 +152,7 @@ export async function parsePayrollRun(opts: {
     detailRows.push({
       payroll_run_id: runRow.id,
       agency_id: opts.agencyId,
-      staff_id: staffId,
+      team_member_id: staffId,
       gross_pay: Number(d?.gross_pay ?? 0),
       federal_tax: Number(d?.federal_tax ?? 0),
       state_tax: Number(d?.state_tax ?? 0),

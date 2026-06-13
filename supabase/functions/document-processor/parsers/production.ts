@@ -7,7 +7,7 @@
 // Both feed producer_production, which drives the Performance tab and AIPP
 // pace tracking. Detail-only — no GL posts.
 //
-// GRAIN: one row per (staff_id, period_year, period_month, line_of_business),
+// GRAIN: one row per (team_member_id, period_year, period_month, line_of_business),
 // enforced by a UNIQUE constraint. This table tracks NEW production issued
 // (premium_type is always "new"); renewal premium is modeled downstream via
 // the lapse rate, not stored here. Do not split new/renewal into separate
@@ -80,7 +80,7 @@ function canonicalLob(raw: unknown): Lob {
   return "other";
 }
 
-// Build a normalized name → staff_id index for the agency's active staff.
+// Build a normalized name → team_member_id index for the agency's active team.
 // Handles "First Last", "Last, First", case, and extra whitespace.
 function normName(s: string): string {
   return s.toLowerCase().replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
@@ -88,7 +88,7 @@ function normName(s: string): string {
 
 async function buildStaffIndex(agencyId: string): Promise<Map<string, string>> {
   const { data, error } = await sb
-    .from("staff")
+    .from("team")
     .select("id, first_name, last_name")
     .eq("agency_id", agencyId)
     .eq("is_active", true);
@@ -177,7 +177,7 @@ export async function parseProductionReport(opts: {
     return { ok: false, queued: false, error: "LLM returned no parseable rows" };
   }
 
-  // Resolve staff names → staff_id. producer_production REQUIRES staff_id (NOT NULL).
+  // Resolve staff names → team_member_id. producer_production REQUIRES team_member_id (NOT NULL).
   // Rows for unmatched producers are skipped and reported back.
   const staffIdx = await buildStaffIndex(opts.agencyId);
   const unmatched: string[] = [];
@@ -191,7 +191,7 @@ export async function parseProductionReport(opts: {
     const isAipp = AIPP_QUALIFYING_LOB.has(r.line_of_business);
     insertRows.push({
       agency_id: opts.agencyId,
-      staff_id: staffId,
+      team_member_id: staffId,
       period_year: r.period_year,
       period_month: r.period_month,
       line_of_business: r.line_of_business,
@@ -215,7 +215,7 @@ export async function parseProductionReport(opts: {
     const { error } = await sb
       .from("producer_production")
       .upsert(insertRows, {
-        onConflict: "agency_id,staff_id,period_year,period_month,line_of_business",
+        onConflict: "agency_id,team_member_id,period_year,period_month,line_of_business",
       });
     if (error) return { ok: false, queued: false, error: `producer_production upsert failed: ${error.message}` };
   }
