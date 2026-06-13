@@ -14,6 +14,7 @@ import Settings from "./src/modules/Settings.jsx";
 import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
+import TimeClock from "./src/modules/TimeClock.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -97,6 +98,7 @@ const NAV_ITEMS = [
   { id: "chat",      label: "Claude",            icon: "message",      roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "financials", label: "Financials",        icon: "dollar",       roles: ["owner","manager","accountant"] },
   { id: "hr",        label: "Team",              icon: "users",        roles: ["owner","manager"] },
+  { id: "timeclock", label: "Time Clock",        icon: "clock",        roles: ["owner","manager","staff"] },
   { id: "social",    label: "Social",      icon: "share",        roles: ["owner","manager","staff"] },
   { id: "automations", label: "Automations",       icon: "zap",          roles: ["owner","manager"] },
   { id: "memory",    label: "Memory",            icon: "brain",        roles: ["owner","manager"] },
@@ -126,6 +128,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     chevronLeft:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="15 18 9 12 15 6"/></svg>,
     chevronRight:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="9 18 15 12 9 6"/></svg>,
     book:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+    clock:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
     logout:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
     menu:       <svg style={s} viewBox="0 0 24 24" {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     x:          <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
@@ -555,6 +558,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="HR & People"><HRPeople /></ErrorBoundary>,
+    timeclock:   <ErrorBoundary name="Time Clock"><TimeClock /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex:1, gap:16, padding:40, textAlign:"center" }}>
