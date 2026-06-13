@@ -54,7 +54,7 @@ BEGIN
     journal_lines, journal_entries,
     credit_transactions,
     payroll_detail, payroll_runs,
-    comp_recap, aipp_tracking, scoreboard_tracking,
+    comp_recap, aipp_tracking, scorecard_tracking,
     automation_run_log,
     daily_briefing_log,
     social_analytics, content_calendar, social_accounts,
@@ -100,7 +100,7 @@ BEGIN
   INSERT INTO persistent_memory (agency_id, category, title, content, added_by, source) VALUES
   (demo_agency_id, 'agency_profile',    'Business Overview',         'Sunshine State Insurance is a State Farm agency in Tampa FL serving FL/GA/AL. Established 2018. S-Corp with Sam Jordan as owner. Focus on auto, home, and life insurance with growing financial services book. Currently 8 staff members.', 'system', 'demo_seed'),
   (demo_agency_id, 'business_rules',    'Communication Preferences', 'Direct communication style. Email for non-urgent matters, phone for urgent. Loves data-driven insights. Prefers concise summaries with clear action items.', 'system', 'demo_seed'),
-  (demo_agency_id, 'goals',             'Annual Goals',              'Hit AIPP target of $85K. Grow team from 8 to 10 staff. Launch financial services cross-sell campaign in Q2. Achieve top-quartile scoreboard ranking.', 'system', 'demo_seed'),
+  (demo_agency_id, 'goals',             'Annual Goals',              'Hit AIPP target of $85K. Grow team from 8 to 10 staff. Launch financial services cross-sell campaign in Q2. Achieve top-quartile scorecard ranking.', 'system', 'demo_seed'),
   (demo_agency_id, 'staff',             'Team Structure',            'Sam Jordan (owner/agent), Marcus Chen (office manager), Priya Patel (LSP), Tasha Williams (LSP), David Rodriguez (LSP), Emily Tran (CSR), Brandon Hill (CSR), Olivia Brooks (financial services specialist).', 'system', 'demo_seed'),
   (demo_agency_id, 'compliance_notes',  'Active Compliance Posture', 'Annual licensing renewals on schedule. P&C licenses current in FL/GA/AL. Life license active in FL. Office passed last SF compliance audit with zero findings.', 'system', 'demo_seed'),
   (demo_agency_id, 'financial_context', 'Financial Health Snapshot', 'Strong cash position. Monthly burn averaging $42K. Q1 revenue tracking 12% above prior year baseline. AIPP YTD at 28% achievement.', 'system', 'demo_seed');
@@ -210,16 +210,16 @@ BEGIN
         (entry_id, demo_agency_id, acct_aipp,     0, aipp, 'AIPP quarterly bonus');
     END IF;
 
-    -- Year-end ScoreBoard
+    -- Year-end Scorecard
     IF mo = 12 THEN
       sb := ROUND((8000 + random() * 7000)::NUMERIC, 2);
       entry_id := uuid_generate_v4();
       INSERT INTO journal_entries (id, agency_id, entry_date, entry_type, description, source) VALUES
         (entry_id, demo_agency_id, MAKE_DATE(yr, mo, 28), 'standard',
-         'ScoreBoard annual bonus — ' || yr, 'demo_seed');
+         'Scorecard annual bonus — ' || yr, 'demo_seed');
       INSERT INTO journal_lines (journal_entry_id, agency_id, account_id, debit, credit, description) VALUES
-        (entry_id, demo_agency_id, acct_checking, sb, 0, 'ScoreBoard bonus'),
-        (entry_id, demo_agency_id, acct_sb,       0, sb, 'ScoreBoard performance bonus');
+        (entry_id, demo_agency_id, acct_checking, sb, 0, 'Scorecard bonus'),
+        (entry_id, demo_agency_id, acct_sb,       0, sb, 'Scorecard performance bonus');
     END IF;
 
     -- Bi-monthly payroll
@@ -309,7 +309,7 @@ BEGIN
       WHEN 9 THEN 0.95 WHEN 10 THEN 0.90 WHEN 11 THEN 0.85 WHEN 12 THEN 1.00
     END;
 
-    INSERT INTO comp_recap (agency_id, period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scoreboard_eligible) VALUES
+    INSERT INTO comp_recap (agency_id, period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scorecard_eligible) VALUES
     (demo_agency_id, yr, mo, 'new_business', 'Auto',     'New Business — Auto',         ROUND((2800 + random() * 1400)::NUMERIC * factor, 2), TRUE,  FALSE),
     (demo_agency_id, yr, mo, 'new_business', 'Home',     'New Business — Home',         ROUND((2400 + random() * 1400)::NUMERIC * factor, 2), TRUE,  FALSE),
     (demo_agency_id, yr, mo, 'new_business', 'Life',     'New Business — Life',         ROUND((800 + random() * 1600)::NUMERIC * factor, 2),  TRUE,  TRUE),
@@ -318,15 +318,15 @@ BEGIN
     (demo_agency_id, yr, mo, 'renewal',      'Umbrella', 'Renewal — Umbrella',          ROUND((450 + random() * 400)::NUMERIC * factor, 2),   FALSE, FALSE);
 
     IF mo IN (3, 6, 9, 12) THEN
-      INSERT INTO comp_recap (agency_id, period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scoreboard_eligible) VALUES
+      INSERT INTO comp_recap (agency_id, period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scorecard_eligible) VALUES
       (demo_agency_id, yr, mo, 'bonus', 'AIPP Accrual', 'Bonus — AIPP Accrual', ROUND((1500 + random() * 1000)::NUMERIC * factor, 2), FALSE, FALSE);
     END IF;
   END LOOP;
 
   -- ============================================================
-  -- 9. SCOREBOARD TRACKING
+  -- 9. SCORECARD TRACKING
   -- ============================================================
-  INSERT INTO scoreboard_tracking (agency_id, program_year, period, metric_name, target, actual, achievement_percentage, notes) VALUES
+  INSERT INTO scorecard_tracking (agency_id, program_year, period, metric_name, target, actual, achievement_percentage, notes) VALUES
   (demo_agency_id, curr_year, 'annual', 'New Business Auto Items',        320, 287,  89.7,  'YTD tracking'),
   (demo_agency_id, curr_year, 'annual', 'New Business Home Items',        180, 198,  110.0, 'YTD tracking'),
   (demo_agency_id, curr_year, 'annual', 'Life Items',                     65,  48,   73.8,  'YTD tracking'),
@@ -403,7 +403,7 @@ BEGIN
   (demo_agency_id, 'Hit Annual AIPP Target',            'Achieve $85,000 in AIPP earnings for the year',                       'aipp',       85000, 23800, 'dollars',    MAKE_DATE(curr_year, 12, 31), 'active', 'Sam Jordan'),
   (demo_agency_id, 'Grow Team to 10',                   'Hire two additional licensed producers by year end',                  'team',       10,    8,     'count',      MAKE_DATE(curr_year, 12, 31), 'active', 'Sam Jordan'),
   (demo_agency_id, 'Financial Services Cross-Sell',     'Launch FSP cross-sell campaign and add 50 FSP customers',             'revenue',    50,    18,    'count',      MAKE_DATE(curr_year, 9, 30),  'active', 'Sam Jordan'),
-  (demo_agency_id, 'Top-Quartile ScoreBoard Ranking',   'Achieve top-quartile placement in regional ScoreBoard rankings',      'revenue',    100,   85,    'percentage', MAKE_DATE(curr_year, 12, 31), 'active', 'Sam Jordan'),
+  (demo_agency_id, 'Top-Quartile Scorecard Ranking',   'Achieve top-quartile placement in regional Scorecard rankings',      'revenue',    100,   85,    'percentage', MAKE_DATE(curr_year, 12, 31), 'active', 'Sam Jordan'),
   (demo_agency_id, 'Zero Compliance Findings',          'Maintain zero compliance audit findings through year end',           'compliance', 0,     0,     'count',      MAKE_DATE(curr_year, 12, 31), 'active', 'Sam Jordan');
 
   -- ============================================================

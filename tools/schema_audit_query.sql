@@ -381,15 +381,15 @@ UNION ALL
 
 UNION ALL
   SELECT
-    'scoreboard_tracking' AS master_table,
+    'scorecard_tracking' AS master_table,
     CASE
-      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='scoreboard_tracking') THEN 'ok'
-      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['scoreboard','scoreboard_log'])) THEN 'bridge_needed'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='scorecard_tracking') THEN 'ok'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['scorecard','scorecard_log'])) THEN 'bridge_needed'
       ELSE 'missing'
     END AS status,
     (SELECT table_name FROM information_schema.tables
-       WHERE table_schema='public' AND table_name = ANY(ARRAY['scoreboard','scoreboard_log']) LIMIT 1) AS legacy_name,
-    ARRAY['scoreboard','scoreboard_log']::text AS aliases_checked
+       WHERE table_schema='public' AND table_name = ANY(ARRAY['scorecard','scorecard_log']) LIMIT 1) AS legacy_name,
+    ARRAY['scorecard','scorecard_log']::text AS aliases_checked
 
 UNION ALL
   SELECT

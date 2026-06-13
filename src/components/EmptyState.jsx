@@ -26,7 +26,7 @@ export default function EmptyState({
     performance:  { icon: "📊", title: "No performance data yet", desc: "Monthly performance logs will appear here once your first review cycle runs." },
     applicants:   { icon: "👤", title: "No applicants",          desc: "Open positions and applicants will appear here when you start hiring." },
     aipp:         { icon: "🏆", title: "AIPP data pending",      desc: "Your AIPP tracking will populate once your annual target is set. Tell your Claude: \"Set my 2026 AIPP target: $[amount]\"" },
-    scoreboard:   { icon: "🥇", title: "Scoreboard pending",     desc: "Monthly ScoreCard Bonus data will appear here. Ask your Claude to load your current ScoreBoard metrics." },
+    scorecard:   { icon: "🥇", title: "Scorecard pending",     desc: "Monthly ScoreCard Bonus data will appear here. Ask your Claude to load your current Scorecard metrics." },
     memory:       { icon: "🧠", title: "No memory entries",      desc: "Your BCC builds persistent memory from your conversations over time." },
   };
 

@@ -146,7 +146,7 @@ INSERT INTO automation_recipes (
   'Pulls State Farm daily comp emails, parses individual line items via Groq, writes to comp_recap.',
   'cron', '0 15 * * *',
   'GMAIL_FETCH_EMAILS', 'gmail',
-  'You are parsing a State Farm daily compensation notice. Extract every line item with: period_year, period_month, comp_type (new_business, renewal, scoreboard, aipp, other), comp_category (auto, home, life, health, fs, umbrella), amount, is_aipp_eligible, is_scoreboard_eligible, description.',
+  'You are parsing a State Farm daily compensation notice. Extract every line item with: period_year, period_month, comp_type (new_business, renewal, scorecard, aipp, other), comp_category (auto, home, life, health, fs, umbrella), amount, is_aipp_eligible, is_scorecard_eligible, description.',
   jsonb_build_object(
     'gmail_query', 'from:no-reply@statefarm.com subject:"daily comp" newer_than:2d',
     'attachment_required', false

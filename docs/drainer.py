@@ -203,7 +203,7 @@ Each row represents one line item with these fields:
 - period_month: integer
 - period_day: integer
 - is_aipp_eligible: boolean (TRUE only for auto_new, auto_renewal, fire_new, fire_renewal)
-- is_scoreboard_eligible: boolean (always false)
+- is_scorecard_eligible: boolean (always false)
 
 SKIP summary lines (GROSS, TOTAL, NET). Only extract individual line items.
 Return ONLY a JSON object {"rows": [...]}. No prose. No markdown fences."""
@@ -219,7 +219,7 @@ Each row represents one deduction line item:
 - amount: number (NEGATIVE -- deductions reduce comp)
 - period_year, period_month, period_day: integers
 - is_aipp_eligible: false
-- is_scoreboard_eligible: false
+- is_scorecard_eligible: false
 
 SKIP totals. Return ONLY {"rows": [...]}. No prose. No fences."""
 
@@ -297,7 +297,7 @@ def _process_parse_pdf_to_text(agency_id: str, row: dict) -> dict:
                 INSERT INTO comp_recap (
                   agency_id, period_year, period_month, period_day,
                   comp_type, comp_category, description, amount,
-                  is_aipp_eligible, is_scoreboard_eligible,
+                  is_aipp_eligible, is_scorecard_eligible,
                   source_document_id, posted_at
                 ) VALUES (
                   {_sql_escape(agency_id)},
@@ -309,7 +309,7 @@ def _process_parse_pdf_to_text(agency_id: str, row: dict) -> dict:
                   {_sql_escape(r.get('description'))},
                   {float(r.get('amount') or 0)},
                   {_sql_escape(bool(r.get('is_aipp_eligible')))},
-                  {_sql_escape(bool(r.get('is_scoreboard_eligible')))},
+                  {_sql_escape(bool(r.get('is_scorecard_eligible')))},
                   {_sql_escape(doc_id)},
                   NOW()
                 );

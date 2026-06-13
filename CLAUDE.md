@@ -98,7 +98,7 @@ VITE_USE_MOCK_DATA=false (production; set to true only for sales demos)
 | Module | Key Tables / Views | Notes |
 |---|---|---|
 | Dashboard | agency, tasks, alerts, compliance_rules, **v_income_statement**, monthly_close_checklist | 7 widgets; uses derived view; AIPP card uses program_year |
-| Financials | **v_income_statement**, comp_recap, **journal_lines + journal_entries + chart_of_accounts**, payroll_detail, bank_accounts, credit_accounts, aipp_tracking, scoreboard_tracking | Most complex; GL is a 3-way join. CompRecap useEffect syncs period state when data loads. Every section uses defensive guards (Array.isArray, optional chaining). |
+| Financials | **v_income_statement**, comp_recap, **journal_lines + journal_entries + chart_of_accounts**, payroll_detail, bank_accounts, credit_accounts, aipp_tracking, scorecard_tracking | Most complex; GL is a 3-way join. CompRecap useEffect syncs period state when data loads. Every section uses defensive guards (Array.isArray, optional chaining). |
 | ComplianceCenter | compliance_rules, compliance_log | Add Rule button |
 | Documents | documents | Wired to live data with mock fallback |
 | **HRPeople** | staff, applicants, **producer_production**, payroll_detail, payroll_runs, comp_recap, agency (smvc_rate_pc, blended_rate_other, lapse_rate_annual) | Add Employee writes to staff. **Performance tab includes Producer ROI projection** — see `docs/PRODUCER_ROI_INSTALL.md`. |
@@ -417,7 +417,7 @@ WITH expected_tables(name) AS (VALUES
   ('daily_briefing_log'),('documents'),('goals'),('interviews'),
   ('journal_entries'),('journal_lines'),('notification_preferences'),
   ('offers'),('onboarding_checklists'),('payroll_detail'),('payroll_runs'),
-  ('persistent_memory'),('positions'),('scoreboard_tracking'),('settings'),
+  ('persistent_memory'),('positions'),('scorecard_tracking'),('settings'),
   ('social_accounts'),('social_analytics'),('staff'),('staff_performance'),
   ('tasks'),('users')
 ),

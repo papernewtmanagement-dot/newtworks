@@ -12,7 +12,7 @@ import MonthlyClose from "./MonthlyClose.jsx";
 //   1. Overview        — Summary cards + revenue trend chart
 //   2. P&L             — Monthly/quarterly/annual P&L
 //   3. COMP_RECAP      — SF compensation detail by period
-//   4. AIPP & ScoreBoard — Progress tracking
+//   4. AIPP & Scorecard — Progress tracking
 //   5. Payroll         — Staff payroll history
 //   6. Bank Accounts   — Account balances and reconciliation
 //   7. Credit & Debt   — Cards, loans, lines of credit
@@ -65,7 +65,7 @@ function useFinancialsData() {
         const [
           isRows, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
-          aippRow, scoreboardRows, balanceSheetRows,
+          aippRow, scorecardRows, balanceSheetRows,
         ] = await Promise.all([
           // Income statement view
           supabase.from("v_income_statement")
@@ -110,7 +110,7 @@ function useFinancialsData() {
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
 
-          // ScoreBoard
+          // Scorecard
           supabase.from("scorecard_tracking")
             .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(20),
@@ -186,8 +186,8 @@ function useFinancialsData() {
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
 
-        // ScoreBoard — alias to {metric, actual, target, pct}
-        const scoreboard = (scoreboardRows.data || []).map(s => ({
+        // Scorecard — alias to {metric, actual, target, pct}
+        const scorecard = (scorecardRows.data || []).map(s => ({
           metric: s.metric_name,
           actual: parseFloat(s.actual || 0),
           target: parseFloat(s.target || 0),
@@ -265,7 +265,7 @@ function useFinancialsData() {
           pl: { income: incomeLines, expenses: expenseLines },
           compRecaps,
           aipp,
-          scoreboard,
+          scorecard,
           bankAccounts: (bankRows.data || []).map(b => ({
             name: b.account_name,
             balance: parseFloat(b.current_balance||0),
@@ -320,7 +320,7 @@ let MOCK = {
   pl:{income:[],expenses:[]},
   compRecaps:[],
   aipp: { year: new Date().getFullYear(), target:0, earned:0, projected:0, priorYear:0, hasData:false, monthlyEarned: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(m=>({month:m,amount:0})) },
-  scoreboard: [],
+  scorecard: [],
   bankAccounts:[],creditAccounts:[],glEntries:[],payroll:[],
   balanceSheet:{ assets:[], liabilities:[], equity:[], totalAssets:0, totalLiabilities:0, totalEquity:0, asOfLabel:"" },
 };
@@ -648,7 +648,7 @@ const CompRecapSection = ({ data }) => {
   );
 };
 
-// ─── Section: AIPP & ScoreBoard ──────────────────────────────
+// ─── Section: AIPP & Scorecard ──────────────────────────────
 const AIPPSection = ({ data }) => {
   const aippData = data?.aipp || {};
   const year       = aippData.year       || new Date().getFullYear();
@@ -658,7 +658,7 @@ const AIPPSection = ({ data }) => {
   const priorYear  = aippData.priorYear  || 0;
   const hasAippData = !!aippData.hasData && target > 0;
   const monthlyEarned = Array.isArray(aippData.monthlyEarned) ? aippData.monthlyEarned : [];
-  const scoreboard    = Array.isArray(data?.scoreboard) ? data.scoreboard : [];
+  const scorecard    = Array.isArray(data?.scorecard) ? data.scorecard : [];
   const achievement = pct(earned, target);
   const projPct = pct(projected, target);
 
@@ -722,15 +722,15 @@ const AIPPSection = ({ data }) => {
           )}
         </Card>
 
-        {/* ScoreBoard */}
+        {/* Scorecard */}
         <Card>
           <CardHeader
-            title={`ScoreBoard Metrics — ${year}`}
+            title={`Scorecard Metrics — ${year}`}
             sub="Progress toward performance recognition"
-            action={<AskBtn context={`My ScoreBoard metrics for ${year}: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention.`} />}
+            action={<AskBtn context={`My Scorecard metrics for ${year}: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention.`} />}
           />
-          {scoreboard.length > 0 ? (
-            scoreboard.map((m, i) => (
+          {scorecard.length > 0 ? (
+            scorecard.map((m, i) => (
               <div key={i} style={{ marginBottom: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   <span style={{ fontSize: 12, color: T.slate700 }}>{m.metric}</span>
@@ -751,10 +751,10 @@ const AIPPSection = ({ data }) => {
             ))
           ) : (
             <div style={{ padding: "8px 0" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700, marginBottom: 6 }}>No ScoreBoard metrics loaded yet</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700, marginBottom: 6 }}>No Scorecard metrics loaded yet</div>
               <div style={{ fontSize: 12, color: T.slate500, lineHeight: 1.5 }}>
-                ScoreBoard tracking populates once {year} benchmarks and current production are entered.
-                Life &amp; Health production in Q3/Q4 lifts next year's Auto/Fire ScoreBoard multiplier.
+                Scorecard tracking populates once {year} benchmarks and current production are entered.
+                Life &amp; Health production in Q3/Q4 lifts next year's Auto/Fire Scorecard multiplier.
               </div>
             </div>
           )}
@@ -1138,7 +1138,7 @@ export default function Financials() {
     { id: "overview",  label: "Overview"        },
     { id: "pl",        label: "P&L"             },
     { id: "comp",      label: "COMP_RECAP"      },
-    { id: "aipp",      label: "AIPP & ScoreBoard"},
+    { id: "aipp",      label: "AIPP & Scorecard"},
     { id: "payroll",   label: "Payroll"         },
     { id: "bank",      label: "Bank Accounts"   },
     { id: "credit",    label: "Credit & Debt"   },

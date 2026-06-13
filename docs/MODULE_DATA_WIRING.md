@@ -27,7 +27,7 @@ The pattern is consistent:
 | Module | Primary tables | Secondary tables / views |
 |---|---|---|
 | Dashboard | `agency`, `tasks`, `alerts`, `compliance_rules`, `compliance_log`, `monthly_close_checklist`, `aipp_tracking` | `v_income_statement` (derived view) |
-| Financials | `comp_recap`, `journal_entries`, `journal_lines`, `chart_of_accounts`, `payroll_runs`, `payroll_detail`, `bank_accounts`, `credit_accounts`, `credit_transactions`, `aipp_tracking`, `scoreboard_tracking` | `v_income_statement`, `v_balance_sheet` |
+| Financials | `comp_recap`, `journal_entries`, `journal_lines`, `chart_of_accounts`, `payroll_runs`, `payroll_detail`, `bank_accounts`, `credit_accounts`, `credit_transactions`, `aipp_tracking`, `scorecard_tracking` | `v_income_statement`, `v_balance_sheet` |
 | ComplianceCenter | `compliance_rules`, `compliance_log`, `compliance_calendar` | — |
 | Documents | `documents` | (mock fallback if empty) |
 | HRPeople | `staff`, `applicants`, `producer_production`, `payroll_detail`, `payroll_runs`, `comp_recap`, `commission_structures`, `staff_performance` | `agency.smvc_rate_pc`, `agency.blended_rate_other`, `agency.lapse_rate_annual` |
@@ -91,8 +91,8 @@ Each section below answers four questions Project Claude needs during debugging:
 - `payroll_runs` + `payroll_detail` — Payroll tab
 - `bank_accounts` + (computed monthly totals from `journal_entries`) — Bank tab
 - `credit_accounts` + `credit_transactions` — Credit tab
-- `aipp_tracking` — AIPP / ScoreBoard tab
-- `scoreboard_tracking` — ScoreBoard sub-section
+- `aipp_tracking` — AIPP / Scorecard tab
+- `scorecard_tracking` — Scorecard sub-section
 
 **If everything is empty:** Financials renders all tabs with EmptyState. Agent sees "$0 revenue, $0 expenses, no journal entries yet." Correct pre-data state.
 

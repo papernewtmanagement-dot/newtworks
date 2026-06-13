@@ -109,7 +109,7 @@ export async function parseDeductionStatement(opts: {
       description: r.description,
       amount: r.amount,
       is_aipp_eligible: false,
-      is_scoreboard_eligible: false,
+      is_scorecard_eligible: false,
       source_document_id: opts.documentId,
     })),
   );

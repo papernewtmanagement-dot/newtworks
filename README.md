@@ -83,7 +83,7 @@ See `HANDOFF_PROMPTS.md` for the canonical handoff prompts each Project Claude r
 ## Featured Modules
 
 - **Dashboard** — 7 widgets spanning AIPP progress, monthly close, financials, compliance, alerts
-- **Financials** — full bookkeeping view: P&L, Comp Recap (SF detail), AIPP/ScoreBoard, Payroll, Bank, Credit, General Ledger
+- **Financials** — full bookkeeping view: P&L, Comp Recap (SF detail), AIPP/Scorecard, Payroll, Bank, Credit, General Ledger
 - **HR & People → Performance** — **Producer ROI projection.** Per-producer 24-month commission trajectory chart with cohort-based renewal projection, lapse rate calculator from comp_recap, breakeven month detection. Built specifically for the State Farm agent decision: "When does this producer start covering their fully-loaded payroll cost?"
 - **Settings → About → Keep It Connected** — Self-heal guide that teaches the agent to work *with* their Claude (screenshot the error, paste it, get fixed) rather than navigating dashboards directly.
 

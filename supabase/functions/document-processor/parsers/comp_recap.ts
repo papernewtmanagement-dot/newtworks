@@ -7,7 +7,7 @@
 //
 // Both 1H and Daily share the same destination shape (period_year,
 // period_month, comp_type, comp_category, description, amount,
-// is_aipp_eligible, is_scoreboard_eligible). The recap_variant arg is
+// is_aipp_eligible, is_scorecard_eligible). The recap_variant arg is
 // passed to the LLM purely for context.
 // =========================================================================
 
@@ -22,7 +22,7 @@ export interface CompRecapRow {
   description: string;
   amount: number;
   is_aipp_eligible: boolean;
-  is_scoreboard_eligible: boolean;
+  is_scorecard_eligible: boolean;
 }
 
 export type ParseCompRecapResult =
@@ -42,12 +42,12 @@ For each line item, return:
   - comp_category (best-fit category from this list, lowercase exact match:
       "auto_new", "auto_renewal", "fire_new", "fire_renewal",
       "life_new", "life_renewal", "health_new", "health_renewal",
-      "bank_new", "annuity_new", "scoreboard_bonus", "aipp_payment",
+      "bank_new", "annuity_new", "scorecard_bonus", "aipp_payment",
       "service_compensation", "validation", "other")
   - description (1 sentence, verbatim from the document where possible)
   - amount (number, can be negative for adjustments)
   - is_aipp_eligible (boolean — true for new P&C lines, false otherwise)
-  - is_scoreboard_eligible (boolean — true for auto/fire/L&H new business)
+  - is_scorecard_eligible (boolean — true for auto/fire/L&H new business)
 
 Return raw JSON in this exact shape — no fences, no prose:
 {
@@ -55,7 +55,7 @@ Return raw JSON in this exact shape — no fences, no prose:
     { "period_year": 2026, "period_month": 5, "comp_type": "DAILY",
       "comp_category": "auto_new", "description": "...",
       "amount": 123.45, "is_aipp_eligible": true,
-      "is_scoreboard_eligible": true }
+      "is_scorecard_eligible": true }
   ]
 }
 
@@ -103,7 +103,7 @@ export async function parseCompRecap(opts: {
       description: String(r.description ?? "").slice(0, 1000),
       amount: r.amount,
       is_aipp_eligible: !!r.is_aipp_eligible,
-      is_scoreboard_eligible: !!r.is_scoreboard_eligible,
+      is_scorecard_eligible: !!r.is_scorecard_eligible,
     });
   }
 
@@ -125,7 +125,7 @@ export async function parseCompRecap(opts: {
       description: r.description,
       amount: r.amount,
       is_aipp_eligible: r.is_aipp_eligible,
-      is_scoreboard_eligible: r.is_scoreboard_eligible,
+      is_scorecard_eligible: r.is_scorecard_eligible,
       source_document_id: opts.documentId,
     })),
   );
