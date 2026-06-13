@@ -609,10 +609,73 @@ async function executeRecipe(
       if (internalErr) {
         throw new Error(`run_internal_recipe failed: ${internalErr.message}`);
       }
-      // run_internal_recipe returns jsonb { records_processed, output_summary }
+      // run_internal_recipe returns jsonb { records_processed, output_summary,
+      // request_id?, target_function? }
       recordsProcessed = (internalResult?.records_processed as number) ?? 0;
       outputSummary = (internalResult?.output_summary as string) ??
         `INTERNAL recipe completed (no summary returned)`;
+
+      // -- pg_net dispatch reconciliation --
+      // When internal_handler is one of the dispatch_* functions (e.g.
+      // dispatch_email_archiver, dispatch_document_processor), the SQL call
+      // fires an HTTP POST via pg_net which is ASYNC: the request only
+      // actually fires after the RPC transaction commits, and the response
+      // lands in net._http_response some time later. We detect this case by
+      // the presence of `request_id` in the SQL result and then poll
+      // public.get_pg_net_response() in SEPARATE RPC calls (= separate
+      // transactions, which CAN see the worker's committed writes) until the
+      // response arrives or we time out. The real status of the dispatched
+      // edge function becomes the status of THIS recipe run.
+      const requestId = internalResult?.request_id as number | undefined;
+      const targetFn = (internalResult?.target_function as string | undefined) ?? "dispatched edge function";
+      if (typeof requestId === "number") {
+        const startedPolling = Date.now();
+        const maxWaitMs = 90_000;
+        const pollIntervalMs = 1500;
+        let resp: any = null;
+        // Tight loop, separate RPC per iteration so we see the worker's commits.
+        while (Date.now() - startedPolling < maxWaitMs) {
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
+          const { data: row, error: respErr } = await sb.rpc(
+            "get_pg_net_response",
+            { p_request_id: requestId },
+          );
+          if (respErr) {
+            throw new Error(`get_pg_net_response failed for ${targetFn} request_id=${requestId}: ${respErr.message}`);
+          }
+          // row is jsonb-or-null. null = response hasn't landed yet.
+          if (row && (row.status_code !== null || row.error_msg !== null || row.timed_out === true)) {
+            resp = row;
+            break;
+          }
+        }
+        if (!resp) {
+          throw new Error(`${targetFn} did not respond within ${maxWaitMs / 1000}s (request_id=${requestId}). Background job may still be running; check edge function logs.`);
+        }
+        if (resp.timed_out === true) {
+          throw new Error(`${targetFn} timed out at the pg_net layer (request_id=${requestId})`);
+        }
+        if (resp.error_msg) {
+          throw new Error(`${targetFn} HTTP error: ${resp.error_msg} (request_id=${requestId})`);
+        }
+        const httpStatus = resp.status_code as number;
+        const bodyText = resp.content as string | null;
+        let parsedBody: any = null;
+        try { parsedBody = bodyText ? JSON.parse(bodyText) : null; } catch { parsedBody = null; }
+        if (httpStatus >= 400) {
+          const errMsg = parsedBody?.error || parsedBody?.output_summary || (bodyText ? bodyText.slice(0, 400) : "no body");
+          throw new Error(`${targetFn} returned HTTP ${httpStatus}: ${errMsg}`);
+        }
+        // Success — surface the real edge-function-reported counts/summary
+        if (parsedBody) {
+          recordsProcessed = (parsedBody.records_processed as number) ??
+            (parsedBody.summary?.processed as number) ?? recordsProcessed;
+          outputSummary = (parsedBody.output_summary as string) ??
+            (parsedBody.summary ? `${targetFn} completed: ${JSON.stringify(parsedBody.summary).slice(0, 300)}` : `${targetFn} returned HTTP ${httpStatus}`);
+        } else {
+          outputSummary = `${targetFn} returned HTTP ${httpStatus} (non-JSON body)`;
+        }
+      }
 
       // Write run log + update recipe status, then return early
       const durationSec = Math.round((Date.now() - started) / 1000);
