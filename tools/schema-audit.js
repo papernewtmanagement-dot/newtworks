@@ -70,46 +70,67 @@ for (const f of files) {
   while ((m = fromPat.exec(c)) !== null) tablesRef.add(m[1]);
 }
 
-// Probe each table — limit(0) returns headers without rows
+// ── Step 2a: Fetch OpenAPI spec FIRST with proper headers ──
+// PostgREST exposes column metadata for every table anon has GRANT on, even
+// when RLS blocks anon from reading rows. This is the only reliable way to
+// see column lists for RLS-protected tables (which is most of the BCC schema).
+// The previous `apikey=${key}` query-string approach silently returned 401 on
+// modern Supabase and the catch swallowed it — that's why this audit reported
+// every RLS-locked table as TABLE_UNKNOWN.
+let openApiDefs = {};
+let openApiFetchOk = false;
+try {
+  const r = await fetch(`${url}/rest/v1/`, {
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      Accept: "application/openapi+json",
+    },
+  });
+  if (r.ok) {
+    const spec = await r.json();
+    openApiDefs = spec.definitions || spec.components?.schemas || {};
+    openApiFetchOk = true;
+  } else {
+    console.warn(`\u26a0 OpenAPI fetch returned HTTP ${r.status} — falling back to row-probe only.`);
+  }
+} catch (e) {
+  console.warn(`\u26a0 OpenAPI fetch threw: ${e.message} — falling back to row-probe only.`);
+}
+
+// ── Step 2b: Build the schema map per table ──
+// Order of preference: OpenAPI (definitive) → row-probe (verifies real data) → mark inaccessible
 const schema = {};
 const probeErrors = [];
+const inaccessible = new Set();
+
 await Promise.all([...tablesRef].map(async t => {
+  // Primary: OpenAPI spec (works through RLS)
+  if (openApiDefs[t]?.properties) {
+    schema[t] = new Set(Object.keys(openApiDefs[t].properties));
+    return;
+  }
+  // Fallback: row probe (catches tables added after OpenAPI cache; finds truly missing tables)
   const { error, data } = await supabase.from(t).select("*").limit(1);
   if (error) {
     if (error.code === "42P01") {
-      schema[t] = null; // table doesn't exist
+      schema[t] = null;  // genuinely doesn't exist
     } else {
+      // RLS-blocked AND not in OpenAPI — almost certainly a missing GRANT issue, not a code bug
       probeErrors.push({ table: t, error: error.message });
+      inaccessible.add(t);
       schema[t] = null;
     }
     return;
   }
-  // Get columns from the first row (or a single-row select if empty)
   if (data && data.length > 0) {
     schema[t] = new Set(Object.keys(data[0]));
   } else {
-    // Empty table — issue an OPTIONS-style probe by inserting+rolling back is too risky.
-    // Fall back to information_schema via rpc. If no rpc, we mark as "unknown" and skip.
+    // Table exists, returned 0 rows, not in OpenAPI — can't verify columns but don't flag as missing
+    inaccessible.add(t);
     schema[t] = null;
   }
 }));
-
-// For tables that came back empty, fall back to fetching column list from PostgREST OpenAPI spec
-const need_openapi = [...tablesRef].filter(t => schema[t] === null && !probeErrors.find(e => e.table === t));
-if (need_openapi.length > 0) {
-  try {
-    const r = await fetch(`${url}/rest/v1/?apikey=${key}`);
-    const spec = await r.json();
-    const defs = spec.definitions || spec.components?.schemas || {};
-    for (const t of need_openapi) {
-      if (defs[t]?.properties) {
-        schema[t] = new Set(Object.keys(defs[t].properties));
-      }
-    }
-  } catch (e) {
-    // OpenAPI fallback failed — leave those tables as null
-  }
-}
 
 // ── Step 3: Parse every supabase.from call ──
 function parseQueries(content, file) {
@@ -186,9 +207,11 @@ const issues = [];
 for (const call of allCalls) {
   const cols = schema[call.table];
   if (cols === null || cols === undefined) {
-    if (probeErrors.find(e => e.table === call.table)) continue;
+    // Inaccessible (RLS-blocked + absent from OpenAPI) — note it but don't flag as a code bug.
+    // Genuinely missing tables (probe returned 42P01) are the only ones we surface as TABLE_UNKNOWN.
+    if (inaccessible.has(call.table)) continue;
     issues.push({ severity: "TABLE_UNKNOWN", ...call,
-      message: `Table '${call.table}' could not be verified (empty or unreachable)` });
+      message: `Table '${call.table}' does not exist in the database` });
     continue;
   }
   const badSelect = (call.selectCols || []).filter(c => !cols.has(c));
@@ -205,9 +228,20 @@ console.log(`\n${BOLD}═══ BCC Schema Audit ═══${RESET}`);
 console.log(`Files scanned:    ${files.length}`);
 console.log(`Queries scanned:  ${allCalls.length}`);
 console.log(`Tables referenced: ${tablesRef.size}`);
+if (openApiFetchOk) {
+  console.log(`${GREEN}✓ OpenAPI schema loaded (${Object.keys(openApiDefs).length} table definitions)${RESET}`);
+}
+if (inaccessible.size > 0) {
+  console.log(`${YELLOW}\u2139 ${inaccessible.size} table(s) inaccessible from anon (RLS-locked, no anon GRANT, or no rows) — column checks skipped for these:${RESET}`);
+  console.log(`   ${[...inaccessible].sort().join(", ")}`);
+}
 if (probeErrors.length) {
-  console.log(`${YELLOW}⚠ Tables that errored on probe:${RESET}`);
-  probeErrors.forEach(e => console.log(`   ${e.table}: ${e.error}`));
+  // Only show errors that aren't already implied by "inaccessible"
+  const surprising = probeErrors.filter(e => !inaccessible.has(e.table));
+  if (surprising.length) {
+    console.log(`${YELLOW}\u26a0 Tables that errored on probe (unexpected):${RESET}`);
+    surprising.forEach(e => console.log(`   ${e.table}: ${e.error}`));
+  }
 }
 
 if (issues.length === 0) {
