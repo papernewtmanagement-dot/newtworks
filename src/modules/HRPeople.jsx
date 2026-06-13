@@ -280,7 +280,7 @@ const StageBadge = ({ status }) => {
 // ─── Section: Overview ────────────────────────────────────────
 const HROverview = ({ applicants, staff, onboarding }) => {
   const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2"});
+  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
 
   const saveEmployee = async () => {
     if (!newEmployee.first_name || !newEmployee.last_name) return;
@@ -288,7 +288,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
       await supabase.from("team").insert({ ...newEmployee, agency_id: AGENCY_ID, is_active: true });
     }
     setShowAddEmployee(false);
-    setNewEmployee({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2"});
+    setNewEmployee({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
   };
 
   const active      = applicants.filter(a => !["hired","rejected"].includes(a.status));
@@ -357,14 +357,21 @@ const HROverview = ({ applicants, staff, onboarding }) => {
               <option value="agency">Agency team</option>
               <option value="admin">Admin team</option>
             </select>
-            <input placeholder="Email" value={newEmployee.email_personal} onChange={e=>setNewEmployee({...newEmployee,email_personal:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input placeholder="Phone" value={newEmployee.phone_personal} onChange={e=>setNewEmployee({...newEmployee,phone_personal:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
+            <input placeholder="Personal email" value={newEmployee.email_personal} onChange={e=>setNewEmployee({...newEmployee,email_personal:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
+            <input placeholder="Personal phone" value={newEmployee.phone_personal} onChange={e=>setNewEmployee({...newEmployee,phone_personal:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <input type="date" placeholder="Start date" value={newEmployee.start_date} onChange={e=>setNewEmployee({...newEmployee,start_date:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <select value={newEmployee.employment_type} onChange={e=>setNewEmployee({...newEmployee,employment_type:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}}>
               <option value="w2">W-2 Employee</option>
               <option value="1099">1099 Contractor</option>
               <option value="family">Family Employee (W-2)</option>
             </select>
+          </div>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:0.5,marginTop:4,marginBottom:8}}>State Farm fields (optional — can be added later)</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <input placeholder="SF associate ID (e.g. VAELNA)" value={newEmployee.sf_alias} onChange={e=>setNewEmployee({...newEmployee,sf_alias:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
+            <input placeholder="Account alpha (e.g. A-L)" value={newEmployee.account_alpha} onChange={e=>setNewEmployee({...newEmployee,account_alpha:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
+            <input placeholder="SF Outlook email" value={newEmployee.email_sf} onChange={e=>setNewEmployee({...newEmployee,email_sf:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
+            <input placeholder="Phone extension / direct line" value={newEmployee.phone_extension} onChange={e=>setNewEmployee({...newEmployee,phone_extension:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={()=>setShowAddEmployee(false)} style={{padding:"6px 14px",fontSize:12,background:"#F1F5F9",color:"#334155",border:"none",borderRadius:6,cursor:"pointer"}}>Cancel</button>
