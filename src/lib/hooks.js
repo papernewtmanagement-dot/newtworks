@@ -55,7 +55,7 @@ export function useSupabaseTable(tableName, agencyId, options = {}) {
 
 /**
  * useSupabaseQuery — run a custom Supabase query
- * Usage: const { data, loading } = useSupabaseQuery(() => supabase.from("x").select("y"))
+ * Usage: const { data, loading } = useSupabaseQuery(() => supabase.from("<table>").select("<columns>"))
  */
 export function useSupabaseQuery(queryFn, deps = []) {
   const [data, setData] = useState(null);

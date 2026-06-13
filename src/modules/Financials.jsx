@@ -111,7 +111,7 @@ function useFinancialsData() {
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
 
           // ScoreBoard
-          supabase.from("scoreboard_tracking")
+          supabase.from("scorecard_tracking")
             .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(20),
 
