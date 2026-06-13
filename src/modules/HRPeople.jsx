@@ -368,10 +368,10 @@ const HROverview = ({ applicants, staff, onboarding }) => {
           </div>
           <div style={{fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:0.5,marginTop:4,marginBottom:8}}>State Farm fields (optional — can be added later)</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <input placeholder="SF associate ID (e.g. VAELNA)" value={newEmployee.sf_alias} onChange={e=>setNewEmployee({...newEmployee,sf_alias:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
+            <input placeholder="SF Alias (e.g. VAELNA)" value={newEmployee.sf_alias} onChange={e=>setNewEmployee({...newEmployee,sf_alias:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
             <input placeholder="Account alpha (e.g. A-L)" value={newEmployee.account_alpha} onChange={e=>setNewEmployee({...newEmployee,account_alpha:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
             <input placeholder="SF Outlook email" value={newEmployee.email_sf} onChange={e=>setNewEmployee({...newEmployee,email_sf:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input placeholder="Phone extension / direct line" value={newEmployee.phone_extension} onChange={e=>setNewEmployee({...newEmployee,phone_extension:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
+            <input placeholder="Phone extension" value={newEmployee.phone_extension} onChange={e=>setNewEmployee({...newEmployee,phone_extension:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={()=>setShowAddEmployee(false)} style={{padding:"6px 14px",fontSize:12,background:"#F1F5F9",color:"#334155",border:"none",borderRadius:6,cursor:"pointer"}}>Cancel</button>

@@ -74,7 +74,7 @@ function useFinancialsData() {
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
-            .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scoreboard_eligible")
+            .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scorecard_eligible")
             .order("period_year", { ascending: false })
             .order("period_month", { ascending: false })
             .limit(2000),   // 16+ months of twice-monthly recaps ~800 rows; cap well above row count so no period is hidden
@@ -165,7 +165,7 @@ function useFinancialsData() {
           description:  r.description || `${r.comp_type} — ${r.comp_category}`,
           amount:       parseFloat(r.amount || 0),
           is_aipp_eligible: r.is_aipp_eligible,
-          is_scoreboard_eligible: r.is_scoreboard_eligible,
+          is_scorecard_eligible: r.is_scorecard_eligible,
         }));
 
         // AIPP — alias schema fields to the names AIPPSection expects
