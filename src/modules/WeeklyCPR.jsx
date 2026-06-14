@@ -174,7 +174,7 @@ function blankDetail(team_member_id) {
 
 // ── Main component ────────────────────────────────────────────
 export default function WeeklyCPR({ onClose = () => {} }) {
-  const [weekEnding, setWeekEnding] = useState(upcomingSaturdayISO());
+  const [weekEnding, setWeekEnding] = useState(null);
   const [report, setReport] = useState(null);
   const [details, setDetails] = useState({});
   const [prevReport, setPrevReport] = useState(null);
@@ -183,6 +183,52 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [error, setError] = useState(null);
+
+  // Determine the default week on mount: the most recent Saturday with no row yet.
+  // Walks back up to 100 Saturdays from the current/upcoming one. If everything in
+  // that window is saved (very unusual), falls forward to the next future Saturday.
+  useEffect(() => {
+    let cancelled = false;
+    async function determineDefault() {
+      if (!supabase) {
+        if (!cancelled) setWeekEnding(upcomingSaturdayISO());
+        return;
+      }
+      try {
+        const { data: rows, error: err } = await supabase
+          .from("weekly_cpr_reports")
+          .select("week_ending_date")
+          .eq("agency_id", AGENCY_ID)
+          .order("week_ending_date", { ascending: false })
+          .limit(100);
+        if (cancelled) return;
+        if (err) {
+          setWeekEnding(upcomingSaturdayISO());
+          return;
+        }
+        const saved = new Set((rows || []).map((r) => r.week_ending_date));
+        const startSat = upcomingSaturdayISO();
+        let candidate = startSat;
+        for (let i = 0; i < 100; i++) {
+          if (!saved.has(candidate)) {
+            setWeekEnding(candidate);
+            return;
+          }
+          const d = new Date(candidate + "T00:00:00");
+          d.setDate(d.getDate() - 7);
+          candidate = d.toISOString().slice(0, 10);
+        }
+        // Extremely unusual: 100 prior weeks all saved. Fall forward.
+        const next = new Date(startSat + "T00:00:00");
+        next.setDate(next.getDate() + 7);
+        setWeekEnding(next.toISOString().slice(0, 10));
+      } catch {
+        if (!cancelled) setWeekEnding(upcomingSaturdayISO());
+      }
+    }
+    determineDefault();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,7 +301,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
     }
   }, []);
 
-  useEffect(() => { loadWeek(weekEnding); }, [weekEnding, loadWeek]);
+  useEffect(() => { if (weekEnding) loadWeek(weekEnding); }, [weekEnding, loadWeek]);
 
   const updateReport = (patch) => setReport((r) => ({ ...(r || {}), ...patch }));
   const updateDetail = (memberId, patch) => {
@@ -328,8 +374,8 @@ export default function WeeklyCPR({ onClose = () => {} }) {
               📋 Weekly CPR — Compliance, Production, Retention
             </div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-              Week ending {fmtDateLong(weekEnding)}
-              {savedAt ? ` · last saved ${fmtTime(savedAt)}` : " · not yet saved"}
+              {weekEnding ? `Week ending ${fmtDateLong(weekEnding)}` : "Determining default week…"}
+              {weekEnding ? (savedAt ? ` · last saved ${fmtTime(savedAt)}` : " · not yet saved") : ""}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -361,9 +407,9 @@ export default function WeeklyCPR({ onClose = () => {} }) {
           }}>⚠ {error}</div>
         ) : null}
 
-        {loading ? (
+        {loading || !weekEnding ? (
           <div style={{ padding: 60, textAlign: "center", color: T.slate500 }}>
-            Loading week ending {fmtDateLong(weekEnding)}…
+            {weekEnding ? `Loading week ending ${fmtDateLong(weekEnding)}…` : "Finding the next CPR to enter…"}
           </div>
         ) : (
           <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
