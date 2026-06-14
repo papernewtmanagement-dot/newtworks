@@ -303,7 +303,7 @@ const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
         </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1.4fr) minmax(0,1fr)", gap:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
         {/* Recent Run Log */}
         <Card>
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>Recent runs — last 24 hours</div>
@@ -340,7 +340,7 @@ const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>LLM parse queue</div>
           <div style={{ fontSize:10, color:T.slate400 }}>document processor → workbench drainer → comp_recap / payroll</div>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10, marginBottom:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:10, marginBottom:12 }}>
           {[
             { label:"Pending",    value:queueStats?.pending    || 0, color:(queueStats?.pending||0)>0?T.amber:T.slate500 },
             { label:"Processing", value:queueStats?.processing || 0, color:(queueStats?.processing||0)>0?T.blue:T.slate500 },
@@ -577,7 +577,7 @@ const DailyBriefingSection = ({ briefings }) => {
   const current = briefings.find(b => b.id === selected);
 
   return (
-    <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,2fr)", gap:12 }}>
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
       {/* Briefing List */}
       <Card>
         <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>Briefing history</div>
@@ -684,7 +684,7 @@ const DocImporter = ({ imports }) => {
 
               {isExpanded && (
                 <div style={{ padding:"0 12px 12px", borderTop:`1px solid ${T.slate100}` }}>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8, marginBottom:10 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:8, marginTop:8, marginBottom:10 }}>
                     <div style={{ background:T.slate50, borderRadius:8, padding:"8px 10px" }}>
                       <div style={{ fontSize:10, color:T.slate400, marginBottom:2 }}>Source</div>
                       <div style={{ fontSize:11, fontWeight:500, color:T.slate700 }}>{doc.source}</div>

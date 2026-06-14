@@ -390,7 +390,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
         </div>
       )}
 
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1.4fr) minmax(0,1fr)", gap:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
         {/* Recent Documents */}
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -573,7 +573,7 @@ const UploadSection = () => {
 
       {/* Path Selection */}
       {!uploadPath && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:12, marginBottom:20 }}>
           {/* Path A */}
           <div
             onClick={() => setUploadPath("database")}

@@ -232,7 +232,7 @@ const InviteModal = ({ onSave, onCancel, sending }) => {
                   style={{ fontSize:10, color:T.slate400, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>Clear</button>
               </div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:6 }}>
               {MODULES.map(m => {
                 const on = mods.includes(m.id);
                 return (
@@ -522,7 +522,7 @@ const BCCConfiguration = ({ config }) => {
           <Toggle value={cfg.briefing_enabled} onChange={() => set("briefing_enabled", !cfg.briefing_enabled)} />
         </div>
         {cfg.briefing_enabled && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10 }}>
             {[
               { label:"Send Time",          key:"briefing_time",  value:cfg.briefing_time,  hint:"24hr format, agency timezone" },
               { label:"Delivery Email",     key:"briefing_email", value:cfg.briefing_email, hint:"Where briefings are sent"      },
@@ -541,7 +541,7 @@ const BCCConfiguration = ({ config }) => {
       {/* Financial Settings */}
       <Card>
         <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:14 }}>Financial Settings</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10 }}>
           {[
             { label:"Accounting Method",   key:"accounting_method", value:cfg.accounting_method, hint:"Cash basis — do not change",  editable:false },
             { label:"Fiscal Year Start",   key:"fiscal_year_start", value:cfg.fiscal_year_start, hint:"Calendar year Jan-Dec",       editable:false },
@@ -565,7 +565,7 @@ const BCCConfiguration = ({ config }) => {
       {/* AIPP Settings */}
       <Card>
         <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:14 }}>AIPP Configuration</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10 }}>
           <div>
             <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>PROGRAM YEAR</label>
             <input defaultValue={cfg.aipp_year} type="number"
@@ -688,7 +688,7 @@ const About = ({ agency: agencyProp }) => {
       </Card>
 
       {/* Sub-tabs */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:8 }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding:"12px 14px",

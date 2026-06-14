@@ -227,7 +227,7 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
         </div>
       )}
 
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
         {/* Today's Posts */}
         
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
@@ -415,7 +415,7 @@ const ContentCalendar = ({ posts, loaded }) => {
                           "{post.caption}"
                         </div>
                         {post.engagement && (
-                          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:6, marginBottom:10 }}>
+                          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:6, marginBottom:10 }}>
                             {[
                               { label:"Likes",    value:post.engagement.likes    },
                               { label:"Comments", value:post.engagement.comments },
@@ -666,7 +666,7 @@ Please draft a complete, compliant post ready to publish. Include:
       </div>
 
       <Card>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:12, marginBottom:14 }}>
           {/* Platform */}
           <div>
             <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:6 }}>PLATFORM</label>

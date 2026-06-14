@@ -325,7 +325,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
         </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
         {/* Active Pipeline */}
         
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
@@ -335,7 +335,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
       {showAddEmployee && (
         <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:10,padding:16,marginBottom:16}}>
           <div style={{fontSize:13,fontWeight:700,color:"#1E3A5F",marginBottom:12}}>Add New Employee</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))",gap:10,marginBottom:10}}>
             <input placeholder="First name *" value={newEmployee.first_name} onChange={e=>setNewEmployee({...newEmployee,first_name:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <input placeholder="Last name *" value={newEmployee.last_name} onChange={e=>setNewEmployee({...newEmployee,last_name:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
             <select value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
@@ -367,7 +367,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
             </select>
           </div>
           <div style={{fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:0.5,marginTop:4,marginBottom:8}}>State Farm fields (optional — can be added later)</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))",gap:10,marginBottom:10}}>
             <input placeholder="SF Alias (e.g. VAELNA)" value={newEmployee.sf_alias} onChange={e=>setNewEmployee({...newEmployee,sf_alias:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
             <input placeholder="Account alpha (e.g. A-L)" value={newEmployee.account_alpha} onChange={e=>setNewEmployee({...newEmployee,account_alpha:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
             <input placeholder="SF Email" value={newEmployee.email_sf} onChange={e=>setNewEmployee({...newEmployee,email_sf:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
@@ -441,8 +441,9 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
 
   return (
     <div>
-      {/* Pipeline Kanban */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(0,1fr))", gap:8, marginBottom:16 }}>
+      {/* Pipeline Kanban (horizontally scrollable on narrow viewports) */}
+      <div style={{ overflowX:"auto", marginBottom:16, marginLeft:-4, marginRight:-4, paddingLeft:4, paddingRight:4 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(120px,1fr))", gap:8, minWidth:"720px" }}>
         {stages.map(stage => {
           const s = STAGES[stage];
           const stageApps = applicants.filter(a => a.status === stage);
@@ -468,6 +469,7 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
             </div>
           );
         })}
+      </div>
       </div>
 
       {/* Applicant Detail Panel */}
@@ -724,7 +726,7 @@ const StaffDirectory = ({ staff }) => {
             {isEditing && (
               <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.blue}` }} onClick={(e) => e.stopPropagation()}>
                 <div style={{ fontSize:12, fontWeight:700, color:T.navy, marginBottom:12 }}>Edit {member.first_name} {member.last_name}</div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10 }}>
                   <div><label style={labelStyle}>First name *</label><input style={inputStyle} value={form.first_name} onChange={e=>setForm({...form, first_name:e.target.value})} /></div>
                   <div><label style={labelStyle}>Last name *</label><input style={inputStyle} value={form.last_name} onChange={e=>setForm({...form, last_name:e.target.value})} /></div>
                   <div><label style={labelStyle}>Role (function)</label>

@@ -491,7 +491,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
         <KPICard label="Expense Ratio" value={expRatio} sub="Target: <45%" border={T.slate200} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         <Card>
           <CardHeader title={`Monthly revenue — ${data?.currentYear || ""}`} sub="Blue bars = revenue · Gray = no data yet" />
           <MiniBarChart data={data.monthlyRevenue} />
@@ -665,7 +665,7 @@ const AIPPSection = ({ data }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
 
         {/* AIPP Progress */}
         <Card>
@@ -686,7 +686,7 @@ const AIPPSection = ({ data }) => {
                 <span>Jan {year}</span><span>Dec {year}</span>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
                 {[
                   { label: "Earned YTD",    value: fmt(earned),    color: T.green },
                   { label: "Projected",     value: fmt(projected), color: projPct >= 95 ? T.green : T.amber },

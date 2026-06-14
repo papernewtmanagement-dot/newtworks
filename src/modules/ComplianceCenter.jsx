@@ -183,7 +183,7 @@ const ComplianceDashboard = ({ rules = [], calendar = [], log = [] }) => {
         ))}
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
         {/* Upcoming Deadlines */}
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -753,7 +753,7 @@ export default function ComplianceCenter() {
       {showAddRule && (
         <div style={{background:T.navyLt, border:`1px solid ${T.blue}30`, borderRadius:10, padding:16, marginBottom:16}}>
           <div style={{fontSize:13, fontWeight:700, color:T.navy, marginBottom:12}}>Add Custom Compliance Rule</div>
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10}}>
             <input placeholder="Rule title *" value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})}
               style={{padding:"8px 10px", borderRadius:6, border:`1px solid ${T.slate300}`, fontSize:12, gridColumn:"1/-1"}} />
             <input placeholder="Category (e.g. Social Media)" value={newRule.category} onChange={e=>setNewRule({...newRule,category:e.target.value})}
