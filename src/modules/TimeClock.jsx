@@ -231,7 +231,7 @@ function useCurrentUser() {
       }
       const { data: rows } = await supabase
         .from("users")
-        .select("id, role, full_name, email")
+        .select("id, role, full_name, email, team_member_id")
         .eq("auth_user_id", authUserId)
         .eq("agency_id", AGENCY_ID)
         .limit(1);
@@ -280,6 +280,23 @@ function useWeekEntries(weekStart, weekEnd) {
   return { entries, loading, reload };
 }
 
+// Filter the hourly staff list based on the logged-in user.
+//   owner   -> see everyone, including is_test_user rows
+//   manager -> see everyone except is_test_user rows
+//   anyone with a linked team_member_id -> only their own row (and not test users)
+//   otherwise -> empty
+function filterVisibleStaff(staff, user) {
+  const all = staff || [];
+  if (!user) return [];
+  if (user.role === "owner") return all;
+  const realStaff = all.filter((s) => !s.is_test_user);
+  if (user.role === "manager") return realStaff;
+  if (user.team_member_id) {
+    return realStaff.filter((s) => s.team_member_id === user.team_member_id);
+  }
+  return [];
+}
+
 // =====================================================================
 // MAIN
 // =====================================================================
@@ -306,8 +323,8 @@ export default function TimeClock() {
       </div>
 
       {tab === "kiosk" || !canSeeAdmin
-        ? <KioskView />
-        : <AdminView userId={user?.id} />}
+        ? <KioskView user={user} />
+        : <AdminView user={user} />}
     </div>
   );
 }
@@ -337,8 +354,9 @@ function TabButton({ active, onClick, children }) {
 // =====================================================================
 // KIOSK VIEW  -- name tiles -> PIN pad -> punch
 // =====================================================================
-function KioskView() {
-  const { staff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
+function KioskView({ user }) {
+  const { staff: allStaff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
+  const staff = useMemo(() => filterVisibleStaff(allStaff, user), [allStaff, user]);
   const weekStart = useMemo(() => startOfSundayWeek(new Date()), []);
   const weekEnd   = useMemo(() => endOfSaturdayWeek(weekStart), [weekStart]);
   const { entries, reload: reloadEntries } = useWeekEntries(weekStart, weekEnd);
@@ -395,11 +413,18 @@ function KioskView() {
     return <div style={{ textAlign: "center", color: T.slate500, padding: "48px 0", fontSize: 13 }}>Loading...</div>;
   }
   if (!staff.length) {
+    const isLinkedStaff = !!user && !["owner", "manager"].includes(user.role) && !!user.team_member_id;
     return (
       <Card style={{ padding: "32px 24px", textAlign: "center", borderStyle: "dashed", background: T.slate50 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate700 }}>No hourly team members yet</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate700 }}>
+          {isLinkedStaff ? "Your clock isn't set up" : "Nothing to clock here"}
+        </div>
         <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
-          Add an hourly team member in Team to see them here.
+          {isLinkedStaff
+            ? "Ask Peter to set your PIN, then refresh."
+            : (allStaff.length
+                ? "Your account isn't linked to an hourly team row. Ask Peter to link it."
+                : "Add an hourly team member in Team to see them here.")}
         </div>
       </Card>
     );
@@ -413,7 +438,7 @@ function KioskView() {
           {result.action === "clock_in" ? "Clocked in" : "Clocked out"}
         </div>
         <div style={{ fontSize: 14, color: T.slate700 }}>
-          {result.staff_name} &middot; {new Date(result.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+          {result.team_member_name} &middot; {new Date(result.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
         </div>
         {result.action === "clock_out" && Number.isFinite(result.hours_this_block) && (
           <div style={{ fontSize: 12, color: T.slate600, marginTop: 6 }}>
@@ -567,13 +592,15 @@ function KioskTile({ staff: s, weekHours, status, onClick }) {
 // =====================================================================
 // ADMIN VIEW  -- weekly grid, edit entries, set PIN
 // =====================================================================
-function AdminView({ userId }) {
+function AdminView({ user }) {
+  const userId = user?.id;
   const [anchor, setAnchor] = useState(() => startOfSundayWeek(new Date()));
   const weekStart = useMemo(() => startOfSundayWeek(anchor), [anchor]);
   const weekEnd = useMemo(() => endOfSaturdayWeek(weekStart), [weekStart]);
   const lastDay = useMemo(() => addDays(weekStart, 6), [weekStart]);
 
-  const { staff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
+  const { staff: allStaff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
+  const staff = useMemo(() => filterVisibleStaff(allStaff, user), [allStaff, user]);
   const { entries, loading: entriesLoading, reload: reloadEntries } = useWeekEntries(weekStart, weekEnd);
 
   const [editing, setEditing] = useState(null);   // entry or "new"
