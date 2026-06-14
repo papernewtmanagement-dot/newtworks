@@ -456,19 +456,19 @@ export default function Dashboard({ onNavigate = () => {} }) {
       </div>
 
       {/* Top Row — Financial + AIPP */}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14}}>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
         <FinancialWidget data={dashData} onNavigate={onNavigate} />
         <AIPPWidget data={dashData} onNavigate={onNavigate} />
       </div>
 
       {/* Second Row — Monthly Close + Alerts */}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14}}>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
         <MonthlyCloseWidget data={dashData} onNavigate={onNavigate} />
         <AlertsWidget data={dashData} onNavigate={onNavigate} />
       </div>
 
       {/* Third Row — Tasks + Compliance */}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14}}>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
         <TasksWidget data={dashData} onNavigate={onNavigate} />
         <ComplianceWidget data={dashData} onNavigate={onNavigate} />
       </div>

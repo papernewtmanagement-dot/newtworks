@@ -320,7 +320,7 @@ const NewTaskModal = ({ onSave, onCancel }) => {
               )}
             </div>
           ))}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:12, marginBottom:12 }}>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>PRIORITY</label>
               <select value={form.priority} onChange={e => set("priority", e.target.value)}
@@ -391,7 +391,7 @@ const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
         ))}
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))", gap:12 }}>
         {/* Due This Week */}
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
