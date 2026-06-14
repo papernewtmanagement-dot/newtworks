@@ -6,23 +6,23 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 // ============================================================
 // BCC FINANCIALS MODULE v1.1
-// Business Command Center â State Farm Agent Edition
+// Business Command Center Ã¢ÂÂ State Farm Agent Edition
 //
 // SECTIONS:
-//   1. Overview        â Summary cards + revenue trend chart
-//   2. P&L             â Monthly/quarterly/annual P&L
-//   3. COMP_RECAP      â SF compensation detail by period
-//   4. AIPP & Scorecard â Progress tracking
-//   5. Payroll         â Staff payroll history
-//   6. Bank Accounts   â Account balances and reconciliation
-//   7. Credit & Debt   â Cards, loans, lines of credit
-//   8. General Ledger  â Full transaction ledger
+//   1. Overview        Ã¢ÂÂ Summary cards + revenue trend chart
+//   2. P&L             Ã¢ÂÂ Monthly/quarterly/annual P&L
+//   3. COMP_RECAP      Ã¢ÂÂ SF compensation detail by period
+//   4. AIPP & Scorecard Ã¢ÂÂ Progress tracking
+//   5. Payroll         Ã¢ÂÂ Staff payroll history
+//   6. Bank Accounts   Ã¢ÂÂ Account balances and reconciliation
+//   7. Credit & Debt   Ã¢ÂÂ Cards, loans, lines of credit
+//   8. General Ledger  Ã¢ÂÂ Full transaction ledger
 //
 // DATA: Reads live from Supabase views/tables via useFinancialsData().
 // ============================================================
 
 
-// âââ Design Tokens (matches BCCApp shell) ââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Design Tokens (matches BCCApp shell) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 
 const T = {
   navy:    "#1B2B4B",
@@ -51,7 +51,7 @@ const T = {
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-// âââ Live Supabase Data Hook âââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Live Supabase Data Hook Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 function useFinancialsData() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -73,7 +73,7 @@ function useFinancialsData() {
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
 
-          // SF comp recap â real schema columns
+          // SF comp recap Ã¢ÂÂ real schema columns
           supabase.from("comp_recap")
             .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scorecard_eligible")
             .order("period_year", { ascending: false })
@@ -106,7 +106,7 @@ function useFinancialsData() {
           supabase.from("payroll_detail")
             .select("payroll_run_id, gross_pay, federal_tax, state_tax, social_security, medicare, other_deductions, net_pay, employment_type"),
 
-          // AIPP â real schema
+          // AIPP Ã¢ÂÂ real schema
           supabase.from("aipp_tracking")
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
@@ -116,7 +116,7 @@ function useFinancialsData() {
             .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(20),
 
-          // Balance Sheet â anchored to QBO 4/30/2026 opening balances + post-4/30 GL activity
+          // Balance Sheet Ã¢ÂÂ anchored to QBO 4/30/2026 opening balances + post-4/30 GL activity
           supabase.from("v_balance_sheet_anchored")
             .select("account_code, account_name, account_type, anchor_0430, activity_since_0430, balance_current"),
         ]);
@@ -155,7 +155,7 @@ function useFinancialsData() {
         const revQTD = sumByPeriod("income",  r => r.month >= quarterStart && r.month <= currentMonth);
         const expQTD = sumByPeriod("expense", r => r.month >= quarterStart && r.month <= currentMonth);
 
-        // Comp recap â group rows into "periods" (e.g. "Apr 2026") and pre-format for the section
+        // Comp recap Ã¢ÂÂ group rows into "periods" (e.g. "Apr 2026") and pre-format for the section
         const compRecapsRaw = compRows.data || [];
         const compRecaps = compRecapsRaw.map(r => ({
           period_year:  r.period_year,
@@ -163,13 +163,13 @@ function useFinancialsData() {
           period_label: `${MONTHS[r.period_month-1]} ${r.period_year}`,
           comp_type:    r.comp_type,
           comp_category: r.comp_category,
-          description:  r.description || `${r.comp_type} â ${r.comp_category}`,
+          description:  r.description || `${r.comp_type} Ã¢ÂÂ ${r.comp_category}`,
           amount:       parseFloat(r.amount || 0),
           is_aipp_eligible: r.is_aipp_eligible,
           is_scorecard_eligible: r.is_scorecard_eligible,
         }));
 
-        // AIPP â alias schema fields to the names AIPPSection expects
+        // AIPP Ã¢ÂÂ alias schema fields to the names AIPPSection expects
         const aippRaw = aippRow.data || null;
         const aipp = aippRaw ? {
           year:          aippRaw.program_year || currentYear,
@@ -187,7 +187,7 @@ function useFinancialsData() {
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
 
-        // Scorecard â alias to {metric, actual, target, pct}
+        // Scorecard Ã¢ÂÂ alias to {metric, actual, target, pct}
         const scorecard = (scorecardRows.data || []).map(s => ({
           metric: s.metric_name,
           actual: parseFloat(s.actual || 0),
@@ -195,7 +195,7 @@ function useFinancialsData() {
           pct:    Math.round(parseFloat(s.achievement_percentage || 0)),
         }));
 
-        // Payroll â combine runs + detail, grouped by run
+        // Payroll Ã¢ÂÂ combine runs + detail, grouped by run
         const detailByRun = {};
         for (const d of (payrollDetailRows.data || [])) {
           (detailByRun[d.payroll_run_id] ||= []).push(d);
@@ -205,7 +205,7 @@ function useFinancialsData() {
           const endStr   = new Date(run.pay_period_end).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
           const dateStr  = run.pay_date ? new Date(run.pay_date).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
           return {
-            pay_period: `${startStr} â ${endStr}`,
+            pay_period: `${startStr} Ã¢ÂÂ ${endStr}`,
             pay_date:   dateStr,
             gross:      parseFloat(run.gross_payroll || 0),
             taxes:      parseFloat(run.employer_taxes || 0),
@@ -215,7 +215,7 @@ function useFinancialsData() {
           };
         });
 
-        // Credit accounts â alias to what CreditSection expects
+        // Credit accounts Ã¢ÂÂ alias to what CreditSection expects
         const creditAccounts = (ccRows.data || []).map(c => ({
           name:    c.account_name,
           balance: parseFloat(c.current_balance || 0),
@@ -229,7 +229,7 @@ function useFinancialsData() {
           dueDay:  c.payment_due_day,
         }));
 
-        // Balance Sheet â group anchored rows by type, with totals
+        // Balance Sheet Ã¢ÂÂ group anchored rows by type, with totals
         const bsRows = (balanceSheetRows.data || []).map(r => ({
           code:    r.account_code,
           name:    r.account_name,
@@ -302,8 +302,8 @@ function useFinancialsData() {
 }
 
 
-// âââ Helpers âââââââââââââââââââââââââââââââââââââââââââââââââ
-const fmt = (n) => { const v = Number(n); if (!Number.isFinite(v)) return "â"; if (v === 0) return "â"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 }); };
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Helpers Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+const fmt = (n) => { const v = Number(n); if (!Number.isFinite(v)) return "Ã¢ÂÂ"; if (v === 0) return "Ã¢ÂÂ"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 }); };
 const pct  = (n, t) => t ? Math.round((n / t) * 100) : 0;
 const yoy  = (curr, prior) => prior ? (((curr - prior) / prior) * 100).toFixed(1) : null;
 const monthYearLabel = (monthIdx1, year) => {
@@ -311,7 +311,7 @@ const monthYearLabel = (monthIdx1, year) => {
   return `${MONTHS[monthIdx1 - 1]} ${year}`;
 };
 
-// âââ Data Store (populated by Financials component with live data) ââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Data Store (populated by Financials component with live data) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 let MOCK = {
   currentYear: new Date().getFullYear(),
   currentMonth: new Date().getMonth() + 1,
@@ -327,7 +327,7 @@ let MOCK = {
 };
 
 
-// âââ Shared Components âââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Shared Components Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const Card = ({ children, style = {} }) => (
   <div style={{
     background: T.white,
@@ -395,7 +395,7 @@ const AskBtn = ({ context }) => (
       cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
     }}
   >
-    â¡ Ask Claude
+    Ã¢ÂÂ¡ Ask Claude
   </button>
 );
 
@@ -420,7 +420,7 @@ const TabBar = ({ tabs, active, onChange }) => (
   </div>
 );
 
-// âââ Mini Bar Chart ââââââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Mini Bar Chart Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const MiniBarChart = ({ data }) => {
   const maxVal = Math.max(...data.map(d => Math.max(d.revenue, d.expenses)));
   const barH = 80;
@@ -447,7 +447,7 @@ const MiniBarChart = ({ data }) => {
   );
 };
 
-// âââ Progress Bar ââââââââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Progress Bar Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const ProgressBar = ({ value, max, color = T.blue, height = 8 }) => {
   const p = Math.min(pct(value, max), 100);
   return (
@@ -461,7 +461,7 @@ const ProgressBar = ({ value, max, color = T.blue, height = 8 }) => {
   );
 };
 
-// âââ Section: Overview âââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: Overview Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const OverviewSection = ({ period, setPeriod, data }) => {
   const d = data?.summary || {};
   const yoyPct = yoy(d.revenueYTD || 0, d.priorYearYTD || 0);
@@ -471,7 +471,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
   const revenue  = period==="mtd" ? d.revenueMTD  : period==="qtd" ? d.revenueQTD  : d.revenueYTD;
   const expenses = period==="mtd" ? d.expensesMTD : period==="qtd" ? d.expensesQTD : d.expensesYTD;
   const netIncome= period==="mtd" ? d.netIncomeMTD: period==="qtd" ? d.netIncomeQTD: d.netIncomeYTD;
-  const expRatio = revenue ? Math.round((expenses / revenue) * 100) + "%" : "â";
+  const expRatio = revenue ? Math.round((expenses / revenue) * 100) + "%" : "Ã¢ÂÂ";
 
   return (
     <div>
@@ -481,11 +481,11 @@ const OverviewSection = ({ period, setPeriod, data }) => {
           active={period}
           onChange={setPeriod}
         />
-        <AskBtn context={`My agency financials â ${period.toUpperCase()}: Revenue $${revenue}, Expenses $${expenses}, Net Income $${netIncome}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
+        <AskBtn context={`My agency financials Ã¢ÂÂ ${period.toUpperCase()}: Revenue $${revenue}, Expenses $${expenses}, Net Income $${netIncome}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
-        <KPICard label="Revenue" value={fmt(revenue)} sub={period==="ytd"?`â ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
+        <KPICard label="Revenue" value={fmt(revenue)} sub={period==="ytd"?`Ã¢ÂÂ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
         <KPICard label="Expenses" value={fmt(expenses)} sub="Cash basis" border={T.amber} />
         <KPICard label="Net Income" value={fmt(netIncome)} color={netIncome >= 0 ? T.green : T.red} border={netIncome >= 0 ? T.green : T.red} />
         <KPICard label="Expense Ratio" value={expRatio} sub="Target: <45%" border={T.slate200} />
@@ -493,12 +493,12 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 12 }}>
         <Card>
-          <CardHeader title={`Monthly revenue â ${data?.currentYear || ""}`} sub="Blue bars = revenue Â· Gray = no data yet" />
+          <CardHeader title={`Monthly revenue Ã¢ÂÂ ${data?.currentYear || ""}`} sub="Blue bars = revenue ÃÂ· Gray = no data yet" />
           <MiniBarChart data={data.monthlyRevenue} />
         </Card>
 
         <Card>
-          <CardHeader title={`Income breakdown â ${curMonthLabel}`} />
+          <CardHeader title={`Income breakdown Ã¢ÂÂ ${curMonthLabel}`} />
           {(Array.isArray(data?.pl?.income) ? data.pl.income : []).filter(item => (item.mtd || 0) !== 0).map((item, i) => (
             <div key={i} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
@@ -517,7 +517,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
   );
 };
 
-// âââ Section: P&L ââââââââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: P&L Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const PLSection = ({ data }) => {
   const pl = data?.pl || { income: [], expenses: [] };
   const incomeRows  = Array.isArray(pl.income)   ? pl.income   : [];
@@ -544,7 +544,7 @@ const PLSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Profit & Loss Statement"
-        sub={`Cash basis Â· Calendar year ${data?.currentYear || ""}`}
+        sub={`Cash basis ÃÂ· Calendar year ${data?.currentYear || ""}`}
         action={<AskBtn context={`My P&L: YTD Revenue $${totalIncomeYTD}, YTD Expenses $${totalExpYTD}, Net Income $${totalIncomeYTD - totalExpYTD}. Expense ratio ${totalIncomeYTD ? Math.round((totalExpYTD/totalIncomeYTD)*100) : 0}%. Help me analyze my profitability and identify areas to improve.`} />}
       />
       <div style={{ overflowX: "auto" }}>
@@ -581,7 +581,7 @@ const PLSection = ({ data }) => {
   );
 };
 
-// âââ Section: COMP_RECAP âââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: COMP_RECAP Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const CompRecapSection = ({ data }) => {
   const compRecaps = Array.isArray(data?.compRecaps) ? data.compRecaps : [];
   const allPeriods = [...new Set(compRecaps.map(r => r?.period_label).filter(Boolean))];
@@ -631,7 +631,7 @@ const CompRecapSection = ({ data }) => {
               <td style={{ padding: "8px 8px", textAlign: "center" }}>
                 {r.is_aipp_eligible
                   ? <Pill type="success">AIPP</Pill>
-                  : <span style={{ fontSize: 11, color: T.slate400 }}>â</span>}
+                  : <span style={{ fontSize: 11, color: T.slate400 }}>Ã¢ÂÂ</span>}
               </td>
               <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(Math.round(r.amount))}</td>
             </tr>
@@ -649,7 +649,7 @@ const CompRecapSection = ({ data }) => {
   );
 };
 
-// âââ Section: AIPP & Scorecard ââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: AIPP & Scorecard Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const AIPPSection = ({ data }) => {
   const aippData = data?.aipp || {};
   const year       = aippData.year       || new Date().getFullYear();
@@ -670,7 +670,7 @@ const AIPPSection = ({ data }) => {
         {/* AIPP Progress */}
         <Card>
           <CardHeader
-            title={`AIPP ${year} â Annual Incentive Progress`}
+            title={`AIPP ${year} Ã¢ÂÂ Annual Incentive Progress`}
             action={<AskBtn context={`AIPP ${year}: Target $${target}, Earned YTD $${earned}, Achievement ${achievement}%, Projected $${projected}, Prior Year $${priorYear}. Am I on track? What do I need to focus on?`} />}
           />
           {hasAippData ? (
@@ -700,7 +700,7 @@ const AIPPSection = ({ data }) => {
               </div>
 
               <div style={{ marginTop: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned â {year}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned Ã¢ÂÂ {year}</div>
                 <div style={{ display: "flex", gap: 6 }}>
                   {monthlyEarned.map((m,i) => (
                     <div key={i} style={{ flex: 1, background: T.blueLt, borderRadius: 6, padding: "6px 4px", textAlign: "center" }}>
@@ -726,7 +726,7 @@ const AIPPSection = ({ data }) => {
         {/* Scorecard */}
         <Card>
           <CardHeader
-            title={`Scorecard Metrics â ${year}`}
+            title={`Scorecard Metrics Ã¢ÂÂ ${year}`}
             sub="Progress toward performance recognition"
             action={<AskBtn context={`My Scorecard metrics for ${year}: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention.`} />}
           />
@@ -765,7 +765,7 @@ const AIPPSection = ({ data }) => {
   );
 };
 
-// âââ Section: Payroll âââââââââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: Payroll Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const PayrollSection = ({ data }) => {
   const ytdGross = (data.payroll || []).reduce((s,r) => s + parseFloat(r.gross || 0), 0);
   const ytdTax   = (data.payroll || []).reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
@@ -774,7 +774,7 @@ const PayrollSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Payroll History"
-        sub={`YTD Gross: ${fmt(ytdGross)} Â· YTD Taxes: ${fmt(ytdTax)}`}
+        sub={`YTD Gross: ${fmt(ytdGross)} ÃÂ· YTD Taxes: ${fmt(ytdTax)}`}
         action={<AskBtn context={`My agency payroll YTD: Gross ${fmt(ytdGross)}, Employer taxes ${fmt(ytdTax)}. Help me review payroll expenses and identify any concerns.`} />}
       />
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -804,7 +804,7 @@ const PayrollSection = ({ data }) => {
   );
 };
 
-// âââ Section: Bank Accounts âââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: Bank Accounts Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const BankSection = ({ data }) => {
   const bankAccounts = Array.isArray(data?.bankAccounts) ? data.bankAccounts : [];
   const totalCash = bankAccounts.reduce((s,r) => s + (r?.balance || 0), 0);
@@ -837,7 +837,7 @@ const BankSection = ({ data }) => {
   );
 };
 
-// âââ Section: Credit & Debt âââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: Credit & Debt Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const CreditSection = ({ data }) => {
   const totalDebt = (data.creditAccounts || []).reduce((s,r) => s + r.balance, 0);
   const totalAvailable = (data.creditAccounts || []).filter(a => a.limit).reduce((s,r) => s + (r.limit - r.balance), 0);
@@ -856,7 +856,7 @@ const CreditSection = ({ data }) => {
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{a.name}</div>
               <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"}{a.rate ? ` Â· ${a.rate}% APR` : ""}
+                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"}{a.rate ? ` ÃÂ· ${a.rate}% APR` : ""}
               </div>
               {a.needsReview ? (
                 <div style={{ marginTop: 4 }}><Pill type="warning">Review</Pill></div>
@@ -902,7 +902,7 @@ const CreditSection = ({ data }) => {
   );
 };
 
-// âââ Section: Balance Sheet âââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: Balance Sheet Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const BalanceSheetSection = ({ data }) => {
   const bs = data?.balanceSheet || { assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0, asOfLabel: "" };
   const assets = Array.isArray(bs.assets) ? bs.assets : [];
@@ -922,7 +922,7 @@ const BalanceSheetSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Balance Sheet"
-        sub={`Anchored to 4/30/2026 close + live GL Â· As of ${bs.asOfLabel || "current"}`}
+        sub={`Anchored to 4/30/2026 close + live GL ÃÂ· As of ${bs.asOfLabel || "current"}`}
         action={<AskBtn context={`My balance sheet: Total Assets ${fmt(bs.totalAssets)}, Total Liabilities ${fmt(bs.totalLiabilities)}, Total Equity ${fmt(bs.totalEquity)}. Help me understand my financial position.`} />}
       />
 
@@ -958,12 +958,12 @@ const BalanceSheetSection = ({ data }) => {
   );
 };
 
-// âââ Section: General Ledger ââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: General Ledger Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const GLSection = ({ data }) => (
   <Card>
     <CardHeader
-      title="General Ledger â Recent Entries"
-      sub="Last 30 days Â· All accounts"
+      title="General Ledger Ã¢ÂÂ Recent Entries"
+      sub="Last 30 days ÃÂ· All accounts"
       action={<AskBtn context="I am reviewing my General Ledger recent entries. Help me verify these entries look correct and identify anything that needs attention." />}
     />
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -981,8 +981,8 @@ const GLSection = ({ data }) => (
             <td style={{ padding: "8px", fontSize: 11, color: T.blue, fontFamily: "monospace" }}>{r.ref}</td>
             <td style={{ padding: "8px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
             <td style={{ padding: "8px", fontSize: 11, color: T.slate500, fontFamily: "monospace" }}>{r.account}</td>
-            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "â"}</td>
-            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "â"}</td>
+            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "Ã¢ÂÂ"}</td>
+            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "Ã¢ÂÂ"}</td>
           </tr>
         ))}
       </tbody>
@@ -990,7 +990,7 @@ const GLSection = ({ data }) => (
   </Card>
 );
 
-// âââ CPA-Style Print Package ââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ CPA-Style Print Package Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 // Browser-native print: hidden on screen, shown only when printing.
 const PRINT_CSS = `
 @media screen { .bcc-print-package { display: none !important; } }
@@ -1005,9 +1005,9 @@ const PRINT_CSS = `
 }
 `;
 
-// âââ Section: Book of Business âââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Section: Book of Business Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 function useBookData() {
-  const [data, setData] = useState({ summary: null, history: [], sources: [] });
+  const [data, setData] = useState({ summary: null, history: [] });
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -1016,10 +1016,9 @@ function useBookData() {
     async function load() {
       setLoading(true);
       try {
-        const [summaryRes, historyRes, sourcesRes] = await Promise.all([
+        const [summaryRes, historyRes] = await Promise.all([
           supabase.from("v_book_growth_summary").select("*").eq("agency_id", AGENCY_ID),
           supabase.from("v_book_snapshot_with_changes").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date", { ascending: false }).limit(120),
-          supabase.from("lead_source_quarterly").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date", { ascending: false }).order("won_premium", { ascending: false }).limit(100),
         ]);
         if (cancelled) return;
         const summaries = Array.isArray(summaryRes?.data) ? summaryRes.data : [];
@@ -1028,7 +1027,6 @@ function useBookData() {
         setData({
           summary: weeklySum || monthlySum || null,
           history: Array.isArray(historyRes?.data) ? historyRes.data : [],
-          sources: Array.isArray(sourcesRes?.data) ? sourcesRes.data : [],
         });
       } catch (err) {
         console.error("useBookData load failed:", err);
@@ -1044,13 +1042,13 @@ function useBookData() {
 }
 
 const fmtSnapDate = (d) => {
-  if (!d) return "â";
+  if (!d) return "Ã¢ÂÂ";
   try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
   catch { return String(d); }
 };
 
 const fmtPct = (n) => {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "â";
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "Ã¢ÂÂ";
   const v = Number(n);
   return `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
 };
@@ -1069,52 +1067,9 @@ const bookTdStyle = { padding: "8px 10px", color: T.slate700, fontSize: 11 };
 const CollapseHeader = ({ title, open, onToggle }) => (
   <div onClick={onToggle} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", userSelect: "none" }}>
     <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{title}</div>
-    <div style={{ fontSize: 14, color: T.slate500 }}>{open ? "â¾" : "â¸"}</div>
+    <div style={{ fontSize: 14, color: T.slate500 }}>{open ? "Ã¢ÂÂ¾" : "Ã¢ÂÂ¸"}</div>
   </div>
 );
-
-const BookSources = ({ sources }) => {
-  if (!sources?.length) return <div style={{ color: T.slate500, fontSize: 12 }}>No lead-source data yet.</div>;
-  const latestDate = sources[0]?.snapshot_date;
-  const latest = sources.filter(s => s?.snapshot_date === latestDate);
-  const totalHH = latest.reduce((s, r) => s + (r?.won_households || 0), 0);
-  const totalPrem = latest.reduce((s, r) => s + Number(r?.won_premium || 0), 0);
-  return (
-    <div>
-      <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10 }}>
-        As of {fmtSnapDate(latestDate)} Â· Q{latest[0]?.period_quarter} {latest[0]?.period_year} Â· Total {totalHH} HH / {fmt(totalPrem)}
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
-              <th style={bookThStyle}>Source</th>
-              <th style={{ ...bookThStyle, textAlign: "right" }}>Won HH</th>
-              <th style={{ ...bookThStyle, textAlign: "right" }}>Won $</th>
-              <th style={{ ...bookThStyle, textAlign: "right" }}>$/HH</th>
-              <th style={{ ...bookThStyle, textAlign: "right" }}>Share</th>
-            </tr>
-          </thead>
-          <tbody>
-            {latest.map((r, i) => (
-              <tr key={r?.id || i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-                <td style={{ ...bookTdStyle, fontWeight: 600 }}>{r?.source}</td>
-                <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.won_households ?? "â"}</td>
-                <td style={{ ...bookTdStyle, textAlign: "right" }}>{fmt(r?.won_premium)}</td>
-                <td style={{ ...bookTdStyle, textAlign: "right" }}>
-                  {r?.won_households > 0 ? fmt(Number(r.won_premium) / r.won_households) : "â"}
-                </td>
-                <td style={{ ...bookTdStyle, textAlign: "right" }}>
-                  {totalPrem > 0 ? ((Number(r?.won_premium || 0) / totalPrem) * 100).toFixed(1) + "%" : "â"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
 
 const BookAddForm = ({ onAdded }) => {
   const today = new Date().toISOString().slice(0, 10);
@@ -1202,7 +1157,7 @@ const BookAddForm = ({ onAdded }) => {
       {err && <div style={{ fontSize: 11, color: T.red, marginBottom: 10 }}>Error: {err}</div>}
       <button onClick={save} disabled={saving || !form.snapshot_date}
         style={{ background: T.blue, color: T.white, border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}>
-        {saving ? "Savingâ¦" : "Add snapshot"}
+        {saving ? "SavingÃ¢ÂÂ¦" : "Add snapshot"}
       </button>
     </div>
   );
@@ -1213,12 +1168,10 @@ const BookSection = () => {
   const [horizon, setHorizon] = useState("mom");
   const [showLOB, setShowLOB] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
-  const [showSources, setShowSources] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
 
   const summary = data?.summary;
   const history = Array.isArray(data?.history) ? data.history : [];
-  const sources = Array.isArray(data?.sources) ? data.sources : [];
 
   const horizonLabel = { wow: "vs last wk", mom: "vs last mo", yoy: "YoY", cum: "since appt" }[horizon];
   const horizonDate = summary ? {
@@ -1231,7 +1184,7 @@ const BookSection = () => {
   };
 
   if (loading) {
-    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading book of businessâ¦</div></Card>;
+    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading book of businessÃ¢ÂÂ¦</div></Card>;
   }
   if (!summary) {
     return (
@@ -1250,12 +1203,12 @@ const BookSection = () => {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>
-              As of {fmtSnapDate(summary.current_snapshot_date)} <span style={{ color: T.slate400, fontWeight: 400 }}>Â· {summary.cadence}</span>
+              As of {fmtSnapDate(summary.current_snapshot_date)} <span style={{ color: T.slate400, fontWeight: 400 }}>ÃÂ· {summary.cadence}</span>
             </div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
               {horizon === "wow" && summary.cadence !== "weekly"
                 ? "WoW unavailable for monthly snapshots"
-                : `Comparing ${horizonLabel} (${horizonDate ? fmtSnapDate(horizonDate) : "â"})`}
+                : `Comparing ${horizonLabel} (${horizonDate ? fmtSnapDate(horizonDate) : "Ã¢ÂÂ"})`}
             </div>
           </div>
           <div style={{ display: "flex", gap: 2, background: T.slate100, borderRadius: 8, padding: 3 }}>
@@ -1284,12 +1237,12 @@ const BookSection = () => {
           <KPICard label="L&H Premium" value={fmt(summary.lh_premium)}
             sub={<span style={{ color: pctColor(getPct("lh")) }}>{fmtPct(getPct("lh"))} {horizonLabel}</span>}
             border={T.purple} />
-          <KPICard label="Households" value={summary.household_count ?? "â"}
+          <KPICard label="Households" value={summary.household_count ?? "Ã¢ÂÂ"}
             sub={<span style={{ color: pctColor(getPct("hh")) }}>{fmtPct(getPct("hh"))} {horizonLabel}</span>}
             border={T.green} />
           <KPICard label="Auto / HH"
             value={summary.household_count > 0 && summary.auto_pif != null
-              ? (summary.auto_pif / summary.household_count).toFixed(2) : "â"}
+              ? (summary.auto_pif / summary.household_count).toFixed(2) : "Ã¢ÂÂ"}
             sub="Policies per household" border={T.amber} />
         </div>
       </Card>
@@ -1313,7 +1266,7 @@ const BookSection = () => {
                   {fmtPct(getPct(lob.key))} {horizonLabel}
                 </div>
                 <div style={{ fontSize: 11, color: T.slate400, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.slate100}` }}>
-                  PIF: <span style={{ color: T.slate700, fontWeight: 600 }}>{summary[`${lob.key}_pif`] ?? "â"}</span>
+                  PIF: <span style={{ color: T.slate700, fontWeight: 600 }}>{summary[`${lob.key}_pif`] ?? "Ã¢ÂÂ"}</span>
                   {summary.household_count > 0 && summary[`${lob.key}_pif`] != null && (
                     <span style={{ marginLeft: 6 }}>
                       ({(summary[`${lob.key}_pif`] / summary.household_count).toFixed(2)}/HH)
@@ -1350,10 +1303,10 @@ const BookSection = () => {
                     <td style={bookTdStyle}>{r?.cadence}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(r?.pc_premium)}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right" }}>{fmt(r?.lh_premium)}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.household_count ?? "â"}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.auto_pif ?? "â"}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.fire_pif ?? "â"}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.life_pif ?? "â"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.household_count ?? "Ã¢ÂÂ"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.auto_pif ?? "Ã¢ÂÂ"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.fire_pif ?? "Ã¢ÂÂ"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.life_pif ?? "Ã¢ÂÂ"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1363,15 +1316,6 @@ const BookSection = () => {
                 Showing 80 most recent of {history.length}.
               </div>
             )}
-          </div>
-        )}
-      </Card>
-
-      <Card>
-        <CollapseHeader title={`Lead sources (quarter-to-date)`} open={showSources} onToggle={() => setShowSources(!showSources)} />
-        {showSources && (
-          <div style={{ marginTop: 12 }}>
-            <BookSources sources={sources} />
           </div>
         )}
       </Card>
@@ -1472,7 +1416,7 @@ const PrintPackage = ({ data, periodLabel }) => {
         <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Peter Story State Farm Agency</div>
         <div style={{ fontSize: 18, color: "#334155", marginBottom: 40 }}>Financial Statements Package</div>
         <div style={{ fontSize: 15, color: "#475569", marginBottom: 4 }}>Period: {periodName}</div>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis Â· Calendar year Â· All figures in USD</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis ÃÂ· Calendar year ÃÂ· All figures in USD</div>
         <div style={{ fontSize: 11, color: "#94A3B8" }}>Prepared {today}</div>
         <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>Business Command Center</div>
         <div style={{ marginTop: 80, fontSize: 10, color: "#94A3B8", maxWidth: 420, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 }}>
@@ -1486,7 +1430,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       <div className="bcc-print-page">
         <PrintTable
           title="Profit & Loss Statement"
-          sub={`Cash basis Â· ${d.currentYear || ""}`}
+          sub={`Cash basis ÃÂ· ${d.currentYear || ""}`}
           cols={["Account", periodName, `Q${qN} ${d.currentYear||""}`, `YTD ${d.currentYear||""}`]}
           rows={plRows}
         />
@@ -1496,7 +1440,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       <div className="bcc-print-page">
         <PrintTable
           title="Balance Sheet"
-          sub={`As of ${bs.asOfLabel || periodName} Â· anchored to 4/30/2026 close + GL activity`}
+          sub={`As of ${bs.asOfLabel || periodName} ÃÂ· anchored to 4/30/2026 close + GL activity`}
           cols={["Account", "Balance"]}
           rows={bsRows}
         />
@@ -1511,7 +1455,7 @@ const PrintPackage = ({ data, periodLabel }) => {
   );
 };
 
-// âââ Main Financials Module âââââââââââââââââââââââââââââââââââ
+// Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Main Financials Module Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 export default function Financials() {
   const [section, setSection] = useState("overview");
   const [period, setPeriod] = useState("mtd");
@@ -1544,7 +1488,7 @@ export default function Financials() {
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>Financials</div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
-            Cash basis Â· Calendar year Â· All figures in USD
+            Cash basis ÃÂ· Calendar year ÃÂ· All figures in USD
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }} className="bcc-no-print">
@@ -1558,7 +1502,7 @@ export default function Financials() {
               cursor: "pointer", whiteSpace: "nowrap",
             }}
           >
-            ð¨ Print / Save PDF
+            Ã°ÂÂÂ¨ Print / Save PDF
           </button>
           <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
         </div>
@@ -1605,7 +1549,7 @@ export default function Financials() {
       {section === "documents"    && <Documents />}
       {section === "monthlyclose" && <MonthlyClose />}
 
-      {/* CPA-style print package â hidden on screen, rendered for print/PDF */}
+      {/* CPA-style print package Ã¢ÂÂ hidden on screen, rendered for print/PDF */}
       <PrintPackage data={MOCK} periodLabel={period} />
     </div>
   );
