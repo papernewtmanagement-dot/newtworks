@@ -2,19 +2,64 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useState, useEffect, useMemo, useCallback } from "react";
 
 // =====================================================================
-// TimeClock.jsx — Hourly staff time clock
+// TimeClock.jsx — Hourly team member time clock
 // Two views: Kiosk (name tile + PIN pad, self-clock) and Admin (timesheet)
 // Week boundary: Sunday 00:00 -> Saturday 23:59
-// One time_clock_entry row = one continuous block of paid work
-// Lunches = gaps between blocks (clock out for lunch, clock back in)
+// One time_clock_entries row = one continuous block of paid work.
+// Lunches = gaps between blocks (clock out, clock back in).
+//
+// Weekly alerts:
+//   < 39 hr      green   on track
+//   39 - 40 hr   amber   approaching overtime
+//   >= 40 hr     red     in overtime
+//
+// Schema:
+//   v_time_clock_status: team_member_id, first_name, last_name, pay_rate,
+//     pin_set, open_entry_id, clock_in_at, is_clocked_in, hours_this_block
+//   time_clock_entries:  id, team_member_id, clock_in_at, clock_out_at,
+//     notes, source, edited_by_user_id, edited_at
+//   RPC time_clock_punch(p_staff_id uuid, p_pin text) -> jsonb
+//   RPC time_clock_set_pin(p_staff_id uuid, p_pin text) -> jsonb
+//   (RPC params are still named p_staff_id from the pre-rename era; the
+//    value passed is the team_member_id - same column, legacy param name.)
 // =====================================================================
 
-// ---------- date / week helpers ----------
+const T = {
+  navy:    "#1B2B4B",
+  blue:    "#2D7DD2",
+  blueLt:  "#EFF6FF",
+  green:   "#10B981",
+  greenLt: "#D1FAE5",
+  amber:   "#F59E0B",
+  amberLt: "#FEF3C7",
+  red:     "#EF4444",
+  redLt:   "#FEE2E2",
+  purple:  "#7C3AED",
+  purpleLt:"#EDE9FE",
+  teal:    "#0D9488",
+  tealLt:  "#CCFBF1",
+  slate50: "#F8FAFC",
+  slate100:"#F1F5F9",
+  slate200:"#E2E8F0",
+  slate400:"#94A3B8",
+  slate500:"#64748B",
+  slate600:"#475569",
+  slate700:"#334155",
+  slate800:"#1E293B",
+  slate900:"#0F172A",
+  white:   "#FFFFFF",
+};
+
+const YELLOW_HR = 39;
+const RED_HR = 40;
+
+// =====================================================================
+// Date / week helpers
+// =====================================================================
 function startOfSundayWeek(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  const dow = d.getDay(); // 0 = Sunday
-  d.setDate(d.getDate() - dow);
+  d.setDate(d.getDate() - d.getDay()); // 0 = Sunday
   return d;
 }
 function endOfSaturdayWeek(date) {
@@ -28,8 +73,14 @@ function addDays(date, days) {
   d.setDate(d.getDate() + days);
   return d;
 }
+function fmtDate(d) {
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function fmtDateLong(d) {
+  return d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
 function fmtTime(iso) {
-  if (!iso) return "—";
+  if (!iso) return "--";
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 function fmtHM(hours) {
@@ -45,8 +96,127 @@ function hoursBetween(inIso, outIso) {
   if (!inIso || !outIso) return 0;
   return (new Date(outIso) - new Date(inIso)) / 3_600_000;
 }
+function toLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fromLocalInput(value) {
+  if (!value) return null;
+  return new Date(value).toISOString();
+}
 
-// ---------- current user (for edit history + admin gating) ----------
+// =====================================================================
+// Status logic: 39 yellow / 40 red
+// =====================================================================
+function weeklyStatus(hours) {
+  if (!Number.isFinite(hours) || hours < YELLOW_HR) {
+    return { level: "ok",     label: "On track",       bg: T.greenLt, color: T.green,  border: T.green  };
+  }
+  if (hours < RED_HR) {
+    return { level: "warn",   label: "Near OT",        bg: T.amberLt, color: T.amber,  border: T.amber  };
+  }
+  return   { level: "danger", label: "Overtime",       bg: T.redLt,   color: T.red,    border: T.red    };
+}
+
+// Sum closed-block hours for a team member from a flat entries array
+function sumClosedHours(entries, teamMemberId) {
+  return (entries || [])
+    .filter((e) => e.team_member_id === teamMemberId && e.clock_out_at)
+    .reduce((acc, e) => acc + hoursBetween(e.clock_in_at, e.clock_out_at), 0);
+}
+// Open block (clocked-in this week, not yet out) running hours
+function openBlockHours(entries, teamMemberId) {
+  const open = (entries || []).find((e) => e.team_member_id === teamMemberId && !e.clock_out_at);
+  if (!open) return 0;
+  return hoursBetween(open.clock_in_at, new Date().toISOString());
+}
+
+// =====================================================================
+// Primitives
+// =====================================================================
+function Card({ children, style = {} }) {
+  return (
+    <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: "16px 18px", ...style }}>
+      {children}
+    </div>
+  );
+}
+
+function Pill({ children, bg = T.slate100, color = T.slate700, style = {} }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      padding: "3px 8px", borderRadius: 20,
+      fontSize: 10, fontWeight: 600,
+      background: bg, color, whiteSpace: "nowrap", ...style,
+    }}>
+      {children}
+    </span>
+  );
+}
+
+function Button({ children, onClick, variant = "secondary", disabled = false, type = "button", style = {} }) {
+  const variants = {
+    primary:   { bg: T.blue,      color: T.white,    border: T.blue },
+    secondary: { bg: T.white,     color: T.slate700, border: T.slate200 },
+    ghost:     { bg: "transparent", color: T.blue,   border: "transparent" },
+    danger:    { bg: T.white,     color: T.red,      border: T.slate200 },
+    dark:      { bg: T.slate900,  color: T.white,    border: T.slate900 },
+  };
+  const v = variants[variant] || variants.secondary;
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: "7px 13px",
+        borderRadius: 7,
+        border: `1px solid ${v.border}`,
+        background: v.bg,
+        color: v.color,
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TextInput({ value, onChange, type = "text", placeholder, maxLength, inputMode, style = {} }) {
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      maxLength={maxLength}
+      inputMode={inputMode}
+      style={{
+        width: "100%",
+        padding: "8px 10px",
+        borderRadius: 7,
+        border: `1px solid ${T.slate200}`,
+        background: T.white,
+        fontSize: 13,
+        color: T.slate900,
+        outline: "none",
+        ...style,
+      }}
+    />
+  );
+}
+
+// =====================================================================
+// Hooks
+// =====================================================================
 function useCurrentUser() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -55,7 +225,10 @@ function useCurrentUser() {
     (async () => {
       const { data: authData } = await supabase.auth.getUser();
       const authUserId = authData?.user?.id;
-      if (!authUserId) { if (!cancelled) { setUser(null); setLoading(false); } return; }
+      if (!authUserId) {
+        if (!cancelled) { setUser(null); setLoading(false); }
+        return;
+      }
       const { data: rows } = await supabase
         .from("users")
         .select("id, role, full_name, email")
@@ -72,7 +245,6 @@ function useCurrentUser() {
   return { user, loading };
 }
 
-// ---------- hourly staff status ----------
 function useHourlyStaff() {
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -89,6 +261,25 @@ function useHourlyStaff() {
   return { staff, loading, reload };
 }
 
+function useWeekEntries(weekStart, weekEnd) {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("time_clock_entries")
+      .select("id, team_member_id, clock_in_at, clock_out_at, notes, source, edited_at")
+      .eq("agency_id", AGENCY_ID)
+      .gte("clock_in_at", weekStart.toISOString())
+      .lt("clock_in_at", weekEnd.toISOString())
+      .order("clock_in_at");
+    if (!error) setEntries(data || []);
+    setLoading(false);
+  }, [weekStart, weekEnd]);
+  useEffect(() => { reload(); }, [reload]);
+  return { entries, loading, reload };
+}
+
 // =====================================================================
 // MAIN
 // =====================================================================
@@ -98,28 +289,18 @@ export default function TimeClock() {
   const [tab, setTab] = useState("kiosk");
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+    <div style={{ padding: "20px 24px", maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Time Clock</h1>
-          <p className="text-sm text-slate-500">
-            Hourly team clock in / out · week runs Sun–Sat · lunch = clock out then back in
-          </p>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: T.slate900, margin: 0 }}>Time Clock</h1>
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
+            Hourly team clock in / out &middot; week runs Sun&ndash;Sat &middot; lunch = clock out then back in
+          </div>
         </div>
         {!userLoading && canSeeAdmin && (
-          <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
-            <button
-              onClick={() => setTab("kiosk")}
-              className={`px-3 py-1.5 text-sm rounded-md transition ${tab === "kiosk" ? "bg-white shadow text-slate-900" : "text-slate-600"}`}
-            >
-              Kiosk
-            </button>
-            <button
-              onClick={() => setTab("admin")}
-              className={`px-3 py-1.5 text-sm rounded-md transition ${tab === "admin" ? "bg-white shadow text-slate-900" : "text-slate-600"}`}
-            >
-              Admin
-            </button>
+          <div style={{ display: "flex", gap: 3, padding: 3, background: T.slate100, borderRadius: 9 }}>
+            <TabButton active={tab === "kiosk"} onClick={() => setTab("kiosk")}>Kiosk</TabButton>
+            <TabButton active={tab === "admin"} onClick={() => setTab("admin")}>Admin</TabButton>
           </div>
         )}
       </div>
@@ -131,23 +312,49 @@ export default function TimeClock() {
   );
 }
 
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "6px 14px",
+        borderRadius: 7,
+        border: "none",
+        background: active ? T.white : "transparent",
+        color: active ? T.slate900 : T.slate600,
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer",
+        boxShadow: active ? "0 1px 3px rgba(15, 23, 42, 0.08)" : "none",
+        transition: "all 0.12s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 // =====================================================================
-// KIOSK VIEW — name tiles -> PIN pad -> punch
+// KIOSK VIEW  -- name tiles -> PIN pad -> punch
 // =====================================================================
 function KioskView() {
-  const { staff, loading, reload } = useHourlyStaff();
+  const { staff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
+  const weekStart = useMemo(() => startOfSundayWeek(new Date()), []);
+  const weekEnd   = useMemo(() => endOfSaturdayWeek(weekStart), [weekStart]);
+  const { entries, reload: reloadEntries } = useWeekEntries(weekStart, weekEnd);
+
   const [selected, setSelected] = useState(null);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
-  // refresh status every 30s so the on-clock counters stay live
+  // refresh every 30s so counters stay live
   useEffect(() => {
-    const t = setInterval(reload, 30_000);
+    const t = setInterval(() => { reloadStaff(); reloadEntries(); }, 30_000);
     return () => clearInterval(t);
-  }, [reload]);
+  }, [reloadStaff, reloadEntries]);
 
-  // clear the success splash after a few seconds
+  // clear success splash
   useEffect(() => {
     if (!result?.ok) return;
     const t = setTimeout(() => setResult(null), 5000);
@@ -155,14 +362,14 @@ function KioskView() {
   }, [result]);
 
   function pickStaff(s) { setSelected(s); setPin(""); setResult(null); }
+  function cancel() { setSelected(null); setPin(""); setBusy(false); }
   function appendDigit(d) {
-    if (pin.length >= 4) return;
+    if (pin.length >= 4 || busy) return;
     const next = pin + d;
     setPin(next);
     if (next.length === 4) submitPunch(next);
   }
   function backspace() { setPin((p) => p.slice(0, -1)); }
-  function cancel() { setSelected(null); setPin(""); setBusy(false); }
 
   async function submitPunch(fullPin) {
     if (!selected) return;
@@ -180,298 +387,277 @@ function KioskView() {
     setResult(data);
     setPin("");
     if (data?.ok) {
-      setTimeout(() => { setSelected(null); reload(); }, 1500);
+      setTimeout(() => { setSelected(null); reloadStaff(); reloadEntries(); }, 1500);
     }
   }
 
-  if (loading) return <div className="text-center text-slate-500 py-12">Loading…</div>;
-
+  if (staffLoading) {
+    return <div style={{ textAlign: "center", color: T.slate500, padding: "48px 0", fontSize: 13 }}>Loading...</div>;
+  }
   if (!staff.length) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-        <p className="text-slate-700 font-medium">No hourly team members yet</p>
-        <p className="text-sm text-slate-500 mt-1">
-          Add an HOURLY staff member in Team to see them here.
-        </p>
-      </div>
+      <Card style={{ padding: "32px 24px", textAlign: "center", borderStyle: "dashed", background: T.slate50 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate700 }}>No hourly team members yet</div>
+        <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
+          Add an hourly team member in Team to see them here.
+        </div>
+      </Card>
     );
   }
 
-  // success splash takes over briefly after a punch
+  // Success splash
   if (result?.ok) {
-    const isIn = result.action === "clock_in";
     return (
-      <div className={`rounded-2xl p-8 text-center ${isIn ? "bg-emerald-50 border border-emerald-200" : "bg-sky-50 border border-sky-200"}`}>
-        <div className={`text-5xl mb-3 ${isIn ? "text-emerald-600" : "text-sky-600"}`}>✓</div>
-        <div className="text-xl font-semibold text-slate-900">
-          {result.team_member_name} {isIn ? "clocked in" : "clocked out"}
+      <Card style={{ padding: "40px 24px", textAlign: "center", background: result.action === "clock_in" ? T.greenLt : T.blueLt, border: `1px solid ${result.action === "clock_in" ? T.green : T.blue}` }}>
+        <div style={{ fontSize: 28, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>
+          {result.action === "clock_in" ? "Clocked in" : "Clocked out"}
         </div>
-        <div className="text-sm text-slate-600 mt-1">
-          at {fmtTime(result.at)}
-          {!isIn && result.hours_this_block != null && (
-            <> · this block: <span className="font-medium">{fmtHM(result.hours_this_block)}</span></>
-          )}
+        <div style={{ fontSize: 14, color: T.slate700 }}>
+          {result.staff_name} &middot; {new Date(result.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
         </div>
-      </div>
+        {result.action === "clock_out" && Number.isFinite(result.hours_this_block) && (
+          <div style={{ fontSize: 12, color: T.slate600, marginTop: 6 }}>
+            This block: {fmtHM(result.hours_this_block)}
+          </div>
+        )}
+      </Card>
     );
   }
 
-  // PIN pad view when a person is selected
+  // PIN pad
   if (selected) {
     return (
-      <div className="max-w-sm mx-auto">
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
-          <div className="text-center mb-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">
-              {selected.is_clocked_in ? "Currently clocked in" : "Ready to clock in"}
-            </div>
-            <div className="text-2xl font-semibold text-slate-900 mt-1">
+      <div style={{ maxWidth: 360, margin: "0 auto" }}>
+        <Card>
+          <div style={{ textAlign: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>
               {selected.first_name} {selected.last_name}
             </div>
-            <div className="text-xs text-slate-500 mt-1">Enter your 4-digit PIN</div>
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+              {selected.is_clocked_in ? "Tap PIN to clock OUT" : "Tap PIN to clock IN"}
+            </div>
           </div>
 
-          <div className="flex justify-center gap-3 mb-5">
-            {[0, 1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className={`w-4 h-4 rounded-full border-2 ${
-                  pin.length > i ? "bg-slate-900 border-slate-900" : "border-slate-300"
-                }`}
-              />
+          {/* PIN dots */}
+          <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 14 }}>
+            {[0,1,2,3].map((i) => (
+              <div key={i} style={{
+                width: 14, height: 14, borderRadius: "50%",
+                border: `2px solid ${pin.length > i ? T.slate900 : T.slate200}`,
+                background: pin.length > i ? T.slate900 : "transparent",
+              }} />
             ))}
           </div>
 
           {result?.ok === false && (
-            <div className="mb-3 text-center text-sm text-rose-600">
+            <div style={{ marginBottom: 12, textAlign: "center", fontSize: 12, color: T.red }}>
               {result.error === "invalid_pin" && "Wrong PIN. Try again."}
               {result.error === "pin_not_set" && "PIN not set. See Peter."}
               {result.error === "inactive_team_member" && "Account inactive."}
               {result.error === "not_hourly" && "Not an hourly position."}
-              {!["invalid_pin", "pin_not_set", "inactive_team_member", "not_hourly"].includes(result.error)
-                && (result.message || "Something went wrong.")}
+              {!["invalid_pin","pin_not_set","inactive_team_member","not_hourly"].includes(result.error) && (result.message || "Something went wrong.")}
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-2">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-              <button
-                key={d}
-                onClick={() => appendDigit(d)}
-                disabled={busy}
-                className="h-14 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-xl font-medium text-slate-800 disabled:opacity-40"
-              >
-                {d}
-              </button>
+          {/* Keypad */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            {["1","2","3","4","5","6","7","8","9"].map((d) => (
+              <PinKey key={d} disabled={busy} onClick={() => appendDigit(d)}>{d}</PinKey>
             ))}
-            <button
-              onClick={cancel}
-              disabled={busy}
-              className="h-14 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-sm text-slate-600 disabled:opacity-40"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => appendDigit("0")}
-              disabled={busy}
-              className="h-14 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-xl font-medium text-slate-800 disabled:opacity-40"
-            >
-              0
-            </button>
-            <button
-              onClick={backspace}
-              disabled={busy || pin.length === 0}
-              className="h-14 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-sm text-slate-600 disabled:opacity-40"
-            >
-              ⌫
-            </button>
+            <PinKey variant="ghost" disabled={busy} onClick={cancel}>Cancel</PinKey>
+            <PinKey disabled={busy} onClick={() => appendDigit("0")}>0</PinKey>
+            <PinKey variant="ghost" disabled={busy || pin.length === 0} onClick={backspace}>&#9003;</PinKey>
           </div>
-        </div>
+        </Card>
       </div>
     );
   }
 
-  // Tile grid (default kiosk landing)
+  // Tile grid
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {(staff || []).map((s) => (
-        <button
-          key={s.team_member_id}
-          onClick={() => pickStaff(s)}
-          className={`rounded-xl border p-5 text-left transition shadow-sm hover:shadow ${
-            s.is_clocked_in
-              ? "bg-emerald-50 border-emerald-200"
-              : "bg-white border-slate-200 hover:border-slate-300"
-          }`}
-        >
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="text-lg font-semibold text-slate-900">
-                {s.first_name} {s.last_name}
-              </div>
-              <div className="text-xs text-slate-500 mt-0.5">${Number(s.pay_rate).toFixed(2)}/hr</div>
-            </div>
-            {s.is_clocked_in ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                On the clock
-              </span>
-            ) : (
-              <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-600 text-xs px-2 py-0.5">
-                Off
-              </span>
-            )}
-          </div>
-          <div className="mt-4 text-sm">
-            {s.is_clocked_in ? (
-              <span className="text-slate-700">
-                In since <span className="font-medium">{fmtTime(s.clock_in_at)}</span> ·{" "}
-                <span className="font-medium">{fmtHM(s.hours_this_block)}</span> this block
-              </span>
-            ) : (
-              <span className="text-slate-500">Tap to clock in</span>
-            )}
-          </div>
-          {!s.pin_set && (
-            <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-              PIN not set — see Peter
-            </div>
-          )}
-        </button>
-      ))}
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+      {(staff || []).map((s) => {
+        const closed = sumClosedHours(entries, s.team_member_id);
+        const open = openBlockHours(entries, s.team_member_id);
+        const weekHours = closed + open;
+        const status = weeklyStatus(weekHours);
+        return (
+          <KioskTile key={s.team_member_id} staff={s} weekHours={weekHours} status={status} onClick={() => pickStaff(s)} />
+        );
+      })}
     </div>
   );
 }
 
+function PinKey({ children, onClick, disabled, variant = "default" }) {
+  const styles = variant === "ghost"
+    ? { bg: T.white,     border: T.slate200, color: T.slate600, font: 13 }
+    : { bg: T.slate100,  border: T.slate100, color: T.slate800, font: 22 };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        height: 56,
+        borderRadius: 10,
+        border: `1px solid ${styles.border}`,
+        background: styles.bg,
+        color: styles.color,
+        fontSize: styles.font,
+        fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.4 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function KioskTile({ staff: s, weekHours, status, onClick }) {
+  const clockedIn = !!s.is_clocked_in;
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: "left",
+        padding: "16px 18px",
+        borderRadius: 12,
+        border: `1px solid ${clockedIn ? T.green : T.slate200}`,
+        background: clockedIn ? T.greenLt : T.white,
+        cursor: "pointer",
+        transition: "all 0.15s",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {s.first_name} {s.last_name}
+          </div>
+          <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+            {clockedIn
+              ? <>Clocked in &middot; {fmtTime(s.clock_in_at)}</>
+              : "Tap to clock in"}
+          </div>
+        </div>
+        {clockedIn && (
+          <Pill bg={T.green} color={T.white}>ON</Pill>
+        )}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+        <div style={{ fontSize: 11, color: T.slate500 }}>
+          This week
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900, marginTop: 1 }}>
+            {fmtHM(weekHours)}
+          </div>
+        </div>
+        <Pill bg={status.bg} color={status.color}>{status.label}</Pill>
+      </div>
+
+      {!s.pin_set && (
+        <div style={{ marginTop: 10, padding: "5px 8px", background: T.amberLt, color: T.amber, borderRadius: 6, fontSize: 10, fontWeight: 600, textAlign: "center" }}>
+          PIN not set
+        </div>
+      )}
+    </button>
+  );
+}
+
 // =====================================================================
-// ADMIN VIEW — weekly timesheet, edit, set PIN
+// ADMIN VIEW  -- weekly grid, edit entries, set PIN
 // =====================================================================
 function AdminView({ userId }) {
-  const { staff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
-  const [weekStart, setWeekStart] = useState(() => startOfSundayWeek(new Date()));
-  const [entries, setEntries] = useState([]);
-  const [entriesLoading, setEntriesLoading] = useState(true);
-  const [editingEntry, setEditingEntry] = useState(null);
-  const [settingPinFor, setSettingPinFor] = useState(null);
-  const [creatingFor, setCreatingFor] = useState(null);
-
+  const [anchor, setAnchor] = useState(() => startOfSundayWeek(new Date()));
+  const weekStart = useMemo(() => startOfSundayWeek(anchor), [anchor]);
   const weekEnd = useMemo(() => endOfSaturdayWeek(weekStart), [weekStart]);
+  const lastDay = useMemo(() => addDays(weekStart, 6), [weekStart]);
 
-  const loadEntries = useCallback(async () => {
-    setEntriesLoading(true);
-    const { data, error } = await supabase
-      .from("time_clock_entries")
-      .select("*")
-      .eq("agency_id", AGENCY_ID)
-      .gte("clock_in_at", weekStart.toISOString())
-      .lt("clock_in_at", weekEnd.toISOString())
-      .order("clock_in_at", { ascending: true });
-    if (!error) setEntries(data || []);
-    setEntriesLoading(false);
-  }, [weekStart, weekEnd]);
+  const { staff, loading: staffLoading, reload: reloadStaff } = useHourlyStaff();
+  const { entries, loading: entriesLoading, reload: reloadEntries } = useWeekEntries(weekStart, weekEnd);
 
-  useEffect(() => { loadEntries(); }, [loadEntries]);
+  const [editing, setEditing] = useState(null);   // entry or "new"
+  const [editingFor, setEditingFor] = useState(null); // staff for "new"
+  const [settingPinFor, setSettingPinFor] = useState(null);
 
-  // group entries by team_member_id, then by day-of-week
-  const byStaff = useMemo(() => {
-    const map = new Map();
-    for (const s of staff || []) {
-      map.set(s.team_member_id, { staff: s, days: Array.from({ length: 7 }, () => []) });
-    }
-    for (const e of entries || []) {
-      const bucket = map.get(e.team_member_id);
-      if (!bucket) continue;
-      const dayIdx = (new Date(e.clock_in_at).getDay()); // 0 = Sun
-      bucket.days[dayIdx].push(e);
-    }
-    return map;
-  }, [staff, entries]);
+  const isThisWeek = useMemo(() => {
+    const now = startOfSundayWeek(new Date());
+    return weekStart.getTime() === now.getTime();
+  }, [weekStart]);
 
-  function shiftWeek(deltaWeeks) {
-    setWeekStart((cur) => addDays(cur, deltaWeeks * 7));
-  }
-  function jumpToThisWeek() {
-    setWeekStart(startOfSundayWeek(new Date()));
-  }
-
-  const weekLabel = `${weekStart.toLocaleDateString([], { month: "short", day: "numeric" })} – ${addDays(weekEnd, -1).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
-  const thisWeekStart = startOfSundayWeek(new Date());
-  const isThisWeek = weekStart.getTime() === thisWeekStart.getTime();
+  function goPrev()   { setAnchor(addDays(weekStart, -7)); }
+  function goNext()   { setAnchor(addDays(weekStart,  7)); }
+  function goToday()  { setAnchor(startOfSundayWeek(new Date())); }
 
   return (
-    <div className="space-y-6">
-      {/* Live status strip */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">On the clock right now</div>
-        {staffLoading ? (
-          <div className="text-sm text-slate-500">Loading…</div>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {(staff || []).filter((s) => s.is_clocked_in).length === 0 ? (
-              <span className="text-sm text-slate-500">Nobody is clocked in.</span>
-            ) : (
-              (staff || [])
-                .filter((s) => s.is_clocked_in)
-                .map((s) => (
-                  <div key={s.team_member_id} className="inline-flex items-center gap-2 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-sm">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="font-medium text-emerald-900">{s.first_name} {s.last_name}</span>
-                    <span className="text-emerald-700">
-                      since {fmtTime(s.clock_in_at)} · {fmtHM(s.hours_this_block)}
-                    </span>
-                  </div>
-                ))
-            )}
-          </div>
-        )}
-      </div>
-
+    <div>
       {/* Week navigator */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => shiftWeek(-1)} className="px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-sm">← Prev</button>
-        <div className="px-3 py-1.5 rounded-md bg-slate-100 text-sm font-medium text-slate-800">
-          {weekLabel}
+      <Card style={{ marginBottom: 14, padding: "12px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>
+              {fmtDate(weekStart)} &ndash; {fmtDate(lastDay)}, {weekStart.getFullYear()}
+            </div>
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+              {isThisWeek ? "This week" : (weekStart < startOfSundayWeek(new Date()) ? "Prior week" : "Future week")}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <Button onClick={goPrev}>&larr; Prev</Button>
+            {!isThisWeek && <Button onClick={goToday} variant="ghost">This week</Button>}
+            <Button onClick={goNext}>Next &rarr;</Button>
+          </div>
         </div>
-        <button onClick={() => shiftWeek(1)} className="px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-sm">Next →</button>
-        {!isThisWeek && (
-          <button onClick={jumpToThisWeek} className="px-3 py-1.5 rounded-md text-sm text-sky-700 hover:bg-sky-50">This week</button>
-        )}
-      </div>
+      </Card>
 
-      {/* Per-employee timesheets */}
-      {entriesLoading ? (
-        <div className="text-sm text-slate-500">Loading entries…</div>
+      {staffLoading && entriesLoading ? (
+        <div style={{ textAlign: "center", color: T.slate500, padding: "32px 0", fontSize: 13 }}>Loading...</div>
+      ) : !staff.length ? (
+        <Card style={{ padding: "32px 24px", textAlign: "center", borderStyle: "dashed", background: T.slate50 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate700 }}>No hourly team members yet</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
+            Add an hourly team member in Team to see them here.
+          </div>
+        </Card>
       ) : (
-        <div className="space-y-4">
-          {Array.from(byStaff.values()).map(({ staff: s, days }) => (
-            <EmployeeWeekCard
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {(staff || []).map((s) => (
+            <StaffWeekCard
               key={s.team_member_id}
               staff={s}
-              days={days}
               weekStart={weekStart}
-              onEdit={(e) => setEditingEntry(e)}
-              onCreate={() => setCreatingFor(s)}
+              entries={(entries || []).filter((e) => e.team_member_id === s.team_member_id)}
+              onEdit={(entry) => setEditing(entry)}
+              onAdd={() => { setEditingFor(s); setEditing("new"); }}
               onSetPin={() => setSettingPinFor(s)}
             />
           ))}
         </div>
       )}
 
-      {/* Modals */}
-      {editingEntry && (
+      {/* Footer summary */}
+      <div style={{ marginTop: 14, padding: "10px 14px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 9, fontSize: 11, color: T.slate600 }}>
+        <span style={{ marginRight: 14 }}>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: T.green, marginRight: 5 }} />
+          On track (&lt;{YELLOW_HR}h)
+        </span>
+        <span style={{ marginRight: 14 }}>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: T.amber, marginRight: 5 }} />
+          Near OT ({YELLOW_HR}-{RED_HR}h)
+        </span>
+        <span>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: T.red, marginRight: 5 }} />
+          Overtime (&ge;{RED_HR}h)
+        </span>
+      </div>
+
+      {editing && (
         <EditEntryModal
-          entry={editingEntry}
+          entry={editing === "new" ? null : editing}
+          forStaff={editing === "new" ? editingFor : null}
           userId={userId}
-          onClose={() => setEditingEntry(null)}
-          onSaved={() => { setEditingEntry(null); loadEntries(); reloadStaff(); }}
-        />
-      )}
-      {creatingFor && (
-        <CreateEntryModal
-          staff={creatingFor}
-          userId={userId}
-          onClose={() => setCreatingFor(null)}
-          onSaved={() => { setCreatingFor(null); loadEntries(); reloadStaff(); }}
+          onClose={() => { setEditing(null); setEditingFor(null); }}
+          onSaved={() => { setEditing(null); setEditingFor(null); reloadEntries(); reloadStaff(); }}
         />
       )}
       {settingPinFor && (
@@ -485,197 +671,242 @@ function AdminView({ userId }) {
   );
 }
 
-function EmployeeWeekCard({ staff: s, days, weekStart, onEdit, onCreate, onSetPin }) {
-  const totalHours = useMemo(() => {
-    let h = 0;
-    for (const dayEntries of days) {
-      for (const e of dayEntries) {
-        if (e.clock_out_at) h += hoursBetween(e.clock_in_at, e.clock_out_at);
-      }
-    }
-    return h;
-  }, [days]);
-  const grossPay = totalHours * Number(s.pay_rate || 0);
-  const overtimeFlag = totalHours > 40;
+function StaffWeekCard({ staff: s, weekStart, entries, onEdit, onAdd, onSetPin }) {
+  const closedHours = sumClosedHours(entries, s.team_member_id);
+  const openHours = openBlockHours(entries, s.team_member_id);
+  const totalHours = closedHours + openHours;
+  const status = weeklyStatus(totalHours);
+  const payRate = Number(s.pay_rate) || 0;
+  const grossPay = totalHours * payRate;
+
+  // Group entries by day
+  const dayBuckets = useMemo(() => {
+    const buckets = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+      const dayStart = addDays(weekStart, i);
+      const dayEnd = addDays(dayStart, 1);
+      return { date: dayStart, entries: [] };
+    });
+    (entries || []).forEach((e) => {
+      const d = new Date(e.clock_in_at);
+      const dow = Math.floor((d - weekStart) / 86_400_000);
+      if (dow >= 0 && dow < 7) buckets[dow].entries.push(e);
+    });
+    return buckets;
+  }, [entries, weekStart]);
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between p-4 bg-slate-50 border-b border-slate-200 flex-wrap gap-2">
+    <Card style={{ padding: 0, overflow: "hidden", borderTop: `3px solid ${status.border}` }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, padding: "14px 18px", borderBottom: `1px solid ${T.slate200}` }}>
         <div>
-          <div className="text-base font-semibold text-slate-900">
-            {s.first_name} {s.last_name}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>
+              {s.first_name} {s.last_name}
+            </div>
+            {s.is_clocked_in && <Pill bg={T.green} color={T.white}>ON</Pill>}
+            {!s.pin_set && <Pill bg={T.amberLt} color={T.amber}>No PIN</Pill>}
           </div>
-          <div className="text-xs text-slate-500 mt-0.5">
-            ${Number(s.pay_rate).toFixed(2)}/hr · {s.pin_set ? "PIN set" : <span className="text-amber-700">PIN not set</span>}
+          <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+            ${payRate.toFixed(2)}/hr
           </div>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="text-right">
-            <div className="text-xs text-slate-500">Week total</div>
-            <div className={`text-base font-semibold ${overtimeFlag ? "text-amber-700" : "text-slate-900"}`}>
-              {fmtHM(totalHours)}{overtimeFlag && " ⚠"}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: T.slate500 }}>Hours / Pay</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+              {fmtHM(totalHours)} &middot; ${grossPay.toFixed(2)}
             </div>
-            <div className="text-xs text-slate-600">${grossPay.toFixed(2)} gross</div>
           </div>
-          <button onClick={onCreate} className="px-2.5 py-1 rounded text-xs border border-slate-200 hover:bg-white">+ Entry</button>
-          <button onClick={onSetPin} className="px-2.5 py-1 rounded text-xs border border-slate-200 hover:bg-white">Set PIN</button>
+          <Pill bg={status.bg} color={status.color}>{status.label}</Pill>
+          <div style={{ display: "flex", gap: 6 }}>
+            <Button onClick={onAdd}>+ Add entry</Button>
+            <Button onClick={onSetPin} variant="ghost">{s.pin_set ? "Reset PIN" : "Set PIN"}</Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-7 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-        {days.map((dayEntries, i) => {
-          const dayDate = addDays(weekStart, i);
-          const dayHours = dayEntries.reduce(
-            (acc, e) => acc + (e.clock_out_at ? hoursBetween(e.clock_in_at, e.clock_out_at) : 0),
-            0
-          );
+      {/* Day grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: `1px solid ${T.slate200}` }}>
+        {dayBuckets.map((b, i) => {
+          const isToday = b.date.toDateString() === new Date().toDateString();
           return (
-            <div key={i} className="p-3 min-h-[110px]">
-              <div className="flex items-baseline justify-between mb-1.5">
-                <div className="text-xs font-medium text-slate-700">
-                  {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i]}{" "}
-                  <span className="text-slate-400">{dayDate.getMonth() + 1}/{dayDate.getDate()}</span>
-                </div>
-                {dayHours > 0 && (
-                  <div className="text-xs font-medium text-slate-600">{fmtHM(dayHours)}</div>
-                )}
+            <div key={i} style={{
+              padding: "10px 8px",
+              borderRight: i < 6 ? `1px solid ${T.slate200}` : "none",
+              background: isToday ? T.blueLt : T.white,
+              minHeight: 90,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: isToday ? T.blue : T.slate500, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                {b.date.toLocaleDateString([], { weekday: "short" })} {b.date.getDate()}
               </div>
-              <div className="space-y-1">
-                {dayEntries.length === 0 ? (
-                  <div className="text-xs text-slate-300">—</div>
-                ) : (
-                  dayEntries.map((e) => (
+              {b.entries.length === 0 ? (
+                <div style={{ fontSize: 10, color: T.slate400 }}>--</div>
+              ) : (
+                b.entries.map((e) => {
+                  const hrs = e.clock_out_at ? hoursBetween(e.clock_in_at, e.clock_out_at) : null;
+                  return (
                     <button
                       key={e.id}
                       onClick={() => onEdit(e)}
-                      className={`w-full text-left text-xs rounded px-2 py-1 ${
-                        e.clock_out_at
-                          ? "bg-slate-50 hover:bg-slate-100 border border-slate-200"
-                          : "bg-emerald-50 hover:bg-emerald-100 border border-emerald-200"
-                      }`}
+                      style={{
+                        display: "block", width: "100%",
+                        textAlign: "left", padding: "4px 6px", marginBottom: 4,
+                        background: e.clock_out_at ? T.slate50 : T.greenLt,
+                        border: `1px solid ${e.clock_out_at ? T.slate200 : T.green}`,
+                        borderRadius: 5,
+                        fontSize: 10, color: T.slate800,
+                        cursor: "pointer",
+                      }}
                     >
-                      <div className="font-medium text-slate-800">
-                        {fmtTime(e.clock_in_at)} – {e.clock_out_at ? fmtTime(e.clock_out_at) : <span className="text-emerald-700">on now</span>}
+                      <div style={{ fontWeight: 600 }}>
+                        {fmtTime(e.clock_in_at)} &ndash; {e.clock_out_at ? fmtTime(e.clock_out_at) : "open"}
                       </div>
-                      {e.clock_out_at && (
-                        <div className="text-slate-500">{fmtHM(hoursBetween(e.clock_in_at, e.clock_out_at))}</div>
-                      )}
-                      {e?.source && e.source !== "kiosk" && (
-                        <div className="text-[10px] uppercase tracking-wide text-slate-400 mt-0.5">{e.source.replace("_", " ")}</div>
-                      )}
+                      {hrs !== null && <div style={{ color: T.slate500, fontSize: 9 }}>{fmtHM(hrs)}</div>}
                     </button>
-                  ))
-                )}
-              </div>
+                  );
+                })
+              )}
             </div>
           );
         })}
+      </div>
+
+      {/* Detail list */}
+      <div style={{ padding: "10px 18px", background: T.slate50, fontSize: 11, color: T.slate600 }}>
+        {(entries || []).length === 0
+          ? <span>No entries this week.</span>
+          : <span>{(entries || []).length} entr{(entries || []).length === 1 ? "y" : "ies"} this week. Click any block to edit.</span>}
+      </div>
+    </Card>
+  );
+}
+
+// =====================================================================
+// MODALS
+// =====================================================================
+function ModalShell({ children, onClose, width = 460 }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9999, padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: T.white, borderRadius: 12, width: "100%", maxWidth: width,
+          boxShadow: "0 20px 50px rgba(15,23,42,0.25)",
+        }}
+      >
+        {children}
       </div>
     </div>
   );
 }
 
-// =====================================================================
-// EDIT / CREATE / PIN modals
-// =====================================================================
-function EditEntryModal({ entry, userId, onClose, onSaved }) {
-  const [inAt, setInAt] = useState(toLocalInputValue(entry.clock_in_at));
-  const [outAt, setOutAt] = useState(entry.clock_out_at ? toLocalInputValue(entry.clock_out_at) : "");
-  const [notes, setNotes] = useState(entry.notes || "");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState(null);
+function EditEntryModal({ entry, forStaff, userId, onClose, onSaved }) {
+  const isNew = !entry;
+  const [clockIn, setClockIn] = useState(toLocalInput(entry?.clock_in_at) || toLocalInput(new Date().toISOString()));
+  const [clockOut, setClockOut] = useState(toLocalInput(entry?.clock_out_at) || "");
+  const [notes, setNotes] = useState(entry?.notes || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   async function save() {
-    setSaving(true); setErr(null);
-    const payload = {
-      clock_in_at: new Date(inAt).toISOString(),
-      clock_out_at: outAt ? new Date(outAt).toISOString() : null,
-      notes: notes || null,
-      source: "admin_edit",
-      edited_by_user_id: userId || null,
-      edited_at: new Date().toISOString(),
-    };
-    const { error } = await supabase.from("time_clock_entries").update(payload).eq("id", entry.id);
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    onSaved?.();
-  }
-  async function del() {
-    if (!confirm("Delete this entry? This cannot be undone.")) return;
-    setSaving(true); setErr(null);
-    const { error } = await supabase.from("time_clock_entries").delete().eq("id", entry.id);
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    onSaved?.();
+    setError("");
+    const inIso = fromLocalInput(clockIn);
+    const outIso = fromLocalInput(clockOut);
+    if (!inIso) { setError("Clock-in time required."); return; }
+    if (outIso && new Date(outIso) <= new Date(inIso)) {
+      setError("Clock-out must be after clock-in."); return;
+    }
+    setBusy(true);
+    if (isNew) {
+      const { error: insErr } = await supabase.from("time_clock_entries").insert({
+        agency_id: AGENCY_ID,
+        team_member_id: forStaff.team_member_id,
+        clock_in_at: inIso,
+        clock_out_at: outIso,
+        notes: notes || null,
+        source: "admin_create",
+        edited_by_user_id: userId || null,
+        edited_at: new Date().toISOString(),
+      });
+      setBusy(false);
+      if (insErr) { setError(insErr.message); return; }
+    } else {
+      const { error: updErr } = await supabase.from("time_clock_entries")
+        .update({
+          clock_in_at: inIso,
+          clock_out_at: outIso,
+          notes: notes || null,
+          source: "admin_edit",
+          edited_by_user_id: userId || null,
+          edited_at: new Date().toISOString(),
+        })
+        .eq("id", entry.id);
+      setBusy(false);
+      if (updErr) { setError(updErr.message); return; }
+    }
+    onSaved();
   }
 
+  async function remove() {
+    if (!entry) return;
+    if (!window.confirm("Delete this time entry? This cannot be undone.")) return;
+    setBusy(true);
+    const { error: delErr } = await supabase.from("time_clock_entries").delete().eq("id", entry.id);
+    setBusy(false);
+    if (delErr) { setError(delErr.message); return; }
+    onSaved();
+  }
+
+  const subject = forStaff
+    ? `${forStaff.first_name} ${forStaff.last_name}`
+    : "this entry";
+
   return (
-    <ModalShell title="Edit time entry" onClose={onClose}>
-      <div className="space-y-3">
-        <Field label="Clock in"><input type="datetime-local" value={inAt} onChange={(e) => setInAt(e.target.value)} className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm" /></Field>
-        <Field label="Clock out (blank = still on the clock)">
-          <input type="datetime-local" value={outAt} onChange={(e) => setOutAt(e.target.value)} className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm" />
-        </Field>
-        <Field label="Notes">
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm" />
-        </Field>
-        {err && <div className="text-sm text-rose-600">{err}</div>}
-        <div className="flex items-center justify-between pt-2">
-          <button onClick={del} disabled={saving} className="px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-50 rounded">Delete</button>
-          <div className="flex gap-2">
-            <button onClick={onClose} disabled={saving} className="px-3 py-1.5 text-sm border border-slate-200 rounded hover:bg-slate-50">Cancel</button>
-            <button onClick={save} disabled={saving} className="px-3 py-1.5 text-sm bg-slate-900 text-white rounded hover:bg-slate-800">{saving ? "Saving…" : "Save"}</button>
-          </div>
+    <ModalShell onClose={busy ? () => {} : onClose}>
+      <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.slate200}` }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
+          {isNew ? `New entry for ${subject}` : "Edit time entry"}
         </div>
+        {!isNew && (
+          <div style={{ fontSize: 11, color: T.slate500, marginTop: 3 }}>
+            Source: {entry.source || "kiosk"}{entry.edited_at ? ` &middot; last edited ${fmtDate(new Date(entry.edited_at))}` : ""}
+          </div>
+        )}
       </div>
-    </ModalShell>
-  );
-}
 
-function CreateEntryModal({ staff: s, userId, onClose, onSaved }) {
-  const defaultDay = (() => {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  })();
-  const [inAt, setInAt] = useState(`${defaultDay}T09:00`);
-  const [outAt, setOutAt] = useState(`${defaultDay}T17:00`);
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState(null);
+      <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Clock in</div>
+          <TextInput type="datetime-local" value={clockIn} onChange={(e) => setClockIn(e.target.value)} />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Clock out</div>
+          <TextInput type="datetime-local" value={clockOut} onChange={(e) => setClockOut(e.target.value)} />
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 4 }}>Leave blank to keep this entry open.</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Notes (optional)</div>
+          <TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. forgot to clock out, fixed 3:30 -> 4:15" />
+        </div>
+        {error && (
+          <div style={{ padding: "8px 10px", background: T.redLt, color: T.red, borderRadius: 6, fontSize: 12 }}>{error}</div>
+        )}
+      </div>
 
-  async function save() {
-    setSaving(true); setErr(null);
-    const payload = {
-      agency_id: AGENCY_ID,
-      team_member_id: s.team_member_id,
-      clock_in_at: new Date(inAt).toISOString(),
-      clock_out_at: outAt ? new Date(outAt).toISOString() : null,
-      notes: notes || null,
-      source: "admin_create",
-      edited_by_user_id: userId || null,
-      edited_at: new Date().toISOString(),
-    };
-    const { error } = await supabase.from("time_clock_entries").insert(payload);
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    onSaved?.();
-  }
-
-  return (
-    <ModalShell title={`Add entry for ${s.first_name}`} onClose={onClose}>
-      <div className="space-y-3">
-        <Field label="Clock in"><input type="datetime-local" value={inAt} onChange={(e) => setInAt(e.target.value)} className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm" /></Field>
-        <Field label="Clock out (blank = still on the clock)">
-          <input type="datetime-local" value={outAt} onChange={(e) => setOutAt(e.target.value)} className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm" />
-        </Field>
-        <Field label="Notes">
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm" />
-        </Field>
-        {err && <div className="text-sm text-rose-600">{err}</div>}
-        <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 text-sm border border-slate-200 rounded hover:bg-slate-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="px-3 py-1.5 text-sm bg-slate-900 text-white rounded hover:bg-slate-800">{saving ? "Saving…" : "Add entry"}</button>
+      <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.slate200}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
+        <div>
+          {!isNew && <Button variant="danger" onClick={remove} disabled={busy}>Delete</Button>}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="dark" onClick={save} disabled={busy}>{busy ? "Saving..." : "Save"}</Button>
         </div>
       </div>
     </ModalShell>
@@ -684,78 +915,62 @@ function CreateEntryModal({ staff: s, userId, onClose, onSaved }) {
 
 function SetPinModal({ staff: s, onClose, onSaved }) {
   const [pin, setPin] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState(null);
+  const [pin2, setPin2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   async function save() {
-    setErr(null);
-    if (!/^\d{4}$/.test(pin)) { setErr("PIN must be exactly 4 digits."); return; }
-    if (pin !== confirm) { setErr("PINs don't match."); return; }
-    setSaving(true);
-    const { data, error } = await supabase.rpc("time_clock_set_pin", {
+    setError("");
+    if (!/^\d{4}$/.test(pin)) { setError("PIN must be exactly 4 digits."); return; }
+    if (pin !== pin2) { setError("PINs do not match."); return; }
+    setBusy(true);
+    const { data, error: rpcErr } = await supabase.rpc("time_clock_set_pin", {
       p_staff_id: s.team_member_id,
       p_pin: pin,
     });
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    if (data?.ok === false) { setErr(data.error); return; }
-    onSaved?.();
+    setBusy(false);
+    if (rpcErr) { setError(rpcErr.message); return; }
+    if (data?.ok === false) { setError(data.error || "Could not set PIN."); return; }
+    onSaved();
   }
 
   return (
-    <ModalShell title={`${s.pin_set ? "Reset" : "Set"} PIN for ${s.first_name}`} onClose={onClose}>
-      <div className="space-y-3">
-        <div className="text-sm text-slate-600">
-          Pick a 4-digit PIN. Share it with {s.first_name} privately. She'll enter it at the kiosk to clock in/out.
+    <ModalShell onClose={busy ? () => {} : onClose} width={380}>
+      <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.slate200}` }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
+          {s.pin_set ? "Reset PIN" : "Set PIN"} for {s.first_name} {s.last_name}
         </div>
-        <Field label="New 4-digit PIN">
-          <input type="password" inputMode="numeric" maxLength={4} value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
-            className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm tracking-widest" />
-        </Field>
-        <Field label="Confirm PIN">
-          <input type="password" inputMode="numeric" maxLength={4} value={confirm}
-            onChange={(e) => setConfirm(e.target.value.replace(/\D/g, "").slice(0, 4))}
-            className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm tracking-widest" />
-        </Field>
-        {err && <div className="text-sm text-rose-600">{err}</div>}
-        <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 text-sm border border-slate-200 rounded hover:bg-slate-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="px-3 py-1.5 text-sm bg-slate-900 text-white rounded hover:bg-slate-800">{saving ? "Saving…" : "Save PIN"}</button>
+        <div style={{ fontSize: 11, color: T.slate500, marginTop: 3 }}>
+          4 digits. Share privately with the team member.
         </div>
+      </div>
+
+      <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>New PIN</div>
+          <TextInput
+            type="password" inputMode="numeric" maxLength={4}
+            value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+            placeholder="4 digits"
+          />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Confirm PIN</div>
+          <TextInput
+            type="password" inputMode="numeric" maxLength={4}
+            value={pin2} onChange={(e) => setPin2(e.target.value.replace(/\D/g, ""))}
+            placeholder="4 digits"
+          />
+        </div>
+        {error && (
+          <div style={{ padding: "8px 10px", background: T.redLt, color: T.red, borderRadius: 6, fontSize: 12 }}>{error}</div>
+        )}
+      </div>
+
+      <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.slate200}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="dark" onClick={save} disabled={busy}>{busy ? "Saving..." : "Save PIN"}</Button>
       </div>
     </ModalShell>
   );
-}
-
-// =====================================================================
-// Shared bits
-// =====================================================================
-function ModalShell({ title, onClose, children }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="font-semibold text-slate-900">{title}</div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <div className="text-xs font-medium text-slate-600 mb-1">{label}</div>
-      {children}
-    </label>
-  );
-}
-function toLocalInputValue(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
