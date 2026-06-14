@@ -54,26 +54,26 @@ const T = {
 
 // ─── Priority Config ──────────────────────────────────────────
 const PRIORITY = {
-  critical: { color:T.red,    bg:T.redLt,    label:"Critical", dot:"🔴" },
-  high:     { color:"#EA580C", bg:"#FFF7ED",  label:"High",     dot:"🟠" },
-  medium:   { color:T.amber,  bg:T.amberLt,  label:"Medium",   dot:"🟡" },
+  critical: { color:T.red,    bg:T.redLt,    label:"Critical", dot:"ð´" },
+  high:     { color:"#EA580C", bg:"#FFF7ED",  label:"High",     dot:"ð " },
+  medium:   { color:T.amber,  bg:T.amberLt,  label:"Medium",   dot:"ð¡" },
   low:      { color:T.slate500,bg:T.slate100, label:"Low",      dot:"⚪" },
 };
 
 // ─── Module Reference Config ──────────────────────────────────
 const MODULES = {
-  financials:   { label:"Financials",   color:T.blue,    icon:"💰" },
-  compliance:   { label:"Compliance",   color:T.red,     icon:"🛡️" },
-  social:       { label:"Social Media", color:T.purple,  icon:"📱" },
+  financials:   { label:"Financials",   color:T.blue,    icon:"ð°" },
+  compliance:   { label:"Compliance",   color:T.red,     icon:"ð¡️" },
+  social:       { label:"Social Media", color:T.purple,  icon:"ð±" },
   automations:  { label:"Automations",  color:T.teal,    icon:"⚡" },
-  hr:           { label:"HR & People",  color:T.green,   icon:"👥" },
-  documents:    { label:"Documents",    color:T.amber,   icon:"📁" },
-  memory:       { label:"Memory",       color:T.navy,    icon:"🧠" },
-  marketing:    { label:"Marketing",    color:T.purple,  icon:"📣" },
-  team:         { label:"Team",         color:T.green,   icon:"👥" },
-  business_dev: { label:"Business Dev", color:T.blue,    icon:"📈" },
+  hr:           { label:"HR & People",  color:T.green,   icon:"ð¥" },
+  documents:    { label:"Documents",    color:T.amber,   icon:"ð" },
+  memory:       { label:"Memory",       color:T.navy,    icon:"ð§ " },
+  marketing:    { label:"Marketing",    color:T.purple,  icon:"ð£" },
+  team:         { label:"Team",         color:T.green,   icon:"ð¥" },
+  business_dev: { label:"Business Dev", color:T.blue,    icon:"ð" },
   operations:   { label:"Operations",   color:T.slate500,icon:"⚙️" },
-  general:      { label:"General",      color:T.slate500,icon:"📋" },
+  general:      { label:"General",      color:T.slate500,icon:"ð" },
 };
 
 // Defensive lookup so unknown module_reference values render gracefully
@@ -81,12 +81,12 @@ const moduleConfig = (key) => MODULES[key] || MODULES.general;
 
 // ─── Goal Category Config ─────────────────────────────────────
 const GOAL_CATS = {
-  aipp:       { label:"AIPP",       color:T.green,  icon:"🎯" },
-  revenue:    { label:"Revenue",    color:T.blue,   icon:"💰" },
-  team:       { label:"Team",       color:T.purple, icon:"👥" },
-  compliance: { label:"Compliance", color:T.red,    icon:"🛡️" },
+  aipp:       { label:"AIPP",       color:T.green,  icon:"ð¯" },
+  revenue:    { label:"Revenue",    color:T.blue,   icon:"ð°" },
+  team:       { label:"Team",       color:T.purple, icon:"ð¥" },
+  compliance: { label:"Compliance", color:T.red,    icon:"ð¡️" },
   personal:   { label:"Personal",   color:T.amber,  icon:"⭐" },
-  growth:     { label:"Growth",     color:T.teal,   icon:"📈" },
+  growth:     { label:"Growth",     color:T.teal,   icon:"ð" },
 };
 
 // ─── Mock Data ────────────────────────────────────────────────
@@ -399,7 +399,7 @@ const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
             <AskBtn size="small" context={`My tasks due this week:\n${dueThisWeek.map(t=>`• ${t.title} (${t.priority}, due ${t.due_date}, module: ${t.module})`).join("\n")}\n\nHelp me prioritize these tasks and create an action plan for the week.`} />
           </div>
           {dueThisWeek.length === 0 ? (
-            <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"16px 0" }}>Nothing due this week 🎉</div>
+            <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"16px 0" }}>Nothing due this week ð</div>
           ) : dueThisWeek.map((task,i) => {
             const pr = PRIORITY[task.priority] || PRIORITY.medium;
             const mod = moduleConfig(task.module);

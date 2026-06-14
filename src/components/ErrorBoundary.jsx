@@ -29,7 +29,7 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     // Log full diagnostic to the console so Claude can read it during debug
-    console.group(`🔴 ErrorBoundary caught an error in module: ${this.props.name || "unknown"}`);
+    console.group(`ð´ ErrorBoundary caught an error in module: ${this.props.name || "unknown"}`);
     console.error("Error:", error);
     console.error("Component stack:", info?.componentStack);
     console.groupEnd();

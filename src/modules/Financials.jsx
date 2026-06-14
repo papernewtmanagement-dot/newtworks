@@ -6,23 +6,23 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 // ============================================================
 // BCC FINANCIALS MODULE v1.1
-// Business Command Center ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ State Farm Agent Edition
+// Business Command Center — State Farm Agent Edition
 //
 // SECTIONS:
-//   1. Overview        ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Summary cards + revenue trend chart
-//   2. P&L             ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Monthly/quarterly/annual P&L
-//   3. COMP_RECAP      ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ SF compensation detail by period
-//   4. AIPP & Scorecard ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Progress tracking
-//   5. Payroll         ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Staff payroll history
-//   6. Bank Accounts   ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Account balances and reconciliation
-//   7. Credit & Debt   ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Cards, loans, lines of credit
-//   8. General Ledger  ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Full transaction ledger
+//   1. Overview        — Summary cards + revenue trend chart
+//   2. P&L             — Monthly/quarterly/annual P&L
+//   3. COMP_RECAP      — SF compensation detail by period
+//   4. AIPP & Scorecard — Progress tracking
+//   5. Payroll         — Staff payroll history
+//   6. Bank Accounts   — Account balances and reconciliation
+//   7. Credit & Debt   — Cards, loans, lines of credit
+//   8. General Ledger  — Full transaction ledger
 //
 // DATA: Reads live from Supabase views/tables via useFinancialsData().
 // ============================================================
 
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Design Tokens (matches BCCApp shell) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Design Tokens (matches BCCApp shell) ────────────────────
 
 const T = {
   navy:    "#1B2B4B",
@@ -51,7 +51,7 @@ const T = {
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Live Supabase Data Hook ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Live Supabase Data Hook ─────────────────────────────────
 function useFinancialsData() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -73,7 +73,7 @@ function useFinancialsData() {
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
 
-          // SF comp recap ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ real schema columns
+          // SF comp recap — real schema columns
           supabase.from("comp_recap")
             .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scorecard_eligible")
             .order("period_year", { ascending: false })
@@ -106,7 +106,7 @@ function useFinancialsData() {
           supabase.from("payroll_detail")
             .select("payroll_run_id, gross_pay, federal_tax, state_tax, social_security, medicare, other_deductions, net_pay, employment_type"),
 
-          // AIPP ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ real schema
+          // AIPP — real schema
           supabase.from("aipp_tracking")
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
@@ -116,7 +116,7 @@ function useFinancialsData() {
             .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(20),
 
-          // Balance Sheet ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ anchored to QBO 4/30/2026 opening balances + post-4/30 GL activity
+          // Balance Sheet — anchored to QBO 4/30/2026 opening balances + post-4/30 GL activity
           supabase.from("v_balance_sheet_anchored")
             .select("account_code, account_name, account_type, anchor_0430, activity_since_0430, balance_current"),
         ]);
@@ -155,7 +155,7 @@ function useFinancialsData() {
         const revQTD = sumByPeriod("income",  r => r.month >= quarterStart && r.month <= currentMonth);
         const expQTD = sumByPeriod("expense", r => r.month >= quarterStart && r.month <= currentMonth);
 
-        // Comp recap ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ group rows into "periods" (e.g. "Apr 2026") and pre-format for the section
+        // Comp recap — group rows into "periods" (e.g. "Apr 2026") and pre-format for the section
         const compRecapsRaw = compRows.data || [];
         const compRecaps = compRecapsRaw.map(r => ({
           period_year:  r.period_year,
@@ -163,13 +163,13 @@ function useFinancialsData() {
           period_label: `${MONTHS[r.period_month-1]} ${r.period_year}`,
           comp_type:    r.comp_type,
           comp_category: r.comp_category,
-          description:  r.description || `${r.comp_type} ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${r.comp_category}`,
+          description:  r.description || `${r.comp_type} — ${r.comp_category}`,
           amount:       parseFloat(r.amount || 0),
           is_aipp_eligible: r.is_aipp_eligible,
           is_scorecard_eligible: r.is_scorecard_eligible,
         }));
 
-        // AIPP ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ alias schema fields to the names AIPPSection expects
+        // AIPP — alias schema fields to the names AIPPSection expects
         const aippRaw = aippRow.data || null;
         const aipp = aippRaw ? {
           year:          aippRaw.program_year || currentYear,
@@ -187,7 +187,7 @@ function useFinancialsData() {
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
 
-        // Scorecard ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ alias to {metric, actual, target, pct}
+        // Scorecard — alias to {metric, actual, target, pct}
         const scorecard = (scorecardRows.data || []).map(s => ({
           metric: s.metric_name,
           actual: parseFloat(s.actual || 0),
@@ -195,7 +195,7 @@ function useFinancialsData() {
           pct:    Math.round(parseFloat(s.achievement_percentage || 0)),
         }));
 
-        // Payroll ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ combine runs + detail, grouped by run
+        // Payroll — combine runs + detail, grouped by run
         const detailByRun = {};
         for (const d of (payrollDetailRows.data || [])) {
           (detailByRun[d.payroll_run_id] ||= []).push(d);
@@ -205,7 +205,7 @@ function useFinancialsData() {
           const endStr   = new Date(run.pay_period_end).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
           const dateStr  = run.pay_date ? new Date(run.pay_date).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
           return {
-            pay_period: `${startStr} ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${endStr}`,
+            pay_period: `${startStr} – ${endStr}`,
             pay_date:   dateStr,
             gross:      parseFloat(run.gross_payroll || 0),
             taxes:      parseFloat(run.employer_taxes || 0),
@@ -215,7 +215,7 @@ function useFinancialsData() {
           };
         });
 
-        // Credit accounts ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ alias to what CreditSection expects
+        // Credit accounts — alias to what CreditSection expects
         const creditAccounts = (ccRows.data || []).map(c => ({
           name:    c.account_name,
           balance: parseFloat(c.current_balance || 0),
@@ -229,7 +229,7 @@ function useFinancialsData() {
           dueDay:  c.payment_due_day,
         }));
 
-        // Balance Sheet ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ group anchored rows by type, with totals
+        // Balance Sheet — group anchored rows by type, with totals
         const bsRows = (balanceSheetRows.data || []).map(r => ({
           code:    r.account_code,
           name:    r.account_name,
@@ -302,8 +302,8 @@ function useFinancialsData() {
 }
 
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Helpers ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
-const fmt = (n) => { const v = Number(n); if (!Number.isFinite(v)) return "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"; if (v === 0) return "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 }); };
+// ─── Helpers ─────────────────────────────────────────────────
+const fmt = (n) => { const v = Number(n); if (!Number.isFinite(v)) return "—"; if (v === 0) return "—"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 }); };
 const pct  = (n, t) => t ? Math.round((n / t) * 100) : 0;
 const yoy  = (curr, prior) => prior ? (((curr - prior) / prior) * 100).toFixed(1) : null;
 const monthYearLabel = (monthIdx1, year) => {
@@ -311,7 +311,7 @@ const monthYearLabel = (monthIdx1, year) => {
   return `${MONTHS[monthIdx1 - 1]} ${year}`;
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Data Store (populated by Financials component with live data) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Data Store (populated by Financials component with live data) ────────────
 let MOCK = {
   currentYear: new Date().getFullYear(),
   currentMonth: new Date().getMonth() + 1,
@@ -327,7 +327,7 @@ let MOCK = {
 };
 
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Shared Components ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Shared Components ───────────────────────────────────────
 const Card = ({ children, style = {} }) => (
   <div style={{
     background: T.white,
@@ -395,7 +395,7 @@ const AskBtn = ({ context }) => (
       cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
     }}
   >
-    ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¡ Ask Claude
+    ⚡ Ask Claude
   </button>
 );
 
@@ -420,7 +420,7 @@ const TabBar = ({ tabs, active, onChange }) => (
   </div>
 );
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Mini Bar Chart ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Mini Bar Chart ──────────────────────────────────────────
 const MiniBarChart = ({ data }) => {
   const maxVal = Math.max(...data.map(d => Math.max(d.revenue, d.expenses)));
   const barH = 80;
@@ -447,7 +447,7 @@ const MiniBarChart = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Progress Bar ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Progress Bar ────────────────────────────────────────────
 const ProgressBar = ({ value, max, color = T.blue, height = 8 }) => {
   const p = Math.min(pct(value, max), 100);
   return (
@@ -461,7 +461,7 @@ const ProgressBar = ({ value, max, color = T.blue, height = 8 }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: Overview ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: Overview ───────────────────────────────────────
 const OverviewSection = ({ period, setPeriod, data }) => {
   const d = data?.summary || {};
   const yoyPct = yoy(d.revenueYTD || 0, d.priorYearYTD || 0);
@@ -471,7 +471,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
   const revenue  = period==="mtd" ? d.revenueMTD  : period==="qtd" ? d.revenueQTD  : d.revenueYTD;
   const expenses = period==="mtd" ? d.expensesMTD : period==="qtd" ? d.expensesQTD : d.expensesYTD;
   const netIncome= period==="mtd" ? d.netIncomeMTD: period==="qtd" ? d.netIncomeQTD: d.netIncomeYTD;
-  const expRatio = revenue ? Math.round((expenses / revenue) * 100) + "%" : "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ";
+  const expRatio = revenue ? Math.round((expenses / revenue) * 100) + "%" : "—";
 
   return (
     <div>
@@ -481,11 +481,11 @@ const OverviewSection = ({ period, setPeriod, data }) => {
           active={period}
           onChange={setPeriod}
         />
-        <AskBtn context={`My agency financials ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${period.toUpperCase()}: Revenue $${revenue}, Expenses $${expenses}, Net Income $${netIncome}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
+        <AskBtn context={`My agency financials — ${period.toUpperCase()}: Revenue $${revenue}, Expenses $${expenses}, Net Income $${netIncome}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
-        <KPICard label="Revenue" value={fmt(revenue)} sub={period==="ytd"?`ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
+        <KPICard label="Revenue" value={fmt(revenue)} sub={period==="ytd"?`↑ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
         <KPICard label="Expenses" value={fmt(expenses)} sub="Cash basis" border={T.amber} />
         <KPICard label="Net Income" value={fmt(netIncome)} color={netIncome >= 0 ? T.green : T.red} border={netIncome >= 0 ? T.green : T.red} />
         <KPICard label="Expense Ratio" value={expRatio} sub="Target: <45%" border={T.slate200} />
@@ -493,12 +493,12 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 12 }}>
         <Card>
-          <CardHeader title={`Monthly revenue ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${data?.currentYear || ""}`} sub="Blue bars = revenue ÃÂÃÂÃÂÃÂ· Gray = no data yet" />
+          <CardHeader title={`Monthly revenue — ${data?.currentYear || ""}`} sub="Blue bars = revenue · Gray = no data yet" />
           <MiniBarChart data={data.monthlyRevenue} />
         </Card>
 
         <Card>
-          <CardHeader title={`Income breakdown ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${curMonthLabel}`} />
+          <CardHeader title={`Income breakdown — ${curMonthLabel}`} />
           {(Array.isArray(data?.pl?.income) ? data.pl.income : []).filter(item => (item.mtd || 0) !== 0).map((item, i) => (
             <div key={i} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
@@ -517,7 +517,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: P&L ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: P&L ────────────────────────────────────────────
 const PLSection = ({ data }) => {
   const pl = data?.pl || { income: [], expenses: [] };
   const incomeRows  = Array.isArray(pl.income)   ? pl.income   : [];
@@ -544,7 +544,7 @@ const PLSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Profit & Loss Statement"
-        sub={`Cash basis ÃÂÃÂÃÂÃÂ· Calendar year ${data?.currentYear || ""}`}
+        sub={`Cash basis · Calendar year ${data?.currentYear || ""}`}
         action={<AskBtn context={`My P&L: YTD Revenue $${totalIncomeYTD}, YTD Expenses $${totalExpYTD}, Net Income $${totalIncomeYTD - totalExpYTD}. Expense ratio ${totalIncomeYTD ? Math.round((totalExpYTD/totalIncomeYTD)*100) : 0}%. Help me analyze my profitability and identify areas to improve.`} />}
       />
       <div style={{ overflowX: "auto" }}>
@@ -581,7 +581,7 @@ const PLSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: COMP_RECAP ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: COMP_RECAP ─────────────────────────────────────
 const CompRecapSection = ({ data }) => {
   const compRecaps = Array.isArray(data?.compRecaps) ? data.compRecaps : [];
   const allPeriods = [...new Set(compRecaps.map(r => r?.period_label).filter(Boolean))];
@@ -631,7 +631,7 @@ const CompRecapSection = ({ data }) => {
               <td style={{ padding: "8px 8px", textAlign: "center" }}>
                 {r.is_aipp_eligible
                   ? <Pill type="success">AIPP</Pill>
-                  : <span style={{ fontSize: 11, color: T.slate400 }}>ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ</span>}
+                  : <span style={{ fontSize: 11, color: T.slate400 }}>—</span>}
               </td>
               <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(Math.round(r.amount))}</td>
             </tr>
@@ -649,7 +649,7 @@ const CompRecapSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: AIPP & Scorecard ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: AIPP & Scorecard ──────────────────────────────
 const AIPPSection = ({ data }) => {
   const aippData = data?.aipp || {};
   const year       = aippData.year       || new Date().getFullYear();
@@ -670,7 +670,7 @@ const AIPPSection = ({ data }) => {
         {/* AIPP Progress */}
         <Card>
           <CardHeader
-            title={`AIPP ${year} ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Annual Incentive Progress`}
+            title={`AIPP ${year} — Annual Incentive Progress`}
             action={<AskBtn context={`AIPP ${year}: Target $${target}, Earned YTD $${earned}, Achievement ${achievement}%, Projected $${projected}, Prior Year $${priorYear}. Am I on track? What do I need to focus on?`} />}
           />
           {hasAippData ? (
@@ -700,7 +700,7 @@ const AIPPSection = ({ data }) => {
               </div>
 
               <div style={{ marginTop: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ {year}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned — {year}</div>
                 <div style={{ display: "flex", gap: 6 }}>
                   {monthlyEarned.map((m,i) => (
                     <div key={i} style={{ flex: 1, background: T.blueLt, borderRadius: 6, padding: "6px 4px", textAlign: "center" }}>
@@ -726,7 +726,7 @@ const AIPPSection = ({ data }) => {
         {/* Scorecard */}
         <Card>
           <CardHeader
-            title={`Scorecard Metrics ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${year}`}
+            title={`Scorecard Metrics — ${year}`}
             sub="Progress toward performance recognition"
             action={<AskBtn context={`My Scorecard metrics for ${year}: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention.`} />}
           />
@@ -765,7 +765,7 @@ const AIPPSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: Payroll ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: Payroll ─────────────────────────────────────────
 const PayrollSection = ({ data }) => {
   const ytdGross = (data.payroll || []).reduce((s,r) => s + parseFloat(r.gross || 0), 0);
   const ytdTax   = (data.payroll || []).reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
@@ -774,7 +774,7 @@ const PayrollSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Payroll History"
-        sub={`YTD Gross: ${fmt(ytdGross)} ÃÂÃÂÃÂÃÂ· YTD Taxes: ${fmt(ytdTax)}`}
+        sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}`}
         action={<AskBtn context={`My agency payroll YTD: Gross ${fmt(ytdGross)}, Employer taxes ${fmt(ytdTax)}. Help me review payroll expenses and identify any concerns.`} />}
       />
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -804,7 +804,7 @@ const PayrollSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: Bank Accounts ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: Bank Accounts ───────────────────────────────────
 const BankSection = ({ data }) => {
   const bankAccounts = Array.isArray(data?.bankAccounts) ? data.bankAccounts : [];
   const totalCash = bankAccounts.reduce((s,r) => s + (r?.balance || 0), 0);
@@ -837,7 +837,7 @@ const BankSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: Credit & Debt ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: Credit & Debt ───────────────────────────────────
 const CreditSection = ({ data }) => {
   const totalDebt = (data.creditAccounts || []).reduce((s,r) => s + r.balance, 0);
   const totalAvailable = (data.creditAccounts || []).filter(a => a.limit).reduce((s,r) => s + (r.limit - r.balance), 0);
@@ -856,7 +856,7 @@ const CreditSection = ({ data }) => {
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{a.name}</div>
               <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"}{a.rate ? ` ÃÂÃÂÃÂÃÂ· ${a.rate}% APR` : ""}
+                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"}{a.rate ? ` · ${a.rate}% APR` : ""}
               </div>
               {a.needsReview ? (
                 <div style={{ marginTop: 4 }}><Pill type="warning">Review</Pill></div>
@@ -902,7 +902,7 @@ const CreditSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: Balance Sheet ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: Balance Sheet ───────────────────────────────────
 const BalanceSheetSection = ({ data }) => {
   const bs = data?.balanceSheet || { assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0, asOfLabel: "" };
   const assets = Array.isArray(bs.assets) ? bs.assets : [];
@@ -922,7 +922,7 @@ const BalanceSheetSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Balance Sheet"
-        sub={`Anchored to 4/30/2026 close + live GL ÃÂÃÂÃÂÃÂ· As of ${bs.asOfLabel || "current"}`}
+        sub={`Anchored to 4/30/2026 close + live GL · As of ${bs.asOfLabel || "current"}`}
         action={<AskBtn context={`My balance sheet: Total Assets ${fmt(bs.totalAssets)}, Total Liabilities ${fmt(bs.totalLiabilities)}, Total Equity ${fmt(bs.totalEquity)}. Help me understand my financial position.`} />}
       />
 
@@ -958,12 +958,12 @@ const BalanceSheetSection = ({ data }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: General Ledger ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: General Ledger ──────────────────────────────────
 const GLSection = ({ data }) => (
   <Card>
     <CardHeader
-      title="General Ledger ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Recent Entries"
-      sub="Last 30 days ÃÂÃÂÃÂÃÂ· All accounts"
+      title="General Ledger — Recent Entries"
+      sub="Last 30 days · All accounts"
       action={<AskBtn context="I am reviewing my General Ledger recent entries. Help me verify these entries look correct and identify anything that needs attention." />}
     />
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -981,8 +981,8 @@ const GLSection = ({ data }) => (
             <td style={{ padding: "8px", fontSize: 11, color: T.blue, fontFamily: "monospace" }}>{r.ref}</td>
             <td style={{ padding: "8px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
             <td style={{ padding: "8px", fontSize: 11, color: T.slate500, fontFamily: "monospace" }}>{r.account}</td>
-            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</td>
-            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</td>
+            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "—"}</td>
+            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "—"}</td>
           </tr>
         ))}
       </tbody>
@@ -990,7 +990,7 @@ const GLSection = ({ data }) => (
   </Card>
 );
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ CPA-Style Print Package ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── CPA-Style Print Package ──────────────────────────────────
 // Browser-native print: hidden on screen, shown only when printing.
 const PRINT_CSS = `
 @media screen { .bcc-print-package { display: none !important; } }
@@ -1005,7 +1005,7 @@ const PRINT_CSS = `
 }
 `;
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Section: Book of Business ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Section: Book of Business ───────────────────────────────
 function useBookData() {
   const [data, setData] = useState({ summary: null, history: [] });
   const [loading, setLoading] = useState(true);
@@ -1042,13 +1042,13 @@ function useBookData() {
 }
 
 const fmtSnapDate = (d) => {
-  if (!d) return "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ";
+  if (!d) return "—";
   try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
   catch { return String(d); }
 };
 
 const fmtPct = (n) => {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ";
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
   const v = Number(n);
   return `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
 };
@@ -1067,7 +1067,7 @@ const bookTdStyle = { padding: "8px 10px", color: T.slate700, fontSize: 11 };
 const CollapseHeader = ({ title, open, onToggle }) => (
   <div onClick={onToggle} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", userSelect: "none" }}>
     <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{title}</div>
-    <div style={{ fontSize: 14, color: T.slate500 }}>{open ? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¾" : "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¸"}</div>
+    <div style={{ fontSize: 14, color: T.slate500 }}>{open ? "▾" : "▸"}</div>
   </div>
 );
 
@@ -1157,7 +1157,7 @@ const BookAddForm = ({ onAdded }) => {
       {err && <div style={{ fontSize: 11, color: T.red, marginBottom: 10 }}>Error: {err}</div>}
       <button onClick={save} disabled={saving || !form.snapshot_date}
         style={{ background: T.blue, color: T.white, border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}>
-        {saving ? "SavingÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¦" : "Add snapshot"}
+        {saving ? "Saving…" : "Add snapshot"}
       </button>
     </div>
   );
@@ -1185,7 +1185,7 @@ const BookSection = () => {
   };
 
   if (loading) {
-    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading book of businessÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¦</div></Card>;
+    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading book of business…</div></Card>;
   }
   if (!summary) {
     return (
@@ -1204,12 +1204,12 @@ const BookSection = () => {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>
-              As of {fmtSnapDate(summary.current_snapshot_date)} <span style={{ color: T.slate400, fontWeight: 400 }}>ÃÂÃÂÃÂÃÂ· {summary.cadence}</span>
+              As of {fmtSnapDate(summary.current_snapshot_date)} <span style={{ color: T.slate400, fontWeight: 400 }}>· {summary.cadence}</span>
             </div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
               {horizon === "wow" && summary.cadence !== "weekly"
                 ? "WoW unavailable for monthly snapshots"
-                : `Comparing ${horizonLabel} (${horizonDate ? fmtSnapDate(horizonDate) : "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"})`}
+                : `Comparing ${horizonLabel} (${horizonDate ? fmtSnapDate(horizonDate) : "—"})`}
             </div>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 2, background: T.slate100, borderRadius: 8, padding: 3 }}>
@@ -1239,12 +1239,12 @@ const BookSection = () => {
           <KPICard label="L&H Premium" value={fmt(summary.lh_premium)}
             sub={<span style={{ color: pctColor(getPct("lh")) }}>{fmtPct(getPct("lh"))} {horizonLabel}</span>}
             border={T.purple} />
-          <KPICard label="Households" value={summary.household_count ?? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}
+          <KPICard label="Households" value={summary.household_count ?? "—"}
             sub={<span style={{ color: pctColor(getPct("hh")) }}>{fmtPct(getPct("hh"))} {horizonLabel}</span>}
             border={T.green} />
           <KPICard label="Auto / HH"
             value={summary.household_count > 0 && summary.auto_pif != null
-              ? (summary.auto_pif / summary.household_count).toFixed(2) : "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}
+              ? (summary.auto_pif / summary.household_count).toFixed(2) : "—"}
             sub="Policies per household" border={T.amber} />
         </div>
       </Card>
@@ -1268,7 +1268,7 @@ const BookSection = () => {
                   {fmtPct(getPct(lob.key))} {horizonLabel}
                 </div>
                 <div style={{ fontSize: 11, color: T.slate400, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.slate100}` }}>
-                  PIF: <span style={{ color: T.slate700, fontWeight: 600 }}>{summary[`${lob.key}_pif`] ?? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</span>
+                  PIF: <span style={{ color: T.slate700, fontWeight: 600 }}>{summary[`${lob.key}_pif`] ?? "—"}</span>
                   {summary.household_count > 0 && summary[`${lob.key}_pif`] != null && (
                     <span style={{ marginLeft: 6 }}>
                       ({(summary[`${lob.key}_pif`] / summary.household_count).toFixed(2)}/HH)
@@ -1305,10 +1305,10 @@ const BookSection = () => {
                     <td style={bookTdStyle}>{r?.cadence}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(r?.pc_premium)}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right" }}>{fmt(r?.lh_premium)}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.household_count ?? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.auto_pif ?? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.fire_pif ?? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.life_pif ?? "ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.household_count ?? "—"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.auto_pif ?? "—"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.fire_pif ?? "—"}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.life_pif ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1418,7 +1418,7 @@ const PrintPackage = ({ data, periodLabel }) => {
         <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Peter Story State Farm Agency</div>
         <div style={{ fontSize: 18, color: "#334155", marginBottom: 40 }}>Financial Statements Package</div>
         <div style={{ fontSize: 15, color: "#475569", marginBottom: 4 }}>Period: {periodName}</div>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis ÃÂÃÂÃÂÃÂ· Calendar year ÃÂÃÂÃÂÃÂ· All figures in USD</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis · Calendar year · All figures in USD</div>
         <div style={{ fontSize: 11, color: "#94A3B8" }}>Prepared {today}</div>
         <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>Business Command Center</div>
         <div style={{ marginTop: 80, fontSize: 10, color: "#94A3B8", maxWidth: 420, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 }}>
@@ -1432,7 +1432,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       <div className="bcc-print-page">
         <PrintTable
           title="Profit & Loss Statement"
-          sub={`Cash basis ÃÂÃÂÃÂÃÂ· ${d.currentYear || ""}`}
+          sub={`Cash basis · ${d.currentYear || ""}`}
           cols={["Account", periodName, `Q${qN} ${d.currentYear||""}`, `YTD ${d.currentYear||""}`]}
           rows={plRows}
         />
@@ -1442,7 +1442,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       <div className="bcc-print-page">
         <PrintTable
           title="Balance Sheet"
-          sub={`As of ${bs.asOfLabel || periodName} ÃÂÃÂÃÂÃÂ· anchored to 4/30/2026 close + GL activity`}
+          sub={`As of ${bs.asOfLabel || periodName} · anchored to 4/30/2026 close + GL activity`}
           cols={["Account", "Balance"]}
           rows={bsRows}
         />
@@ -1457,7 +1457,7 @@ const PrintPackage = ({ data, periodLabel }) => {
   );
 };
 
-// ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Main Financials Module ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+// ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
   const [section, setSection] = useState("overview");
   const [period, setPeriod] = useState("mtd");
@@ -1490,7 +1490,7 @@ export default function Financials() {
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>Financials</div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
-            Cash basis ÃÂÃÂÃÂÃÂ· Calendar year ÃÂÃÂÃÂÃÂ· All figures in USD
+            Cash basis · Calendar year · All figures in USD
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }} className="bcc-no-print">
@@ -1504,7 +1504,7 @@ export default function Financials() {
               cursor: "pointer", whiteSpace: "nowrap",
             }}
           >
-            ÃÂÃÂ°ÃÂÃÂÃÂÃÂÃÂÃÂ¨ Print / Save PDF
+            ð¨ Print / Save PDF
           </button>
           <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
         </div>
@@ -1551,7 +1551,7 @@ export default function Financials() {
       {section === "documents"    && <Documents />}
       {section === "monthlyclose" && <MonthlyClose />}
 
-      {/* CPA-style print package ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ hidden on screen, rendered for print/PDF */}
+      {/* CPA-style print package — hidden on screen, rendered for print/PDF */}
       <PrintPackage data={MOCK} periodLabel={period} />
     </div>
   );

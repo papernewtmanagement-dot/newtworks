@@ -169,15 +169,15 @@ const MOCK_RUN_LOG = [
 const MOCK_BRIEFINGS = [
   {
     id:"b1", date:"Apr 26, 2026", sent_at:"6:01 AM", delivered:true, opened:true,
-    content:"Good morning Jane — here's your agency snapshot for Sunday April 26.\n\n💰 Revenue MTD: $48,240 (↑12% vs last year)\n🎯 AIPP: 47.5% of $142,000 target — on track\n📋 Tasks: 7 open, 2 due this week\n⚠️ Alerts: 3 active (1 critical — SF social media audit due May 11)\n📱 Social: 2 posts scheduled today (Facebook 9AM, LinkedIn 12PM) + Instagram manual needed\n🔴 Automation: Drive Filer ran successfully last night\n\nHave a great Sunday."
+    content:"Good morning Jane — here's your agency snapshot for Sunday April 26.\n\nð° Revenue MTD: $48,240 (↑12% vs last year)\nð¯ AIPP: 47.5% of $142,000 target — on track\nð Tasks: 7 open, 2 due this week\n⚠️ Alerts: 3 active (1 critical — SF social media audit due May 11)\nð± Social: 2 posts scheduled today (Facebook 9AM, LinkedIn 12PM) + Instagram manual needed\nð´ Automation: Drive Filer ran successfully last night\n\nHave a great Sunday."
   },
   {
     id:"b2", date:"Apr 25, 2026", sent_at:"6:01 AM", delivered:true, opened:true,
-    content:"Good morning Jane — here's your agency snapshot for Saturday April 25.\n\n💰 Revenue MTD: $48,240 (↑12% vs last year)\n🎯 AIPP: 47.5% of $142,000 target — on track\n📋 Tasks: 7 open, 2 due this week\n⚠️ Alerts: 2 active\n📱 Social: Facebook post scheduled 9AM\n✅ All automations ran successfully overnight."
+    content:"Good morning Jane — here's your agency snapshot for Saturday April 25.\n\nð° Revenue MTD: $48,240 (↑12% vs last year)\nð¯ AIPP: 47.5% of $142,000 target — on track\nð Tasks: 7 open, 2 due this week\n⚠️ Alerts: 2 active\nð± Social: Facebook post scheduled 9AM\n✅ All automations ran successfully overnight."
   },
   {
     id:"b3", date:"Apr 24, 2026", sent_at:"6:01 AM", delivered:true, opened:false,
-    content:"Good morning Jane — here's your agency snapshot for Friday April 24.\n\n💰 Revenue MTD: $42,400 (↑9% vs last year)\n🎯 AIPP: 44.2% of $142,000 target\n📋 Tasks: 8 open, 3 due this week\n⚠️ Alerts: 2 active\n📱 Social: Facebook and LinkedIn posts scheduled\n✅ All automations ran successfully overnight."
+    content:"Good morning Jane — here's your agency snapshot for Friday April 24.\n\nð° Revenue MTD: $42,400 (↑9% vs last year)\nð¯ AIPP: 44.2% of $142,000 target\nð Tasks: 8 open, 3 due this week\n⚠️ Alerts: 2 active\nð± Social: Facebook and LinkedIn posts scheduled\n✅ All automations ran successfully overnight."
   },
 ];
 
@@ -434,7 +434,7 @@ const RunLog = ({ runLog }) => {
                   </div>
                   {run.error_message && (
                     <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, padding:"8px 10px", borderRadius:6, marginTop:8, marginBottom:8 }}>
-                      🔴 {run.error_message}
+                      ð´ {run.error_message}
                     </div>
                   )}
                   <div style={{ marginTop:8 }}>
@@ -767,19 +767,19 @@ export default function Automations() {
       return (Date.now() - new Date(r.run_at).getTime()) < 24 * 3600000;
     });
     const specs = [
-      { id:"gmail",         platform:"Gmail",          icon:"📧", key:"composio_gmail_account_id",       account:"Google Workspace (Composio)", note:"Used by document importer and email archiver" },
-      { id:"drive",         platform:"Google Drive",   icon:"📁", key:"composio_googledrive_account_id", account:"Google Workspace (Composio)", note:"Where processed documents are filed" },
-      { id:"calendar",      platform:"Google Calendar",icon:"📅", key:"composio_googlecalendar_account_id", account:"Google Workspace (Composio)", note:"Used for scheduling reminders" },
-      { id:"github",        platform:"GitHub",         icon:"🐙", key:"composio_github_account_id",     account:"papernewtmanagement-dot",     note:"Code repo for the BCC web app — reads/writes app code" },
-      { id:"supabase",      platform:"Supabase",       icon:"🗄️", key:"composio_supabase_account_id",   account:"BCC project database",        note:"The agency database — all BCC data lives here" },
-      { id:"facebook",      platform:"Facebook Pages", icon:"📘", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content", setupLater:true },
-      { id:"linkedin",      platform:"LinkedIn",       icon:"💼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content", setupLater:true },
-      { id:"instagram",     platform:"Instagram",      icon:"📷", key:"composio_instagram_account_id",   account:"Instagram (manual posting)",  note:"API only allows reminders — agent posts manually", manual:true },
+      { id:"gmail",         platform:"Gmail",          icon:"ð§", key:"composio_gmail_account_id",       account:"Google Workspace (Composio)", note:"Used by document importer and email archiver" },
+      { id:"drive",         platform:"Google Drive",   icon:"ð", key:"composio_googledrive_account_id", account:"Google Workspace (Composio)", note:"Where processed documents are filed" },
+      { id:"calendar",      platform:"Google Calendar",icon:"ð", key:"composio_googlecalendar_account_id", account:"Google Workspace (Composio)", note:"Used for scheduling reminders" },
+      { id:"github",        platform:"GitHub",         icon:"ð", key:"composio_github_account_id",     account:"papernewtmanagement-dot",     note:"Code repo for the BCC web app — reads/writes app code" },
+      { id:"supabase",      platform:"Supabase",       icon:"ð️", key:"composio_supabase_account_id",   account:"BCC project database",        note:"The agency database — all BCC data lives here" },
+      { id:"facebook",      platform:"Facebook Pages", icon:"ð", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content", setupLater:true },
+      { id:"linkedin",      platform:"LinkedIn",       icon:"ð¼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content", setupLater:true },
+      { id:"instagram",     platform:"Instagram",      icon:"ð·", key:"composio_instagram_account_id",   account:"Instagram (manual posting)",  note:"API only allows reminders — agent posts manually", manual:true },
       // Composio + Groq are the always-on engine. Their secrets are no longer
       // anon-readable (security hardening), so health is derived from whether
       // automations actually succeeded recently — a signal anon CAN see — not
       // from probing for an API key value the dashboard is no longer allowed to read.
-      { id:"composio",      platform:"Composio",       icon:"🧩", key:"composio_api_key",                 account:"Action layer (live)",         note:"Action layer for all integrations", derived:true },
+      { id:"composio",      platform:"Composio",       icon:"ð§©", key:"composio_api_key",                 account:"Action layer (live)",         note:"Action layer for all integrations", derived:true },
       { id:"groq",          platform:"Groq",           icon:"⚡", key:"groq_api_key",                     account:"LLM parsing (live)",          note:"LLM parsing for document classification", derived:true },
     ];
     return specs.map(s => {

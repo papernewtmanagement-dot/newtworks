@@ -29,7 +29,7 @@ export default function DemoBanner() {
         boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
       }}
     >
-      🌟 DEMO DATA — This is "Sunshine State Insurance," a fictional agency.
+      ð DEMO DATA — This is "Sunshine State Insurance," a fictional agency.
       Your real BCC will be populated with your actual agency data.
       Demo resets nightly. Built by{' '}
       <a

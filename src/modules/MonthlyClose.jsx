@@ -68,17 +68,17 @@ const MONTHS = ["", "January","February","March","April","May","June",
 // Maps doc_category values (aligned to recipe groq_classification)
 // to a label + icon for display.
 const CAT = {
-  comp_recap_daily:   { label:"SF Daily Comp Recaps",  icon:"📊" },
+  comp_recap_daily:   { label:"SF Daily Comp Recaps",  icon:"ð" },
   deduction_statement:{ label:"SF Deduction Statement", icon:"➖" },
-  payroll:            { label:"Payroll (Heartland)",   icon:"💼" },
-  production_report:  { label:"Producer Production",   icon:"🎯" },
-  bank_statement:     { label:"Bank Statement",        icon:"🏦" },
-  cc_statement:       { label:"Credit Card Statement", icon:"💳" },
+  payroll:            { label:"Payroll (Heartland)",   icon:"ð¼" },
+  production_report:  { label:"Producer Production",   icon:"ð¯" },
+  bank_statement:     { label:"Bank Statement",        icon:"ð¦" },
+  cc_statement:       { label:"Credit Card Statement", icon:"ð³" },
   reconciliation:     { label:"GL Reconciliation",     icon:"⚖️" },
-  review:             { label:"Transaction Review",    icon:"🔍" },
-  balance_review:     { label:"Balance Review",        icon:"🧾" },
+  review:             { label:"Transaction Review",    icon:"ð" },
+  balance_review:     { label:"Balance Review",        icon:"ð§¾" },
 };
-const catConfig = (c) => CAT[c] || { label:(c||"Item").replace(/_/g," "), icon:"📄" };
+const catConfig = (c) => CAT[c] || { label:(c||"Item").replace(/_/g," "), icon:"ð" };
 
 // ─── Status Config (three-state) ──────────────────────────────
 const STATUS = {
@@ -195,7 +195,7 @@ const ChecklistRow = ({ item, doc, busy, monthClosed, onMark, onRevert }) => {
                 href={driveUrl} target="_blank" rel="noopener noreferrer"
                 style={{ display:"inline-flex", alignItems:"center", gap:6, fontSize:11, fontWeight:600, color:T.blue, background:T.blueLt, border:`1px solid ${T.slate200}`, borderRadius:7, padding:"6px 11px", textDecoration:"none" }}
               >
-                📎 {doc?.file_name || "View source document"}
+                ð {doc?.file_name || "View source document"}
               </a>
             ) : item.document_id ? (
               <span style={{ fontSize:11, color:T.slate500 }}>Source document linked (no Drive URL yet)</span>
@@ -401,7 +401,7 @@ export default function MonthlyClose() {
   if (!rows || rows.length === 0) {
     return (
       <EmptyState
-        icon="🗓️"
+        icon="ð️"
         title="No close checklist yet"
         description="Your monthly close checklist is generated on the 1st of each month. Ask your Claude: &quot;Generate this month's close checklist.&quot;"
         module="documents"
@@ -483,7 +483,7 @@ export default function MonthlyClose() {
       {/* Ready-to-close banner */}
       {!monthClosed && readyToClose && waitingOn.length === 0 && (
         <div style={{ display:"flex", alignItems:"center", gap:10, background:T.blueLt, border:`1px solid ${T.blue}`, borderRadius:10, padding:"11px 14px", marginBottom:16 }}>
-          <span style={{ fontSize:16 }}>🎉</span>
+          <span style={{ fontSize:16 }}>ð</span>
           <div style={{ flex:1, fontSize:12.5, color:"#1E40AF", fontWeight:600 }}>
             Everything for {periodLabel} is received. You're ready to close.
           </div>

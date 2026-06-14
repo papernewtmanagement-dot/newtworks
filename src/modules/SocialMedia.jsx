@@ -74,20 +74,20 @@ const PILLARS = {
 
 // ─── Mock Data ────────────────────────────────────────────────
 const MOCK_POSTS = [
-  { id:"p1",  platform:"facebook",  date:"Apr 27", time:"9:00 AM",  status:"scheduled", pillar:"educate",   caption:"Monday motivation — your agency runs on relationships, not just policies. Here are 3 things every homeowner should review this spring... 🏠", requires_manual:false, engagement:null },
+  { id:"p1",  platform:"facebook",  date:"Apr 27", time:"9:00 AM",  status:"scheduled", pillar:"educate",   caption:"Monday motivation — your agency runs on relationships, not just policies. Here are 3 things every homeowner should review this spring... ð ", requires_manual:false, engagement:null },
   { id:"p2",  platform:"linkedin",  date:"Apr 27", time:"12:00 PM", status:"scheduled", pillar:"connect",   caption:"3 things State Farm agents overlook in their Q2 planning — and what I do differently to stay ahead of the numbers.", requires_manual:false, engagement:null },
   { id:"p3",  platform:"instagram", date:"Apr 27", time:"11:00 AM", status:"scheduled", pillar:"connect",   caption:"Behind the scenes at the agency this Monday morning. Coffee, team huddle, and a full week ahead. ☕", requires_manual:true, engagement:null },
-  { id:"p4",  platform:"facebook",  date:"Apr 26", time:"9:00 AM",  status:"posted",    pillar:"community", caption:"Huge shoutout to the Sarasota Food Bank for their incredible work this month. Proud to support our community! 🙌", requires_manual:false, engagement:{ likes:42, comments:8, shares:6, reach:680 } },
+  { id:"p4",  platform:"facebook",  date:"Apr 26", time:"9:00 AM",  status:"posted",    pillar:"community", caption:"Huge shoutout to the Sarasota Food Bank for their incredible work this month. Proud to support our community! ð", requires_manual:false, engagement:{ likes:42, comments:8, shares:6, reach:680 } },
   { id:"p5",  platform:"linkedin",  date:"Apr 26", time:"12:00 PM", status:"posted",    pillar:"educate",   caption:"The biggest financial mistake I see new homeowners make — and it's easier to fix than you think.", requires_manual:false, engagement:{ likes:31, comments:4, shares:2, reach:410 } },
-  { id:"p6",  platform:"instagram", date:"Apr 26", time:"11:00 AM", status:"posted",    pillar:"community", caption:"Saturday morning walk through Lakewood Ranch. This community never gets old. 🌿", requires_manual:true, engagement:{ likes:89, comments:12, shares:0, reach:920 } },
-  { id:"p7",  platform:"facebook",  date:"Apr 25", time:"9:00 AM",  status:"posted",    pillar:"celebrate", caption:"Happy work anniversary to Marcus! 4 years of helping Sarasota families feel confident about their coverage. 🎉", requires_manual:false, engagement:{ likes:67, comments:22, shares:3, reach:1100 } },
+  { id:"p6",  platform:"instagram", date:"Apr 26", time:"11:00 AM", status:"posted",    pillar:"community", caption:"Saturday morning walk through Lakewood Ranch. This community never gets old. ð¿", requires_manual:true, engagement:{ likes:89, comments:12, shares:0, reach:920 } },
+  { id:"p7",  platform:"facebook",  date:"Apr 25", time:"9:00 AM",  status:"posted",    pillar:"celebrate", caption:"Happy work anniversary to Marcus! 4 years of helping Sarasota families feel confident about their coverage. ð", requires_manual:false, engagement:{ likes:67, comments:22, shares:3, reach:1100 } },
   { id:"p8",  platform:"facebook",  date:"Apr 24", time:"9:00 AM",  status:"posted",    pillar:"educate",   caption:"Spring storm season reminder — here are 4 things every Florida homeowner should check before June 1st.", requires_manual:false, engagement:{ likes:38, comments:5, shares:11, reach:820 } },
-  { id:"p9",  platform:"instagram", date:"Apr 25", time:"11:00 AM", status:"failed",    pillar:"celebrate", caption:"Team Friday! Celebrating Marcus's work anniversary at lunch today. 🎂", requires_manual:true, engagement:null },
+  { id:"p9",  platform:"instagram", date:"Apr 25", time:"11:00 AM", status:"failed",    pillar:"celebrate", caption:"Team Friday! Celebrating Marcus's work anniversary at lunch today. ð", requires_manual:true, engagement:null },
   { id:"p10", platform:"twitter",   date:"Apr 26", time:"9:00 AM",  status:"posted",    pillar:"educate",   caption:"Florida homeowners: your policy probably doesn't cover flooding. Worth a 5-minute conversation to find out for sure.", requires_manual:false, engagement:{ likes:18, comments:3, shares:7, reach:290 } },
   { id:"p11", platform:"facebook",  date:"Apr 28", time:"9:00 AM",  status:"draft",     pillar:"community", caption:"Local Love Tuesday — this week we're spotlighting a favorite local business in the area...", requires_manual:false, engagement:null },
   { id:"p12", platform:"linkedin",  date:"Apr 29", time:"12:00 PM", status:"draft",     pillar:"educate",   caption:"Thursday Thoughts: what the best-run independent insurance agencies have in common.", requires_manual:false, engagement:null },
   { id:"p13", platform:"facebook",  date:"Apr 30", time:"9:00 AM",  status:"draft",     pillar:"invite",    caption:"End of April — if you haven't done a policy review this year, my door is always open. No pressure, just a conversation.", requires_manual:false, engagement:null },
-  { id:"p14", platform:"instagram", date:"Apr 28", time:"11:00 AM", status:"draft",     pillar:"educate",   caption:"Myth Monday: does a red car actually cost more to insure? Let's bust this one. 🚗❓", requires_manual:true, engagement:null },
+  { id:"p14", platform:"instagram", date:"Apr 28", time:"11:00 AM", status:"draft",     pillar:"educate",   caption:"Myth Monday: does a red car actually cost more to insure? Let's bust this one. ð❓", requires_manual:true, engagement:null },
 ];
 
 const MOCK_ANALYTICS = {
@@ -180,7 +180,7 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
   if (loaded && (posts || []).length === 0) {
     return (
       <div style={{ textAlign:"center", padding:"48px 24px" }}>
-        <div style={{ fontSize:40, marginBottom:12 }}>📱</div>
+        <div style={{ fontSize:40, marginBottom:12 }}>ð±</div>
         <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>No social content yet</div>
         <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto 16px", lineHeight:1.6 }}>
           Your content calendar is empty. Head to the <strong>Create Content</strong> tab to build your first compliance-aware post, or ask Claude to draft a week of content for you.
@@ -211,7 +211,7 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
       {/* Instagram Reminder */}
       {manualNeeded > 0 && (
         <div style={{ background:T.purpleLt, border:`1px solid #DDD6FE`, borderLeft:`4px solid ${T.purple}`, borderRadius:10, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", gap:12 }}>
-          <span style={{ fontSize:20 }}>📸</span>
+          <span style={{ fontSize:20 }}>ð¸</span>
           <div style={{ flex:1 }}>
             <div style={{ fontSize:12, fontWeight:700, color:"#5B21B6", marginBottom:2 }}>Instagram requires manual posting today</div>
             <div style={{ fontSize:11, color:"#6D28D9" }}>{manualNeeded} Instagram {manualNeeded===1?"post":"posts"} scheduled — must be posted manually. Instagram API does not support auto-scheduling.</div>
@@ -337,7 +337,7 @@ const ContentCalendar = ({ posts, loaded }) => {
   if (loaded && (posts || []).length === 0) {
     return (
       <div style={{ textAlign:"center", padding:"48px 24px" }}>
-        <div style={{ fontSize:40, marginBottom:12 }}>🗓️</div>
+        <div style={{ fontSize:40, marginBottom:12 }}>ð️</div>
         <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>Your calendar is empty</div>
         <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto 16px", lineHeight:1.6 }}>
           Once you create or schedule posts, they'll appear here grouped by date. Use the Create Content tab to get started.
@@ -402,7 +402,7 @@ const ContentCalendar = ({ posts, loaded }) => {
                       </div>
                       <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
                         {post.engagement && (
-                          <span style={{ fontSize:10, color:T.slate400 }}>❤️ {post.engagement.likes} · 💬 {post.engagement.comments} · 👁 {post.engagement.reach}</span>
+                          <span style={{ fontSize:10, color:T.slate400 }}>❤️ {post.engagement.likes} · ð¬ {post.engagement.comments} · ð {post.engagement.reach}</span>
                         )}
                         <StatusBadge status={post.status} manual={post.requires_manual} />
                         <span style={{ color:T.slate400, fontSize:12 }}>{isExpanded?"▲":"▼"}</span>
@@ -431,7 +431,7 @@ const ContentCalendar = ({ posts, loaded }) => {
                         )}
                         {post.status === "failed" && (
                           <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, padding:"8px 10px", borderRadius:6, marginBottom:8 }}>
-                            🔴 Post failed — repost manually or reschedule.
+                            ð´ Post failed — repost manually or reschedule.
                           </div>
                         )}
                         <AskBtn size="small" context={`Social media post review:\nPlatform: ${post.platform}\nDate: ${post.date} at ${post.time}\nPillar: ${post.pillar}\nStatus: ${post.status}\nCaption: "${post.caption}"\n${post.engagement?`Engagement: ${post.engagement.likes} likes, ${post.engagement.comments} comments, ${post.engagement.shares} shares, ${post.engagement.reach} reach`:"No engagement data yet"}\n\nRun this post through the compliance pre-post checklist and tell me if anything needs to be changed. Also evaluate engagement quality.`} />
@@ -456,7 +456,7 @@ const Analytics = ({ analytics, loaded }) => {
   if (loaded && (analytics.by_platform || []).length === 0 && analytics.this_week.total_posts === 0) {
     return (
       <div style={{ textAlign:"center", padding:"48px 24px" }}>
-        <div style={{ fontSize:40, marginBottom:12 }}>📊</div>
+        <div style={{ fontSize:40, marginBottom:12 }}>ð</div>
         <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>No analytics yet</div>
         <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto", lineHeight:1.6 }}>
           Analytics populate automatically as your posts publish and gather engagement. Once you've posted content and recorded reach, likes, comments, and shares, this tab will show your weekly performance by platform and content pillar.
@@ -534,7 +534,7 @@ const Analytics = ({ analytics, loaded }) => {
           );
         })}
         <div style={{ marginTop:8, padding:"10px 12px", background:T.greenLt, borderRadius:8, fontSize:11, color:"#065F46" }}>
-          💡 Celebrate pillar (team spotlights, milestones) is your highest-performing content type this week with avg reach of 1,100. Consider featuring your team more frequently.
+          ð¡ Celebrate pillar (team spotlights, milestones) is your highest-performing content type this week with avg reach of 1,100. Consider featuring your team more frequently.
         </div>
       </Card>
     </div>
@@ -571,7 +571,7 @@ const PlatformGuide = () => (
             </div>
             {key === "instagram" && (
               <div style={{ fontSize:11, color:"#5B21B6", background:T.purpleLt, padding:"8px 12px", borderRadius:8, lineHeight:1.6 }}>
-                📸 <strong>Instagram requires manual daily posting.</strong> No reliable API scheduling exists. Batch-prepare your content in advance, but post each day manually. Your BCC sends a reminder alert each morning for scheduled Instagram posts.
+                ð¸ <strong>Instagram requires manual daily posting.</strong> No reliable API scheduling exists. Batch-prepare your content in advance, but post each day manually. Your BCC sends a reminder alert each morning for scheduled Instagram posts.
               </div>
             )}
             {key === "facebook" && (

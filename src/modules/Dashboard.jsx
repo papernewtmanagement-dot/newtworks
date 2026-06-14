@@ -70,7 +70,7 @@ const FinancialWidget = ({ data, onNavigate }) => {
   ];
   return (
     <Card>
-      <SectionTitle icon="💰" title="Financial Overview"
+      <SectionTitle icon="ð°" title="Financial Overview"
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View Full P&L →</button>}
       />
       <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
@@ -93,7 +93,7 @@ const AIPPWidget = ({ data, onNavigate }) => {
   const achievement = pct(earned, target);
   return (
     <Card>
-      <SectionTitle icon="🏆" title={`AIPP ${a.year||2026} Progress`}
+      <SectionTitle icon="ð" title={`AIPP ${a.year||2026} Progress`}
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Details →</button>}
       />
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:8}}>
@@ -134,7 +134,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
   if (periods.length === 0) {
     return (
       <Card>
-        <SectionTitle icon="📅" title="Monthly Close" />
+        <SectionTitle icon="ð" title="Monthly Close" />
         <div style={{padding:"16px 0", fontSize:12, color:T.slate400, textAlign:"center"}}>
           Ask your Claude to set up your monthly close checklist
         </div>
@@ -154,7 +154,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
 
   return (
     <Card>
-      <SectionTitle icon="📅" title={`Monthly Close — ${monthLong(current.year, current.month)}`}
+      <SectionTitle icon="ð" title={`Monthly Close — ${monthLong(current.year, current.month)}`}
         action={<button onClick={()=>onNavigate("documents")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
       />
 
@@ -249,7 +249,7 @@ const OpenItemsWidget = ({ data, onNavigate }) => {
     .slice(0, 5);
   return (
     <Card>
-      <SectionTitle icon="🔍" title="Open Items — Claude Needs Your Input"
+      <SectionTitle icon="ð" title="Open Items — Claude Needs Your Input"
         action={<button onClick={()=>onNavigate("memory")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
       />
       {openItems.length === 0 ? (
@@ -279,7 +279,7 @@ const AlertsWidget = ({ data, onNavigate }) => {
     .slice(0, 4);
   return (
     <Card>
-      <SectionTitle icon="🔔" title="Active Alerts"
+      <SectionTitle icon="ð" title="Active Alerts"
         action={<button onClick={()=>onNavigate("alerts")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>All Alerts →</button>}
       />
       {alerts.length === 0 ? (
@@ -451,7 +451,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
     <div style={{padding:"0 0 40px 0"}}>
       {/* Header */}
       <div style={{padding:"20px 0 16px 0", borderBottom:`1px solid ${T.slate200}`, marginBottom:20}}>
-        <div style={{fontSize:20, fontWeight:800, color:T.navy}}>{greeting}, {agencyName} 👋</div>
+        <div style={{fontSize:20, fontWeight:800, color:T.navy}}>{greeting}, {agencyName} ð</div>
         <div style={{fontSize:12, color:T.slate500, marginTop:4}}>{today}</div>
       </div>
 

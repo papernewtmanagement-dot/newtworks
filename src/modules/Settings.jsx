@@ -658,8 +658,8 @@ const About = ({ agency: agencyProp }) => {
 
   const tabs = [
     { id:"stack",     label:"⚡  Tech Stack" },
-    { id:"how",       label:"🔄 How It Works" },
-    { id:"connected", label:"🔗 Keep It Connected" },
+    { id:"how",       label:"ð How It Works" },
+    { id:"connected", label:"ð Keep It Connected" },
   ];
 
   return (
@@ -780,7 +780,7 @@ const About = ({ agency: agencyProp }) => {
           {/* HERO: The self-heal model */}
           <Card style={{ borderLeft:`4px solid ${T.green}`, background:"linear-gradient(180deg, #F0FDF4 0%, #FFFFFF 60%)" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-              <span style={{ fontSize:24 }}>💚</span>
+              <span style={{ fontSize:24 }}>ð</span>
               <div>
                 <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>When something breaks, ask your Claude first</div>
                 <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
@@ -795,12 +795,12 @@ const About = ({ agency: agencyProp }) => {
               <div style={{ fontSize:11, fontWeight:700, color:T.slate800, marginBottom:8 }}>The pattern, every time:</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10, fontSize:11, color:T.slate600 }}>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>📸</div>
+                  <div style={{ fontSize:18, marginBottom:4 }}>ð¸</div>
                   <strong style={{ color:T.slate900 }}>1. Screenshot the error</strong>
                   <div style={{ marginTop:3, lineHeight:1.5 }}>Whatever you&apos;re seeing — alert banner, broken module, failed automation</div>
                 </div>
                 <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>💬</div>
+                  <div style={{ fontSize:18, marginBottom:4 }}>ð¬</div>
                   <strong style={{ color:T.slate900 }}>2. Paste it to your Claude</strong>
                   <div style={{ marginTop:3, lineHeight:1.5 }}>&quot;Help me fix this&quot; is enough — your Claude has full context on your stack</div>
                 </div>
@@ -832,10 +832,10 @@ const About = ({ agency: agencyProp }) => {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:8 }}>
                 {[
-                  { name:"Supabase",  icon:"💾", role:"Persistent memory + database" },
-                  { name:"Composio",  icon:"🔌", role:"Gateway to all your other tools" },
-                  { name:"GitHub",    icon:"📦", role:"BCC web app source code" },
-                  { name:"Vercel",    icon:"🚀", role:"BCC web app hosting & deploys" },
+                  { name:"Supabase",  icon:"ð¾", role:"Persistent memory + database" },
+                  { name:"Composio",  icon:"ð", role:"Gateway to all your other tools" },
+                  { name:"GitHub",    icon:"ð¦", role:"BCC web app source code" },
+                  { name:"Vercel",    icon:"ð", role:"BCC web app hosting & deploys" },
                 ].map(c => (
                   <div key={c.name} style={{ background:T.slate50, padding:"10px 12px", borderRadius:8, border:`1px solid ${T.slate200}` }}>
                     <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
@@ -901,7 +901,7 @@ const About = ({ agency: agencyProp }) => {
               }}>Composio Dashboard </a>
             </div>
             <div style={{ marginTop:10, fontSize:10, color:T.slate500, lineHeight:1.5 }}>
-              💡 You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
+              ð¡ You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
             </div>
           </Card>
         </div>
@@ -1019,14 +1019,14 @@ export default function Settings() {
     : "—";
 
   const connSpecs = [
-    { key:"composio_gmail_account_id",          icon:"📧", platform:"Gmail",           account:liveAgency.google_account || "Google Workspace", note:"Email intake + archiver" },
-    { key:"composio_googledrive_account_id",    icon:"📁", platform:"Google Drive",    account:liveAgency.google_account || "Google Workspace", note:"Where documents are filed" },
-    { key:"composio_googlecalendar_account_id", icon:"📅", platform:"Google Calendar", account:liveAgency.google_account || "Google Workspace", note:"Scheduling + reminders" },
-    { key:"composio_github_account_id",         icon:"🐙", platform:"GitHub",          account:"papernewtmanagement-dot",   note:"BCC app code repository" },
-    { key:"composio_supabase_account_id",       icon:"🗄️", platform:"Supabase",        account:liveAgency.name || "BCC database", note:"The agency database" },
-    { key:"composio_facebook_account_id",       icon:"📘", platform:"Facebook Pages",  account:"Facebook Business",         note:"Auto-posts approved content", setupLater:true },
-    { key:"composio_linkedin_account_id",       icon:"💼", platform:"LinkedIn",        account:"LinkedIn Profile",          note:"Auto-posts approved content", setupLater:true },
-    { key:"composio_instagram_account_id",      icon:"📷", platform:"Instagram",       account:"Instagram (manual)",        note:"API allows reminders only", manual:true },
+    { key:"composio_gmail_account_id",          icon:"ð§", platform:"Gmail",           account:liveAgency.google_account || "Google Workspace", note:"Email intake + archiver" },
+    { key:"composio_googledrive_account_id",    icon:"ð", platform:"Google Drive",    account:liveAgency.google_account || "Google Workspace", note:"Where documents are filed" },
+    { key:"composio_googlecalendar_account_id", icon:"ð", platform:"Google Calendar", account:liveAgency.google_account || "Google Workspace", note:"Scheduling + reminders" },
+    { key:"composio_github_account_id",         icon:"ð", platform:"GitHub",          account:"papernewtmanagement-dot",   note:"BCC app code repository" },
+    { key:"composio_supabase_account_id",       icon:"ð️", platform:"Supabase",        account:liveAgency.name || "BCC database", note:"The agency database" },
+    { key:"composio_facebook_account_id",       icon:"ð", platform:"Facebook Pages",  account:"Facebook Business",         note:"Auto-posts approved content", setupLater:true },
+    { key:"composio_linkedin_account_id",       icon:"ð¼", platform:"LinkedIn",        account:"LinkedIn Profile",          note:"Auto-posts approved content", setupLater:true },
+    { key:"composio_instagram_account_id",      icon:"ð·", platform:"Instagram",       account:"Instagram (manual)",        note:"API allows reminders only", manual:true },
   ];
   const liveConns = connSpecs.map((s, i) => {
     const present = Boolean(settingsMap[s.key]);
