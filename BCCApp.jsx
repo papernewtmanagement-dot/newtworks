@@ -22,24 +22,24 @@ import DemoBanner from "./src/components/DemoBanner.jsx";
 
 // ============================================================
 // BCC APP SHELL v1.0
-// Business Command Center — State Farm Agent Edition
+// Business Command Center â State Farm Agent Edition
 //
 // ARCHITECTURE:
-// ┌─────────────────────────────────────────────────────┐
-// │  This file: Frontend UI (React)                      │
-// │  Data:      Supabase (SUPABASE_URL + ANON_KEY only) │
-// │  Execution: Composio (connected accounts)            │
-// │  Processing: Groq via Composio (free, no API key)   │
-// │  Intelligence: Claude.ai (client's subscription)    │
-// │  Hosting:   Vercel (client's free account)          │
-// │  Recipes:   Stored in automation_recipes table      │
-// │  Schedules: Cron triggers in Supabase               │
-// │                                                      │
-// │  NO Anthropic API key required in this app.         │
-// │  Claude.ai opens in a new tab with context.         │
-// └─────────────────────────────────────────────────────┘
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// â  This file: Frontend UI (React)                      â
+// â  Data:      Supabase (SUPABASE_URL + ANON_KEY only) â
+// â  Execution: Composio (connected accounts)            â
+// â  Processing: Groq via Composio (free, no API key)   â
+// â  Intelligence: Claude.ai (client's subscription)    â
+// â  Hosting:   Vercel (client's free account)          â
+// â  Recipes:   Stored in automation_recipes table      â
+// â  Schedules: Cron triggers in Supabase               â
+// â                                                      â
+// â  NO Anthropic API key required in this app.         â
+// â  Claude.ai opens in a new tab with context.         â
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 //
-// AUTH (Path 1 — login gates the UI):
+// AUTH (Path 1 â login gates the UI):
 //   The whole app is wrapped in an auth gate. On mount we check for a
 //   Supabase session. No session -> Login screen only. Has session ->
 //   the full app renders unchanged. Data reads still use anon grants
@@ -55,7 +55,30 @@ import DemoBanner from "./src/components/DemoBanner.jsx";
 // ============================================================
 
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
+// âââ Design Tokens ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// Viewport hook (responsive design)
+// Pixel 8 Pro ~412px wide portrait; iPad 10 ~820px portrait; 15" laptop ~1440px+.
+// Phone: <640. Tablet: 640-1023. Desktop: >=1024.
+function useViewport() {
+  const compute = () => {
+    if (typeof window === "undefined") return { width: 1024, isPhone: false, isTablet: false, isDesktop: true };
+    const w = window.innerWidth;
+    return {
+      width: w,
+      isPhone:   w < 640,
+      isTablet:  w >= 640 && w < 1024,
+      isDesktop: w >= 1024,
+    };
+  };
+  const [vp, setVp] = useState(compute);
+  useEffect(() => {
+    const onResize = () => setVp(compute());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return vp;
+}
+
 const TOKENS = {
   navy:    "#1B2B4B",
   navyDark:"#121E35",
@@ -77,11 +100,11 @@ const TOKENS = {
   white:   "#FFFFFF",
 };
 
-// ─── App Context ──────────────────────────────────────────────────────────────
+// âââ App Context ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const AppContext = createContext(null);
 const useApp = () => useContext(AppContext);
 
-// ─── Mock Auth & Agency Data ──────────────────────────────────────────────────
+// âââ Mock Auth & Agency Data ââââââââââââââââââââââââââââââââââââââââââââââââââ
 // In production this comes from Supabase Auth + agency table
 const MOCK_AGENCY = {
   name: "Smith Insurance Agency",
@@ -90,7 +113,7 @@ const MOCK_AGENCY = {
   alerts: 3,
 };
 
-// ─── Navigation Config ────────────────────────────────────────────────────────
+// âââ Navigation Config ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const NAV_ITEMS = [
     { id: "dashboard", label: "Dashboard",         icon: "grid",         roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "alerts",    label: "Alerts",            icon: "bell",         roles: ["owner","manager","staff","readonly","accountant"] },
@@ -106,7 +129,7 @@ const NAV_ITEMS = [
   { id: "settings",  label: "Settings",          icon: "settings",     roles: ["owner"] },
 ];
 
-// ─── SVG Icons ────────────────────────────────────────────────────────────────
+// âââ SVG Icons ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) => {
   const s = { width: size, height: size, flexShrink: 0 };
   const p = { fill: "none", stroke: color, strokeWidth, strokeLinecap: "round", strokeLinejoin: "round" };
@@ -138,7 +161,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
   return icons[name] || null;
 };
 
-// ─── Styles (CSS-in-JS) ───────────────────────────────────────────────────────
+// âââ Styles (CSS-in-JS) âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const css = {
   app: {
     display: "flex", flexDirection: "column",
@@ -337,7 +360,7 @@ const css = {
   },
 };
 
-// ─── Ask Claude Button Component ──────────────────────────────────────────────
+// âââ Ask Claude Button Component ââââââââââââââââââââââââââââââââââââââââââââââ
 const AskClaudeBtn = ({ context, size = "normal" }) => {
   const handleClick = () => {
     const prompt = context || "I am reviewing my Business Command Center. Help me analyze what I'm seeing.";
@@ -361,7 +384,7 @@ const AskClaudeBtn = ({ context, size = "normal" }) => {
   );
 };
 
-// ─── Login Screen ─────────────────────────────────────────────────────────────
+// âââ Login Screen âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // Path 1 auth: this gates the UI. The data layer (anon reads) is untouched,
 // so there is no blank-screen risk. Signing in (authenticated role) is what
 // unlocks writes such as the staff edit form.
@@ -431,7 +454,7 @@ const LoginScreen = ({ onSignedIn }) => {
           <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>Password</label>
           <input
             type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password" placeholder="••••••••"
+            autoComplete="current-password" placeholder="â¢â¢â¢â¢â¢â¢â¢â¢"
             style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 16, background: TOKENS.white }}
           />
 
@@ -445,7 +468,7 @@ const LoginScreen = ({ onSignedIn }) => {
             type="submit" disabled={busy}
             style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, color: TOKENS.white, background: busy ? TOKENS.slate400 : TOKENS.blue, border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer", transition: "background 0.15s" }}
           >
-            {busy ? "Signing in…" : "Sign In"}
+            {busy ? "Signing inâ¦" : "Sign In"}
           </button>
         </form>
 
@@ -457,7 +480,7 @@ const LoginScreen = ({ onSignedIn }) => {
   );
 };
 
-// ─── Set Password Screen (invite / recovery deep links) ──────────────────────
+// âââ Set Password Screen (invite / recovery deep links) ââââââââââââââââââââââ
 // When a teammate clicks the invite or password-reset email, Supabase puts a
 // session in the URL hash and fires onAuthStateChange. We show this screen so
 // they can set their password, then drop them into the app.
@@ -513,14 +536,14 @@ const SetPasswordScreen = ({ email, onDone }) => {
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" placeholder="At least 8 characters"
             style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 14, background: TOKENS.white }} />
           <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>Confirm Password</label>
-          <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" placeholder="••••••••"
+          <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" placeholder="â¢â¢â¢â¢â¢â¢â¢â¢"
             style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 16, background: TOKENS.white }} />
           {error && (
             <div style={{ fontSize: 12, color: "#991B1B", background: TOKENS.redLt, border: `1px solid #FECACA`, borderRadius: 8, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 }}>{error}</div>
           )}
           <button type="submit" disabled={busy}
             style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, color: TOKENS.white, background: busy ? TOKENS.slate400 : TOKENS.blue, border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer" }}>
-            {busy ? "Saving…" : "Set Password & Continue"}
+            {busy ? "Savingâ¦" : "Set Password & Continue"}
           </button>
         </form>
       </div>
@@ -528,7 +551,7 @@ const SetPasswordScreen = ({ email, onDone }) => {
   );
 };
 
-// ─── Module Placeholders ──────────────────────────────────────────────────────
+// âââ Module Placeholders ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // Each will be replaced with full module builds in subsequent steps
 
 const ComingSoon = ({ module }) => (
@@ -543,7 +566,7 @@ const ComingSoon = ({ module }) => (
   </div>
 );
 
-// ─── Module Router ────────────────────────────────────────────────────────────
+// âââ Module Router ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
 // for the Claude module which connects to Claude.ai externally.
@@ -562,7 +585,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex:1, gap:16, padding:40, textAlign:"center" }}>
-        <div style={{ fontSize:40 }}>💬</div>
+        <div style={{ fontSize:40 }}>ð¬</div>
         <div style={{ fontSize:18, fontWeight:700, color:TOKENS.slate900 }}>Claude</div>
         <div style={{ fontSize:13, color:TOKENS.slate500, maxWidth:360, lineHeight:1.7 }}>
           Your Claude.ai account is your intelligence layer. Open it in a new tab and your BCC data is already in context through your Project instructions.
@@ -575,7 +598,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
           Open Claude.ai
         </button>
         <div style={{ fontSize:11, color:TOKENS.slate400, maxWidth:320, lineHeight:1.6 }}>
-          Tip: Use the Ask Claude buttons throughout your BCC — they open Claude.ai with your data already in the prompt. One paste and Claude knows exactly what you're looking at.
+          Tip: Use the Ask Claude buttons throughout your BCC â they open Claude.ai with your data already in the prompt. One paste and Claude knows exactly what you're looking at.
         </div>
       </div>
     ),
@@ -583,9 +606,9 @@ const ModuleRouter = ({ active, onNavigate }) => {
   return modules[active] || <ComingSoon module={active} />;
 };
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
+// âââ Main App âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 export default function BCCApp() {
-  // ── Auth gate state (Path 1) ──────────────────────────────────────────────
+  // ââ Auth gate state (Path 1) ââââââââââââââââââââââââââââââââââââââââââââââ
   // authState: "checking" | "out" | "in"
   const [authState, setAuthState] = useState("checking");
   const [sessionEmail, setSessionEmail] = useState("");
@@ -597,7 +620,12 @@ export default function BCCApp() {
   });
 
   const [activeModule, setActiveModule] = useState("dashboard");
-  const [navCollapsed, setNavCollapsed] = useState(false);
+  const viewport = useViewport();
+  // Sidebar starts collapsed on phone/tablet (manual toggle still works thereafter).
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 1024;
+  });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agency, setAgency] = useState(MOCK_AGENCY);
 
@@ -605,7 +633,7 @@ export default function BCCApp() {
   useEffect(() => {
     let mounted = true;
     if (!supabase) {
-      // No client at all — fail open to the app (data still reads via anon),
+      // No client at all â fail open to the app (data still reads via anon),
       // rather than locking the user out of a misconfigured build.
       setAuthState("in");
       return;
@@ -653,7 +681,7 @@ export default function BCCApp() {
         .eq("id", AGENCY_ID)
         .single();
 
-      // The signed-in user's own row — drives role + module visibility.
+      // The signed-in user's own row â drives role + module visibility.
       // Match on email (case-insensitive) since that's what auth gives us.
       let profile = null;
       const email = (sessionEmail || "").toLowerCase();
@@ -698,16 +726,16 @@ export default function BCCApp() {
     try {
       if (supabase) await supabase.auth.signOut();
     } catch (e) {
-      // ignore — onAuthStateChange will still flip us to "out"
+      // ignore â onAuthStateChange will still flip us to "out"
     }
     setAuthState("out");
   };
 
-  // ── Auth gate render ───────────────────────────────────────────────────────
+  // ââ Auth gate render âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   if (authState === "checking") {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.slate50, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", fontSize: 13, color: TOKENS.slate500 }}>
-        Loading…
+        Loadingâ¦
       </div>
     );
   }
@@ -719,7 +747,7 @@ export default function BCCApp() {
     return <SetPasswordScreen email={sessionEmail} onDone={() => { setNeedsPassword(false); setAuthState("in"); }} />;
   }
 
-  // ── Authenticated app (unchanged below) ────────────────────────────────────
+  // ââ Authenticated app (unchanged below) ââââââââââââââââââââââââââââââââââââ
   const visibleNav = NAV_ITEMS.filter(n => {
     if (!n.roles.includes(agency.user.role)) return false;
     // If allowed_modules is set (non-owner/manager with explicit module list),
@@ -733,8 +761,8 @@ export default function BCCApp() {
       <div style={css.app}>
         <DemoBanner />
 
-        {/* ── Header ── */}
-        <header style={css.header}>
+        {/* ââ Header ââ */}
+        <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
           <div style={css.headerLeft}>
             <div style={css.headerLogo}>
               <Icon name="lightning" size={16} color={TOKENS.white} />
@@ -794,10 +822,10 @@ export default function BCCApp() {
           </div>
         </header>
 
-        {/* ── Body ── */}
+        {/* ââ Body ââ */}
         <div style={css.body} onClick={() => userMenuOpen && setUserMenuOpen(false)}>
 
-          {/* ── Sidebar ── */}
+          {/* ââ Sidebar ââ */}
           <nav style={css.nav(navCollapsed)}>
             <div style={css.navScroll}>
               {visibleNav.map(item => {
@@ -835,15 +863,15 @@ export default function BCCApp() {
             </div>
           </nav>
 
-          {/* ── Main Content ── */}
+          {/* ââ Main Content ââ */}
           <main style={css.main}>
-            <div style={css.mainInner}>
+            <div style={{ ...css.mainInner, padding: viewport.isPhone ? "12px 12px" : viewport.isTablet ? "16px 18px" : "20px 24px" }}>
               <ModuleRouter active={activeModule} onNavigate={setActiveModule} />
             </div>
 
             {/* Footer */}
             <div style={css.footer}>
-              {agency.name} &nbsp;·&nbsp; Business Command Center
+              {agency.name} &nbsp;Â·&nbsp; Business Command Center
             </div>
           </main>
         </div>
