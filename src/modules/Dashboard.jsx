@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import WeeklyCPR from "./WeeklyCPR.jsx";
 
 // ── Design Tokens ──────────────────────────────────────────────
 const T = {
@@ -346,11 +347,55 @@ const ComplianceWidget = ({ data, onNavigate }) => {
 };
 
 // ── Main Dashboard Component ───────────────────────────────────
+// ── Widget: Weekly CPR ─────────────────────────────────────────
+const WeeklyCPRWidget = ({ data, onOpen }) => {
+  const r = data.cprLatest;
+  const fmtD = (iso) => { if (!iso) return "—"; try { return new Date(iso + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}); } catch { return iso; } };
+  const fmtP = (v) => (v===null||v===undefined||v==="") ? "—" : `${Number(v).toFixed(2)}%`;
+  return (
+    <Card>
+      <SectionTitle icon="📋" title="Weekly CPR"
+        action={<button onClick={onOpen} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Open form →</button>}
+      />
+      {r ? (
+        <div>
+          <div style={{fontSize:11, color:T.slate500, marginBottom:10}}>
+            Latest week ending <span style={{fontWeight:700, color:T.slate800}}>{fmtD(r.week_ending_date)}</span>
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+            <div style={{padding:"8px 10px", borderRadius:8, border:`1px solid ${T.blue}30`, background:`${T.blue}08`}}>
+              <div style={{fontSize:10, color:T.slate500, fontWeight:600}}>AUTO</div>
+              <div style={{fontSize:16, fontWeight:800, color:T.blue}}>{fmtP(r.auto_ratio_pct)}</div>
+              <div style={{fontSize:10, color:T.slate500}}>rank {r.auto_rank ?? "—"}</div>
+            </div>
+            <div style={{padding:"8px 10px", borderRadius:8, border:`1px solid ${T.amber}30`, background:`${T.amber}08`}}>
+              <div style={{fontSize:10, color:T.slate500, fontWeight:600}}>FIRE</div>
+              <div style={{fontSize:16, fontWeight:800, color:T.amber}}>{fmtP(r.fire_ratio_pct)}</div>
+              <div style={{fontSize:10, color:T.slate500}}>rank {r.fire_rank ?? "—"}</div>
+            </div>
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:6}}>
+            {[["Non Pays", r.non_pays],["New", r.new_claims],["Open", r.open_claims],["Unreview", r.unreviewed_claims]].map(([lbl, val], i) => (
+              <div key={i} style={{padding:"6px 8px", borderRadius:6, background:T.slate50, border:`1px solid ${T.slate200}`}}>
+                <div style={{fontSize:9, color:T.slate500, fontWeight:600}}>{lbl}</div>
+                <div style={{fontSize:14, fontWeight:800, color:T.slate800}}>{val ?? "—"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <EmptyRow message="No CPR entered yet — click 'Open form' above to start." />
+      )}
+    </Card>
+  );
+};
+
 export default function Dashboard({ onNavigate = () => {} }) {
   const [dashData, setDashData] = useState({});
   const [loading, setLoading] = useState(true);
   const [agencyName, setAgencyName] = useState("Your Agency");
   const [greeting, setGreeting] = useState("Good morning");
+  const [showCPR, setShowCPR] = useState(false);
 
   useEffect(() => {
     const hr = new Date().getHours();
@@ -364,7 +409,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
         // Parallel fetch all dashboard data
         const [
           agencyRes, summaryRes, aippRes, tasksRes,
-          alertsRes, memoryRes, complianceRes, closeRes, closeChecklistRes
+          alertsRes, memoryRes, complianceRes, closeRes, closeChecklistRes, cprRes
         ] = await Promise.allSettled([
           supabase.from("agency").select("*").limit(1).maybeSingle(),
           Promise.resolve({ data: null }), // removed — no comp_recap_data  table
@@ -376,6 +421,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
           supabase.from("compliance_rules").select("id,title,severity,is_active").limit(100),
           supabase.from("documents").select("*").order("created_at",{ascending:false}).limit(20),
           supabase.from("monthly_close_checklist").select("*").order("period_year",{ascending:false}).order("period_month",{ascending:false}).limit(60),
+          supabase.from("weekly_cpr_reports").select("*").eq("agency_id", AGENCY_ID).order("week_ending_date",{ascending:false}).limit(1).maybeSingle(),
         ]);
 
         const agency = agencyRes.status==="fulfilled" ? agencyRes.value.data : null;
@@ -426,6 +472,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
           complianceRules: complianceRes.status==="fulfilled" ? (complianceRes.value.data||[]) : [],
           closeDocuments: closeRes.status==="fulfilled" ? (closeRes.value.data||[]) : [],
           closeChecklist: closeChecklistRes.status==="fulfilled" ? (closeChecklistRes.value.data||[]) : [],
+          cprLatest: cprRes.status==="fulfilled" ? (cprRes.value.data || null) : null,
         });
       } catch (err) {
         console.error("Dashboard load error:", err);
@@ -473,8 +520,16 @@ export default function Dashboard({ onNavigate = () => {} }) {
         <ComplianceWidget data={dashData} onNavigate={onNavigate} />
       </div>
 
+      {/* Fourth Row — Weekly CPR (full width) */}
+      <div style={{marginBottom:14}}>
+        <WeeklyCPRWidget data={dashData} onOpen={() => setShowCPR(true)} />
+      </div>
+
       {/* Bottom Row — Open Items (full width) */}
       <OpenItemsWidget data={dashData} onNavigate={onNavigate} />
+
+      {/* Weekly CPR overlay (modal) */}
+      {showCPR ? <WeeklyCPR onClose={() => setShowCPR(false)} /> : null}
     </div>
   );
 }
