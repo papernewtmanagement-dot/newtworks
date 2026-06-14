@@ -2,8 +2,9 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useState, useEffect, useMemo, useCallback } from "react";
 
 // =====================================================================
-// TimeClock.jsx — Hourly team member time clock
-// Two views: Kiosk (name tile + PIN pad, self-clock) and Admin (timesheet)
+// TimeClock.jsx — Hourly team member timeclock (per-user, no PIN)
+// Two views: Kiosk (name tile, tap to punch) and Admin (timesheet)
+// Each user logs into BCC as themselves; auth.uid() identifies the puncher.
 // Week boundary: Sunday 00:00 -> Saturday 23:59
 // One time_clock_entries row = one continuous block of paid work.
 // Lunches = gaps between blocks (clock out, clock back in).
@@ -15,13 +16,13 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 //
 // Schema:
 //   v_time_clock_status: team_member_id, first_name, last_name, pay_rate,
-//     pin_set, open_entry_id, clock_in_at, is_clocked_in, hours_this_block
+//     open_entry_id, clock_in_at, is_clocked_in, hours_this_block, is_test_user
 //   time_clock_entries:  id, team_member_id, clock_in_at, clock_out_at,
-//     notes, source, edited_by_user_id, edited_at
-//   RPC time_clock_punch(p_staff_id uuid, p_pin text) -> jsonb
-//   RPC time_clock_set_pin(p_staff_id uuid, p_pin text) -> jsonb
-//   (RPC params are still named p_staff_id from the pre-rename era; the
-//    value passed is the team_member_id - same column, legacy param name.)
+//     notes, source ('self'|'admin'|'admin_create'|'admin_edit'|'kiosk'),
+//     edited_by_user_id, edited_at
+//   RPC time_clock_punch_simple(p_team_member_id uuid DEFAULT NULL) -> jsonb
+//     - NULL targets caller's own team row
+//     - owner/manager may pass any team row to cross-punch (e.g. Test User)
 // =====================================================================
 
 const T = {
@@ -84,13 +85,9 @@ function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 function fmtHM(hours) {
-  if (!Number.isFinite(hours)) return "0:00";
-  const sign = hours < 0 ? "-" : "";
-  const abs = Math.abs(hours);
-  const h = Math.floor(abs);
-  const m = Math.round((abs - h) * 60);
-  if (m === 60) return `${sign}${h + 1}:00`;
-  return `${sign}${h}:${String(m).padStart(2, "0")}`;
+  // Returns decimal hours, e.g. 8.50 for 8 hours 30 min.  Negative values keep sign.
+  if (!Number.isFinite(hours)) return "0.00";
+  return hours.toFixed(2);
 }
 function hoursBetween(inIso, outIso) {
   if (!inIso || !outIso) return 0;
@@ -309,7 +306,7 @@ export default function TimeClock() {
     <div style={{ padding: "20px 24px", maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: T.slate900, margin: 0 }}>Time Clock</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: T.slate900, margin: 0 }}>Timeclock</h1>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
             Hourly team clock in / out &middot; week runs Sun&ndash;Sat &middot; lunch = clock out then back in
           </div>
@@ -361,9 +358,9 @@ function KioskView({ user }) {
   const weekEnd   = useMemo(() => endOfSaturdayWeek(weekStart), [weekStart]);
   const { entries, reload: reloadEntries } = useWeekEntries(weekStart, weekEnd);
 
-  const [selected, setSelected] = useState(null);
-  const [pin, setPin] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Without PINs, a tile tap punches that team_member directly.  `busy` holds the
+  // team_member_id currently being punched (so we can disable just that tile).
+  const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
 
   // refresh every 30s so counters stay live
@@ -379,33 +376,21 @@ function KioskView({ user }) {
     return () => clearTimeout(t);
   }, [result]);
 
-  function pickStaff(s) { setSelected(s); setPin(""); setResult(null); }
-  function cancel() { setSelected(null); setPin(""); setBusy(false); }
-  function appendDigit(d) {
-    if (pin.length >= 4 || busy) return;
-    const next = pin + d;
-    setPin(next);
-    if (next.length === 4) submitPunch(next);
-  }
-  function backspace() { setPin((p) => p.slice(0, -1)); }
-
-  async function submitPunch(fullPin) {
-    if (!selected) return;
-    setBusy(true);
-    const { data, error } = await supabase.rpc("time_clock_punch", {
-      p_staff_id: selected.team_member_id,
-      p_pin: fullPin,
+  async function punch(memberId) {
+    if (busy) return;
+    setBusy(memberId);
+    const { data, error } = await supabase.rpc("time_clock_punch_simple", {
+      p_team_member_id: memberId,
     });
-    setBusy(false);
+    setBusy(null);
     if (error) {
       setResult({ ok: false, error: "rpc_error", message: error.message });
-      setPin("");
       return;
     }
     setResult(data);
-    setPin("");
     if (data?.ok) {
-      setTimeout(() => { setSelected(null); reloadStaff(); reloadEntries(); }, 1500);
+      reloadStaff();
+      reloadEntries();
     }
   }
 
@@ -449,108 +434,60 @@ function KioskView({ user }) {
     );
   }
 
-  // PIN pad
-  if (selected) {
-    return (
-      <div style={{ maxWidth: 360, margin: "0 auto" }}>
-        <Card>
-          <div style={{ textAlign: "center", marginBottom: 14 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>
-              {selected.first_name} {selected.last_name}
-            </div>
-            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-              {selected.is_clocked_in ? "Tap PIN to clock OUT" : "Tap PIN to clock IN"}
-            </div>
-          </div>
+  // Error splash (success splash is above and self-dismisses)
+  // We render the tile grid below regardless, but show a non-ok result inline at top.
 
-          {/* PIN dots */}
-          <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 14 }}>
-            {[0,1,2,3].map((i) => (
-              <div key={i} style={{
-                width: 14, height: 14, borderRadius: "50%",
-                border: `2px solid ${pin.length > i ? T.slate900 : T.slate200}`,
-                background: pin.length > i ? T.slate900 : "transparent",
-              }} />
-            ))}
-          </div>
-
-          {result?.ok === false && (
-            <div style={{ marginBottom: 12, textAlign: "center", fontSize: 12, color: T.red }}>
-              {result.error === "invalid_pin" && "Wrong PIN. Try again."}
-              {result.error === "pin_not_set" && "PIN not set. See Peter."}
-              {result.error === "inactive_team_member" && "Account inactive."}
-              {result.error === "not_hourly" && "Not an hourly position."}
-              {!["invalid_pin","pin_not_set","inactive_team_member","not_hourly"].includes(result.error) && (result.message || "Something went wrong.")}
-            </div>
-          )}
-
-          {/* Keypad */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            {["1","2","3","4","5","6","7","8","9"].map((d) => (
-              <PinKey key={d} disabled={busy} onClick={() => appendDigit(d)}>{d}</PinKey>
-            ))}
-            <PinKey variant="ghost" disabled={busy} onClick={cancel}>Cancel</PinKey>
-            <PinKey disabled={busy} onClick={() => appendDigit("0")}>0</PinKey>
-            <PinKey variant="ghost" disabled={busy || pin.length === 0} onClick={backspace}>&#9003;</PinKey>
+  // Tile grid (with inline error banner when last punch failed)
+  return (
+    <div>
+      {result?.ok === false && (
+        <Card style={{ marginBottom: 12, background: T.redLt, border: `1px solid ${T.red}`, padding: "10px 14px" }}>
+          <div style={{ fontSize: 12, color: T.red, fontWeight: 600 }}>
+            {result.error === "inactive_team_member" && "Account inactive."}
+            {result.error === "not_hourly" && "Not an hourly position."}
+            {result.error === "no_team_member_linked" && "Your account isn't linked to a team row yet. Ask Peter to link it."}
+            {result.error === "not_authorized" && "You can only clock yourself in or out."}
+            {result.error === "not_authenticated" && "Log in to clock in."}
+            {!["inactive_team_member","not_hourly","no_team_member_linked","not_authorized","not_authenticated"].includes(result.error) && (result.message || "Something went wrong.")}
           </div>
         </Card>
-      </div>
-    );
-  }
-
-  // Tile grid
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
       {(staff || []).map((s) => {
         const closed = sumClosedHours(entries, s.team_member_id);
         const open = openBlockHours(entries, s.team_member_id);
         const weekHours = closed + open;
         const status = weeklyStatus(weekHours);
         return (
-          <KioskTile key={s.team_member_id} staff={s} weekHours={weekHours} status={status} onClick={() => pickStaff(s)} />
+          <KioskTile
+            key={s.team_member_id}
+            staff={s}
+            weekHours={weekHours}
+            status={status}
+            busy={busy === s.team_member_id}
+            onClick={() => punch(s.team_member_id)}
+          />
         );
       })}
+      </div>
     </div>
   );
 }
 
-function PinKey({ children, onClick, disabled, variant = "default" }) {
-  const styles = variant === "ghost"
-    ? { bg: T.white,     border: T.slate200, color: T.slate600, font: 13 }
-    : { bg: T.slate100,  border: T.slate100, color: T.slate800, font: 22 };
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        height: 56,
-        borderRadius: 10,
-        border: `1px solid ${styles.border}`,
-        background: styles.bg,
-        color: styles.color,
-        fontSize: styles.font,
-        fontWeight: 600,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function KioskTile({ staff: s, weekHours, status, onClick }) {
+function KioskTile({ staff: s, weekHours, status, onClick, busy }) {
   const clockedIn = !!s.is_clocked_in;
   return (
     <button
       onClick={onClick}
+      disabled={busy}
       style={{
         textAlign: "left",
         padding: "16px 18px",
         borderRadius: 12,
         border: `1px solid ${clockedIn ? T.green : T.slate200}`,
         background: clockedIn ? T.greenLt : T.white,
-        cursor: "pointer",
+        cursor: busy ? "wait" : "pointer",
+        opacity: busy ? 0.6 : 1,
         transition: "all 0.15s",
       }}
     >
@@ -560,9 +497,11 @@ function KioskTile({ staff: s, weekHours, status, onClick }) {
             {s.first_name} {s.last_name}
           </div>
           <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-            {clockedIn
-              ? <>Clocked in &middot; {fmtTime(s.clock_in_at)}</>
-              : "Tap to clock in"}
+            {busy
+              ? "Working..."
+              : (clockedIn
+                  ? <>Clocked in &middot; {fmtTime(s.clock_in_at)}</>
+                  : "Tap to clock in")}
           </div>
         </div>
         {clockedIn && (
@@ -579,12 +518,6 @@ function KioskTile({ staff: s, weekHours, status, onClick }) {
         </div>
         <Pill bg={status.bg} color={status.color}>{status.label}</Pill>
       </div>
-
-      {!s.pin_set && (
-        <div style={{ marginTop: 10, padding: "5px 8px", background: T.amberLt, color: T.amber, borderRadius: 6, fontSize: 10, fontWeight: 600, textAlign: "center" }}>
-          PIN not set
-        </div>
-      )}
     </button>
   );
 }
@@ -605,7 +538,6 @@ function AdminView({ user }) {
 
   const [editing, setEditing] = useState(null);   // entry or "new"
   const [editingFor, setEditingFor] = useState(null); // staff for "new"
-  const [settingPinFor, setSettingPinFor] = useState(null);
 
   const isThisWeek = useMemo(() => {
     const now = startOfSundayWeek(new Date());
@@ -656,7 +588,6 @@ function AdminView({ user }) {
               entries={(entries || []).filter((e) => e.team_member_id === s.team_member_id)}
               onEdit={(entry) => setEditing(entry)}
               onAdd={() => { setEditingFor(s); setEditing("new"); }}
-              onSetPin={() => setSettingPinFor(s)}
             />
           ))}
         </div>
@@ -687,18 +618,11 @@ function AdminView({ user }) {
           onSaved={() => { setEditing(null); setEditingFor(null); reloadEntries(); reloadStaff(); }}
         />
       )}
-      {settingPinFor && (
-        <SetPinModal
-          staff={settingPinFor}
-          onClose={() => setSettingPinFor(null)}
-          onSaved={() => { setSettingPinFor(null); reloadStaff(); }}
-        />
-      )}
     </div>
   );
 }
 
-function StaffWeekCard({ staff: s, weekStart, entries, onEdit, onAdd, onSetPin }) {
+function StaffWeekCard({ staff: s, weekStart, entries, onEdit, onAdd }) {
   const closedHours = sumClosedHours(entries, s.team_member_id);
   const openHours = openBlockHours(entries, s.team_member_id);
   const totalHours = closedHours + openHours;
@@ -731,7 +655,6 @@ function StaffWeekCard({ staff: s, weekStart, entries, onEdit, onAdd, onSetPin }
               {s.first_name} {s.last_name}
             </div>
             {s.is_clocked_in && <Pill bg={T.green} color={T.white}>ON</Pill>}
-            {!s.pin_set && <Pill bg={T.amberLt} color={T.amber}>No PIN</Pill>}
           </div>
           <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
             ${payRate.toFixed(2)}/hr
@@ -747,7 +670,6 @@ function StaffWeekCard({ staff: s, weekStart, entries, onEdit, onAdd, onSetPin }
           <Pill bg={status.bg} color={status.color}>{status.label}</Pill>
           <div style={{ display: "flex", gap: 6 }}>
             <Button onClick={onAdd}>+ Add entry</Button>
-            <Button onClick={onSetPin} variant="ghost">{s.pin_set ? "Reset PIN" : "Set PIN"}</Button>
           </div>
         </div>
       </div>
@@ -940,64 +862,3 @@ function EditEntryModal({ entry, forStaff, userId, onClose, onSaved }) {
   );
 }
 
-function SetPinModal({ staff: s, onClose, onSaved }) {
-  const [pin, setPin] = useState("");
-  const [pin2, setPin2] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  async function save() {
-    setError("");
-    if (!/^\d{4}$/.test(pin)) { setError("PIN must be exactly 4 digits."); return; }
-    if (pin !== pin2) { setError("PINs do not match."); return; }
-    setBusy(true);
-    const { data, error: rpcErr } = await supabase.rpc("time_clock_set_pin", {
-      p_staff_id: s.team_member_id,
-      p_pin: pin,
-    });
-    setBusy(false);
-    if (rpcErr) { setError(rpcErr.message); return; }
-    if (data?.ok === false) { setError(data.error || "Could not set PIN."); return; }
-    onSaved();
-  }
-
-  return (
-    <ModalShell onClose={busy ? () => {} : onClose} width={380}>
-      <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.slate200}` }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-          {s.pin_set ? "Reset PIN" : "Set PIN"} for {s.first_name} {s.last_name}
-        </div>
-        <div style={{ fontSize: 11, color: T.slate500, marginTop: 3 }}>
-          4 digits. Share privately with the team member.
-        </div>
-      </div>
-
-      <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>New PIN</div>
-          <TextInput
-            type="password" inputMode="numeric" maxLength={4}
-            value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-            placeholder="4 digits"
-          />
-        </div>
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Confirm PIN</div>
-          <TextInput
-            type="password" inputMode="numeric" maxLength={4}
-            value={pin2} onChange={(e) => setPin2(e.target.value.replace(/\D/g, ""))}
-            placeholder="4 digits"
-          />
-        </div>
-        {error && (
-          <div style={{ padding: "8px 10px", background: T.redLt, color: T.red, borderRadius: 6, fontSize: 12 }}>{error}</div>
-        )}
-      </div>
-
-      <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.slate200}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Button onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button variant="dark" onClick={save} disabled={busy}>{busy ? "Saving..." : "Save PIN"}</Button>
-      </div>
-    </ModalShell>
-  );
-}

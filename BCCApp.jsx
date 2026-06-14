@@ -98,7 +98,7 @@ const NAV_ITEMS = [
   { id: "chat",      label: "Claude",            icon: "message",      roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "financials", label: "Financials",        icon: "dollar",       roles: ["owner","manager","accountant"] },
   { id: "hr",        label: "Team",              icon: "users",        roles: ["owner","manager"] },
-  { id: "timeclock", label: "Time Clock",        icon: "clock",        roles: ["owner","manager","staff"] },
+  { id: "timeclock", label: "Timeclock",           icon: "clock",        roles: ["owner","manager","staff"] },
   { id: "social",    label: "Social",      icon: "share",        roles: ["owner","manager","staff"] },
   { id: "automations", label: "Automations",       icon: "zap",          roles: ["owner","manager"] },
   { id: "memory",    label: "Memory",            icon: "brain",        roles: ["owner","manager"] },
@@ -558,7 +558,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="HR & People"><HRPeople /></ErrorBoundary>,
-    timeclock:   <ErrorBoundary name="Time Clock"><TimeClock /></ErrorBoundary>,
+    timeclock:   <ErrorBoundary name="Timeclock"><TimeClock /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex:1, gap:16, padding:40, textAlign:"center" }}>
