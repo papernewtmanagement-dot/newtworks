@@ -1073,21 +1073,105 @@ const CollapseHeader = ({ title, open, onToggle }) => (
 
 const BookAddForm = ({ onAdded }) => {
   const today = new Date().toISOString().slice(0, 10);
-  const [form, setForm] = useState({
+  const emptyForm = {
     snapshot_date: today, cadence: "weekly",
     auto_premium: "", fire_premium: "", life_premium: "", health_premium: "",
     auto_pif: "", fire_pif: "", life_pif: "", health_pif: "",
-    household_count: "", notes: "",
-  });
+    household_count: "",
+    dss_pct: "", mld_pct: "",
+    auto_production_mtd: "", auto_lapse_mtd: "",
+    fire_production_mtd: "", fire_lapse_mtd: "",
+    life_production_mtd: "", life_lapse_mtd: "",
+    count_hh_1_lob: "", count_hh_2_lob: "", count_hh_3_lob: "",
+    notes: "",
+  };
+  const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  const [existingSource, setExistingSource] = useState(null);
+  const [loadingExisting, setLoadingExisting] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Treat numeric input that looks like a percentage (e.g. 82 for 82%) as decimal (0.82)
+  // ONLY for the two pct fields. Everything else is parsed as-is.
   const numOrNull = (v) => {
     if (v === "" || v == null) return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   };
+  const pctOrNull = (v) => {
+    if (v === "" || v == null) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    return n > 1.5 ? n / 100 : n;
+  };
+  const fmtPctForInput = (v) => {
+    if (v === null || v === undefined) return "";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "";
+    return String(n);
+  };
+
+  // Pre-fill: when date or cadence changes, look up the existing row and populate the form
+  useEffect(() => {
+    if (!form.snapshot_date || !form.cadence) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingExisting(true);
+      setErr(null);
+      try {
+        const { data, error } = await supabase
+          .from("book_snapshot")
+          .select("*")
+          .eq("agency_id", AGENCY_ID)
+          .eq("snapshot_date", form.snapshot_date)
+          .eq("cadence", form.cadence)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error) {
+          // .maybeSingle() throws on multi-row, otherwise returns null cleanly; surface but don't block
+          console.warn("BookAddForm pre-fill lookup failed:", error);
+          setExistingSource(null);
+          return;
+        }
+        if (data) {
+          setForm(f => ({
+            ...f,
+            auto_premium:        data.auto_premium        ?? "",
+            fire_premium:        data.fire_premium        ?? "",
+            life_premium:        data.life_premium        ?? "",
+            health_premium:      data.health_premium      ?? "",
+            auto_pif:            data.auto_pif            ?? "",
+            fire_pif:            data.fire_pif            ?? "",
+            life_pif:            data.life_pif            ?? "",
+            health_pif:          data.health_pif          ?? "",
+            household_count:     data.household_count     ?? "",
+            dss_pct:             fmtPctForInput(data.dss_pct),
+            mld_pct:             fmtPctForInput(data.mld_pct),
+            auto_production_mtd: data.auto_production_mtd ?? "",
+            auto_lapse_mtd:      data.auto_lapse_mtd      ?? "",
+            fire_production_mtd: data.fire_production_mtd ?? "",
+            fire_lapse_mtd:      data.fire_lapse_mtd      ?? "",
+            life_production_mtd: data.life_production_mtd ?? "",
+            life_lapse_mtd:      data.life_lapse_mtd      ?? "",
+            count_hh_1_lob:      data.count_hh_1_lob      ?? "",
+            count_hh_2_lob:      data.count_hh_2_lob      ?? "",
+            count_hh_3_lob:      data.count_hh_3_lob      ?? "",
+            notes:               data.notes               ?? "",
+          }));
+          setExistingSource(data.source || null);
+        } else {
+          setExistingSource(null);
+        }
+      } catch (e) {
+        if (!cancelled) console.warn("BookAddForm pre-fill error:", e);
+      } finally {
+        if (!cancelled) setLoadingExisting(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [form.snapshot_date, form.cadence]);
 
   const save = async () => {
     setSaving(true); setErr(null);
@@ -1096,20 +1180,46 @@ const BookAddForm = ({ onAdded }) => {
         agency_id: AGENCY_ID,
         snapshot_date: form.snapshot_date,
         cadence: form.cadence,
-        auto_premium: numOrNull(form.auto_premium),
-        fire_premium: numOrNull(form.fire_premium),
-        life_premium: numOrNull(form.life_premium),
-        health_premium: numOrNull(form.health_premium),
-        auto_pif: numOrNull(form.auto_pif),
-        fire_pif: numOrNull(form.fire_pif),
-        life_pif: numOrNull(form.life_pif),
-        health_pif: numOrNull(form.health_pif),
-        household_count: numOrNull(form.household_count),
-        source: "manual_entry_bcc",
+        auto_premium:        numOrNull(form.auto_premium),
+        fire_premium:        numOrNull(form.fire_premium),
+        life_premium:        numOrNull(form.life_premium),
+        health_premium:      numOrNull(form.health_premium),
+        auto_pif:            numOrNull(form.auto_pif),
+        fire_pif:            numOrNull(form.fire_pif),
+        life_pif:            numOrNull(form.life_pif),
+        health_pif:          numOrNull(form.health_pif),
+        household_count:     numOrNull(form.household_count),
+        dss_pct:             pctOrNull(form.dss_pct),
+        mld_pct:             pctOrNull(form.mld_pct),
+        auto_production_mtd: numOrNull(form.auto_production_mtd),
+        auto_lapse_mtd:      numOrNull(form.auto_lapse_mtd),
+        fire_production_mtd: numOrNull(form.fire_production_mtd),
+        fire_lapse_mtd:      numOrNull(form.fire_lapse_mtd),
+        life_production_mtd: numOrNull(form.life_production_mtd),
+        life_lapse_mtd:      numOrNull(form.life_lapse_mtd),
+        count_hh_1_lob:      numOrNull(form.count_hh_1_lob),
+        count_hh_2_lob:      numOrNull(form.count_hh_2_lob),
+        count_hh_3_lob:      numOrNull(form.count_hh_3_lob),
+        source: existingSource && existingSource.startsWith("sf_crm_analytics_email")
+          ? "sf_crm_analytics_email_manual_review"
+          : "manual_entry_bcc",
         notes: form.notes || null,
       };
-      const { error } = await supabase.from("book_snapshot").insert(row);
+      const { error } = await supabase
+        .from("book_snapshot")
+        .upsert(row, { onConflict: "agency_id,snapshot_date,cadence" });
       if (error) throw error;
+
+      // Resolve any open weekly-book-snapshot alert for this Saturday
+      if (form.cadence === "weekly") {
+        await supabase
+          .from("alerts")
+          .update({ is_resolved: true, resolved_at: new Date().toISOString() })
+          .eq("agency_id", AGENCY_ID)
+          .eq("module_reference", `book_snapshot_weekly_alert:${form.snapshot_date}`)
+          .eq("is_resolved", false);
+      }
+
       onAdded?.();
     } catch (e) {
       setErr(e?.message || String(e));
@@ -1120,16 +1230,28 @@ const BookAddForm = ({ onAdded }) => {
 
   const inputStyle = { width: "100%", padding: "6px 8px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 };
   const labelStyle = { fontSize: 10, color: T.slate500, fontWeight: 500, marginBottom: 3, display: "block" };
-  const fld = (key, label, type = "number") => (
+  const groupHeaderStyle = { fontSize: 10, color: T.slate600, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 8, marginBottom: 6 };
+  const fld = (key, label, type = "number", placeholder = "") => (
     <div key={key}>
       <label style={labelStyle}>{label}</label>
-      <input type={type} value={form[key]} onChange={e => set(key, e.target.value)} style={inputStyle} />
+      <input type={type} value={form[key]} onChange={e => set(key, e.target.value)} placeholder={placeholder} style={inputStyle} />
     </div>
   );
 
+  const isAutoImport = existingSource && existingSource.startsWith("sf_crm_analytics_email");
+
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 12 }}>
+      {loadingExisting && (
+        <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>Checking for an existing row for this date…</div>
+      )}
+      {isAutoImport && !loadingExisting && (
+        <div style={{ fontSize: 11, color: T.blue, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6, padding: "8px 10px", marginBottom: 12 }}>
+          Auto-imported from the SF CRM Analytics email. Fields the email carried are pre-filled. Add Health, MTD production/lapse, DSS/MLD, and LOB-per-HH counts from the weekly CPR sheet, then save.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
         {fld("snapshot_date", "Date", "date")}
         <div>
           <label style={labelStyle}>Cadence</label>
@@ -1138,26 +1260,55 @@ const BookAddForm = ({ onAdded }) => {
             <option value="monthly">Monthly</option>
           </select>
         </div>
-        {fld("auto_premium", "Auto premium ($)")}
-        {fld("fire_premium", "Fire premium ($)")}
-        {fld("life_premium", "Life premium ($)")}
-        {fld("health_premium", "Health premium ($)")}
+        {fld("household_count", "Household count")}
+      </div>
+
+      <div style={groupHeaderStyle}>Premium ($)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
+        {fld("auto_premium", "Auto premium")}
+        {fld("fire_premium", "Fire premium")}
+        {fld("life_premium", "Life premium")}
+        {fld("health_premium", "Health premium")}
+      </div>
+
+      <div style={groupHeaderStyle}>Policies in force</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
         {fld("auto_pif", "Auto PIF")}
         {fld("fire_pif", "Fire PIF")}
         {fld("life_pif", "Life PIF")}
         {fld("health_pif", "Health PIF")}
-        {fld("household_count", "Household count")}
       </div>
-      <div style={{ marginBottom: 12 }}>
+
+      <div style={groupHeaderStyle}>MTD production / lapse (from CPR sheet)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
+        {fld("auto_production_mtd", "Auto production MTD")}
+        {fld("auto_lapse_mtd",      "Auto lapse/can MTD")}
+        {fld("fire_production_mtd", "Fire production MTD")}
+        {fld("fire_lapse_mtd",      "Fire lapse/can MTD")}
+        {fld("life_production_mtd", "Life production MTD")}
+        {fld("life_lapse_mtd",      "Life lapse/can MTD")}
+      </div>
+
+      <div style={groupHeaderStyle}>Distribution metrics</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
+        {fld("dss_pct", "DSS %", "number", "0.82 or 82")}
+        {fld("mld_pct", "MLD %", "number", "0.64 or 64")}
+        {fld("count_hh_1_lob", "# HH w/ 1 LOB")}
+        {fld("count_hh_2_lob", "# HH w/ 2 LOB")}
+        {fld("count_hh_3_lob", "# HH w/ 3 LOB")}
+      </div>
+
+      <div style={{ marginTop: 10, marginBottom: 12 }}>
         <label style={labelStyle}>Notes (optional)</label>
         <textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={2}
           style={{ ...inputStyle, fontFamily: "inherit" }}
-          placeholder="Source of data, anomalies, etc." />
+          placeholder="Source of data, anomalies, step-changes, etc." />
       </div>
+
       {err && <div style={{ fontSize: 11, color: T.red, marginBottom: 10 }}>Error: {err}</div>}
       <button onClick={save} disabled={saving || !form.snapshot_date}
         style={{ background: T.blue, color: T.white, border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}>
-        {saving ? "Saving…" : "Add snapshot"}
+        {saving ? "Saving…" : (existingSource ? "Save changes" : "Add snapshot")}
       </button>
     </div>
   );
