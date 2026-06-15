@@ -293,29 +293,20 @@ See `docs/AUTOMATIONS_INSTALL.md` for the full inventory, SQL templates, and the
 ### What it shows
 
 For each producer (staff with role containing "LSP", "Producer", or "Financial Services"):
-- **Current month economics**: P&C premium issued, other lines premium, new-business commission earned (premium × SMVC), fully-loaded payroll cost (gross × 1.15), net to agency
+- **Current month economics**: P&C premium issued, other lines premium, new-business commission earned, fully-loaded payroll cost, net to agency
 - **24-month trajectory chart**: stacked cohort bars (green new business + blue surviving renewals) with a red dashed cost line and a ⭐ star at projected breakeven month
 - **Status pill**: "Profitable now" / "On track" / "Slow ramp" / "Behind pace"
 - **Book-level Lapse Rate card** (top of tab): YTD prior-year vs current-year auto+fire renewal commission ratio, used as the persistency assumption in the projection
 
 ### The math
 
-```
-Future month N total commission to agency =
-  new_commission_this_month
-  + Σ for each cohort_k written ≥12 months ago:
-      cohort_k_commission × persistency^years_since
-```
+The implementation follows the producer profitability framework: cohort-survival commission projection against fully-loaded payroll cost. Canonical formulas live in `core_principles.compensation` (SF → agency direction) and the `sf_compensation` mechanics rows. Agency-to-producer pay logic (burden multiplier, "net to agency" definition) belongs to `core_principles.team_compensation` once that principle is developed (currently the producer ROI math also surfaces in `core_principles.financial_health` §3). The cohort-survival projection model is implementation-specific — see `src/modules/HRPeople.jsx` and `supabase/migrations/010_producer_roi_infrastructure.sql` for the code.
 
-- `new_commission` = `pc_premium × SMVC_rate + other_premium × blended_rate`
-- `persistency` = `(1 - lapse_rate / 100)`
-- `years_since` = `floor((months_since_issued - 12) / 12) + 1`
-
-Producer is profitable when `total_commission ≥ monthly_loaded_cost`.
+Producer is profitable when projected commission ≥ monthly fully-loaded cost.
 
 ### Honest math principles (carved into the implementation)
 
-1. **Premium issued ≠ commission earned.** The agent earns SMVC% of premium. The "New-Biz Commission" tile shows premium × SMVC, not premium itself.
+1. **Premium issued ≠ commission earned.** The agent earns commission as a percentage of premium per the variable comp rate. The "New-Biz Commission" tile reflects earned commission, not premium itself.
 2. **Historical bars in the chart show ONLY actual new-business commission.** No retroactive renewal simulation — that would lie about what the producer actually generated.
 3. **Forward bars stack new + projected renewal cohorts.** That's the projection; the visual makes the difference clear with a "now" divider.
 4. **Per-producer renewal income is NOT pulled from agency-level comp_recap.** Renewal commission in `comp_recap` isn't tagged to a producer. Attributing the agency's collective renewal income to one person would be misleading.
@@ -323,7 +314,7 @@ Producer is profitable when `total_commission ≥ monthly_loaded_cost`.
 ### Data intake
 
 Three pieces feed this tab:
-1. **`agency.smvc_rate_pc`** and **`agency.blended_rate_other`** — agent's A005 SMVC commission rate. Project Claude asks the agent during install (most agents know their P&C rate; blended is typically 8-10%).
+1. **`agency.smvc_rate_pc`** and **`agency.blended_rate_other`** — agent's AA05 SMVC commission rate. Project Claude asks the agent during install (most agents know their P&C rate; blended is typically 8-10%).
 2. **`agency.lapse_rate_annual`** — optional override. NULL = compute from `comp_recap` (prior-year vs current-year P&C YTD ratio).
 3. **`producer_production`** — monthly issued premium per producer per line of business. Fed by either:
    - Manual entry during onboarding (Project Claude pastes from agent's reports)
