@@ -7,11 +7,20 @@ This document is referenced by `HANDOFF_PROMPTS.md` for both install paths. Proj
 
 ---
 
+## Where the canonical formulas live
+
+Compensation mechanics live outside this doc — keep them in sync there, not here:
+
+- **SF → agency commission formulas** (SMVC rates, base rates, VC under AA28, AIPP, Scorecard): `persistent_memory.sf_compensation` rows + `core_principles.compensation`.
+- **Agency → producer pay logic** (payroll burden multiplier, "net to agency" definition, producer commission structures): `core_principles.team_compensation` (under development; currently the producer ROI math also surfaces in `core_principles.financial_health` §3).
+
+This document focuses on install steps, data wiring, and what the tab does. Math formulas go in the principles.
+
 ## What the Performance tab does
 
 For each producer (any staff member with role containing "LSP", "Producer", or "Financial Services Specialist"), the Performance tab shows:
 
-1. **Current month economics** — premium issued by line, new-business commission earned (premium × SMVC), fully-loaded payroll cost (gross × 1.15), net to agency
+1. **Current month economics** — premium issued by line, new-business commission earned, fully-loaded payroll cost, net to agency
 2. **24-month commission trajectory chart** — historical bars (actual new-business commission earned per month) plus 24 forward months of projected new + cohort renewal income, with a red dashed cost line and a ⭐ star at projected breakeven month
 3. **Status pill** — `Profitable now` / `On track` / `Slow ramp` / `Behind pace` based on whether breakeven hits within the 12-18 month target window
 4. **Book-level Lapse Rate card** at the top — computed from `comp_recap` (prior-year vs current-year auto+fire YTD renewal commission)
@@ -24,7 +33,7 @@ For each producer (any staff member with role containing "LSP", "Producer", or "
 `010_producer_roi_infrastructure.sql` adds:
 
 **Three columns on `agency`:**
-- `smvc_rate_pc NUMERIC(5,2)` — agent's P&C SMVC rate per A005 (e.g. `10.00` = 10%)
+- `smvc_rate_pc NUMERIC(5,2)` — agent's P&C SMVC rate per AA05 (e.g. `10.00` = 10%)
 - `blended_rate_other NUMERIC(5,2)` — blended rate for non-P&C lines (typically 8-10%)
 - `lapse_rate_annual NUMERIC(5,2)` — manual override; NULL means "compute from comp_recap"
 
@@ -60,7 +69,7 @@ WHERE table_schema='public' AND table_name='producer_production';
 
 ### 2. Ask the agent for their commission rates
 
-Most agents know their A005 SMVC rate. If not, the rate appears on every monthly comp recap from State Farm. Typical values:
+Most agents know their AA05 SMVC rate. If not, the rate appears on every monthly comp recap from State Farm. Typical values:
 
 - **SMVC rate (P&C):** Usually around 10%, ranges 8-12%
 - **Blended rate (other lines):** Typically 8-10%
@@ -177,13 +186,13 @@ Show the agent:
 ## Honest math — what the tab does and does NOT do
 
 **Does:**
-- Calculate new-business commission to agency from real producer premium issued × agency SMVC/blended rate
+- Calculate new-business commission to agency from real producer premium issued, applying the agency's SMVC/blended rate
 - Project forward using cohort survival math (each month's new business renews 12 months later, then loses lapse_rate% per year compounding)
-- Show breakeven against fully-loaded payroll cost (gross × 1.15)
+- Show breakeven against fully-loaded payroll cost
 
 **Does not:**
 - Attribute agency-level renewal commission from `comp_recap` to individual producers (that data isn't tagged to a producer; attributing it would be misleading)
-- Account for producer commission pay-out in the "net to agency" calculation. The fully-loaded cost is gross × 1.15 (FICA/FUTA/SUTA/WC). If the agent also pays the producer a percentage of issued premium as commission, that's a separate line item — track it via `commission_structures` and discuss with the agent's Claude during planning sessions.
+- Account for producer commission pay-out in the "net to agency" calculation. The fully-loaded cost adds employer-side payroll burden (FICA/FUTA/SUTA/WC) to gross wages — see `core_principles.team_compensation` for the burden multiplier. If the agent also pays the producer a percentage of issued premium as commission, that's a separate line item — track it via `commission_structures` and discuss with the agent's Claude during planning sessions.
 
 If the agent asks for either of those, the right answer is: "Your Claude can model that for you specifically — paste your producer agreement and let's work through it."
 
