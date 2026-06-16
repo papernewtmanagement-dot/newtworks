@@ -1735,6 +1735,264 @@ const BookAssignmentsSection = () => {
   );
 };
 
+// ─── Section: Retention Budget ───────────────────────────────
+const RetentionBudgetSection = () => {
+  const money = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
+  const pct = (n, dec = 3) => ((Number(n) || 0) * 100).toFixed(dec) + "%";
+
+  const [state, setState] = useState({
+    loading: true,
+    error: null,
+    current: null,
+    upcoming: [],
+    agency: null,
+    snapshot: null,
+    receptionTeam: [],
+  });
+
+  useEffect(() => {
+    if (!supabase || !AGENCY_ID) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const [currentRes, upcomingRes, agencyRes, snapshotRes, teamRes] = await Promise.all([
+          supabase.from("v_retention_budget_current").select("*").maybeSingle(),
+          supabase.from("retention_budget_schedule")
+            .select("week_end_date, multiplier, phase")
+            .eq("agency_id", AGENCY_ID)
+            .gte("week_end_date", today)
+            .order("week_end_date", { ascending: true })
+            .limit(8),
+          supabase.from("agency")
+            .select("id, on_time_smvc_current, payroll_burden_multiplier")
+            .eq("id", AGENCY_ID)
+            .maybeSingle(),
+          supabase.from("book_snapshot")
+            .select("snapshot_date, auto_premium, fire_premium, life_premium")
+            .eq("agency_id", AGENCY_ID)
+            .order("snapshot_date", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase.from("team")
+            .select("first_name, pay_type, pay_rate, pay_frequency")
+            .eq("agency_id", AGENCY_ID)
+            .eq("is_active", true)
+            .eq("role", "Reception"),
+        ]);
+        if (cancelled) return;
+        setState({
+          loading: false,
+          error: null,
+          current: currentRes?.data ?? null,
+          upcoming: Array.isArray(upcomingRes?.data) ? upcomingRes.data : [],
+          agency: agencyRes?.data ?? null,
+          snapshot: snapshotRes?.data ?? null,
+          receptionTeam: Array.isArray(teamRes?.data) ? teamRes.data : [],
+        });
+      } catch (e) {
+        if (!cancelled) setState((s) => ({ ...s, loading: false, error: e?.message || String(e) }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (state.loading) {
+    return <Card><div style={{ padding:12, color:T.slate500, fontSize:12 }}>Loading retention budget…</div></Card>;
+  }
+  if (state.error) {
+    return <Card><div style={{ padding:12, color:T.red, fontSize:12 }}>Retention budget error: {state.error}</div></Card>;
+  }
+
+  const scheduledFloor = Number(state.current?.multiplier) || 0;
+  const smvc           = Number(state.agency?.on_time_smvc_current) || 0;
+  const burdenMult     = Number(state.agency?.payroll_burden_multiplier) || 1.15;
+
+  const smvcAdd        = 0.21 * smvc;
+  const effective      = scheduledFloor + smvcAdd;
+
+  const autoPrem       = Number(state.snapshot?.auto_premium) || 0;
+  const firePrem       = Number(state.snapshot?.fire_premium) || 0;
+  const lifePrem       = Number(state.snapshot?.life_premium) || 0;
+  const aflPremium     = autoPrem + firePrem + lifePrem;
+
+  const annualBudget   = effective * aflPremium;
+  const weeklyBudget   = annualBudget / 52;
+
+  // Reception team annual wages (Cassie + Stephanie, exclude any Test user)
+  const annualWageRaw  = (state.receptionTeam || [])
+    .filter((t) => (t?.first_name || "").toLowerCase() !== "test")
+    .reduce((sum, t) => {
+      const rate = Number(t?.pay_rate) || 0;
+      if (t?.pay_type === "HOURLY") return sum + rate * 40 * 52;
+      if (t?.pay_type === "SALARY") {
+        const freqMult = { weekly: 52, biweekly: 26, monthly: 12, annual: 1 }[t?.pay_frequency] || 52;
+        return sum + rate * freqMult;
+      }
+      return sum;
+    }, 0);
+  const annualWageLoaded = annualWageRaw * burdenMult;
+
+  const marginRaw     = annualBudget - annualWageRaw;
+  const marginLoaded  = annualBudget - annualWageLoaded;
+  const breachLoaded  = annualBudget < annualWageLoaded;
+
+  const trajectory = (state.upcoming || []).slice(0, 8);
+  const phaseLabel = state.current?.phase === "phase_1_aa05_stepdown" ? "Phase 1 (AA05 stepdown)" :
+                     state.current?.phase === "phase_2_aa28_stepdown" ? "Phase 2 (AA28 stepdown)" :
+                     state.current?.phase || "—";
+
+  const askCtx =
+    `My retention budget for the week ending ${state.current?.week_end_date} is ${money(annualBudget)}/yr ` +
+    `(${money(weeklyBudget)}/wk). Scheduled floor ${pct(scheduledFloor)} plus SMVC modifier ${pct(smvcAdd)} ` +
+    `= effective ${pct(effective)} on ${money(aflPremium)} A+F+L premium. ` +
+    `Reception team raw wages ${money(annualWageRaw)}, loaded ${money(annualWageLoaded)}. ` +
+    `Margin vs loaded: ${money(marginLoaded)}. Phase: ${phaseLabel}. Is the budget healthy this week?`;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+      <Card style={{ borderLeft: `4px solid ${T.purple}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>
+              Retention Budget — Week ending {state.current?.week_end_date || "—"}
+            </div>
+            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
+              {phaseLabel} · Schedule is a permanent ramp; current on-time SMVC adds to the floor each week.
+            </div>
+          </div>
+          <AskBtn size="small" context={askCtx} />
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(170px, 1fr))", gap:10 }}>
+          <div style={{ background:T.purpleLt, padding:"10px 12px", borderRadius:8 }}>
+            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Annual Budget</div>
+            <div style={{ fontSize:18, fontWeight:700, color:T.slate900 }}>{money(annualBudget)}</div>
+            <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>{money(weeklyBudget)} / wk</div>
+          </div>
+          <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
+            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Effective Multiplier</div>
+            <div style={{ fontSize:18, fontWeight:700, color:T.slate900 }}>{pct(effective)}</div>
+            <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>floor + 0.21 × SMVC</div>
+          </div>
+          <div style={{ background: breachLoaded ? T.redLt : T.greenLt, padding:"10px 12px", borderRadius:8 }}>
+            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Margin vs Loaded Wages</div>
+            <div style={{ fontSize:18, fontWeight:700, color: breachLoaded ? "#991B1B" : "#065F46" }}>
+              {breachLoaded ? "−" : ""}{money(Math.abs(marginLoaded))}
+            </div>
+            <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>
+              {breachLoaded ? "BUDGET BELOW LOADED WAGES" : "above wage commitment"}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop:12, padding:12, background:T.slate50, borderRadius:8 }}>
+          <div style={{ fontSize:11, fontWeight:600, color:T.slate700, marginBottom:8 }}>Formula breakdown</div>
+          <table style={{ width:"100%", fontSize:12, color:T.slate700 }}>
+            <tbody>
+              <tr>
+                <td style={{ padding:"3px 0" }}>Scheduled floor (zero-SMVC)</td>
+                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{pct(scheduledFloor)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding:"3px 0" }}>+ 0.21 × on-time SMVC ({pct(smvc, 2)})</td>
+                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace" }}>+ {pct(smvcAdd)}</td>
+              </tr>
+              <tr style={{ borderTop:`1px solid ${T.slate200}` }}>
+                <td style={{ padding:"3px 0", fontWeight:600 }}>= Effective multiplier</td>
+                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace", fontWeight:600 }}>{pct(effective)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding:"3px 0" }}>× Auto + Fire + Life premium</td>
+                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{money(aflPremium)}</td>
+              </tr>
+              <tr style={{ borderTop:`1px solid ${T.slate200}` }}>
+                <td style={{ padding:"3px 0", fontWeight:600 }}>= Annual retention budget</td>
+                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace", fontWeight:600, color:T.purple }}>{money(annualBudget)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ fontSize:10, color:T.slate500, marginTop:8 }}>
+            Premium snapshot: {state.snapshot?.snapshot_date || "no snapshot on file"} — Auto {money(autoPrem)}, Fire {money(firePrem)}, Life {money(lifePrem)}. Health excluded by design.
+          </div>
+        </div>
+
+        <div style={{ marginTop:12, padding:12, background: breachLoaded ? T.redLt : T.greenLt, borderRadius:8 }}>
+          <div style={{ fontSize:11, fontWeight:600, color: breachLoaded ? "#991B1B" : "#065F46", marginBottom:6 }}>
+            {breachLoaded ? "⚠ BUDGET BREACH — body cut signal" : "Wage commitment"}
+          </div>
+          <div style={{ fontSize:12, color:T.slate700, lineHeight:1.6 }}>
+            Reception team (active, non-test) raw annual wages: <strong>{money(annualWageRaw)}</strong>.
+            With payroll burden ×{burdenMult.toFixed(2)}: <strong>{money(annualWageLoaded)}</strong>.{" "}
+            {breachLoaded
+              ? <>Budget covers raw wages with <strong>{money(marginRaw)}</strong> of room, but is short of the loaded cost by <strong>{money(Math.abs(marginLoaded))}</strong>. Service surge capacity is negative — body cut or rate intervention needed.</>
+              : <>Budget is <strong>{money(marginLoaded)}</strong> above loaded wages — that is the room for service surge and bonus accruals.</>}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upcoming weeks</div>
+        <div style={{ fontSize:11, color:T.slate500, marginBottom:10 }}>
+          Schedule shows the zero-SMVC floor. Effective + budget assume current SMVC of {pct(smvc, 2)} holds.
+        </div>
+        <table style={{ width:"100%", fontSize:12 }}>
+          <thead>
+            <tr style={{ color:T.slate500, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>
+              <th style={{ textAlign:"left", padding:"6px 8px" }}>Week ending</th>
+              <th style={{ textAlign:"right", padding:"6px 8px" }}>Floor</th>
+              <th style={{ textAlign:"right", padding:"6px 8px" }}>Effective</th>
+              <th style={{ textAlign:"right", padding:"6px 8px" }}>Annual budget</th>
+              <th style={{ textAlign:"left", padding:"6px 8px" }}>Phase</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trajectory.map((row, idx) => {
+              const floor = Number(row?.multiplier) || 0;
+              const eff = floor + smvcAdd;
+              const budget = eff * aflPremium;
+              const isCurrent = row?.week_end_date === state.current?.week_end_date;
+              const phaseShort = row?.phase === "phase_1_aa05_stepdown" ? "AA05" :
+                                 row?.phase === "phase_2_aa28_stepdown" ? "AA28" :
+                                 row?.phase || "—";
+              return (
+                <tr key={row?.week_end_date || idx} style={{ background: isCurrent ? T.purpleLt : "transparent", borderTop:`1px solid ${T.slate100}` }}>
+                  <td style={{ padding:"6px 8px", fontWeight: isCurrent ? 600 : 400, color:T.slate900 }}>
+                    {row?.week_end_date}{isCurrent ? " (this week)" : ""}
+                  </td>
+                  <td style={{ padding:"6px 8px", textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{pct(floor)}</td>
+                  <td style={{ padding:"6px 8px", textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{pct(eff)}</td>
+                  <td style={{ padding:"6px 8px", textAlign:"right", fontFamily:"ui-monospace, monospace", color:T.slate900 }}>{money(budget)}</td>
+                  <td style={{ padding:"6px 8px", color:T.slate500, fontSize:11 }}>{phaseShort}</td>
+                </tr>
+              );
+            })}
+            {trajectory.length === 0 && (
+              <tr><td colSpan={5} style={{ padding:"10px 8px", color:T.slate500, fontSize:12, textAlign:"center" }}>No upcoming weeks on file.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card style={{ background:T.slate50 }}>
+        <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
+          <div style={{ fontWeight:600, color:T.slate700, marginBottom:4 }}>Formula reference</div>
+          <code style={{ fontFamily:"ui-monospace, monospace", fontSize:11, color:T.slate800 }}>
+            budget = (scheduled_floor + 0.21 × on_time_SMVC) × (Auto + Fire + Life premium)
+          </code>
+          <div style={{ marginTop:6 }}>
+            Stored schedule is the zero-SMVC floor (Path B). The SMVC modifier (0.21 × on-time SMVC) is added on top each week.
+            Full doc: persistent_memory → operational_rule → "Retention budget formula — permanent".
+            On-time SMVC is held in <code>agency.on_time_smvc_current</code>; update it weekly from current production and loss numbers.
+          </div>
+        </div>
+      </Card>
+
+    </div>
+  );
+};
+
 export default function HRPeople() {
   const { data: roi } = useProducerROI();
   const [section,     setSection]     = useState("overview");
@@ -1775,6 +2033,7 @@ export default function HRPeople() {
     { id:"staff",       label:"Staff"       },
     { id:"onboarding",  label:"Onboarding"  },
     { id:"performance", label:"Performance" },
+    { id:"retention",   label:"Retention"   },
     { id:"commissions", label:"Commissions" },
     { id:"book",        label:"Book"        },
   ];
@@ -1807,6 +2066,7 @@ export default function HRPeople() {
       {section === "staff"       && <StaffDirectory     staff={roi?.allActiveStaff || []} />}
       {section === "onboarding"  && <OnboardingSection  onboarding={[]} />}
       {section === "performance" && <PerformanceSection  roi={roi} />}
+      {section === "retention"   && <RetentionBudgetSection />}
       {section === "commissions" && <CommissionsSection  commissions={[]} />}
       {section === "book"        && <BookAssignmentsSection />}
     </div>
