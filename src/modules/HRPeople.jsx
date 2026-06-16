@@ -1775,11 +1775,39 @@ const RetentionBudgetSection = () => {
             .limit(1)
             .maybeSingle(),
           supabase.from("team")
-            .select("first_name, pay_type, pay_rate, pay_frequency")
+            .select("id, first_name, pay_type, pay_rate, pay_frequency")
             .eq("agency_id", AGENCY_ID)
             .eq("is_active", true)
             .eq("role", "Reception"),
         ]);
+        if (cancelled) return;
+        const team = Array.isArray(teamRes?.data) ? teamRes.data : [];
+        const teamIds = team.map(t => t?.id).filter(Boolean);
+
+        // Trailing ~13 weeks of payroll for the Reception team
+        let payrollByPerson = {};
+        if (teamIds.length > 0) {
+          const cutoff = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          const payrollRes = await supabase
+            .from("payroll_detail")
+            .select("team_member_id, gross_pay, payroll_runs!inner(pay_period_start, pay_period_end)")
+            .eq("agency_id", AGENCY_ID)
+            .in("team_member_id", teamIds)
+            .gte("payroll_runs.pay_period_end", cutoff);
+          (Array.isArray(payrollRes?.data) ? payrollRes.data : []).forEach(row => {
+            const pid = row?.team_member_id;
+            if (!pid) return;
+            const start = row?.payroll_runs?.pay_period_start;
+            const end = row?.payroll_runs?.pay_period_end;
+            if (!start || !end) return;
+            const days = (new Date(end) - new Date(start)) / 86400000 + 1;
+            const bucket = payrollByPerson[pid] || { gross: 0, days: 0 };
+            bucket.gross += Number(row?.gross_pay) || 0;
+            bucket.days += Math.max(1, days);
+            payrollByPerson[pid] = bucket;
+          });
+        }
+
         if (cancelled) return;
         setState({
           loading: false,
@@ -1788,8 +1816,10 @@ const RetentionBudgetSection = () => {
           upcoming: Array.isArray(upcomingRes?.data) ? upcomingRes.data : [],
           agency: agencyRes?.data ?? null,
           snapshot: snapshotRes?.data ?? null,
-          receptionTeam: Array.isArray(teamRes?.data) ? teamRes.data : [],
+          receptionTeam: team,
+          payrollByPerson,
         });
+        return;
       } catch (e) {
         if (!cancelled) setState((s) => ({ ...s, loading: false, error: e?.message || String(e) }));
       }
@@ -1819,22 +1849,35 @@ const RetentionBudgetSection = () => {
   const annualBudget   = effective * aflPremium;
   const weeklyBudget   = annualBudget / 52;
 
-  // Reception team annual wages (Cassie + Stephanie, exclude any Test user)
-  const annualWageRaw  = (state.receptionTeam || [])
-    .filter((t) => (t?.first_name || "").toLowerCase() !== "test")
-    .reduce((sum, t) => {
-      const rate = Number(t?.pay_rate) || 0;
-      if (t?.pay_type === "HOURLY") return sum + rate * 40 * 52;
-      if (t?.pay_type === "SALARY") {
-        const freqMult = { weekly: 52, biweekly: 26, monthly: 12, annual: 1 }[t?.pay_frequency] || 52;
-        return sum + rate * freqMult;
-      }
-      return sum;
-    }, 0);
+  // Reception team annual wages — trailing ~13 weeks of payroll annualized.
+  // Falls back to scheduled-rate × 40 × 52 if a member has no payroll history yet.
+  const teamForWages = (state.receptionTeam || []).filter(
+    (t) => (t?.first_name || "").toLowerCase() !== "test"
+  );
+  const wagesByPerson = teamForWages.map((t) => {
+    const bucket = (state.payrollByPerson || {})[t?.id];
+    if (bucket && bucket.days > 0) {
+      const annualized = (bucket.gross / bucket.days) * 365;
+      return { name: t?.first_name, annualized, source: "payroll", days: bucket.days };
+    }
+    // Fallback for members with no payroll history yet
+    const rate = Number(t?.pay_rate) || 0;
+    let annualized = 0;
+    if (t?.pay_type === "HOURLY") annualized = rate * 40 * 52;
+    else if (t?.pay_type === "SALARY") {
+      const freqMult = { weekly: 52, biweekly: 26, monthly: 12, annual: 1 }[t?.pay_frequency] || 52;
+      annualized = rate * freqMult;
+    }
+    return { name: t?.first_name, annualized, source: "scheduled", days: 0 };
+  });
+  const annualWageRaw    = wagesByPerson.reduce((s, w) => s + (Number(w?.annualized) || 0), 0);
   const annualWageLoaded = annualWageRaw * burdenMult;
 
+  // Breach signal fires on RAW wages (payroll burden is paid from agency overhead,
+  // not from the retention budget — see persistent_memory operational_rule).
   const marginRaw     = annualBudget - annualWageRaw;
   const marginLoaded  = annualBudget - annualWageLoaded;
+  const breachRaw     = annualBudget < annualWageRaw;
   const breachLoaded  = annualBudget < annualWageLoaded;
 
   const trajectory = (state.upcoming || []).slice(0, 8);
@@ -1846,8 +1889,9 @@ const RetentionBudgetSection = () => {
     `My retention budget for the week ending ${state.current?.week_end_date} is ${money(annualBudget)}/yr ` +
     `(${money(weeklyBudget)}/wk). Scheduled floor ${pct(scheduledFloor)} plus SMVC modifier ${pct(smvcAdd)} ` +
     `= effective ${pct(effective)} on ${money(aflPremium)} A+F+L premium. ` +
-    `Reception team raw wages ${money(annualWageRaw)}, loaded ${money(annualWageLoaded)}. ` +
-    `Margin vs loaded: ${money(marginLoaded)}. Phase: ${phaseLabel}. Is the budget healthy this week?`;
+    `Reception team annualized wages from payroll: ${money(annualWageRaw)}. ` +
+    `Margin vs wages: ${money(marginRaw)}. Loaded cost (× ${burdenMult.toFixed(2)}): ${money(annualWageLoaded)}. ` +
+    `Phase: ${phaseLabel}. Is the budget healthy this week?`;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
@@ -1876,13 +1920,13 @@ const RetentionBudgetSection = () => {
             <div style={{ fontSize:18, fontWeight:700, color:T.slate900 }}>{pct(effective)}</div>
             <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>floor + 0.21 × SMVC</div>
           </div>
-          <div style={{ background: breachLoaded ? T.redLt : T.greenLt, padding:"10px 12px", borderRadius:8 }}>
-            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Margin vs Loaded Wages</div>
-            <div style={{ fontSize:18, fontWeight:700, color: breachLoaded ? "#991B1B" : "#065F46" }}>
-              {breachLoaded ? "−" : ""}{money(Math.abs(marginLoaded))}
+          <div style={{ background: breachRaw ? T.redLt : T.greenLt, padding:"10px 12px", borderRadius:8 }}>
+            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Margin vs Wages</div>
+            <div style={{ fontSize:18, fontWeight:700, color: breachRaw ? "#991B1B" : "#065F46" }}>
+              {breachRaw ? "−" : ""}{money(Math.abs(marginRaw))}
             </div>
             <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>
-              {breachLoaded ? "BUDGET BELOW LOADED WAGES" : "above wage commitment"}
+              {breachRaw ? "BUDGET BELOW WAGE COMMITMENT" : "above wage commitment"}
             </div>
           </div>
         </div>
@@ -1918,16 +1962,40 @@ const RetentionBudgetSection = () => {
           </div>
         </div>
 
-        <div style={{ marginTop:12, padding:12, background: breachLoaded ? T.redLt : T.greenLt, borderRadius:8 }}>
-          <div style={{ fontSize:11, fontWeight:600, color: breachLoaded ? "#991B1B" : "#065F46", marginBottom:6 }}>
-            {breachLoaded ? "⚠ BUDGET BREACH — body cut signal" : "Wage commitment"}
+        <div style={{ marginTop:12, padding:12, background: breachRaw ? T.redLt : T.greenLt, borderRadius:8 }}>
+          <div style={{ fontSize:11, fontWeight:600, color: breachRaw ? "#991B1B" : "#065F46", marginBottom:6 }}>
+            {breachRaw ? "⚠ BUDGET BREACH — body cut signal" : "Wage commitment"}
           </div>
-          <div style={{ fontSize:12, color:T.slate700, lineHeight:1.6 }}>
-            Reception team (active, non-test) raw annual wages: <strong>{money(annualWageRaw)}</strong>.
-            With payroll burden ×{burdenMult.toFixed(2)}: <strong>{money(annualWageLoaded)}</strong>.{" "}
-            {breachLoaded
-              ? <>Budget covers raw wages with <strong>{money(marginRaw)}</strong> of room, but is short of the loaded cost by <strong>{money(Math.abs(marginLoaded))}</strong>. Service surge capacity is negative — body cut or rate intervention needed.</>
-              : <>Budget is <strong>{money(marginLoaded)}</strong> above loaded wages — that is the room for service surge and bonus accruals.</>}
+          <div style={{ fontSize:12, color:T.slate700, lineHeight:1.6, marginBottom:8 }}>
+            Reception team (active, non-test) annualized wages from trailing-13-week payroll:
+            {" "}<strong>{money(annualWageRaw)}</strong>.{" "}
+            {breachRaw
+              ? <>Budget is short of wages by <strong>{money(Math.abs(marginRaw))}</strong> — body cut or rate intervention needed.</>
+              : <>Budget is <strong>{money(marginRaw)}</strong> above wages — that is the room for service surge and bonus accruals.</>}
+          </div>
+          <table style={{ width:"100%", fontSize:11, color:T.slate600 }}>
+            <thead>
+              <tr style={{ color:T.slate500, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>
+                <th style={{ textAlign:"left", padding:"4px 6px" }}>Person</th>
+                <th style={{ textAlign:"right", padding:"4px 6px" }}>Annualized gross</th>
+                <th style={{ textAlign:"left", padding:"4px 6px" }}>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {wagesByPerson.map((w, idx) => (
+                <tr key={(w?.name || "") + idx} style={{ borderTop:`1px solid ${T.slate100}` }}>
+                  <td style={{ padding:"4px 6px" }}>{w?.name || "—"}</td>
+                  <td style={{ padding:"4px 6px", textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{money(w?.annualized)}</td>
+                  <td style={{ padding:"4px 6px", color:T.slate500 }}>
+                    {w?.source === "payroll" ? `payroll (${w?.days}d covered)` : "scheduled rate × 40h"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontSize:11, color:T.slate500, marginTop:8, lineHeight:1.5 }}>
+            Payroll burden (×{burdenMult.toFixed(2)}) adds <strong>{money(annualWageLoaded - annualWageRaw)}</strong> on top
+            ({money(annualWageLoaded)} fully loaded) — that's paid from agency overhead, not from this budget.
           </div>
         </div>
       </Card>
