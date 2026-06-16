@@ -1748,6 +1748,8 @@ const RetentionBudgetSection = () => {
     agency: null,
     snapshot: null,
     receptionTeam: [],
+    scorecardActuals: null,
+    smvcResult: null,
   });
 
   useEffect(() => {
@@ -1765,11 +1767,11 @@ const RetentionBudgetSection = () => {
             .order("week_end_date", { ascending: true })
             .limit(8),
           supabase.from("agency")
-            .select("id, on_time_smvc_current, payroll_burden_multiplier")
+            .select("id, payroll_burden_multiplier")
             .eq("id", AGENCY_ID)
             .maybeSingle(),
           supabase.from("book_snapshot")
-            .select("snapshot_date, auto_premium, fire_premium, life_premium")
+            .select("snapshot_date, auto_premium, fire_premium, life_premium, auto_pif, fire_pif")
             .eq("agency_id", AGENCY_ID)
             .order("snapshot_date", { ascending: false })
             .limit(1)
@@ -1808,6 +1810,49 @@ const RetentionBudgetSection = () => {
           });
         }
 
+        // Pull latest scorecard_tracking actuals + current-year on-time SMVC via runtime RPC.
+        // Stored "current" on-time values are forbidden per operational_rule —
+        // calculation must happen at runtime from underlying source data.
+        const programYear = new Date().getFullYear();
+        const { data: stRows } = await supabase
+          .from("scorecard_tracking")
+          .select("metric_name, actual, as_of_date")
+          .eq("agency_id", AGENCY_ID)
+          .eq("program_year", programYear)
+          .order("as_of_date", { ascending: false });
+
+        const latestActuals = {};
+        const latestAsOf = (Array.isArray(stRows) && stRows.length > 0) ? stRows[0].as_of_date : null;
+        if (latestAsOf) {
+          stRows.filter(r => r?.as_of_date === latestAsOf).forEach(r => {
+            if (r?.metric_name) latestActuals[r.metric_name] = Number(r.actual) || 0;
+          });
+        }
+
+        const snap = snapshotRes?.data;
+        const pcProductionActual = (Number(snap?.auto_pif) || 0) + (Number(snap?.fire_pif) || 0);
+        const autoPifGain = latestActuals.auto_pif_gain ?? null;
+        const firePifGain = latestActuals.fire_pif_gain ?? null;
+        // FS Credits = Life + Health credits. Use lh_premium as proxy until a dedicated FS Credits actual is tracked.
+        const fsCredits = latestActuals.fs_credits ?? latestActuals.lh_premium ?? null;
+        const ipsActivity = latestActuals.ips_activity ?? 0;
+
+        let smvcResult = null;
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc("compute_on_time_smvc_with_better_of", {
+            p_agency_id: AGENCY_ID,
+            p_program_year: programYear,
+            p_pc_production_actual: pcProductionActual,
+            p_auto_pif_gain: autoPifGain,
+            p_fire_pif_gain: firePifGain,
+            p_fs_credits: fsCredits,
+            p_ips_activity: ipsActivity,
+          });
+          if (!rpcErr) smvcResult = rpcData;
+        } catch (rpcCatch) {
+          // Leave smvcResult null; UI will show "awaiting input" state
+        }
+
         if (cancelled) return;
         setState({
           loading: false,
@@ -1818,6 +1863,8 @@ const RetentionBudgetSection = () => {
           snapshot: snapshotRes?.data ?? null,
           receptionTeam: team,
           payrollByPerson,
+          scorecardActuals: { ...latestActuals, as_of_date: latestAsOf },
+          smvcResult,
         });
         return;
       } catch (e) {
@@ -1835,7 +1882,10 @@ const RetentionBudgetSection = () => {
   }
 
   const scheduledFloor = Number(state.current?.multiplier) || 0;
-  const smvc           = Number(state.agency?.on_time_smvc_current) || 0;
+  // On-time SMVC computed at runtime — never stored as a "current" value (operational_rule).
+  const smvc           = Number(state.smvcResult?.applied_smvc_decimal) || 0;
+  const smvcBandsComplete = state.smvcResult?.bands_complete === true;
+  const smvcSource     = state.smvcResult?.better_of_source || null;
   const burdenMult     = Number(state.agency?.payroll_burden_multiplier) || 1.15;
 
   const smvcAdd        = 0.21 * smvc;
@@ -2052,7 +2102,21 @@ const RetentionBudgetSection = () => {
           <div style={{ marginTop:6 }}>
             Stored schedule is the zero-SMVC floor (Path B). The SMVC modifier (0.21 × on-time SMVC) is added on top each week.
             Full doc: persistent_memory → operational_rule → "Retention budget formula — permanent".
-            On-time SMVC is held in <code>agency.on_time_smvc_current</code>; update it weekly from current production and loss numbers.
+            On-time SMVC is computed at runtime via <code>compute_on_time_smvc_with_better_of()</code> from the latest
+            <code>scorecard_tracking</code> actuals and <code>smvc_band_config</code> thresholds — never stored as a "current" value.
+            Update weekly by writing a new <code>scorecard_tracking</code> snapshot.
+            {!smvcBandsComplete && (
+              <div style={{ marginTop:6, padding:8, background:T.amberLt, border:`1px solid ${T.amber}`, borderRadius:6, color:T.slate800, fontSize:11 }}>
+                ⚠️ SMVC bands not yet configured for {new Date().getFullYear()} in <code>smvc_band_config</code>.
+                Until Peter enters the Min/Max thresholds (and P&amp;C Production Minimum gate) from the corporate OT dashboard,
+                this calculator treats on-time SMVC as 0%.
+              </div>
+            )}
+            {smvcSource && (
+              <div style={{ marginTop:4, color:T.slate600, fontSize:11 }}>
+                Applied rate source: <strong>{smvcSource === "current_year" ? "current-year earned" : "rolling average (Better Of)"}</strong>
+              </div>
+            )}
           </div>
         </div>
       </Card>
