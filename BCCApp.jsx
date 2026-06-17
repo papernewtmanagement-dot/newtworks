@@ -105,13 +105,14 @@ const TOKENS = {
 const AppContext = createContext(null);
 const useApp = () => useContext(AppContext);
 
-// ─── Mock Auth & Agency Data ──────────────────────────────────────────────────
-// In production this comes from Supabase Auth + agency table
-const MOCK_AGENCY = {
-  name: "Smith Insurance Agency",
-  agentCode: "IL 22-441A",
-  user: { name: "Jane Smith", initials: "JS", role: "owner", email: "jane@smithinsurance.com" },
-  alerts: 3,
+// ─── Default Agency Identity (fallback if DB read fails) ──────────────────────
+// Live values come from Supabase Auth + the agency table. These defaults only
+// render if the agency fetch errors out (network blip, RLS misconfig, etc.).
+const AGENCY_DEFAULTS = {
+  name: "Peter Story State Farm",
+  agentCode: "TX-2277768",
+  user: { name: "Peter Story", initials: "PS", role: "owner", email: "paper.newt.management@gmail.com" },
+  alerts: 0,
 };
 
 // ─── Navigation Config ────────────────────────────────────────────────────────
@@ -634,7 +635,7 @@ export default function BCCApp() {
     return window.innerWidth < 1024;
   });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [agency, setAgency] = useState(MOCK_AGENCY);
+  const [agency, setAgency] = useState(AGENCY_DEFAULTS);
 
   // Check for an existing session on mount, and subscribe to auth changes.
   useEffect(() => {
@@ -711,17 +712,17 @@ export default function BCCApp() {
             : null);
       setAllowedModules(mods);
 
-      const displayName = profile?.full_name || ag?.owner_name || MOCK_AGENCY.user.name;
+      const displayName = profile?.full_name || ag?.owner_name || AGENCY_DEFAULTS.user.name;
       setAgency({
-        name: ag?.name || MOCK_AGENCY.name,
-        agentCode: ag?.state_farm_agent_code || MOCK_AGENCY.agentCode,
+        name: ag?.name || AGENCY_DEFAULTS.name,
+        agentCode: ag?.state_farm_agent_code || AGENCY_DEFAULTS.agentCode,
         user: {
           name: displayName,
           initials: (displayName || "?").split(" ").map(n => n?.[0] || "").join("").toUpperCase().slice(0,2),
           role,
-          email: profile?.email || ag?.primary_email || sessionEmail || MOCK_AGENCY.user.email,
+          email: profile?.email || ag?.primary_email || sessionEmail || AGENCY_DEFAULTS.user.email,
         },
-        alerts: MOCK_AGENCY.alerts,
+        alerts: AGENCY_DEFAULTS.alerts,
       });
     }
 
