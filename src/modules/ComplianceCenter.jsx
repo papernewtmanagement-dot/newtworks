@@ -452,8 +452,8 @@ const ComplianceCalendar = ({ calendar = [] }) => {
           <button key={f.id} onClick={() => setFilter(f.id)} style={{
             padding:"5px 12px", fontSize:11, fontWeight:filter===f.id?600:400,
             color:filter===f.id?T.white:T.slate600,
-            background:filter===f.id?T.navy:T.white,
-            border:`1px solid ${filter===f.id?T.navy:T.slate200}`,
+            background:filter===f.id?T.slate900:T.white,
+            border:`1px solid ${filter===f.id?T.slate900:T.slate200}`,
             borderRadius:6, cursor:"pointer",
           }}>{f.label}</button>
         ))}
@@ -727,7 +727,7 @@ export default function ComplianceCenter() {
 
       {/* Add Rule Form */}
       {showAddRule && (
-        <div style={{background:T.navyLt, border:`1px solid ${T.blue}30`, borderRadius:10, padding:16, marginBottom:16}}>
+        <div style={{background:T.slate100, border:`1px solid ${T.blue}30`, borderRadius:10, padding:16, marginBottom:16}}>
           <div style={{fontSize:13, fontWeight:700, color:T.slate900, marginBottom:12}}>Add Custom Compliance Rule</div>
           <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10}}>
             <input placeholder="Rule title *" value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})}

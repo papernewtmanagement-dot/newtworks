@@ -288,8 +288,8 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
       style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "9px 12px", borderRadius: 8, cursor: "pointer",
-        background: activeCategory === "all" ? T.navy : "transparent",
-        border: `1px solid ${activeCategory === "all" ? T.navy : T.slate200}`,
+        background: activeCategory === "all" ? T.slate900 : "transparent",
+        border: `1px solid ${activeCategory === "all" ? T.slate900 : T.slate200}`,
         fontSize: 12, fontWeight: activeCategory === "all" ? 600 : 400,
         color: activeCategory === "all" ? T.white : T.slate600,
         textAlign: "left",

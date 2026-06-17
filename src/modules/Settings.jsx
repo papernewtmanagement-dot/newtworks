@@ -213,8 +213,8 @@ const InviteModal = ({ onSave, onCancel, sending }) => {
                 const on = mods.includes(m.id);
                 return (
                   <div key={m.id} onClick={() => toggleMod(m.id)}
-                    style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, cursor:"pointer", border:`1px solid ${on?T.navy:T.slate200}`, background:on?T.slate100:T.white }}>
-                    <div style={{ width:14, height:14, borderRadius:4, border:`2px solid ${on?T.navy:T.slate300}`, background:on?T.navy:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, cursor:"pointer", border:`1px solid ${on?T.slate900:T.slate200}`, background:on?T.slate100:T.white }}>
+                    <div style={{ width:14, height:14, borderRadius:4, border:`2px solid ${on?T.slate900:T.slate300}`, background:on?T.slate900:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                       {on && <span style={{ color:T.white, fontSize:9, lineHeight:1 }}>✓</span>}
                     </div>
                     <span style={{ fontSize:11, color:on?T.slate900:T.slate600, fontWeight:on?600:500 }}>{m.label}</span>
@@ -365,7 +365,7 @@ const TeamAccess = ({ users }) => {
           return (
             <div key={user.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 0", borderBottom:isLast?"none":`1px solid ${T.slate100}` }}>
               {/* Avatar */}
-              <div style={{ width:36, height:36, borderRadius:10, background:user.is_current?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:user.is_current?T.white:T.slate500, flexShrink:0 }}>
+              <div style={{ width:36, height:36, borderRadius:10, background:user.is_current?T.slate900:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:user.is_current?T.white:T.slate500, flexShrink:0 }}>
                 {(user.name || "?").toString().split(" ").map(n=>n?.[0] || "").join("").slice(0,2) || "?"}
               </div>
 
@@ -564,7 +564,7 @@ const BCCConfiguration = ({ config }) => {
           <div style={{ display:"flex", gap:6 }}>
             {[{id:"mtd",label:"Month to Date"},{id:"qtd",label:"Quarter to Date"},{id:"ytd",label:"Year to Date"}].map(opt => (
               <button key={opt.id} onClick={() => set("dashboard_period", opt.id)}
-                style={{ padding:"7px 14px", fontSize:11, fontWeight:cfg.dashboard_period===opt.id?600:400, color:cfg.dashboard_period===opt.id?T.white:T.slate600, background:cfg.dashboard_period===opt.id?T.navy:T.white, border:`1px solid ${cfg.dashboard_period===opt.id?T.navy:T.slate200}`, borderRadius:7, cursor:"pointer" }}>
+                style={{ padding:"7px 14px", fontSize:11, fontWeight:cfg.dashboard_period===opt.id?600:400, color:cfg.dashboard_period===opt.id?T.white:T.slate600, background:cfg.dashboard_period===opt.id?T.slate900:T.white, border:`1px solid ${cfg.dashboard_period===opt.id?T.slate900:T.slate200}`, borderRadius:7, cursor:"pointer" }}>
                 {opt.label}
               </button>
             ))}

@@ -20,9 +20,8 @@
 // ============================================================
 
 export const T = {
-  // ─── primary brand ────────────────────────────────────────
-  navy:     "#FAF7F0",   // Cream — primary chrome surface
-  navyLt:   "#F3EFE5",   // Cream-Stone — subtle surface tint
+  // ─── accent (sage) ────────────────────────────────────────
+  // Primary mark color. Cream/stone values live in the slate ramp below.
   blue:     "#737A59",   // Sage Primary — accent / mark color
   blueLt:   "#ECEFE4",   // Sage Mist — active-state background
 

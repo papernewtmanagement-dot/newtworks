@@ -303,7 +303,7 @@ const AskBtn = ({ context, label = "Ask Claude about this" }) => (
       fontSize: 12, fontWeight: 600, cursor: "pointer",
       transition: "background 0.15s",
     }}
-    onMouseOver={(e) => { e.currentTarget.style.background = T.navy; }}
+    onMouseOver={(e) => { e.currentTarget.style.background = T.slate900; }}
     onMouseOut={(e) => { e.currentTarget.style.background = T.blue; }}
     title="Copy this page to clipboard and open Claude.ai"
   >
@@ -484,7 +484,7 @@ export default function Handbook() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
                     fontSize: 13, fontWeight: depth === 0 ? 700 : 600,
-                    color: isActive ? T.navy : T.slate900,
+                    color: isActive ? T.slate900 : T.slate900,
                     letterSpacing: "-0.01em",
                     lineHeight: 1.3,
                   }}>

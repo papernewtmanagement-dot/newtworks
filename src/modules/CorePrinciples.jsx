@@ -26,7 +26,7 @@ import { T } from "../lib/theme.js";
 // back to DEFAULT_DOMAIN_META.
 const DOMAIN_META = {
   scripture:           { icon: "✝️",  accent: T.gold,   accentLt: T.goldLt,   tagline: "The final authority" },
-  claude_directives:   { icon: "🛡️",  accent: T.navy,   accentLt: T.navyLt,   tagline: "Things Claude must never break" },
+  claude_directives:   { icon: "🛡️",  accent: T.slate900,   accentLt: T.slate100,   tagline: "Things Claude must never break" },
   operating_philosophy:{ icon: "🧭",  accent: T.green,  accentLt: T.greenLt,  tagline: "How Peter and the agency operate" },
   team_model:          { icon: "👥",  accent: T.purple, accentLt: T.purpleLt, tagline: "How the team is structured" },
   compliance:          { icon: "⚖️",  accent: T.red,    accentLt: T.redLt,    tagline: "Non-negotiable rules" },
@@ -130,7 +130,7 @@ const AskBtn = ({ context, label = "Ask Claude about this", size = "normal" }) =
       fontWeight: 600, cursor: "pointer",
       transition: "background 0.15s",
     }}
-    onMouseOver={(e) => { e.currentTarget.style.background = T.navy; }}
+    onMouseOver={(e) => { e.currentTarget.style.background = T.slate900; }}
     onMouseOut={(e) => { e.currentTarget.style.background = T.blue; }}
     title="Copy this principle to clipboard and open Claude.ai"
   >
@@ -435,7 +435,7 @@ export default function CorePrinciples() {
                 color: isActive ? T.slate900 : T.slate500,
                 background: "transparent",
                 border: "none",
-                borderBottom: isActive ? `2px solid ${T.navy}` : "2px solid transparent",
+                borderBottom: isActive ? `2px solid ${T.slate900}` : "2px solid transparent",
                 marginBottom: -1,
                 cursor: "pointer",
                 transition: "color 0.15s",

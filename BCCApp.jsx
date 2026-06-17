@@ -417,7 +417,7 @@ const LoginScreen = ({ onSignedIn }) => {
   return (
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: TOKENS.navy, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20,
+      background: TOKENS.slate50, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20,
     }}>
       <div style={{
         width: "100%", maxWidth: 380, background: TOKENS.white,
@@ -508,7 +508,7 @@ const SetPasswordScreen = ({ email, onDone }) => {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.navy, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20 }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.slate50, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 380, background: TOKENS.white, borderRadius: 16, padding: "32px 30px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
           <img src="/newt-icon-transparent.png" alt="paper newt" width="144" height="144" style={{ display: "block", marginBottom: 14 }} />

@@ -373,7 +373,7 @@ const RunLog = ({ runLog }) => {
       {/* Filters */}
       <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
         {[{id:"all",label:"All"},{id:"success",label:"Success"},{id:"failed",label:"Failed"},{id:"partial",label:"Partial"}].map(f => (
-          <button key={f.id} onClick={() => setFilter(f.id)} style={{ padding:"5px 12px", fontSize:11, fontWeight:filter===f.id?600:400, color:filter===f.id?T.white:T.slate600, background:filter===f.id?T.navy:T.white, border:`1px solid ${filter===f.id?T.navy:T.slate200}`, borderRadius:6, cursor:"pointer" }}>
+          <button key={f.id} onClick={() => setFilter(f.id)} style={{ padding:"5px 12px", fontSize:11, fontWeight:filter===f.id?600:400, color:filter===f.id?T.white:T.slate600, background:filter===f.id?T.slate900:T.white, border:`1px solid ${filter===f.id?T.slate900:T.slate200}`, borderRadius:6, cursor:"pointer" }}>
             {f.label} {f.id !== "all" && `(${runLog.filter(r => r.status === f.id).length})`}
           </button>
         ))}

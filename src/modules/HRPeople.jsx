@@ -628,7 +628,7 @@ const StaffDirectory = ({ staff }) => {
           <Card key={member.id} style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
               {/* Avatar */}
-              <div style={{ width:48, height:48, borderRadius:12, background:hasAnyLicense(member)?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:hasAnyLicense(member)?T.white:T.slate500, flexShrink:0 }}>
+              <div style={{ width:48, height:48, borderRadius:12, background:hasAnyLicense(member)?T.slate900:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:hasAnyLicense(member)?T.white:T.slate500, flexShrink:0 }}>
                 {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
               </div>
 
@@ -776,7 +776,7 @@ const StaffDirectory = ({ staff }) => {
 
                 <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
                   <button onClick={cancelEdit} disabled={saving} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:"none", borderRadius:7, cursor:saving?"not-allowed":"pointer" }}>Cancel</button>
-                  <button onClick={() => saveEdit(member.id)} disabled={saving} style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:saving?T.slate400:T.navy, border:"none", borderRadius:7, cursor:saving?"not-allowed":"pointer" }}>
+                  <button onClick={() => saveEdit(member.id)} disabled={saving} style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:saving?T.slate400:T.slate900, border:"none", borderRadius:7, cursor:saving?"not-allowed":"pointer" }}>
                     {saving ? "Saving…" : "Save Changes"}
                   </button>
                 </div>

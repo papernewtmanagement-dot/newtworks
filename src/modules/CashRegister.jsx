@@ -221,7 +221,7 @@ function SuspenseRegisterSection({ txns, coaAccounts, onRefresh }) {
   const btnStyle = (active) => ({
     padding:"6px 14px", borderRadius:20, border:"none", fontSize:12, fontWeight:600,
     cursor:"pointer", transition:"all 0.15s",
-    background: active ? T.navy : T.slate100,
+    background: active ? T.slate900 : T.slate100,
     color:       active ? T.white : T.slate600,
   });
 
@@ -415,7 +415,7 @@ function WeeklySnapshotSection({ snapshots, weeklyView }) {
         return (
           <div key={wk} style={{ background:T.white, border:`1px solid ${T.slate200}`,
                                   borderRadius:10, overflow:"hidden" }}>
-            <div style={{ background:T.navy, padding:"12px 18px",
+            <div style={{ background:T.slate900, padding:"12px 18px",
                           display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span style={{ color:T.white, fontWeight:700, fontSize:14 }}>
                 Week ending {new Date(wk).toLocaleDateString("en-US", {month:"short",day:"numeric",year:"numeric"})}
@@ -649,7 +649,7 @@ export default function CashRegister() {
     padding:"9px 18px", border:"none", borderRadius:"8px 8px 0 0",
     fontSize:13, fontWeight:600, cursor:"pointer",
     background: active ? T.white : "transparent",
-    color:      active ? T.navy  : T.slate500,
+    color:      active ? T.slate900  : T.slate500,
     borderBottom: active ? `2px solid ${T.blue}` : "2px solid transparent",
     transition:"all 0.15s",
   });

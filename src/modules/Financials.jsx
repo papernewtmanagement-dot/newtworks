@@ -586,8 +586,8 @@ const CompRecapSection = ({ data }) => {
           <button key={p} onClick={() => setPeriod(p)} style={{
             padding: "5px 12px", fontSize: 11, fontWeight: period===p ? 600 : 400,
             color: period===p ? T.white : T.slate600,
-            background: period===p ? T.navy : T.white,
-            border: `1px solid ${period===p ? T.navy : T.slate200}`,
+            background: period===p ? T.slate900 : T.white,
+            border: `1px solid ${period===p ? T.slate900 : T.slate200}`,
             borderRadius: 6, cursor: "pointer",
           }}>{p}</button>
         ))}
@@ -804,7 +804,7 @@ const BankSection = ({ data }) => {
             </div>
           </Card>
         ))}
-        <Card style={{ background: T.navy, border: "none" }}>
+        <Card style={{ background: T.slate900, border: "none" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
           <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmt(totalCash)}</div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>All accounts combined</div>
