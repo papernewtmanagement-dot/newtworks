@@ -81,24 +81,28 @@ function useViewport() {
 }
 
 const TOKENS = {
-  navy:    "#1B2B4B",
-  navyDark:"#121E35",
-  blue:    "#2D7DD2",
-  blueLt:  "#EFF6FF",
-  green:   "#10B981",
-  greenLt: "#D1FAE5",
-  amber:   "#F59E0B",
-  amberLt: "#FEF3C7",
-  red:     "#EF4444",
-  redLt:   "#FEE2E2",
-  slate50: "#F8FAFC",
-  slate100:"#F1F5F9",
-  slate200:"#E2E8F0",
-  slate400:"#94A3B8",
-  slate500:"#64748B",
-  slate700:"#334155",
-  slate900:"#0F172A",
-  white:   "#FFFFFF",
+  // ─── paper newt brand palette v1.0 ────────────────────────
+  // Brand: cream/sage/olive/charcoal warm-natural system.
+  // Key names preserved so existing call sites keep working;
+  // values now resolve to brand colors instead of navy/slate.
+  navy:     "#FAF7F0",   // Cream — header + chrome surfaces
+  navyDark: "#E8E2D1",   // Warm Stone — chrome divider lines
+  blue:     "#737A59",   // Sage Primary — primary accent + mark color
+  blueLt:   "#ECEFE4",   // soft sage tint — active nav background
+  green:    "#10B981",   // semantic success (unchanged)
+  greenLt:  "#D1FAE5",
+  amber:    "#F59E0B",   // semantic warning (unchanged)
+  amberLt:  "#FEF3C7",
+  red:      "#EF4444",   // semantic danger (unchanged)
+  redLt:    "#FEE2E2",
+  slate50:  "#FAF7F0",   // Cream — content background
+  slate100: "#F3EFE5",   // Cream-Stone — subtle surface
+  slate200: "#E8E2D1",   // Warm Stone — borders, dividers
+  slate400: "#A8A99A",   // muted olive — secondary text
+  slate500: "#6E7163",   // olive-light — body sub-text
+  slate700: "#4D503F",   // Olive Charcoal — body text
+  slate900: "#2D2F26",   // Charcoal — headlines, deepest text
+  white:    "#FFFFFF",   // Paper White — cards, sheets
 };
 
 // ─── App Context ──────────────────────────────────────────────────────────────
@@ -172,7 +176,7 @@ const css = {
   app: {
     display: "flex", flexDirection: "column",
     height: "100vh", minHeight: 600,
-    fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif",
+    fontFamily: "'Poppins', 'Helvetica Neue', sans-serif",
     background: TOKENS.slate50,
     overflow: "hidden",
   },
@@ -190,13 +194,16 @@ const css = {
   },
   headerLeft: { display: "flex", alignItems: "center", gap: 12 },
   headerLogo: {
-    width: 32, height: 32,
-    background: TOKENS.blue,
+    width: 36, height: 36,
+    background: TOKENS.white,
+    border: `1px solid ${TOKENS.slate200}`,
     borderRadius: 8,
     display: "flex", alignItems: "center", justifyContent: "center",
+    overflow: "hidden",
+    flexShrink: 0,
   },
-  agencyName: { fontSize: 14, fontWeight: 600, color: TOKENS.white, letterSpacing: "-0.01em" },
-  agencySub:  { fontSize: 10, color: TOKENS.slate400, marginTop: 1 },
+  agencyName: { fontSize: 14, fontWeight: 600, color: TOKENS.slate900, letterSpacing: "-0.01em" },
+  agencySub:  { fontSize: 10, color: TOKENS.slate500, marginTop: 1, fontWeight: 500, letterSpacing: "0.02em", textTransform: "uppercase" },
   headerRight: { display: "flex", alignItems: "center", gap: 16 },
   bellWrap: { position: "relative", cursor: "pointer", padding: 4 },
   bellBadge: {
@@ -220,8 +227,8 @@ const css = {
     fontSize: 11, fontWeight: 700, color: TOKENS.white,
     flexShrink: 0,
   },
-  userName: { fontSize: 12, fontWeight: 600, color: TOKENS.white },
-  userRole: { fontSize: 10, color: TOKENS.slate400, textTransform: "capitalize" },
+  userName: { fontSize: 12, fontWeight: 600, color: TOKENS.slate900 },
+  userRole: { fontSize: 10, color: TOKENS.slate500, textTransform: "capitalize" },
 
   // Body
   body: { display: "flex", flex: 1, overflow: "hidden" },
@@ -434,7 +441,7 @@ const LoginScreen = ({ onSignedIn }) => {
   return (
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: TOKENS.navy, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", padding: 20,
+      background: TOKENS.navy, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20,
     }}>
       <div style={{
         width: "100%", maxWidth: 380, background: TOKENS.white,
@@ -443,9 +450,7 @@ const LoginScreen = ({ onSignedIn }) => {
       }}>
         {/* Logo + heading */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
-          <div style={{ width: 44, height: 44, background: TOKENS.blue, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
-            <Icon name="lightning" size={22} color={TOKENS.white} />
-          </div>
+          <img src="/apple-touch-icon.png" alt="paper newt" width="72" height="72" style={{ display: "block", marginBottom: 14, borderRadius: 14 }} />
           <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Business Command Center</div>
           <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4 }}>Sign in to continue</div>
         </div>
@@ -527,12 +532,10 @@ const SetPasswordScreen = ({ email, onDone }) => {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.navy, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", padding: 20 }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.navy, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 380, background: TOKENS.white, borderRadius: 16, padding: "32px 30px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
-          <div style={{ width: 44, height: 44, background: TOKENS.blue, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
-            <Icon name="lightning" size={22} color={TOKENS.white} />
-          </div>
+          <img src="/apple-touch-icon.png" alt="paper newt" width="72" height="72" style={{ display: "block", marginBottom: 14, borderRadius: 14 }} />
           <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Welcome to your BCC</div>
           <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4, textAlign: "center" }}>
             {email ? <>Set a password for <strong>{email}</strong></> : "Set a password to finish setting up your account"}
@@ -742,7 +745,7 @@ export default function BCCApp() {
   // ── Auth gate render ───────────────────────────────────────────────────────
   if (authState === "checking") {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.slate50, fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif", fontSize: 13, color: TOKENS.slate500 }}>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.slate50, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", fontSize: 13, color: TOKENS.slate500 }}>
         Loading…
       </div>
     );
@@ -788,7 +791,7 @@ export default function BCCApp() {
         <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
           <div style={css.headerLeft}>
             <div style={css.headerLogo}>
-              <Icon name="lightning" size={16} color={TOKENS.white} />
+              <img src="/favicon-32x32.png" alt="paper newt" width="28" height="28" style={{ display: "block" }} />
             </div>
             <div>
               <div style={css.agencyName}>{agency.name}</div>
