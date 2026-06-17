@@ -123,13 +123,13 @@ const NAV_ITEMS = [
   { id: "financials",  label: "Financials",  icon: "dollar",   roles: ["owner","manager","accountant"] },
   { id: "hr",          label: "Team",        icon: "users",    roles: ["owner","manager"] },
   { id: "social",      label: "Social",      icon: "share",    roles: ["owner","manager","staff"] },
-  { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
-  { id: "memory",      label: "Memory",      icon: "brain",    roles: ["owner","manager"] },
-  { id: "principles",  label: "Principles",  icon: "book",     roles: ["owner","manager"] },
   { type: "divider",   id: "_div_team_top" },
   { id: "timeclock",   label: "Timeclock",   icon: "clock",    roles: ["owner","manager","staff"] },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
   { type: "divider",   id: "_div_team_bot" },
+  { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
+  { id: "memory",      label: "Memory",      icon: "brain",    roles: ["owner","manager"] },
+  { id: "principles",  label: "Principles",  icon: "book",     roles: ["owner","manager"] },
   { id: "settings",    label: "Settings",    icon: "settings", roles: ["owner"] },
 ];
 
