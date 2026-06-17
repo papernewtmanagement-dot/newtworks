@@ -113,7 +113,7 @@ const useApp = () => useContext(AppContext);
 // Live values come from Supabase Auth + the agency table. These defaults only
 // render if the agency fetch errors out (network blip, RLS misconfig, etc.).
 const AGENCY_DEFAULTS = {
-  name: "Peter Story State Farm",
+  name: "Paper Newt Management LLC",
   agentCode: "TX-2277768",
   user: { name: "Peter Story", initials: "PS", role: "owner", email: "paper.newt.management@gmail.com" },
   alerts: 0,
