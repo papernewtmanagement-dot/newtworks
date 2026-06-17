@@ -46,8 +46,8 @@ const DOC_TYPES = {
   resume:         { label:"Resume",          color:T.purple, bg:T.purpleLt, icon:"👤" },
   aipp_report:    { label:"AIPP Report",     color:T.green,  bg:T.greenLt,  icon:"🎯" },
   eo_insurance:   { label:"E&O Insurance",   color:T.red,    bg:T.redLt,    icon:"🛡️" },
-  license:        { label:"License",         color:T.navy,   bg:T.slate100, icon:"🪪" },
-  contract:       { label:"Contract",        color:T.navy,   bg:T.slate100, icon:"📜" },
+  license:        { label:"License",         color:T.slate900,   bg:T.slate100, icon:"🪪" },
+  contract:       { label:"Contract",        color:T.slate900,   bg:T.slate100, icon:"📜" },
   other:          { label:"Other",           color:T.slate500,bg:T.slate100, icon:"📄" },
 };
 
@@ -345,7 +345,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
       {/* KPI Row */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:16 }}>
         {[
-          { label:"Total Documents", value:total,    color:T.navy,  border:T.navy  },
+          { label:"Total Documents", value:total,    color:T.slate900,  border:T.slate900  },
           { label:"Complete",        value:complete, color:T.green, border:T.green },
           { label:"Partial Import",  value:partial,  color:partial>0?T.amber:T.green, border:partial>0?T.amber:T.green },
           { label:"Failed",          value:failed,   color:failed>0?T.red:T.green,   border:failed>0?T.red:T.green   },
@@ -677,7 +677,7 @@ const UploadSection = () => {
 
           {/* What happens */}
           <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderRadius:10, padding:"12px 14px", marginBottom:16 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:T.navy, marginBottom:8 }}>What happens after you upload:</div>
+            <div style={{ fontSize:11, fontWeight:600, color:T.slate900, marginBottom:8 }}>What happens after you upload:</div>
             {[
               { step:"1", text:"Document is attached to your next Claude.ai conversation" },
               { step:"2", text:"Claude can read, analyze, and answer questions about it" },

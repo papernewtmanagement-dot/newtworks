@@ -272,7 +272,7 @@ const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
 
       {/* Architecture Note */}
       <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderLeft:`4px solid ${T.blue}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
-        <div style={{ fontSize:12, fontWeight:600, color:T.navy, marginBottom:4 }}>How your automations work</div>
+        <div style={{ fontSize:12, fontWeight:600, color:T.slate900, marginBottom:4 }}>How your automations work</div>
         <div style={{ fontSize:11, color:T.slate600, lineHeight:1.7 }}>
           Recipe definitions live in your Supabase database. Cron triggers fire on schedule. Composio executes the recipe using your connected accounts (Gmail, Drive, Facebook, LinkedIn). Groq processes documents for free — no API key needed. Every run is logged here automatically.
         </div>

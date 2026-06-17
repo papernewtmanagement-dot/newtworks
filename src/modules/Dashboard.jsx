@@ -60,7 +60,7 @@ const FinancialWidget = ({ data, onNavigate }) => {
     { label:"Revenue MTD",    value:fmt(s.revenueMTD),    color:T.green,  border:T.green },
     { label:"Expenses MTD",   value:fmt(s.expensesMTD),   color:T.red,    border:T.red   },
     { label:"Net Income MTD", value:fmt(s.netIncomeMTD),  color:s.netIncomeMTD>=0?T.green:T.red, border:s.netIncomeMTD>=0?T.green:T.red },
-    { label:"Revenue YTD",   value:fmt(s.revenueYTD),    color:T.navy,   border:T.navy  },
+    { label:"Revenue YTD",   value:fmt(s.revenueYTD),    color:T.slate900,   border:T.slate900  },
   ];
   return (
     <Card>
@@ -97,7 +97,7 @@ const AIPPWidget = ({ data, onNavigate }) => {
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:11, color:T.slate500}}>Projected</div>
-          <div style={{fontSize:16, fontWeight:700, color:T.navy}}>{fmt(a.projected)}</div>
+          <div style={{fontSize:16, fontWeight:700, color:T.slate900}}>{fmt(a.projected)}</div>
         </div>
       </div>
       <ProgressBar value={earned} max={target} color={parseFloat(achievement)>=80?T.green:T.amber} height={8} />
@@ -491,7 +491,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
     <div style={{padding:"0 0 40px 0"}}>
       {/* Header */}
       <div style={{padding:"20px 0 16px 0", borderBottom:`1px solid ${T.slate200}`, marginBottom:20}}>
-        <div style={{fontSize:20, fontWeight:800, color:T.navy}}>{greeting}, {agencyName} 👋</div>
+        <div style={{fontSize:20, fontWeight:800, color:T.slate900}}>{greeting}, {agencyName} 👋</div>
         <div style={{fontSize:12, color:T.slate500, marginTop:4}}>{today}</div>
       </div>
 

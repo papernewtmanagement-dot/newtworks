@@ -30,7 +30,7 @@ import { T } from "../lib/theme.js";
 
 // ─── Category Config ──────────────────────────────────────────
 const CATEGORY_CONFIG = {
-  contract:              { label: "Contract Basics",        color: T.navy,   icon: "📜" },
+  contract:              { label: "Contract Basics",        color: T.slate900,   icon: "📜" },
   advertising:           { label: "Advertising",            color: T.blue,   icon: "📢" },
   social_media:          { label: "Social Media",           color: T.purple, icon: "📱" },
   social_media_checklist:{ label: "Pre-Post Checklist",     color: T.teal,   icon: "✅" },
@@ -543,7 +543,7 @@ const AuditLog = ({ log = [], agencyName = "Agent", onRefresh }) => {
           <button
             onClick={addLog}
             disabled={!newNote.trim()}
-            style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:newNote.trim()?"pointer":"not-allowed", opacity:newNote.trim()?1:0.5 }}
+            style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:newNote.trim()?"pointer":"not-allowed", opacity:newNote.trim()?1:0.5 }}
           >Log Activity</button>
         </div>
       </div>
@@ -695,7 +695,7 @@ export default function ComplianceCenter() {
       <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderLeft:`4px solid ${T.blue}`, borderRadius:10, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"flex-start", gap:12 }}>
         <span style={{ fontSize:18, flexShrink:0 }}>📜</span>
         <div>
-          <div style={{ fontSize:12, fontWeight:600, color:T.navy, marginBottom:2 }}>
+          <div style={{ fontSize:12, fontWeight:600, color:T.slate900, marginBottom:2 }}>
             These rules are grounded in your AA05 Agent Agreement
           </div>
           <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
@@ -718,7 +718,7 @@ export default function ComplianceCenter() {
         {section === "rules" && (
           <button
             onClick={() => setShowAddRule(!showAddRule)}
-            style={{padding:"7px 16px", fontSize:12, fontWeight:600, background:T.navy, color:T.white, border:"none", borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6}}
+            style={{padding:"7px 16px", fontSize:12, fontWeight:600, background:T.blue, color:T.white, border:"none", borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6}}
           >
             ➕ Add Custom Rule
           </button>
@@ -728,7 +728,7 @@ export default function ComplianceCenter() {
       {/* Add Rule Form */}
       {showAddRule && (
         <div style={{background:T.navyLt, border:`1px solid ${T.blue}30`, borderRadius:10, padding:16, marginBottom:16}}>
-          <div style={{fontSize:13, fontWeight:700, color:T.navy, marginBottom:12}}>Add Custom Compliance Rule</div>
+          <div style={{fontSize:13, fontWeight:700, color:T.slate900, marginBottom:12}}>Add Custom Compliance Rule</div>
           <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10}}>
             <input placeholder="Rule title *" value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})}
               style={{padding:"8px 10px", borderRadius:6, border:`1px solid ${T.slate300}`, fontSize:12, gridColumn:"1/-1"}} />
@@ -745,7 +745,7 @@ export default function ComplianceCenter() {
           </div>
           <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
             <button onClick={()=>setShowAddRule(false)} style={{padding:"6px 14px", fontSize:12, background:T.slate100, color:T.slate700, border:"none", borderRadius:6, cursor:"pointer"}}>Cancel</button>
-            <button onClick={saveRule} style={{padding:"6px 14px", fontSize:12, background:T.navy, color:T.white, border:"none", borderRadius:6, cursor:"pointer", fontWeight:600}}>Save Rule</button>
+            <button onClick={saveRule} style={{padding:"6px 14px", fontSize:12, background:T.blue, color:T.white, border:"none", borderRadius:6, cursor:"pointer", fontWeight:600}}>Save Rule</button>
           </div>
         </div>
       )}

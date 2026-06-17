@@ -32,7 +32,7 @@ import { T } from "../lib/theme.js";
 
 // ─── Role Config ──────────────────────────────────────────────
 const ROLES = {
-  owner:     { label:"Owner",      color:T.navy,   bg:T.slate100, description:"Full access including settings and all financial data" },
+  owner:     { label:"Owner",      color:T.slate900,   bg:T.slate100, description:"Full access including settings and all financial data" },
   manager:   { label:"Manager",    color:T.blue,   bg:T.blueLt,  description:"All modules except Settings. Can manage team." },
   staff:     { label:"Staff",      color:T.green,  bg:T.greenLt, description:"Tasks, Social Media, Calendar, Documents only" },
   readonly:  { label:"Read Only",  color:T.slate500,bg:T.slate100,description:"View-only access to assigned modules" },
@@ -123,7 +123,7 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
             <input value={val} onChange={e => setVal(e.target.value)} type={type}
               style={{ flex:1, padding:"6px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.blue}`, borderRadius:7, outline:"none" }} />
             <button onClick={() => { onChange?.(val); setEditing(false); }}
-              style={{ padding:"6px 12px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}>Save</button>
+              style={{ padding:"6px 12px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>Save</button>
             <button onClick={() => { setVal(value); setEditing(false); }}
               style={{ padding:"6px 10px", fontSize:11, color:T.slate500, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
           </div>
@@ -230,7 +230,7 @@ const InviteModal = ({ onSave, onCancel, sending }) => {
           <button
             onClick={() => valid && !sending && onSave({ ...form, allowed_modules: mods })}
             disabled={!valid || sending}
-            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:(valid&&!sending)?T.navy:"#94A3B8", border:"none", borderRadius:7, cursor:(valid&&!sending)?"pointer":"default" }}
+            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:(valid&&!sending)?T.blue:"#94A3B8", border:"none", borderRadius:7, cursor:(valid&&!sending)?"pointer":"default" }}
           >{sending ? "Sending…" : "Send Invite"}</button>
         </div>
       </div>
@@ -342,7 +342,7 @@ const TeamAccess = ({ users }) => {
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>Manage who has access to your BCC and what they can see</div>
         </div>
         <button onClick={() => setShowInvite(true)}
-          style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:8, cursor:"pointer" }}>
+          style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer" }}>
           + Invite User
         </button>
       </div>
@@ -372,7 +372,7 @@ const TeamAccess = ({ users }) => {
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <span style={{ fontSize:13, fontWeight:600, color:T.slate900 }}>{user.name}</span>
-                  {user.is_current && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.navy, color:T.white }}>You</span>}
+                  {user.is_current && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.blue, color:T.white }}>You</span>}
                   {user.pending   && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>Invite Pending</span>}
                 </div>
                 <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{user.email} · Last login: {user.last_login}</div>
@@ -429,7 +429,7 @@ const ConnectedAccounts = ({ connections }) => (
     <SectionHeader title="Connected Accounts" sub="Composio manages all external connections. Reconnect any account that shows an error." />
 
     <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderLeft:`4px solid ${T.blue}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
-      <div style={{ fontSize:12, fontWeight:600, color:T.navy, marginBottom:3 }}>How connections work</div>
+      <div style={{ fontSize:12, fontWeight:600, color:T.slate900, marginBottom:3 }}>How connections work</div>
       <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
         Your BCC automations use Composio to interact with Gmail, Google Drive, Facebook, LinkedIn, and Instagram on your behalf. Connections are authenticated via your Google account and each platform's OAuth. If a connection expires, automations that depend on it will fail until reconnected. All connections are managed in your Composio dashboard.
       </div>
@@ -642,7 +642,7 @@ const About = ({ agency: agencyProp }) => {
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
 
       {/* Header card */}
-      <Card style={{ background:T.navy, border:"none", color:T.white }}>
+      <Card style={{ background:T.slate900, border:"none", color:T.white }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:14 }}>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
             <div style={{ width:60, height:60, borderRadius:14, background:"rgba(255,255,255,0.08)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:800, color:T.white, letterSpacing:"-0.02em" }}>

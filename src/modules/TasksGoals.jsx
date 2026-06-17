@@ -44,7 +44,7 @@ const MODULES = {
   automations:  { label:"Automations",  color:T.teal,    icon:"⚡" },
   hr:           { label:"HR & People",  color:T.green,   icon:"👥" },
   documents:    { label:"Documents",    color:T.amber,   icon:"📁" },
-  memory:       { label:"Memory",       color:T.navy,    icon:"🧠" },
+  memory:       { label:"Memory",       color:T.slate900,    icon:"🧠" },
   marketing:    { label:"Marketing",    color:T.purple,  icon:"📣" },
   team:         { label:"Team",         color:T.green,   icon:"👥" },
   business_dev: { label:"Business Dev", color:T.blue,    icon:"📈" },
@@ -327,7 +327,7 @@ const NewTaskModal = ({ onSave, onCancel }) => {
           <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
           <button onClick={() => form.title.trim() && onSave({ ...form, id:`t${Date.now()}`, status:"open", created_by:"Jane Smith", created_at:"Today" })}
             disabled={!form.title.trim()}
-            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.title.trim()?T.navy:"#94A3B8", border:"none", borderRadius:7, cursor:form.title.trim()?"pointer":"not-allowed" }}>
+            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.title.trim()?T.blue:"#94A3B8", border:"none", borderRadius:7, cursor:form.title.trim()?"pointer":"not-allowed" }}>
             Create Task
           </button>
         </div>
@@ -468,7 +468,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd }) => {
           {Object.keys(MODULES).map(m => <option key={m} value={m}>{moduleConfig(m).icon} {moduleConfig(m).label}</option>)}
         </select>
         <div style={{ flex:1 }} />
-        <button onClick={() => setShowModal(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:8, cursor:"pointer" }}>
+        <button onClick={() => setShowModal(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer" }}>
           + New Task
         </button>
         <AskBtn context="Review my open task list and help me prioritize. What should I focus on first today? Are there any tasks I should delegate, defer, or eliminate?" />

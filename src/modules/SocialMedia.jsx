@@ -699,7 +699,7 @@ Please draft a complete, compliant post ready to publish. Include:
         <button
           onClick={handleCopy}
           disabled={!topic.trim()}
-          style={{ width:"100%", padding:"12px", fontSize:13, fontWeight:700, color:T.white, background:topic.trim()?T.navy:"#94A3B8", border:"none", borderRadius:10, cursor:topic.trim()?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
+          style={{ width:"100%", padding:"12px", fontSize:13, fontWeight:700, color:T.white, background:topic.trim()?T.blue:"#94A3B8", border:"none", borderRadius:10, cursor:topic.trim()?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
         >
           {copyDone ? "✓ Prompt copied — Claude.ai opened!" : "⚡ Build prompt and send to Claude"}
         </button>

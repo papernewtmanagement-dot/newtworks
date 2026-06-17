@@ -43,7 +43,7 @@ const ALERT_TYPES = {
   hr:           { label:"HR",           color:T.green,  bg:T.greenLt,  icon:"👥" },
   document:     { label:"Documents",    color:T.amber,  bg:T.amberLt,  icon:"📁" },
   social_media: { label:"Social Media", color:T.purple, bg:T.purpleLt, icon:"📱" },
-  system:       { label:"System",       color:T.navy,   bg:T.slate100, icon:"⚙️" },
+  system:       { label:"System",       color:T.slate900,   bg:T.slate100, icon:"⚙️" },
 };
 
 // ─── Severity Config ──────────────────────────────────────────
@@ -288,7 +288,7 @@ const AlertCard = ({ alert, onRead, onResolve, onNavigate }) => {
             {alert.action_module && !alert.is_resolved && (
               <button
                 onClick={() => onNavigate(alert.action_module)}
-                style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}
+                style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}
               >
                 {alert.action_label || "Open Module"}
               </button>
@@ -324,7 +324,7 @@ const AlertsOverview = ({ alerts, onRead, onResolve, onNavigate }) => {
       {/* KPI Row */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:16 }}>
         {[
-          { label:"Unread",   value:unread.length,   color:T.navy,  border:T.navy  },
+          { label:"Unread",   value:unread.length,   color:T.slate900,  border:T.slate900  },
           { label:"Critical", value:critical.length, color:critical.length>0?T.red:T.green,   border:critical.length>0?T.red:T.green   },
           { label:"Warning",  value:warning.length,  color:warning.length>0?T.amber:T.green,  border:warning.length>0?T.amber:T.green  },
           { label:"Info",     value:info.length,     color:T.blue,  border:T.blue  },

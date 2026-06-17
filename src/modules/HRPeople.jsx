@@ -283,7 +283,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
           { label:"New Applicants",    value:newApps,         color:newApps>0?T.amber:T.slate400, border:newApps>0?T.amber:T.slate200 },
           { label:"In Interviews",     value:inInterview,     color:T.purple,border:T.purple },
           { label:"Offers Pending",    value:inOffer,         color:T.green, border:T.green },
-          { label:"Active Staff",      value:activeStaff,     color:T.navy,  border:T.navy  },
+          { label:"Active Staff",      value:activeStaff,     color:T.slate900,  border:T.slate900  },
           { label:"Compliance Flags",  value:flagged,         color:flagged>0?T.red:T.green, border:flagged>0?T.red:T.green },
         ].map((k,i) => (
           <div key={i} style={{ background:T.white, border:`1px solid ${T.slate200}`, borderTop:`3px solid ${k.border}`, borderRadius:12, padding:"14px 16px" }}>
@@ -691,7 +691,7 @@ const StaffDirectory = ({ staff }) => {
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                   <button
                     onClick={(e) => { e.stopPropagation(); startEdit(member); }}
-                    style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}>
+                    style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>
                     ✏️ Edit
                   </button>
                   <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}${member.role_level ? " · " + member.role_level : ""}\nTeam: ${member.category || "agency"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicenses: ${[member.license_pc && "P&C", member.license_lh && "L&H", member.license_ips && "IPS"].filter(Boolean).join(", ") || "None"}${((member.license_states||[]).length ? " (states: " + (member.license_states||[]).join(", ") + ")" : "")}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
@@ -701,7 +701,7 @@ const StaffDirectory = ({ staff }) => {
 
             {isEditing && (
               <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.blue}` }} onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontSize:12, fontWeight:700, color:T.navy, marginBottom:12 }}>Edit {member.first_name} {member.last_name}</div>
+                <div style={{ fontSize:12, fontWeight:700, color:T.slate900, marginBottom:12 }}>Edit {member.first_name} {member.last_name}</div>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10 }}>
                   <div><label style={labelStyle}>First name *</label><input style={inputStyle} value={form.first_name} onChange={e=>setForm({...form, first_name:e.target.value})} /></div>
                   <div><label style={labelStyle}>Last name *</label><input style={inputStyle} value={form.last_name} onChange={e=>setForm({...form, last_name:e.target.value})} /></div>

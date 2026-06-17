@@ -265,7 +265,7 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
               disabled={!title.trim() || !content.trim()}
               style={{
                 padding: "7px 16px", fontSize: 11, fontWeight: 600,
-                color: T.white, background: T.navy,
+                color: T.white, background: T.blue,
                 border: "none", borderRadius: 7, cursor: "pointer",
                 opacity: (!title.trim() || !content.trim()) ? 0.5 : 1,
               }}
@@ -480,7 +480,7 @@ export default function PersistentMemory() {
             onClick={() => setShowNewModal(true)}
             style={{
               display: "flex", alignItems: "center", gap: 6,
-              background: T.navy, color: T.white,
+              background: T.blue, color: T.white,
               border: "none", borderRadius: 8,
               padding: "8px 16px", fontSize: 12, fontWeight: 600,
               cursor: "pointer",
@@ -500,7 +500,7 @@ export default function PersistentMemory() {
       }}>
         <span style={{ fontSize: 20, flexShrink: 0 }}>💡</span>
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: T.navy, marginBottom: 3 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 3 }}>
             How Claude uses this memory
           </div>
           <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.6 }}>

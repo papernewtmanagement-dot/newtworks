@@ -364,7 +364,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
           background: T.white, borderRadius: "14px 14px 0 0",
         }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: T.navy }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
               📋 Weekly CPR — Compliance, Production, Retention
             </div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
