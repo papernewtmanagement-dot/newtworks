@@ -20,6 +20,8 @@ import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
 
+import { TOKENS } from "./src/lib/theme.js";
+
 
 // ============================================================
 // BCC APP SHELL v1.0
@@ -55,7 +57,6 @@ import DemoBanner from "./src/components/DemoBanner.jsx";
 // That's it. Two variables. Nothing else.
 // ============================================================
 
-
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 // Viewport hook (responsive design)
 // Pixel 8 Pro ~412px wide portrait; iPad 10 ~820px portrait; 15" laptop ~1440px+.
@@ -79,31 +80,6 @@ function useViewport() {
   }, []);
   return vp;
 }
-
-const TOKENS = {
-  // ─── paper newt brand palette v1.0 ────────────────────────
-  // Brand: cream/sage/olive/charcoal warm-natural system.
-  // Key names preserved so existing call sites keep working;
-  // values now resolve to brand colors instead of navy/slate.
-  navy:     "#FAF7F0",   // Cream — header + chrome surfaces
-  navyDark: "#E8E2D1",   // Warm Stone — chrome divider lines
-  blue:     "#737A59",   // Sage Primary — primary accent + mark color
-  blueLt:   "#ECEFE4",   // soft sage tint — active nav background
-  green:    "#10B981",   // semantic success (unchanged)
-  greenLt:  "#D1FAE5",
-  amber:    "#F59E0B",   // semantic warning (unchanged)
-  amberLt:  "#FEF3C7",
-  red:      "#EF4444",   // semantic danger (unchanged)
-  redLt:    "#FEE2E2",
-  slate50:  "#FAF7F0",   // Cream — content background
-  slate100: "#F3EFE5",   // Cream-Stone — subtle surface
-  slate200: "#E8E2D1",   // Warm Stone — borders, dividers
-  slate400: "#A8A99A",   // muted olive — secondary text
-  slate500: "#6E7163",   // olive-light — body sub-text
-  slate700: "#4D503F",   // Olive Charcoal — body text
-  slate900: "#2D2F26",   // Charcoal — headlines, deepest text
-  white:    "#FFFFFF",   // Paper White — cards, sheets
-};
 
 // ─── App Context ──────────────────────────────────────────────────────────────
 const AppContext = createContext(null);
