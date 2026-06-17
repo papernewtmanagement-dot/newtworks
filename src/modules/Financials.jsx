@@ -1543,7 +1543,7 @@ const PrintPackage = ({ data, periodLabel }) => {
 
       {/* Cover Page */}
       <div className="bcc-print-page" style={{ textAlign: "center", paddingTop: 180 }}>
-        <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Peter Story State Farm Agency</div>
+        <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Paper Newt Management LLC</div>
         <div style={{ fontSize: 18, color: "#334155", marginBottom: 40 }}>Financial Statements Package</div>
         <div style={{ fontSize: 15, color: "#475569", marginBottom: 4 }}>Period: {periodName}</div>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis · Calendar year · All figures in USD</div>

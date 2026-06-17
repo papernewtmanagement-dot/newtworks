@@ -5,7 +5,7 @@ import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
 // BCC DOCUMENTS MODULE v1.0
-// Peter Story State Farm · Business Command Center
+// Paper Newt Management LLC · Business Command Center
 //
 // SECTIONS:
 //   1. Overview     — Recent activity, storage summary, quick stats
