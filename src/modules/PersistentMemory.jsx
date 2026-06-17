@@ -16,25 +16,50 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 
 // ─── Design Tokens ────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+const T = {
+  navy:    "#1B2B4B",
+  blue:    "#2D7DD2",
+  blueLt:  "#EFF6FF",
+  green:   "#10B981",
+  greenLt: "#D1FAE5",
+  amber:   "#F59E0B",
+  amberLt: "#FEF3C7",
+  red:     "#EF4444",
+  redLt:   "#FEE2E2",
+  purple:  "#7C3AED",
+  purpleLt:"#EDE9FE",
+  teal:    "#0D9488",
+  tealLt:  "#CCFBF1",
+  slate50: "#F8FAFC",
+  slate100:"#F1F5F9",
+  slate200:"#E2E8F0",
+  slate300:"#CBD5E1",
+  slate400:"#94A3B8",
+  slate500:"#64748B",
+  slate600:"#475569",
+  slate700:"#334155",
+  slate800:"#1E293B",
+  slate900:"#0F172A",
+  white:   "#FFFFFF",
+};
 
 // ─── Category Metadata ────────────────────────────────────────
 // Visual config per known category. The sidebar is built dynamically from
 // whatever categories actually exist in the persistent_memory table — any
 // category not in this map gets DEFAULT_CATEGORY_META styling.
 const CATEGORY_META = {
-  agency_profile:    { label: "Agency Profile",    icon: "ð¢", color: "#3B82F6", colorLt: "#DBEAFE", description: "Entity details, licensing, contact information",          order: 1 },
-  business_context:  { label: "Business Context",  icon: "ð§­", color: "#0EA5E9", colorLt: "#E0F2FE", description: "Who the agent is and how the business operates",          order: 2 },
-  accounting_rules:  { label: "Accounting Rules",  icon: "ð", color: "#10B981", colorLt: "#D1FAE5", description: "Cash-basis rules, two-entity convention, GL conventions",  order: 3 },
-  financial_context: { label: "Financial Context", icon: "ð°", color: "#10B981", colorLt: "#D1FAE5", description: "Accounting setup, CPA details, compensation structure",   order: 4 },
+  agency_profile:    { label: "Agency Profile",    icon: "🏢", color: "#3B82F6", colorLt: "#DBEAFE", description: "Entity details, licensing, contact information",          order: 1 },
+  business_context:  { label: "Business Context",  icon: "🧭", color: "#0EA5E9", colorLt: "#E0F2FE", description: "Who the agent is and how the business operates",          order: 2 },
+  accounting_rules:  { label: "Accounting Rules",  icon: "📒", color: "#10B981", colorLt: "#D1FAE5", description: "Cash-basis rules, two-entity convention, GL conventions",  order: 3 },
+  financial_context: { label: "Financial Context", icon: "💰", color: "#10B981", colorLt: "#D1FAE5", description: "Accounting setup, CPA details, compensation structure",   order: 4 },
   business_rules:    { label: "Business Rules",    icon: "⚙️", color: "#1E3A8A", colorLt: "#F1F5F9", description: "Rules Claude must always follow in every conversation",   order: 5 },
-  staff:             { label: "Staff & Team",      icon: "ð¥", color: "#A855F7", colorLt: "#FAF5FF", description: "Team members, roles, employment details",                 order: 6 },
-  goals:             { label: "Goals & Priorities",icon: "ð¯", color: "#F59E0B", colorLt: "#FEF3C7", description: "Current targets, priorities, milestones",                 order: 7 },
-  relationships:     { label: "Key Relationships", icon: "ð¤", color: "#14B8A6", colorLt: "#CCFBF1", description: "CPA, vendors, SF contacts, key business relationships",   order: 8 },
-  compliance_notes:  { label: "Compliance Notes",  icon: "ð¡️", color: "#EF4444", colorLt: "#FEE2E2", description: "Agency-specific compliance reminders and notes",          order: 9 },
-  session_note:      { label: "Session Notes",     icon: "ð", color: "#64748B", colorLt: "#F1F5F9", description: "Working notes Claude wrote at the end of past sessions",  order: 99 },
+  staff:             { label: "Staff & Team",      icon: "👥", color: "#A855F7", colorLt: "#FAF5FF", description: "Team members, roles, employment details",                 order: 6 },
+  goals:             { label: "Goals & Priorities",icon: "🎯", color: "#F59E0B", colorLt: "#FEF3C7", description: "Current targets, priorities, milestones",                 order: 7 },
+  relationships:     { label: "Key Relationships", icon: "🤝", color: "#14B8A6", colorLt: "#CCFBF1", description: "CPA, vendors, SF contacts, key business relationships",   order: 8 },
+  compliance_notes:  { label: "Compliance Notes",  icon: "🛡️", color: "#EF4444", colorLt: "#FEE2E2", description: "Agency-specific compliance reminders and notes",          order: 9 },
+  session_note:      { label: "Session Notes",     icon: "📝", color: "#64748B", colorLt: "#F1F5F9", description: "Working notes Claude wrote at the end of past sessions",  order: 99 },
 };
-const DEFAULT_CATEGORY_META = { label: null, icon: "ð", color: "#64748B", colorLt: "#F1F5F9", description: "", order: 50 };
+const DEFAULT_CATEGORY_META = { label: null, icon: "📌", color: "#64748B", colorLt: "#F1F5F9", description: "", order: 50 };
 const metaFor = (id) => {
   const m = CATEGORY_META[id] || DEFAULT_CATEGORY_META;
   return { ...m, label: m.label || (id || "").replace(/_/g," ").replace(/\b\w/g, c => c.toUpperCase()) };
@@ -498,7 +523,7 @@ export default function PersistentMemory() {
         marginBottom: 20,
         display: "flex", alignItems: "flex-start", gap: 12,
       }}>
-        <span style={{ fontSize: 20, flexShrink: 0 }}>ð¡</span>
+        <span style={{ fontSize: 20, flexShrink: 0 }}>💡</span>
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: T.navy, marginBottom: 3 }}>
             How Claude uses this memory

@@ -26,20 +26,44 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 
 // ─── Design Tokens ────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+const T = {
+  navy:    "#1B2B4B",
+  blue:    "#2D7DD2",
+  blueLt:  "#EFF6FF",
+  green:   "#10B981",
+  greenLt: "#D1FAE5",
+  amber:   "#F59E0B",
+  amberLt: "#FEF3C7",
+  red:     "#EF4444",
+  redLt:   "#FEE2E2",
+  purple:  "#7C3AED",
+  purpleLt:"#EDE9FE",
+  teal:    "#0D9488",
+  tealLt:  "#CCFBF1",
+  slate50: "#F8FAFC",
+  slate100:"#F1F5F9",
+  slate200:"#E2E8F0",
+  slate400:"#94A3B8",
+  slate500:"#64748B",
+  slate600:"#475569",
+  slate700:"#334155",
+  slate800:"#1E293B",
+  slate900:"#0F172A",
+  white:   "#FFFFFF",
+};
 
 // ─── Category Config ──────────────────────────────────────────
 const CATEGORY_CONFIG = {
-  contract:              { label: "Contract Basics",        color: T.navy,   icon: "ð" },
-  advertising:           { label: "Advertising",            color: T.blue,   icon: "ð¢" },
-  social_media:          { label: "Social Media",           color: T.purple, icon: "ð±" },
+  contract:              { label: "Contract Basics",        color: T.navy,   icon: "📜" },
+  advertising:           { label: "Advertising",            color: T.blue,   icon: "📢" },
+  social_media:          { label: "Social Media",           color: T.purple, icon: "📱" },
   social_media_checklist:{ label: "Pre-Post Checklist",     color: T.teal,   icon: "✅" },
   trademark:             { label: "Trademark & Brand",      color: T.amber,  icon: "®️" },
-  giveaways:             { label: "Giveaways",              color: T.green,  icon: "ð" },
-  financial:             { label: "Financial",              color: T.blue,   icon: "ð°" },
-  licensing:             { label: "Licensing",              color: T.red,    icon: "ðªª" },
-  data_privacy:          { label: "Data Privacy",           color: T.slate700,icon: "ð" },
-  medicare:              { label: "Medicare",               color: T.red,    icon: "ð¥" },
+  giveaways:             { label: "Giveaways",              color: T.green,  icon: "🎁" },
+  financial:             { label: "Financial",              color: T.blue,   icon: "💰" },
+  licensing:             { label: "Licensing",              color: T.red,    icon: "🪪" },
+  data_privacy:          { label: "Data Privacy",           color: T.slate700,icon: "🔒" },
+  medicare:              { label: "Medicare",               color: T.red,    icon: "🏥" },
 };
 
 // ─── Mock Data ────────────────────────────────────────────────
@@ -96,12 +120,12 @@ const statusConfig = (s) => ({
 }[s] || { color: T.slate500, bg: T.slate100, label: s });
 
 const eventConfig = (e) => ({
-  review:          { color: T.blue,    icon: "ð" },
+  review:          { color: T.blue,    icon: "👁" },
   completed:       { color: T.green,   icon: "✅" },
   claude_pushback: { color: T.amber,   icon: "⚡" },
-  violation_flagged:{ color: T.red,   icon: "ð¨" },
-  acknowledged:    { color: T.slate500,icon: "ð" },
-}[e] || { color: T.slate500, icon: "ð" });
+  violation_flagged:{ color: T.red,   icon: "🚨" },
+  acknowledged:    { color: T.slate500,icon: "📋" },
+}[e] || { color: T.slate500, icon: "📋" });
 
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style = {} }) => (
@@ -310,7 +334,7 @@ const RulesLibrary = ({ rules = [] }) => {
                   </div>
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
                     <div style={{ fontSize:10, color:T.slate400 }}>
-                      ð <em>{rule.source}</em>
+                      📜 <em>{rule.source}</em>
                     </div>
                     <AskBtn size="small" context={`Compliance rule: ${rule.title} (${rule.rule_code})\n\nRule description: ${rule.description}\n\nSource: ${rule.source}\n\nHelp me understand this rule and how it applies to my agency. What are the most common ways agents accidentally violate this?`} />
                   </div>
@@ -693,7 +717,7 @@ export default function ComplianceCenter() {
 
       {/* AA05 Notice Banner */}
       <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderLeft:`4px solid ${T.blue}`, borderRadius:10, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"flex-start", gap:12 }}>
-        <span style={{ fontSize:18, flexShrink:0 }}>ð</span>
+        <span style={{ fontSize:18, flexShrink:0 }}>📜</span>
         <div>
           <div style={{ fontSize:12, fontWeight:600, color:T.navy, marginBottom:2 }}>
             These rules are grounded in your AA05 Agent Agreement

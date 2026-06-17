@@ -33,16 +33,40 @@ import EmptyState from "../components/EmptyState.jsx";
 
 
 // ─── Design Tokens ────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+const T = {
+  navy:    "#1B2B4B",
+  blue:    "#2D7DD2",
+  blueLt:  "#EFF6FF",
+  green:   "#10B981",
+  greenLt: "#D1FAE5",
+  amber:   "#F59E0B",
+  amberLt: "#FEF3C7",
+  red:     "#EF4444",
+  redLt:   "#FEE2E2",
+  purple:  "#7C3AED",
+  purpleLt:"#EDE9FE",
+  teal:    "#0D9488",
+  tealLt:  "#CCFBF1",
+  slate50: "#F8FAFC",
+  slate100:"#F1F5F9",
+  slate200:"#E2E8F0",
+  slate400:"#94A3B8",
+  slate500:"#64748B",
+  slate600:"#475569",
+  slate700:"#334155",
+  slate800:"#1E293B",
+  slate900:"#0F172A",
+  white:   "#FFFFFF",
+};
 
 // ─── Alert Type Config ────────────────────────────────────────
 const ALERT_TYPES = {
-  compliance:   { label:"Compliance",   color:T.red,    bg:T.redLt,    icon:"ð¡️" },
+  compliance:   { label:"Compliance",   color:T.red,    bg:T.redLt,    icon:"🛡️" },
   automation:   { label:"Automation",   color:T.teal,   bg:T.tealLt,   icon:"⚡" },
-  financial:    { label:"Financial",    color:T.blue,   bg:T.blueLt,   icon:"ð°" },
-  hr:           { label:"HR",           color:T.green,  bg:T.greenLt,  icon:"ð¥" },
-  document:     { label:"Documents",    color:T.amber,  bg:T.amberLt,  icon:"ð" },
-  social_media: { label:"Social Media", color:T.purple, bg:T.purpleLt, icon:"ð±" },
+  financial:    { label:"Financial",    color:T.blue,   bg:T.blueLt,   icon:"💰" },
+  hr:           { label:"HR",           color:T.green,  bg:T.greenLt,  icon:"👥" },
+  document:     { label:"Documents",    color:T.amber,  bg:T.amberLt,  icon:"📁" },
+  social_media: { label:"Social Media", color:T.purple, bg:T.purpleLt, icon:"📱" },
   system:       { label:"System",       color:T.navy,   bg:T.slate100, icon:"⚙️" },
 };
 
@@ -267,7 +291,7 @@ const AlertCard = ({ alert, onRead, onResolve, onNavigate }) => {
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:type.bg, color:type.color }}>{type.label}</span>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:sev.bg, color:sev.color }}>{sev.label}</span>
-            {alert.due_date && <span style={{ fontSize:10, color:T.amber, fontWeight:500 }}>ð {alert.due_date}</span>}
+            {alert.due_date && <span style={{ fontSize:10, color:T.amber, fontWeight:500 }}>📅 {alert.due_date}</span>}
             <span style={{ fontSize:10, color:T.slate400 }}>{alert.created_at}</span>
             {alert.is_resolved && <span style={{ fontSize:9, padding:"2px 7px", borderRadius:20, background:T.greenLt, color:"#065F46", fontWeight:600 }}>✓ Resolved</span>}
           </div>
@@ -340,7 +364,7 @@ const AlertsOverview = ({ alerts, onRead, onResolve, onNavigate }) => {
       {critical.length > 0 && (
         <div style={{ marginBottom:16 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-            <span style={{ fontSize:13, fontWeight:700, color:T.red }}>ð´ Critical — Action Required</span>
+            <span style={{ fontSize:13, fontWeight:700, color:T.red }}>🔴 Critical — Action Required</span>
             <div style={{ flex:1, height:1, background:T.redLt }} />
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -355,7 +379,7 @@ const AlertsOverview = ({ alerts, onRead, onResolve, onNavigate }) => {
       {warning.length > 0 && (
         <div style={{ marginBottom:16 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-            <span style={{ fontSize:13, fontWeight:700, color:T.amber }}>ð¡ Warnings — Review Soon</span>
+            <span style={{ fontSize:13, fontWeight:700, color:T.amber }}>🟡 Warnings — Review Soon</span>
             <div style={{ flex:1, height:1, background:T.amberLt }} />
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -610,7 +634,7 @@ export default function AlertsNotifications({ onNavigate }) {
         <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
           <div>
             <div style={{ fontSize:13, fontWeight:700, color:"#991B1B", marginBottom:2 }}>
-              ð´ {critical} critical alert{critical>1?"s":""} require{critical===1?"s":""} immediate attention
+              🔴 {critical} critical alert{critical>1?"s":""} require{critical===1?"s":""} immediate attention
             </div>
             <div style={{ fontSize:11, color:"#991B1B" }}>
               {alerts.filter(a=>a.severity==="critical"&&!a.is_resolved).map(a=>a.title).join(" · ")}

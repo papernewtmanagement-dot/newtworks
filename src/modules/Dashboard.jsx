@@ -3,7 +3,14 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import WeeklyCPR from "./WeeklyCPR.jsx";
 
 // ── Design Tokens ──────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+const T = {
+  navy:"#1E3A5F", blue:"#2563EB", green:"#16A34A", amber:"#D97706",
+  red:"#DC2626", slate900:"#0F172A", slate800:"#1E293B", slate700:"#334155",
+  slate600:"#475569", slate500:"#64748B", slate400:"#94A3B8", slate300:"#CBD5E1",
+  slate200:"#E2E8F0", slate100:"#F1F5F9", slate50:"#F8FAFC", white:"#FFFFFF",
+  greenLt:"#DCFCE7", amberLt:"#FEF3C7", redLt:"#FEE2E2", blueLt:"#DBEAFE",
+  navyLt:"#EFF6FF",
+};
 
 const fmt = v => { const n=parseFloat(v); return isNaN(n)?"$0.00":"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); };
 const pct = (v,m) => (((parseFloat(v)||0)/(parseFloat(m)||1))*100).toFixed(1);
@@ -64,7 +71,7 @@ const FinancialWidget = ({ data, onNavigate }) => {
   ];
   return (
     <Card>
-      <SectionTitle icon="ð°" title="Financial Overview"
+      <SectionTitle icon="💰" title="Financial Overview"
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View Full P&L →</button>}
       />
       <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
@@ -87,7 +94,7 @@ const AIPPWidget = ({ data, onNavigate }) => {
   const achievement = pct(earned, target);
   return (
     <Card>
-      <SectionTitle icon="ð" title={`AIPP ${a.year||2026} Progress`}
+      <SectionTitle icon="🏆" title={`AIPP ${a.year||2026} Progress`}
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Details →</button>}
       />
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:8}}>
@@ -128,7 +135,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
   if (periods.length === 0) {
     return (
       <Card>
-        <SectionTitle icon="ð" title="Monthly Close" />
+        <SectionTitle icon="📅" title="Monthly Close" />
         <div style={{padding:"16px 0", fontSize:12, color:T.slate400, textAlign:"center"}}>
           Ask your Claude to set up your monthly close checklist
         </div>
@@ -148,7 +155,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
 
   return (
     <Card>
-      <SectionTitle icon="ð" title={`Monthly Close — ${monthLong(current.year, current.month)}`}
+      <SectionTitle icon="📅" title={`Monthly Close — ${monthLong(current.year, current.month)}`}
         action={<button onClick={()=>onNavigate("documents")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
       />
 
@@ -243,7 +250,7 @@ const OpenItemsWidget = ({ data, onNavigate }) => {
     .slice(0, 5);
   return (
     <Card>
-      <SectionTitle icon="ð" title="Open Items — Claude Needs Your Input"
+      <SectionTitle icon="🔍" title="Open Items — Claude Needs Your Input"
         action={<button onClick={()=>onNavigate("memory")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
       />
       {openItems.length === 0 ? (
@@ -273,7 +280,7 @@ const AlertsWidget = ({ data, onNavigate }) => {
     .slice(0, 4);
   return (
     <Card>
-      <SectionTitle icon="ð" title="Active Alerts"
+      <SectionTitle icon="🔔" title="Active Alerts"
         action={<button onClick={()=>onNavigate("alerts")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>All Alerts →</button>}
       />
       {alerts.length === 0 ? (
@@ -491,7 +498,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
     <div style={{padding:"0 0 40px 0"}}>
       {/* Header */}
       <div style={{padding:"20px 0 16px 0", borderBottom:`1px solid ${T.slate200}`, marginBottom:20}}>
-        <div style={{fontSize:20, fontWeight:800, color:T.navy}}>{greeting}, {agencyName} ð</div>
+        <div style={{fontSize:20, fontWeight:800, color:T.navy}}>{greeting}, {agencyName} 👋</div>
         <div style={{fontSize:12, color:T.slate500, marginTop:4}}>{today}</div>
       </div>
 

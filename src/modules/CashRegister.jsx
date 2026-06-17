@@ -17,7 +17,15 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // ============================================================
 
 // ─── Design Tokens ────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+const T = {
+  navy:    "#1B2B4B", blue:    "#2D7DD2", blueLt:  "#EFF6FF",
+  green:   "#10B981", greenLt: "#D1FAE5", amber:   "#F59E0B",
+  amberLt: "#FEF3C7", red:    "#EF4444", redLt:   "#FEE2E2",
+  purple:  "#7C3AED", purpleLt:"#EDE9FE",
+  slate50: "#F8FAFC", slate100:"#F1F5F9", slate200:"#E2E8F0",
+  slate400:"#94A3B8", slate500:"#64748B", slate600:"#475569",
+  slate700:"#334155", slate800:"#1E293B", white:   "#FFFFFF",
+};
 
 const fmt = (n) => new Intl.NumberFormat("en-US", { style:"currency", currency:"USD" }).format(n ?? 0);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) : "—";
@@ -173,7 +181,7 @@ function BalanceBoardSection({ balances }) {
           }}>
             <div style={{ fontSize:11, fontWeight:700, color:T.slate400, textTransform:"uppercase",
                           letterSpacing:"0.08em", marginBottom:4 }}>
-              {isCC ? "ð³ Credit Card" : "ð¦ Checking"}
+              {isCC ? "💳 Credit Card" : "🏦 Checking"}
             </div>
             <div style={{ fontSize:14, fontWeight:600, color:T.slate700, marginBottom:8 }}>
               {b.account_label || `···${b.account_last4}`}
@@ -369,7 +377,7 @@ function CodingQueueSection({ questions, coaAccounts, onRefresh }) {
                 )}
                 {q.suggested_debit_account && (
                   <div style={{ marginTop:6, fontSize:12, color:T.slate400 }}>
-                    ð¡ Suggested: DR {q.suggested_debit_account} / CR {q.suggested_credit_account}
+                    💡 Suggested: DR {q.suggested_debit_account} / CR {q.suggested_credit_account}
                     {q.suggested_confidence && ` (${q.suggested_confidence} confidence)`}
                   </div>
                 )}
@@ -515,7 +523,7 @@ function CodingRulesSection({ rules, onRefresh }) {
                 <td style={{ padding:"9px 12px", fontSize:12, color:T.slate600 }}>{r.debit_account}</td>
                 <td style={{ padding:"9px 12px", fontSize:12, color:T.slate600 }}>{r.credit_account}</td>
                 <td style={{ padding:"9px 12px", fontSize:11, color:T.slate400 }}>
-                  {r.rule_source === "peter_answer" ? "ð¤ Peter" : "⚙ System"}
+                  {r.rule_source === "peter_answer" ? "👤 Peter" : "⚙ System"}
                 </td>
                 <td style={{ padding:"9px 12px", color:T.slate500 }}>{r.usage_count || 0}×</td>
                 <td style={{ padding:"9px 12px" }}>
@@ -638,10 +646,10 @@ export default function CashRegister() {
   const { data, loading, refresh } = useCashRegisterData();
 
   const tabs = [
-    { id:"balances",  label:"ð° Live Balances" },
-    { id:"register",  label:"ð Suspense Register" },
+    { id:"balances",  label:"💰 Live Balances" },
+    { id:"register",  label:"📋 Suspense Register" },
     { id:"queue",     label: data ? `❓ Coding Queue (${data.questions?.length || 0})` : "❓ Coding Queue" },
-    { id:"weekly",    label:"ð Weekly Snapshot" },
+    { id:"weekly",    label:"📅 Weekly Snapshot" },
     { id:"rules",     label:"⚙ Coding Rules" },
   ];
 
@@ -674,7 +682,7 @@ export default function CashRegister() {
           style={{ padding:"10px 16px", background:T.amberLt, borderRadius:8, marginBottom:16,
                    cursor:"pointer", display:"flex", alignItems:"center", gap:10,
                    border:`1px solid ${T.amber}` }}>
-          <span style={{ fontSize:18 }}>ð</span>
+          <span style={{ fontSize:18 }}>🛑</span>
           <span style={{ fontSize:13, color:"#92400e", fontWeight:600 }}>
             GL Firewall: {data.questions.length} transaction{data.questions.length>1?"s":""} blocked from ledger — click to code them.
           </span>

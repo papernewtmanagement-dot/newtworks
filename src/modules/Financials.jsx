@@ -24,7 +24,30 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 // ─── Design Tokens (matches BCCApp shell) ────────────────────
 
-import { T } from "../lib/theme.js";
+const T = {
+  navy:    "#1B2B4B",
+  blue:    "#2D7DD2",
+  blueLt:  "#EFF6FF",
+  green:   "#10B981",
+  greenLt: "#D1FAE5",
+  amber:   "#F59E0B",
+  amberLt: "#FEF3C7",
+  red:     "#EF4444",
+  redLt:   "#FEE2E2",
+  purple:  "#7C3AED",
+  purpleLt:"#EDE9FE",
+  slate50: "#F8FAFC",
+  slate100:"#F1F5F9",
+  slate200:"#E2E8F0",
+  slate300:"#CBD5E1",
+  slate400:"#94A3B8",
+  slate500:"#64748B",
+  slate600:"#475569",
+  slate700:"#334155",
+  slate800:"#1E293B",
+  slate900:"#0F172A",
+  white:   "#FFFFFF",
+};
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -1632,7 +1655,7 @@ export default function Financials() {
               cursor: "pointer", whiteSpace: "nowrap",
             }}
           >
-            ð¨ Print / Save PDF
+            🖨 Print / Save PDF
           </button>
           <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
         </div>

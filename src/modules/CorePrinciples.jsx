@@ -19,19 +19,45 @@ import ComplianceCenter from "./ComplianceCenter.jsx";
 // ============================================================
 
 // ─── Design Tokens ────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+const T = {
+  navy:    "#1B2B4B",
+  navyLt:  "#E0E7FF",
+  blue:    "#2D7DD2",
+  blueLt:  "#EFF6FF",
+  gold:    "#B45309",
+  goldLt:  "#FEF3C7",
+  green:   "#10B981",
+  greenLt: "#D1FAE5",
+  amber:   "#F59E0B",
+  amberLt: "#FEF3C7",
+  red:     "#EF4444",
+  redLt:   "#FEE2E2",
+  purple:  "#7C3AED",
+  purpleLt:"#EDE9FE",
+  slate50: "#F8FAFC",
+  slate100:"#F1F5F9",
+  slate200:"#E2E8F0",
+  slate300:"#CBD5E1",
+  slate400:"#94A3B8",
+  slate500:"#64748B",
+  slate600:"#475569",
+  slate700:"#334155",
+  slate800:"#1E293B",
+  slate900:"#0F172A",
+  white:   "#FFFFFF",
+};
 
 // ─── Domain Metadata ──────────────────────────────────────────
 // Visual config per known domain. Domains not in this map fall
 // back to DEFAULT_DOMAIN_META.
 const DOMAIN_META = {
   scripture:           { icon: "✝️",  accent: T.gold,   accentLt: T.goldLt,   tagline: "The final authority" },
-  claude_directives:   { icon: "ð¡️",  accent: T.navy,   accentLt: T.navyLt,   tagline: "Things Claude must never break" },
-  operating_philosophy:{ icon: "ð§­",  accent: T.green,  accentLt: T.greenLt,  tagline: "How Peter and the agency operate" },
-  team_model:          { icon: "ð¥",  accent: T.purple, accentLt: T.purpleLt, tagline: "How the team is structured" },
+  claude_directives:   { icon: "🛡️",  accent: T.navy,   accentLt: T.navyLt,   tagline: "Things Claude must never break" },
+  operating_philosophy:{ icon: "🧭",  accent: T.green,  accentLt: T.greenLt,  tagline: "How Peter and the agency operate" },
+  team_model:          { icon: "👥",  accent: T.purple, accentLt: T.purpleLt, tagline: "How the team is structured" },
   compliance:          { icon: "⚖️",  accent: T.red,    accentLt: T.redLt,    tagline: "Non-negotiable rules" },
 };
-const DEFAULT_DOMAIN_META = { icon: "ð", accent: T.slate600, accentLt: T.slate100, tagline: "" };
+const DEFAULT_DOMAIN_META = { icon: "📜", accent: T.slate600, accentLt: T.slate100, tagline: "" };
 const metaFor = (domain) => DOMAIN_META[domain] || DEFAULT_DOMAIN_META;
 const prettyDomain = (d) => (d || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
@@ -134,7 +160,7 @@ const AskBtn = ({ context, label = "Ask Claude about this", size = "normal" }) =
     onMouseOut={(e) => { e.currentTarget.style.background = T.blue; }}
     title="Copy this principle to clipboard and open Claude.ai"
   >
-    ð¬ {label}
+    💬 {label}
   </button>
 );
 
@@ -415,7 +441,7 @@ What I'd like to discuss:
 export default function CorePrinciples() {
   const [outerTab, setOuterTab] = useState("principles");
   const tabs = [
-    { id: "principles", label: "Principles",        icon: "ð" },
+    { id: "principles", label: "Principles",        icon: "📜" },
     { id: "compliance", label: "Compliance Center", icon: "⚖️" },
   ];
   return (

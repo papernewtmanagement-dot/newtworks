@@ -1,7 +1,5 @@
 import React from "react";
 
-import { T } from "../lib/theme.js";
-
 /**
  * ErrorBoundary — catches JavaScript errors in module trees and displays a
  * useful diagnostic message instead of a blank screen.
@@ -31,7 +29,7 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     // Log full diagnostic to the console so Claude can read it during debug
-    console.group(`ð´ ErrorBoundary caught an error in module: ${this.props.name || "unknown"}`);
+    console.group(`🔴 ErrorBoundary caught an error in module: ${this.props.name || "unknown"}`);
     console.error("Error:", error);
     console.error("Component stack:", info?.componentStack);
     console.groupEnd();
@@ -56,18 +54,18 @@ export default class ErrorBoundary extends React.Component {
       <div style={{
         padding: "24px",
         margin: "16px 0",
-        background: T.amberLt,
+        background: "#FEF3C7",
         border: "1px solid #FBBF24",
         borderRadius: 12,
-        color: T.slate700,
+        color: "#92400E",
       }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
           <span style={{ fontSize:24 }}>⚠️</span>
           <div>
-            <div style={{ fontSize:15, fontWeight:700, color:T.slate700 }}>
+            <div style={{ fontSize:15, fontWeight:700, color:"#92400E" }}>
               Something went wrong loading {moduleName}
             </div>
-            <div style={{ fontSize:12, color:T.slate700, marginTop:2 }}>
+            <div style={{ fontSize:12, color:"#B45309", marginTop:2 }}>
               The rest of the BCC is still working — try another module while this is fixed.
             </div>
           </div>
@@ -80,13 +78,13 @@ export default class ErrorBoundary extends React.Component {
           padding: "10px 12px",
           borderRadius: 8,
           border: "1px solid #FDE68A",
-          color: T.slate900,
+          color: "#78350F",
           marginBottom: 12,
           overflow: "auto",
         }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>{errMsg}</div>
           {stackPreview && (
-            <pre style={{ margin:0, whiteSpace:"pre-wrap", fontSize:10, color:T.slate700 }}>
+            <pre style={{ margin:0, whiteSpace:"pre-wrap", fontSize:10, color:"#92400E" }}>
               {stackPreview}
             </pre>
           )}
@@ -96,18 +94,18 @@ export default class ErrorBoundary extends React.Component {
           <button onClick={this.reset} style={{
             padding: "8px 14px",
             fontSize: 12, fontWeight: 600,
-            background: T.amber, color: "#fff",
+            background: "#F59E0B", color: "#fff",
             border: "none", borderRadius: 7, cursor: "pointer",
           }}>Try again</button>
           <button onClick={() => location.reload()} style={{
             padding: "8px 14px",
             fontSize: 12, fontWeight: 600,
-            background: "#fff", color: T.slate700,
+            background: "#fff", color: "#92400E",
             border: "1px solid #FBBF24", borderRadius: 7, cursor: "pointer",
           }}>Reload page</button>
         </div>
 
-        <div style={{ marginTop:14, fontSize:11, color:T.slate900 }}>
+        <div style={{ marginTop:14, fontSize:11, color:"#78350F" }}>
           <strong>For your Claude:</strong> Check the browser console for the full error and stack trace.
           The most common cause is a schema mismatch — a column referenced in the code that does not
           exist in the database. Run <code style={{ background:"#FFFBEB", padding:"1px 5px", borderRadius:3 }}>npm run audit:schema</code> to find it.
