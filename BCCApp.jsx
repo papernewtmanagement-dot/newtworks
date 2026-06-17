@@ -159,27 +159,27 @@ const css = {
 
   // Header
   header: {
-    background: TOKENS.navy,
+    background: TOKENS.chromeBg,
     height: 58,
     display: "flex", alignItems: "center",
     justifyContent: "space-between",
     padding: "0 20px",
     flexShrink: 0,
-    borderBottom: `1px solid ${TOKENS.navyDark}`,
+    borderBottom: `1px solid ${TOKENS.chromeBorder}`,
     zIndex: 100,
   },
   headerLeft: { display: "flex", alignItems: "center", gap: 12 },
   headerLogo: {
     width: 36, height: 36,
     background: TOKENS.white,
-    border: `1px solid ${TOKENS.slate200}`,
+    border: `1px solid ${TOKENS.chromeBorder}`,
     borderRadius: 8,
     display: "flex", alignItems: "center", justifyContent: "center",
     overflow: "hidden",
     flexShrink: 0,
   },
-  agencyName: { fontSize: 14, fontWeight: 600, color: TOKENS.slate900, letterSpacing: "-0.01em" },
-  agencySub:  { fontSize: 10, color: TOKENS.slate500, marginTop: 1, fontWeight: 500, letterSpacing: "0.02em", textTransform: "uppercase" },
+  agencyName: { fontSize: 14, fontWeight: 600, color: TOKENS.chromeText, letterSpacing: "-0.01em" },
+  agencySub:  { fontSize: 10, color: TOKENS.chromeTextDim, marginTop: 1, fontWeight: 500, letterSpacing: "0.02em", textTransform: "uppercase" },
   headerRight: { display: "flex", alignItems: "center", gap: 16 },
   bellWrap: { position: "relative", cursor: "pointer", padding: 4 },
   bellBadge: {
@@ -188,7 +188,7 @@ const css = {
     fontSize: 9, fontWeight: 700,
     borderRadius: "50%", width: 16, height: 16,
     display: "flex", alignItems: "center", justifyContent: "center",
-    border: `2px solid ${TOKENS.navy}`,
+    border: `2px solid ${TOKENS.chromeBg}`,
   },
   userPill: {
     display: "flex", alignItems: "center", gap: 8,
@@ -198,13 +198,13 @@ const css = {
   },
   avatar: {
     width: 30, height: 30, borderRadius: "50%",
-    background: TOKENS.blue,
+    background: TOKENS.chromeBgDeep,
     display: "flex", alignItems: "center", justifyContent: "center",
     fontSize: 11, fontWeight: 700, color: TOKENS.white,
     flexShrink: 0,
   },
-  userName: { fontSize: 12, fontWeight: 600, color: TOKENS.slate900 },
-  userRole: { fontSize: 10, color: TOKENS.slate500, textTransform: "capitalize" },
+  userName: { fontSize: 12, fontWeight: 600, color: TOKENS.chromeText },
+  userRole: { fontSize: 10, color: TOKENS.chromeTextDim, textTransform: "capitalize" },
 
   // Body
   body: { display: "flex", flex: 1, overflow: "hidden" },
@@ -212,8 +212,8 @@ const css = {
   // Sidebar Nav
   nav: (collapsed) => ({
     width: collapsed ? 56 : 220,
-    background: TOKENS.white,
-    borderRight: `1px solid ${TOKENS.slate200}`,
+    background: TOKENS.chromeBg,
+    borderRight: `1px solid ${TOKENS.chromeBorder}`,
     display: "flex", flexDirection: "column",
     flexShrink: 0,
     transition: "width 0.2s ease",
@@ -221,7 +221,7 @@ const css = {
     zIndex: 50,
   }),
   navScroll: { flex: 1, overflowY: "auto", overflowX: "hidden", padding: "8px 0" },
-  navDivider: { height: 1, background: TOKENS.slate200, margin: "8px 12px" },
+  navDivider: { height: 1, background: TOKENS.chromeBorder, margin: "8px 12px" },
   navItem: (active, collapsed) => ({
     display: "flex", alignItems: "center",
     gap: collapsed ? 0 : 10,
@@ -229,9 +229,9 @@ const css = {
     justifyContent: collapsed ? "center" : "flex-start",
     cursor: "pointer",
     fontSize: 12.5, fontWeight: active ? 600 : 400,
-    color: active ? TOKENS.blue : TOKENS.slate500,
-    background: active ? TOKENS.blueLt : "transparent",
-    borderLeft: active ? `3px solid ${TOKENS.blue}` : "3px solid transparent",
+    color: active ? TOKENS.chromeText : TOKENS.chromeTextDim,
+    background: active ? TOKENS.chromeBgDeep : "transparent",
+    borderLeft: active ? `3px solid ${TOKENS.chromeText}` : "3px solid transparent",
     borderRadius: collapsed ? 0 : "0 6px 6px 0",
     marginRight: collapsed ? 0 : 8,
     transition: "all 0.12s",
@@ -247,14 +247,14 @@ const css = {
   navCollapseBtn: {
     padding: "10px 0",
     display: "flex", alignItems: "center", justifyContent: "center",
-    borderTop: `1px solid ${TOKENS.slate200}`,
+    borderTop: `1px solid ${TOKENS.chromeBorder}`,
     cursor: "pointer",
-    color: TOKENS.slate400,
+    color: TOKENS.chromeTextDim,
     transition: "color 0.15s",
   },
   navFooter: {
     padding: "8px 14px 12px",
-    borderTop: `1px solid ${TOKENS.slate200}`,
+    borderTop: `1px solid ${TOKENS.chromeBorder}`,
   },
 
   // Main Content
@@ -426,7 +426,7 @@ const LoginScreen = ({ onSignedIn }) => {
       }}>
         {/* Logo + heading */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
-          <img src="/apple-touch-icon.png" alt="paper newt" width="72" height="72" style={{ display: "block", marginBottom: 14, borderRadius: 14 }} />
+          <img src="/newt-icon-transparent.png" alt="paper newt" width="144" height="144" style={{ display: "block", marginBottom: 14 }} />
           <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Business Command Center</div>
           <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4 }}>Sign in to continue</div>
         </div>
@@ -511,7 +511,7 @@ const SetPasswordScreen = ({ email, onDone }) => {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.navy, fontFamily: "'Poppins', 'Helvetica Neue', sans-serif", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 380, background: TOKENS.white, borderRadius: 16, padding: "32px 30px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
-          <img src="/apple-touch-icon.png" alt="paper newt" width="72" height="72" style={{ display: "block", marginBottom: 14, borderRadius: 14 }} />
+          <img src="/newt-icon-transparent.png" alt="paper newt" width="144" height="144" style={{ display: "block", marginBottom: 14 }} />
           <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Welcome to your BCC</div>
           <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4, textAlign: "center" }}>
             {email ? <>Set a password for <strong>{email}</strong></> : "Set a password to finish setting up your account"}
@@ -778,7 +778,7 @@ export default function BCCApp() {
           <div style={css.headerRight}>
             {/* Alerts Bell */}
             <div style={css.bellWrap} title={`${agency.alerts} active alerts`}>
-              <Icon name="bell" size={18} color={TOKENS.slate400} />
+              <Icon name="bell" size={18} color={TOKENS.chromeText} />
               {agency.alerts > 0 && <span style={css.bellBadge}>{agency.alerts}</span>}
             </div>
 
@@ -845,7 +845,7 @@ export default function BCCApp() {
                     <Icon
                       name={item.icon}
                       size={15}
-                      color={active ? TOKENS.blue : TOKENS.slate400}
+                      color={active ? TOKENS.chromeText : TOKENS.chromeTextDim}
                     />
                     <span style={css.navLabel(navCollapsed)}>{item.label}</span>
                     {item.id === "alerts" && !navCollapsed && agency.alerts > 0 && (
@@ -864,7 +864,7 @@ export default function BCCApp() {
               onClick={() => setNavCollapsed(c => !c)}
               title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
             >
-              <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.slate400} />
+              <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
             </div>
           </nav>
 

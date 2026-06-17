@@ -31,13 +31,23 @@ export const T = {
   slate100: "#F3EFE5",   // Cream-Stone
   slate200: "#E8E2D1",   // Warm Stone
   slate300: "#D4CDB8",   // Stone-Deep
-  slate400: "#A8A99A",   // Muted Olive — secondary text
+  slate400: "#7A7C6E",   // Olive-Mid — secondary text (bumped from #A8A99A for AA contrast on cream)
   slate500: "#6E7163",   // Olive-Light — body sub-text
   slate600: "#5C5E50",   // Olive-Mid
   slate700: "#4D503F",   // Olive Charcoal — body text
   slate800: "#3B3E32",   // Deep Olive
   slate900: "#2D2F26",   // Charcoal — headlines, deepest text
   white:    "#FFFFFF",   // Paper White — cards, sheets
+
+
+  // ─── chrome surfaces (sage shell wrapping cream/white workspace) ──
+  // Used for header bar + sidebar nav. Anchors the brand identity
+  // without making content surfaces hard to read against.
+  chromeBg:      "#737A59",  // Sage Primary — primary chrome surface
+  chromeBgDeep:  "#5C6447",  // Sage Deeper — active nav fill, hover
+  chromeText:    "#F3EFE5",  // Cream-Stone — primary text on chrome
+  chromeTextDim: "#C9CCB8",  // Muted cream — secondary text/icons on chrome
+  chromeBorder:  "#5C6447",  // Sage Deeper — borders within chrome
 
   // ─── semantic (unchanged — universal meaning) ────────────
   green:    "#10B981",   // success
