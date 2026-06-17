@@ -170,8 +170,8 @@ const css = {
   },
   headerLeft: { display: "flex", alignItems: "center", gap: 12 },
   headerLogo: {
-    width: 36, height: 36,
-    background: TOKENS.white,
+    width: 48, height: 48,
+    background: TOKENS.slate50,
     border: `1px solid ${TOKENS.chromeBorder}`,
     borderRadius: 8,
     display: "flex", alignItems: "center", justifyContent: "center",
@@ -767,7 +767,7 @@ export default function BCCApp() {
         <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
           <div style={css.headerLeft}>
             <div style={css.headerLogo}>
-              <img src="/favicon-32x32.jpg" alt="paper newt" width="28" height="28" style={{ display: "block" }} />
+              <img src="/favicon-32x32.jpg" alt="paper newt" width="40" height="40" style={{ display: "block" }} />
             </div>
             <div>
               <div style={css.agencyName}>{agency.name}</div>
