@@ -60,7 +60,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, first_name, last_name, role, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -256,7 +256,7 @@ const StageBadge = ({ status }) => {
 // ─── Section: Overview ────────────────────────────────────────
 const HROverview = ({ applicants, staff, onboarding }) => {
   const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
+  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", role_category:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
 
   const saveEmployee = async () => {
     if (!newEmployee.first_name || !newEmployee.last_name) return;
@@ -264,7 +264,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
       await supabase.from("team").insert({ ...newEmployee, agency_id: AGENCY_ID, is_active: true });
     }
     setShowAddEmployee(false);
-    setNewEmployee({first_name:"", last_name:"", role:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
+    setNewEmployee({first_name:"", last_name:"", role:"", role_category:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
   };
 
   const active      = applicants.filter(a => !["hired","rejected"].includes(a.status));
@@ -319,15 +319,21 @@ const HROverview = ({ applicants, staff, onboarding }) => {
               <option value="Acquisition">Acquisition</option>
               <option value="Inside Sales">Inside Sales</option>
               <option value="Reception">Reception</option>
-              <option value="Support">Support</option>
-              <option value="Owner">Owner</option>
+              <option value="Escalation">Escalation</option>
+            </select>
+            <select value={newEmployee.role_category} onChange={e=>setNewEmployee({...newEmployee,role_category:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
+              <option value="">Role category</option>
+              <option value="Sales">Sales</option>
+              <option value="Retention">Retention</option>
             </select>
             <select value={newEmployee.role_level} onChange={e=>setNewEmployee({...newEmployee,role_level:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
               <option value="">Role level (optional)</option>
+              <option value="Owner">Owner</option>
+              <option value="Office Manager">Office Manager</option>
+              <option value="Unit Manager">Unit Manager</option>
+              <option value="Section Manager">Section Manager</option>
               <option value="Account Manager">Account Manager</option>
               <option value="Account Associate">Account Associate</option>
-              <option value="Support">Support</option>
-              <option value="Owner">Owner</option>
             </select>
             <select value={newEmployee.category} onChange={e=>setNewEmployee({...newEmployee,category:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
               <option value="agency">Agency team</option>
@@ -533,6 +539,7 @@ const StaffDirectory = ({ staff }) => {
       first_name: member.first_name || "",
       last_name: member.last_name || "",
       role: member.role || "",
+      role_category: member.role_category || "",
       role_level: member.role_level || "",
       category: member.category || "agency",
       employment_type: member.employment_type || "",
@@ -562,6 +569,7 @@ const StaffDirectory = ({ staff }) => {
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
       role: form.role.trim() || null,
+      role_category: (form.role_category || "").trim() || null,
       role_level: (form.role_level || "").trim() || null,
       category: (form.category || "agency").trim() || "agency",
       employment_type: form.employment_type.trim() || null,
@@ -711,17 +719,25 @@ const StaffDirectory = ({ staff }) => {
                       <option value="Acquisition">Acquisition</option>
                       <option value="Inside Sales">Inside Sales</option>
                       <option value="Reception">Reception</option>
-                      <option value="Support">Support</option>
-                      <option value="Owner">Owner</option>
+                      <option value="Escalation">Escalation</option>
+                    </select>
+                  </div>
+                  <div><label style={labelStyle}>Role category</label>
+                    <select style={inputStyle} value={form.role_category || ""} onChange={e=>setForm({...form, role_category:e.target.value})}>
+                      <option value="">—</option>
+                      <option value="Sales">Sales</option>
+                      <option value="Retention">Retention</option>
                     </select>
                   </div>
                   <div><label style={labelStyle}>Role level (position)</label>
                     <select style={inputStyle} value={form.role_level || ""} onChange={e=>setForm({...form, role_level:e.target.value})}>
                       <option value="">—</option>
+                      <option value="Owner">Owner</option>
+                      <option value="Office Manager">Office Manager</option>
+                      <option value="Unit Manager">Unit Manager</option>
+                      <option value="Section Manager">Section Manager</option>
                       <option value="Account Manager">Account Manager</option>
                       <option value="Account Associate">Account Associate</option>
-                      <option value="Support">Support</option>
-                      <option value="Owner">Owner</option>
                     </select>
                   </div>
                   <div><label style={labelStyle}>Team category</label>
