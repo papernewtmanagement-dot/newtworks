@@ -491,8 +491,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
     <div style={{padding:"0 0 40px 0"}}>
       {/* Header */}
       <div style={{padding:"20px 0 16px 0", borderBottom:`1px solid ${T.slate200}`, marginBottom:20}}>
-        <div style={{fontSize:20, fontWeight:800, color:T.slate900}}>{greeting}, {agencyName} 👋</div>
-        <div style={{fontSize:12, color:T.slate500, marginTop:4}}>{today}</div>
+        <div style={{fontSize:22, fontWeight:700, color:T.slate900}}>{today}</div>
       </div>
 
       {/* Top Row — Financial + AIPP */}
