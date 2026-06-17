@@ -24,30 +24,7 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 // ─── Design Tokens (matches BCCApp shell) ────────────────────
 
-const T = {
-  navy:    "#1B2B4B",
-  blue:    "#2D7DD2",
-  blueLt:  "#EFF6FF",
-  green:   "#10B981",
-  greenLt: "#D1FAE5",
-  amber:   "#F59E0B",
-  amberLt: "#FEF3C7",
-  red:     "#EF4444",
-  redLt:   "#FEE2E2",
-  purple:  "#7C3AED",
-  purpleLt:"#EDE9FE",
-  slate50: "#F8FAFC",
-  slate100:"#F1F5F9",
-  slate200:"#E2E8F0",
-  slate300:"#CBD5E1",
-  slate400:"#94A3B8",
-  slate500:"#64748B",
-  slate600:"#475569",
-  slate700:"#334155",
-  slate800:"#1E293B",
-  slate900:"#0F172A",
-  white:   "#FFFFFF",
-};
+import { T } from "../lib/theme.js";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -1566,7 +1543,7 @@ const PrintPackage = ({ data, periodLabel }) => {
 
       {/* Cover Page */}
       <div className="bcc-print-page" style={{ textAlign: "center", paddingTop: 180 }}>
-        <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Paper Newt Management LLC</div>
+        <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Peter Story State Farm Agency</div>
         <div style={{ fontSize: 18, color: "#334155", marginBottom: 40 }}>Financial Statements Package</div>
         <div style={{ fontSize: 15, color: "#475569", marginBottom: 4 }}>Period: {periodName}</div>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis · Calendar year · All figures in USD</div>

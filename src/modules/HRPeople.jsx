@@ -35,31 +35,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 
 
 // ─── Design Tokens ────────────────────────────────────────────
-const T = {
-  navy:    "#1B2B4B",
-  blue:    "#2D7DD2",
-  blueLt:  "#EFF6FF",
-  green:   "#10B981",
-  greenLt: "#D1FAE5",
-  amber:   "#F59E0B",
-  amberLt: "#FEF3C7",
-  red:     "#EF4444",
-  redLt:   "#FEE2E2",
-  purple:  "#7C3AED",
-  purpleLt:"#EDE9FE",
-  teal:    "#0D9488",
-  tealLt:  "#CCFBF1",
-  slate50: "#F8FAFC",
-  slate100:"#F1F5F9",
-  slate200:"#E2E8F0",
-  slate400:"#94A3B8",
-  slate500:"#64748B",
-  slate600:"#475569",
-  slate700:"#334155",
-  slate800:"#1E293B",
-  slate900:"#0F172A",
-  white:   "#FFFFFF",
-};
+import { T } from "../lib/theme.js";
 
 // ─── Pipeline Stage Config ────────────────────────────────────
 const STAGES = {

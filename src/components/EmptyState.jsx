@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { T } from "../lib/theme.js";
+
 /**
  * EmptyState — shown when a table has 0 rows
  * Tells Dominique exactly what's missing and how to add it
@@ -44,7 +46,7 @@ export default function EmptyState({
       {awaiting && (
         <div style={{
           display: "inline-flex", alignItems: "center", gap: 6,
-          background: "#FEF3C7", color: "#92400E", borderRadius: 20,
+          background: T.amberLt, color: T.slate700, borderRadius: 20,
           padding: "4px 12px", fontSize: 11, fontWeight: 600,
           marginBottom: 16, border: "1px solid #FDE68A"
         }}>
@@ -55,13 +57,13 @@ export default function EmptyState({
       <div style={{ fontSize: 36, marginBottom: 12 }}>{displayIcon}</div>
 
       <div style={{
-        fontSize: 15, fontWeight: 600, color: "#1E293B", marginBottom: 8
+        fontSize: 15, fontWeight: 600, color: T.slate900, marginBottom: 8
       }}>
         {displayTitle}
       </div>
 
       <div style={{
-        fontSize: 12, color: "#64748B", maxWidth: 320, lineHeight: 1.6, marginBottom: 20
+        fontSize: 12, color: T.slate500, maxWidth: 320, lineHeight: 1.6, marginBottom: 20
       }}>
         {displayDesc}
       </div>
@@ -71,7 +73,7 @@ export default function EmptyState({
           onClick={onCtaClick}
           style={{
             padding: "8px 20px", fontSize: 12, fontWeight: 600,
-            background: "#1E3A5F", color: "white", border: "none",
+            background: T.blue, color: "white", border: "none",
             borderRadius: 6, cursor: "pointer"
           }}
         >

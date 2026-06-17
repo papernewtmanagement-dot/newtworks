@@ -2,13 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ── Design tokens (mirrors Dashboard.jsx) ──────────────────────
-const T = {
-  navy:"#1E3A5F", blue:"#2563EB", green:"#16A34A", amber:"#D97706",
-  red:"#DC2626", slate900:"#0F172A", slate800:"#1E293B", slate700:"#334155",
-  slate600:"#475569", slate500:"#64748B", slate400:"#94A3B8", slate300:"#CBD5E1",
-  slate200:"#E2E8F0", slate100:"#F1F5F9", slate50:"#F8FAFC", white:"#FFFFFF",
-  greenLt:"#DCFCE7", amberLt:"#FEF3C7", redLt:"#FEE2E2", blueLt:"#DBEAFE",
-};
+import { T } from "../lib/theme.js";
 
 // ── Date helpers ───────────────────────────────────────────────
 // Week ends Saturday. Default: the upcoming (or current) Saturday.
