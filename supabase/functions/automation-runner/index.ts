@@ -63,6 +63,10 @@ const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 // causing "Tool not found" errors when the runner invoked it. Direct calls use the
 // existing groq_api_key in settings and Groq's native JSON-mode output.
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+// 2026-06-18 v15.2: Back to 70b after adding Gmail pre-processing.
+// Pre-processing strips Gmail responses to ~5% of original size (decoded plain
+// text body + subject/from/date only), so 70b's 12K TPM is now plenty.
+// 70b gives better extraction quality than 8b for structured email parsing.
 const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
 
 function stripFences(s: string): string {
@@ -211,6 +215,97 @@ async function callGroqLLM(opts: {
     return { ok: true, data: extracted, error: null };
   }
   return { ok: false, data: null, error: `Groq call exhausted retries: ${lastErr}` };
+}
+
+// =====================================================================
+// 2026-06-18 v15.2: Gmail pre-processing helpers
+// Gmail FETCH_EMAILS responses include full base64-encoded HTML + plaintext
+// + 50+ MIME headers per message — typically 15-25KB per message of mostly
+// noise. The LLM only needs subject / from / date / plaintext body. These
+// helpers extract just that, achieving ~95% token reduction before LLM call.
+// =====================================================================
+
+function decodeBase64Url(s: string): string {
+  if (!s) return "";
+  let normalized = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (normalized.length % 4 !== 0) normalized += "=";
+  try {
+    const bytes = Uint8Array.from(atob(normalized), (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+function findGmailPlainTextBody(payload: any): string {
+  if (!payload) return "";
+  // Single-part text message
+  if (payload.body?.data && (!payload.parts || payload.parts.length === 0)) {
+    const decoded = decodeBase64Url(payload.body.data);
+    // If it looks like HTML, strip tags. Otherwise treat as plain.
+    if (/<[a-z][^>]*>/i.test(decoded)) {
+      return decoded.replace(/<style[\s\S]*?<\/style>/gi, " ")
+                    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+                    .replace(/<[^>]+>/g, " ")
+                    .replace(/&nbsp;/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
+    }
+    return decoded;
+  }
+  // Multipart: prefer text/plain
+  const parts = payload.parts ?? [];
+  const plain = parts.find((p: any) => p.mimeType === "text/plain");
+  if (plain?.body?.data) return decodeBase64Url(plain.body.data);
+  // Recurse into nested multipart (multipart/alternative inside multipart/mixed)
+  for (const p of parts) {
+    if (p.parts) {
+      const nested = findGmailPlainTextBody(p);
+      if (nested) return nested;
+    }
+  }
+  // Fallback: strip HTML from text/html part
+  const html = parts.find((p: any) => p.mimeType === "text/html");
+  if (html?.body?.data) {
+    const raw = decodeBase64Url(html.body.data);
+    return raw.replace(/<style[\s\S]*?<\/style>/gi, " ")
+              .replace(/<script[\s\S]*?<\/script>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+  }
+  return "";
+}
+
+function extractGmailEssentials(composioData: any, perMessageBodyCap = 3000): any {
+  // composioResult.data may be the messages array directly, or wrapped under .messages
+  const messages = Array.isArray(composioData)
+    ? composioData
+    : (composioData?.messages ?? composioData?.data?.messages ?? []);
+  if (!Array.isArray(messages)) return composioData;
+
+  return {
+    total: messages.length,
+    messages: messages.map((m: any) => {
+      const headers = m.payload?.headers ?? [];
+      const getHeader = (name: string): string => {
+        const h = headers.find((x: any) => (x.name ?? "").toLowerCase() === name.toLowerCase());
+        return h?.value ?? "";
+      };
+      const body = findGmailPlainTextBody(m.payload).slice(0, perMessageBodyCap);
+      return {
+        messageId: m.messageId ?? m.id ?? "",
+        threadId: m.threadId ?? "",
+        subject: m.subject ?? getHeader("Subject"),
+        from: m.sender ?? m.from ?? getHeader("From"),
+        to: m.to ?? getHeader("To"),
+        date: getHeader("Date") || m.internalDate || "",
+        snippet: m.snippet ?? "",
+        body,
+      };
+    }),
+  };
 }
 
 /**
@@ -822,7 +917,15 @@ async function executeRecipe(
       if (!groqApiKey) {
         throw new Error(`Missing settings credential: groq_api_key (agency ${agencyId}). Required for LLM parsing.`);
       }
-      const inputForLLM = JSON.stringify(composioResult.data).slice(0, 60000);
+      // 2026-06-18 v15.2: Gmail-specific pre-processing.
+      // For Gmail recipes, strip raw API payloads (base64 bodies, 50+ headers, HTML
+      // versions) down to just subject/from/date/plaintext body. ~95% token reduction.
+      // Other toolkits pass through unchanged.
+      let inputData: any = composioResult.data;
+      if (recipe.composio_action === "GMAIL_FETCH_EMAILS") {
+        inputData = extractGmailEssentials(composioResult.data);
+      }
+      const inputForLLM = JSON.stringify(inputData).slice(0, 50000);
       const llmResult = await callGroqLLM({
         groqApiKey,
         systemPrompt: recipe.groq_prompt +
