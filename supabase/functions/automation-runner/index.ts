@@ -631,11 +631,14 @@ async function executeRecipe(
       if (typeof requestId === "number") {
         const startedPolling = Date.now();
         const maxWaitMs = 90_000;
-        const pollIntervalMs = 1500;
+        const pollIntervalMs = 500;
         let resp: any = null;
-        // Tight loop, separate RPC per iteration so we see the worker's commits.
+        let pollCount = 0;
+        // 2026-06-18 patch: poll immediately (no initial sleep), shorter interval,
+        // and fall back to a direct net._http_response query after timeout to catch
+        // cases where the RPC's connection-pool snapshot misses fast responses.
         while (Date.now() - startedPolling < maxWaitMs) {
-          await new Promise((r) => setTimeout(r, pollIntervalMs));
+          pollCount++;
           const { data: row, error: respErr } = await sb.rpc(
             "get_pg_net_response",
             { p_request_id: requestId },
@@ -643,14 +646,33 @@ async function executeRecipe(
           if (respErr) {
             throw new Error(`get_pg_net_response failed for ${targetFn} request_id=${requestId}: ${respErr.message}`);
           }
-          // row is jsonb-or-null. null = response hasn't landed yet.
           if (row && (row.status_code !== null || row.error_msg !== null || row.timed_out === true)) {
             resp = row;
+            console.log(`[runner] ${targetFn} response captured on poll #${pollCount} after ${Date.now() - startedPolling}ms`);
             break;
+          }
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
+        }
+        if (!resp) {
+          // Fallback: try once more via direct schema query (bypasses any RPC caching).
+          console.warn(`[runner] ${targetFn} polling timed out after ${pollCount} polls; trying direct fallback for request_id=${requestId}`);
+          try {
+            const { data: fallbackRow, error: fbErr } = await sb
+              .schema("net" as any)
+              .from("_http_response")
+              .select("status_code,content,error_msg,timed_out,created")
+              .eq("id", requestId)
+              .maybeSingle();
+            if (!fbErr && fallbackRow && (fallbackRow.status_code !== null || fallbackRow.error_msg !== null || fallbackRow.timed_out === true)) {
+              resp = fallbackRow;
+              console.log(`[runner] ${targetFn} response recovered via direct fallback for request_id=${requestId}`);
+            }
+          } catch (e) {
+            console.warn(`[runner] direct fallback query failed: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
         if (!resp) {
-          throw new Error(`${targetFn} did not respond within ${maxWaitMs / 1000}s (request_id=${requestId}). Background job may still be running; check edge function logs.`);
+          throw new Error(`${targetFn} did not respond within ${maxWaitMs / 1000}s (request_id=${requestId}, polls=${pollCount}). Background job may still be running; check edge function logs.`);
         }
         if (resp.timed_out === true) {
           throw new Error(`${targetFn} timed out at the pg_net layer (request_id=${requestId})`);
