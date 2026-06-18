@@ -58,9 +58,11 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
-// LLM calls now route through Composio's hosted Groq chat tool.
-// Auth uses composio_api_key — NO separate groq_api_key needed.
-const COMPOSIO_LLM_TOOL = "COMPOSIO_SEARCH_GROQ_CHAT";
+// 2026-06-18 v15: LLM calls bypass Composio entirely — direct to Groq.
+// COMPOSIO_SEARCH_GROQ_CHAT was removed from the composio_search toolkit catalog,
+// causing "Tool not found" errors when the runner invoked it. Direct calls use the
+// existing groq_api_key in settings and Groq's native JSON-mode output.
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
 
 function stripFences(s: string): string {
@@ -146,42 +148,34 @@ async function callComposio(opts: {
   return { ok, data, error, httpStatus: res.status };
 }
 
-async function callComposioLLM(opts: {
-  composioApiKey: string;
-  composioUserId: string;
+async function callGroqLLM(opts: {
+  groqApiKey: string;
   systemPrompt: string;
   userContent: string;
   model?: string;
   maxTokens?: number;
 }): Promise<{ ok: boolean; data: any; error: string | null }> {
-  // COMPOSIO_SEARCH_GROQ_CHAT is part of the composio_search toolkit
-  // (no separate auth/connection needed beyond composio_api_key).
-  // Schema does NOT expose response_format — system prompt MUST demand raw JSON
-  // and we MUST strip code fences before JSON.parse.
+  // v15: direct call to Groq's OpenAI-compatible chat completions endpoint.
+  // Uses native JSON-mode (response_format: json_object) — Groq guarantees valid
+  // JSON output, no markdown fences or prose. No stripFences pass needed.
   const body = {
-    user_id: opts.composioUserId,
-    arguments: {
-      messages: [
-        {
-          role: "system",
-          content: opts.systemPrompt +
-            "\n\nReturn ONLY a raw JSON object. No markdown. No code fences. No prose before or after the JSON.",
-        },
-        { role: "user", content: opts.userContent },
-      ],
-      model: opts.model ?? LLM_MODEL_DEFAULT,
-      temperature: 0.1,
-      max_tokens: opts.maxTokens ?? 4096,
-    },
+    model: opts.model ?? LLM_MODEL_DEFAULT,
+    messages: [
+      { role: "system", content: opts.systemPrompt },
+      { role: "user", content: opts.userContent },
+    ],
+    temperature: 0,
+    max_tokens: opts.maxTokens ?? 4096,
+    response_format: { type: "json_object" },
   };
 
   // Retry on 429/5xx with exponential backoff, max 3 attempts.
   let lastErr = "unknown";
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`${COMPOSIO_BASE}/${COMPOSIO_LLM_TOOL}`, {
+    const res = await fetch(GROQ_API_URL, {
       method: "POST",
       headers: {
-        "x-api-key": opts.composioApiKey,
+        "Authorization": `Bearer ${opts.groqApiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -194,34 +188,29 @@ async function callComposioLLM(opts: {
     let parsed: any = {};
     try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
     if (!res.ok) {
-      lastErr = parsed?.error?.message || parsed?.error || text.slice(0, 400);
-      return { ok: false, data: null, error: lastErr };
+      lastErr = parsed?.error?.message || parsed?.error?.code || text.slice(0, 400);
+      return { ok: false, data: null, error: `Groq HTTP ${res.status}: ${lastErr}` };
     }
-    if (!parsed?.successful) {
-      lastErr = parsed?.error || "Composio LLM call unsuccessful";
-      return { ok: false, data: null, error: lastErr };
-    }
-    const choice = parsed?.data?.choices?.[0];
+    const choice = parsed?.choices?.[0];
     const content = choice?.message?.content;
     if (!content) {
-      return { ok: false, data: null, error: "Composio LLM returned empty content" };
+      return { ok: false, data: null, error: "Groq returned empty content" };
     }
     if (choice?.finish_reason === "length") {
-      console.warn("[callComposioLLM] finish_reason=length — output may be truncated");
+      console.warn("[callGroqLLM] finish_reason=length — output may be truncated; consider raising max_tokens");
     }
-    const cleaned = stripFences(content);
     let extracted: any;
-    try { extracted = JSON.parse(cleaned); }
+    try { extracted = JSON.parse(content); }
     catch (e) {
       return {
         ok: false,
         data: null,
-        error: `LLM response was not valid JSON after fence-stripping: ${(e as Error).message}`,
+        error: `Groq response was not valid JSON despite json_object mode: ${(e as Error).message}`,
       };
     }
     return { ok: true, data: extracted, error: null };
   }
-  return { ok: false, data: null, error: `LLM call exhausted retries: ${lastErr}` };
+  return { ok: false, data: null, error: `Groq call exhausted retries: ${lastErr}` };
 }
 
 /**
@@ -824,15 +813,18 @@ async function executeRecipe(
 
     let parsedRecords: any[] = [];
 
-    // --- Optional: LLM parsing pass (via Composio-hosted Groq) ---
+    // --- Optional: LLM parsing pass (v15: direct to Groq) ---
     if (recipe.groq_prompt && recipe.output_table) {
       // Default expectation: composioResult.data is array-shaped or has a top-level
       // collection (messages, items, results). Recipes that need a different shape
       // can include extraction hints in groq_prompt.
+      const groqApiKey = await getSetting(agencyId, "groq_api_key");
+      if (!groqApiKey) {
+        throw new Error(`Missing settings credential: groq_api_key (agency ${agencyId}). Required for LLM parsing.`);
+      }
       const inputForLLM = JSON.stringify(composioResult.data).slice(0, 60000);
-      const llmResult = await callComposioLLM({
-        composioApiKey,
-        composioUserId,
+      const llmResult = await callGroqLLM({
+        groqApiKey,
         systemPrompt: recipe.groq_prompt +
           '\n\nReturn a JSON object: {"records": [...]} where records is an array of objects ready to insert into the output_table. Return {"records": []} if nothing applicable.',
         userContent: inputForLLM,
