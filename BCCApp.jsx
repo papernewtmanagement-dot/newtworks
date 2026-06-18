@@ -762,7 +762,7 @@ export default function BCCApp() {
         <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
           <div style={css.headerLeft}>
             <div style={css.headerLogo}>
-              <img src="/paper-newt-icon.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
+              <img src="/paper-newt-master.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
             </div>
             <div>
               <div style={css.agencyName}>{agency.name}</div>
