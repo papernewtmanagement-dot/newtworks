@@ -105,6 +105,86 @@ const AIPPWidget = ({ data, onNavigate }) => {
   );
 };
 
+
+// ── Widget: Standing Goals Pace ────────────────────────────────
+// Tracks Peter's 3 standing goals: 25% P&C book growth, Champions Circle
+// qualification (400 Scorecard pts), and +1pt owner profit per quarter.
+// Sources: book_snapshot · sf_on_time_snapshot · scorecard_tracking · v_income_statement.
+const GoalsPaceWidget = ({ data, onNavigate }) => {
+  const g = data.goalsPace || {};
+
+  const statusColor = (p) => {
+    if (p == null) return T.slate400;
+    if (p >= 95)   return T.green;
+    if (p >= 75)   return T.amber;
+    return T.red;
+  };
+  const statusLabel = (p) => {
+    if (p == null) return "—";
+    if (p >= 110)  return "Ahead";
+    if (p >= 95)   return "On Pace";
+    if (p >= 75)   return "Behind";
+    return "Off Pace";
+  };
+
+  const Row = ({ icon, title, current, target, sub, pacePct, navTarget }) => {
+    const c = statusColor(pacePct);
+    return (
+      <div style={{padding:"12px 0", borderBottom:`1px solid ${T.slate100}`}}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6, gap:8}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, fontSize:12, fontWeight:700, color:T.slate800, minWidth:0, flex:1}}>
+            <span style={{fontSize:15}}>{icon}</span>
+            <span style={{overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{title}</span>
+          </div>
+          <div style={{fontSize:10, fontWeight:700, color:c, padding:"2px 9px", borderRadius:10, background:`${c}18`, flexShrink:0}}>{statusLabel(pacePct)}</div>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6, gap:8}}>
+          <div style={{fontSize:15, fontWeight:800, color:T.slate900}}>
+            {current}<span style={{fontSize:11, fontWeight:500, color:T.slate500}}> / {target}</span>
+          </div>
+          {sub && <div style={{fontSize:10, color:T.slate500, textAlign:"right", maxWidth:"60%"}}>{sub}</div>}
+        </div>
+        <ProgressBar value={Math.max(0, Math.min(pacePct||0, 100))} max={100} color={c} height={6} />
+      </div>
+    );
+  };
+
+  return (
+    <Card>
+      <SectionTitle icon="🎯" title="Standing Goals — Pace Check"
+        action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Financials →</button>}
+      />
+      <Row
+        icon="📈"
+        title="P&C Book Growth (25%/yr)"
+        current={g.pc?.current_label || "—"}
+        target={g.pc?.target_label || "—"}
+        sub={g.pc?.sub}
+        pacePct={g.pc?.pace_pct}
+      />
+      <Row
+        icon="🏆"
+        title="Champions Circle (400 pts)"
+        current={g.cc?.current_label || "—"}
+        target={g.cc?.target_label || "—"}
+        sub={g.cc?.sub}
+        pacePct={g.cc?.pace_pct}
+      />
+      <Row
+        icon="💰"
+        title="Owner Profit (+1pt/qtr)"
+        current={g.op?.current_label || "—"}
+        target={g.op?.target_label || "—"}
+        sub={g.op?.sub}
+        pacePct={g.op?.pace_pct}
+      />
+      <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
+        {g.as_of_note || "Pace computed live · book_snapshot · sf_on_time_snapshot · GL"}
+      </div>
+    </Card>
+  );
+};
+
 // ── Widget: Monthly Close Progress ────────────────────────────
 // Visual checklist: closed months shown as compact pills, current month shows
 // item-by-item received/outstanding with the actual document labels.
@@ -424,21 +504,139 @@ export default function Dashboard({ onNavigate = () => {} }) {
         const { data: compData } = await supabase.from("comp_recap").select("*").order("period_year",{ascending:false}).order("period_month",{ascending:false}).limit(20);
         const latestComp = (compData||[])[0] || {};
 
-        // Build income statement summary
+        // Build income statement summary (current year + prior year for goal comparisons)
         const now = new Date();
         const curYear  = now.getFullYear();
         const curMonth = now.getMonth() + 1;
         const { data: isData } = await supabase.from("v_income_statement")
           .select("account_name, account_type, amount, month, year")
-          .eq("year", curYear)
-          .limit(500);
+          .gte("year", curYear - 1)
+          .limit(1500);
 
-        const incomeLines  = (isData||[]).filter(r => r.account_type === "income");
-        const expenseLines = (isData||[]).filter(r => r.account_type === "expense");
+        const isCur = (isData||[]).filter(r => r.year === curYear);
+        const incomeLines  = isCur.filter(r => r.account_type === "income");
+        const expenseLines = isCur.filter(r => r.account_type === "expense");
         const sum = rows => rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
         const revenueMTD  = sum(incomeLines.filter(r  => r.month === curMonth));
         const expensesMTD = sum(expenseLines.filter(r => r.month === curMonth));
         const revenueYTD  = sum(incomeLines);
+
+        // ─── Standing Goals pace computation ─────────────────────
+        // Pull goal feeds in parallel
+        const [bookRes, bpgRes, sfRes, scRes] = await Promise.allSettled([
+          supabase.from("book_snapshot").select("snapshot_date, auto_pif, fire_pif").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("book_performance_goals").select("lob, metric, target_value").eq("agency_id", AGENCY_ID).eq("year", curYear),
+          supabase.from("sf_on_time_snapshot").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("scorecard_tracking").select("metric_name, min_target, max_target").eq("agency_id", AGENCY_ID).eq("program_year", curYear),
+        ]);
+        const book = bookRes.status==="fulfilled" ? bookRes.value.data : null;
+        const bpg  = bpgRes.status==="fulfilled" ? (bpgRes.value.data||[]) : [];
+        const sf   = sfRes.status==="fulfilled" ? sfRes.value.data : null;
+        const scBands = (scRes.status==="fulfilled" ? (scRes.value.data||[]) : []).reduce((acc,r) => { acc[r.metric_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0}; return acc; }, {});
+
+        // Days through year (for annualization)
+        const yearStart = new Date(curYear, 0, 1);
+        const daysElapsed = Math.max(1, Math.floor((now - yearStart) / 86400000) + 1);
+        const annualize = (ytd) => (parseFloat(ytd)||0) * (365 / daysElapsed);
+        const yearProgress = daysElapsed / 365;
+
+        // ─── Goal 1: P&C Book Growth (25%/yr) ───
+        let pc = null;
+        const bpgByKey = bpg.reduce((m,r) => { m[`${r.lob}.${r.metric}`] = parseFloat(r.target_value)||0; return m; }, {});
+        const autoTarget = bpgByKey["auto.pif"];
+        const fireTarget = bpgByKey["fire.pif"];
+        const autoGainTgt = bpgByKey["auto.gain"];
+        const fireGainTgt = bpgByKey["fire.gain"];
+        if (book && autoTarget && fireTarget && autoGainTgt!=null && fireGainTgt!=null) {
+          const ysAutoPC  = autoTarget - autoGainTgt;
+          const ysFirePC  = fireTarget - fireGainTgt;
+          const ysPC      = ysAutoPC + ysFirePC;
+          const curPC     = (book.auto_pif||0) + (book.fire_pif||0);
+          const netYTD    = curPC - ysPC;
+          const tgtGain   = ysPC * 0.25;                     // 25% of year-start P&C
+          const annualGain= annualize(netYTD);
+          const growthPctYTD     = ysPC > 0 ? (netYTD / ysPC) * 100 : 0;
+          const growthPctOnTime  = ysPC > 0 ? (annualGain / ysPC) * 100 : 0;
+          const pace_pct  = growthPctOnTime > 0 ? (growthPctOnTime / 25) * 100 : 0;
+          pc = {
+            current_label: `${curPC.toLocaleString()} PIF`,
+            target_label:  `${Math.round(ysPC * 1.25).toLocaleString()} PIF`,
+            sub: `+${netYTD} YTD · on-time +${Math.round(annualGain)} (need +${Math.round(tgtGain)}) · ${growthPctYTD.toFixed(1)}% / 25%`,
+            pace_pct,
+          };
+        }
+
+        // ─── Goal 2: Champions Circle (400 pts, Auto + Fire + FS only) ───
+        let cc = null;
+        if (sf) {
+          const lin = (val, min, max, capPts) => {
+            if (!max || max <= min) return 0;
+            const raw = ((val - min) / (max - min)) * capPts;
+            return Math.max(0, Math.min(capPts, raw));
+          };
+          const autoGainAnn = annualize((sf.auto_production_ytd||0) - (sf.auto_lapse_ytd||0));
+          const autoProdAnn = annualize(sf.auto_production_ytd||0);
+          const fireGainAnn = annualize((sf.fire_production_ytd||0) - (sf.fire_lapse_ytd||0));
+          const fireProdAnn = annualize(sf.fire_production_ytd||0);
+          const fsCreditsAnn= annualize((parseFloat(sf.life_premium_credits_ytd)||0) + (parseFloat(sf.ips_activity_ytd)||0));
+          const autoGainPts = scBands.auto_pif_gain        ? lin(autoGainAnn, scBands.auto_pif_gain.min, scBands.auto_pif_gain.max, 200) : 0;
+          const autoProdPts = scBands.auto_pif_production  ? lin(autoProdAnn, scBands.auto_pif_production.min, scBands.auto_pif_production.max, 125) : 0;
+          const fireGainPts = scBands.fire_pif_gain        ? lin(fireGainAnn, scBands.fire_pif_gain.min, scBands.fire_pif_gain.max, 100) : 0;
+          const fireProdPts = scBands.fire_pif_production  ? lin(fireProdAnn, scBands.fire_pif_production.min, scBands.fire_pif_production.max, 100) : 0;
+          const fsPts       = scBands.fs_credits           ? lin(fsCreditsAnn, scBands.fs_credits.min, scBands.fs_credits.max, 225) : 0;
+          const autoPts     = Math.max(autoGainPts, autoProdPts);
+          const firePts     = Math.max(fireGainPts, fireProdPts);
+          const totalPts    = autoPts + firePts + fsPts;
+          const pace_pct    = (totalPts / 400) * 100;
+          cc = {
+            current_label: `${Math.round(totalPts)} pts`,
+            target_label:  `400 pts`,
+            sub: `Auto ${Math.round(autoPts)} · Fire ${Math.round(firePts)} · FS ${Math.round(fsPts)}`,
+            pace_pct,
+          };
+        }
+
+        // ─── Goal 3: Owner Profit (+1pt/quarter) ───
+        let op = null;
+        const isAll = (isData||[]);
+        const sumQ = (year, q) => {
+          const months = [q*3-2, q*3-1, q*3];
+          const rev = sum(isAll.filter(r => r.year===year && months.includes(r.month) && r.account_type==="income"));
+          const exp = sum(isAll.filter(r => r.year===year && months.includes(r.month) && r.account_type==="expense"));
+          return rev > 0 ? { revenue:rev, expenses:exp, margin: ((rev - exp) / rev) * 100 } : null;
+        };
+        // Latest closed quarter = the most recent quarter whose final month is < current month/year
+        const curQ  = Math.ceil(curMonth / 3);
+        let lastClosedYear, lastClosedQ, priorClosedYear, priorClosedQ;
+        if (curQ === 1) { lastClosedYear = curYear-1; lastClosedQ = 4; priorClosedYear = curYear-1; priorClosedQ = 3; }
+        else            { lastClosedYear = curYear;   lastClosedQ = curQ-1; priorClosedYear = (curQ-1===1) ? curYear-1 : curYear; priorClosedQ = curQ===2 ? 4 : curQ-2; if (priorClosedYear !== curYear) priorClosedYear = curYear-1; }
+        const latestQ = sumQ(lastClosedYear, lastClosedQ);
+        const priorQ  = sumQ(priorClosedYear, priorClosedQ);
+        if (latestQ && priorQ) {
+          const delta = latestQ.margin - priorQ.margin;
+          const pace_pct = (delta / 1.0) * 100; // 1pp = 100% pace
+          const sign = delta >= 0 ? "+" : "";
+          op = {
+            current_label: `${latestQ.margin.toFixed(1)}%`,
+            target_label:  `${(priorQ.margin + 1).toFixed(1)}%`,
+            sub: `${sign}${delta.toFixed(1)} pp vs Q${priorClosedQ} ${priorClosedYear} (${priorQ.margin.toFixed(1)}%)`,
+            pace_pct: Math.max(0, Math.min(200, pace_pct)),
+          };
+        } else if (latestQ) {
+          op = {
+            current_label: `${latestQ.margin.toFixed(1)}%`,
+            target_label:  "—",
+            sub: `Q${lastClosedQ} ${lastClosedYear} margin · prior Q unavailable`,
+            pace_pct: null,
+          };
+        }
+
+        const goalsPace = {
+          pc, cc, op,
+          as_of_note: sf?.snapshot_date
+            ? `Live as of ${sf.snapshot_date} · day ${daysElapsed} of 365`
+            : `Live · day ${daysElapsed} of 365`,
+        };
 
         setDashData({
           agency,
@@ -466,6 +664,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
           closeDocuments: closeRes.status==="fulfilled" ? (closeRes.value.data||[]) : [],
           closeChecklist: closeChecklistRes.status==="fulfilled" ? (closeChecklistRes.value.data||[]) : [],
           cprLatest: cprRes.status==="fulfilled" ? (cprRes.value.data || null) : null,
+          goalsPace,
         });
       } catch (err) {
         console.error("Dashboard load error:", err);
@@ -494,7 +693,12 @@ export default function Dashboard({ onNavigate = () => {} }) {
         <div style={{fontSize:22, fontWeight:700, color:T.slate900}}>{today}</div>
       </div>
 
-      {/* Top Row — Financial + AIPP */}
+      {/* Top Row — Standing Goals Pace (full width) */}
+      <div style={{marginBottom:14}}>
+        <GoalsPaceWidget data={dashData} onNavigate={onNavigate} />
+      </div>
+
+      {/* Second Row — Financial + AIPP */}
       <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
         <FinancialWidget data={dashData} onNavigate={onNavigate} />
         <AIPPWidget data={dashData} onNavigate={onNavigate} />
