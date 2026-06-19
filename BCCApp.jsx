@@ -175,8 +175,7 @@ const css = {
     display: "flex", alignItems: "center",
     flexShrink: 0,
   },
-  agencyName: { fontSize: 14, fontWeight: 600, color: TOKENS.chromeText, letterSpacing: "-0.01em" },
-  agencySub:  { fontSize: 10, color: TOKENS.chromeTextDim, marginTop: 1, fontWeight: 500, letterSpacing: "0.02em", textTransform: "uppercase" },
+  agencyName: { fontFamily: '"Quicksand", "Poppins", sans-serif', fontSize: 22, fontWeight: 500, color: TOKENS.chromeText, letterSpacing: "0.04em" },
   headerRight: { display: "flex", alignItems: "center", gap: 16 },
   bellWrap: { position: "relative", cursor: "pointer", padding: 4 },
   bellBadge: {
@@ -768,8 +767,7 @@ export default function BCCApp() {
               <img src="/paper-newt-master.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
             </div>
             <div>
-              <div style={css.agencyName}>{agency.name}</div>
-              <div style={css.agencySub}>Business Command Center</div>
+              <div style={css.agencyName}>Paper Newt</div>
             </div>
           </div>
 
