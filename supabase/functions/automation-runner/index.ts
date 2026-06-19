@@ -372,23 +372,40 @@ async function archiveProcessedGmailMessages(opts: {
   if (ids.length === 0) {
     return { ok: true, archived: 0, error: null };
   }
-  const result = await callComposio({
-    apiKey: opts.apiKey,
-    userId: opts.userId,
-    connectedAccountId: opts.connectedAccountId,
-    toolSlug: "GMAIL_BATCH_MODIFY_MESSAGES",
-    toolArguments: {
-      messageIds: ids,
-      removeLabelIds: ["INBOX"],
-      ...(opts.additionalLabelsToAdd && opts.additionalLabelsToAdd.length > 0
-        ? { addLabelIds: opts.additionalLabelsToAdd }
-        : {}),
-    },
-  });
-  if (!result.ok) {
-    return { ok: false, archived: 0, error: result.error };
+  // GMAIL_BATCH_MODIFY_MESSAGES is not enabled for this Composio org —
+  // returns 404 Tool_ToolNotFound. Use GMAIL_ADD_LABEL_TO_EMAIL per-message
+  // instead. Args are snake_case for this tool (message_id, remove_label_ids,
+  // add_label_ids), unlike the batch tool which uses camelCase.
+  let archived = 0;
+  const errors: string[] = [];
+  for (const msgId of ids) {
+    const result = await callComposio({
+      apiKey: opts.apiKey,
+      userId: opts.userId,
+      connectedAccountId: opts.connectedAccountId,
+      toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
+      toolArguments: {
+        message_id: msgId,
+        remove_label_ids: ["INBOX"],
+        ...(opts.additionalLabelsToAdd && opts.additionalLabelsToAdd.length > 0
+          ? { add_label_ids: opts.additionalLabelsToAdd }
+          : {}),
+      },
+    });
+    if (result.ok) {
+      archived += 1;
+    } else {
+      errors.push(`${msgId}: ${result.error}`);
+    }
   }
-  return { ok: true, archived: ids.length, error: null };
+  if (errors.length > 0) {
+    return {
+      ok: archived > 0,
+      archived,
+      error: `${errors.length}/${ids.length} failed: ${errors.slice(0, 3).join("; ")}`,
+    };
+  }
+  return { ok: true, archived, error: null };
 }
 
 async function getComposioAccountId(agencyId: string, connection: string): Promise<string> {
