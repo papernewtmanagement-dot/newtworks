@@ -532,6 +532,151 @@ const StaffDirectory = ({ staff }) => {
   // Local overlay of edits so saved changes show immediately without a full reload
   const [overrides, setOverrides] = useState({});
 
+  // ── Termination flow state (principle 500: document the decision before making it) ──
+  const [terminatingId, setTerminatingId] = useState(null);
+  const [termForm, setTermForm] = useState({});
+  const [terminating, setTerminating] = useState(false);
+  const [termError, setTermError] = useState("");
+  // Track terminated IDs so they disappear from the active list immediately on success.
+  const [terminatedIds, setTerminatedIds] = useState(new Set());
+
+  const startTerminate = (member) => {
+    setTermError("");
+    setTerminatingId(member.id);
+    setTermForm({
+      reason_category: "",
+      end_date: new Date().toISOString().slice(0,10),
+      notes: "",
+      confirm_name: "",
+    });
+  };
+  const cancelTerminate = () => { setTerminatingId(null); setTermForm({}); setTermError(""); };
+
+  const terminateMember = async (member) => {
+    if (terminating) return;
+    const expectedName = `${member.first_name || ""} ${member.last_name || ""}`.trim();
+    const reason = (termForm.reason_category || "").trim();
+    const notes = (termForm.notes || "").trim();
+    const endDate = termForm.end_date || new Date().toISOString().slice(0,10);
+    const typedName = (termForm.confirm_name || "").trim();
+
+    // Principle 500 enforcement: require structured reason + free-text documentation.
+    if (!reason) { setTermError("Reason category is required."); return; }
+    if (notes.length < 10) { setTermError("Notes are required (at least 10 characters) — this is the documented reasoning per principle 500."); return; }
+    if (typedName.toLowerCase() !== expectedName.toLowerCase()) {
+      setTermError(`Type the team member's full name ("${expectedName}") to confirm.`);
+      return;
+    }
+    if (!supabase) { setTermError("No database connection."); return; }
+
+    setTerminating(true);
+    setTermError("");
+
+    const nowIso = new Date().toISOString();
+    const reasonLabel = {
+      ethics_breach:   "Ethics breach (immediate, per principle 500)",
+      pip_not_met:     "Signed PIP not met (per principle 500)",
+      resignation:     "Resignation (voluntary)",
+      mutual_departure:"Mutual departure",
+      other:           "Other (documented in notes)",
+    }[reason] || reason;
+
+    try {
+      // 1) Deactivate the team row.
+      const teamUpdate = await supabase
+        .from("team")
+        .update({
+          is_active: false,
+          end_date: endDate,
+          archived_at: nowIso,
+          performance_status: "terminated",
+          updated_at: nowIso,
+        })
+        .eq("id", member.id)
+        .eq("agency_id", AGENCY_ID);
+      if (teamUpdate.error) {
+        setTermError(`team update failed: ${teamUpdate.error.message}`);
+        setTerminating(false);
+        return;
+      }
+
+      // 2) Deactivate the linked user account if one exists. team.user_id is the canonical link.
+      if (member.user_id) {
+        const userUpdate = await supabase
+          .from("users")
+          .update({
+            is_active: false,
+            invite_status: "deactivated",
+            updated_at: nowIso,
+          })
+          .eq("id", member.user_id)
+          .eq("agency_id", AGENCY_ID);
+        if (userUpdate.error) {
+          // Roll back the team change so we don't leave an inconsistent state.
+          await supabase.from("team").update({
+            is_active: true,
+            end_date: null,
+            archived_at: null,
+            performance_status: null,
+          }).eq("id", member.id).eq("agency_id", AGENCY_ID);
+          setTermError(`users update failed (team row rolled back): ${userUpdate.error.message}`);
+          setTerminating(false);
+          return;
+        }
+      }
+
+      // 3) Write the audit row to team_behavioral_notes (principle 500 documentation surface).
+      const obsText = [
+        `TERMINATION — ${reasonLabel}`,
+        `End date: ${endDate}`,
+        `Notes: ${notes}`,
+      ].join("\n");
+      await supabase.from("team_behavioral_notes").insert({
+        agency_id: AGENCY_ID,
+        team_member_id: member.id,
+        observation_date: endDate,
+        pattern_type: "termination",
+        source: "termination_action",
+        observation_text: obsText,
+      });
+
+      // 4) Open an offboarding follow-up task for the admin checklist.
+      await supabase.from("tasks").insert({
+        agency_id: AGENCY_ID,
+        title: `Offboarding follow-up: ${expectedName} (${endDate})`,
+        description: [
+          `Reason: ${reasonLabel}`,
+          `End date: ${endDate}`,
+          ``,
+          `Offboarding checklist:`,
+          `- [ ] Revoke SF / Outlook / shared logins`,
+          `- [ ] Recover agency equipment, keys, badges`,
+          `- [ ] Final payroll cut + commission true-up`,
+          `- [ ] Remove from Telegram team groups + checkin recipes`,
+          `- [ ] Remove from time-off coverage rotation`,
+          `- [ ] Reassign book of business / open tasks`,
+          `- [ ] Update org chart + handbook references`,
+        ].join("\n"),
+        status: "open",
+        priority: reason === "ethics_breach" ? "high" : "medium",
+        module_reference: "hr_people",
+        related_id: member.id,
+        due_date: endDate,
+        created_by: "termination_action",
+      });
+
+      // 5) Local UI update so the row disappears from the active list immediately.
+      setTerminatedIds(prev => { const n = new Set(prev); n.add(member.id); return n; });
+      setTerminatingId(null);
+      setTermForm({});
+      setExpanded(null);
+    } catch (e) {
+      setTermError(e?.message || "Unexpected error during termination.");
+    } finally {
+      setTerminating(false);
+    }
+  };
+
   const startEdit = (member) => {
     setSaveError("");
     setEditingId(member.id);
@@ -627,7 +772,7 @@ const StaffDirectory = ({ staff }) => {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      {staff.filter(s => s.is_active).map(raw => {
+      {staff.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
         // Merge any saved override on top of the loaded row.
         const member = overrides[raw.id] ? { ...raw, ...overrides[raw.id] } : raw;
         const isExpanded = expanded === member.id;
@@ -702,7 +847,71 @@ const StaffDirectory = ({ staff }) => {
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>
                     ✏️ Edit
                   </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startTerminate(member); }}
+                    title="Document and execute end of employment. Deactivates linked user login."
+                    style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.white, border:`1px solid ${T.red}`, borderRadius:7, cursor:"pointer", marginLeft:"auto" }}>
+                    End Employment…
+                  </button>
                   <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}${member.role_level ? " · " + member.role_level : ""}\nTeam: ${member.category || "agency"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicenses: ${[member.license_pc && "P&C", member.license_lh && "L&H", member.license_ips && "IPS"].filter(Boolean).join(", ") || "None"}${((member.license_states||[]).length ? " (states: " + (member.license_states||[]).join(", ") + ")" : "")}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                </div>
+              </div>
+            )}
+
+            {terminatingId === member.id && (
+              <div style={{ marginTop:14, paddingTop:14, borderTop:`2px solid ${T.red}` }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.red, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.04em" }}>
+                  ⚠ End Employment — {member.first_name} {member.last_name}
+                </div>
+                <div style={{ fontSize:11, color:T.slate600, marginBottom:12, lineHeight:1.55 }}>
+                  This is the documented record of the termination decision (core principle 500). It deactivates the team row, deactivates the linked user login if one exists, writes the reason and notes to <code>team_behavioral_notes</code>, and opens an offboarding follow-up task.
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:10, marginBottom:10 }}>
+                  <div>
+                    <label style={labelStyle}>Reason category *</label>
+                    <select style={inputStyle} value={termForm.reason_category || ""} onChange={e=>setTermForm({...termForm, reason_category:e.target.value})}>
+                      <option value="">— select —</option>
+                      <option value="ethics_breach">Ethics breach (immediate)</option>
+                      <option value="pip_not_met">Signed PIP not met</option>
+                      <option value="resignation">Resignation (voluntary)</option>
+                      <option value="mutual_departure">Mutual departure</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>End date *</label>
+                    <input style={inputStyle} type="date" value={termForm.end_date || ""} onChange={e=>setTermForm({...termForm, end_date:e.target.value})} />
+                  </div>
+                </div>
+                <div style={{ marginBottom:10 }}>
+                  <label style={labelStyle}>Notes / reasoning * (the documented why — principle 500)</label>
+                  <textarea
+                    style={{ ...inputStyle, resize:"vertical", minHeight:70, fontFamily:"inherit", lineHeight:1.5 }}
+                    rows={3}
+                    value={termForm.notes || ""}
+                    onChange={e=>setTermForm({...termForm, notes:e.target.value})}
+                    placeholder="For ethics breach: what was the breach, when discovered. For PIP not met: which signed PIP, which metrics missed. For resignation: notice given, reason if known. For mutual: what was agreed."
+                  />
+                </div>
+                <div style={{ marginBottom:12 }}>
+                  <label style={labelStyle}>Type full name to confirm: <strong>{member.first_name} {member.last_name}</strong></label>
+                  <input style={inputStyle} value={termForm.confirm_name || ""} onChange={e=>setTermForm({...termForm, confirm_name:e.target.value})} placeholder={`${member.first_name || ""} ${member.last_name || ""}`.trim()} />
+                </div>
+
+                {termError && (
+                  <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
+                    {termError}
+                  </div>
+                )}
+
+                <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+                  <button onClick={cancelTerminate} disabled={terminating} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:"none", borderRadius:7, cursor:terminating?"not-allowed":"pointer" }}>Cancel</button>
+                  <button
+                    onClick={() => terminateMember(member)}
+                    disabled={terminating}
+                    style={{ padding:"7px 16px", fontSize:11, fontWeight:700, color:T.white, background:terminating?T.slate400:T.red, border:"none", borderRadius:7, cursor:terminating?"not-allowed":"pointer" }}>
+                    {terminating ? "Ending Employment…" : "End Employment"}
+                  </button>
                 </div>
               </div>
             )}
