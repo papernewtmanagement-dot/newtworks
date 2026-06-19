@@ -195,7 +195,7 @@ function SubmitView({ me, onSubmitted }) {
         <h3 style={{ marginTop: 0 }}>New Request</h3>
         <label style={labelStyle}>Type</label>
         <select value={requestType} onChange={e => setRequestType(e.target.value)} style={inputStyle}>
-          {REQUEST_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          {REQUEST_TYPES.filter(t => t.id !== "sick").map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         {!isChange && (<>
           <label style={labelStyle}>Start date</label>
@@ -356,6 +356,112 @@ function MyRequestsView({ me }) {
 }
 
 // INBOX VIEW (Owner only) ================================================
+function LogSickDayForm({ onLogged }) {
+  const [team, setTeam] = useState([]);
+  const [teamId, setTeamId] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [partialDay, setPartialDay] = useState("none");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    async function loadTeam() {
+      if (!supabase) return;
+      const { data } = await supabase.from("team")
+        .select("id, first_name, last_name")
+        .eq("agency_id", AGENCY_ID)
+        .eq("category", "agency")
+        .is("archived_at", null)
+        .neq("is_test_user", true)
+        .order("first_name");
+      setTeam(Array.isArray(data) ? data : []);
+    }
+    loadTeam();
+  }, []);
+
+  async function submit() {
+    if (!teamId || !startDate) { alert("Team member and start date are required"); return; }
+    setSubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc("log_sick_day_for", {
+        p_team_member_id: teamId,
+        p_start_date: startDate,
+        p_end_date: endDate || startDate,
+        p_partial_day: partialDay || "none",
+        p_notes: notes || null
+      });
+      if (error) throw error;
+      setTeamId(""); setStartDate(""); setEndDate(""); setPartialDay("none"); setNotes("");
+      setExpanded(false);
+      alert("Sick day logged. Calendar event will appear within 5 minutes.");
+      if (typeof onLogged === "function") onLogged();
+    } catch (e) {
+      alert("Log failed: " + (e?.message || "unknown"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const inp = { padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, marginTop: 4, width: "100%", boxSizing: "border-box" };
+  const lbl = { fontSize: 12, fontWeight: 600, color: "#475569", display: "block" };
+
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", overflow: "hidden", marginBottom: 4 }}>
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 600, color: "#0f172a", textAlign: "left" }}
+      >
+        <span>🤒 Log Sick Day on Behalf of Team Member</span>
+        <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "#64748b", fontSize: 18, lineHeight: 1 }}>›</span>
+      </button>
+      {expanded && (
+        <div style={{ padding: "12px 16px 16px", borderTop: "1px solid #e2e8f0" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label style={lbl}>
+              Team Member
+              <select value={teamId} onChange={e => setTeamId(e.target.value)} style={inp}>
+                <option value="">— select —</option>
+                {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
+              </select>
+            </label>
+            <label style={lbl}>
+              Partial Day
+              <select value={partialDay} onChange={e => setPartialDay(e.target.value)} style={inp}>
+                <option value="none">Full day</option>
+                <option value="morning">Morning only</option>
+                <option value="afternoon">Afternoon only</option>
+              </select>
+            </label>
+            <label style={lbl}>
+              Start Date
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inp} />
+            </label>
+            <label style={lbl}>
+              End Date (optional)
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inp} />
+            </label>
+          </div>
+          <label style={{ ...lbl, marginTop: 12 }}>
+            Notes (optional)
+            <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. 'flu, out for the day'" style={inp} />
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+            <button onClick={submit} disabled={submitting} style={{ padding: "8px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: submitting ? "wait" : "pointer", opacity: submitting ? 0.6 : 1 }}>
+              {submitting ? "Logging…" : "Log Sick Day"}
+            </button>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>
+              Skips vote. Status = approved. Calendar event auto-creates. No email sent.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InboxView({ me, onDecided }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -402,12 +508,16 @@ function InboxView({ me, onDecided }) {
     finally { setDeciding(d => ({ ...d, [reqId]: false })); }
   }
 
-  if (loading) return <div style={{ color: "#64748b" }}>Loading…</div>;
-  if (!requests.length) return <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>Inbox empty.</div>;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {requests.map(r => {
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <LogSickDayForm onLogged={load} />
+      {loading ? (
+        <div style={{ color: "#64748b" }}>Loading…</div>
+      ) : !requests.length ? (
+        <div style={{ color: "#64748b", padding: 24, textAlign: "center", border: "1px dashed #e2e8f0", borderRadius: 8 }}>Inbox empty.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {requests.map(r => {
         const vs = voteStatuses[r.id];
         const elig = r.eligibility_check_result;
         const cov = r.coverage_check_result;
@@ -449,6 +559,8 @@ function InboxView({ me, onDecided }) {
           </div>
         );
       })}
+        </div>
+      )}
     </div>
   );
 }
