@@ -1,5 +1,5 @@
 # =========================================================================
-# docs/drainer.py -- LLM Parse Queue Drainer (v1.2)
+# docs/drainer.py -- LLM Parse Queue Drainer (v1.3)
 # =========================================================================
 # Workbench-side script that drains llm_parse_queue using invoke_llm() and
 # smart_file_extract() -- helpers that are only available inside
@@ -12,6 +12,23 @@
 #      Or:   drain_llm_queue_until_empty()  -- drains everything
 #
 # CHANGELOG:
+#   v1.3 (2026-06-19): (a) Fixed _download_from_storage missing the
+#     `apikey` header -- the new sb_secret_ Supabase keys reject
+#     storage requests that only carry Authorization: Bearer (legacy
+#     JWT keys did not need the apikey header). Symptom: storage GET
+#     returned HTTP 400 silently, drainer reported "extracted text
+#     too short" instead of the real auth failure.
+#   v1.3 (2026-06-19): (b) Removed comp_recap_daily / deduction_statement
+#     LLM prompts. Those doc types are now parsed deterministically
+#     INLINE by the document-processor edge function via
+#     parsers/comp_recap.ts and parsers/deduction.ts (regex-based, no
+#     LLM). The queue path is no longer used for those doc types --
+#     it produced two recurring bugs: (i) silent payload truncation
+#     on bigger comp PDFs, (ii) wrong-column extraction (YTD instead
+#     of CURRENT) on deduction statements. If a comp/deduction PDF
+#     ever lands in this queue manually, the parse_pdf_to_text
+#     handler now refuses it with a clear message pointing back to
+#     the doc-processor inline path.
 #   v1.2 (2026-05-20): Added parse_pdf_to_text handler. Was previously
 #     missing -- caused 19 stuck ADP files + every new PDF intake to
 #     hang in queue. Drainer now downloads from Supabase Storage,
@@ -97,7 +114,18 @@ def _load_storage_creds():
 def _download_from_storage(bucket: str, path: str) -> bytes:
     _load_storage_creds()
     url = f"{_STORAGE_URL}/storage/v1/object/{bucket}/{path}"
-    r = requests.get(url, headers={"Authorization": f"Bearer {_STORAGE_KEY}"}, timeout=60)
+    # IMPORTANT: New sb_secret_* keys require BOTH Authorization: Bearer
+    # AND apikey headers. Legacy JWT keys worked with just Authorization;
+    # newer keys 400 silently without apikey. Always send both. See v1.3
+    # changelog.
+    r = requests.get(
+        url,
+        headers={
+            "Authorization": f"Bearer {_STORAGE_KEY}",
+            "apikey": _STORAGE_KEY,
+        },
+        timeout=60,
+    )
     if r.status_code != 200:
         raise RuntimeError(f"Storage GET {bucket}/{path} -> HTTP {r.status_code}: {r.text[:200]}")
     return r.content
@@ -184,44 +212,14 @@ def _create_failure_task(agency_id: str, row: dict, error: str) -> None:
     """)
 
 
-# === PDF/text extraction handler (NEW in v1.2) =====================
-
-# LLM prompts per doc_type for post-extraction parsing.
-COMP_RECAP_LLM_PROMPT = """You are an extractor for State Farm Daily Compensation Recap PDFs.
-Given the extracted text below, return a JSON object with a "rows" array.
-Each row represents one line item with these fields:
-
-- comp_type: string ("1H" or "2H")
-- comp_category: string -- one of:
-    "auto_new", "auto_renewal", "fire_new", "fire_renewal",
-    "life_new", "life_renewal", "health_new", "health_renewal",
-    "deduction_license", "deduction_technology", "deduction_advertising",
-    "other"
-- description: string (the original line item description)
-- amount: number (positive for credits, NEGATIVE for deductions shown in parens)
-- period_year: integer
-- period_month: integer
-- period_day: integer
-- is_aipp_eligible: boolean (TRUE only for auto_new, auto_renewal, fire_new, fire_renewal)
-- is_scorecard_eligible: boolean (always false)
-
-SKIP summary lines (GROSS, TOTAL, NET). Only extract individual line items.
-Return ONLY a JSON object {"rows": [...]}. No prose. No markdown fences."""
-
-DEDUCTION_LLM_PROMPT = """You are an extractor for State Farm Deduction Statements.
-Given the extracted text below, return a JSON object with a "rows" array.
-Each row represents one deduction line item:
-
-- comp_type: string ("1H" or "2H")
-- comp_category: string (one of "deduction_license", "deduction_technology",
-    "deduction_advertising", "deduction_other")
-- description: string
-- amount: number (NEGATIVE -- deductions reduce comp)
-- period_year, period_month, period_day: integers
-- is_aipp_eligible: false
-- is_scorecard_eligible: false
-
-SKIP totals. Return ONLY {"rows": [...]}. No prose. No fences."""
+# === PDF/text extraction handler ===================================
+#
+# NOTE: v1.3 removed the LLM prompts for comp_recap_daily and
+# deduction_statement. Those doc types are now parsed deterministically
+# INLINE by the document-processor edge function via
+# parsers/comp_recap.ts and parsers/deduction.ts (regex-based). If a
+# row of either doc_type lands here, _process_parse_pdf_to_text refuses
+# it and the queue row fails fast with a clear error message.
 
 
 def _process_parse_pdf_to_text(agency_id: str, row: dict) -> dict:
@@ -262,78 +260,29 @@ def _process_parse_pdf_to_text(agency_id: str, row: dict) -> dict:
         try: os.unlink(tmp_path)
         except: pass
 
-    # Pick the right LLM prompt for this doc_type
+    # v1.3: comp_recap_daily / deduction_statement are now handled by
+    # the doc-processor inline path (deterministic regex parser). If we
+    # see one here, fail fast with a pointer to the right path.
     doc_type = row.get('doc_type')
-    if doc_type == 'comp_recap_daily':
-        prompt = COMP_RECAP_LLM_PROMPT
-        target_table = 'comp_recap'
-    elif doc_type == 'deduction_statement':
-        prompt = DEDUCTION_LLM_PROMPT
-        target_table = 'comp_recap'  # deductions also go to comp_recap with negative amounts
-    else:
-        # text extracted, but no downstream parser for this doc_type yet
-        return {
-            "extracted_chars": len(text),
-            "extracted_text": text,
-            "llm_rows": 0,
-            "inserted": 0,
-            "target_table": None,
-            "note": f"text extracted but no LLM parser configured for doc_type={doc_type}",
-        }
-
-    llm_out, llm_err = invoke_llm(query=f"{prompt}\n\nTEXT TO PARSE:\n{text}")
-    if llm_err:
-        raise RuntimeError(f"invoke_llm failed: {llm_err}")
-    cleaned = _strip_fences(llm_out or "")
-    parsed = json.loads(cleaned)
-    parsed_rows = parsed.get("rows", [])
-
-    # Insert rows into target table
-    inserted = 0
-    doc_id = row.get('document_id')
-    for r in parsed_rows:
-        if target_table == 'comp_recap':
-            _sql(f"""
-                INSERT INTO comp_recap (
-                  agency_id, period_year, period_month, period_day,
-                  comp_type, comp_category, description, amount,
-                  is_aipp_eligible, is_scorecard_eligible,
-                  source_document_id, posted_at
-                ) VALUES (
-                  {_sql_escape(agency_id)},
-                  {int(r.get('period_year') or 0)},
-                  {int(r.get('period_month') or 0)},
-                  {int(r.get('period_day') or 0)},
-                  {_sql_escape(r.get('comp_type'))},
-                  {_sql_escape(r.get('comp_category'))},
-                  {_sql_escape(r.get('description'))},
-                  {float(r.get('amount') or 0)},
-                  {_sql_escape(bool(r.get('is_aipp_eligible')))},
-                  {_sql_escape(bool(r.get('is_scorecard_eligible')))},
-                  {_sql_escape(doc_id)},
-                  NOW()
-                );
-            """)
-            inserted += 1
-
-    # Update document row
-    if doc_id:
-        _sql(f"""
-            UPDATE documents
-            SET processing_status='processed',
-                tables_updated=ARRAY[{_sql_escape(target_table)}],
-                records_created={inserted},
-                processed_at=NOW()
-            WHERE id={_sql_escape(doc_id)};
-        """)
-
+    if doc_type in ('comp_recap_daily', 'deduction_statement'):
+        raise RuntimeError(
+            f"doc_type={doc_type} is no longer drained via the LLM queue. "
+            f"It should be parsed inline by document-processor "
+            f"(parsers/comp_recap.ts or parsers/deduction.ts). "
+            f"If it landed here, the doc-processor edge function failed "
+            f"upstream -- check its logs and re-run."
+        )
+    # Other doc_types: extract text for downstream inspection, no LLM call.
     return {
         "extracted_chars": len(text),
         "extracted_text": text,
-        "llm_rows": len(parsed_rows),
-        "inserted": inserted,
-        "target_table": target_table,
+        "llm_rows": 0,
+        "inserted": 0,
+        "target_table": None,
+        "note": f"text extracted but no parser configured for doc_type={doc_type}",
     }
+
+
 
 
 # === Main drainer entry points =========================================

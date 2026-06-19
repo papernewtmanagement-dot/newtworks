@@ -87,6 +87,7 @@ interface AttachmentInput {
   // Where this attachment came from. For Gmail intake: filled in below.
   // For zip inner files: filled in from the outer + the inner filename.
   messageId: string; // empty string for inner files
+  threadId: string;  // gmail thread id (empty for inner zip files)
   fromEmail: string;
   subject: string;
   receivedAt: string; // ISO 8601
@@ -156,6 +157,7 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
 
         attachments.push({
           messageId: m.messageId ?? m.id,
+          threadId: m.threadId ?? m.thread_id ?? m.messageId ?? m.id,
           fromEmail, subject, receivedAt,
           fileName: filename,
           mimeType: a?.mimeType ?? "application/octet-stream",
@@ -186,6 +188,7 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
 
       attachments.push({
         messageId: m.id,
+        threadId: m.threadId ?? m.thread_id ?? m.id,
         fromEmail, subject, receivedAt,
         fileName: filename,
         mimeType: p?.mimeType ?? "application/octet-stream",
@@ -199,9 +202,9 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
 
 async function downloadAttachmentBytes(
   ctx: RunCtx, att: AttachmentInput,
-): Promise<string | null> {
-  if (att.bytesB64) return att.bytesB64; // inner file already in hand
-  if (!att.attachmentId) return null;
+): Promise<{ ok: true; bytesB64: string } | { ok: false; error: string }> {
+  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64 }; // inner file already in hand
+  if (!att.attachmentId) return { ok: false, error: "no attachmentId on outer attachment" };
 
   // Composio's GMAIL_GET_ATTACHMENT returns an s3url to fetch the raw bytes.
   const res = await callComposio({
@@ -216,13 +219,13 @@ async function downloadAttachmentBytes(
       user_id: "me",
     },
   });
-  if (!res.ok) return null;
+  if (!res.ok) return { ok: false, error: `GMAIL_GET_ATTACHMENT failed: ${res.error}` };
   const file = res.data?.file ?? res.data?.data?.file;
   const s3url = file?.s3url;
   if (s3url) {
     try {
       const r = await fetch(s3url);
-      if (!r.ok) return null;
+      if (!r.ok) return { ok: false, error: `s3url fetch returned HTTP ${r.status}` };
       const buf = new Uint8Array(await r.arrayBuffer());
       // Base64-encode in chunks to avoid call-stack issues on large files.
       let bin = "";
@@ -230,13 +233,15 @@ async function downloadAttachmentBytes(
       for (let i = 0; i < buf.length; i += CHUNK) {
         bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
       }
-      return btoa(bin);
-    } catch {
-      return null;
+      return { ok: true, bytesB64: btoa(bin) };
+    } catch (e) {
+      return { ok: false, error: `s3url fetch threw: ${e instanceof Error ? e.message : String(e)}` };
     }
   }
   // Fallback for older Composio response shapes
-  return res.data?.data ?? res.data?.bytes ?? null;
+  const fallback = res.data?.data ?? res.data?.bytes;
+  if (typeof fallback === "string") return { ok: true, bytesB64: fallback };
+  return { ok: false, error: "GMAIL_GET_ATTACHMENT returned no s3url and no inline bytes" };
 }
 
 // ---- ZIP unpack ------------------------------------------------------------
@@ -358,6 +363,8 @@ async function insertSourceDocument(
       source_account_code: sourceAccountCode,
       uploaded_by: att.fromEmail,
       uploaded_at: att.receivedAt,
+      gmail_message_id: att.messageId || null,
+      gmail_thread_id: att.threadId || null,
       notes: `subject: ${att.subject}${att.parentArchive ? ` | extracted_from: ${att.parentArchive}` : ""}`,
     })
     .select("id")
@@ -466,6 +473,52 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
   return "QBO-007";
 }
 
+// ---- Gmail thread archive --------------------------------------------------
+// After a doc finishes successfully, check whether every document tied to the
+// same gmail_thread_id is in a terminal state (processed/error/skipped). If so,
+// archive the thread in Gmail by removing the INBOX label. Sets
+// documents.gmail_archived_at for all rows in the thread so we know it happened.
+async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefined): Promise<void> {
+  if (!threadId) return;
+  // Inner zip files inherit empty threadId — skip.
+  try {
+    const { data: pending } = await sb
+      .from("documents")
+      .select("id, processing_status")
+      .eq("agency_id", ctx.agencyId)
+      .eq("gmail_thread_id", threadId)
+      .not("processing_status", "in", "(processed,error,skipped)");
+    if ((pending?.length ?? 0) > 0) {
+      console.log(`[archive] thread ${threadId}: ${pending?.length} docs still pending, not archiving yet`);
+      return;
+    }
+    const res = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.gmailAccountId,
+      toolSlug: "GMAIL_MODIFY_THREAD_LABELS",
+      toolArguments: {
+        thread_id: threadId,
+        remove_label_ids: ["INBOX"],
+        user_id: "me",
+      },
+    });
+    if (!res.ok) {
+      console.error(`[archive] thread ${threadId}: GMAIL_MODIFY_THREAD_LABELS failed: ${res.error}`);
+      return;
+    }
+    await sb
+      .from("documents")
+      .update({ gmail_archived_at: new Date().toISOString() })
+      .eq("agency_id", ctx.agencyId)
+      .eq("gmail_thread_id", threadId)
+      .is("gmail_archived_at", null);
+    console.log(`[archive] thread ${threadId}: archived (INBOX label removed)`);
+  } catch (e) {
+    console.error(`[archive] thread ${threadId}: exception: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 // ---- Per-attachment processor (reusable for outer + zip-inner files) -------
 
 async function processOneAttachment(
@@ -515,16 +568,18 @@ async function processOneAttachment(
   }
 
   // Get bytes (downloads from Gmail for outer, uses in-hand bytes for inner)
-  const bytesB64 = await downloadAttachmentBytes(ctx, att);
-  if (!bytesB64) {
+  const dl = await downloadAttachmentBytes(ctx, att);
+  if (!dl.ok) {
+    console.error(`[document-processor] attachment_download_failed: ${att.fileName} threadId=${att.threadId} messageId=${att.messageId} reason="${dl.error}"`);
     results.push({
       documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
       docType, status: "error", jeCount: 0, suspenseCount: 0,
       sourceLabel: uploadSource,
-      error: "attachment_download_failed",
+      error: `attachment_download_failed: ${dl.error}`,
     });
     return results;
   }
+  const bytesB64 = dl.bytesB64;
 
   // ---- ZIP fork --------------------------------------------------------
   if (docType === "archive_bundle") {
@@ -677,24 +732,16 @@ async function processOneAttachment(
           break;
         }
         const r = await parseCompRecap({
-          agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
-          composioUserId: ctx.composioUserId, documentId,
-          recapVariant: variant as "1H" | "DAILY", statementText: ex.text,
+          agencyId: ctx.agencyId, documentId, statementText: ex.text,
         });
         if (r.ok) {
           await markDocument(documentId, "processed", r.written, ["comp_recap"],
             `${r.written} comp_recap rows written`);
+          await maybeArchiveThread(ctx, att.threadId);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
             sourceLabel: uploadSource,
-          });
-        } else if (r.queued) {
-          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "queued", jeCount: 0, suspenseCount: 0,
-            queueId: r.queueId, sourceLabel: uploadSource,
           });
         } else {
           await markDocument(documentId, "error", 0, [], r.error);
@@ -718,23 +765,16 @@ async function processOneAttachment(
           break;
         }
         const r = await parseDeductionStatement({
-          agencyId: ctx.agencyId, composioApiKey: ctx.composioApiKey,
-          composioUserId: ctx.composioUserId, documentId, statementText: ex.text,
+          agencyId: ctx.agencyId, documentId, statementText: ex.text,
         });
         if (r.ok) {
           await markDocument(documentId, "processed", r.written, ["comp_recap"],
             `${r.written} deduction rows written`);
+          await maybeArchiveThread(ctx, att.threadId);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
             sourceLabel: uploadSource,
-          });
-        } else if (r.queued) {
-          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "queued", jeCount: 0, suspenseCount: 0,
-            queueId: r.queueId, sourceLabel: uploadSource,
           });
         } else {
           await markDocument(documentId, "error", 0, [], r.error);

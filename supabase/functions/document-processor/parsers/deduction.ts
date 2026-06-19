@@ -1,110 +1,142 @@
 // =========================================================================
-// parsers/deduction.ts
+// parsers/deduction.ts (v2 — deterministic regex parser)
 // =========================================================================
-// Parses State Farm deduction statements. Deductions are amounts SF withholds
-// from comp (E&O, license fees, advertising, etc.). They land in the same
-// comp_recap table with NEGATIVE amounts and comp_category="deduction_*".
-// Detail-only — no GL posts. GL Entry Writer reconciles separately.
+// Parses State Farm semi-monthly deduction statements into comp_recap rows
+// with negative amounts.
+//
+// REPLACES the prior LLM-based parser (v1, 2026-05). Key bug it fixes:
+// the LLM consistently extracted the YEAR-TO-DATE column instead of CURRENT,
+// producing 22x overstatement of period deductions.
+//
+// VERIFIED RECONCILIATIONS:
+//   - June 1-15 2026: 3 rows, total -$457.17 (matches comp PDF
+//     "LESS DEDUCTIONS 457.17-").
+//   - May 16-31 2026: 5 rows, total -$1,286.56 (matches comp PDF
+//     "LESS DEDUCTIONS 1,286.56-").
+//
+// FORMAT REFERENCE (real example):
+//   "1 STATEMENTS OF DEDUCTIONS AND ADDITIONS"
+//   "1 MAY 31, 2026"                           <- date header
+//   "1 CURRENT YEAR TO"
+//   "1 AMOUNT DATE"
+//   "1 CREDIT UNION 338.03 1,690.15"           <- cur=338.03 → -338.03
+//   "1 ADVISORY RENEWAL FEE-AGENT 0.00 15.00"  <- cur=0, skip
+//   "1 TOTAL DEDUCTIONS 1,286.56 9,969.74"     <- summary, skip
 // =========================================================================
 
 import { sb } from "../lib/supabase.ts";
-import { parseWithLLM } from "../lib/llm.ts";
 
 export interface DeductionRow {
   period_year: number;
   period_month: number;
+  period_day: number;
+  comp_type: string;
   comp_category: string;
   description: string;
-  amount: number; // always negative (or zero)
+  amount: number;  // always negative
 }
 
 export type ParseDeductionResult =
-  | { ok: true; rows: DeductionRow[]; written: number }
-  | { ok: false; queued: true; queueId: string }
-  | { ok: false; queued: false; error: string };
+  | { ok: true; rows: DeductionRow[]; written: number; total: number }
+  | { ok: false; error: string };
 
-const SYSTEM_PROMPT = `
-You are a parser for State Farm agent deduction statements. These document
-amounts that SF withholds from the agent's compensation each period (E&O
-insurance, license fees, advertising co-ops, technology fees, etc.).
+const MONTHS_D: Record<string, number> = {
+  JANUARY: 1, FEBRUARY: 2, MARCH: 3, APRIL: 4, MAY: 5, JUNE: 6,
+  JULY: 7, AUGUST: 8, SEPTEMBER: 9, OCTOBER: 10, NOVEMBER: 11, DECEMBER: 12,
+};
 
-For each deduction line item, return:
-  - period_year (integer, 4-digit)
-  - period_month (integer 1-12)
-  - comp_category (lowercase, from this list:
-      "deduction_eo", "deduction_license", "deduction_advertising",
-      "deduction_technology", "deduction_supplies", "deduction_misc")
-  - description (1 sentence, verbatim where possible)
-  - amount (number, ALWAYS NEGATIVE — these are withholdings)
-
-Return raw JSON only:
-{
-  "rows": [
-    { "period_year": 2026, "period_month": 5,
-      "comp_category": "deduction_eo",
-      "description": "...", "amount": -45.00 }
-  ]
+function parseDeductionDate(text: string): { year: number; month: number; day: number; comp_type: "1H" | "2H" } | null {
+  const m = text.match(/([A-Z]+)\s+(\d{1,2}),\s*(\d{4})/i);
+  if (!m) return null;
+  const month = MONTHS_D[m[1].toUpperCase()];
+  if (!month) return null;
+  const day = parseInt(m[2], 10);
+  const year = parseInt(m[3], 10);
+  return { year, month, day, comp_type: day <= 15 ? "1H" : "2H" };
 }
 
-Rules:
-- Skip headers, summary totals, page footers.
-- One row per distinct deduction line.
-- Amount is always negative. If the document shows positive numbers, negate them.
-- Output raw JSON, never wrap it in code fences.
-`.trim();
+interface DCatRule { test: RegExp; category: string }
+const DEDUCTION_CATEGORIES: DCatRule[] = [
+  { test: /ECHO CO-OP|DIRECT MAIL|ADVERTISING/i,                      category: "deduction_advertising" },
+  { test: /APPOINTMENT|LICENSE|ADVISORY RENEWAL|FINRA|EXAM FEE/i,     category: "deduction_license"     },
+  { test: /AGENT EQUIPMENT|MYSFDOMAIN|TECHNOLOGY|COMPUTER|SOFTWARE/i, category: "deduction_technology"  },
+];
+function classifyDeduction(desc: string): string {
+  for (const r of DEDUCTION_CATEGORIES) if (r.test.test(desc)) return r.category;
+  return "deduction_other";
+}
+
+function parseAmt(s: string): number | null {
+  const cleaned = s.replace(/,/g, "").trim();
+  const negative = cleaned.endsWith("-");
+  const num = parseFloat(negative ? cleaned.slice(0, -1) : cleaned);
+  if (isNaN(num)) return null;
+  return negative ? -num : num;
+}
+
+const DED_LINE_RE = /^1\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/;
+const DED_SKIP: RegExp[] = [
+  /^1DEDUCTION/i, /^1\s+STATE FARM/i, /^1\s+SEMI MONTHLY/i,
+  /^1\s+STATEMENTS OF/i, /^1\s+STATE \d/i, /^1\s+\dBDD\s/i,
+  /^1\s+-+DEDUCTIONS-+/i, /^1\s+THESE AMOUNTS/i,
+  /^1\s+CURRENT YEAR/i, /^1\s+AMOUNT DATE/i,
+  /^1\s+TOTAL DEDUCTIONS/i,
+];
+
+export function parseDeductionText(text: string): {
+  rows: DeductionRow[];
+  period: { year: number; month: number; day: number; comp_type: "1H" | "2H" };
+  current_total: number;
+} {
+  const period = parseDeductionDate(text);
+  if (!period) throw new Error("Could not identify date header in deduction PDF.");
+  const lines = text.split(/\r?\n|\\n/);
+  const rows: DeductionRow[] = [];
+  let total = 0;
+  for (const raw of lines) {
+    if (DED_SKIP.some((re) => re.test(raw))) continue;
+    const m = raw.match(DED_LINE_RE);
+    if (!m) continue;
+    const description = m[1].trim();
+    const current = parseAmt(m[2]);
+    if (current === null || current === 0) continue;
+    const amount = -Math.abs(current);  // always negative
+    rows.push({
+      period_year: period.year,
+      period_month: period.month,
+      period_day: period.day,
+      comp_type: period.comp_type,
+      comp_category: classifyDeduction(description),
+      description,
+      amount,
+    });
+    total += amount;
+  }
+  return { rows, period, current_total: total };
+}
 
 export async function parseDeductionStatement(opts: {
   agencyId: string;
-  composioApiKey: string;
-  composioUserId: string;
   documentId: string;
   statementText: string;
 }): Promise<ParseDeductionResult> {
-  const result = await parseWithLLM({
-    agencyId: opts.agencyId,
-    composioApiKey: opts.composioApiKey,
-    composioUserId: opts.composioUserId,
-    systemPrompt: SYSTEM_PROMPT,
-    userContent: opts.statementText,
-    documentId: opts.documentId,
-    purpose: "parse_deduction_statement",
-    maxTokens: 4000,
-  });
-
-  if (!result.ok) {
-    if (result.queued) return { ok: false, queued: true, queueId: result.queueId };
-    return { ok: false, queued: false, error: result.error };
+  let parsed;
+  try {
+    parsed = parseDeductionText(opts.statementText);
+  } catch (e) {
+    return { ok: false, error: `deduction parse failed: ${e instanceof Error ? e.message : String(e)}` };
   }
-
-  const rawRows: any[] = Array.isArray(result.json?.rows) ? result.json.rows : [];
-  const rows: DeductionRow[] = [];
-  for (const r of rawRows) {
-    if (typeof r?.amount !== "number") continue;
-    if (typeof r?.period_year !== "number" || typeof r?.period_month !== "number") continue;
-    // Force negative (defensive — LLMs sometimes forget the sign rule)
-    const amt = r.amount > 0 ? -r.amount : r.amount;
-    rows.push({
-      period_year: r.period_year,
-      period_month: r.period_month,
-      comp_category: String(r.comp_category ?? "deduction_misc").toLowerCase(),
-      description: String(r.description ?? "").slice(0, 1000),
-      amount: amt,
-    });
+  if (parsed.rows.length === 0) {
+    return { ok: false, error: "Parser yielded no rows. Either no current-period deductions or PDF malformed." };
   }
-
-  if (rows.length === 0) {
-    return { ok: false, queued: false, error: "LLM returned no parseable rows" };
-  }
-
-  // Idempotency
   await sb.from("comp_recap").delete().eq("source_document_id", opts.documentId);
-
   const { error } = await sb.from("comp_recap").insert(
-    rows.map((r) => ({
+    parsed.rows.map((r) => ({
       agency_id: opts.agencyId,
       period_year: r.period_year,
       period_month: r.period_month,
-      comp_type: "DEDUCTION",
+      period_day: r.period_day,
+      comp_type: r.comp_type,
       comp_category: r.comp_category,
       description: r.description,
       amount: r.amount,
@@ -113,7 +145,6 @@ export async function parseDeductionStatement(opts: {
       source_document_id: opts.documentId,
     })),
   );
-  if (error) return { ok: false, queued: false, error: `comp_recap (deduction) insert failed: ${error.message}` };
-
-  return { ok: true, rows, written: rows.length };
+  if (error) return { ok: false, error: `comp_recap (deduction) insert failed: ${error.message}` };
+  return { ok: true, rows: parsed.rows, written: parsed.rows.length, total: parsed.current_total };
 }
