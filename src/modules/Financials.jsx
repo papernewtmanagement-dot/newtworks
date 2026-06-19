@@ -41,14 +41,19 @@ function useFinancialsData() {
         const quarterStart = Math.floor((currentMonth - 1) / 3) * 3 + 1;
 
         const [
-          isRows, compRows, bankRows, ccRows, glRows,
+          isRows, priorIsRows, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
           aippRow, scorecardRows, balanceSheetRows,
         ] = await Promise.all([
-          // Income statement view
+          // Income statement view (current year)
           supabase.from("v_income_statement")
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
+
+          // Income statement view (prior year) — for quarterly margin comparison on Owner Profit Pace
+          supabase.from("v_income_statement")
+            .select("account_type, amount, month, year")
+            .eq("year", currentYear - 1).order("month"),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
@@ -227,6 +232,49 @@ function useFinancialsData() {
           asOfLabel: monthYearLabel(currentMonth, currentYear),
         };
 
+        // Owner Profit Pace — quarterly margin computation against +1pp/quarter goal
+        const priorYearIS = priorIsRows.data || [];
+        const quarterMargin = (yr, q) => {
+          const rows = yr === currentYear ? isData : priorYearIS;
+          const months = [q*3-2, q*3-1, q*3];
+          const rev = rows.filter(r => months.includes(r.month) && r.account_type === "income")
+            .reduce((s,r) => s + parseFloat(r.amount||0), 0);
+          const exp = rows.filter(r => months.includes(r.month) && r.account_type === "expense")
+            .reduce((s,r) => s + parseFloat(r.amount||0), 0);
+          return rev > 0
+            ? { year: yr, quarter: q, revenue: rev, expenses: exp, margin: ((rev - exp) / rev) * 100 }
+            : null;
+        };
+        const curQ = Math.ceil(currentMonth / 3);
+        let lastClosedYear, lastClosedQ, priorClosedYear, priorClosedQ;
+        if (curQ === 1) {
+          lastClosedYear  = currentYear - 1; lastClosedQ  = 4;
+          priorClosedYear = currentYear - 1; priorClosedQ = 3;
+        } else {
+          lastClosedYear = currentYear; lastClosedQ = curQ - 1;
+          if (curQ === 2) { priorClosedYear = currentYear - 1; priorClosedQ = 4; }
+          else            { priorClosedYear = currentYear;     priorClosedQ = curQ - 2; }
+        }
+        const opLatest = quarterMargin(lastClosedYear, lastClosedQ);
+        const opPrior  = quarterMargin(priorClosedYear, priorClosedQ);
+        // Trailing 4 closed quarters for sparkline-style trend
+        const trail = [];
+        {
+          let y = lastClosedYear, q = lastClosedQ;
+          for (let i = 0; i < 4; i++) {
+            const m = quarterMargin(y, q);
+            if (m) trail.unshift(m);
+            q -= 1; if (q < 1) { q = 4; y -= 1; }
+          }
+        }
+        const ownerProfit = {
+          latest: opLatest,
+          prior:  opPrior,
+          delta:  (opLatest && opPrior) ? (opLatest.margin - opPrior.margin) : null,
+          target_delta: 1.0,   // +1pp per quarter goal
+          trail,
+        };
+
         setData({
           currentYear,
           currentMonth,
@@ -239,6 +287,7 @@ function useFinancialsData() {
             netIncomeYTD: Math.round(revYTD - expYTD),
             priorYearYTD: 442434,
           },
+          ownerProfit,
           monthlyRevenue,
           pl: { income: incomeLines, expenses: expenseLines },
           compRecaps,
@@ -438,6 +487,81 @@ const ProgressBar = ({ value, max, color = T.blue, height = 8 }) => {
   );
 };
 
+// ─── Owner Profit Pace Card (standing +1pp/quarter goal) ─────
+const OwnerProfitPaceCard = ({ data }) => {
+  const op = data?.ownerProfit;
+  if (!op || !op.latest) {
+    return (
+      <Card>
+        <CardHeader title="Owner Profit Pace" sub="+1pp per quarter — standing goal" />
+        <div style={{ fontSize: 11, color: T.slate400, padding: "8px 0" }}>
+          No closed-quarter data yet. Margin pace will show once at least one quarter is complete.
+        </div>
+      </Card>
+    );
+  }
+  const { latest, prior, delta, trail } = op;
+  const statusColor = (d) => {
+    if (d == null)  return T.slate400;
+    if (d >= 1.0)   return T.green;
+    if (d >= 0)     return T.amber;
+    return T.red;
+  };
+  const statusLabel = (d) => {
+    if (d == null) return "—";
+    if (d >= 2.0)  return "Ahead";
+    if (d >= 1.0)  return "On Pace";
+    if (d >= 0)    return "Behind";
+    return "Off Pace";
+  };
+  const c = statusColor(delta);
+  const sign = (n) => n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2);
+  const targetLatestMargin = prior ? prior.margin + 1.0 : null;
+  return (
+    <Card>
+      <CardHeader
+        title="Owner Profit Pace"
+        sub={`+1pp/quarter standing goal${targetLatestMargin != null ? ` · target Q${latest.quarter} ${latest.year}: ${targetLatestMargin.toFixed(1)}%` : ""}`}
+      />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600, marginBottom: 4, letterSpacing: "0.04em" }}>LATEST CLOSED QUARTER</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: latest.margin >= 0 ? T.green : T.red }}>{latest.margin.toFixed(1)}%</div>
+          <div style={{ fontSize: 10, color: T.slate500 }}>Q{latest.quarter} {latest.year} · {fmt(Math.round(latest.revenue))} rev</div>
+        </div>
+        {prior && (
+          <div>
+            <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600, marginBottom: 4, letterSpacing: "0.04em" }}>PRIOR QUARTER</div>
+            <div style={{ fontSize: 26, fontWeight: 800, color: prior.margin >= 0 ? T.green : T.red }}>{prior.margin.toFixed(1)}%</div>
+            <div style={{ fontSize: 10, color: T.slate500 }}>Q{prior.quarter} {prior.year} · {fmt(Math.round(prior.revenue))} rev</div>
+          </div>
+        )}
+        <div>
+          <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600, marginBottom: 4, letterSpacing: "0.04em" }}>DELTA vs PRIOR</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: c }}>{delta != null ? `${sign(delta)} pp` : "—"}</div>
+          <div style={{ display: "inline-block", fontSize: 10, fontWeight: 700, color: c, padding: "2px 9px", borderRadius: 10, background: `${c}18`, marginTop: 2 }}>{statusLabel(delta)}</div>
+        </div>
+      </div>
+      {trail && trail.length > 1 && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${T.slate200}` }}>
+          <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600, marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>Trailing Closed Quarters</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {trail.map((t, i) => (
+              <div key={i} style={{ padding: "5px 9px", borderRadius: 8, background: t.margin >= 0 ? T.greenLt : T.redLt, border: `1px solid ${t.margin >= 0 ? T.green + "40" : T.red + "40"}`, fontSize: 11 }}>
+                <span style={{ color: T.slate600, fontWeight: 600 }}>Q{t.quarter} {String(t.year).slice(-2)}: </span>
+                <span style={{ color: t.margin >= 0 ? T.green : T.red, fontWeight: 700 }}>{t.margin.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize: 10, color: T.slate400, marginTop: 10 }}>
+        Source: v_income_statement quarterly aggregates · Goal: each quarter's net margin ≥ prior quarter + 1pp
+      </div>
+    </Card>
+  );
+};
+
 // ─── Section: Overview ───────────────────────────────────────
 const OverviewSection = ({ period, setPeriod, data }) => {
   const d = data?.summary || {};
@@ -452,6 +576,11 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 
   return (
     <div>
+      {/* Owner Profit Pace — standing +1pp/quarter goal (independent of period selector) */}
+      <div style={{ marginBottom: 14 }}>
+        <OwnerProfitPaceCard data={data} />
+      </div>
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <TabBar
           tabs={[{ id:"mtd", label:"This Month" },{ id:"qtd", label:"This Quarter" },{ id:"ytd", label:"Year to Date" }]}

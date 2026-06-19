@@ -170,14 +170,6 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
         sub={g.cc?.sub}
         pacePct={g.cc?.pace_pct}
       />
-      <Row
-        icon="💰"
-        title="Owner Profit (+1pt/qtr)"
-        current={g.op?.current_label || "—"}
-        target={g.op?.target_label || "—"}
-        sub={g.op?.sub}
-        pacePct={g.op?.pace_pct}
-      />
       <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
         {g.as_of_note || "Pace computed live · book_snapshot · sf_on_time_snapshot · GL"}
       </div>
@@ -596,43 +588,8 @@ export default function Dashboard({ onNavigate = () => {} }) {
           };
         }
 
-        // ─── Goal 3: Owner Profit (+1pt/quarter) ───
-        let op = null;
-        const isAll = (isData||[]);
-        const sumQ = (year, q) => {
-          const months = [q*3-2, q*3-1, q*3];
-          const rev = sum(isAll.filter(r => r.year===year && months.includes(r.month) && r.account_type==="income"));
-          const exp = sum(isAll.filter(r => r.year===year && months.includes(r.month) && r.account_type==="expense"));
-          return rev > 0 ? { revenue:rev, expenses:exp, margin: ((rev - exp) / rev) * 100 } : null;
-        };
-        // Latest closed quarter = the most recent quarter whose final month is < current month/year
-        const curQ  = Math.ceil(curMonth / 3);
-        let lastClosedYear, lastClosedQ, priorClosedYear, priorClosedQ;
-        if (curQ === 1) { lastClosedYear = curYear-1; lastClosedQ = 4; priorClosedYear = curYear-1; priorClosedQ = 3; }
-        else            { lastClosedYear = curYear;   lastClosedQ = curQ-1; priorClosedYear = (curQ-1===1) ? curYear-1 : curYear; priorClosedQ = curQ===2 ? 4 : curQ-2; if (priorClosedYear !== curYear) priorClosedYear = curYear-1; }
-        const latestQ = sumQ(lastClosedYear, lastClosedQ);
-        const priorQ  = sumQ(priorClosedYear, priorClosedQ);
-        if (latestQ && priorQ) {
-          const delta = latestQ.margin - priorQ.margin;
-          const pace_pct = (delta / 1.0) * 100; // 1pp = 100% pace
-          const sign = delta >= 0 ? "+" : "";
-          op = {
-            current_label: `${latestQ.margin.toFixed(1)}%`,
-            target_label:  `${(priorQ.margin + 1).toFixed(1)}%`,
-            sub: `${sign}${delta.toFixed(1)} pp vs Q${priorClosedQ} ${priorClosedYear} (${priorQ.margin.toFixed(1)}%)`,
-            pace_pct: Math.max(0, Math.min(200, pace_pct)),
-          };
-        } else if (latestQ) {
-          op = {
-            current_label: `${latestQ.margin.toFixed(1)}%`,
-            target_label:  "—",
-            sub: `Q${lastClosedQ} ${lastClosedYear} margin · prior Q unavailable`,
-            pace_pct: null,
-          };
-        }
-
         const goalsPace = {
-          pc, cc, op,
+          pc, cc,
           as_of_note: sf?.snapshot_date
             ? `Live as of ${sf.snapshot_date} · day ${daysElapsed} of 365`
             : `Live · day ${daysElapsed} of 365`,
