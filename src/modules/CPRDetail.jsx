@@ -451,7 +451,7 @@ function useCPRData(weekDate) {
           .order("created_on", { ascending: false })
           .limit(50);
 
-        // 8. True Pay history — last 39 weeks of weekly_cpr_team_detail
+        // 8. True Pay Bonus history — last 39 weeks of weekly_cpr_team_detail
         // Pulls detail rows joined to reports ordered by week_ending_date desc
         const { data: histReports } = await supabase
           .from("weekly_cpr_reports")
@@ -1245,14 +1245,14 @@ function PayrollSection({ details, team }) {
   );
 }
 
-// 20 — True Pay History (weekly per-person + 5 averages — page version shows BOTH)
+// 20 — True Pay Bonus History (weekly per-person + 5 averages — page version shows BOTH)
 function TruePayHistorySection({ team, truePayHistory, weekDate }) {
   const sorted = [...(team || [])];
   if (!truePayHistory || Object.keys(truePayHistory).length === 0) {
     return (
       <div>
-        <SectionHeader icon="📈" title="True Pay History" hint="Full weekly history + 5 averages (page-only detail)" />
-        <Card><Awaiting message="No True Pay history yet — populates as weekly_cpr_team_detail accumulates" /></Card>
+        <SectionHeader icon="📈" title="True Pay Bonus History" hint="Full weekly history + 5 averages (page-only detail)" />
+        <Card><Awaiting message="No True Pay Bonus history yet — populates as weekly_cpr_team_detail accumulates" /></Card>
       </div>
     );
   }
@@ -1278,7 +1278,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
 
   return (
     <div>
-      <SectionHeader icon="📈" title="True Pay History" hint="Most recent 13 weeks + multi-window averages" />
+      <SectionHeader icon="📈" title="True Pay Bonus History" hint="Most recent 13 weeks + multi-window averages" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -1685,7 +1685,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, userRole = nul
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} /></Section>
 
-      {/* 20. True Pay history (full + averages) */}
+      {/* 20. True Pay Bonus history (full + averages) */}
       <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section>
 
       {/* 21. Leaderboards */}
