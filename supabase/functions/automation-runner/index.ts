@@ -278,7 +278,12 @@ function findGmailPlainTextBody(payload: any): string {
   return "";
 }
 
-function extractGmailEssentials(composioData: any, perMessageBodyCap = 3000): any {
+// 2026-06-18 v15.4: Body cap 1500 → 1000 chars.
+// At 1500, 15-msg requests landed at ~12.3K tokens (358 over Groq free-tier
+// 12K TPM). 1000 chars per message gives ~5K-token headroom which lets
+// max_results go up to ~20 messages per call. Transactional emails fit
+// comfortably (~500-800 chars of post-stripped useful content).
+function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): any {
   // composioResult.data may be the messages array directly, or wrapped under .messages
   const messages = Array.isArray(composioData)
     ? composioData
