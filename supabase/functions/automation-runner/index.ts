@@ -326,7 +326,16 @@ function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): an
       // This avoids the failure mode where US Bank emails fit 2000+ chars of
       // tracking links into the first part of the body and push the transaction
       // text past the cap, causing the LLM to return null account_last4.
-      const rawBody = findGmailPlainTextBody(m.payload);
+      //
+      // 2026-06-19 v29: prefer Composio's pre-extracted m.messageText when
+      // present — it already walks multi-part MIME and includes forwarded
+      // email content. findGmailPlainTextBody only sees the outermost
+      // text/plain part, which for forwarded emails is just the forwarding
+      // user's signature (the actual content lives in a nested part).
+      const composioPreExtracted = typeof m.messageText === "string" && m.messageText.length > 0
+        ? m.messageText
+        : null;
+      const rawBody = composioPreExtracted ?? findGmailPlainTextBody(m.payload);
       const body = stripParenthesizedUrls(rawBody).slice(0, perMessageBodyCap);
       return {
         messageId: m.messageId ?? m.id ?? "",
@@ -392,6 +401,168 @@ async function getComposioAccountId(agencyId: string, connection: string): Promi
   }
   return v;
 }
+
+// ============================================================================
+// Deterministic parsers (no LLM)
+// ============================================================================
+// Recipes can set `internal_parser` to one of these keys to bypass the Groq LLM
+// step entirely. Use this for upstream emails/payloads whose format is stable
+// enough to parse with regex. Big wins: zero LLM token cost, zero LLM
+// hallucinations, sub-second parse time, doesn't share TPD with other recipes.
+
+interface ParsedSfCrmAnalytics {
+  source_message_id: string;
+  week_ending_date: string | null;
+  household_count: number | null;
+  auto_pif: number | null;
+  auto_premium: number | null;
+  fire_pif: number | null;
+  fire_premium: number | null;
+  life_pif: number | null;
+  life_premium: number | null;
+  quarter_year: number | null;
+  quarter_number: number | null;
+  lead_sources: Array<{ source: string; won_households: number | null; won_premium: number | null }>;
+}
+
+const SF_MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function _saturdayAfter(year: number, month1to12: number, day: number): string {
+  // Add 1 day to (year, month, day). Handle month/year rollover.
+  // We treat this as a calendar add — not a "next Saturday" calc — because the
+  // email is always "For Friday, <date>" and the snapshot is the very next day.
+  const d = new Date(Date.UTC(year, month1to12 - 1, day));
+  d.setUTCDate(d.getUTCDate() + 1);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
+function _stripHtmlAndUrls(s: string): string {
+  // Strip <https://...> bracketed URLs first (the format Gmail plaintext uses),
+  // then collapse <a> tags / HTML if any, then normalize whitespace.
+  let out = s.replace(/<https?:\/\/[^>]+>/g, "");
+  out = out.replace(/<[^>]+>/g, " ");
+  out = out.replace(/\r\n/g, "\n");
+  out = out.replace(/\n{3,}/g, "\n\n");
+  return out;
+}
+
+function _parseMoney(s: string): number | null {
+  if (s == null) return null;
+  const cleaned = s.replace(/[\$,]/g, "").trim();
+  if (!cleaned) return null;
+  const n = parseFloat(cleaned);
+  return isFinite(n) ? n : null;
+}
+
+function _parseInt(s: string): number | null {
+  if (s == null) return null;
+  const cleaned = s.replace(/[,]/g, "").trim();
+  if (!cleaned) return null;
+  const n = parseInt(cleaned, 10);
+  return isFinite(n) ? n : null;
+}
+
+/**
+ * Extract a single labeled widget value from the cleaned body.
+ * The email format is: "<Label>\n\n<Value>\nLast updated: ..."
+ * (with optional whitespace). Match the label, then capture up to "Last updated".
+ */
+function _extractWidget(body: string, label: string): string | null {
+  // Match: label, whitespace, captured value (non-greedy), whitespace, "Last updated:".
+  // Works whether the body has newlines between fields (raw plain text) or has
+  // all whitespace collapsed (findGmailPlainTextBody's HTML-strip fallback).
+  const escLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`${escLabel}\\s+([\\s\\S]*?)\\s+Last updated:`, "i");
+  const m = body.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function parseSfCrmAnalyticsEmailOne(message: any): ParsedSfCrmAnalytics | null {
+  const msgId: string = message.messageId || message.id || "";
+  const text: string = message.body || message.messageText || message.snippet || "";
+
+  if (!text) return null;
+  const body = _stripHtmlAndUrls(text);
+
+  // ---- week_ending_date from "For Friday, <Month> <day>, <year>" ----
+  let week_ending_date: string | null = null;
+  const friMatch = body.match(/For Friday,\s+([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})/);
+  if (friMatch) {
+    const monthIdx = SF_MONTH_NAMES.findIndex((mn) => mn.toLowerCase() === friMatch[1].toLowerCase());
+    if (monthIdx >= 0) {
+      week_ending_date = _saturdayAfter(parseInt(friMatch[3], 10), monthIdx + 1, parseInt(friMatch[2], 10));
+    }
+  }
+
+  // ---- Primary widget values ----
+  const hh   = _parseInt(_extractWidget(body, "HH #") ?? "");
+  const aP   = _parseInt(_extractWidget(body, "Auto #") ?? "");
+  const aD   = _parseMoney(_extractWidget(body, "Auto $") ?? "");
+  const fP   = _parseInt(_extractWidget(body, "Fire #") ?? "");
+  const fD   = _parseMoney(_extractWidget(body, "Fire $") ?? "");
+  const lP   = _parseInt(_extractWidget(body, "Life #") ?? "");
+  const lD   = _parseMoney(_extractWidget(body, "Life $") ?? "");
+
+  // ---- Quarter inference ----
+  // Use the year from week_ending_date + the quarter the email date falls in
+  // (Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec).
+  let quarter_year: number | null = null;
+  let quarter_number: number | null = null;
+  if (friMatch) {
+    const month = SF_MONTH_NAMES.findIndex((mn) => mn.toLowerCase() === friMatch[1].toLowerCase()) + 1;
+    quarter_year = parseInt(friMatch[3], 10);
+    quarter_number = Math.ceil(month / 3);
+  }
+
+  // ---- Lead sources (Referral, SF.com, EverQuote, etc.) ----
+  // Pattern: "<Name> Won HH - Qtr\n\n<n>\nLast updated:" and
+  //          "<Name> Won $ - Qtr\n\n$<m>\nLast updated:"
+  // Walk the body finding all "<Name> Won HH - Qtr" widgets, then pair with $ widget.
+  const sourceNames: string[] = [];
+  const hhRe = /(?:^|\s)([A-Za-z][A-Za-z0-9.\-]+(?:\s[A-Za-z][A-Za-z0-9.\-]+)?) Won HH - Qtr/g;
+  let m;
+  while ((m = hhRe.exec(body)) !== null) {
+    const name = m[1].trim();
+    if (!sourceNames.includes(name)) sourceNames.push(name);
+  }
+  const lead_sources: ParsedSfCrmAnalytics["lead_sources"] = sourceNames.map((name) => ({
+    source: name,
+    won_households: _parseInt(_extractWidget(body, `${name} Won HH - Qtr`) ?? ""),
+    won_premium:    _parseMoney(_extractWidget(body, `${name} Won $ - Qtr`) ?? ""),
+  }));
+
+  return {
+    source_message_id: msgId,
+    week_ending_date,
+    household_count: hh, auto_pif: aP, auto_premium: aD,
+    fire_pif: fP, fire_premium: fD,
+    life_pif: lP, life_premium: lD,
+    quarter_year, quarter_number,
+    lead_sources,
+  };
+}
+
+function parseSfCrmAnalyticsEmail(messages: any[]): any[] {
+  if (!Array.isArray(messages)) return [];
+  const out: any[] = [];
+  for (const m of messages) {
+    const parsed = parseSfCrmAnalyticsEmailOne(m);
+    if (parsed && parsed.week_ending_date && parsed.household_count !== null) {
+      out.push(parsed);
+    }
+  }
+  return out;
+}
+
+// Registry of all deterministic parsers. Recipes reference these via
+// recipe.internal_parser.
+const INTERNAL_PARSERS: Record<string, (input: any) => any[]> = {
+  sf_crm_analytics_email: (inputData: any) => parseSfCrmAnalyticsEmail(inputData?.messages ?? []),
+};
+
 
 /**
  * Write a parsed record array to the recipe's output_table, honoring the
@@ -1131,15 +1302,43 @@ async function executeRecipe(
 
     // --- Call Composio ---
     const inputConfig = recipe.input_config || {};
-    // input_config can include keys like gmail_query, attachment_required, etc.
-    // Recipes are responsible for using keys that map to the Composio tool's
-    // expected arguments. The runner passes them through as-is.
+
+    // 2026-06-19: Build composio arguments by mapping recipe-level fields to
+    // the Composio tool's expected schema. Recipes have historically been
+    // storing fields with runner-only names (gmail_query, dedupe_by,
+    // archive_after_parse, etc.) and Composio silently ignored unknown keys,
+    // returning the default (most-recent) results. This masked the bug while
+    // Groq was tolerant; deterministic parsers expose it.
+    const RUNNER_ONLY_KEYS = new Set([
+      "gmail_query", "gmail_labels", "archive_after_parse",
+      "archive_label_ids_to_add", "dedupe_by", "local_time",
+      "gl_firewall", "output_table", "drive_folders",
+      "apply_coding_rules", "coding_rules_table",
+    ]);
+    const composioArgs: Record<string, any> = {};
+    for (const [k, v] of Object.entries(inputConfig)) {
+      if (!RUNNER_ONLY_KEYS.has(k)) composioArgs[k] = v;
+    }
+    // Field-name mappings per toolSlug
+    if (action === "GMAIL_FETCH_EMAILS") {
+      if (inputConfig.gmail_query && !composioArgs.query) {
+        composioArgs.query = inputConfig.gmail_query;
+      }
+      if (!composioArgs.user_id) composioArgs.user_id = "me";
+      // Internal parsers need access to the full body and the raw payload that
+      // findGmailPlainTextBody walks. Default include_payload=true for any
+      // recipe that uses an internal_parser; the Groq path doesn't care.
+      if (recipe.internal_parser && composioArgs.include_payload === undefined) {
+        composioArgs.include_payload = true;
+      }
+    }
+
     const composioResult = await callComposio({
       apiKey: composioApiKey,
       userId: composioUserId,
       connectedAccountId: accountId,
       toolSlug: action,
-      toolArguments: inputConfig,
+      toolArguments: composioArgs,
     });
 
     if (!composioResult.ok) {
@@ -1151,8 +1350,56 @@ async function executeRecipe(
     // archive them from inbox even when we skip the LLM/insert path.
     let alreadyKnownMessageIds: string[] = [];
 
+    // --- Optional: deterministic internal parser (no LLM, no Groq) ---
+    // If the recipe sets `internal_parser` to a known key, use that registered
+    // function instead of the Groq path. The parser receives the Composio output
+    // data (typed like Gmail extractGmailEssentials output for Gmail recipes)
+    // and returns an array of records suitable for writeOutput.
+    let usedInternalParser = false;
+    if (recipe.internal_parser && INTERNAL_PARSERS[recipe.internal_parser]) {
+      // Apply Gmail-specific essentials extraction first for Gmail recipes
+      // (matches the pre-processing the Groq branch does so parsers can rely on
+      // the same shape).
+      let inputData: any = composioResult.data;
+      if (recipe.composio_action === "GMAIL_FETCH_EMAILS") {
+        // Internal parsers don't have an LLM token budget — pass the full body
+        // (cap at 50KB to keep memory sane). Default 1000-char cap is for Groq.
+        inputData = extractGmailEssentials(composioResult.data, 50000);
+
+        // Same v18 dedup precheck as the Groq branch — if output_table has a
+        // source_message_id column, exclude already-processed messages so we
+        // don't re-emit rows for them.
+        const messages: any[] = Array.isArray(inputData?.messages) ? inputData.messages : [];
+        const fetchedIds: string[] = messages
+          .map((m: any) => m.messageId as string | undefined)
+          .filter((x: any): x is string => typeof x === "string" && x.length > 0);
+        if (recipe.output_table && fetchedIds.length > 0) {
+          const { data: existing, error: dedupErr } = await sb
+            .from(recipe.output_table)
+            .select("source_message_id")
+            .in("source_message_id", fetchedIds);
+          if (dedupErr) {
+            console.warn(`[internal_parser dedup precheck] query failed for ${recipe.output_table}.source_message_id — proceeding without dedup: ${dedupErr.message}`);
+          } else {
+            const knownSet = new Set((existing ?? []).map((r: any) => r.source_message_id as string));
+            if (knownSet.size > 0) {
+              alreadyKnownMessageIds = fetchedIds.filter((id) => knownSet.has(id));
+              const newMessages = messages.filter((m: any) => !knownSet.has(m.messageId));
+              inputData = { total: newMessages.length, messages: newMessages };
+              console.log(`[internal_parser dedup] ${alreadyKnownMessageIds.length} message(s) already in ${recipe.output_table}; parser will see ${newMessages.length} new`);
+            }
+          }
+        }
+      }
+      const parserFn = INTERNAL_PARSERS[recipe.internal_parser];
+      const records = parserFn(inputData);
+      parsedRecords = Array.isArray(records) ? records : [];
+      usedInternalParser = true;
+      console.log(`[internal_parser] ${recipe.internal_parser} produced ${parsedRecords.length} record(s)`);
+    }
+
     // --- Optional: LLM parsing pass (v15: direct to Groq) ---
-    if (recipe.groq_prompt && recipe.output_table) {
+    if (!usedInternalParser && recipe.groq_prompt && recipe.output_table) {
       // Default expectation: composioResult.data is array-shaped or has a top-level
       // collection (messages, items, results). Recipes that need a different shape
       // can include extraction hints in groq_prompt.
