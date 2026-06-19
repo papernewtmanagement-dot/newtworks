@@ -2630,7 +2630,7 @@ export default function HRPeople() {
   const sections = [
     { id:"overview",    label:"Overview"    },
     { id:"recruiting",  label:"Recruiting"  },
-    { id:"staff",       label:"Members"     },
+    { id:"members",     label:"Members"     },
     { id:"onboarding",  label:"Onboarding"  },
     { id:"performance", label:"Performance" },
     { id:"retention",   label:"Retention"   },
@@ -2663,7 +2663,7 @@ export default function HRPeople() {
       {/* Section Content */}
       {section === "overview"    && <HROverview        applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
       {section === "recruiting"  && <RecruitingPipeline applicants={applicants} onUpdate={updateApplicantStage} />}
-      {section === "staff"       && <StaffDirectory     staff={roi?.allActiveStaff || []} />}
+      {section === "members"     && <StaffDirectory     staff={roi?.allActiveStaff || []} />}
       {section === "onboarding"  && <OnboardingSection  onboarding={[]} />}
       {section === "performance" && <PerformanceSection  roi={roi} />}
       {section === "retention"   && <RetentionBudgetSection />}
