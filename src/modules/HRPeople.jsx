@@ -582,7 +582,9 @@ const StaffDirectory = ({ staff }) => {
     }[reason] || reason;
 
     try {
-      // 1) Deactivate the team row.
+      // 1) Deactivate the team row. .select() forces PostgREST to return the
+      //    affected rows so we can detect silent RLS denial (0 rows = no error
+      //    but nothing actually changed in the database).
       const teamUpdate = await supabase
         .from("team")
         .update({
@@ -593,9 +595,15 @@ const StaffDirectory = ({ staff }) => {
           updated_at: nowIso,
         })
         .eq("id", member.id)
-        .eq("agency_id", AGENCY_ID);
+        .eq("agency_id", AGENCY_ID)
+        .select("id");
       if (teamUpdate.error) {
         setTermError(`team update failed: ${teamUpdate.error.message}`);
+        setTerminating(false);
+        return;
+      }
+      if (!teamUpdate.data || teamUpdate.data.length === 0) {
+        setTermError("Termination did not affect any rows — RLS may be blocking the write. Tell Claude.");
         setTerminating(false);
         return;
       }
@@ -733,7 +741,7 @@ const StaffDirectory = ({ staff }) => {
     try {
       if (!supabase) { setReactivateError("No database connection."); setReactivating(false); return; }
 
-      // 1) Restore team row.
+      // 1) Restore team row. .select() forces PostgREST to return affected rows.
       const teamUpdate = await supabase
         .from("team")
         .update({
@@ -744,8 +752,14 @@ const StaffDirectory = ({ staff }) => {
           updated_at: nowIso,
         })
         .eq("id", member.id)
-        .eq("agency_id", AGENCY_ID);
+        .eq("agency_id", AGENCY_ID)
+        .select("id");
       if (teamUpdate.error) { setReactivateError(`team update failed: ${teamUpdate.error.message}`); setReactivating(false); return; }
+      if (!teamUpdate.data || teamUpdate.data.length === 0) {
+        setReactivateError("Reactivation did not affect any rows — RLS may be blocking the write. Tell Claude.");
+        setReactivating(false);
+        return;
+      }
 
       // 2) Restore linked user account if one exists.
       if (member.user_id) {
@@ -884,13 +898,19 @@ const StaffDirectory = ({ staff }) => {
     }
     try {
       if (!supabase) { setSaveError("No database connection."); setSaving(false); return; }
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("team")
         .update(payload)
         .eq("id", id)
-        .eq("agency_id", AGENCY_ID);
+        .eq("agency_id", AGENCY_ID)
+        .select("id");
       if (error) {
         setSaveError(error.message || "Save failed. You may need to be signed in.");
+        setSaving(false);
+        return;
+      }
+      if (!data || data.length === 0) {
+        setSaveError("Save did not affect any rows — RLS may be blocking the write. Tell Claude.");
         setSaving(false);
         return;
       }
@@ -1038,7 +1058,7 @@ const StaffDirectory = ({ staff }) => {
                       {member.license_ips && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6" }}>IPS</span>}
                     </div>
                   ) : (
-                    <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed — cannot perform licensed activities</span>
+                    <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed</span>
                   )}
                   {member.compliance_flag && (
                     <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
@@ -2610,7 +2630,7 @@ export default function HRPeople() {
   const sections = [
     { id:"overview",    label:"Overview"    },
     { id:"recruiting",  label:"Recruiting"  },
-    { id:"staff",       label:"Staff"       },
+    { id:"staff",       label:"Members"     },
     { id:"onboarding",  label:"Onboarding"  },
     { id:"performance", label:"Performance" },
     { id:"retention",   label:"Retention"   },
@@ -2623,7 +2643,7 @@ export default function HRPeople() {
       {/* Module Header */}
       <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16 }}>
         <div>
-          <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>HR & People</div>
+          <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Team</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
             {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","rejected"].includes(a.status)).length} applicants in pipeline · Resume scanner active
           </div>
