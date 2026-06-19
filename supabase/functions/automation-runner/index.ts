@@ -24,6 +24,11 @@
 //        v17+: Gmail body extraction strips parenthesized tracking URLs
 //        before applying the per-message cap, so vendor emails (US Bank,
 //        Amazon, etc.) surface their actual transaction text within budget.
+//        v18+: For Gmail parsers with source_message_id uniqueness, the
+//        runner pre-filters already-known messageIds before the LLM call.
+//        If all fetched messages are dups, LLM is skipped entirely and the
+//        emails are archived from inbox anyway. Saves tokens and prevents
+//        the duplicate-key-failure loop where archive never fires.
 //     9. Write a row to automation_run_log
 //    10. Update the recipe's last_run_status
 //    11. Telegram alert on failure (if Telegram creds present)
@@ -971,6 +976,9 @@ async function executeRecipe(
     }
 
     let parsedRecords: any[] = [];
+    // 2026-06-19 v18: Track Gmail messageIds already in output_table so we can
+    // archive them from inbox even when we skip the LLM/insert path.
+    let alreadyKnownMessageIds: string[] = [];
 
     // --- Optional: LLM parsing pass (v15: direct to Groq) ---
     if (recipe.groq_prompt && recipe.output_table) {
@@ -988,18 +996,54 @@ async function executeRecipe(
       let inputData: any = composioResult.data;
       if (recipe.composio_action === "GMAIL_FETCH_EMAILS") {
         inputData = extractGmailEssentials(composioResult.data);
+
+        // v18: dedup precheck. Look up which fetched Gmail messageIds already exist
+        // in output_table.source_message_id and exclude them from the LLM batch.
+        // Avoids burning tokens on already-processed emails and prevents the
+        // duplicate-key insert failures that previously left emails stuck in the
+        // inbox in an infinite re-fetch loop.
+        const messages: any[] = Array.isArray(inputData?.messages) ? inputData.messages : [];
+        const fetchedIds: string[] = messages
+          .map((m: any) => m.messageId as string | undefined)
+          .filter((x: any): x is string => typeof x === "string" && x.length > 0);
+        if (fetchedIds.length > 0) {
+          const { data: existing, error: dedupErr } = await sb
+            .from(recipe.output_table)
+            .select("source_message_id")
+            .in("source_message_id", fetchedIds);
+          if (dedupErr) {
+            console.warn(`[v18 dedup precheck] query failed for ${recipe.output_table}.source_message_id — proceeding without dedup: ${dedupErr.message}`);
+          } else {
+            const knownSet = new Set((existing ?? []).map((r: any) => r.source_message_id as string));
+            if (knownSet.size > 0) {
+              alreadyKnownMessageIds = fetchedIds.filter((id) => knownSet.has(id));
+              const newMessages = messages.filter((m: any) => !knownSet.has(m.messageId));
+              inputData = { total: newMessages.length, messages: newMessages };
+              console.log(`[v18 dedup] ${alreadyKnownMessageIds.length} message(s) already in ${recipe.output_table}; LLM will see ${newMessages.length} new`);
+            }
+          }
+        }
       }
-      const inputForLLM = JSON.stringify(inputData).slice(0, 50000);
-      const llmResult = await callGroqLLM({
-        groqApiKey,
-        systemPrompt: recipe.groq_prompt +
-          '\n\nReturn a JSON object: {"records": [...]} where records is an array of objects ready to insert into the output_table. Return {"records": []} if nothing applicable.',
-        userContent: inputForLLM,
-      });
-      if (!llmResult.ok) {
-        throw new Error(`LLM parsing failed: ${llmResult.error}`);
+
+      // v18: if dedup left zero new messages, skip the LLM call entirely.
+      // alreadyKnownMessageIds will be archived in the post-parse archive block below.
+      const messagesAfterDedup = Array.isArray(inputData?.messages) ? inputData.messages.length : -1;
+      if (messagesAfterDedup === 0) {
+        parsedRecords = [];
+        console.log(`[v18] all fetched messages already processed; skipping LLM call (${alreadyKnownMessageIds.length} known)`);
+      } else {
+        const inputForLLM = JSON.stringify(inputData).slice(0, 50000);
+        const llmResult = await callGroqLLM({
+          groqApiKey,
+          systemPrompt: recipe.groq_prompt +
+            '\n\nReturn a JSON object: {"records": [...]} where records is an array of objects ready to insert into the output_table. Return {"records": []} if nothing applicable.',
+          userContent: inputForLLM,
+        });
+        if (!llmResult.ok) {
+          throw new Error(`LLM parsing failed: ${llmResult.error}`);
+        }
+        parsedRecords = Array.isArray(llmResult.data?.records) ? llmResult.data.records : [];
       }
-      parsedRecords = Array.isArray(llmResult.data?.records) ? llmResult.data.records : [];
     } else if (recipe.output_table && Array.isArray(composioResult.data)) {
       // No LLM step — write raw composio data if it's already record-shaped
       parsedRecords = composioResult.data;
@@ -1015,22 +1059,43 @@ async function executeRecipe(
       });
       recordsProcessed = writeResult.inserted + writeResult.updated;
       outputSummary = `${recordsProcessed} records written to ${recipe.output_table}`;
-      // --- v16: post-parse archive ---
+      // --- v16: post-parse archive (v18: also includes already-known messageIds) ---
       if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
-        const messageIds = parsedRecords.map((r: any) => r.source_message_id as string | undefined).filter((x): x is string => typeof x === "string" && x.length > 0);
-        if (messageIds.length > 0) {
+        const newMessageIds = parsedRecords.map((r: any) => r.source_message_id as string | undefined).filter((x): x is string => typeof x === "string" && x.length > 0);
+        const allMessageIds = Array.from(new Set([...newMessageIds, ...alreadyKnownMessageIds]));
+        if (allMessageIds.length > 0) {
           const archiveResult = await archiveProcessedGmailMessages({
             apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId,
-            messageIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined,
+            messageIds: allMessageIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined,
           });
           if (archiveResult.ok) {
             outputSummary += ` — archived ${archiveResult.archived} email${archiveResult.archived === 1 ? "" : "s"} from inbox`;
+            if (alreadyKnownMessageIds.length > 0) {
+              outputSummary += ` (${alreadyKnownMessageIds.length} were already-known dups)`;
+            }
           } else {
             outputSummary += ` — ⚠️ archive failed: ${archiveResult.error}`;
             await telegram(agencyId, `🟡 <b>Post-parse archive failed</b>\nRecipe: <b>${recipe.recipe_name}</b>\n${(archiveResult.error ?? "").slice(0, 400)}`);
           }
         } else {
           outputSummary += ` — archive skipped (no source_message_id in records)`;
+        }
+      }
+    } else if (recipe.output_table && alreadyKnownMessageIds.length > 0) {
+      // v18: All fetched messages were already in output_table — nothing new to write,
+      // but still archive them from inbox so they do not keep showing up in fetches.
+      outputSummary = `0 new records — ${alreadyKnownMessageIds.length} message(s) already processed historically`;
+      if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
+        const archiveResult = await archiveProcessedGmailMessages({
+          apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId,
+          messageIds: alreadyKnownMessageIds,
+          additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined,
+        });
+        if (archiveResult.ok) {
+          outputSummary += ` — archived ${archiveResult.archived} from inbox`;
+        } else {
+          outputSummary += ` — ⚠️ archive failed: ${archiveResult.error}`;
+          await telegram(agencyId, `🟡 <b>Post-parse archive failed</b>\nRecipe: <b>${recipe.recipe_name}</b>\n${(archiveResult.error ?? "").slice(0, 400)}`);
         }
       }
     } else if (recipe.output_table) {
