@@ -429,7 +429,7 @@ function LogTimeOffForm({ onLogged }) {
         onClick={() => setExpanded(v => !v)}
         style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 600, color: "#0f172a", textAlign: "left" }}
       >
-        <span>📝 Log Time Off on Behalf of Team Member</span>
+        <span>Log Time for Team</span>
         <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "#64748b", fontSize: 18, lineHeight: 1 }}>›</span>
       </button>
       {expanded && (
