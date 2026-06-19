@@ -178,6 +178,8 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   const [savedAt, setSavedAt] = useState(null);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState(null); // { success, error?, sent_to_team_at? }
+  const [previewing, setPreviewing] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState(null);
   const [error, setError] = useState(null);
 
   // Determine the default week on mount: the most recent Saturday with no row yet.
@@ -376,6 +378,31 @@ export default function WeeklyCPR({ onClose = () => {} }) {
       setError(e.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handlePreviewEmail() {
+    if (!supabase) return;
+    if (previewing || saving || loading) return;
+    setPreviewing(true);
+    setError(null);
+    try {
+      // Save first so the composer sees the latest data
+      await handleSave();
+      const { data, error: rpcErr } = await supabase.rpc("compose_weekly_cpr_html", {
+        p_agency_id: AGENCY_ID,
+        p_week_ending_date: weekEnding,
+      });
+      if (rpcErr) throw rpcErr;
+      if (!data || typeof data !== "string") {
+        setError("Composer returned no HTML");
+        return;
+      }
+      setPreviewHtml(data);
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setPreviewing(false);
     }
   }
 
@@ -700,8 +727,25 @@ export default function WeeklyCPR({ onClose = () => {} }) {
                 </div>
               </div>
 
+              {/* Preview email — opens compose_weekly_cpr_html output in a modal */}
+              <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  onClick={handlePreviewEmail}
+                  disabled={previewing || saving || loading}
+                  style={{
+                    padding: "8px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                    cursor: (previewing || saving || loading) ? "not-allowed" : "pointer",
+                    background: T.white, color: T.slate700,
+                    border: `1px solid ${T.slate300}`,
+                    opacity: (previewing || saving || loading) ? 0.55 : 1,
+                  }}
+                >
+                  {previewing ? "Composing…" : "👁️ Preview email"}
+                </button>
+              </div>
+
               <div style={{
-                marginTop: 14, padding: "12px 14px", borderRadius: 8,
+                marginTop: 10, padding: "12px 14px", borderRadius: 8,
                 background: T.white, border: `1px solid ${T.slate200}`,
               }}>
                 <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
@@ -760,6 +804,57 @@ export default function WeeklyCPR({ onClose = () => {} }) {
           </div>
         )}
       </div>
+
+      {/* Email preview modal */}
+      {previewHtml ? (
+        <div
+          onClick={() => setPreviewHtml(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(15, 23, 42, 0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: T.white, borderRadius: 12,
+              width: "min(960px, 100%)", height: "min(90vh, 1100px)",
+              display: "flex", flexDirection: "column",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{
+              padding: "14px 18px", borderBottom: `1px solid ${T.slate200}`,
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              background: T.slate50,
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: T.slate800 }}>Email preview</div>
+                <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+                  This is exactly what gets sent to the team. Close to keep editing.
+                </div>
+              </div>
+              <button
+                onClick={() => setPreviewHtml(null)}
+                style={{
+                  border: "none", background: "transparent", cursor: "pointer",
+                  fontSize: 22, color: T.slate500, lineHeight: 1, padding: "4px 10px",
+                }}
+                aria-label="Close preview"
+              >×</button>
+            </div>
+            <iframe
+              srcDoc={previewHtml}
+              title="CPR email preview"
+              style={{ flex: 1, width: "100%", border: "none", background: T.white }}
+              sandbox="allow-same-origin"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
