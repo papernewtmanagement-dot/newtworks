@@ -21,6 +21,9 @@
 //     8. v16+: If input_config.archive_after_parse, remove INBOX label from
 //        each parsed message (Gmail recipes only) so parsers self-clean their
 //        own emails.
+//        v17+: Gmail body extraction strips parenthesized tracking URLs
+//        before applying the per-message cap, so vendor emails (US Bank,
+//        Amazon, etc.) surface their actual transaction text within budget.
 //     9. Write a row to automation_run_log
 //    10. Update the recipe's last_run_status
 //    11. Telegram alert on failure (if Telegram creds present)
@@ -285,6 +288,20 @@ function findGmailPlainTextBody(payload: any): string {
 // 12K TPM). 1000 chars per message gives ~5K-token headroom which lets
 // max_results go up to ~20 messages per call. Transactional emails fit
 // comfortably (~500-800 chars of post-stripped useful content).
+// 2026-06-19 v17: Strip tracking URLs in parens (e.g. "Login ( http://... )")
+// from email bodies before applying the per-message cap. Vendor emails (US Bank,
+// Amazon, etc.) embed many tracking links inline that consume the entire 1000-char
+// budget and hide the actual transaction text. After stripping, typical body
+// content is ~5-10% of original size and the meaningful sentence ("account ending
+// in 3977", "Your order shipped", etc.) fits comfortably under the cap.
+function stripParenthesizedUrls(text: string): string {
+  if (!text) return "";
+  // Remove "( https?://... )" patterns with surrounding whitespace
+  const noUrls = text.replace(/\s*\(\s*https?:\/\/[^)]+\)\s*/g, " ");
+  // Collapse runs of whitespace (newlines, tabs, multiple spaces) into single spaces
+  return noUrls.replace(/\s+/g, " ").trim();
+}
+
 function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): any {
   // composioResult.data may be the messages array directly, or wrapped under .messages
   const messages = Array.isArray(composioData)
@@ -300,7 +317,12 @@ function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): an
         const h = headers.find((x: any) => (x.name ?? "").toLowerCase() === name.toLowerCase());
         return h?.value ?? "";
       };
-      const body = findGmailPlainTextBody(m.payload).slice(0, perMessageBodyCap);
+      // v17: strip parenthesized tracking URLs BEFORE applying the cap.
+      // This avoids the failure mode where US Bank emails fit 2000+ chars of
+      // tracking links into the first part of the body and push the transaction
+      // text past the cap, causing the LLM to return null account_last4.
+      const rawBody = findGmailPlainTextBody(m.payload);
+      const body = stripParenthesizedUrls(rawBody).slice(0, perMessageBodyCap);
       return {
         messageId: m.messageId ?? m.id ?? "",
         threadId: m.threadId ?? "",
