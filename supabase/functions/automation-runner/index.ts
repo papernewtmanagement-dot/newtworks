@@ -14,14 +14,16 @@
 //     3. Mark the recipe as "running" (sets last_run_at to NOW())
 //     4. Resolve Composio credentials from settings (agency-scoped)
 //     5. Call the recipe's composio_action with input_config arguments
-//     6. If groq_prompt is set, post the result data through the
-//        Composio-hosted LLM (COMPOSIO_SEARCH_GROQ_CHAT) for structured
-//        extraction. NO separate Groq API key required — auth is via the
-//        existing composio_api_key.
+//     6. If groq_prompt is set, post the result data through Groq directly
+//        (v15+: NOT through Composio's removed GROQ_CHAT tool) for structured
+//        extraction.
 //     7. Write parsed records to the recipe's output_table per output_config
-//     8. Write a row to automation_run_log
-//     9. Update the recipe's last_run_status
-//    10. Telegram alert on failure (if Telegram creds present)
+//     8. v16+: If input_config.archive_after_parse, remove INBOX label from
+//        each parsed message (Gmail recipes only) so parsers self-clean their
+//        own emails.
+//     9. Write a row to automation_run_log
+//    10. Update the recipe's last_run_status
+//    11. Telegram alert on failure (if Telegram creds present)
 //
 // PATTERN: Mirrors the Composio call shape in gmail-inbox-archiver and the
 //   auth/log/Telegram structure in linkedin-poster from the Imaginary Farms
@@ -318,6 +320,41 @@ function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): an
  * Recipes specify composio_connection like "gmail" or "facebook"; this maps
  * to the corresponding settings key for the given agency.
  */
+// =====================================================================
+// 2026-06-19 v16: Post-parse Gmail archive helper.
+// =====================================================================
+async function archiveProcessedGmailMessages(opts: {
+  apiKey: string;
+  userId: string;
+  connectedAccountId: string;
+  messageIds: string[];
+  additionalLabelsToAdd?: string[];
+}): Promise<{ ok: boolean; archived: number; error: string | null }> {
+  const ids = (opts.messageIds || []).filter(
+    (x): x is string => typeof x === "string" && x.length > 0,
+  );
+  if (ids.length === 0) {
+    return { ok: true, archived: 0, error: null };
+  }
+  const result = await callComposio({
+    apiKey: opts.apiKey,
+    userId: opts.userId,
+    connectedAccountId: opts.connectedAccountId,
+    toolSlug: "GMAIL_BATCH_MODIFY_MESSAGES",
+    toolArguments: {
+      messageIds: ids,
+      removeLabelIds: ["INBOX"],
+      ...(opts.additionalLabelsToAdd && opts.additionalLabelsToAdd.length > 0
+        ? { addLabelIds: opts.additionalLabelsToAdd }
+        : {}),
+    },
+  });
+  if (!result.ok) {
+    return { ok: false, archived: 0, error: result.error };
+  }
+  return { ok: true, archived: ids.length, error: null };
+}
+
 async function getComposioAccountId(agencyId: string, connection: string): Promise<string> {
   const key = `composio_${connection.toLowerCase()}_account_id`;
   const v = await getSetting(agencyId, key);
@@ -956,6 +993,24 @@ async function executeRecipe(
       });
       recordsProcessed = writeResult.inserted + writeResult.updated;
       outputSummary = `${recordsProcessed} records written to ${recipe.output_table}`;
+      // --- v16: post-parse archive ---
+      if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
+        const messageIds = parsedRecords.map((r: any) => r.source_message_id as string | undefined).filter((x): x is string => typeof x === "string" && x.length > 0);
+        if (messageIds.length > 0) {
+          const archiveResult = await archiveProcessedGmailMessages({
+            apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId,
+            messageIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined,
+          });
+          if (archiveResult.ok) {
+            outputSummary += ` — archived ${archiveResult.archived} email${archiveResult.archived === 1 ? "" : "s"} from inbox`;
+          } else {
+            outputSummary += ` — ⚠️ archive failed: ${archiveResult.error}`;
+            await telegram(agencyId, `🟡 <b>Post-parse archive failed</b>\nRecipe: <b>${recipe.recipe_name}</b>\n${(archiveResult.error ?? "").slice(0, 400)}`);
+          }
+        } else {
+          outputSummary += ` — archive skipped (no source_message_id in records)`;
+        }
+      }
     } else if (recipe.output_table) {
       outputSummary = `0 records — Composio returned data but LLM parsing yielded no records to write`;
     } else {
