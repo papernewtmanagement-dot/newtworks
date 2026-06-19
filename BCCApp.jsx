@@ -17,6 +17,7 @@ import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Handbook from "./src/modules/Handbook.jsx";
 import TimeClock from "./src/modules/TimeClock.jsx";
 import TimeOffRequests from "./src/modules/TimeOffRequests.jsx";
+import CPRDetail from "./src/modules/CPRDetail.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -590,6 +591,15 @@ const ModuleRouter = ({ active, onNavigate }) => {
   return modules[active] || <ComingSoon module={active} />;
 };
 
+// ─── CPR Detail deep-link routing ─────────────────────────────────────────────
+// Detects URL path /cpr/YYYY-MM-DD and returns the date string; null otherwise.
+// Used to render the standalone Weekly CPR viewer in place of ModuleRouter.
+function detectCPRWeekDate() {
+  if (typeof window === "undefined") return null;
+  const m = /^\/cpr\/(\d{4}-\d{2}-\d{2})\/?$/.exec(window.location.pathname || "");
+  return m ? m[1] : null;
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function BCCApp() {
   // ── Auth gate state (Path 1) ──────────────────────────────────────────────
@@ -604,6 +614,22 @@ export default function BCCApp() {
   });
 
   const [activeModule, setActiveModule] = useState("dashboard");
+  // CPR detail deep-link state: set when URL matches /cpr/YYYY-MM-DD, cleared on close.
+  const [cprWeekDate, setCprWeekDate] = useState(() => detectCPRWeekDate());
+  // Re-evaluate the URL on browser back/forward so navigation stays in sync.
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onPop = () => setCprWeekDate(detectCPRWeekDate());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  // Close the CPR detail page and return to the main BCC view.
+  const handleCloseCPR = () => {
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/cpr/")) {
+      window.history.pushState({}, "", "/");
+    }
+    setCprWeekDate(null);
+  };
   const viewport = useViewport();
   // Sidebar starts collapsed on phone/tablet (manual toggle still works thereafter).
   const [navCollapsed, setNavCollapsed] = useState(() => {
@@ -802,7 +828,7 @@ export default function BCCApp() {
                   </div>
                   {["Profile", "Notification Settings", "Team Access"].map(item => (
                     <div key={item} style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.slate700, cursor: "pointer", borderRadius: 6 }}
-                      onClick={() => { setActiveModule("settings"); setUserMenuOpen(false); }}>
+                      onClick={() => { if (cprWeekDate) handleCloseCPR(); setActiveModule("settings"); setUserMenuOpen(false); }}>
                       {item}
                     </div>
                   ))}
@@ -835,7 +861,7 @@ export default function BCCApp() {
                   <div
                     key={item.id}
                     style={css.navItem(active, navCollapsed)}
-                    onClick={() => setActiveModule(item.id)}
+                    onClick={() => { if (cprWeekDate) handleCloseCPR(); setActiveModule(item.id); }}
                     title={navCollapsed ? item.label : ""}
                   >
                     <Icon
@@ -867,7 +893,11 @@ export default function BCCApp() {
           {/* ── Main Content ── */}
           <main style={css.main}>
             <div style={{ ...css.mainInner, padding: viewport.isPhone ? "12px 12px" : viewport.isTablet ? "16px 18px" : "20px 24px" }}>
-              <ModuleRouter active={activeModule} onNavigate={setActiveModule} />
+              {cprWeekDate ? (
+                <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} /></ErrorBoundary>
+              ) : (
+                <ModuleRouter active={activeModule} onNavigate={setActiveModule} />
+              )}
             </div>
 
             {/* Footer */}
