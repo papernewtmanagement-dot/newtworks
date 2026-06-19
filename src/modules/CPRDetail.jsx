@@ -17,6 +17,21 @@ function isValidISODate(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+function addDaysISO(iso, days) {
+  if (!isValidISODate(iso)) return null;
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayISO() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function fmtDateLong(iso) {
   if (!isValidISODate(iso)) return "—";
   try {
@@ -1425,7 +1440,7 @@ function EditModeBar({ totalDirty, saving, saveError, onSave, onCancel }) {
 // ─────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────
-export default function CPRDetail({ weekDate, onClose = () => {}, userRole = null }) {
+export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek = null, userRole = null }) {
   const data = useCPRData(weekDate);
   const edit = useEditForm();
   const canEdit = EDIT_ROLES.has(userRole);
@@ -1550,8 +1565,32 @@ export default function CPRDetail({ weekDate, onClose = () => {}, userRole = nul
           <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>
             📊 CPR Recap {edit.active && <span style={{ fontSize: 13, color: T.amber700 || "#a16207", fontWeight: 700, marginLeft: 10 }}>· Editing</span>}
           </div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
-            Week ending {fmtDateLong(weekDate)} &nbsp;·&nbsp; ({fmtRange(weekDate)})
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {onNavigateWeek && !edit.active ? (
+              <button
+                onClick={() => onNavigateWeek(addDaysISO(weekDate, -7))}
+                style={{
+                  padding: "3px 8px", fontSize: 11, fontWeight: 600,
+                  background: T.white, color: T.slate700,
+                  border: `1px solid ${T.slate300}`, borderRadius: 5,
+                  cursor: "pointer",
+                }}
+                title={`Go to week ending ${addDaysISO(weekDate, -7)}`}
+              >← Prev week</button>
+            ) : null}
+            <span>Week ending {fmtDateLong(weekDate)} &nbsp;·&nbsp; ({fmtRange(weekDate)})</span>
+            {onNavigateWeek && !edit.active && addDaysISO(weekDate, 7) && addDaysISO(weekDate, 7) <= todayISO() ? (
+              <button
+                onClick={() => onNavigateWeek(addDaysISO(weekDate, 7))}
+                style={{
+                  padding: "3px 8px", fontSize: 11, fontWeight: 600,
+                  background: T.white, color: T.slate700,
+                  border: `1px solid ${T.slate300}`, borderRadius: 5,
+                  cursor: "pointer",
+                }}
+                title={`Go to week ending ${addDaysISO(weekDate, 7)}`}
+              >Next week →</button>
+            ) : null}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>

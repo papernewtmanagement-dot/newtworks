@@ -625,6 +625,14 @@ export default function BCCApp() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   // Close the CPR detail page and return to the main BCC view.
+  const handleNavigateCPRWeek = (newDateISO) => {
+    if (!newDateISO || !/^\d{4}-\d{2}-\d{2}$/.test(newDateISO)) return;
+    setCprWeekDate(newDateISO);
+    if (typeof window !== "undefined") {
+      window.history.pushState({}, "", `/cpr/${newDateISO}`);
+    }
+  };
+
   const handleCloseCPR = () => {
     if (typeof window !== "undefined" && window.location.pathname.startsWith("/cpr/")) {
       window.history.pushState({}, "", "/");
@@ -895,7 +903,7 @@ export default function BCCApp() {
           <main style={css.main}>
             <div style={{ ...css.mainInner, padding: viewport.isPhone ? "12px 12px" : viewport.isTablet ? "16px 18px" : "20px 24px" }}>
               {cprWeekDate ? (
-                <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} userRole={agency?.user?.role} /></ErrorBoundary>
+                <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
               ) : (
                 <ModuleRouter active={activeModule} onNavigate={setActiveModule} />
               )}
