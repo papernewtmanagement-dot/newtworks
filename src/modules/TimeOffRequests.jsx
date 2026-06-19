@@ -464,11 +464,18 @@ export default function TimeOffRequests() {
       try {
         if (!supabase) { setLoading(false); return; }
         const { data: sessionData } = await supabase.auth.getUser();
-        const user = sessionData?.user;
-        if (!user) { setLoading(false); return; }
+        const authUser = sessionData?.user;
+        if (!authUser) { setLoading(false); return; }
+        // Resolve auth.users.id -> public.users row -> public.team row
+        // (team.user_id holds public.users.id, NOT auth.users.id, so we must
+        // route through the users table by auth_user_id.)
+        const { data: userRow } = await supabase.from("users")
+          .select("team_member_id")
+          .eq("agency_id", AGENCY_ID).eq("auth_user_id", authUser.id).maybeSingle();
+        if (!userRow?.team_member_id) { setLoading(false); return; }
         const { data: teamRow } = await supabase.from("team")
           .select("id, first_name, last_name, role, role_level, work_location, four_day_off_day, category")
-          .eq("agency_id", AGENCY_ID).eq("user_id", user.id).maybeSingle();
+          .eq("id", userRow.team_member_id).maybeSingle();
         setMe(teamRow);
       } catch (e) { console.error("Time Off — auth load error", e); }
       finally { setLoading(false); }

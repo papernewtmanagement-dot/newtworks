@@ -110,7 +110,7 @@ const NAV_ITEMS = [
   { id: "social",      label: "Social",      icon: "share",    roles: ["owner","manager","staff"] },
   { type: "divider",   id: "_div_team_top" },
   { id: "timeclock",   label: "Timeclock",   icon: "clock",    roles: ["owner","manager","staff"] },
-  { id: "time_off",    label: "Time Off",    icon: "check",    roles: ["owner","manager","staff"] },
+  { id: "time_off",    label: "Time Off",    icon: "calendarOff", roles: ["owner","manager","staff"] },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
   { type: "divider",   id: "_div_team_bot" },
   { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
@@ -148,6 +148,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     x:          <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
     lightning:  <svg style={s} viewBox="0 0 24 24" fill={color} stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
     externalLink:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
+    calendarOff:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M4.2 4.2A2 2 0 0 0 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.8-1.2"/><path d="M21 15.5V6a2 2 0 0 0-2-2H9.5"/><line x1="3" y1="10" x2="14" y2="10"/><path d="M16 2v4"/><path d="M8 2v2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>,
   };
   return icons[name] || null;
 };
