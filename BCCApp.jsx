@@ -424,7 +424,7 @@ const LoginScreen = ({ onSignedIn }) => {
         {/* Logo + heading */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
           <img src="/newt-icon-transparent.png" alt="paper newt" width="144" height="144" style={{ display: "block", marginBottom: 14 }} />
-          <div style={{ fontFamily: '"Quicksand", "Poppins", sans-serif', fontSize: 26, fontWeight: 500, color: TOKENS.slate900, letterSpacing: "0.04em" }}>Paper Newt</div>
+          <div style={{ fontFamily: '"Quicksand", "Poppins", sans-serif', fontSize: 26, fontWeight: 500, color: TOKENS.slate900, letterSpacing: "0.04em" }}>paper newt</div>
           <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4 }}>Sign in to continue</div>
         </div>
 
@@ -793,7 +793,7 @@ export default function BCCApp() {
               <img src="/paper-newt-master.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
             </div>
             <div>
-              <div style={css.agencyName}>Paper Newt</div>
+              <div style={css.agencyName}>paper newt</div>
             </div>
           </div>
 
@@ -902,7 +902,7 @@ export default function BCCApp() {
 
             {/* Footer */}
             <div style={css.footer}>
-              Paper Newt
+              paper newt
             </div>
           </main>
         </div>
