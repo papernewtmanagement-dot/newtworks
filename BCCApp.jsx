@@ -18,6 +18,7 @@ import Handbook from "./src/modules/Handbook.jsx";
 import TimeClock from "./src/modules/TimeClock.jsx";
 import TimeOffRequests from "./src/modules/TimeOffRequests.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
+import CPRList from "./src/modules/CPRList.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -100,6 +101,7 @@ const AGENCY_DEFAULTS = {
 // ─── Navigation Config ────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: "dashboard",   label: "Dashboard",   icon: "grid",     roles: ["owner","manager","staff","readonly","accountant"] },
+  { id: "cpr",         label: "CPR",         icon: "calendar", roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "alerts",      label: "Alerts",      icon: "bell",     roles: ["owner","manager","staff","readonly","accountant"] },
   { id: "tasks",       label: "Tasks",       icon: "check",    roles: ["owner","manager","staff","readonly"] },
   { id: "chat",        label: "Claude",      icon: "message",  roles: ["owner","manager","staff","readonly","accountant"] },
@@ -556,6 +558,7 @@ const ComingSoon = ({ module }) => (
 const ModuleRouter = ({ active, onNavigate }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} /></ErrorBoundary>,
+    cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
