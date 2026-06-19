@@ -297,6 +297,41 @@ export default function WeeklyCPR({ onClose = () => {} }) {
     }
   }, []);
 
+  // After a week loads, if team_detail rows are missing for some members, call
+  // prefill_weekly_cpr_form RPC and re-load. Idempotent server-side — fills:
+  //   * carryover (from prior week's owed)
+  //   * mon/tue/wed/thu/fri hours + location (from time_clock_entries)
+  // Never overwrites existing values.
+  const [prefillAttempted, setPrefillAttempted] = useState({});
+  useEffect(() => {
+    if (!supabase || !weekEnding || loading) return;
+    if (members.length === 0) return;
+    const detailCount = Object.keys(details).length;
+    if (detailCount >= members.length) return;            // already fully populated
+    if (prefillAttempted[weekEnding]) return;             // already tried this week
+    let cancelled = false;
+    (async () => {
+      setPrefillAttempted((p) => ({ ...p, [weekEnding]: true }));
+      try {
+        const { error: rpcErr } = await supabase.rpc("prefill_weekly_cpr_form", {
+          p_agency_id: AGENCY_ID,
+          p_week_ending_date: weekEnding,
+        });
+        if (cancelled) return;
+        if (rpcErr) {
+          // Soft fail: prefill is best-effort, don't block the form
+          console.warn("prefill_weekly_cpr_form failed:", rpcErr.message);
+          return;
+        }
+        // Reload the week to pick up the prefilled rows
+        await loadWeek(weekEnding);
+      } catch (e) {
+        if (!cancelled) console.warn("prefill RPC threw:", e?.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [weekEnding, members, details, loading, loadWeek, prefillAttempted]);
+
   useEffect(() => { if (weekEnding) loadWeek(weekEnding); }, [weekEnding, loadWeek]);
 
   const updateReport = (patch) => setReport((r) => ({ ...(r || {}), ...patch }));
