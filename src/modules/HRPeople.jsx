@@ -677,6 +677,140 @@ const StaffDirectory = ({ staff }) => {
     }
   };
 
+  // ── Reactivation flow state ──
+  const [view, setView] = useState("active"); // "active" or "archived"
+  const [archivedStaff, setArchivedStaff] = useState([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedError, setArchivedError] = useState("");
+  const [reactivatingId, setReactivatingId] = useState(null);
+  const [reactivating, setReactivating] = useState(false);
+  const [reactivateError, setReactivateError] = useState("");
+  const [reactivateNote, setReactivateNote] = useState("");
+  const [reactivatedIds, setReactivatedIds] = useState(new Set());
+
+  // Load archived staff (is_active=false) plus their latest termination note for context.
+  useEffect(() => {
+    if (view !== "archived" || !supabase) return;
+    let cancelled = false;
+    setArchivedLoading(true);
+    setArchivedError("");
+    (async () => {
+      const { data: teamRows, error: teamErr } = await supabase
+        .from("team")
+        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id")
+        .eq("agency_id", AGENCY_ID)
+        .eq("is_active", false)
+        .order("archived_at", { ascending: false, nullsFirst: false });
+      if (cancelled) return;
+      if (teamErr) { setArchivedError(teamErr.message || "Failed to load archived staff."); setArchivedLoading(false); return; }
+      const rows = teamRows || [];
+      let notes = [];
+      if (rows.length) {
+        const { data: noteRows } = await supabase
+          .from("team_behavioral_notes")
+          .select("team_member_id, observation_text, observation_date, pattern_type, source")
+          .eq("agency_id", AGENCY_ID)
+          .in("team_member_id", rows.map(r => r.id))
+          .eq("pattern_type", "termination")
+          .order("observation_date", { ascending: false });
+        notes = noteRows || [];
+      }
+      const latestNote = {};
+      notes.forEach(n => { if (!latestNote[n.team_member_id]) latestNote[n.team_member_id] = n; });
+      if (cancelled) return;
+      setArchivedStaff(rows.map(t => ({ ...t, _termNote: latestNote[t.id] || null })));
+      setArchivedLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [view, reactivatedIds]);
+
+  const reactivateMember = async (member, note) => {
+    if (reactivating) return;
+    setReactivating(true);
+    setReactivateError("");
+    const nowIso = new Date().toISOString();
+    const today = new Date().toISOString().slice(0,10);
+    try {
+      if (!supabase) { setReactivateError("No database connection."); setReactivating(false); return; }
+
+      // 1) Restore team row.
+      const teamUpdate = await supabase
+        .from("team")
+        .update({
+          is_active: true,
+          end_date: null,
+          archived_at: null,
+          performance_status: null,
+          updated_at: nowIso,
+        })
+        .eq("id", member.id)
+        .eq("agency_id", AGENCY_ID);
+      if (teamUpdate.error) { setReactivateError(`team update failed: ${teamUpdate.error.message}`); setReactivating(false); return; }
+
+      // 2) Restore linked user account if one exists.
+      if (member.user_id) {
+        const userUpdate = await supabase
+          .from("users")
+          .update({ is_active: true, invite_status: "accepted", updated_at: nowIso })
+          .eq("id", member.user_id)
+          .eq("agency_id", AGENCY_ID);
+        if (userUpdate.error) {
+          await supabase.from("team").update({
+            is_active: false,
+            archived_at: member.archived_at,
+            end_date: member.end_date,
+            performance_status: member.performance_status,
+          }).eq("id", member.id).eq("agency_id", AGENCY_ID);
+          setReactivateError(`users update failed (team rolled back): ${userUpdate.error.message}`);
+          setReactivating(false);
+          return;
+        }
+      }
+
+      // 3) Audit: reactivation note.
+      const obsText = [
+        `REACTIVATION — team member returned to active status.`,
+        `Prior end date: ${member.end_date || "unknown"}.`,
+        note && note.trim() ? `Notes: ${note.trim()}` : null,
+      ].filter(Boolean).join("\n");
+      await supabase.from("team_behavioral_notes").insert({
+        agency_id: AGENCY_ID,
+        team_member_id: member.id,
+        observation_date: today,
+        pattern_type: "reactivation",
+        source: "reactivation_action",
+        observation_text: obsText,
+      });
+
+      // 4) Resolve the related termination note.
+      await supabase
+        .from("team_behavioral_notes")
+        .update({ is_resolved: true, resolved_date: today, updated_at: nowIso })
+        .eq("agency_id", AGENCY_ID)
+        .eq("team_member_id", member.id)
+        .eq("pattern_type", "termination")
+        .eq("is_resolved", false);
+
+      // 5) Cancel any still-open offboarding follow-up task for this person.
+      await supabase
+        .from("tasks")
+        .update({ status: "cancelled", completed_at: nowIso, updated_at: nowIso })
+        .eq("agency_id", AGENCY_ID)
+        .eq("related_id", member.id)
+        .eq("module_reference", "hr_people")
+        .eq("status", "open");
+
+      // 6) Local UI: drop from archived list immediately.
+      setReactivatedIds(prev => { const n = new Set(prev); n.add(member.id); return n; });
+      setReactivatingId(null);
+      setReactivateNote("");
+    } catch (e) {
+      setReactivateError(e?.message || "Unexpected error during reactivation.");
+    } finally {
+      setReactivating(false);
+    }
+  };
+
   const startEdit = (member) => {
     setSaveError("");
     setEditingId(member.id);
@@ -688,8 +822,10 @@ const StaffDirectory = ({ staff }) => {
       role_level: member.role_level || "",
       category: member.category || "agency",
       employment_type: member.employment_type || "",
-      email: member.email || "",
-      phone: member.phone || "",
+      email_personal:  member.email_personal  || "",
+      email_sf:        member.email_sf        || "",
+      phone_personal:  member.phone_personal  || "",
+      phone_extension: member.phone_extension || "",
       pay_type: member.pay_type || "",
       pay_rate: member.pay_rate ?? "",
       pay_frequency: member.pay_frequency || "",
@@ -718,8 +854,10 @@ const StaffDirectory = ({ staff }) => {
       role_level: (form.role_level || "").trim() || null,
       category: (form.category || "agency").trim() || "agency",
       employment_type: form.employment_type.trim() || null,
-      email: form.email.trim() || null,
-      phone: form.phone.trim() || null,
+      email_personal:  form.email_personal.trim()  || null,
+      email_sf:        form.email_sf.trim()        || null,
+      phone_personal:  form.phone_personal.trim()  || null,
+      phone_extension: form.phone_extension.trim() || null,
       pay_type: form.pay_type.trim() || null,
       pay_rate: form.pay_rate === "" || form.pay_rate == null ? null : Number(form.pay_rate),
       pay_frequency: form.pay_frequency.trim() || null,
@@ -770,9 +908,114 @@ const StaffDirectory = ({ staff }) => {
   const inputStyle = { padding:"8px 10px", borderRadius:6, border:`1px solid ${T.slate200}`, fontSize:12, width:"100%", boxSizing:"border-box", background:T.white, color:T.slate800 };
   const labelStyle = { fontSize:9, color:T.slate400, marginBottom:3, display:"block" };
 
+  // Counts for the view toggle
+  const activeCount = (staff || []).filter(s => s.is_active && !terminatedIds.has(s.id)).length;
+  const archivedCount = archivedStaff.filter(s => !reactivatedIds.has(s.id)).length;
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      {staff.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
+      {/* View toggle — Active vs Archived */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+        <button
+          onClick={() => setView("active")}
+          style={{ padding:"6px 12px", fontSize:11, fontWeight:view==="active"?700:500, color:view==="active"?T.white:T.slate700, background:view==="active"?T.slate900:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
+          Active · {activeCount}
+        </button>
+        <button
+          onClick={() => setView("archived")}
+          style={{ padding:"6px 12px", fontSize:11, fontWeight:view==="archived"?700:500, color:view==="archived"?T.white:T.slate700, background:view==="archived"?T.slate900:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
+          Archived{view==="archived" ? " · " + archivedCount : ""}
+        </button>
+        {view === "archived" && archivedLoading && (
+          <span style={{ fontSize:11, color:T.slate500 }}>Loading…</span>
+        )}
+      </div>
+
+      {/* ============== ARCHIVED VIEW ============== */}
+      {view === "archived" && !archivedLoading && archivedError && (
+        <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"8px 10px" }}>
+          {archivedError}
+        </div>
+      )}
+      {view === "archived" && !archivedLoading && !archivedError && archivedStaff.filter(s => !reactivatedIds.has(s.id)).length === 0 && (
+        <div style={{ fontSize:12, color:T.slate500, background:T.slate50, borderRadius:8, padding:"16px 14px", textAlign:"center" }}>
+          No archived team members.
+        </div>
+      )}
+      {view === "archived" && archivedStaff.filter(s => !reactivatedIds.has(s.id)).map(member => {
+        const expectedName = `${member.first_name || ""} ${member.last_name || ""}`.trim();
+        const isReactivating = reactivatingId === member.id;
+        const term = member._termNote;
+        const reasonLine = term && term.observation_text ? term.observation_text.split("\n")[0] : "";
+        return (
+          <Card key={member.id} style={{ border:`1px solid ${T.slate200}`, background:T.slate50, opacity:0.95 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+              <div style={{ width:48, height:48, borderRadius:12, background:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:T.slate500, flexShrink:0 }}>
+                {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
+              </div>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:T.slate900, textDecoration:"line-through" }}>{member.first_name} {member.last_name}</span>
+                  <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.redLt, color:"#991B1B" }}>
+                    Terminated · {member.end_date || (member.archived_at ? member.archived_at.slice(0,10) : "date unknown")}
+                  </span>
+                </div>
+                <div style={{ fontSize:12, color:T.slate500 }}>
+                  {member.role || "—"}{member.role_level ? ` · ${member.role_level}` : ""} · {member.employment_type || "—"} · Started {member.start_date || "—"}
+                </div>
+                {reasonLine && (
+                  <div style={{ fontSize:11, color:T.slate600, marginTop:4 }}>{reasonLine}</div>
+                )}
+              </div>
+              <div style={{ flexShrink:0 }}>
+                <button
+                  onClick={() => { setReactivateError(""); setReactivateNote(""); setReactivatingId(isReactivating ? null : member.id); }}
+                  style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>
+                  {isReactivating ? "Cancel" : "Reactivate"}
+                </button>
+              </div>
+            </div>
+
+            {isReactivating && (
+              <div style={{ marginTop:14, paddingTop:14, borderTop:`2px solid ${T.green}` }}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.slate900, marginBottom:6 }}>
+                  Reactivate {expectedName}?
+                </div>
+                <div style={{ fontSize:11, color:T.slate600, marginBottom:10, lineHeight:1.55 }}>
+                  Sets the team row back to active, clears the end date and archived stamp, and restores the linked user login if one exists. Cancels any open offboarding follow-up task. Writes a reactivation audit note and marks the prior termination note as resolved.
+                </div>
+                <div style={{ marginBottom:10 }}>
+                  <label style={labelStyle}>Reason / context (optional)</label>
+                  <textarea
+                    style={{ ...inputStyle, resize:"vertical", minHeight:50, fontFamily:"inherit", lineHeight:1.5 }}
+                    rows={2}
+                    value={reactivateNote}
+                    onChange={e => setReactivateNote(e.target.value)}
+                    placeholder="e.g. Rehire after 6-month break · Termination was logged in error · Returning from leave"
+                  />
+                </div>
+                {reactivateError && (
+                  <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
+                    {reactivateError}
+                  </div>
+                )}
+                <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+                  <button onClick={() => setReactivatingId(null)} disabled={reactivating} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:"none", borderRadius:7, cursor:reactivating?"not-allowed":"pointer" }}>Cancel</button>
+                  <button
+                    onClick={() => reactivateMember(member, reactivateNote)}
+                    disabled={reactivating}
+                    style={{ padding:"7px 16px", fontSize:11, fontWeight:700, color:T.white, background:reactivating?T.slate400:T.green, border:"none", borderRadius:7, cursor:reactivating?"not-allowed":"pointer" }}>
+                    {reactivating ? "Reactivating…" : "Confirm Reactivate"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+
+      {/* ============== ACTIVE VIEW (existing card list) ============== */}
+      {view === "active" && staff.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
         // Merge any saved override on top of the loaded row.
         const member = overrides[raw.id] ? { ...raw, ...overrides[raw.id] } : raw;
         const isExpanded = expanded === member.id;
@@ -820,10 +1063,12 @@ const StaffDirectory = ({ staff }) => {
               <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.slate100}` }}>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:8, marginBottom:12 }}>
                   {[
-                    { label:"Email",      value:member.email||"—" },
-                    { label:"Phone",      value:member.phone||"—" },
+                    { label:"Personal Email", value:member.email_personal||"—" },
+                    { label:"SF Email",       value:member.email_sf||"—" },
+                    { label:"Personal Phone", value:member.phone_personal||"—" },
+                    { label:"Phone Ext",      value:member.phone_extension||"—" },
                     { label:"Licensed States", value:(member.license_states || []).length>0?(member.license_states || []).join(", "):"None" },
-                    { label:"Start Date", value:member.start_date||"—" },
+                    { label:"Start Date",     value:member.start_date||"—" },
                   ].map((d,i) => (
                     <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
                       <div style={{ fontSize:9, color:T.slate400, marginBottom:2 }}>{d.label}</div>
@@ -956,8 +1201,10 @@ const StaffDirectory = ({ staff }) => {
                     </select>
                   </div>
                   <div><label style={labelStyle}>Employment type</label><input style={inputStyle} value={form.employment_type} onChange={e=>setForm({...form, employment_type:e.target.value})} placeholder="Full Time / 1099 / family" /></div>
-                  <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={e=>setForm({...form, email:e.target.value})} /></div>
-                  <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={form.phone} onChange={e=>setForm({...form, phone:e.target.value})} /></div>
+                  <div><label style={labelStyle}>Personal email</label><input style={inputStyle} value={form.email_personal} onChange={e=>setForm({...form, email_personal:e.target.value})} placeholder="name@gmail.com" /></div>
+                  <div><label style={labelStyle}>SF email</label><input style={inputStyle} value={form.email_sf} onChange={e=>setForm({...form, email_sf:e.target.value})} placeholder="name@statefarm.com" /></div>
+                  <div><label style={labelStyle}>Personal phone</label><input style={inputStyle} value={form.phone_personal} onChange={e=>setForm({...form, phone_personal:e.target.value})} placeholder="(210) 555-0100" /></div>
+                  <div><label style={labelStyle}>Phone extension</label><input style={inputStyle} value={form.phone_extension} onChange={e=>setForm({...form, phone_extension:e.target.value})} placeholder="e.g. 101" /></div>
                   <div><label style={labelStyle}>Pay type</label>
                     <select style={inputStyle} value={form.pay_type} onChange={e=>setForm({...form, pay_type:e.target.value})}>
                       <option value="">—</option>
