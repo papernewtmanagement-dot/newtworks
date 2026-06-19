@@ -356,12 +356,15 @@ function MyRequestsView({ me }) {
 }
 
 // INBOX VIEW (Owner only) ================================================
-function LogSickDayForm({ onLogged }) {
+function LogTimeOffForm({ onLogged }) {
   const [team, setTeam] = useState([]);
   const [teamId, setTeamId] = useState("");
+  const [type, setType] = useState("sick");           // sick | pto | remote
+  const [dayPart, setDayPart] = useState("none");     // none | morning | afternoon
+  const [isPaid, setIsPaid] = useState(true);
+  const [isPlanned, setIsPlanned] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [partialDay, setPartialDay] = useState("none");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -381,21 +384,33 @@ function LogSickDayForm({ onLogged }) {
     loadTeam();
   }, []);
 
+  function deriveRequestType(t, dp) {
+    if (t === "sick") return "sick";
+    if (t === "pto")    return dp === "none" ? "pto_full_day" : "pto_half_day";
+    if (t === "remote") return dp === "none" ? "remote_day"   : "remote_half_day";
+    return "sick";
+  }
+
   async function submit() {
     if (!teamId || !startDate) { alert("Team member and start date are required"); return; }
+    const requestType = deriveRequestType(type, dayPart);
     setSubmitting(true);
     try {
-      const { data, error } = await supabase.rpc("log_sick_day_for", {
+      const { error } = await supabase.rpc("log_time_off_for", {
         p_team_member_id: teamId,
-        p_start_date: startDate,
-        p_end_date: endDate || startDate,
-        p_partial_day: partialDay || "none",
-        p_notes: notes || null
+        p_request_type:   requestType,
+        p_start_date:     startDate,
+        p_end_date:       endDate || startDate,
+        p_partial_day:    dayPart,
+        p_is_paid:        isPaid,
+        p_is_planned:     isPlanned,
+        p_notes:          notes || null
       });
       if (error) throw error;
-      setTeamId(""); setStartDate(""); setEndDate(""); setPartialDay("none"); setNotes("");
-      setExpanded(false);
-      alert("Sick day logged. Calendar event will appear within 5 minutes.");
+      setTeamId(""); setStartDate(""); setEndDate("");
+      setType("sick"); setDayPart("none"); setIsPaid(true); setIsPlanned(false);
+      setNotes(""); setExpanded(false);
+      alert("Time off logged. Calendar event will appear within 5 minutes.");
       if (typeof onLogged === "function") onLogged();
     } catch (e) {
       alert("Log failed: " + (e?.message || "unknown"));
@@ -414,25 +429,48 @@ function LogSickDayForm({ onLogged }) {
         onClick={() => setExpanded(v => !v)}
         style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 600, color: "#0f172a", textAlign: "left" }}
       >
-        <span>🤒 Log Sick Day on Behalf of Team Member</span>
+        <span>📝 Log Time Off on Behalf of Team Member</span>
         <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "#64748b", fontSize: 18, lineHeight: 1 }}>›</span>
       </button>
       {expanded && (
         <div style={{ padding: "12px 16px 16px", borderTop: "1px solid #e2e8f0" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <label style={lbl}>
+            Team Member
+            <select value={teamId} onChange={e => setTeamId(e.target.value)} style={inp}>
+              <option value="">— select —</option>
+              {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
+            </select>
+          </label>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
             <label style={lbl}>
-              Team Member
-              <select value={teamId} onChange={e => setTeamId(e.target.value)} style={inp}>
-                <option value="">— select —</option>
-                {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
+              Type
+              <select value={type} onChange={e => setType(e.target.value)} style={inp}>
+                <option value="sick">Sick</option>
+                <option value="pto">PTO</option>
+                <option value="remote">Remote</option>
               </select>
             </label>
             <label style={lbl}>
-              Partial Day
-              <select value={partialDay} onChange={e => setPartialDay(e.target.value)} style={inp}>
+              Day Part
+              <select value={dayPart} onChange={e => setDayPart(e.target.value)} style={inp}>
                 <option value="none">Full day</option>
                 <option value="morning">Morning only</option>
                 <option value="afternoon">Afternoon only</option>
+              </select>
+            </label>
+            <label style={lbl}>
+              Pay
+              <select value={isPaid ? "paid" : "unpaid"} onChange={e => setIsPaid(e.target.value === "paid")} style={inp}>
+                <option value="paid">Paid</option>
+                <option value="unpaid">Unpaid</option>
+              </select>
+            </label>
+            <label style={lbl}>
+              Planning
+              <select value={isPlanned ? "planned" : "unplanned"} onChange={e => setIsPlanned(e.target.value === "planned")} style={inp}>
+                <option value="unplanned">Unplanned</option>
+                <option value="planned">Planned</option>
               </select>
             </label>
             <label style={lbl}>
@@ -444,13 +482,15 @@ function LogSickDayForm({ onLogged }) {
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inp} />
             </label>
           </div>
+
           <label style={{ ...lbl, marginTop: 12 }}>
             Notes (optional)
             <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. 'flu, out for the day'" style={inp} />
           </label>
+
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
             <button onClick={submit} disabled={submitting} style={{ padding: "8px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: submitting ? "wait" : "pointer", opacity: submitting ? 0.6 : 1 }}>
-              {submitting ? "Logging…" : "Log Sick Day"}
+              {submitting ? "Logging…" : "Log Time Off"}
             </button>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>
               Skips vote. Status = approved. Calendar event auto-creates. No email sent.
@@ -461,6 +501,7 @@ function LogSickDayForm({ onLogged }) {
     </div>
   );
 }
+
 
 function InboxView({ me, onDecided }) {
   const [requests, setRequests] = useState([]);
@@ -510,7 +551,7 @@ function InboxView({ me, onDecided }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <LogSickDayForm onLogged={load} />
+      <LogTimeOffForm onLogged={load} />
       {loading ? (
         <div style={{ color: "#64748b" }}>Loading…</div>
       ) : !requests.length ? (
