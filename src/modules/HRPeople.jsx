@@ -591,7 +591,6 @@ const StaffDirectory = ({ staff }) => {
           is_active: false,
           end_date: endDate,
           archived_at: nowIso,
-          performance_status: "terminated",
           updated_at: nowIso,
         })
         .eq("id", member.id)
@@ -625,7 +624,6 @@ const StaffDirectory = ({ staff }) => {
             is_active: true,
             end_date: null,
             archived_at: null,
-            performance_status: null,
           }).eq("id", member.id).eq("agency_id", AGENCY_ID);
           setTermError(`users update failed (team row rolled back): ${userUpdate.error.message}`);
           setTerminating(false);
@@ -748,7 +746,6 @@ const StaffDirectory = ({ staff }) => {
           is_active: true,
           end_date: null,
           archived_at: null,
-          performance_status: null,
           updated_at: nowIso,
         })
         .eq("id", member.id)
@@ -773,7 +770,6 @@ const StaffDirectory = ({ staff }) => {
             is_active: false,
             archived_at: member.archived_at,
             end_date: member.end_date,
-            performance_status: member.performance_status,
           }).eq("id", member.id).eq("agency_id", AGENCY_ID);
           setReactivateError(`users update failed (team rolled back): ${userUpdate.error.message}`);
           setReactivating(false);
