@@ -176,6 +176,8 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState(null); // { success, error?, sent_to_team_at? }
   const [error, setError] = useState(null);
 
   // Determine the default week on mount: the most recent Saturday with no row yet.
@@ -312,7 +314,8 @@ export default function WeeklyCPR({ onClose = () => {} }) {
     setError(null);
     try {
       const reportPayload = { ...report, agency_id: AGENCY_ID, week_ending_date: weekEnding };
-      const { id: _id, created_at: _ca, updated_at: _ua, ...rpClean } = reportPayload;
+      // sent_to_team_at is server-managed by send_weekly_cpr_recap() RPC; never overwrite from client.
+      const { id: _id, created_at: _ca, updated_at: _ua, sent_to_team_at: _st, ...rpClean } = reportPayload;
       const { data: upserted, error: upErr } = await supabase
         .from("weekly_cpr_reports")
         .upsert(rpClean, { onConflict: "agency_id,week_ending_date" })
@@ -338,6 +341,40 @@ export default function WeeklyCPR({ onClose = () => {} }) {
       setError(e.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSendRecap() {
+    if (!supabase) return;
+    if (sending) return;
+    if (report?.sent_to_team_at) return;
+    if (!report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) return;
+    const ok = typeof window !== "undefined" && window.confirm(
+      "Send the weekly CPR recap to the team?\n\nRecipients: 5 team members on SF + personal emails (10 total)\nCC: storypeterj@gmail.com\n\nThis cannot be undone."
+    );
+    if (!ok) return;
+    setSending(true);
+    setSendResult(null);
+    setError(null);
+    try {
+      // Save first so opener/looking-ahead/etc. edits are persisted before send composes.
+      await handleSave();
+      const { data, error: rpcErr } = await supabase.rpc("send_weekly_cpr_recap", {
+        p_agency_id: AGENCY_ID,
+        p_week_ending_date: weekEnding,
+      });
+      if (rpcErr) throw rpcErr;
+      setSendResult(data);
+      if (data?.success) {
+        await loadWeek(weekEnding); // refresh to pick up sent_to_team_at stamp
+      } else {
+        setError(data?.error || "Send failed");
+      }
+    } catch (e) {
+      setError(e.message || "Send failed");
+      setSendResult({ success: false, error: e.message || "Send failed" });
+    } finally {
+      setSending(false);
     }
   }
 
@@ -578,6 +615,107 @@ export default function WeeklyCPR({ onClose = () => {} }) {
                     })}
                   </tbody>
                 </table>
+              </div>
+            </Card>
+
+            <Card style={{ borderColor: T.blue + "40", background: T.blue + "06" }}>
+              <SectionHeader icon="📧" title="Email recap — opener + looking ahead"
+                hint="Both fields required before the recap can send. Save persists draft text; Send fires the real email to the team." />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <Label>Opener</Label>
+                  <textarea
+                    value={report?.opener_text ?? ""}
+                    onChange={(e) => updateReport({ opener_text: e.target.value || null })}
+                    placeholder="Hey team, ... (springboard/pivot to Life framing — never push products)"
+                    rows={8}
+                    disabled={!!report?.sent_to_team_at}
+                    style={{
+                      width: "100%", padding: "10px 12px",
+                      border: `1px solid ${T.slate300}`, borderRadius: 6,
+                      fontSize: 13, color: T.slate900,
+                      background: report?.sent_to_team_at ? T.slate50 : T.white,
+                      fontFamily: "inherit", resize: "vertical",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: T.slate400, marginTop: 4, textAlign: "right" }}>
+                    {(report?.opener_text ?? "").length} chars
+                  </div>
+                </div>
+                <div>
+                  <Label>Looking at next week</Label>
+                  <textarea
+                    value={report?.looking_next_week_text ?? ""}
+                    onChange={(e) => updateReport({ looking_next_week_text: e.target.value || null })}
+                    placeholder="3–4 focus items for next week. IPS framing: team CAN set up appointments for Peter (compliant) but CANNOT directly sell IPS."
+                    rows={8}
+                    disabled={!!report?.sent_to_team_at}
+                    style={{
+                      width: "100%", padding: "10px 12px",
+                      border: `1px solid ${T.slate300}`, borderRadius: 6,
+                      fontSize: 13, color: T.slate900,
+                      background: report?.sent_to_team_at ? T.slate50 : T.white,
+                      fontFamily: "inherit", resize: "vertical",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: T.slate400, marginTop: 4, textAlign: "right" }}>
+                    {(report?.looking_next_week_text ?? "").length} chars
+                  </div>
+                </div>
+              </div>
+
+              <div style={{
+                marginTop: 14, padding: "12px 14px", borderRadius: 8,
+                background: T.white, border: `1px solid ${T.slate200}`,
+              }}>
+                <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
+                  Sending to <strong style={{ color: T.slate800 }}>5 team members on SF + personal emails (10 recipients)</strong>, CC: <strong style={{ color: T.slate800 }}>storypeterj@gmail.com</strong>
+                </div>
+
+                {report?.sent_to_team_at ? (
+                  <div style={{
+                    padding: "10px 12px", borderRadius: 6,
+                    background: T.greenLt, color: T.green, fontSize: 12, fontWeight: 600,
+                    border: `1px solid ${T.green}40`,
+                  }}>
+                    ✓ Sent {fmtTime(report.sent_to_team_at)}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <button
+                      onClick={handleSendRecap}
+                      disabled={
+                        sending || loading || saving ||
+                        members.length === 0 ||
+                        !report?.opener_text?.trim() ||
+                        !report?.looking_next_week_text?.trim()
+                      }
+                      style={{
+                        padding: "10px 22px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                        cursor: (sending || loading || saving || !report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) ? "not-allowed" : "pointer",
+                        background: sending ? T.slate400 : T.blue, color: T.white,
+                        border: "none",
+                        opacity: (sending || loading || saving || !report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) ? 0.55 : 1,
+                      }}
+                    >
+                      {sending ? "Sending…" : "📧 Send Weekly Recap to Team"}
+                    </button>
+                    <div style={{ fontSize: 11, color: T.slate500 }}>
+                      {(!report?.opener_text?.trim() || !report?.looking_next_week_text?.trim())
+                        ? "Fill in both fields above to enable."
+                        : "This will fire the real email immediately."}
+                    </div>
+                  </div>
+                )}
+
+                {sendResult && !sendResult.success && sendResult.error ? (
+                  <div style={{
+                    marginTop: 10, padding: "10px 12px", borderRadius: 6,
+                    background: T.redLt, color: T.red, fontSize: 12, fontWeight: 600,
+                    border: `1px solid ${T.red}40`,
+                  }}>⚠ {sendResult.error}</div>
+                ) : null}
               </div>
             </Card>
 
