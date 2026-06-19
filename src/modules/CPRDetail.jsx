@@ -383,11 +383,11 @@ function useCPRData(weekDate) {
         // 1. Team (active, tenure order)
         const { data: teamRows } = await supabase
           .from("team")
-          .select("id, full_name, hire_date, role, role_level, category")
+          .select("id, first_name, last_name, nickname, hire_date, role, role_level, category")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true)
           .order("hire_date", { ascending: true })
-          .order("full_name", { ascending: true });
+          .order("first_name", { ascending: true });
 
         // 2. Report row for this week
         const { data: reportRow } = await supabase
@@ -492,7 +492,7 @@ function useCPRData(weekDate) {
           loading: false, error: null,
           report: reportRow || null,
           details: detailRows,
-          team: teamRows || [],
+          team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)" })),
           snapshot,
           snapshotPrior,
           bookYearStart: bookYS || null,
