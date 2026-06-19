@@ -13,7 +13,7 @@ import TimeOffRequests from "./TimeOffRequests.jsx";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: "timeclock", label: "Timeclock" },
+  { id: "timeclock", label: "Time Clock" },
   { id: "timeoff",   label: "Time Off" }
 ];
 

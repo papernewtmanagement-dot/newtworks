@@ -93,7 +93,7 @@ function inlineMd(s) {
 
 const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
 
-function mdToHtml(md) {
+export function mdToHtml(md) {
   const src = String(md || "");
   if (!src.trim()) return "";
 

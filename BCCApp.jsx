@@ -108,7 +108,7 @@ const NAV_ITEMS = [
   { id: "hr",          label: "Team",        icon: "users",    roles: ["owner","manager"] },
   { id: "social",      label: "Social",      icon: "share",    roles: ["owner","manager","staff"] },
   { type: "divider",   id: "_div_team_top" },
-  { id: "time",        label: "Time",        icon: "clock",    roles: ["owner","manager","staff"] },
+  { id: "time",        label: "Hours",       icon: "clock",    roles: ["owner","manager","staff"] },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
   { type: "divider",   id: "_div_team_bot" },
   { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },

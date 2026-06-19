@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { mdToHtml } from "./Handbook.jsx";
 
 // ============================================================
 // Time Off & Remote Request Module
@@ -458,6 +459,8 @@ export default function TimeOffRequests() {
   const [activeTab, setActiveTab] = useState("submit");
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [policy, setPolicy] = useState(null); // { title, html, updated_at }
 
   useEffect(() => {
     async function loadMe() {
@@ -481,6 +484,31 @@ export default function TimeOffRequests() {
       finally { setLoading(false); }
     }
     loadMe();
+  }, []);
+
+  // Load the "02 Hours & Time Off" handbook page live so the policy below
+  // always reflects the current handbook (no duplication). Re-renders on
+  // next page load whenever the handbook row is updated.
+  useEffect(() => {
+    async function loadPolicy() {
+      try {
+        if (!supabase) return;
+        const { data } = await supabase.from("handbook")
+          .select("title, content, updated_at")
+          .eq("agency_id", AGENCY_ID)
+          .eq("title", "02 Hours & Time Off")
+          .eq("is_active", true)
+          .maybeSingle();
+        if (data) {
+          setPolicy({
+            title: data.title,
+            html: mdToHtml(data.content),
+            updated_at: data.updated_at
+          });
+        }
+      } catch (e) { console.error("Time Off — policy load error", e); }
+    }
+    loadPolicy();
   }, []);
 
   if (loading) return <div style={{ padding: 40, color: "#64748b" }}>Loading…</div>;
@@ -507,6 +535,33 @@ export default function TimeOffRequests() {
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Time Off & Remote</h1>
         <div style={{ fontSize: 13, color: "#64748b" }}>{me?.first_name} {me?.last_name} · {me?.role_level || "—"}</div>
       </div>
+
+      {/* Handbook policy reference — reads live from public.handbook (single source of truth). */}
+      <div style={{ marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc", overflow: "hidden" }}>
+        <button
+          onClick={() => setPolicyOpen(!policyOpen)}
+          type="button"
+          style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#0f172a", textAlign: "left" }}
+        >
+          <span>📖 Hours & Time Off — Policy (from handbook)</span>
+          <span style={{ transform: policyOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", fontSize: 18, color: "#64748b", lineHeight: 1 }}>›</span>
+        </button>
+        {policyOpen && (
+          <div style={{ padding: "12px 20px 16px", borderTop: "1px solid #e2e8f0", background: "#fff", fontSize: 14, lineHeight: 1.55 }}>
+            {policy ? (
+              <>
+                <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: policy.html }} />
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9", fontSize: 12, color: "#94a3b8" }}>
+                  From handbook · last updated {new Date(policy.updated_at).toLocaleDateString()}
+                </div>
+              </>
+            ) : (
+              <div style={{ color: "#94a3b8" }}>Loading policy…</div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #e2e8f0", marginBottom: 20 }}>
         {tabs.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}

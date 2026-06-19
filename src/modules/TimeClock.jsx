@@ -282,7 +282,7 @@ export default function TimeClock() {
     <div style={{ padding: "20px 24px", maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: T.slate900, margin: 0 }}>Timeclock</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: T.slate900, margin: 0 }}>Time Clock</h1>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
             Hourly team clock in / out &middot; week runs Sun&ndash;Sat &middot; lunch = clock out then back in
           </div>
