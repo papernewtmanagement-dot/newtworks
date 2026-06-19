@@ -385,7 +385,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
     if (report?.sent_to_team_at) return;
     if (!report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) return;
     const ok = typeof window !== "undefined" && window.confirm(
-      "Send the weekly CPR recap to the team?\n\nRecipients: 5 team members on SF + personal emails (10 total)\nCC: storypeterj@gmail.com\n\nThis cannot be undone."
+      "Send the weekly CPR recap to the team?\n\nRecipients: 5 team members + Peter on State Farm emails (6 total)\n\nThis cannot be undone."
     );
     if (!ok) return;
     setSending(true);
@@ -655,7 +655,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
 
             <Card style={{ borderColor: T.blue + "40", background: T.blue + "06" }}>
               <SectionHeader icon="📧" title="Email recap — opener + looking ahead"
-                hint="Both fields required before the recap can send. Save persists draft text; Send fires the real email to the team." />
+                hint="Claude writes both fields after you ping with the data filled in. Cron auto-sends Sat 11:59 PM CT (Sun 11:59 PM CT backup)." />
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div>
@@ -705,7 +705,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
                 background: T.white, border: `1px solid ${T.slate200}`,
               }}>
                 <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
-                  Sending to <strong style={{ color: T.slate800 }}>5 team members on SF + personal emails (10 recipients)</strong>, CC: <strong style={{ color: T.slate800 }}>storypeterj@gmail.com</strong>
+                  Auto-sends to <strong style={{ color: T.slate800 }}>5 team members + Peter on State Farm emails (6 recipients total)</strong>
                 </div>
 
                 {report?.sent_to_team_at ? (
@@ -716,41 +716,19 @@ export default function WeeklyCPR({ onClose = () => {} }) {
                   }}>
                     ✓ Sent {fmtTime(report.sent_to_team_at)}
                   </div>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <button
-                      onClick={handleSendRecap}
-                      disabled={
-                        sending || loading || saving ||
-                        members.length === 0 ||
-                        !report?.opener_text?.trim() ||
-                        !report?.looking_next_week_text?.trim()
-                      }
-                      style={{
-                        padding: "10px 22px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                        cursor: (sending || loading || saving || !report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) ? "not-allowed" : "pointer",
-                        background: sending ? T.slate400 : T.blue, color: T.white,
-                        border: "none",
-                        opacity: (sending || loading || saving || !report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) ? 0.55 : 1,
-                      }}
-                    >
-                      {sending ? "Sending…" : "📧 Send Weekly Recap to Team"}
-                    </button>
-                    <div style={{ fontSize: 11, color: T.slate500 }}>
-                      {(!report?.opener_text?.trim() || !report?.looking_next_week_text?.trim())
-                        ? "Fill in both fields above to enable."
-                        : "This will fire the real email immediately."}
-                    </div>
-                  </div>
-                )}
-
-                {sendResult && !sendResult.success && sendResult.error ? (
+                ) : (report?.opener_text?.trim() && report?.looking_next_week_text?.trim()) ? (
                   <div style={{
-                    marginTop: 10, padding: "10px 12px", borderRadius: 6,
-                    background: T.redLt, color: T.red, fontSize: 12, fontWeight: 600,
-                    border: `1px solid ${T.red}40`,
-                  }}>⚠ {sendResult.error}</div>
-                ) : null}
+                    padding: "10px 12px", borderRadius: 6,
+                    background: T.greenLt, color: T.green, fontSize: 12, fontWeight: 600,
+                    border: `1px solid ${T.green}40`,
+                  }}>⏰ Drafts ready. Auto-sends Saturday 11:59 PM CT (with Sunday 11:59 PM CT as backup).</div>
+                ) : (
+                  <div style={{
+                    padding: "10px 12px", borderRadius: 6,
+                    background: T.slate50, color: T.slate700, fontSize: 12, fontWeight: 600,
+                    border: `1px solid ${T.slate300}`,
+                  }}>⏳ Awaiting drafts. Ping Claude after filling the form; Claude writes opener + looking-ahead. Cron auto-sends once both are populated.</div>
+                )}
               </div>
             </Card>
 
