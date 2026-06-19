@@ -178,6 +178,8 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   const [savedAt, setSavedAt] = useState(null);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState(null); // { success, error?, sent_to_team_at? }
+  const [generating, setGenerating] = useState(false);
+  const [generateResult, setGenerateResult] = useState(null); // { success, error?, opener_text?, looking_next_week_text? }
   const [error, setError] = useState(null);
 
   // Determine the default week on mount: the most recent Saturday with no row yet.
@@ -376,6 +378,38 @@ export default function WeeklyCPR({ onClose = () => {} }) {
       setError(e.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleGenerateDrafts() {
+    if (!supabase) return;
+    if (generating || saving || loading) return;
+    if (report?.sent_to_team_at) return;
+    setGenerating(true);
+    setGenerateResult(null);
+    setError(null);
+    try {
+      // Save first so the LLM grounds in the latest form data.
+      await handleSave();
+      const { data, error: fnErr } = await supabase.functions.invoke("draft-weekly-cpr-text", {
+        body: { p_agency_id: AGENCY_ID, p_week_ending_date: weekEnding },
+      });
+      if (fnErr) throw fnErr;
+      if (!data?.success) {
+        const errMsg = data?.error || "Draft generation failed";
+        setError(errMsg);
+        setGenerateResult({ success: false, error: errMsg });
+        return;
+      }
+      setGenerateResult(data);
+      // Reload to pick up the new drafts written by the Edge function.
+      await loadWeek(weekEnding);
+    } catch (e) {
+      const errMsg = e?.message || String(e);
+      setError(errMsg);
+      setGenerateResult({ success: false, error: errMsg });
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -655,7 +689,42 @@ export default function WeeklyCPR({ onClose = () => {} }) {
 
             <Card style={{ borderColor: T.blue + "40", background: T.blue + "06" }}>
               <SectionHeader icon="📧" title="Email recap — opener + looking ahead"
-                hint="Both fields required before the recap can send. Save persists draft text; Send fires the real email to the team." />
+                hint="Fill out the form first, then click Generate to have Claude draft both fields. Edit, then Send." />
+
+              {!report?.sent_to_team_at ? (
+                <div style={{
+                  marginBottom: 14, padding: "12px 14px", borderRadius: 8,
+                  background: T.white, border: `1px dashed ${T.slate300}`,
+                  display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+                }}>
+                  <button
+                    onClick={handleGenerateDrafts}
+                    disabled={generating || saving || loading || !!report?.sent_to_team_at}
+                    style={{
+                      padding: "10px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                      cursor: (generating || saving || loading) ? "not-allowed" : "pointer",
+                      background: generating ? T.slate400 : T.blue, color: T.white,
+                      border: "none",
+                      opacity: (generating || saving || loading) ? 0.6 : 1,
+                    }}
+                  >
+                    {generating ? "✨ Drafting…" : "✨ Generate drafts with Claude"}
+                  </button>
+                  <div style={{ fontSize: 11, color: T.slate500, flex: 1, minWidth: 200 }}>
+                    {generating
+                      ? "Saving form first, then asking Claude. ~5–10 seconds."
+                      : "Saves the form first, then pulls all this week's data and writes fresh drafts you can edit. Overwrites whatever's currently in the fields."}
+                  </div>
+                </div>
+              ) : null}
+
+              {generateResult && !generateResult.success && generateResult.error ? (
+                <div style={{
+                  marginBottom: 14, padding: "10px 12px", borderRadius: 6,
+                  background: T.redLt, color: T.red, fontSize: 12, fontWeight: 600,
+                  border: `1px solid ${T.red}40`,
+                }}>⚠ {generateResult.error}</div>
+              ) : null}
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div>
