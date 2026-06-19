@@ -15,8 +15,7 @@ import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Handbook from "./src/modules/Handbook.jsx";
-import TimeClock from "./src/modules/TimeClock.jsx";
-import TimeOffRequests from "./src/modules/TimeOffRequests.jsx";
+import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
@@ -109,8 +108,7 @@ const NAV_ITEMS = [
   { id: "hr",          label: "Team",        icon: "users",    roles: ["owner","manager"] },
   { id: "social",      label: "Social",      icon: "share",    roles: ["owner","manager","staff"] },
   { type: "divider",   id: "_div_team_top" },
-  { id: "timeclock",   label: "Timeclock",   icon: "clock",    roles: ["owner","manager","staff"] },
-  { id: "time_off",    label: "Time Off",    icon: "calendarOff", roles: ["owner","manager","staff"] },
+  { id: "time",        label: "Time",        icon: "clock",    roles: ["owner","manager","staff"] },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
   { type: "divider",   id: "_div_team_bot" },
   { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
@@ -569,8 +567,7 @@ const ModuleRouter = ({ active, onNavigate }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="HR & People"><HRPeople /></ErrorBoundary>,
-    timeclock:   <ErrorBoundary name="Timeclock"><TimeClock /></ErrorBoundary>,
-    time_off:    <ErrorBoundary name="Time Off"><TimeOffRequests /></ErrorBoundary>,
+    time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     chat: (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex:1, gap:16, padding:40, textAlign:"center" }}>
