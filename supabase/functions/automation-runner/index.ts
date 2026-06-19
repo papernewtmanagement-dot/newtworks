@@ -394,56 +394,227 @@ async function getComposioAccountId(agencyId: string, connection: string): Promi
 }
 
 /**
- * Write a parsed record array to the recipe's output_table, honoring
- * output_config.unique_on (column list for ON CONFLICT) and on_conflict
- * (update | ignore).
+ * Write a parsed record array to the recipe's output_table, honoring the
+ * full output_config schema:
+ *
+ *   {
+ *     "source":               <string>,   // stamped on every primary row
+ *     "cadence":              <string>,   // stamped on every primary row
+ *     "snapshot_date_field":  <string>,   // copy this field on the record into snapshot_date
+ *     "unique_on" | "on_conflict_columns": <string[]>,   // primary ON CONFLICT cols
+ *     "merge_strategy": "overwrite" | "ignore" | "fill_nulls_only" (default "ignore"),
+ *     "secondary_write": {
+ *       "table":               <string>,
+ *       "rows_from":           <string>,   // field on each primary record holding the array of child rows
+ *       "on_conflict_columns": <string[]>,
+ *       "merge_strategy":      "overwrite" | "ignore" | "fill_nulls_only",
+ *       "static_columns": {
+ *         "<col>":         <literal>,            // sec.<col> = <literal>
+ *         "<col>_field":   <primary_field_name>  // sec.<col> = primary[<primary_field_name>]
+ *       }
+ *     }
+ *   }
+ *
+ * Fields on each parsed record that don't match a real column on the target
+ * table are STRIPPED before insert. This lets the LLM return helper fields
+ * like `source_message_id`, `quarter_year`, `quarter_number`, `lead_sources`
+ * without breaking the insert with "column not found" errors.
  */
+
+// Module-level cache of public-schema table columns.
+const _tableColumnsCache = new Map<string, Set<string>>();
+async function getTableColumns(table: string): Promise<Set<string>> {
+  const hit = _tableColumnsCache.get(table);
+  if (hit) return hit;
+  const { data, error } = await sb.rpc("get_table_columns_v1", { p_table_name: table });
+  if (error) throw new Error(`get_table_columns_v1(${table}) failed: ${error.message}`);
+  const cols = new Set<string>(((data as any[]) || []).map((r) => r.column_name));
+  _tableColumnsCache.set(table, cols);
+  return cols;
+}
+
+function pickKnownCols(rec: Record<string, any>, cols: Set<string>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    if (cols.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 async function writeOutput(opts: {
   outputTable: string;
   outputConfig: any;
   records: any[];
   agencyId: string | null;
-}): Promise<{ inserted: number; updated: number }> {
+}): Promise<{ inserted: number; updated: number; secondary?: { table: string; inserted: number } }> {
   if (!Array.isArray(opts.records) || opts.records.length === 0) {
     return { inserted: 0, updated: 0 };
   }
+  const cfg = opts.outputConfig || {};
+  const primaryCols = await getTableColumns(opts.outputTable);
 
-  // Stamp agency_id on every record if the table has the column and the recipe
-  // belongs to an agency. We let the actual insert fail if the column doesn't
-  // exist; that surfaces in the error_message in the run log.
-  const records = opts.agencyId
-    ? opts.records.map((r) => ({ agency_id: opts.agencyId, ...r }))
-    : opts.records;
+  // Accept both `unique_on` (legacy) and `on_conflict_columns` (newer).
+  const uniqueOn: string[] | undefined = cfg.unique_on || cfg.on_conflict_columns;
+  // Accept both `merge_strategy` (newer) and `on_conflict` (legacy "update" | "ignore").
+  const mergeStrategy: string = cfg.merge_strategy
+    ? cfg.merge_strategy
+    : (cfg.on_conflict === "update" ? "overwrite" : "ignore");
 
-  const uniqueOn: string[] | undefined = opts.outputConfig?.unique_on;
-  const onConflict: string = opts.outputConfig?.on_conflict || "ignore";
+  const secondaryWrite: any = cfg.secondary_write;
 
-  if (uniqueOn && uniqueOn.length > 0 && onConflict === "update") {
-    const { data, error } = await sb
-      .from(opts.outputTable)
-      .upsert(records, { onConflict: uniqueOn.join(","), ignoreDuplicates: false })
-      .select("id");
-    if (error) throw new Error(`upsert to ${opts.outputTable} failed: ${error.message}`);
-    return { inserted: data?.length ?? 0, updated: 0 }; // Upsert doesn't distinguish
-  }
+  // Snapshot the per-record secondary arrays BEFORE we filter fields off records.
+  const secondaryRowsByIndex: any[][] = opts.records.map((r) => {
+    if (secondaryWrite?.rows_from) {
+      const v = (r as any)[secondaryWrite.rows_from];
+      return Array.isArray(v) ? v : [];
+    }
+    return [];
+  });
 
+  // Build clean primary records: strip unknown fields, stamp agency_id/source/cadence/snapshot_date.
+  const primaryRecords: any[] = opts.records.map((r) => {
+    const out: any = pickKnownCols(r, primaryCols);
+    if (opts.agencyId && primaryCols.has("agency_id")) out.agency_id = opts.agencyId;
+    if (cfg.source && primaryCols.has("source")) out.source = cfg.source;
+    if (cfg.cadence && primaryCols.has("cadence")) out.cadence = cfg.cadence;
+    if (cfg.snapshot_date_field && primaryCols.has("snapshot_date")) {
+      const sd = (r as any)[cfg.snapshot_date_field];
+      if (sd !== undefined && sd !== null) out.snapshot_date = sd;
+    }
+    return out;
+  });
+
+  // ---- Primary write ------------------------------------------------------
+  let primaryInserted = 0;
   if (uniqueOn && uniqueOn.length > 0) {
-    // ignore-on-conflict
-    const { data, error } = await sb
-      .from(opts.outputTable)
-      .upsert(records, { onConflict: uniqueOn.join(","), ignoreDuplicates: true })
-      .select("id");
+    if (mergeStrategy === "fill_nulls_only") {
+      // PostgREST has no native "fill nulls only" upsert — do it per-record:
+      //   SELECT existing, merge nulls from new, UPSERT.
+      for (const rec of primaryRecords) {
+        let q = sb.from(opts.outputTable).select("*");
+        for (const col of uniqueOn) {
+          if (rec[col] === undefined) throw new Error(`fill_nulls_only on ${opts.outputTable}: record missing unique col "${col}"`);
+          q = q.eq(col, rec[col]);
+        }
+        const { data: existing, error: selErr } = await q.maybeSingle();
+        if (selErr) throw new Error(`select from ${opts.outputTable} failed: ${selErr.message}`);
+
+        let merged: any;
+        if (existing) {
+          merged = { ...existing };
+          for (const [k, v] of Object.entries(rec)) {
+            if (merged[k] === null || merged[k] === undefined) merged[k] = v;
+          }
+        } else {
+          merged = rec;
+        }
+        if (primaryCols.has("updated_at")) merged.updated_at = new Date().toISOString();
+
+        const { error: upErr } = await sb.from(opts.outputTable)
+          .upsert(merged, { onConflict: uniqueOn.join(","), ignoreDuplicates: false });
+        if (upErr) throw new Error(`upsert to ${opts.outputTable} failed: ${upErr.message}`);
+        primaryInserted += 1;
+      }
+    } else if (mergeStrategy === "overwrite") {
+      const { data, error } = await sb.from(opts.outputTable)
+        .upsert(primaryRecords, { onConflict: uniqueOn.join(","), ignoreDuplicates: false })
+        .select("id");
+      if (error) throw new Error(`upsert to ${opts.outputTable} failed: ${error.message}`);
+      primaryInserted = data?.length ?? 0;
+    } else {
+      const { data, error } = await sb.from(opts.outputTable)
+        .upsert(primaryRecords, { onConflict: uniqueOn.join(","), ignoreDuplicates: true })
+        .select("id");
+      if (error) throw new Error(`insert to ${opts.outputTable} failed: ${error.message}`);
+      primaryInserted = data?.length ?? 0;
+    }
+  } else {
+    const { data, error } = await sb.from(opts.outputTable).insert(primaryRecords).select("id");
     if (error) throw new Error(`insert to ${opts.outputTable} failed: ${error.message}`);
-    return { inserted: data?.length ?? 0, updated: 0 };
+    primaryInserted = data?.length ?? 0;
   }
 
-  // No unique constraint specified — plain insert
-  const { data, error } = await sb
-    .from(opts.outputTable)
-    .insert(records)
-    .select("id");
-  if (error) throw new Error(`insert to ${opts.outputTable} failed: ${error.message}`);
-  return { inserted: data?.length ?? 0, updated: 0 };
+  // ---- Secondary write ----------------------------------------------------
+  let secondaryInserted = 0;
+  if (secondaryWrite?.table && secondaryRowsByIndex.some((arr) => arr.length > 0)) {
+    const secondaryCols = await getTableColumns(secondaryWrite.table);
+    const secUniqueOn: string[] | undefined = secondaryWrite.on_conflict_columns || secondaryWrite.unique_on;
+    const secMerge: string = secondaryWrite.merge_strategy || "ignore";
+    const staticCols: Record<string, any> = secondaryWrite.static_columns || {};
+
+    // For each primary record, build secondary rows from its child array.
+    // staticCols convention:
+    //   "foo_field": "bar"   ->  sec.foo = primary[bar]   (copy primary field)
+    //   "foo":       "bar"   ->  sec.foo = "bar"          (literal)
+    const secondaryRecords: any[] = [];
+    for (let i = 0; i < opts.records.length; i++) {
+      const orig = opts.records[i];
+      const rows = secondaryRowsByIndex[i];
+      for (const row of rows) {
+        const sec: any = pickKnownCols(row, secondaryCols);
+        if (opts.agencyId && secondaryCols.has("agency_id")) sec.agency_id = opts.agencyId;
+        for (const [key, val] of Object.entries(staticCols)) {
+          if (key.endsWith("_field")) {
+            const targetCol = key.slice(0, -"_field".length);
+            if (secondaryCols.has(targetCol)) sec[targetCol] = (orig as any)[val as string];
+          } else {
+            if (secondaryCols.has(key)) sec[key] = val;
+          }
+        }
+        secondaryRecords.push(sec);
+      }
+    }
+
+    if (secondaryRecords.length > 0) {
+      if (secUniqueOn && secUniqueOn.length > 0) {
+        if (secMerge === "fill_nulls_only") {
+          for (const rec of secondaryRecords) {
+            let q = sb.from(secondaryWrite.table).select("*");
+            for (const col of secUniqueOn) {
+              if (rec[col] === undefined) continue;
+              q = q.eq(col, rec[col]);
+            }
+            const { data: existing } = await q.maybeSingle();
+            let merged: any;
+            if (existing) {
+              merged = { ...existing };
+              for (const [k, v] of Object.entries(rec)) {
+                if (merged[k] === null || merged[k] === undefined) merged[k] = v;
+              }
+            } else {
+              merged = rec;
+            }
+            if (secondaryCols.has("updated_at")) merged.updated_at = new Date().toISOString();
+            const { error } = await sb.from(secondaryWrite.table)
+              .upsert(merged, { onConflict: secUniqueOn.join(","), ignoreDuplicates: false });
+            if (error) throw new Error(`upsert to ${secondaryWrite.table} failed: ${error.message}`);
+            secondaryInserted += 1;
+          }
+        } else {
+          const { data, error } = await sb.from(secondaryWrite.table)
+            .upsert(secondaryRecords, {
+              onConflict: secUniqueOn.join(","),
+              ignoreDuplicates: secMerge === "ignore",
+            })
+            .select("id");
+          if (error) throw new Error(`upsert to ${secondaryWrite.table} failed: ${error.message}`);
+          secondaryInserted = data?.length ?? 0;
+        }
+      } else {
+        const { data, error } = await sb.from(secondaryWrite.table).insert(secondaryRecords).select("id");
+        if (error) throw new Error(`insert to ${secondaryWrite.table} failed: ${error.message}`);
+        secondaryInserted = data?.length ?? 0;
+      }
+    }
+  }
+
+  return {
+    inserted: primaryInserted,
+    updated: 0,
+    ...(secondaryInserted > 0 && secondaryWrite?.table
+      ? { secondary: { table: secondaryWrite.table, inserted: secondaryInserted } }
+      : {}),
+  };
 }
 
 
@@ -1059,6 +1230,9 @@ async function executeRecipe(
       });
       recordsProcessed = writeResult.inserted + writeResult.updated;
       outputSummary = `${recordsProcessed} records written to ${recipe.output_table}`;
+      if (writeResult.secondary) {
+        outputSummary += ` (+ ${writeResult.secondary.inserted} rows to ${writeResult.secondary.table})`;
+      }
       // --- v16: post-parse archive (v18: also includes already-known messageIds) ---
       if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
         const newMessageIds = parsedRecords.map((r: any) => r.source_message_id as string | undefined).filter((x): x is string => typeof x === "string" && x.length > 0);
