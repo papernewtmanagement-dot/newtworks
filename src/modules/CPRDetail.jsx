@@ -1901,6 +1901,17 @@ function PayrollSection({ details, team, weekDate, onRefresh }) {
                   );
                 })}
               </tr>
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>Annualized (× 52)</Td>
+                {sorted.map(d => {
+                  const total = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
+                  return (
+                    <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
+                      {fmtMoneyCents(total * 52)}
+                    </Td>
+                  );
+                })}
+              </tr>
             </tbody>
           </table>
         </div>
