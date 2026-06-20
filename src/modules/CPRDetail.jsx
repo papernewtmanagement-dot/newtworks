@@ -1284,27 +1284,15 @@ function SMVCScorecardSection({ section11 }) {
                 <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtPct(current)}</Td>
                 <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>{fmtDiff(diff)}</Td>
               </tr>
-              {/* Scorecard Bonus row — live from compute_scorecard_bonus() */}
-              {(() => {
-                const sc = section11.scorecard_bonus || {};
-                const scOnTime  = sc.on_time     != null ? Number(sc.on_time)     : null;
-                const scLastWk  = sc.last_wk     != null ? Number(sc.last_wk)     : null;
-                const scLastQ   = sc.last_q      != null ? Number(sc.last_q)      : null;
-                const scCurrent = sc.current     != null ? Number(sc.current)     : null;
-                const scDiff    = sc.dollar_diff != null ? Number(sc.dollar_diff) : null;
-                const fmtMoney  = (v) => v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US");
-                const scDiffColor = scDiff == null ? T.slate500 : (scDiff >= 0 ? T.green : T.red);
-                return (
-                  <tr>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
-                    <Td align="right">{fmtMoney(scOnTime)}</Td>
-                    <Td align="right" style={{ color: scLastWk == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastWk)}</Td>
-                    <Td align="right" style={{ color: scLastQ == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastQ)}</Td>
-                    <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtMoney(scCurrent)}</Td>
-                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: scDiffColor }}>{fmtDiff(scDiff)}</Td>
-                  </tr>
-                );
-              })()}
+              {/* Scorecard Bonus row — all placeholders for now */}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
+                <Td align="right" style={{ color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ background: T.slate50, color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ background: T.blueLt, color: T.slate500 }}>—</Td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1713,7 +1701,27 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 }
 
 // 19 — Payroll (per-person columns, pay component rows)
-function PayrollSection({ details, team }) {
+// Admin can toggle Edit mode to enter pay_paid_to_date_qtd (cumulative $
+// paid through SurePayroll this quarter through end of last pay period).
+// True Pay Bonus is computed off that value on save via write_weekly_pay RPC.
+function PayrollSection({ details, team, weekDate, onRefresh }) {
+  const [editMode, setEditMode] = useState(false);
+  const [drafts, setDrafts] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+
+  // When entering edit mode, seed drafts from current values
+  useEffect(() => {
+    if (editMode && details && details.length > 0) {
+      const init = {};
+      details.forEach(d => {
+        init[d.team_member_id] = d.pay_paid_to_date_qtd ?? null;
+      });
+      setDrafts(init);
+      setSaveError(null);
+    }
+  }, [editMode, details]);
+
   if (!details || details.length === 0) {
     return (
       <div>
@@ -1732,10 +1740,101 @@ function PayrollSection({ details, team }) {
     ["manager_bonus", "Manager Bonus"],
     ["agency_profit_share", "Agency Profit"],
   ];
+
+  async function handleSave() {
+    if (!supabase || !weekDate) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      // Find this week's report id
+      const { data: reportRow, error: reportErr } = await supabase
+        .from("weekly_cpr_reports")
+        .select("id")
+        .eq("agency_id", AGENCY_ID)
+        .eq("week_ending_date", weekDate)
+        .maybeSingle();
+      if (reportErr) throw reportErr;
+      if (!reportRow) throw new Error("No CPR report row for this week");
+
+      // Update each team_detail row's pay_paid_to_date_qtd
+      for (const tmId of Object.keys(drafts)) {
+        const raw = drafts[tmId];
+        const val = raw === null || raw === undefined || raw === "" ? null : Number(raw);
+        const { error: updErr } = await supabase
+          .from("weekly_cpr_team_detail")
+          .update({ pay_paid_to_date_qtd: val })
+          .eq("weekly_cpr_report_id", reportRow.id)
+          .eq("team_member_id", tmId);
+        if (updErr) throw updErr;
+      }
+
+      // Recompute the 7 pay components for the week (refreshes True Pay Bonus)
+      const { error: rpcErr } = await supabase.rpc("write_weekly_pay", {
+        p_agency_id: AGENCY_ID,
+        p_week_ending_date: weekDate,
+      });
+      if (rpcErr) throw rpcErr;
+
+      setEditMode(false);
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      setSaveError(err.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div>
       <SectionHeader icon="💰" title="Payroll" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
+        {/* Edit toolbar — small admin-only affordance */}
+        <div style={{
+          display: "flex", justifyContent: "flex-end", alignItems: "center",
+          gap: 8, padding: "8px 14px", borderBottom: `1px solid ${T.slate200}`,
+          background: editMode ? (T.amber50 || "#fef3c7") : T.white,
+        }}>
+          {editMode && saveError && (
+            <span style={{ color: T.red600 || "#dc2626", fontSize: 12, marginRight: "auto" }}>
+              {saveError}
+            </span>
+          )}
+          {editMode ? (
+            <>
+              <button
+                onClick={() => setEditMode(false)}
+                disabled={saving}
+                style={{
+                  fontSize: 12, padding: "4px 10px", borderRadius: 4,
+                  border: `1px solid ${T.slate300}`, background: T.white,
+                  color: T.slate700, cursor: saving ? "default" : "pointer",
+                }}>
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                style={{
+                  fontSize: 12, padding: "4px 10px", borderRadius: 4,
+                  border: `1px solid ${T.slate700}`, background: T.slate700,
+                  color: T.white, cursor: saving ? "default" : "pointer",
+                }}>
+                {saving ? "Saving…" : "Save & recompute"}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setEditMode(true)}
+              style={{
+                fontSize: 12, padding: "4px 10px", borderRadius: 4,
+                border: `1px solid ${T.slate300}`, background: T.white,
+                color: T.slate700, cursor: "pointer",
+              }}>
+              Edit pay-to-date
+            </button>
+          )}
+        </div>
+
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
             <thead>
@@ -1755,6 +1854,30 @@ function PayrollSection({ details, team }) {
                   ))}
                 </tr>
               ))}
+              {/* Edit-only row: pay_paid_to_date_qtd (cumulative $ paid this quarter
+                  through end of last pay period — used as the lower bound for
+                  True Pay Bonus). Hidden in normal view per Peter 2026-06-20. */}
+              {editMode && (
+                <tr style={{ background: T.amber50 || "#fef3c7" }}>
+                  <Td style={{ paddingLeft: 14, color: T.slate900, fontStyle: "italic" }}>
+                    Pay paid-to-date QTD
+                    <div style={{ fontSize: 11, color: T.slate600, fontWeight: 400 }}>
+                      Total $ paid this quarter through last pay period (SurePayroll)
+                    </div>
+                  </Td>
+                  {sorted.map(d => (
+                    <Td key={d.team_member_id} align="right">
+                      <NumberInput
+                        value={drafts[d.team_member_id] ?? null}
+                        onChange={v => setDrafts(prev => ({ ...prev, [d.team_member_id]: v }))}
+                        dirty={drafts[d.team_member_id] !== (d.pay_paid_to_date_qtd ?? null)}
+                        step={0.01}
+                        style={{ width: 100 }}
+                      />
+                    </Td>
+                  ))}
+                </tr>
+              )}
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week total</Td>
                 {sorted.map(d => {
@@ -2325,7 +2448,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} onRefresh={data.refresh} /></Section>
 
       {/* 20. True Pay Bonus history (full + averages) */}
       <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section>
