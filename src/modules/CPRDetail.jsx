@@ -275,8 +275,6 @@ const EDIT_FIELDS = {
     // Auto/Fire retention bonus
     "auto_ratio_pct", "auto_rank", "auto_bonus",
     "fire_ratio_pct", "fire_rank", "fire_bonus",
-    // Auto/Fire production (new + lost)
-    "auto_new", "auto_lost", "fire_new", "fire_lost",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
@@ -1015,30 +1013,86 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const firePIF_YS = bookYearStart?.fire_pif || null;
   const lifePIF_YS = bookYearStart?.life_pif || null;
 
+  // Helper to compute weekly delta from snapshot vs snapshotPrior
+  const wkDelta = (cur, prev) => {
+    if (cur === null || cur === undefined || prev === null || prev === undefined) return null;
+    return Number(cur) - Number(prev);
+  };
+
+  const auto_new_ytd  = snapshot.auto_production_ytd || 0;
+  const auto_lost_ytd = snapshot.auto_lapse_ytd      || 0;
+  const fire_new_ytd  = snapshot.fire_production_ytd || 0;
+  const fire_lost_ytd = snapshot.fire_lapse_ytd      || 0;
+  const life_new_ytd  = snapshot.life_production_ytd || 0;
+  const life_loss_ytd = snapshot.life_loss_ytd       || 0;
+
   const lines = [
     {
+      label: "Auto New",
+      ytd: auto_new_ytd,
+      wkDelta: wkDelta(snapshot.auto_production_ytd, snapshotPrior?.auto_production_ytd),
+      goal: null,
+    },
+    {
+      label: "Auto Lost",
+      ytd: auto_lost_ytd,
+      wkDelta: wkDelta(snapshot.auto_lapse_ytd, snapshotPrior?.auto_lapse_ytd),
+      goal: null,
+      lowerIsBetter: true,
+    },
+    {
       label: "Auto Gain",
-      ytd: ((snapshot.auto_production_ytd || 0) - (snapshot.auto_lapse_ytd || 0)),
+      ytd: (auto_new_ytd - auto_lost_ytd),
+      wkDelta: (() => {
+        const a = wkDelta(snapshot.auto_production_ytd, snapshotPrior?.auto_production_ytd);
+        const b = wkDelta(snapshot.auto_lapse_ytd,      snapshotPrior?.auto_lapse_ytd);
+        return (a === null || b === null) ? null : (a - b);
+      })(),
       goal: goalFor(goals, "auto", "gain"),
     },
     {
+      label: "Fire New",
+      ytd: fire_new_ytd,
+      wkDelta: wkDelta(snapshot.fire_production_ytd, snapshotPrior?.fire_production_ytd),
+      goal: null,
+    },
+    {
+      label: "Fire Lost",
+      ytd: fire_lost_ytd,
+      wkDelta: wkDelta(snapshot.fire_lapse_ytd, snapshotPrior?.fire_lapse_ytd),
+      goal: null,
+      lowerIsBetter: true,
+    },
+    {
       label: "Fire Gain",
-      ytd: ((snapshot.fire_production_ytd || 0) - (snapshot.fire_lapse_ytd || 0)),
+      ytd: (fire_new_ytd - fire_lost_ytd),
+      wkDelta: (() => {
+        const a = wkDelta(snapshot.fire_production_ytd, snapshotPrior?.fire_production_ytd);
+        const b = wkDelta(snapshot.fire_lapse_ytd,      snapshotPrior?.fire_lapse_ytd);
+        return (a === null || b === null) ? null : (a - b);
+      })(),
       goal: goalFor(goals, "fire", "gain"),
     },
     {
       label: "Life Gain",
-      ytd: ((snapshot.life_production_ytd || 0) - (snapshot.life_loss_ytd || 0)),
+      ytd: (life_new_ytd - life_loss_ytd),
+      wkDelta: (() => {
+        const a = wkDelta(snapshot.life_production_ytd, snapshotPrior?.life_production_ytd);
+        const b = wkDelta(snapshot.life_loss_ytd,       snapshotPrior?.life_loss_ytd);
+        return (a === null || b === null) ? null : (a - b);
+      })(),
       goal: goalFor(goals, "life", "gain"),
     },
     {
       label: "Life Paid #",
       ytd: snapshot.life_paid_count_ytd || 0,
+      wkDelta: wkDelta(snapshot.life_paid_count_ytd, snapshotPrior?.life_paid_count_ytd),
       goal: goalFor(goals, "life", "net_paid_for"),
     },
     {
       label: "Life Premium",
       ytd: Number(snapshot.life_premium_credits_ytd) || 0,
+      wkDelta: wkDelta(snapshot.life_premium_credits_ytd, snapshotPrior?.life_premium_credits_ytd),
       goal: goalFor(goals, "life", "premium"),
       isMoney: true,
     },
@@ -1064,6 +1118,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
             <thead>
               <tr>
                 <Th align="left">Metric</Th>
+                <Th align="right">Wk Δ</Th>
                 <Th align="right" style={{ background: T.slate50 }}>YTD</Th>
                 <Th align="right" style={{ background: T.slate50 }}>On Time</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Goal</Th>
@@ -1075,15 +1130,38 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 const onTime = (Number(line.ytd) * 365) / daysElapsed;
                 const onTimeRounded = line.isMoney ? onTime : Math.round(onTime);
                 const diff = line.goal !== null ? (onTime - Number(line.goal)) : null;
+                const lowerIsBetter = line.lowerIsBetter === true;
+                // Color for Wk Δ — green if "good direction", red if "bad", grey if zero/null
+                const wkDeltaColor = (() => {
+                  if (line.wkDelta === null || line.wkDelta === undefined) return T.slate500;
+                  if (Math.abs(line.wkDelta) < 0.001) return T.slate500;
+                  const improved = lowerIsBetter ? line.wkDelta < 0 : line.wkDelta > 0;
+                  return improved ? T.green : T.red;
+                })();
+                // Color for Diff — same logic
+                const diffColor = (() => {
+                  if (diff === null) return T.slate500;
+                  if (Math.abs(diff) < 0.001) return T.slate500;
+                  const improved = lowerIsBetter ? diff < 0 : diff > 0;
+                  return improved ? T.green : T.red;
+                })();
+                const wkDeltaDisplay = (() => {
+                  if (line.wkDelta === null || line.wkDelta === undefined) return "—";
+                  const v = line.isMoney ? line.wkDelta : Math.round(line.wkDelta);
+                  if (Math.abs(v) < 0.001) return "0";
+                  if (line.isMoney) return (v > 0 ? "+" : "") + fmtMoney(v);
+                  return (v > 0 ? "+" : "") + v.toLocaleString("en-US");
+                })();
                 return (
                   <tr key={line.label}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{line.label}</Td>
+                    <Td align="right" style={{ color: wkDeltaColor, fontWeight: 600 }}>{wkDeltaDisplay}</Td>
                     <Td align="right">{line.isMoney ? fmtMoney(line.ytd) : fmtInt(line.ytd)}</Td>
                     <Td align="right" style={{ color: T.slate700 }}>{line.isMoney ? fmtMoney(onTimeRounded) : fmtInt(onTimeRounded)}</Td>
                     <Td align="right" style={{ background: T.blueLt }}>
                       {line.goal === null ? "—" : (line.isMoney ? fmtMoney(line.goal) : fmtInt(line.goal))}
                     </Td>
-                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diff === null ? T.slate500 : (diff >= 0 ? T.green : T.red) }}>
+                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>
                       {diff === null ? "—" : (line.isMoney ? (diff >= 0 ? "+" : "") + fmtMoney(diff) : fmtSigned(Math.round(diff)))}
                     </Td>
                   </tr>
@@ -1126,16 +1204,14 @@ function SMVCScorecardSection({ snapshot }) {
 }
 
 // 12 — Claims
-// 11.5 — Auto/Fire Retention & Production (weekly SF retention + new/lost)
-// Renders one block per LOB with Last Wk / This Wk / Δ columns across
-// five rows: Retention %, Rank, Bonus, New, Lost.
+// 11.5 — Auto/Fire Retention Bonus (weekly SF retention competition)
+// One block per LOB with This Wk / Last Wk / Δ across Retention %, Rank, Bonus.
+// New/Lost moved to AgencyPerformanceSection (Section 10).
 function RetentionBonusSection({ report, reportPrior, editMode, formReport, isReportDirty, onReportChange }) {
   const FIELDS = [
     { key: "ratio_pct", label: "Retention %", kind: "pct"   },
     { key: "rank",      label: "Rank",        kind: "int"   },
     { key: "bonus",     label: "Bonus",       kind: "money" },
-    { key: "new",       label: "New",         kind: "int"   },
-    { key: "lost",      label: "Lost",        kind: "int"   },
   ];
   const LOBS = [
     { lob: "Auto", color: T.blue, prefix: "auto_" },
@@ -1167,7 +1243,7 @@ function RetentionBonusSection({ report, reportPrior, editMode, formReport, isRe
     if (cur === null || cur === undefined || prev === null || prev === undefined) return T.slate500;
     const d = Number(cur) - Number(prev);
     if (!isFinite(d) || Math.abs(d) < 0.001) return T.slate500;
-    const lowerIsBetter = (fieldKey === "rank" || fieldKey === "lost");
+    const lowerIsBetter = (fieldKey === "rank");
     const improved = lowerIsBetter ? d < 0 : d > 0;
     return improved ? T.green : T.red;
   };
@@ -1192,10 +1268,10 @@ function RetentionBonusSection({ report, reportPrior, editMode, formReport, isRe
     <div>
       <SectionHeader
         icon="🏆"
-        title="Auto / Fire — Retention & Production"
+        title="Auto/Fire Retention Bonus"
         hint={editMode
-          ? "Per LOB: Retention %, Rank, Bonus (weekly SF competition) + New + Lost"
-          : "Weekly SF retention competition + new business / lapses"}
+          ? "Per LOB: Retention %, Rank, Bonus (weekly SF competition)"
+          : "Weekly SF retention competition"}
       />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
