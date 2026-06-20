@@ -93,9 +93,10 @@ function useFinancialsData() {
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
 
-          // Scorecard
-          supabase.from("scorecard_tracking")
-            .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
+          // Scorecard — bands only (actuals derived at runtime, not stored). Reads from unified sf_program_targets.
+          supabase.from("sf_program_targets")
+            .select("program_year, period, bucket_name, min_target, max_target, notes")
+            .eq("program", "scorecard")
             .order("program_year", { ascending: false }).limit(20),
 
           // Balance Sheet — anchored to QBO 4/30/2026 opening balances + post-4/30 GL activity
@@ -169,12 +170,15 @@ function useFinancialsData() {
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
 
-        // Scorecard — alias to {metric, actual, target, pct}
+        // Scorecard — bands only. Per the compensation_data_freshness principle, "actual" and
+        // achievement % are computed at runtime from sf_on_time_snapshot, never stored on the targets table.
+        // Map min/max into the legacy {metric, actual, target, pct} shape consumed by ScorecardSection;
+        // actual/pct render as 0 until ScorecardSection is updated to call compute_on_time_smvc.
         const scorecard = (scorecardRows.data || []).map(s => ({
-          metric: s.metric_name,
-          actual: parseFloat(s.actual || 0),
-          target: parseFloat(s.target || 0),
-          pct:    Math.round(parseFloat(s.achievement_percentage || 0)),
+          metric: s.bucket_name,
+          actual: 0,
+          target: parseFloat(s.max_target || 0),
+          pct:    0,
         }));
 
         // Payroll — combine runs + detail, grouped by run

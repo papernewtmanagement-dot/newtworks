@@ -2249,7 +2249,7 @@ const RetentionBudgetSection = () => {
     (async () => {
       try {
         const today = new Date().toISOString().slice(0, 10);
-        const [currentRes, upcomingRes, agencyRes, snapshotRes, teamRes] = await Promise.all([
+        const [currentRes, upcomingRes, agencyRes, snapshotRes, otSnapRes, teamRes] = await Promise.all([
           supabase.from("v_retention_budget_current").select("*").maybeSingle(),
           supabase.from("retention_budget_schedule")
             .select("week_end_date, multiplier, phase")
@@ -2263,6 +2263,13 @@ const RetentionBudgetSection = () => {
             .maybeSingle(),
           supabase.from("book_snapshot")
             .select("snapshot_date, auto_premium, fire_premium, life_premium, auto_pif, fire_pif")
+            .eq("agency_id", AGENCY_ID)
+            .order("snapshot_date", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          // YTD on-time SMVC inputs — source of truth for raw YTD production/lapse/credits/IPS values.
+          supabase.from("sf_on_time_snapshot")
+            .select("*")
             .eq("agency_id", AGENCY_ID)
             .order("snapshot_date", { ascending: false })
             .limit(1)
@@ -2301,32 +2308,18 @@ const RetentionBudgetSection = () => {
           });
         }
 
-        // Pull latest scorecard_tracking actuals + current-year on-time SMVC via runtime RPC.
-        // Stored "current" on-time values are forbidden per operational_rule —
-        // calculation must happen at runtime from underlying source data.
+        // SMVC inputs derive from sf_on_time_snapshot YTD raw values — never stored "current" values.
+        // Per the compensation_data_freshness principle, calculation happens at runtime from source data.
         const programYear = new Date().getFullYear();
-        const { data: stRows } = await supabase
-          .from("scorecard_tracking")
-          .select("metric_name, actual, as_of_date")
-          .eq("agency_id", AGENCY_ID)
-          .eq("program_year", programYear)
-          .order("as_of_date", { ascending: false });
-
-        const latestActuals = {};
-        const latestAsOf = (Array.isArray(stRows) && stRows.length > 0) ? stRows[0].as_of_date : null;
-        if (latestAsOf) {
-          stRows.filter(r => r?.as_of_date === latestAsOf).forEach(r => {
-            if (r?.metric_name) latestActuals[r.metric_name] = Number(r.actual) || 0;
-          });
-        }
+        const otSnap = otSnapRes?.data;
+        const otAsOf = otSnap?.snapshot_date || null;
+        const autoPifGain = otSnap ? ((Number(otSnap.auto_production_ytd) || 0) - (Number(otSnap.auto_lapse_ytd) || 0)) : null;
+        const firePifGain = otSnap ? ((Number(otSnap.fire_production_ytd) || 0) - (Number(otSnap.fire_lapse_ytd) || 0)) : null;
+        const fsCredits   = otSnap ? (Number(otSnap.life_premium_credits_ytd) || 0) : null;
+        const ipsActivity = otSnap ? (Number(otSnap.ips_activity_ytd) || 0) : null;
 
         const snap = snapshotRes?.data;
         const pcProductionActual = (Number(snap?.auto_pif) || 0) + (Number(snap?.fire_pif) || 0);
-        const autoPifGain = latestActuals.auto_pif_gain ?? null;
-        const firePifGain = latestActuals.fire_pif_gain ?? null;
-        // FS Credits = Life + Health credits. Use lh_premium as proxy until a dedicated FS Credits actual is tracked.
-        const fsCredits = latestActuals.fs_credits ?? latestActuals.lh_premium ?? null;
-        const ipsActivity = latestActuals.ips_activity ?? 0;
 
         let smvcResult = null;
         try {
@@ -2354,7 +2347,7 @@ const RetentionBudgetSection = () => {
           snapshot: snapshotRes?.data ?? null,
           receptionTeam: team,
           payrollByPerson,
-          scorecardActuals: { ...latestActuals, as_of_date: latestAsOf },
+          scorecardActuals: { auto_pif_gain: autoPifGain, fire_pif_gain: firePifGain, fs_credits: fsCredits, ips_activity: ipsActivity, as_of_date: otAsOf },
           smvcResult,
         });
         return;
@@ -2594,11 +2587,11 @@ const RetentionBudgetSection = () => {
             Stored schedule is the zero-SMVC floor (Path B). The SMVC modifier (0.21 × on-time SMVC) is added on top each week.
             Full doc: persistent_memory → operational_rule → "Retention budget formula — permanent".
             On-time SMVC is computed at runtime via <code>compute_on_time_smvc_with_better_of()</code> from the latest
-            <code>scorecard_tracking</code> actuals and <code>smvc_band_config</code> thresholds — never stored as a "current" value.
-            Update weekly by writing a new <code>scorecard_tracking</code> snapshot.
+            <code>sf_on_time_snapshot</code> YTD values and <code>sf_program_targets</code> SMVC bands — never stored as a "current" value.
+            Update weekly by writing a new <code>sf_on_time_snapshot</code> row.
             {!smvcBandsComplete && (
               <div style={{ marginTop:6, padding:8, background:T.amberLt, border:`1px solid ${T.amber}`, borderRadius:6, color:T.slate800, fontSize:11 }}>
-                ⚠️ SMVC bands not yet configured for {new Date().getFullYear()} in <code>smvc_band_config</code>.
+                ⚠️ SMVC bands not yet configured for {new Date().getFullYear()} in <code>sf_program_targets</code> (program=&apos;smvc&apos;).
                 Until Peter enters the Min/Max thresholds (and P&amp;C Production Minimum gate) from the corporate OT dashboard,
                 this calculator treats on-time SMVC as 0%.
               </div>

@@ -109,7 +109,7 @@ const AIPPWidget = ({ data, onNavigate }) => {
 // ── Widget: Standing Goals Pace ────────────────────────────────
 // Tracks Peter's standing goals: 25% P&C premium growth, Champions Circle
 // qualification (400 Scorecard pts), and SMVC pace toward 2.70%.
-// Sources: book_snapshot · sf_on_time_snapshot · scorecard_tracking · smvc_history.
+// Sources: book_snapshot · sf_on_time_snapshot · sf_program_targets · agency.
 const GoalsPaceWidget = ({ data, onNavigate }) => {
   const g = data.goalsPace || {};
 
@@ -179,7 +179,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
         pacePct={g.smvc?.pace_pct}
       />
       <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
-        {g.as_of_note || "Pace computed live · book_snapshot · sf_on_time_snapshot · GL"}
+        {g.as_of_note || "Pace computed live · book_snapshot · sf_on_time_snapshot · sf_program_targets"}
       </div>
     </Card>
   );
@@ -523,20 +523,20 @@ export default function Dashboard({ onNavigate = () => {} }) {
 
         // ─── Standing Goals pace computation ─────────────────────
         // Pull goal feeds in parallel
-        const [bookRes, bookYsRes, bpgRes, sfRes, scRes, smvcRes] = await Promise.allSettled([
+        const [bookRes, bookYsRes, bpgRes, sfRes, bandsRes] = await Promise.allSettled([
           supabase.from("book_snapshot").select("snapshot_date, auto_pif, fire_pif, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
           supabase.from("book_snapshot").select("snapshot_date, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).gte("snapshot_date", `${curYear}-01-01`).order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
           supabase.from("book_performance_goals").select("lob, metric, target_value").eq("agency_id", AGENCY_ID).eq("year", curYear),
           supabase.from("sf_on_time_snapshot").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
-          supabase.from("scorecard_tracking").select("metric_name, min_target, max_target").eq("agency_id", AGENCY_ID).eq("program_year", curYear),
-          supabase.from("smvc_history").select("as_of_date, this_period_smvc, last_period_smvc").eq("agency_id", AGENCY_ID).order("as_of_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("sf_program_targets").select("program, bucket_name, min_target, max_target, percent_available").eq("agency_id", AGENCY_ID).eq("program_year", curYear).in("program", ["scorecard","smvc"]),
         ]);
         const book   = bookRes.status==="fulfilled"   ? bookRes.value.data   : null;
         const bookYs = bookYsRes.status==="fulfilled" ? bookYsRes.value.data : null;
         const bpg    = bpgRes.status==="fulfilled"    ? (bpgRes.value.data||[]) : [];
         const sf     = sfRes.status==="fulfilled"     ? sfRes.value.data     : null;
-        const scBands = (scRes.status==="fulfilled" ? (scRes.value.data||[]) : []).reduce((acc,r) => { acc[r.metric_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0}; return acc; }, {});
-        const smvc   = smvcRes.status==="fulfilled"   ? smvcRes.value.data   : null;
+        const allBands  = bandsRes.status==="fulfilled" ? (bandsRes.value.data||[]) : [];
+        const scBands   = allBands.filter(r => r.program === "scorecard").reduce((acc,r) => { acc[r.bucket_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0}; return acc; }, {});
+        const smvcBands = allBands.filter(r => r.program === "smvc").reduce((acc,r) => { acc[r.bucket_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0, pct:parseFloat(r.percent_available)||0}; return acc; }, {});
 
         // Days through year (for annualization)
         const yearStart = new Date(curYear, 0, 1);
@@ -598,18 +598,32 @@ export default function Dashboard({ onNavigate = () => {} }) {
         }
 
         // ─── Goal 3: SMVC pace (target 2.70%, below 3% Better Of cap) ───
-        // smvc_history.this_period_smvc is stored as a decimal (e.g. 0.0233 = 2.33%).
+        // Computed client-side from sf_on_time_snapshot YTD inputs + smvcBands (sf_program_targets).
+        // Mirrors public.smvc_bucket_score / public.compute_on_time_smvc SQL math.
         let smvcPace = null;
-        if (smvc) {
-          const tgtSmvc  = 2.70;
-          const curSmvc  = (parseFloat(smvc.this_period_smvc)||0) * 100;
-          const lastSmvc = (parseFloat(smvc.last_period_smvc)||0) * 100;
-          const pace_pct = tgtSmvc > 0 ? (curSmvc / tgtSmvc) * 100 : 0;
+        if (sf && Object.keys(smvcBands).length > 0) {
+          const score = (actual, b) => {
+            if (!b || b.min == null || b.max == null || !b.pct) return 0;
+            if (actual == null) return 0;
+            if (b.max === b.min) return 0;
+            return Math.min(b.pct, Math.max(0, ((actual - b.min) / (b.max - b.min)) * b.pct));
+          };
+          const autoGain       = (sf.auto_production_ytd||0) - (sf.auto_lapse_ytd||0);
+          const fireGain       = (sf.fire_production_ytd||0) - (sf.fire_lapse_ytd||0);
+          const fsCreditsYTD   = parseFloat(sf.life_premium_credits_ytd) || 0;
+          const ipsActivityYTD = parseFloat(sf.ips_activity_ytd) || 0;
+          const totalPct = score(autoGain,       smvcBands.auto_pif_gain)
+                         + score(fireGain,       smvcBands.fire_pif_gain)
+                         + score(fsCreditsYTD,   smvcBands.fs_credits)
+                         + score(ipsActivityYTD, smvcBands.ips_activity);
+          const capped      = Math.min(3.0, totalPct);
+          const tgtSmvc     = 2.70;
+          const appliedSmvc = (parseFloat(agency?.smvc_rate_pc)||0) * 100;
           smvcPace = {
-            current_label: `${curSmvc.toFixed(2)}%`,
+            current_label: `${capped.toFixed(2)}%`,
             target_label:  `${tgtSmvc.toFixed(2)}%`,
-            sub: `Last period ${lastSmvc.toFixed(2)}% · capped at 3.00% Better Of`,
-            pace_pct,
+            sub: `Currently applied ${appliedSmvc.toFixed(2)}% · capped at 3.00% Better Of`,
+            pace_pct: tgtSmvc > 0 ? (capped / tgtSmvc) * 100 : 0,
           };
         }
 

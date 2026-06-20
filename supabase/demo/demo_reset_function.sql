@@ -54,7 +54,7 @@ BEGIN
     journal_lines, journal_entries,
     credit_transactions,
     payroll_detail, payroll_runs,
-    comp_recap, aipp_tracking, scorecard_tracking,
+    comp_recap, aipp_tracking, sf_program_targets,
     automation_run_log,
     daily_briefing_log,
     social_analytics, content_calendar, social_accounts,
@@ -324,15 +324,24 @@ BEGIN
   END LOOP;
 
   -- ============================================================
-  -- 9. SCORECARD TRACKING
+  -- 9. SF PROGRAM TARGETS — Scorecard bands + SMVC bands + Honor Club gates
+  -- Replaces legacy scorecard_tracking + smvc_band_config tables (consolidated 2026-06-20)
   -- ============================================================
-  INSERT INTO scorecard_tracking (agency_id, program_year, period, metric_name, target, actual, achievement_percentage, notes) VALUES
-  (demo_agency_id, curr_year, 'annual', 'New Business Auto Items',        320, 287,  89.7,  'YTD tracking'),
-  (demo_agency_id, curr_year, 'annual', 'New Business Home Items',        180, 198,  110.0, 'YTD tracking'),
-  (demo_agency_id, curr_year, 'annual', 'Life Items',                     65,  48,   73.8,  'YTD tracking'),
-  (demo_agency_id, curr_year, 'annual', 'Financial Services NB',          95,  102,  107.4, 'YTD tracking'),
-  (demo_agency_id, curr_year, 'annual', 'Customer Retention',             92,  94.5, 102.7, 'YTD tracking'),
-  (demo_agency_id, curr_year, 'annual', 'Auto Multi-Line Discount Rate',  78,  81.2, 104.1, 'YTD tracking');
+  INSERT INTO sf_program_targets (agency_id, program, program_year, period, bucket_name, min_target, max_target, percent_available, is_gate, notes) VALUES
+  -- Scorecard bands
+  (demo_agency_id, 'scorecard',  curr_year, 'annual', 'auto_pif_production',         400,   650,    NULL, FALSE, 'Demo Scorecard Auto PIF Production'),
+  (demo_agency_id, 'scorecard',  curr_year, 'annual', 'auto_pif_gain',                50,    90,    NULL, FALSE, 'Demo Scorecard Auto PIF Gain'),
+  (demo_agency_id, 'scorecard',  curr_year, 'annual', 'fire_pif_production',         150,   240,    NULL, FALSE, 'Demo Scorecard Fire PIF Production'),
+  (demo_agency_id, 'scorecard',  curr_year, 'annual', 'fire_pif_gain',                16,    42,    NULL, FALSE, 'Demo Scorecard Fire PIF Gain'),
+  (demo_agency_id, 'scorecard',  curr_year, 'annual', 'fs_credits',                40000, 145000,   NULL, FALSE, 'Demo Scorecard FS Credits'),
+  -- Honor Club gates
+  (demo_agency_id, 'honor_club', curr_year, 'annual', 'honor_club_life_credits_gate',17500, 17500,  NULL, TRUE,  'Demo Honor Club Life Credits gate'),
+  (demo_agency_id, 'honor_club', curr_year, 'annual', 'honor_club_life_policies_gate',  40,    40,  NULL, TRUE,  'Demo Honor Club Life Policies gate'),
+  -- SMVC bucket bands (with per-bucket weight)
+  (demo_agency_id, 'smvc',       curr_year, 'annual', 'auto_pif_gain',                15,    90,    1.00, FALSE, 'Demo SMVC Auto Gain bucket'),
+  (demo_agency_id, 'smvc',       curr_year, 'annual', 'fire_pif_gain',               -10,    42,    1.00, FALSE, 'Demo SMVC Fire Gain bucket'),
+  (demo_agency_id, 'smvc',       curr_year, 'annual', 'fs_credits',                 9000, 90000,    1.75, FALSE, 'Demo SMVC FS Credits bucket'),
+  (demo_agency_id, 'smvc',       curr_year, 'annual', 'ips_activity',                  0, 2000000, 0.25, FALSE, 'Demo SMVC IPS Activity bucket');
 
   -- ============================================================
   -- 10. SOCIAL ACCOUNTS + CONTENT CALENDAR
