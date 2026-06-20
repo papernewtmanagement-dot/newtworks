@@ -1670,19 +1670,25 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Td align="right"></Td>
               </tr>
 
-              {/* WtW Result row — per-column shortfall (centered) or ✓ Met */}
+              {/* WtW Result row — one consolidated label spanning Net Quotes + Q Sales Pts.
+                  Win  (both conditions cleared): ✓ Win the Week!  (green)
+                  Loss (either missed):           Carryover: N quotes / M pts  (each piece shown only if > 0, red) */}
               <tr>
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate700 }}>Result</Td>
                 <Td align="right"></Td>
-                <Td align="center" style={{ fontWeight: 700, color: quotesPass ? T.green : T.red }}>
-                  {quotesPass
-                    ? "✓ Met"
-                    : `Carryover: ${quotesShort.toLocaleString()} quote${quotesShort === 1 ? "" : "s"}`}
-                </Td>
-                <Td align="center" style={{ fontWeight: 700, color: spPass ? T.green : T.red }}>
-                  {spPass
-                    ? "✓ Met"
-                    : `Carryover: ${Math.round(spShort).toLocaleString()} pts`}
+                <Td
+                  colSpan={2}
+                  align="center"
+                  style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red }}
+                >
+                  {(quotesPass && spPass)
+                    ? "✓ Win the Week!"
+                    : (() => {
+                        const parts = [];
+                        if (quotesShort > 0) parts.push(`${quotesShort.toLocaleString()} quote${quotesShort === 1 ? "" : "s"}`);
+                        if (spShort > 0) parts.push(`${Math.round(spShort).toLocaleString()} pts`);
+                        return `Carryover: ${parts.join(" / ")}`;
+                      })()}
                 </Td>
                 <Td align="right"></Td>
               </tr>
