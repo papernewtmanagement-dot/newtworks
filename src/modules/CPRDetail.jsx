@@ -419,7 +419,7 @@ function useCPRData(weekDate) {
         // leave those team_detail rows orphaned and display "(unknown)" on the page.
         const { data: teamRows } = await supabase
           .from("team")
-          .select("id, first_name, last_name, nickname, hire_date, role, role_level, category, is_active, archived_at")
+          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at")
           .eq("agency_id", AGENCY_ID)
           .order("hire_date", { ascending: true })
           .order("first_name", { ascending: true });
@@ -1957,20 +1957,29 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, onRefresh }
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>On-Time</Td>
                 {sorted.map(d => {
-                  // On-Time = (payroll_ytd_paid + this_week_total_pay) × 365 / days_into_year.
+                  // On-Time = (payroll_ytd_paid + this_week_total_pay) × 365 / days_employed_this_year.
                   // payroll_ytd_paid is SurePayroll YTD through end of last pay period (entered manually).
                   // this_week_total_pay is the sum of this week's 7 computed components.
+                  // Denominator uses days employed this year (start_date if mid-year hire, Jan 1 otherwise)
+                  // so mid-year hires get a fair annualization based on their actual earning window.
                   const ytdPaid = (d.payroll_ytd_paid === null || d.payroll_ytd_paid === undefined)
                     ? null : Number(d.payroll_ytd_paid);
                   const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
                   const ytdWithThisWeek = ytdPaid === null ? null : ytdPaid + thisWeekTotal;
-                  const dayOfYear = (() => {
+                  const daysEmployedThisYear = (() => {
                     if (!weekDate) return 1;
                     const dt = new Date(weekDate + "T00:00:00Z");
                     const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-                    return Math.max(1, Math.floor((dt - ys) / 86400000) + 1);
+                    // Look up team member's start_date; fall back to Jan 1 if missing.
+                    const member = (team || []).find(t => t.id === d.team_member_id);
+                    const startDateStr = member && (member.start_date || member.hire_date);
+                    const startDt = startDateStr
+                      ? new Date(startDateStr + "T00:00:00Z")
+                      : ys;
+                    const effectiveStart = startDt > ys ? startDt : ys;
+                    return Math.max(1, Math.floor((dt - effectiveStart) / 86400000) + 1);
                   })();
-                  const onTimeAnnual = ytdWithThisWeek === null ? null : (ytdWithThisWeek * 365) / dayOfYear;
+                  const onTimeAnnual = ytdWithThisWeek === null ? null : (ytdWithThisWeek * 365) / daysEmployedThisYear;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
                       {onTimeAnnual === null ? "—" : fmtMoneyCents(onTimeAnnual)}
