@@ -107,9 +107,9 @@ const AIPPWidget = ({ data, onNavigate }) => {
 
 
 // ── Widget: Standing Goals Pace ────────────────────────────────
-// Tracks Peter's 3 standing goals: 25% P&C book growth, Champions Circle
-// qualification (400 Scorecard pts), and +1pt owner profit per quarter.
-// Sources: book_snapshot · sf_on_time_snapshot · scorecard_tracking · v_income_statement.
+// Tracks Peter's standing goals: 25% P&C premium growth, Champions Circle
+// qualification (400 Scorecard pts), and SMVC pace toward 2.70%.
+// Sources: book_snapshot · sf_on_time_snapshot · scorecard_tracking · smvc_history.
 const GoalsPaceWidget = ({ data, onNavigate }) => {
   const g = data.goalsPace || {};
 
@@ -156,7 +156,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
       />
       <Row
         icon="📈"
-        title="P&C Book Growth (25%/yr)"
+        title="P&C Premium Growth (25%/yr)"
         current={g.pc?.current_label || "—"}
         target={g.pc?.target_label || "—"}
         sub={g.pc?.sub}
@@ -169,6 +169,14 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
         target={g.cc?.target_label || "—"}
         sub={g.cc?.sub}
         pacePct={g.cc?.pace_pct}
+      />
+      <Row
+        icon="📊"
+        title="SMVC (target 2.70%)"
+        current={g.smvc?.current_label || "—"}
+        target={g.smvc?.target_label || "—"}
+        sub={g.smvc?.sub}
+        pacePct={g.smvc?.pace_pct}
       />
       <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
         {g.as_of_note || "Pace computed live · book_snapshot · sf_on_time_snapshot · GL"}
@@ -515,16 +523,20 @@ export default function Dashboard({ onNavigate = () => {} }) {
 
         // ─── Standing Goals pace computation ─────────────────────
         // Pull goal feeds in parallel
-        const [bookRes, bpgRes, sfRes, scRes] = await Promise.allSettled([
-          supabase.from("book_snapshot").select("snapshot_date, auto_pif, fire_pif").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+        const [bookRes, bookYsRes, bpgRes, sfRes, scRes, smvcRes] = await Promise.allSettled([
+          supabase.from("book_snapshot").select("snapshot_date, auto_pif, fire_pif, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("book_snapshot").select("snapshot_date, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).gte("snapshot_date", `${curYear}-01-01`).order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
           supabase.from("book_performance_goals").select("lob, metric, target_value").eq("agency_id", AGENCY_ID).eq("year", curYear),
           supabase.from("sf_on_time_snapshot").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
           supabase.from("scorecard_tracking").select("metric_name, min_target, max_target").eq("agency_id", AGENCY_ID).eq("program_year", curYear),
+          supabase.from("smvc_history").select("as_of_date, this_period_smvc, last_period_smvc").eq("agency_id", AGENCY_ID).order("as_of_date",{ascending:false}).limit(1).maybeSingle(),
         ]);
-        const book = bookRes.status==="fulfilled" ? bookRes.value.data : null;
-        const bpg  = bpgRes.status==="fulfilled" ? (bpgRes.value.data||[]) : [];
-        const sf   = sfRes.status==="fulfilled" ? sfRes.value.data : null;
+        const book   = bookRes.status==="fulfilled"   ? bookRes.value.data   : null;
+        const bookYs = bookYsRes.status==="fulfilled" ? bookYsRes.value.data : null;
+        const bpg    = bpgRes.status==="fulfilled"    ? (bpgRes.value.data||[]) : [];
+        const sf     = sfRes.status==="fulfilled"     ? sfRes.value.data     : null;
         const scBands = (scRes.status==="fulfilled" ? (scRes.value.data||[]) : []).reduce((acc,r) => { acc[r.metric_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0}; return acc; }, {});
+        const smvc   = smvcRes.status==="fulfilled"   ? smvcRes.value.data   : null;
 
         // Days through year (for annualization)
         const yearStart = new Date(curYear, 0, 1);
@@ -532,28 +544,25 @@ export default function Dashboard({ onNavigate = () => {} }) {
         const annualize = (ytd) => (parseFloat(ytd)||0) * (365 / daysElapsed);
         const yearProgress = daysElapsed / 365;
 
-        // ─── Goal 1: P&C Book Growth (25%/yr) ───
+        // ─── Goal 1: P&C Premium Growth (25%/yr) ───
+        // Tracks Auto + Fire in-force premium dollars: year-start snapshot vs latest snapshot.
+        // (Clarified 2026-06-19 — was previously PIF count; goal is premium $.)
         let pc = null;
-        const bpgByKey = bpg.reduce((m,r) => { m[`${r.lob}.${r.metric}`] = parseFloat(r.target_value)||0; return m; }, {});
-        const autoTarget = bpgByKey["auto.pif"];
-        const fireTarget = bpgByKey["fire.pif"];
-        const autoGainTgt = bpgByKey["auto.gain"];
-        const fireGainTgt = bpgByKey["fire.gain"];
-        if (book && autoTarget && fireTarget && autoGainTgt!=null && fireGainTgt!=null) {
-          const ysAutoPC  = autoTarget - autoGainTgt;
-          const ysFirePC  = fireTarget - fireGainTgt;
-          const ysPC      = ysAutoPC + ysFirePC;
-          const curPC     = (book.auto_pif||0) + (book.fire_pif||0);
-          const netYTD    = curPC - ysPC;
-          const tgtGain   = ysPC * 0.25;                     // 25% of year-start P&C
+        if (book && bookYs) {
+          const ysPCPrem  = (parseFloat(bookYs.auto_premium)||0) + (parseFloat(bookYs.fire_premium)||0);
+          const curPCPrem = (parseFloat(book.auto_premium)||0)   + (parseFloat(book.fire_premium)||0);
+          const netYTD    = curPCPrem - ysPCPrem;
+          const tgtGain   = ysPCPrem * 0.25;                 // 25% of year-start P&C premium
           const annualGain= annualize(netYTD);
-          const growthPctYTD     = ysPC > 0 ? (netYTD / ysPC) * 100 : 0;
-          const growthPctOnTime  = ysPC > 0 ? (annualGain / ysPC) * 100 : 0;
+          const growthPctYTD     = ysPCPrem > 0 ? (netYTD / ysPCPrem) * 100 : 0;
+          const growthPctOnTime  = ysPCPrem > 0 ? (annualGain / ysPCPrem) * 100 : 0;
           const pace_pct  = growthPctOnTime > 0 ? (growthPctOnTime / 25) * 100 : 0;
+          const fmtUsd = (n) => `$${Math.round(n).toLocaleString()}`;
+          const fmtUsdSigned = (n) => `${n>=0?"+":"−"}$${Math.abs(Math.round(n)).toLocaleString()}`;
           pc = {
-            current_label: `${curPC.toLocaleString()} PIF`,
-            target_label:  `${Math.round(ysPC * 1.25).toLocaleString()} PIF`,
-            sub: `+${netYTD} YTD · on-time +${Math.round(annualGain)} (need +${Math.round(tgtGain)}) · ${growthPctYTD.toFixed(1)}% / 25%`,
+            current_label: fmtUsd(curPCPrem),
+            target_label:  fmtUsd(ysPCPrem * 1.25),
+            sub: `${fmtUsdSigned(netYTD)} YTD · on-time ${fmtUsdSigned(annualGain)} (need +${fmtUsd(tgtGain)}) · ${growthPctYTD.toFixed(1)}% / 25%`,
             pace_pct,
           };
         }
@@ -588,8 +597,24 @@ export default function Dashboard({ onNavigate = () => {} }) {
           };
         }
 
+        // ─── Goal 3: SMVC pace (target 2.70%, below 3% Better Of cap) ───
+        // smvc_history.this_period_smvc is stored as a decimal (e.g. 0.0233 = 2.33%).
+        let smvcPace = null;
+        if (smvc) {
+          const tgtSmvc  = 2.70;
+          const curSmvc  = (parseFloat(smvc.this_period_smvc)||0) * 100;
+          const lastSmvc = (parseFloat(smvc.last_period_smvc)||0) * 100;
+          const pace_pct = tgtSmvc > 0 ? (curSmvc / tgtSmvc) * 100 : 0;
+          smvcPace = {
+            current_label: `${curSmvc.toFixed(2)}%`,
+            target_label:  `${tgtSmvc.toFixed(2)}%`,
+            sub: `Last period ${lastSmvc.toFixed(2)}% · capped at 3.00% Better Of`,
+            pace_pct,
+          };
+        }
+
         const goalsPace = {
-          pc, cc,
+          pc, cc, smvc: smvcPace,
           as_of_note: sf?.snapshot_date
             ? `Live as of ${sf.snapshot_date} · day ${daysElapsed} of 365`
             : `Live · day ${daysElapsed} of 365`,
