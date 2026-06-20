@@ -1281,12 +1281,26 @@ function SMVCScorecardSection({ section11 }) {
             </tbody>
           </table>
         </div>
-        <div style={{ padding: "10px 18px 4px", borderTop: `1px solid ${T.slate100}`, fontSize: 12, color: T.slate600 }}>
-          Prize Cart Budget: <span style={{ color: T.slate400 }}>—</span>
-        </div>
-        <div style={{ padding: "0 18px 10px", fontSize: 12, color: T.slate600 }}>
-          WtQ Trip Budget: <span style={{ color: T.slate400 }}>—</span>
-        </div>
+        {(() => {
+          const fmtMoneyOrDash = (v) => v == null ? "—" : "$" + Math.round(Number(v)).toLocaleString("en-US");
+          const prizeBudget = section11?.prize_cart_budget?.value ?? null;
+          const wtqBudget   = section11?.wtq_trip_budget?.value ?? null;
+          return (
+            <div style={{
+              padding: "10px 18px",
+              borderTop: `1px solid ${T.slate100}`,
+              fontSize: 12, color: T.slate600,
+              display: "flex", gap: 32, justifyContent: "space-between", flexWrap: "wrap",
+            }}>
+              <div style={{ flex: "1 1 0", minWidth: 180 }}>
+                Prize Cart Budget: <span style={{ color: prizeBudget == null ? T.slate400 : T.slate800, fontWeight: prizeBudget == null ? 400 : 700 }}>{fmtMoneyOrDash(prizeBudget)}</span>
+              </div>
+              <div style={{ flex: "1 1 0", minWidth: 180 }}>
+                WtQ Trip Budget: <span style={{ color: wtqBudget == null ? T.slate400 : T.slate800, fontWeight: wtqBudget == null ? 400 : 700 }}>{fmtMoneyOrDash(wtqBudget)}</span>
+              </div>
+            </div>
+          );
+        })()}
       </Card>
     </div>
   );
