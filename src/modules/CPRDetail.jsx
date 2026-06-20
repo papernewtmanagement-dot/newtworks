@@ -542,10 +542,13 @@ function useCPRData(weekDate) {
         }
 
         // 9. Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
-        const { data: hoursRows } = await supabase.rpc("get_weekly_cpr_hours", {
+        const { data: hoursRows, error: hoursError } = await supabase.rpc("get_weekly_cpr_hours", {
           p_agency_id: AGENCY_ID,
           p_week_ending_date: weekDate,
         });
+        if (hoursError) {
+          console.error("get_weekly_cpr_hours failed:", hoursError);
+        }
         const runtimeHours = {};
         (hoursRows || []).forEach(h => {
           if (!runtimeHours[h.team_member_id]) runtimeHours[h.team_member_id] = {};
@@ -558,10 +561,13 @@ function useCPRData(weekDate) {
 
         // 10. Runtime requirements — get_weekly_cpr_requirements computes
         // carryover/missed/cost/total/paid/owed/net_quotes per person.
-        const { data: reqsRows } = await supabase.rpc("get_weekly_cpr_requirements", {
+        const { data: reqsRows, error: reqsError } = await supabase.rpc("get_weekly_cpr_requirements", {
           p_agency_id: AGENCY_ID,
           p_week_ending_date: weekDate,
         });
+        if (reqsError) {
+          console.error("get_weekly_cpr_requirements failed:", reqsError);
+        }
         const runtimeReqs = {};
         (reqsRows || []).forEach(r => {
           runtimeReqs[r.team_member_id] = {
@@ -1531,7 +1537,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
 }
 
 // 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1%)
-function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editMode, formDetails, isDirty, onChange }) {
+function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -1541,6 +1547,25 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
     );
   }
   const sorted = sortByTenure(details, team);
+
+  // Team aggregates pulled from the weekly_cpr_reports row (populated by the daily
+  // checkin pipeline + locked by the Saturday outcome writer). Falls back to
+  // computing from runtimeReqs / details when the report row is null.
+  const teamNetQuotesTotal = report?.quotes_total_net != null
+    ? Number(report.quotes_total_net)
+    : sorted.reduce((acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0), 0);
+  const teamSalesPtsTotal = report?.quarterly_sales_points_qtd != null
+    ? Number(report.quarterly_sales_points_qtd)
+    : sorted.reduce((acc, d) => acc + (Number(d.sales_points) || 0), 0);
+
+  const carryover = Number(report?.quotes_owed_carryover) || 0;
+  const freshNeeded = Number(report?.quotes_fresh_needed) || 0;
+  const quoteGoal = carryover + freshNeeded;
+  const salesPtsGoal = Number(report?.quarterly_sales_points_target) || 0;
+
+  const wtwHit = report?.won_the_week === true;
+  const quotesOwedNext = Number(report?.quotes_owed_next_week) || 0;
+
   return (
     <div>
       <SectionHeader icon="📊" title="Team Activity" />
@@ -1603,42 +1628,42 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
                   </tr>
                 );
               })}
+
+              {/* Team Total row */}
+              <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
+                <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Team Total</Td>
+                <Td align="right"></Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtSigned(teamNetQuotesTotal)}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
+                <Td align="right"></Td>
+              </tr>
+
+              {/* Goal row — quotes goal includes carryover from prior week */}
+              <tr>
+                <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate700 }}>
+                  Goal{" "}
+                  <span style={{ fontWeight: 400, color: T.slate500, fontSize: 11 }}>
+                    ({carryover} carryover)
+                  </span>
+                </Td>
+                <Td align="right"></Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{quoteGoal}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{salesPtsGoal.toFixed(2)}</Td>
+                <Td align="right"></Td>
+              </tr>
+
+              {/* WtW Result row — status + quotes owed next week */}
+              <tr>
+                <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate700 }}>Result</Td>
+                <Td align="right"></Td>
+                <Td align="right" style={{ fontWeight: 700, color: wtwHit ? T.green : T.red }}>
+                  {wtwHit ? "✓ Won" : `✗ ${quotesOwedNext} owed next wk`}
+                </Td>
+                <Td align="right"></Td>
+                <Td align="right"></Td>
+              </tr>
             </tbody>
           </table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// 18 — Team Performance (3-line block: quotes flow, sales pace, won the week)
-function TeamPerformanceSection({ report }) {
-  if (!report) {
-    return (
-      <div>
-        <SectionHeader icon="📊" title="Team Performance" />
-        <Card><Awaiting /></Card>
-      </div>
-    );
-  }
-  const wonStr = report.won_the_week === true ? "✅ Yes" : report.won_the_week === false ? "❌ No" : "—";
-  const target = Number(report.quarterly_sales_points_target) || 0;
-  const qtd = Number(report.quarterly_sales_points_qtd) || 0;
-  const pacePct = target > 0 ? (qtd / target * 100).toFixed(1) : "—";
-  return (
-    <div>
-      <SectionHeader icon="📊" title="Team Performance" />
-      <Card>
-        <div style={{ fontSize: 13, lineHeight: 1.9, color: T.slate800 }}>
-          <div>
-            Quotes: {fmtInt(report.quotes_owed_carryover)} owed last wk → {fmtInt(report.quotes_fresh_needed)} fresh needed → {fmtInt(report.quotes_total_net)} net → <strong>{fmtInt(report.quotes_owed_next_week)} owed next wk</strong>
-          </div>
-          <div>
-            Quarterly sales points: {qtd.toFixed(2)} / {target.toFixed(2)} QTD ({pacePct === "—" ? "—" : pacePct + "%"} pace)
-          </div>
-          <div>
-            Won the Week: <strong>{wonStr}</strong>
-          </div>
         </div>
       </Card>
     </div>
@@ -2248,15 +2273,13 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           details={data.details} team={data.team}
           truePayHistory={data.truePayHistory}
           runtimeReqs={data.runtimeReqs}
+          report={data.report}
           editMode={edit.active}
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
           onChange={edit.setDetailField}
         />
       </Section>
-
-      {/* 18. Team performance */}
-      <Section><TeamPerformanceSection report={data.report} /></Section>
 
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} /></Section>
