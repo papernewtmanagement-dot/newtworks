@@ -1318,7 +1318,7 @@ const BookAddForm = ({ onAdded }) => {
           .from("alerts")
           .update({ is_resolved: true, resolved_at: new Date().toISOString() })
           .eq("agency_id", AGENCY_ID)
-          .eq("module_reference", `book_snapshot_weekly_alert:${form.snapshot_date}`)
+          .eq("module_reference", `agency_snapshot_weekly_alert:${form.snapshot_date}`)
           .eq("is_resolved", false);
       }
 
