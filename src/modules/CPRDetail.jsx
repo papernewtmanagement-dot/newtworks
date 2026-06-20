@@ -2473,8 +2473,8 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} onRefresh={data.refresh} /></Section>
 
-      {/* 20. True Pay Bonus history (full + averages) */}
-      <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section>
+      {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
+      {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
 
       {/* 21. Leaderboards */}
       <Section><LeaderboardsSection /></Section>
