@@ -1241,14 +1241,14 @@ function SMVCScorecardSection({ section11 }) {
   }
 
   const smvc = section11.smvc || {};
-  const onTime  = smvc.on_time     != null ? Number(smvc.on_time)     : null;
-  const lastWk  = smvc.last_wk     != null ? Number(smvc.last_wk)     : null;
-  const lastQ   = smvc.last_q      != null ? Number(smvc.last_q)      : null;
-  // "Current" column = this year's applied SMVC rate (agency.smvc_rate_pc),
-  // surfaced by get_cpr_section_11 as smvc.applied. The smvc.current field
-  // (= pre-Better-Of live pace) is no longer rendered on the page.
-  const current = smvc.applied     != null ? Number(smvc.applied)     : null;
-  const diff    = smvc.dollar_diff != null ? Number(smvc.dollar_diff) : null;
+  const onTime   = smvc.on_time     != null ? Number(smvc.on_time)     : null;
+  const lastWk   = smvc.last_wk     != null ? Number(smvc.last_wk)     : null;
+  const lastQ    = smvc.last_q      != null ? Number(smvc.last_q)      : null;
+  // "Last Year" column for SMVC = this year's applied SMVC rate (agency.smvc_rate_pc).
+  // That rate is the realized outcome of last year's performance, paid out this year.
+  // Backend exposes both smvc.last_year and smvc.applied (same value) for the rename.
+  const lastYear = smvc.last_year   != null ? Number(smvc.last_year)   : null;
+  const diff     = smvc.dollar_diff != null ? Number(smvc.dollar_diff) : null;
 
   const fmtPct = (v) => v == null ? "—" : (v * 100).toFixed(2) + "%";
   const fmtDiff = (v) => {
@@ -1267,40 +1267,40 @@ function SMVCScorecardSection({ section11 }) {
             <thead>
               <tr>
                 <Th align="left"></Th>
-                <Th align="right">On-Time</Th>
                 <Th align="right">Last Wk</Th>
                 <Th align="right">Last Q</Th>
-                <Th align="right" style={{ background: T.slate50 }}>Current</Th>
+                <Th align="right" style={{ background: T.slate50 }}>Last Year</Th>
+                <Th align="right">On-Time</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>$ Diff</Th>
               </tr>
             </thead>
             <tbody>
-              {/* SMVC row */}
+              {/* SMVC row — Last Wk | Last Q | Last Year | On-Time | $ Diff */}
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>SMVC</Td>
-                <Td align="right">{fmtPct(onTime)}</Td>
                 <Td align="right">{fmtPct(lastWk)}</Td>
                 <Td align="right">{fmtPct(lastQ)}</Td>
-                <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtPct(current)}</Td>
+                <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtPct(lastYear)}</Td>
+                <Td align="right">{fmtPct(onTime)}</Td>
                 <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>{fmtDiff(diff)}</Td>
               </tr>
-              {/* Scorecard Bonus row — live from compute_scorecard_bonus() */}
+              {/* Scorecard Bonus row — Last Wk | Last Q | Last Year | On-Time | $ Diff */}
               {(() => {
                 const sc = section11.scorecard_bonus || {};
-                const scOnTime  = sc.on_time     != null ? Number(sc.on_time)     : null;
-                const scLastWk  = sc.last_wk     != null ? Number(sc.last_wk)     : null;
-                const scLastQ   = sc.last_q      != null ? Number(sc.last_q)      : null;
-                const scCurrent = sc.current     != null ? Number(sc.current)     : null;
-                const scDiff    = sc.dollar_diff != null ? Number(sc.dollar_diff) : null;
-                const fmtMoney  = (v) => v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US");
+                const scOnTime   = sc.on_time     != null ? Number(sc.on_time)     : null;
+                const scLastWk   = sc.last_wk     != null ? Number(sc.last_wk)     : null;
+                const scLastQ    = sc.last_q      != null ? Number(sc.last_q)      : null;
+                const scLastYear = sc.last_year   != null ? Number(sc.last_year)   : null;
+                const scDiff     = sc.dollar_diff != null ? Number(sc.dollar_diff) : null;
+                const fmtMoney   = (v) => v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US");
                 const scDiffColor = scDiff == null ? T.slate500 : (scDiff >= 0 ? T.green : T.red);
                 return (
                   <tr>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
-                    <Td align="right">{fmtMoney(scOnTime)}</Td>
                     <Td align="right" style={{ color: scLastWk == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastWk)}</Td>
                     <Td align="right" style={{ color: scLastQ == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastQ)}</Td>
-                    <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtMoney(scCurrent)}</Td>
+                    <Td align="right" style={{ background: T.slate50, fontWeight: 700, color: scLastYear == null ? T.slate500 : T.slate800 }}>{fmtMoney(scLastYear)}</Td>
+                    <Td align="right">{fmtMoney(scOnTime)}</Td>
                     <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: scDiffColor }}>{fmtDiff(scDiff)}</Td>
                   </tr>
                 );
