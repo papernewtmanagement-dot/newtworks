@@ -1094,6 +1094,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: auto_new - auto_lost,
       onTimeWkD: gainWkD("auto_new_ytd", "auto_lost_ytd"),
       goal: goalFor(goals, "auto", "gain"),
+      lapseRate: (Number(snapshot.auto_pif) > 0)
+        ? (auto_lost * 365 / daysElapsed) / Number(snapshot.auto_pif) * 100
+        : null,
     },
     {
       label: "Fire",
@@ -1102,6 +1105,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: fire_new - fire_lost,
       onTimeWkD: gainWkD("fire_new_ytd", "fire_lost_ytd"),
       goal: goalFor(goals, "fire", "gain"),
+      lapseRate: (Number(snapshot.fire_pif) > 0)
+        ? (fire_lost * 365 / daysElapsed) / Number(snapshot.fire_pif) * 100
+        : null,
     },
     {
       label: "Life",
@@ -1110,6 +1116,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: life_new - life_lost,
       onTimeWkD: gainWkD("life_new_ytd", "life_lost_ytd"),
       goal: goalFor(goals, "life", "gain"),
+      lapseRate: null,
     },
     {
       label: "Life #",
@@ -1118,6 +1125,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: life_count,
       onTimeWkD: wkDelta(snapshot.life_paid_for_count_ytd, snapshotPrior?.life_paid_for_count_ytd),
       goal: goalFor(goals, "life", "net_paid_for"),
+      lapseRate: null,
     },
     {
       label: "Life $",
@@ -1127,6 +1135,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       onTimeWkD: wkDelta(snapshot.life_paid_for_premium_ytd, snapshotPrior?.life_paid_for_premium_ytd),
       goal: goalFor(goals, "life", "premium"),
       isMoney: true,
+      lapseRate: null,
     },
   ];
 
@@ -1163,6 +1172,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 <Th align="left">LOB</Th>
                 <Th align="right">New</Th>
                 <Th align="right">Lost</Th>
+                <Th align="right">Lapse Rate</Th>
                 <Th align="right" style={{ background: T.slate50 }}>On Time</Th>
                 <Th align="right" style={{ background: T.slate50 }}>Goal</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Diff</Th>
@@ -1202,6 +1212,11 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{r.label}</Td>
                     {renderValDelta(r.newYtd,  r.newWkD,  undefined, false)}
                     {renderValDelta(r.lostYtd, r.lostWkD, undefined, false)}
+                    <Td align="right">
+                      {(r.lapseRate === null || r.lapseRate === undefined)
+                        ? <span style={{ color: T.slate400 }}>—</span>
+                        : <span style={{ color: T.slate900, fontWeight: 500 }}>{r.lapseRate.toFixed(1)}%</span>}
+                    </Td>
                     {renderValDelta(onTimeRounded, r.onTimeWkD, T.slate50, true)}
                     <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>
                       {(r.goal === null || r.goal === undefined)
