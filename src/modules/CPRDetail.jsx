@@ -1284,15 +1284,27 @@ function SMVCScorecardSection({ section11 }) {
                 <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtPct(current)}</Td>
                 <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>{fmtDiff(diff)}</Td>
               </tr>
-              {/* Scorecard Bonus row — all placeholders for now */}
-              <tr>
-                <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
-                <Td align="right" style={{ color: T.slate500 }}>—</Td>
-                <Td align="right" style={{ color: T.slate500 }}>—</Td>
-                <Td align="right" style={{ color: T.slate500 }}>—</Td>
-                <Td align="right" style={{ background: T.slate50, color: T.slate500 }}>—</Td>
-                <Td align="right" style={{ background: T.blueLt, color: T.slate500 }}>—</Td>
-              </tr>
+              {/* Scorecard Bonus row — live from compute_scorecard_bonus() */}
+              {(() => {
+                const sc = section11.scorecard_bonus || {};
+                const scOnTime  = sc.on_time     != null ? Number(sc.on_time)     : null;
+                const scLastWk  = sc.last_wk     != null ? Number(sc.last_wk)     : null;
+                const scLastQ   = sc.last_q      != null ? Number(sc.last_q)      : null;
+                const scCurrent = sc.current     != null ? Number(sc.current)     : null;
+                const scDiff    = sc.dollar_diff != null ? Number(sc.dollar_diff) : null;
+                const fmtMoney  = (v) => v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US");
+                const scDiffColor = scDiff == null ? T.slate500 : (scDiff >= 0 ? T.green : T.red);
+                return (
+                  <tr>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
+                    <Td align="right">{fmtMoney(scOnTime)}</Td>
+                    <Td align="right" style={{ color: scLastWk == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastWk)}</Td>
+                    <Td align="right" style={{ color: scLastQ == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastQ)}</Td>
+                    <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtMoney(scCurrent)}</Td>
+                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: scDiffColor }}>{fmtDiff(scDiff)}</Td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
         </div>
