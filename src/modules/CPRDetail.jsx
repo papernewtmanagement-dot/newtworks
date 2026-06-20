@@ -277,11 +277,15 @@ const EDIT_FIELDS = {
     "fire_ratio_pct", "fire_rank", "fire_bonus",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
+    // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
+    "campaign_onboarding_date", "campaign_defectors_date",
+    "campaign_single_line_date", "campaign_af_renewals_date",
   ],
   detail: [
     "code_reds", "code_yellows",
     "cpr_reply_done", "wrapup_done", "inbox_done",
     "quotes_discussed", "sales_points",
+    "quotes_modified",
   ],
 };
 
@@ -289,19 +293,27 @@ const EDIT_FIELDS = {
 const EDIT_ROLES = new Set(["owner", "manager"]);
 
 // ── Checklist constants ─────────────────────────────────────
-const TEAM_CHECKLIST_KEYS = [
+// Daily ops — items the team handles every day.
+const DAILY_OPS_KEYS = [
   ["shareds_done", "Shared Outlook folders"],
   ["texts_done", "Texts recorded"],
   ["deposits_done", "Deposits finalized"],
   ["appts_done", "Appointments formatted"],
   ["tasks_done", "Tasks cleared"],
-  ["cases_done", "Onboarding cases"],
-  ["no_onboarding_done", "Non-onboarding closed"],
-  ["no_fu_task_done", "No follow-up tasks"],
-  ["new_opps_done", "New contacts"],
+  ["cases_done", "Onboarding cases created"],
+  ["no_onboarding_done", "Non-onboarding cases closed"],
+];
+
+// Opp lists cleared — opportunity backlog hygiene.
+const OPP_LISTS_KEYS = [
+  ["no_fu_task_done", "Missing follow-up"],
+  ["new_opps_done", "New leads"],
   ["no_phone_done", "No phone"],
   ["bad_data_done", "Quotes w/ missing data"],
 ];
+
+// Combined — used for hit/miss counting and the report-level booleans.
+const TEAM_CHECKLIST_KEYS = [...DAILY_OPS_KEYS, ...OPP_LISTS_KEYS];
 
 const PERSONAL_CHECKLIST_KEYS = [
   ["cpr_reply_done", "CPR Reply"],
@@ -388,7 +400,7 @@ function useCPRData(weekDate) {
     bookYearStart: null, // book_snapshot row at year start
     bookCurrent: null,   // book_snapshot row (most recent)
     goals: [],           // book_performance_goals rows (current year)
-    campaigns: [],       // cpr_campaigns rows (most recent per type)
+    campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
@@ -468,13 +480,24 @@ function useCPRData(weekDate) {
           .eq("agency_id", AGENCY_ID)
           .eq("year", year);
 
-        // 7. cpr_campaigns — most recent per type (we sort client-side)
-        const { data: campRows } = await supabase
-          .from("cpr_campaigns")
-          .select("*")
+        // 7. Campaign prefills — most recent prior week with a non-null value per type.
+        // Stored directly on weekly_cpr_reports (one column per campaign type).
+        const { data: priorCampRows } = await supabase
+          .from("weekly_cpr_reports")
+          .select("week_ending_date, campaign_onboarding_date, campaign_defectors_date, campaign_single_line_date, campaign_af_renewals_date")
           .eq("agency_id", AGENCY_ID)
-          .order("created_on", { ascending: false })
-          .limit(50);
+          .lt("week_ending_date", weekDate)
+          .order("week_ending_date", { ascending: false })
+          .limit(30);
+        const campaignPriors = {
+          onboarding_date: null, defectors_date: null, single_line_date: null, af_renewals_date: null,
+        };
+        (priorCampRows || []).forEach(r => {
+          if (!campaignPriors.onboarding_date && r.campaign_onboarding_date) campaignPriors.onboarding_date = r.campaign_onboarding_date;
+          if (!campaignPriors.defectors_date  && r.campaign_defectors_date)  campaignPriors.defectors_date  = r.campaign_defectors_date;
+          if (!campaignPriors.single_line_date && r.campaign_single_line_date) campaignPriors.single_line_date = r.campaign_single_line_date;
+          if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
+        });
 
         // 8. True Pay Bonus history — last 39 weeks of weekly_cpr_team_detail
         // Pulls detail rows joined to reports ordered by week_ending_date desc
@@ -507,7 +530,7 @@ function useCPRData(weekDate) {
           });
           // Sort each person's history desc
           Object.keys(truePayHistory).forEach(k => {
-            truePayHistory[k].sort((a, b) => b.week_ending_date.localeCompare(a.week_ending_date));
+            truePayHistory[k].sort((a, b) => a.week_ending_date.localeCompare(b.week_ending_date));
           });
         }
 
@@ -541,6 +564,7 @@ function useCPRData(weekDate) {
             missed: Number(r.missed) || 0,
             cost: Number(r.cost) || 0,
             total: Number(r.total) || 0,
+            modified: Number(r.modified) || 0,
             quotes_discussed: Number(r.quotes_discussed) || 0,
             paid: Number(r.paid) || 0,
             owed: Number(r.owed) || 0,
@@ -560,7 +584,7 @@ function useCPRData(weekDate) {
           bookYearStart: bookYS || null,
           bookCurrent,
           goals: goalRows || [],
-          campaigns: campRows || [],
+          campaignPriors,
           truePayHistory,
           runtimeHours,
           runtimeReqs,
@@ -760,10 +784,55 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
       </div>
     );
   }
-  // Count hits when not editing
+  // Count hits when not editing — across both subsections combined
   const hits = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] === true).length;
   const total = TEAM_CHECKLIST_KEYS.length;
   const misses = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] === false);
+
+  // Render one subsection's grid
+  const renderGrid = (keys) => (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+      gap: "10px 18px",
+    }}>
+      {keys.map(([key, label]) => {
+        const val = editMode ? (formReport[key] ?? null) : report[key];
+        const dirty = editMode ? isReportDirty(key) : false;
+        return (
+          <div key={key} style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "6px 8px", borderRadius: 6,
+            background: dirty ? (T.amber50 || "#fef3c7") : "transparent",
+          }}>
+            {editMode ? (
+              <Checkbox
+                checked={val === true}
+                onChange={v => onReportChange(key, v)}
+                dirty={dirty}
+              />
+            ) : (
+              <span style={{ fontSize: 14, width: 16, display: "inline-block", textAlign: "center" }}>
+                {val === false
+                  ? <span style={{ color: T.red }}>✕</span>
+                  : <span style={{ color: T.green }}>✓</span>}
+              </span>
+            )}
+            <span style={{ fontSize: 12, color: T.slate700 }}>{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const subheading = (text) => (
+    <div style={{
+      fontSize: 10, fontWeight: 800, color: T.slate500,
+      letterSpacing: 0.6, textTransform: "uppercase",
+      marginBottom: 6,
+    }}>{text}</div>
+  );
+
   return (
     <div>
       <SectionHeader
@@ -772,38 +841,11 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
         hint={editMode ? "Toggle each item — yellow = unsaved" : `Hit ${hits} of ${total}${misses.length > 0 ? `  •  Missed: ${misses.map(([,label]) => label).join(", ")}` : "  ✓"}`}
       />
       <Card>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-          gap: "10px 18px",
-        }}>
-          {TEAM_CHECKLIST_KEYS.map(([key, label]) => {
-            const val = editMode ? (formReport[key] ?? null) : report[key];
-            const dirty = editMode ? isReportDirty(key) : false;
-            return (
-              <div key={key} style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "6px 8px", borderRadius: 6,
-                background: dirty ? (T.amber50 || "#fef3c7") : "transparent",
-              }}>
-                {editMode ? (
-                  <Checkbox
-                    checked={val === true}
-                    onChange={v => onReportChange(key, v)}
-                    dirty={dirty}
-                  />
-                ) : (
-                  <span style={{ fontSize: 14, width: 16, display: "inline-block", textAlign: "center" }}>
-                    {val === false
-                      ? <span style={{ color: T.red }}>✕</span>
-                      : <span style={{ color: T.green }}>✓</span>}
-                  </span>
-                )}
-                <span style={{ fontSize: 12, color: T.slate700 }}>{label}</span>
-              </div>
-            );
-          })}
-        </div>
+        {subheading("Daily Ops")}
+        {renderGrid(DAILY_OPS_KEYS)}
+        <div style={{ height: 14 }} />
+        {subheading("Opp Lists Cleared")}
+        {renderGrid(OPP_LISTS_KEYS)}
       </Card>
     </div>
   );
@@ -869,7 +911,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
 }
 
 // 8 — Requirements (per-person Last Wk / This Wk / Cost / Total / Paid / Next Wk)
-function RequirementsSection({ details, team, runtimeReqs }) {
+function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails, isDirty, onChange }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -879,12 +921,19 @@ function RequirementsSection({ details, team, runtimeReqs }) {
     );
   }
   const sorted = sortByTenure(details, team);
+  // In edit mode, Owed (Next Wk) reflects the live form value of quotes_modified
+  // so the impact of the adjustment is visible before save. In view mode we read
+  // r.owed which already factors in stored quotes_modified (computed in SQL).
   return (
     <div>
-      <SectionHeader icon="⭐" title="Requirements" hint="Quote counts — computed at runtime (read-only)" />
+      <SectionHeader
+        icon="⭐"
+        title="Requirements"
+        hint={editMode ? "Modified column adjusts owed manually (±) — yellow = unsaved" : "Quote counts — computed at runtime; Modified is a per-person manual adjustment"}
+      />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
             <thead>
               <tr>
                 <Th align="left">Person</Th>
@@ -893,12 +942,19 @@ function RequirementsSection({ details, team, runtimeReqs }) {
                 <Th align="right">Cost</Th>
                 <Th align="right">Total</Th>
                 <Th align="right">Paid</Th>
+                <Th align="right">Modified</Th>
                 <Th align="right">Next Wk</Th>
               </tr>
             </thead>
             <tbody>
               {sorted.map(d => {
                 const r = runtimeReqs?.[d.team_member_id] || {};
+                const formMod = editMode ? (formDetails?.[d.team_member_id]?.quotes_modified ?? r.modified ?? 0) : (r.modified ?? 0);
+                const dirty = editMode ? isDirty?.(d.team_member_id, "quotes_modified") : false;
+                // Live-recompute Owed when editing so the change is visible before save
+                const liveOwed = editMode
+                  ? ((Number(r.total) || 0) + (Number(formMod) || 0) - (Number(r.paid) || 0))
+                  : r.owed;
                 return (
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
@@ -907,7 +963,20 @@ function RequirementsSection({ details, team, runtimeReqs }) {
                     <Td align="right">{fmtInt(r.cost)}</Td>
                     <Td align="right">{fmtInt(r.total)}</Td>
                     <Td align="right">{fmtInt(r.paid)}</Td>
-                    <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtInt(r.owed)}</Td>
+                    <Td align="right" style={{ padding: editMode ? 4 : undefined, background: dirty ? (T.amber50 || "#fef3c7") : undefined }}>
+                      {editMode ? (
+                        <NumberInput
+                          value={formMod}
+                          onChange={v => onChange(d.team_member_id, "quotes_modified", Number(v) || 0)}
+                          dirty={dirty}
+                          step={1}
+                          style={{ width: 70 }}
+                        />
+                      ) : (
+                        <span style={{ color: (Number(r.modified) || 0) === 0 ? T.slate500 : T.slate900 }}>{fmtSigned(Number(r.modified) || 0)}</span>
+                      )}
+                    </Td>
+                    <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtInt(liveOwed)}</Td>
                   </tr>
                 );
               })}
@@ -920,7 +989,7 @@ function RequirementsSection({ details, team, runtimeReqs }) {
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate }) {
   if (!snapshot) {
     return (
       <div>
@@ -962,32 +1031,47 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     },
   ];
 
+  // On Time = year-end projection from current YTD pace.
+  // Formula: YTD × 365 / days_elapsed_into_year(weekDate)
+  // Diff = On Time − Goal (positive = projected overshoot, negative = projected undershoot)
+  const daysElapsedIntoYear = (iso) => {
+    if (!iso) return 1;
+    const d = new Date(iso + "T00:00:00Z");
+    const start = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.max(1, Math.floor((d - start) / 86400000) + 1);
+  };
+  const daysElapsed = daysElapsedIntoYear(weekDate);
+
   return (
     <div>
-      <SectionHeader icon="🎯" title="Agency Performance" hint="Five goal-pointing rows — Scorecard $ / SMVC % / Chairman's Circle" />
+      <SectionHeader icon="🎯" title="Agency Performance" hint="Year-end projection vs goal — drives Scorecard / SMVC / Champions Circle" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 540 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
             <thead>
               <tr>
                 <Th align="left">Metric</Th>
                 <Th align="right" style={{ background: T.slate50 }}>YTD</Th>
+                <Th align="right" style={{ background: T.slate50 }}>On Time</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Goal</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Diff</Th>
               </tr>
             </thead>
             <tbody>
               {lines.map(line => {
-                const diff = line.goal !== null ? (Number(line.ytd) - Number(line.goal)) : null;
+                const onTime = (Number(line.ytd) * 365) / daysElapsed;
+                const onTimeRounded = line.isMoney ? onTime : Math.round(onTime);
+                const diff = line.goal !== null ? (onTime - Number(line.goal)) : null;
                 return (
                   <tr key={line.label}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{line.label}</Td>
                     <Td align="right">{line.isMoney ? fmtMoney(line.ytd) : fmtInt(line.ytd)}</Td>
+                    <Td align="right" style={{ color: T.slate700 }}>{line.isMoney ? fmtMoney(onTimeRounded) : fmtInt(onTimeRounded)}</Td>
                     <Td align="right" style={{ background: T.blueLt }}>
                       {line.goal === null ? "—" : (line.isMoney ? fmtMoney(line.goal) : fmtInt(line.goal))}
                     </Td>
                     <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diff === null ? T.slate500 : (diff >= 0 ? T.green : T.red) }}>
-                      {diff === null ? "—" : (line.isMoney ? (diff >= 0 ? "+" : "") + fmtMoney(diff) : fmtSigned(diff))}
+                      {diff === null ? "—" : (line.isMoney ? (diff >= 0 ? "+" : "") + fmtMoney(diff) : fmtSigned(Math.round(diff)))}
                     </Td>
                   </tr>
                 );
@@ -1180,30 +1264,84 @@ function NonPaysSection({ report, editMode, formReport, isReportDirty, onReportC
 }
 
 // 14 — Campaigns (most recent created date per type)
-function CampaignsSection({ campaigns }) {
-  const TYPES = ["defectors", "single_line", "af_renewals", "onboarding"];
-  const LABELS = {
-    defectors: "Defectors",
-    single_line: "Single-Line At-Risk",
-    af_renewals: "A/F Renewals",
-    onboarding: "Onboarding",
+function CampaignsSection({ report, campaignPriors, weekDate, editMode, formReport, isReportDirty, onReportChange }) {
+  // Each row maps to one date column on weekly_cpr_reports.
+  // cadence "week" → "this week" option = weekDate (Saturday)
+  // cadence "month" → "this month" option = first-of-month YYYY-MM-01
+  const TYPES = [
+    { key: "campaign_onboarding_date",  priorKey: "onboarding_date",  label: "Onboarding",          cadence: "week"  },
+    { key: "campaign_defectors_date",   priorKey: "defectors_date",   label: "Defectors",           cadence: "month" },
+    { key: "campaign_single_line_date", priorKey: "single_line_date", label: "Single-Line At-Risk", cadence: "month" },
+    { key: "campaign_af_renewals_date", priorKey: "af_renewals_date", label: "A/F Renewals",        cadence: "month" },
+  ];
+
+  const currentSat = weekDate || null;
+  const currentMonth = weekDate ? (weekDate.slice(0, 7) + "-01") : null;
+  const fmtMonthYear = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso + "T00:00:00Z");
+    return d.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
   };
-  const latestByType = {};
-  (campaigns || []).forEach(c => {
-    if (!latestByType[c.campaign_type] || c.created_on > latestByType[c.campaign_type]) {
-      latestByType[c.campaign_type] = c.created_on;
-    }
-  });
+  const display = (iso, cadence) => {
+    if (!iso) return "—";
+    return cadence === "week" ? fmtMMDD(iso) : fmtMonthYear(iso);
+  };
+
   return (
     <div>
-      <SectionHeader icon="📋" title="Campaigns" />
+      <SectionHeader icon="📋" title="Campaigns" hint={editMode ? "Pick last run date — saved on this week's CPR row" : "Most recent run per type"} />
       <Card>
-        <div style={{ fontSize: 13, color: T.slate800, display: "flex", flexWrap: "wrap", gap: 14 }}>
-          {TYPES.map(t => (
-            <span key={t}>
-              <strong>{LABELS[t]}</strong>: {latestByType[t] ? fmtMMDD(latestByType[t]) : "—"}
-            </span>
-          ))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 18px" }}>
+          {TYPES.map(t => {
+            const savedValue = editMode ? formReport[t.key] : (report ? report[t.key] : null);
+            const priorValue = campaignPriors ? campaignPriors[t.priorKey] : null;
+            const currentValue = t.cadence === "week" ? currentSat : currentMonth;
+            const displayValue = savedValue || priorValue;
+            const dirty = editMode ? isReportDirty(t.key) : false;
+
+            if (editMode) {
+              // Build option list — dedupe if prior === current
+              const opts = [];
+              if (priorValue && priorValue !== currentValue) {
+                opts.push({ value: priorValue, label: `${display(priorValue, t.cadence)} (prior)` });
+              }
+              if (currentValue) {
+                opts.push({ value: currentValue, label: `${display(currentValue, t.cadence)} (this ${t.cadence})` });
+              }
+              return (
+                <div key={t.key} style={{
+                  display: "flex", flexDirection: "column", gap: 4,
+                  padding: "6px 8px", borderRadius: 6,
+                  background: dirty ? (T.amber50 || "#fef3c7") : "transparent",
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: T.slate500, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                    {t.label}
+                  </span>
+                  <select
+                    value={savedValue || ""}
+                    onChange={e => onReportChange(t.key, e.target.value || null)}
+                    onFocus={focusStyle}
+                    onBlur={blurStyle}
+                    style={{
+                      ...inputBase, width: "100%", fontSize: 13,
+                      background: dirty ? (T.amber50 || "#fef3c7") : T.white,
+                    }}
+                  >
+                    <option value="">— (clear / use prior)</option>
+                    {opts.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            }
+            return (
+              <span key={t.key} style={{ fontSize: 13, color: T.slate800 }}>
+                <strong>{t.label}</strong>: {display(displayValue, t.cadence)}
+                {!savedValue && priorValue ? <span style={{ color: T.slate500, fontSize: 11, marginLeft: 4 }}>(from prior)</span> : null}
+              </span>
+            );
+          })}
         </div>
       </Card>
     </div>
@@ -1461,7 +1599,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
   // Collect unique week-ending dates across all people (most recent 13 for the table)
   const weekSet = new Set();
   Object.values(truePayHistory).forEach(rows => rows.forEach(r => weekSet.add(r.week_ending_date)));
-  const weeks = Array.from(weekSet).sort((a, b) => b.localeCompare(a)).slice(0, 13);
+  const weeks = Array.from(weekSet).sort((a, b) => a.localeCompare(b)).slice(-13);
 
   // Build cell lookup
   const lookup = {};
@@ -1472,7 +1610,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
 
   // Averages helper — over a list of values (only weeks that have data for that person)
   const avgOver = (tmId, n) => {
-    const rows = (truePayHistory[tmId] || []).slice(0, n);
+    const rows = (truePayHistory[tmId] || []).slice(-n);
     if (rows.length === 0) return null;
     const sum = rows.reduce((s, r) => s + (Number(r.true_pay_bonus) || 0), 0);
     return sum / rows.length;
@@ -1480,7 +1618,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
 
   return (
     <div>
-      <SectionHeader icon="📈" title="True Pay Bonus History" hint="Most recent 13 weeks + multi-window averages" />
+      <SectionHeader icon="📈" title="True Pay Bonus History" hint="13 most recent weeks (oldest → newest) + multi-window averages" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -1860,11 +1998,15 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         />
       </Section>
 
-      {/* 8. Requirements — read-only, runtime-computed */}
+      {/* 8. Requirements — Modified column editable */}
       <Section>
         <RequirementsSection
           details={data.details} team={data.team}
           runtimeReqs={data.runtimeReqs}
+          editMode={edit.active}
+          formDetails={edit.form.details}
+          isDirty={edit.isDetailDirty}
+          onChange={edit.setDetailField}
         />
       </Section>
 
@@ -1877,6 +2019,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           snapshotPrior={data.snapshotPrior}
           bookYearStart={data.bookYearStart}
           goals={data.goals}
+          weekDate={weekDate}
         />
       </Section>
 
@@ -1917,7 +2060,17 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 14. Campaigns */}
-      <Section><CampaignsSection campaigns={data.campaigns} /></Section>
+      <Section>
+        <CampaignsSection
+          report={data.report}
+          campaignPriors={data.campaignPriors}
+          weekDate={weekDate}
+          editMode={edit.active}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
+        />
+      </Section>
 
       <Divider />
 
