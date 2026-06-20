@@ -592,6 +592,23 @@ function useCPRData(weekDate) {
           console.warn("get_cpr_section_11 failed:", e);
         }
 
+        // Prize Cart — 13 prizes for the cycle containing this week.
+        // Filter: smallest quarter_ending_date >= weekDate, ordered by display_order.
+        let prizeCart = [];
+        try {
+          const { data: prizeCartRows } = await supabase
+            .from("prize_cart")
+            .select("id, display_order, prize_description, prize_url, prize_value, winner_team_member_id, won_on")
+            .eq("agency_id", AGENCY_ID)
+            .gte("quarter_ending_date", weekDate)
+            .order("quarter_ending_date", { ascending: true })
+            .order("display_order", { ascending: true })
+            .limit(13);
+          if (!cancelled) prizeCart = prizeCartRows || [];
+        } catch (e) {
+          console.warn("prize_cart fetch failed:", e);
+        }
+
         setState({
           loading: false, error: null,
           report: reportRow || null,
@@ -608,6 +625,7 @@ function useCPRData(weekDate) {
           runtimeHours,
           runtimeReqs,
           section11,
+          prizeCart,
         });
       } catch (err) {
         if (!cancelled) {
@@ -1770,12 +1788,58 @@ function LeaderboardsSection() {
 }
 
 // 22 — Prize Cart
-function PrizeCartSection() {
+function PrizeCartSection({ prizeCart, team }) {
+  const safe = Array.isArray(prizeCart) ? prizeCart : [];
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+
+  if (safe.length === 0) {
+    return (
+      <div>
+        <SectionHeader icon="🏆" title="Prize Cart" />
+        <Card><Awaiting message="No prizes loaded for this quarter yet" /></Card>
+      </div>
+    );
+  }
+
   return (
     <div>
       <SectionHeader icon="🏆" title="Prize Cart" />
-      <Card>
-        <Awaiting message="Prize Cart wiring pending — 13 prizes for the quarter" />
+      <Card style={{ padding: 0 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <Th style={{ paddingLeft: 16 }}>Prize</Th>
+              <Th>Winner</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {safe.map(row => {
+              const winner = row.winner_team_member_id ? teamById[row.winner_team_member_id] : null;
+              const winnerLabel = winner ? (winner.nickname || winner.first_name || "(unknown)") : "—";
+              return (
+                <tr key={row.id}>
+                  <Td style={{ paddingLeft: 16 }}>
+                    {row.prize_url ? (
+                      <a
+                        href={row.prize_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: T.slate800, textDecoration: "none" }}
+                      >
+                        {row.prize_description}
+                      </a>
+                    ) : (
+                      row.prize_description
+                    )}
+                  </Td>
+                  <Td style={{ color: winner ? T.slate800 : T.slate400 }}>
+                    {winnerLabel}
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </Card>
     </div>
   );
@@ -2193,7 +2257,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section><LeaderboardsSection /></Section>
 
       {/* 22. Prize Cart */}
-      <Section><PrizeCartSection /></Section>
+      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} /></Section>
 
       {/* Footer signoff */}
       <div style={{
