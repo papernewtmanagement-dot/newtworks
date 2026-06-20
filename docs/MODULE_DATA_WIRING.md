@@ -27,7 +27,7 @@ The pattern is consistent:
 | Module | Primary tables | Secondary tables / views |
 |---|---|---|
 | Dashboard | `agency`, `tasks`, `alerts`, `compliance_rules`, `compliance_log`, `monthly_close_checklist`, `aipp_tracking` | `v_income_statement` (derived view) |
-| Financials | `comp_recap`, `journal_entries`, `journal_lines`, `chart_of_accounts`, `payroll_runs`, `payroll_detail`, `bank_accounts`, `credit_accounts`, `credit_transactions`, `aipp_tracking`, `scorecard_tracking` | `v_income_statement`, `v_balance_sheet` |
+| Financials | `comp_recap`, `journal_entries`, `journal_lines`, `chart_of_accounts`, `payroll_runs`, `payroll_detail`, `bank_accounts`, `credit_accounts`, `credit_transactions`, `aipp_tracking`, `sf_program_targets`, `sf_on_time_snapshot` | `v_income_statement`, `v_balance_sheet` |
 | ComplianceCenter | `compliance_rules`, `compliance_log`, `compliance_calendar` | — |
 | Documents | `documents` | (mock fallback if empty) |
 | HRPeople | `staff`, `applicants`, `producer_production`, `payroll_detail`, `payroll_runs`, `comp_recap`, `commission_structures`, `staff_performance` | `agency.smvc_rate_pc`, `agency.blended_rate_other`, `agency.lapse_rate_annual` |
@@ -92,7 +92,8 @@ Each section below answers four questions Project Claude needs during debugging:
 - `bank_accounts` + (computed monthly totals from `journal_entries`) — Bank tab
 - `credit_accounts` + `credit_transactions` — Credit tab
 - `aipp_tracking` — AIPP / Scorecard tab
-- `scorecard_tracking` — Scorecard sub-section
+- `sf_program_targets` — Min/Target/Max band thresholds per bucket per year, discriminated by the `program` column (Scorecard, SMVC, Honor Club gates, Ambassador, Champions Circle). Replaces `scorecard_tracking` + `smvc_band_config` (consolidated 2026-06-20).
+- `sf_on_time_snapshot` — Raw YTD production/lapse/credits/IPS values; primary input to runtime on-time SMVC + Scorecard computations via `compute_on_time_smvc()`.
 
 **If everything is empty:** Financials renders all tabs with EmptyState. Agent sees "$0 revenue, $0 expenses, no journal entries yet." Correct pre-data state.
 
