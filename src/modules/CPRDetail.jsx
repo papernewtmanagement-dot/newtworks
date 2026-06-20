@@ -1206,9 +1206,6 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
             </tbody>
           </table>
         </div>
-        {(autoYsPIF || firePIF_YS || lifePIF_YS) ? (
-
-        ) : null}
       </Card>
     </div>
   );
