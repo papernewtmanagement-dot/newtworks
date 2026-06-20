@@ -176,8 +176,6 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
-  const [sending, setSending] = useState(false);
-  const [sendResult, setSendResult] = useState(null); // { success, error?, sent_to_team_at? }
   const [previewing, setPreviewing] = useState(false);
   const [previewHtml, setPreviewHtml] = useState(null);
   const [error, setError] = useState(null);
@@ -403,40 +401,6 @@ export default function WeeklyCPR({ onClose = () => {} }) {
       setError(e?.message || String(e));
     } finally {
       setPreviewing(false);
-    }
-  }
-
-  async function handleSendRecap() {
-    if (!supabase) return;
-    if (sending) return;
-    if (report?.sent_to_team_at) return;
-    if (!report?.opener_text?.trim() || !report?.looking_next_week_text?.trim()) return;
-    const ok = typeof window !== "undefined" && window.confirm(
-      "Send the weekly CPR recap to the team?\n\nRecipients: 5 team members + Peter on State Farm emails (6 total)\n\nThis cannot be undone."
-    );
-    if (!ok) return;
-    setSending(true);
-    setSendResult(null);
-    setError(null);
-    try {
-      // Save first so opener/looking-ahead/etc. edits are persisted before send composes.
-      await handleSave();
-      const { data, error: rpcErr } = await supabase.rpc("send_weekly_cpr_recap", {
-        p_agency_id: AGENCY_ID,
-        p_week_ending_date: weekEnding,
-      });
-      if (rpcErr) throw rpcErr;
-      setSendResult(data);
-      if (data?.success) {
-        await loadWeek(weekEnding); // refresh to pick up sent_to_team_at stamp
-      } else {
-        setError(data?.error || "Send failed");
-      }
-    } catch (e) {
-      setError(e.message || "Send failed");
-      setSendResult({ success: false, error: e.message || "Send failed" });
-    } finally {
-      setSending(false);
     }
   }
 
