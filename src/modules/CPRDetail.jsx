@@ -265,17 +265,23 @@ function LocationSelect({ value, onChange, dirty, style = {} }) {
 // ── Edit schema — which fields are editable + their DB table ────
 // Used by useEditForm to initialize form state and by save() to build UPDATEs.
 const EDIT_FIELDS = {
-  report: ["notes"], // weekly_cpr_reports
-  detail: [           // weekly_cpr_team_detail
-    "code_reds", "code_yellows",
-    "carryover", "missed", "cost", "total", "paid", "owed",
+  report: [
+    // Opener
+    "notes",
+    // Team checklist — single, report-level (was per-person × 5)
     "shareds_done", "texts_done", "deposits_done", "appts_done", "tasks_done",
     "cases_done", "no_onboarding_done", "no_fu_task_done", "new_opps_done",
     "no_phone_done", "bad_data_done",
+    // Auto/Fire retention bonus
+    "auto_ratio_pct", "auto_rank", "auto_bonus",
+    "fire_ratio_pct", "fire_rank", "fire_bonus",
+    // Claims + Non-Pays
+    "non_pays", "new_claims", "open_claims", "unreviewed_claims",
+  ],
+  detail: [
+    "code_reds", "code_yellows",
     "cpr_reply_done", "wrapup_done", "inbox_done",
-    "mon_hours", "mon_location", "tue_hours", "tue_location",
-    "wed_hours", "wed_location", "thu_hours", "thu_location",
-    "fri_hours", "fri_location",
+    "quotes_discussed", "sales_points",
   ],
 };
 
@@ -384,6 +390,8 @@ function useCPRData(weekDate) {
     goals: [],           // book_performance_goals rows (current year)
     campaigns: [],       // cpr_campaigns rows (most recent per type)
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
+    runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
+    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
   });
 
   useEffect(() => {
@@ -501,6 +509,43 @@ function useCPRData(weekDate) {
           });
         }
 
+        // 9. Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
+        const { data: hoursRows } = await supabase.rpc("get_weekly_cpr_hours", {
+          p_agency_id: AGENCY_ID,
+          p_week_ending_date: weekDate,
+        });
+        const runtimeHours = {};
+        (hoursRows || []).forEach(h => {
+          if (!runtimeHours[h.team_member_id]) runtimeHours[h.team_member_id] = {};
+          runtimeHours[h.team_member_id][h.day_label] = {
+            hours: h.hours != null ? Number(h.hours) : null,
+            location: h.location || null,
+            work_date: h.work_date || null,
+          };
+        });
+
+        // 10. Runtime requirements — get_weekly_cpr_requirements computes
+        // carryover/missed/cost/total/paid/owed/net_quotes per person.
+        const { data: reqsRows } = await supabase.rpc("get_weekly_cpr_requirements", {
+          p_agency_id: AGENCY_ID,
+          p_week_ending_date: weekDate,
+        });
+        const runtimeReqs = {};
+        (reqsRows || []).forEach(r => {
+          runtimeReqs[r.team_member_id] = {
+            carryover: Number(r.carryover) || 0,
+            personal_misses: Number(r.personal_misses) || 0,
+            team_misses: Number(r.team_misses) || 0,
+            missed: Number(r.missed) || 0,
+            cost: Number(r.cost) || 0,
+            total: Number(r.total) || 0,
+            quotes_discussed: Number(r.quotes_discussed) || 0,
+            paid: Number(r.paid) || 0,
+            owed: Number(r.owed) || 0,
+            net_quotes: Number(r.net_quotes) || 0,
+          };
+        });
+
         if (cancelled) return;
 
         setState({
@@ -515,6 +560,8 @@ function useCPRData(weekDate) {
           goals: goalRows || [],
           campaigns: campRows || [],
           truePayHistory,
+          runtimeHours,
+          runtimeReqs,
         });
       } catch (err) {
         if (!cancelled) {
@@ -684,60 +731,58 @@ function CodeRedsYellowsSection({ details, team, editMode, formDetails, isDirty,
 }
 
 // 6 — Team Checklist (full enumeration)
-function TeamChecklistSection({ details, team, editMode, formDetails, isDirty, onChange }) {
-  if (!details || details.length === 0) {
+function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  if (!report) {
     return (
       <div>
-        <SectionHeader icon="✅" title="Team Checklist" hint="11 daily-ops + opportunity items, full per-person grid" />
+        <SectionHeader icon="✅" title="Team Checklist" hint="Single team-level checklist (11 items)" />
         <Card><Awaiting /></Card>
       </div>
     );
   }
-  // Detail rows ordered by tenure
-  const sorted = sortByTenure(details, team);
+  // Count hits when not editing
+  const hits = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] === true).length;
+  const total = TEAM_CHECKLIST_KEYS.length;
+  const misses = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] === false);
   return (
     <div>
-      <SectionHeader icon="✅" title="Team Checklist" hint={editMode ? "Toggle each cell — yellow = unsaved" : "Daily ops + opportunity lists, 11 items per person"} />
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
-            <thead>
-              <tr>
-                <Th align="left">Item</Th>
-                {sorted.map(d => (
-                  <Th key={d.team_member_id} align="center">{firstName(d.__name)}</Th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {TEAM_CHECKLIST_KEYS.map(([key, label]) => (
-                <tr key={key}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
-                  {sorted.map(d => {
-                    const formVal = editMode ? (formDetails[d.id]?.[key] ?? null) : d[key];
-                    if (editMode) {
-                      return (
-                        <Td key={d.team_member_id} align="center" style={{ padding: 4 }}>
-                          <Checkbox
-                            checked={formVal === true}
-                            onChange={v => onChange(d.id, key, v)}
-                            dirty={isDirty(d.id, key)}
-                          />
-                        </Td>
-                      );
-                    }
-                    return (
-                      <Td key={d.team_member_id} align="center">
-                        {d[key] === false
-                          ? <span style={{ color: T.red, fontSize: 14 }}>✕</span>
-                          : <span style={{ color: T.green, fontSize: 14 }}>✓</span>}
-                      </Td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <SectionHeader
+        icon="✅"
+        title="Team Checklist"
+        hint={editMode ? "Toggle each item — yellow = unsaved" : `Hit ${hits} of ${total}${misses.length > 0 ? `  •  Missed: ${misses.map(([,label]) => label).join(", ")}` : "  ✓"}`}
+      />
+      <Card>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: "10px 18px",
+        }}>
+          {TEAM_CHECKLIST_KEYS.map(([key, label]) => {
+            const val = editMode ? (formReport[key] ?? null) : report[key];
+            const dirty = editMode ? isReportDirty(key) : false;
+            return (
+              <div key={key} style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "6px 8px", borderRadius: 6,
+                background: dirty ? (T.amber50 || "#fef3c7") : "transparent",
+              }}>
+                {editMode ? (
+                  <Checkbox
+                    checked={val === true}
+                    onChange={v => onReportChange(key, v)}
+                    dirty={dirty}
+                  />
+                ) : (
+                  <span style={{ fontSize: 14, width: 16, display: "inline-block", textAlign: "center" }}>
+                    {val === false
+                      ? <span style={{ color: T.red }}>✕</span>
+                      : <span style={{ color: T.green }}>✓</span>}
+                  </span>
+                )}
+                <span style={{ fontSize: 12, color: T.slate700 }}>{label}</span>
+              </div>
+            );
+          })}
         </div>
       </Card>
     </div>
@@ -804,7 +849,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
 }
 
 // 8 — Requirements (per-person Last Wk / This Wk / Cost / Total / Paid / Next Wk)
-function RequirementsSection({ details, team, editMode, formDetails, isDirty, onChange }) {
+function RequirementsSection({ details, team, runtimeReqs }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -814,10 +859,9 @@ function RequirementsSection({ details, team, editMode, formDetails, isDirty, on
     );
   }
   const sorted = sortByTenure(details, team);
-  const REQ_KEYS = ["carryover", "missed", "cost", "total", "paid", "owed"];
   return (
     <div>
-      <SectionHeader icon="⭐" title="Requirements" hint="Quote counts — not dollars" />
+      <SectionHeader icon="⭐" title="Requirements" hint="Quote counts — computed at runtime (read-only)" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -833,32 +877,20 @@ function RequirementsSection({ details, team, editMode, formDetails, isDirty, on
               </tr>
             </thead>
             <tbody>
-              {sorted.map(d => (
-                <tr key={d.team_member_id}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                  {REQ_KEYS.map(key => {
-                    if (editMode) {
-                      return (
-                        <Td key={key} align="right" style={{ padding: 6 }}>
-                          <NumberInput
-                            value={formDetails[d.id]?.[key]}
-                            onChange={v => onChange(d.id, key, v)}
-                            dirty={isDirty(d.id, key)}
-                            min={0}
-                            step={1}
-                          />
-                        </Td>
-                      );
-                    }
-                    const isOwed = key === "owed";
-                    return (
-                      <Td key={key} align="right" style={isOwed ? { fontWeight: 700, color: T.slate900 } : {}}>
-                        {fmtInt(d[key])}
-                      </Td>
-                    );
-                  })}
-                </tr>
-              ))}
+              {sorted.map(d => {
+                const r = runtimeReqs?.[d.team_member_id] || {};
+                return (
+                  <tr key={d.team_member_id}>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
+                    <Td align="right">{fmtInt(r.carryover)}</Td>
+                    <Td align="right">{fmtInt(r.missed)}</Td>
+                    <Td align="right">{fmtInt(r.cost)}</Td>
+                    <Td align="right">{fmtInt(r.total)}</Td>
+                    <Td align="right">{fmtInt(r.paid)}</Td>
+                    <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtInt(r.owed)}</Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -977,7 +1009,108 @@ function SMVCScorecardSection({ snapshot }) {
 }
 
 // 12 — Claims
-function ClaimsSection({ report }) {
+// 11.5 — Auto/Fire Retention Bonus (weekly SF retention competition)
+function RetentionBonusSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  const rowSpec = [
+    { lob: "Auto", color: T.blue, ratio: "auto_ratio_pct", rank: "auto_rank", bonus: "auto_bonus" },
+    { lob: "Fire", color: T.red,  ratio: "fire_ratio_pct", rank: "fire_rank", bonus: "fire_bonus" },
+  ];
+  return (
+    <div>
+      <SectionHeader icon="🏆" title="Auto/Fire Retention Bonus" hint={editMode ? "Weekly SF retention competition — ratio %, rank, $ bonus" : "Weekly SF retention competition"} />
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+            <thead>
+              <tr>
+                <Th align="left">LOB</Th>
+                <Th align="right">Retention %</Th>
+                <Th align="right">Rank</Th>
+                <Th align="right">Bonus</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rowSpec.map(spec => (
+                <tr key={spec.lob}>
+                  <Td style={{ paddingLeft: 14, fontWeight: 700, color: spec.color }}>{spec.lob}</Td>
+                  {editMode ? (
+                    <>
+                      <Td align="right" style={{ padding: 6 }}>
+                        <NumberInput
+                          value={formReport[spec.ratio]}
+                          onChange={v => onReportChange(spec.ratio, v)}
+                          dirty={isReportDirty(spec.ratio)}
+                          step={0.01}
+                          style={{ width: 96 }}
+                        />
+                      </Td>
+                      <Td align="right" style={{ padding: 6 }}>
+                        <NumberInput
+                          value={formReport[spec.rank]}
+                          onChange={v => onReportChange(spec.rank, v)}
+                          dirty={isReportDirty(spec.rank)}
+                          min={1}
+                          step={1}
+                          style={{ width: 80 }}
+                        />
+                      </Td>
+                      <Td align="right" style={{ padding: 6 }}>
+                        <NumberInput
+                          value={formReport[spec.bonus]}
+                          onChange={v => onReportChange(spec.bonus, v)}
+                          dirty={isReportDirty(spec.bonus)}
+                          step={0.01}
+                          style={{ width: 96 }}
+                        />
+                      </Td>
+                    </>
+                  ) : (
+                    <>
+                      <Td align="right">{report?.[spec.ratio] != null ? fmtPct(report[spec.ratio]) : "—"}</Td>
+                      <Td align="right">{fmtInt(report?.[spec.rank])}</Td>
+                      <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtMoneyCents(report?.[spec.bonus])}</Td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function ClaimsSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  if (editMode) {
+    const fields = [
+      ["new_claims", "New"],
+      ["unreviewed_claims", "Unreviewed"],
+      ["open_claims", "Open"],
+    ];
+    return (
+      <div>
+        <SectionHeader icon="🚨" title="Claims" />
+        <Card>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
+            {fields.map(([key, label]) => (
+              <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{label}</span>
+                <NumberInput
+                  value={formReport[key]}
+                  onChange={v => onReportChange(key, v)}
+                  dirty={isReportDirty(key)}
+                  min={0}
+                  step={1}
+                  style={{ width: 96 }}
+                />
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    );
+  }
   return (
     <div>
       <SectionHeader icon="🚨" title="Claims" />
@@ -993,7 +1126,27 @@ function ClaimsSection({ report }) {
 }
 
 // 13 — Non-Pays
-function NonPaysSection({ report }) {
+function NonPaysSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  if (editMode) {
+    return (
+      <div>
+        <SectionHeader icon="🛑" title="Non-Pays" />
+        <Card>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, width: 140 }}>
+            <span style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>This week</span>
+            <NumberInput
+              value={formReport.non_pays}
+              onChange={v => onReportChange("non_pays", v)}
+              dirty={isReportDirty("non_pays")}
+              min={0}
+              step={1}
+              style={{ width: 96 }}
+            />
+          </div>
+        </Card>
+      </div>
+    );
+  }
   return (
     <div>
       <SectionHeader icon="🛑" title="Non-Pays" />
@@ -1038,7 +1191,7 @@ function CampaignsSection({ campaigns }) {
 }
 
 // 16 — Hours Worked (Mon-Fri grid + total)
-function HoursWorkedSection({ details, team, editMode, formDetails, isDirty, onChange }) {
+function HoursWorkedSection({ details, team, runtimeHours }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -1052,59 +1205,38 @@ function HoursWorkedSection({ details, team, editMode, formDetails, isDirty, onC
   const DAY_LABELS = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri" };
   return (
     <div>
-      <SectionHeader icon="🕐" title="Hours Worked" hint={editMode ? "hours + location per day, per person" : "🟢 in-office  ·  🟣 remote"} />
+      <SectionHeader icon="🕐" title="Hours Worked" hint="Runtime-computed from TimeClock + role defaults · 🟢 in-office · 🟣 remote" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: editMode ? 880 : 600 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
             <thead>
               <tr>
                 <Th align="left">Person</Th>
                 {DAYS.map(day => <Th key={day} align="center">{DAY_LABELS[day]}</Th>)}
-                {!editMode && <Th align="right">Total</Th>}
+                <Th align="right">Total</Th>
               </tr>
             </thead>
             <tbody>
               {sorted.map(d => {
-                if (editMode) {
-                  const row = formDetails[d.id] || {};
-                  return (
-                    <tr key={d.team_member_id}>
-                      <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                      {DAYS.map(day => (
-                        <Td key={day} align="center" style={{ padding: 6 }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}>
-                            <NumberInput
-                              value={row[`${day}_hours`]}
-                              onChange={v => onChange(d.id, `${day}_hours`, v)}
-                              dirty={isDirty(d.id, `${day}_hours`)}
-                              min={0} max={24} step={0.5}
-                              style={{ width: 64 }}
-                            />
-                            <LocationSelect
-                              value={row[`${day}_location`]}
-                              onChange={v => onChange(d.id, `${day}_location`, v)}
-                              dirty={isDirty(d.id, `${day}_location`)}
-                            />
-                          </div>
-                        </Td>
-                      ))}
-                    </tr>
-                  );
-                }
-                const total = DAYS.reduce((sum, day) => sum + (Number(d[`${day}_hours`]) || 0), 0);
+                const tmHours = runtimeHours?.[d.team_member_id] || {};
+                let total = 0;
+                DAYS.forEach(day => { total += Number(tmHours[day]?.hours) || 0; });
                 return (
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                    {DAYS.map(day => (
-                      <Td key={day} align="center">
-                        {d[`${day}_hours`] != null ? (
-                          <span>
-                            {Number(d[`${day}_hours`]).toFixed(1)}
-                            {d[`${day}_location`] === "remote" ? " 🟣" : d[`${day}_location`] === "office" ? " 🟢" : ""}
-                          </span>
-                        ) : "—"}
-                      </Td>
-                    ))}
+                    {DAYS.map(day => {
+                      const cell = tmHours[day];
+                      if (!cell || cell.hours == null) {
+                        return <Td key={day} align="center">—</Td>;
+                      }
+                      const loc = cell.location;
+                      const icon = loc === "remote" ? " 🟣" : (loc === "in_office" || loc === "office") ? " 🟢" : "";
+                      return (
+                        <Td key={day} align="center">
+                          <span>{Number(cell.hours).toFixed(1)}{icon}</span>
+                        </Td>
+                      );
+                    })}
                     <Td align="right" style={{ fontWeight: 700 }}>{total > 0 ? total.toFixed(1) : "—"}</Td>
                   </tr>
                 );
@@ -1118,7 +1250,7 @@ function HoursWorkedSection({ details, team, editMode, formDetails, isDirty, onC
 }
 
 // 17 — Team Activity (Quotes / Net Quotes / Sales Pts / ↑ 1%)
-function TeamActivitySection({ details, team, truePayHistory }) {
+function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editMode, formDetails, isDirty, onChange }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -1130,10 +1262,10 @@ function TeamActivitySection({ details, team, truePayHistory }) {
   const sorted = sortByTenure(details, team);
   return (
     <div>
-      <SectionHeader icon="📊" title="Team Activity" />
+      <SectionHeader icon="📊" title="Team Activity" hint={editMode ? "Quotes discussed + Sales Points are editable per person; Net Quotes is computed" : null} />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 540 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
             <thead>
               <tr>
                 <Th align="left">Person</Th>
@@ -1144,20 +1276,55 @@ function TeamActivitySection({ details, team, truePayHistory }) {
               </tr>
             </thead>
             <tbody>
-              {sorted.map(d => (
-                <tr key={d.team_member_id}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                  <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
-                  <Td align="right">{fmtInt(d.quotes_net)}</Td>
-                  <Td align="right">{d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}</Td>
-                  <Td align="right">—</Td>
-                </tr>
-              ))}
+              {sorted.map(d => {
+                const row = formDetails?.[d.id] || {};
+                const r = runtimeReqs?.[d.team_member_id] || {};
+                // Net quotes is computed: quotes_discussed - total quotes owed.
+                // In edit mode we recompute from the dirty form value so the user sees
+                // the impact immediately; otherwise we use the runtime-computed value.
+                const quotesEdit = editMode ? (row.quotes_discussed ?? d.quotes_discussed ?? 0) : (d.quotes_discussed ?? 0);
+                const totalOwed = Number(r.total) || 0;
+                const netPreview = editMode ? (Number(quotesEdit) - totalOwed) : (d.quotes_net != null ? Number(d.quotes_net) : (Number(r.net_quotes) || 0));
+                return (
+                  <tr key={d.team_member_id}>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
+                    {editMode ? (
+                      <Td align="right" style={{ padding: 6 }}>
+                        <NumberInput
+                          value={row.quotes_discussed}
+                          onChange={v => onChange(d.id, "quotes_discussed", v)}
+                          dirty={isDirty(d.id, "quotes_discussed")}
+                          min={0}
+                          step={1}
+                          style={{ width: 80 }}
+                        />
+                      </Td>
+                    ) : (
+                      <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
+                    )}
+                    <Td align="right" style={{ color: T.slate500 }}>{fmtSigned(netPreview)}</Td>
+                    {editMode ? (
+                      <Td align="right" style={{ padding: 6 }}>
+                        <NumberInput
+                          value={row.sales_points}
+                          onChange={v => onChange(d.id, "sales_points", v)}
+                          dirty={isDirty(d.id, "sales_points")}
+                          step={0.01}
+                          style={{ width: 88 }}
+                        />
+                      </Td>
+                    ) : (
+                      <Td align="right">{d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}</Td>
+                    )}
+                    <Td align="right">—</Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
         <div style={{ padding: "10px 18px", borderTop: `1px solid ${T.slate100}`, fontSize: 11, color: T.slate500 }}>
-          13-wk delta column wiring pending (needs sales-points history aggregation).
+          Net Quotes = Quotes − Total Owed (runtime). 13-wk delta column wiring pending.
         </div>
       </Card>
     </div>
@@ -1643,14 +1810,14 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         />
       </Section>
 
-      {/* 6. Team checklist */}
+      {/* 6. Team checklist — single, report-level */}
       <Section>
         <TeamChecklistSection
-          details={data.details} team={data.team}
+          report={data.report}
           editMode={edit.active}
-          formDetails={edit.form.details}
-          isDirty={edit.isDetailDirty}
-          onChange={edit.setDetailField}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
         />
       </Section>
 
@@ -1665,14 +1832,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         />
       </Section>
 
-      {/* 8. Requirements */}
+      {/* 8. Requirements — read-only, runtime-computed */}
       <Section>
         <RequirementsSection
           details={data.details} team={data.team}
-          editMode={edit.active}
-          formDetails={edit.form.details}
-          isDirty={edit.isDetailDirty}
-          onChange={edit.setDetailField}
+          runtimeReqs={data.runtimeReqs}
         />
       </Section>
 
@@ -1691,31 +1855,63 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 11. SMVC & Scorecard */}
       <Section><SMVCScorecardSection snapshot={data.snapshot} /></Section>
 
+      {/* 11.5. Auto/Fire retention bonus */}
+      <Section>
+        <RetentionBonusSection
+          report={data.report}
+          editMode={edit.active}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
+        />
+      </Section>
+
       {/* 12. Claims */}
-      <Section><ClaimsSection report={data.report} /></Section>
+      <Section>
+        <ClaimsSection
+          report={data.report}
+          editMode={edit.active}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
+        />
+      </Section>
 
       {/* 13. Non-pays */}
-      <Section><NonPaysSection report={data.report} /></Section>
+      <Section>
+        <NonPaysSection
+          report={data.report}
+          editMode={edit.active}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
+        />
+      </Section>
 
       {/* 14. Campaigns */}
       <Section><CampaignsSection campaigns={data.campaigns} /></Section>
 
       <Divider />
 
-      {/* 16. Hours worked */}
+      {/* 16. Hours worked — read-only, runtime-computed from TimeClock */}
       <Section>
         <HoursWorkedSection
           details={data.details} team={data.team}
-          editMode={edit.active}
-          formDetails={edit.form.details}
-          isDirty={edit.isDetailDirty}
-          onChange={edit.setDetailField}
+          runtimeHours={data.runtimeHours}
         />
       </Section>
 
       {/* 17. Team activity */}
       <Section>
-        <TeamActivitySection details={data.details} team={data.team} truePayHistory={data.truePayHistory} />
+        <TeamActivitySection
+          details={data.details} team={data.team}
+          truePayHistory={data.truePayHistory}
+          runtimeReqs={data.runtimeReqs}
+          editMode={edit.active}
+          formDetails={edit.form.details}
+          isDirty={edit.isDetailDirty}
+          onChange={edit.setDetailField}
+        />
       </Section>
 
       {/* 18. Team performance */}
