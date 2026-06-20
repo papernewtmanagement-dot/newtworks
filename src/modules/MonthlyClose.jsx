@@ -46,7 +46,7 @@ const MONTHS = ["", "January","February","March","April","May","June",
 const CAT = {
   comp_recap_daily:   { label:"SF Daily Comp Recaps",  icon:"📊" },
   deduction_statement:{ label:"SF Deduction Statement", icon:"➖" },
-  payroll:            { label:"Payroll (Heartland)",   icon:"💼" },
+  payroll:            { label:"Payroll (SurePayroll)",   icon:"💼" },
   production_report:  { label:"Producer Production",   icon:"🎯" },
   bank_statement:     { label:"Bank Statement",        icon:"🏦" },
   cc_statement:       { label:"Credit Card Statement", icon:"💳" },
