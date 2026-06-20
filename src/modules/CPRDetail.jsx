@@ -398,6 +398,7 @@ function useCPRData(weekDate) {
     goals: [],           // book_performance_goals rows (current year)
     campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
+    ytdPayByMember: {},  // {team_member_id: totalPayYTD} — sum of 7 pay components across YTD weeks
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
@@ -516,24 +517,38 @@ function useCPRData(weekDate) {
           .order("week_ending_date", { ascending: false })
           .limit(39);
         let truePayHistory = {};
+        let ytdPayByMember = {};
         if (histReports && histReports.length > 0) {
           const reportIds = histReports.map(r => r.id);
           const { data: histDetail } = await supabase
             .from("weekly_cpr_team_detail")
-            .select("team_member_id, weekly_cpr_report_id, true_pay_bonus")
+            .select("team_member_id, weekly_cpr_report_id, true_pay_bonus, weekly_pay, base_advance, health_bonus, service_surge_share, manager_bonus, agency_profit_share")
             .eq("agency_id", AGENCY_ID)
             .in("weekly_cpr_report_id", reportIds);
           // Index report id → date for lookups
           const reportDateById = {};
           histReports.forEach(r => { reportDateById[r.id] = r.week_ending_date; });
+          const yearStartISO = `${year}-01-01`;
           // Group by team_member_id
           (histDetail || []).forEach(d => {
             const tmId = d.team_member_id;
+            const wkDate = reportDateById[d.weekly_cpr_report_id];
             if (!truePayHistory[tmId]) truePayHistory[tmId] = [];
             truePayHistory[tmId].push({
-              week_ending_date: reportDateById[d.weekly_cpr_report_id],
+              week_ending_date: wkDate,
               true_pay_bonus: Number(d.true_pay_bonus) || 0,
             });
+            // YTD pay sum — include rows where week_ending_date is within current year and <= weekDate
+            if (wkDate && wkDate >= yearStartISO && wkDate <= weekDate) {
+              const components = (Number(d.weekly_pay) || 0)
+                + (Number(d.base_advance) || 0)
+                + (Number(d.health_bonus) || 0)
+                + (Number(d.service_surge_share) || 0)
+                + (Number(d.true_pay_bonus) || 0)
+                + (Number(d.manager_bonus) || 0)
+                + (Number(d.agency_profit_share) || 0);
+              ytdPayByMember[tmId] = (ytdPayByMember[tmId] || 0) + components;
+            }
           });
           // Sort each person's history desc
           Object.keys(truePayHistory).forEach(k => {
@@ -628,6 +643,7 @@ function useCPRData(weekDate) {
           goals: goalRows || [],
           campaignPriors,
           truePayHistory,
+          ytdPayByMember,
           runtimeHours,
           runtimeReqs,
           section11,
@@ -1172,7 +1188,8 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 <Th align="left">LOB</Th>
                 <Th align="right">New</Th>
                 <Th align="right">Lost</Th>
-                <Th align="right">Lapse Rate</Th>
+                <Th align="right">Lapse</Th>
+                <Th align="right">YTD</Th>
                 <Th align="right" style={{ background: T.slate50 }}>On Time</Th>
                 <Th align="right" style={{ background: T.slate50 }}>Goal</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Diff</Th>
@@ -1217,6 +1234,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                         ? <span style={{ color: T.slate400 }}>—</span>
                         : <span style={{ color: T.slate900, fontWeight: 500 }}>{r.lapseRate.toFixed(1)}%</span>}
                     </Td>
+                    {renderValDelta(r.gainYtd, r.onTimeWkD, undefined, false)}
                     {renderValDelta(onTimeRounded, r.onTimeWkD, T.slate50, true)}
                     <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>
                       {(r.goal === null || r.goal === undefined)
@@ -1731,7 +1749,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 // Admin can toggle Edit mode to enter pay_paid_to_date_qtd (cumulative $
 // paid through SurePayroll this quarter through end of last pay period).
 // True Pay Bonus is computed off that value on save via write_weekly_pay RPC.
-function PayrollSection({ details, team, weekDate, onRefresh }) {
+function PayrollSection({ details, team, weekDate, ytdPayByMember, onRefresh }) {
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState(false);
@@ -1917,12 +1935,21 @@ function PayrollSection({ details, team, weekDate, onRefresh }) {
                 })}
               </tr>
               <tr>
-                <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>Annualized (× 52)</Td>
+                <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>On-Time</Td>
                 {sorted.map(d => {
-                  const total = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
+                  // On-Time projected annual = YTD pay (this year, through this week) × 365 / days elapsed.
+                  // Pulled from ytdPayByMember (sum of 7 components across YTD weekly_cpr_team_detail rows).
+                  const ytdPay = (ytdPayByMember && ytdPayByMember[d.team_member_id]) || 0;
+                  const dayOfYear = (() => {
+                    if (!weekDate) return 1;
+                    const dt = new Date(weekDate + "T00:00:00Z");
+                    const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+                    return Math.max(1, Math.floor((dt - ys) / 86400000) + 1);
+                  })();
+                  const onTimeAnnual = ytdPay > 0 ? (ytdPay * 365) / dayOfYear : null;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
-                      {fmtMoneyCents(total * 52)}
+                      {onTimeAnnual === null ? "—" : fmtMoneyCents(onTimeAnnual)}
                     </Td>
                   );
                 })}
@@ -2486,7 +2513,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} onRefresh={data.refresh} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} ytdPayByMember={data.ytdPayByMember} onRefresh={data.refresh} /></Section>
 
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
