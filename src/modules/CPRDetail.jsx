@@ -964,9 +964,13 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
     );
   }
   const sorted = sortByTenure(details, team);
-  // In edit mode, Owed (Next Wk) reflects the live form value of quotes_modified
-  // so the impact of the adjustment is visible before save. In view mode we read
-  // r.owed which already factors in stored quotes_modified (computed in SQL).
+  // Math (locked 2026-06-20):
+  //   Total      = (Last Wk + This Wk + Modified) × Cost
+  //   Paid       = team-pool allocation against the new Total (server-computed)
+  //   Next Wk    = Total − Paid
+  // In edit mode we live-recompute Total + Next Wk from the dirty form value of
+  // quotes_modified so the impact is visible before save. Paid is server-computed
+  // and won't refresh until save.
   return (
     <div>
       <SectionHeader
@@ -993,9 +997,14 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                 const r = runtimeReqs?.[d.team_member_id] || {};
                 const formMod = editMode ? (formDetails?.[d.id]?.quotes_modified ?? r.modified ?? 0) : (r.modified ?? 0);
                 const dirty = editMode ? isDirty?.(d.id, "quotes_modified") : false;
-                // Live-recompute Owed when editing so the change is visible before save
+                // Live-recompute Total + Next Wk when editing Modified.
+                // Total = (carryover + missed + modified) × cost
+                // Next Wk = Total − Paid  (Paid is server-computed; refreshes on save)
+                const liveTotal = editMode
+                  ? ((Number(r.carryover) || 0) + (Number(r.missed) || 0) + (Number(formMod) || 0)) * (Number(r.cost) || 1)
+                  : r.total;
                 const liveOwed = editMode
-                  ? ((Number(r.total) || 0) + (Number(formMod) || 0) - (Number(r.paid) || 0))
+                  ? ((Number(liveTotal) || 0) - (Number(r.paid) || 0))
                   : r.owed;
                 return (
                   <tr key={d.team_member_id}>
@@ -1016,7 +1025,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                       )}
                     </Td>
                     <Td align="right">{fmtInt(r.cost)}</Td>
-                    <Td align="right">{fmtInt(r.total)}</Td>
+                    <Td align="right">{fmtInt(liveTotal)}</Td>
                     <Td align="right">{fmtInt(r.paid)}</Td>
                     <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtInt(liveOwed)}</Td>
                   </tr>
@@ -1298,10 +1307,10 @@ function SMVCScorecardSection({ section11 }) {
               fontSize: 12, color: T.slate600,
               display: "flex", gap: 32, justifyContent: "space-between", flexWrap: "wrap",
             }}>
-              <div style={{ flex: "1 1 0", minWidth: 180 }}>
+              <div style={{ flex: "1 1 0", minWidth: 180, textAlign: "center" }}>
                 Prize Cart Budget: <span style={{ color: prizeBudget == null ? T.slate400 : T.slate800, fontWeight: prizeBudget == null ? 400 : 700 }}>{fmtMoneyOrDash(prizeBudget)}</span>
               </div>
-              <div style={{ flex: "1 1 0", minWidth: 180 }}>
+              <div style={{ flex: "1 1 0", minWidth: 180, textAlign: "center" }}>
                 WtQ Trip Budget: <span style={{ color: wtqBudget == null ? T.slate400 : T.slate800, fontWeight: wtqBudget == null ? 400 : 700 }}>{fmtMoneyOrDash(wtqBudget)}</span>
               </div>
             </div>
@@ -1513,7 +1522,8 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
                     {DAYS.map(day => {
                       const cell = tmHours[day];
-                      if (!cell || cell.hours == null) {
+                      // Off entire day (no hours or 0 hours) renders blank — no icon either.
+                      if (!cell || cell.hours == null || Number(cell.hours) === 0) {
                         return <Td key={day} align="center">—</Td>;
                       }
                       const loc = cell.location;
@@ -1585,14 +1595,13 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
               {sorted.map(d => {
                 const row = formDetails?.[d.id] || {};
                 const r = runtimeReqs?.[d.team_member_id] || {};
-                // Net Quotes = quotes_discussed - total - modified.
+                // Net Quotes = quotes_discussed − paid.
                 // Single formula matching get_weekly_cpr_requirements (server). In edit
-                // mode, quotes and modified come from the dirty form so the user sees
-                // impact immediately; total is always runtime-computed from the RPC.
+                // mode, Quotes comes from the dirty form so a typing change is visible
+                // immediately; Paid is server-computed and refreshes on save.
                 const quotesNow = Number(editMode ? (row.quotes_discussed ?? d.quotes_discussed ?? 0) : (d.quotes_discussed ?? 0));
-                const modifiedNow = Number(editMode ? (row.quotes_modified ?? d.quotes_modified ?? 0) : (d.quotes_modified ?? 0));
-                const totalOwed = Number(r.total) || 0;
-                const netPreview = quotesNow - totalOwed - modifiedNow;
+                const paidNow = Number(r.paid) || 0;
+                const netPreview = quotesNow - paidNow;
                 return (
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
@@ -1734,11 +1743,12 @@ function PayrollSection({ details, team }) {
 
 // 20 — True Pay Bonus History (weekly per-person + 5 averages — page version shows BOTH)
 function TruePayHistorySection({ team, truePayHistory, weekDate }) {
-  // True Pay Bonus History only shows currently-active agency team members.
-  // Inactive (terminated/archived) and admin-category staff are excluded — their
-  // historical bonuses still live in weekly_cpr_team_detail but don't render here.
+  // True Pay Bonus History only shows currently-active agency team members,
+  // excluding the Owner (Peter). Inactive (terminated/archived), admin-category,
+  // and Owner staff are excluded — their historical bonuses still live in
+  // weekly_cpr_team_detail but don't render here.
   const sorted = (team || []).filter(t =>
-    t.is_active === true && !t.archived_at && t.category === "agency"
+    t.is_active === true && !t.archived_at && t.category === "agency" && t.role_level !== "Owner"
   );
   if (!truePayHistory || Object.keys(truePayHistory).length === 0) {
     return (
