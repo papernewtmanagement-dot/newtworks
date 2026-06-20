@@ -423,7 +423,7 @@ function useCPRData(weekDate) {
         // leave those team_detail rows orphaned and display "(unknown)" on the page.
         const { data: teamRows } = await supabase
           .from("team")
-          .select("id, first_name, last_name, nickname, hire_date, role, role_level, category")
+          .select("id, first_name, last_name, nickname, hire_date, role, role_level, category, is_active, archived_at")
           .eq("agency_id", AGENCY_ID)
           .order("hire_date", { ascending: true })
           .order("first_name", { ascending: true });
@@ -963,10 +963,10 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                 <Th align="left">Person</Th>
                 <Th align="right">Last Wk</Th>
                 <Th align="right">This Wk</Th>
+                <Th align="right">Modified</Th>
                 <Th align="right">Cost</Th>
                 <Th align="right">Total</Th>
                 <Th align="right">Paid</Th>
-                <Th align="right">Modified</Th>
                 <Th align="right">Next Wk</Th>
               </tr>
             </thead>
@@ -984,9 +984,6 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
                     <Td align="right">{fmtInt(r.carryover)}</Td>
                     <Td align="right">{fmtInt(r.missed)}</Td>
-                    <Td align="right">{fmtInt(r.cost)}</Td>
-                    <Td align="right">{fmtInt(r.total)}</Td>
-                    <Td align="right">{fmtInt(r.paid)}</Td>
                     <Td align="right" style={{ padding: editMode ? 4 : undefined, background: dirty ? (T.amber50 || "#fef3c7") : undefined }}>
                       {editMode ? (
                         <NumberInput
@@ -1000,6 +997,9 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                         <span style={{ color: (Number(r.modified) || 0) === 0 ? T.slate500 : T.slate900 }}>{fmtSigned(Number(r.modified) || 0)}</span>
                       )}
                     </Td>
+                    <Td align="right">{fmtInt(r.cost)}</Td>
+                    <Td align="right">{fmtInt(r.total)}</Td>
+                    <Td align="right">{fmtInt(r.paid)}</Td>
                     <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtInt(liveOwed)}</Td>
                   </tr>
                 );
@@ -1026,94 +1026,13 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const firePIF_YS = bookYearStart?.fire_pif || null;
   const lifePIF_YS = bookYearStart?.life_pif || null;
 
-  // Helper to compute weekly delta from snapshot vs snapshotPrior
+  // Helper: weekly delta (this snapshot vs prior week's snapshot)
   const wkDelta = (cur, prev) => {
     if (cur === null || cur === undefined || prev === null || prev === undefined) return null;
     return Number(cur) - Number(prev);
   };
 
-  const auto_new_ytd  = snapshot.auto_production_ytd || 0;
-  const auto_lost_ytd = snapshot.auto_lapse_ytd      || 0;
-  const fire_new_ytd  = snapshot.fire_production_ytd || 0;
-  const fire_lost_ytd = snapshot.fire_lapse_ytd      || 0;
-  const life_new_ytd  = snapshot.life_production_ytd || 0;
-  const life_loss_ytd = snapshot.life_loss_ytd       || 0;
-
-  const lines = [
-    {
-      label: "Auto New",
-      ytd: auto_new_ytd,
-      wkDelta: wkDelta(snapshot.auto_production_ytd, snapshotPrior?.auto_production_ytd),
-      goal: null,
-    },
-    {
-      label: "Auto Lost",
-      ytd: auto_lost_ytd,
-      wkDelta: wkDelta(snapshot.auto_lapse_ytd, snapshotPrior?.auto_lapse_ytd),
-      goal: null,
-      lowerIsBetter: true,
-    },
-    {
-      label: "Auto Gain",
-      ytd: (auto_new_ytd - auto_lost_ytd),
-      wkDelta: (() => {
-        const a = wkDelta(snapshot.auto_production_ytd, snapshotPrior?.auto_production_ytd);
-        const b = wkDelta(snapshot.auto_lapse_ytd,      snapshotPrior?.auto_lapse_ytd);
-        return (a === null || b === null) ? null : (a - b);
-      })(),
-      goal: goalFor(goals, "auto", "gain"),
-    },
-    {
-      label: "Fire New",
-      ytd: fire_new_ytd,
-      wkDelta: wkDelta(snapshot.fire_production_ytd, snapshotPrior?.fire_production_ytd),
-      goal: null,
-    },
-    {
-      label: "Fire Lost",
-      ytd: fire_lost_ytd,
-      wkDelta: wkDelta(snapshot.fire_lapse_ytd, snapshotPrior?.fire_lapse_ytd),
-      goal: null,
-      lowerIsBetter: true,
-    },
-    {
-      label: "Fire Gain",
-      ytd: (fire_new_ytd - fire_lost_ytd),
-      wkDelta: (() => {
-        const a = wkDelta(snapshot.fire_production_ytd, snapshotPrior?.fire_production_ytd);
-        const b = wkDelta(snapshot.fire_lapse_ytd,      snapshotPrior?.fire_lapse_ytd);
-        return (a === null || b === null) ? null : (a - b);
-      })(),
-      goal: goalFor(goals, "fire", "gain"),
-    },
-    {
-      label: "Life Gain",
-      ytd: (life_new_ytd - life_loss_ytd),
-      wkDelta: (() => {
-        const a = wkDelta(snapshot.life_production_ytd, snapshotPrior?.life_production_ytd);
-        const b = wkDelta(snapshot.life_loss_ytd,       snapshotPrior?.life_loss_ytd);
-        return (a === null || b === null) ? null : (a - b);
-      })(),
-      goal: goalFor(goals, "life", "gain"),
-    },
-    {
-      label: "Life Paid #",
-      ytd: snapshot.life_paid_count_ytd || 0,
-      wkDelta: wkDelta(snapshot.life_paid_count_ytd, snapshotPrior?.life_paid_count_ytd),
-      goal: goalFor(goals, "life", "net_paid_for"),
-    },
-    {
-      label: "Life Premium",
-      ytd: Number(snapshot.life_premium_credits_ytd) || 0,
-      wkDelta: wkDelta(snapshot.life_premium_credits_ytd, snapshotPrior?.life_premium_credits_ytd),
-      goal: goalFor(goals, "life", "premium"),
-      isMoney: true,
-    },
-  ];
-
   // On Time = year-end projection from current YTD pace.
-  // Formula: YTD × 365 / days_elapsed_into_year(weekDate)
-  // Diff = On Time − Goal (positive = projected overshoot, negative = projected undershoot)
   const daysElapsedIntoYear = (iso) => {
     if (!iso) return 1;
     const d = new Date(iso + "T00:00:00Z");
@@ -1122,60 +1041,152 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   };
   const daysElapsed = daysElapsedIntoYear(weekDate);
 
+  // Pull metrics
+  const auto_new   = Number(snapshot.auto_production_ytd) || 0;
+  const auto_lost  = Number(snapshot.auto_lapse_ytd)      || 0;
+  const fire_new   = Number(snapshot.fire_production_ytd) || 0;
+  const fire_lost  = Number(snapshot.fire_lapse_ytd)      || 0;
+  const life_new   = Number(snapshot.life_production_ytd) || 0;
+  const life_lost  = Number(snapshot.life_loss_ytd)       || 0;
+  const life_count = Number(snapshot.life_paid_count_ytd) || 0;
+  const life_prem  = Number(snapshot.life_premium_credits_ytd) || 0;
+
+  // Combined wk-delta for the On Time column when it represents Gain (new - lost)
+  const gainWkD = (newKey, lostKey) => {
+    const a = wkDelta(snapshot[newKey],  snapshotPrior?.[newKey]);
+    const b = wkDelta(snapshot[lostKey], snapshotPrior?.[lostKey]);
+    return (a === null || b === null) ? null : (a - b);
+  };
+
+  // Row definitions — one row per LOB / metric category
+  const rows = [
+    {
+      label: "Auto",
+      newYtd:  auto_new,  newWkD:  wkDelta(snapshot.auto_production_ytd, snapshotPrior?.auto_production_ytd),
+      lostYtd: auto_lost, lostWkD: wkDelta(snapshot.auto_lapse_ytd,      snapshotPrior?.auto_lapse_ytd),
+      gainYtd: auto_new - auto_lost,
+      onTimeWkD: gainWkD("auto_production_ytd", "auto_lapse_ytd"),
+      goal: goalFor(goals, "auto", "gain"),
+    },
+    {
+      label: "Fire",
+      newYtd:  fire_new,  newWkD:  wkDelta(snapshot.fire_production_ytd, snapshotPrior?.fire_production_ytd),
+      lostYtd: fire_lost, lostWkD: wkDelta(snapshot.fire_lapse_ytd,      snapshotPrior?.fire_lapse_ytd),
+      gainYtd: fire_new - fire_lost,
+      onTimeWkD: gainWkD("fire_production_ytd", "fire_lapse_ytd"),
+      goal: goalFor(goals, "fire", "gain"),
+    },
+    {
+      label: "Life",
+      newYtd:  life_new,  newWkD:  wkDelta(snapshot.life_production_ytd, snapshotPrior?.life_production_ytd),
+      lostYtd: life_lost, lostWkD: wkDelta(snapshot.life_loss_ytd,       snapshotPrior?.life_loss_ytd),
+      gainYtd: life_new - life_lost,
+      onTimeWkD: gainWkD("life_production_ytd", "life_loss_ytd"),
+      goal: goalFor(goals, "life", "gain"),
+    },
+    {
+      label: "Life #",
+      newYtd:  null, newWkD:  null,
+      lostYtd: null, lostWkD: null,
+      gainYtd: life_count,
+      onTimeWkD: wkDelta(snapshot.life_paid_count_ytd, snapshotPrior?.life_paid_count_ytd),
+      goal: goalFor(goals, "life", "net_paid_for"),
+    },
+    {
+      label: "Life $",
+      newYtd:  null, newWkD:  null,
+      lostYtd: null, lostWkD: null,
+      gainYtd: life_prem,
+      onTimeWkD: wkDelta(snapshot.life_premium_credits_ytd, snapshotPrior?.life_premium_credits_ytd),
+      goal: goalFor(goals, "life", "premium"),
+      isMoney: true,
+    },
+  ];
+
+  // Delta display: "-" if flat/null; otherwise signed number (or signed money)
+  const deltaText = (d, isMoney) => {
+    if (d === null || d === undefined) return "—";
+    const v = isMoney ? d : Math.round(d);
+    if (Math.abs(v) < 0.001) return "—";
+    const sign = v > 0 ? "+" : "";
+    return isMoney ? sign + fmtMoney(v) : sign + v.toLocaleString("en-US");
+  };
+  // Per spec: green if up, red if down, grey if flat — uniform across all three delta columns.
+  const deltaColor = (d) => {
+    if (d === null || d === undefined) return T.slate500;
+    const v = Number(d);
+    if (!isFinite(v) || Math.abs(v) < 0.001) return T.slate500;
+    return v > 0 ? T.green : T.red;
+  };
+  // Diff color: positive (above goal) = green, negative (below goal) = red.
+  const diffColor = (diff) => {
+    if (diff === null || diff === undefined) return T.slate500;
+    if (Math.abs(diff) < 0.001) return T.slate500;
+    return diff > 0 ? T.green : T.red;
+  };
+
   return (
     <div>
       <SectionHeader icon="🎯" title="Agency Performance" hint="Year-end projection vs goal — drives Scorecard / SMVC / Champions Circle" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
             <thead>
               <tr>
-                <Th align="left">Metric</Th>
-                <Th align="right">Wk Δ</Th>
-                <Th align="right" style={{ background: T.slate50 }}>YTD</Th>
+                <Th align="left">LOB</Th>
+                <Th align="right">New</Th>
+                <Th align="right">Lost</Th>
                 <Th align="right" style={{ background: T.slate50 }}>On Time</Th>
-                <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Goal</Th>
+                <Th align="right" style={{ background: T.slate50 }}>Goal</Th>
                 <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>Diff</Th>
               </tr>
             </thead>
             <tbody>
-              {lines.map(line => {
-                const onTime = (Number(line.ytd) * 365) / daysElapsed;
-                const onTimeRounded = line.isMoney ? onTime : Math.round(onTime);
-                const diff = line.goal !== null ? (onTime - Number(line.goal)) : null;
-                const lowerIsBetter = line.lowerIsBetter === true;
-                // Color for Wk Δ — green if "good direction", red if "bad", grey if zero/null
-                const wkDeltaColor = (() => {
-                  if (line.wkDelta === null || line.wkDelta === undefined) return T.slate500;
-                  if (Math.abs(line.wkDelta) < 0.001) return T.slate500;
-                  const improved = lowerIsBetter ? line.wkDelta < 0 : line.wkDelta > 0;
-                  return improved ? T.green : T.red;
-                })();
-                // Color for Diff — same logic
-                const diffColor = (() => {
-                  if (diff === null) return T.slate500;
-                  if (Math.abs(diff) < 0.001) return T.slate500;
-                  const improved = lowerIsBetter ? diff < 0 : diff > 0;
-                  return improved ? T.green : T.red;
-                })();
-                const wkDeltaDisplay = (() => {
-                  if (line.wkDelta === null || line.wkDelta === undefined) return "—";
-                  const v = line.isMoney ? line.wkDelta : Math.round(line.wkDelta);
-                  if (Math.abs(v) < 0.001) return "0";
-                  if (line.isMoney) return (v > 0 ? "+" : "") + fmtMoney(v);
-                  return (v > 0 ? "+" : "") + v.toLocaleString("en-US");
-                })();
-                return (
-                  <tr key={line.label}>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{line.label}</Td>
-                    <Td align="right" style={{ color: wkDeltaColor, fontWeight: 600 }}>{wkDeltaDisplay}</Td>
-                    <Td align="right">{line.isMoney ? fmtMoney(line.ytd) : fmtInt(line.ytd)}</Td>
-                    <Td align="right" style={{ color: T.slate700 }}>{line.isMoney ? fmtMoney(onTimeRounded) : fmtInt(onTimeRounded)}</Td>
-                    <Td align="right" style={{ background: T.blueLt }}>
-                      {line.goal === null ? "—" : (line.isMoney ? fmtMoney(line.goal) : fmtInt(line.goal))}
+              {rows.map(r => {
+                const onTime = (Number(r.gainYtd) * 365) / daysElapsed;
+                const onTimeRounded = r.isMoney ? onTime : Math.round(onTime);
+                const diff = (r.goal !== null && r.goal !== undefined)
+                  ? (onTime - Number(r.goal))
+                  : null;
+                const formatYtd = (v) => (v === null || v === undefined)
+                  ? "—"
+                  : (r.isMoney ? fmtMoney(v) : fmtInt(v));
+
+                const renderValDelta = (ytd, wkD, bg, weightBoost) => {
+                  if (ytd === null || ytd === undefined) {
+                    return (
+                      <Td align="right" style={{ background: bg, color: T.slate400 }}>—</Td>
+                    );
+                  }
+                  return (
+                    <Td align="right" style={{ background: bg }}>
+                      <span style={{ fontWeight: weightBoost ? 700 : 500, color: T.slate900 }}>
+                        {formatYtd(ytd)}
+                      </span>
+                      <span style={{ marginLeft: 6, color: deltaColor(wkD), fontWeight: 600 }}>
+                        {deltaText(wkD, r.isMoney)}
+                      </span>
                     </Td>
-                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>
-                      {diff === null ? "—" : (line.isMoney ? (diff >= 0 ? "+" : "") + fmtMoney(diff) : fmtSigned(Math.round(diff)))}
+                  );
+                };
+
+                return (
+                  <tr key={r.label}>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{r.label}</Td>
+                    {renderValDelta(r.newYtd,  r.newWkD,  undefined, false)}
+                    {renderValDelta(r.lostYtd, r.lostWkD, undefined, false)}
+                    {renderValDelta(onTimeRounded, r.onTimeWkD, T.slate50, true)}
+                    <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>
+                      {(r.goal === null || r.goal === undefined)
+                        ? "—"
+                        : (r.isMoney ? fmtMoney(r.goal) : fmtInt(r.goal))}
+                    </Td>
+                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor(diff) }}>
+                      {diff === null
+                        ? "—"
+                        : (r.isMoney
+                            ? (diff >= 0 ? "+" : "") + fmtMoney(diff)
+                            : fmtSigned(Math.round(diff)))}
                     </Td>
                   </tr>
                 );
@@ -1349,51 +1360,56 @@ function RetentionBonusSection({ report, reportPrior, editMode, formReport, isRe
       />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
             <thead>
               <tr>
-                <Th align="left">LOB</Th>
-                <Th align="left">Metric</Th>
-                <Th align="right">This Wk</Th>
-                <Th align="right">Last Wk</Th>
-                <Th align="right">Δ</Th>
+                <Th align="left" rowSpan={2} style={{ verticalAlign: "bottom" }}>LOB</Th>
+                {FIELDS.map((f, i) => (
+                  <Th
+                    key={f.key}
+                    align="center"
+                    colSpan={3}
+                    style={{ borderLeft: i === 0 ? `1px solid ${T.slate100}` : `1px solid ${T.slate100}` }}
+                  >
+                    {f.label}
+                  </Th>
+                ))}
+              </tr>
+              <tr>
+                {FIELDS.flatMap(f => [
+                  <Th key={f.key + "_cur"} align="right" style={{ fontSize: 11, fontWeight: 500, color: T.slate500, borderLeft: `1px solid ${T.slate100}` }}>This Wk</Th>,
+                  <Th key={f.key + "_prev"} align="right" style={{ fontSize: 11, fontWeight: 500, color: T.slate500 }}>Last Wk</Th>,
+                  <Th key={f.key + "_delta"} align="right" style={{ fontSize: 11, fontWeight: 500, color: T.slate500 }}>Δ</Th>,
+                ])}
               </tr>
             </thead>
             <tbody>
               {LOBS.map(({ lob, color, prefix }) => (
-                FIELDS.map((f, idx) => {
-                  const col = prefix + f.key;
-                  const cur = report?.[col];
-                  const prev = reportPrior?.[col];
-                  return (
-                    <tr key={col}>
-                      {idx === 0 ? (
-                        <Td
-                          rowSpan={FIELDS.length}
-                          style={{ paddingLeft: 14, fontWeight: 700, color, verticalAlign: "top", borderRight: `1px solid ${T.slate100}` }}
-                        >
-                          {lob}
-                        </Td>
-                      ) : null}
-                      <Td style={{ color: T.slate700 }}>{f.label}</Td>
-                      {editMode ? (
-                        <Td align="right" style={{ padding: 6 }}>
+                <tr key={lob}>
+                  <Td style={{ paddingLeft: 14, fontWeight: 700, color, borderRight: `1px solid ${T.slate100}` }}>{lob}</Td>
+                  {FIELDS.flatMap(f => {
+                    const col = prefix + f.key;
+                    const cur = report?.[col];
+                    const prev = reportPrior?.[col];
+                    return [
+                      editMode ? (
+                        <Td key={col + "_cur"} align="right" style={{ padding: 6, borderLeft: `1px solid ${T.slate100}` }}>
                           <NumInputForField lobPrefix={prefix} fieldKey={f.key} kind={f.kind} />
                         </Td>
                       ) : (
-                        <Td align="right" style={{ fontWeight: f.key === "bonus" ? 700 : 500, color: T.slate900 }}>
+                        <Td key={col + "_cur"} align="right" style={{ fontWeight: f.key === "bonus" ? 700 : 500, color: T.slate900, borderLeft: `1px solid ${T.slate100}` }}>
                           {fmtVal(cur, f.kind)}
                         </Td>
-                      )}
-                      <Td align="right" style={{ color: T.slate500 }}>
+                      ),
+                      <Td key={col + "_prev"} align="right" style={{ color: T.slate500 }}>
                         {fmtVal(prev, f.kind)}
-                      </Td>
-                      <Td align="right" style={{ color: deltaColor(cur, prev, f.key), fontWeight: 600 }}>
+                      </Td>,
+                      <Td key={col + "_delta"} align="right" style={{ color: deltaColor(cur, prev, f.key), fontWeight: 600 }}>
                         {fmtDelta(cur, prev, f.kind)}
-                      </Td>
-                    </tr>
-                  );
-                })
+                      </Td>,
+                    ];
+                  })}
+                </tr>
               ))}
             </tbody>
           </table>
@@ -1806,7 +1822,12 @@ function PayrollSection({ details, team }) {
 
 // 20 — True Pay Bonus History (weekly per-person + 5 averages — page version shows BOTH)
 function TruePayHistorySection({ team, truePayHistory, weekDate }) {
-  const sorted = [...(team || [])];
+  // True Pay Bonus History only shows currently-active agency team members.
+  // Inactive (terminated/archived) and admin-category staff are excluded — their
+  // historical bonuses still live in weekly_cpr_team_detail but don't render here.
+  const sorted = (team || []).filter(t =>
+    t.is_active === true && !t.archived_at && t.category === "agency"
+  );
   if (!truePayHistory || Object.keys(truePayHistory).length === 0) {
     return (
       <div>
