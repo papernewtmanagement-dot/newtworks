@@ -107,7 +107,7 @@ const Card = ({ children, style = {} }) => (
   }}>{children}</div>
 );
 
-const SectionHeader = ({ icon, title, hint }) => (
+const SectionHeader = ({ icon, title }) => (
   <div style={{ marginBottom: 12 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       {icon ? <span style={{ fontSize: 18 }}>{icon}</span> : null}
@@ -116,11 +116,6 @@ const SectionHeader = ({ icon, title, hint }) => (
         textTransform: "uppercase", letterSpacing: 0.6,
       }}>{title}</span>
     </div>
-    {hint ? (
-      <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, marginLeft: icon ? 28 : 0 }}>
-        {hint}
-      </div>
-    ) : null}
   </div>
 );
 
@@ -675,7 +670,7 @@ function LookingNextWeekSection({ report, editMode, formValue, dirty, onChange }
   const text = report?.looking_next_week_text && report.looking_next_week_text.trim().length > 0 ? report.looking_next_week_text : null;
   return (
     <div>
-      <SectionHeader icon="🎯" title="Looking at Next Week" hint="Focus items drafted from real data" />
+      <SectionHeader icon="🎯" title="Looking at Next Week" />
       <Card>
         {editMode ? (
           <TextArea
@@ -705,14 +700,14 @@ function CodeRedsYellowsSection({ details, team, editMode, formDetails, isDirty,
     if (sorted.length === 0) {
       return (
         <div>
-          <SectionHeader title="Code Reds / Code Yellows" hint="Edit per-person notes" />
+          <SectionHeader title="Code Reds / Code Yellows" />
           <Card><Awaiting message="No team detail rows yet — code reds/yellows can be added once detail rows exist" /></Card>
         </div>
       );
     }
     return (
       <div>
-        <SectionHeader title="Code Reds / Code Yellows" hint="Edit per-person notes" />
+        <SectionHeader title="Code Reds / Code Yellows" />
         <Card>
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
             {sorted.map(d => {
@@ -803,7 +798,7 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
   if (!report) {
     return (
       <div>
-        <SectionHeader icon="✅" title="Team Checklist" hint="Single team-level checklist (11 items)" />
+        <SectionHeader icon="✅" title="Team Checklist" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -862,7 +857,6 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
       <SectionHeader
         icon="✅"
         title="Team Checklist"
-        hint={editMode ? "Toggle each item — yellow = unsaved" : `Hit ${hits} of ${total}${misses.length > 0 ? `  •  Missed: ${misses.map(([,label]) => label).join(", ")}` : "  ✓"}`}
       />
       <Card>
         {subheading("Daily Ops")}
@@ -880,7 +874,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
   if (!details || details.length === 0) {
     return (
       <div>
-        <SectionHeader icon="🧍" title="Personal Checklist" hint="CPR Reply, Wrap-up, Inbox per person" />
+        <SectionHeader icon="🧍" title="Personal Checklist" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -888,7 +882,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
   const sorted = sortByTenure(details, team);
   return (
     <div>
-      <SectionHeader icon="🧍" title="Personal Checklist" hint="CPR Reply, Wrap-up, Inbox per person" />
+      <SectionHeader icon="🧍" title="Personal Checklist" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
@@ -939,7 +933,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
   if (!details || details.length === 0) {
     return (
       <div>
-        <SectionHeader icon="⭐" title="Requirements" hint="Per-person quote requirements, by tenure" />
+        <SectionHeader icon="⭐" title="Requirements" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -953,7 +947,6 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
       <SectionHeader
         icon="⭐"
         title="Requirements"
-        hint={editMode ? "Modified column adjusts owed manually (±) — yellow = unsaved" : "Quote counts — computed at runtime; Modified is a per-person manual adjustment"}
       />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
@@ -973,8 +966,8 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
             <tbody>
               {sorted.map(d => {
                 const r = runtimeReqs?.[d.team_member_id] || {};
-                const formMod = editMode ? (formDetails?.[d.team_member_id]?.quotes_modified ?? r.modified ?? 0) : (r.modified ?? 0);
-                const dirty = editMode ? isDirty?.(d.team_member_id, "quotes_modified") : false;
+                const formMod = editMode ? (formDetails?.[d.id]?.quotes_modified ?? r.modified ?? 0) : (r.modified ?? 0);
+                const dirty = editMode ? isDirty?.(d.id, "quotes_modified") : false;
                 // Live-recompute Owed when editing so the change is visible before save
                 const liveOwed = editMode
                   ? ((Number(r.total) || 0) + (Number(formMod) || 0) - (Number(r.paid) || 0))
@@ -988,7 +981,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                       {editMode ? (
                         <NumberInput
                           value={formMod}
-                          onChange={v => onChange(d.team_member_id, "quotes_modified", Number(v) || 0)}
+                          onChange={v => onChange(d.id, "quotes_modified", Number(v) || 0)}
                           dirty={dirty}
                           step={1}
                           style={{ width: 70 }}
@@ -1017,7 +1010,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   if (!snapshot) {
     return (
       <div>
-        <SectionHeader icon="🎯" title="Agency Performance" hint="Full LOB breakdown — Auto, Fire, Life" />
+        <SectionHeader icon="🎯" title="Agency Performance" />
         <Card><Awaiting message="No on-time snapshot loaded yet for this week" /></Card>
       </div>
     );
@@ -1127,7 +1120,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
 
   return (
     <div>
-      <SectionHeader icon="🎯" title="Agency Performance" hint="Year-end projection vs goal — drives Scorecard / SMVC / Champions Circle" />
+      <SectionHeader icon="🎯" title="Agency Performance" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
@@ -1225,7 +1218,10 @@ function SMVCScorecardSection({ section11 }) {
   const onTime  = smvc.on_time     != null ? Number(smvc.on_time)     : null;
   const lastWk  = smvc.last_wk     != null ? Number(smvc.last_wk)     : null;
   const lastQ   = smvc.last_q      != null ? Number(smvc.last_q)      : null;
-  const current = smvc.current     != null ? Number(smvc.current)     : null;
+  // "Current" column = this year's applied SMVC rate (agency.smvc_rate_pc),
+  // surfaced by get_cpr_section_11 as smvc.applied. The smvc.current field
+  // (= pre-Better-Of live pace) is no longer rendered on the page.
+  const current = smvc.applied     != null ? Number(smvc.applied)     : null;
   const diff    = smvc.dollar_diff != null ? Number(smvc.dollar_diff) : null;
 
   const fmtPct = (v) => v == null ? "—" : (v * 100).toFixed(2) + "%";
@@ -1238,7 +1234,7 @@ function SMVCScorecardSection({ section11 }) {
 
   return (
     <div>
-      <SectionHeader icon="🎯" title="SMVC & Scorecard" hint="On-Time SMVC computed live · Scorecard Bonus + budget lines pending" />
+      <SectionHeader icon="🎯" title="SMVC & Scorecard" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
@@ -1275,10 +1271,10 @@ function SMVCScorecardSection({ section11 }) {
           </table>
         </div>
         <div style={{ padding: "10px 18px 4px", borderTop: `1px solid ${T.slate100}`, fontSize: 12, color: T.slate600 }}>
-          Next Quarter On-Time Prize Cart Budget: <span style={{ color: T.slate400 }}>—</span>
+          Prize Cart Budget: <span style={{ color: T.slate400 }}>—</span>
         </div>
         <div style={{ padding: "0 18px 10px", fontSize: 12, color: T.slate600 }}>
-          Next Quarter On-Time WtQ Trip Budget: <span style={{ color: T.slate400 }}>—</span>
+          WtQ Trip Budget: <span style={{ color: T.slate400 }}>—</span>
         </div>
         <div style={{ padding: "8px 18px 12px", fontSize: 11, color: T.slate400, fontStyle: "italic" }}>
           SMVC row computed live from sf_on_time_snapshot + smvc_band_config. Scorecard Bonus + budgets pending compute_scorecard_bonus() function and budget formulas.
@@ -1289,136 +1285,6 @@ function SMVCScorecardSection({ section11 }) {
 }
 
 // 12 — Claims
-// 11.5 — Auto/Fire Retention Bonus (weekly SF retention competition)
-// One block per LOB with This Wk / Last Wk / Δ across Retention %, Rank, Bonus.
-// New/Lost moved to AgencyPerformanceSection (Section 10).
-function RetentionBonusSection({ report, reportPrior, editMode, formReport, isReportDirty, onReportChange }) {
-  const FIELDS = [
-    { key: "ratio_pct", label: "Retention %", kind: "pct"   },
-    { key: "rank",      label: "Rank",        kind: "int"   },
-    { key: "bonus",     label: "Bonus",       kind: "money" },
-  ];
-  const LOBS = [
-    { lob: "Auto", color: T.blue, prefix: "auto_" },
-    { lob: "Fire", color: T.red,  prefix: "fire_" },
-  ];
-
-  const fmtVal = (v, kind) => {
-    if (v === null || v === undefined || v === "") return "—";
-    const n = Number(v);
-    if (!isFinite(n)) return "—";
-    if (kind === "pct")   return fmtPct(n);
-    if (kind === "money") return fmtMoneyCents(n);
-    return fmtInt(n);
-  };
-  const fmtDelta = (cur, prev, kind) => {
-    if (cur === null || cur === undefined || cur === "" ||
-        prev === null || prev === undefined || prev === "") return "—";
-    const a = Number(cur), b = Number(prev);
-    if (!isFinite(a) || !isFinite(b)) return "—";
-    const d = a - b;
-    if (Math.abs(d) < 0.001) return "0";
-    if (kind === "pct")   return (d > 0 ? "+" : "") + d.toFixed(2) + "%";
-    if (kind === "money") return (d > 0 ? "+" : "") + fmtMoneyCents(d);
-    return (d > 0 ? "+" : "") + Math.round(d).toLocaleString("en-US");
-  };
-  // Colorize delta: green when "better", red when "worse".
-  // For Rank: lower is better. For Lost: lower is better. Everything else: higher is better.
-  const deltaColor = (cur, prev, fieldKey) => {
-    if (cur === null || cur === undefined || prev === null || prev === undefined) return T.slate500;
-    const d = Number(cur) - Number(prev);
-    if (!isFinite(d) || Math.abs(d) < 0.001) return T.slate500;
-    const lowerIsBetter = (fieldKey === "rank");
-    const improved = lowerIsBetter ? d < 0 : d > 0;
-    return improved ? T.green : T.red;
-  };
-
-  const NumInputForField = ({ lobPrefix, fieldKey, kind }) => {
-    const col = lobPrefix + fieldKey;
-    const step = (kind === "pct" || kind === "money") ? 0.01 : 1;
-    const minProp = fieldKey === "rank" ? { min: 1 } : {};
-    return (
-      <NumberInput
-        value={formReport[col]}
-        onChange={v => onReportChange(col, v)}
-        dirty={isReportDirty(col)}
-        step={step}
-        {...minProp}
-        style={{ width: 96 }}
-      />
-    );
-  };
-
-  return (
-    <div>
-      <SectionHeader
-        icon="🏆"
-        title="Auto/Fire Retention Bonus"
-        hint={editMode
-          ? "Per LOB: Retention %, Rank, Bonus (weekly SF competition)"
-          : "Weekly SF retention competition"}
-      />
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
-            <thead>
-              <tr>
-                <Th align="left" rowSpan={2} style={{ verticalAlign: "bottom" }}>LOB</Th>
-                {FIELDS.map((f, i) => (
-                  <Th
-                    key={f.key}
-                    align="center"
-                    colSpan={3}
-                    style={{ borderLeft: i === 0 ? `1px solid ${T.slate100}` : `1px solid ${T.slate100}` }}
-                  >
-                    {f.label}
-                  </Th>
-                ))}
-              </tr>
-              <tr>
-                {FIELDS.flatMap(f => [
-                  <Th key={f.key + "_cur"} align="right" style={{ fontSize: 11, fontWeight: 500, color: T.slate500, borderLeft: `1px solid ${T.slate100}` }}>This Wk</Th>,
-                  <Th key={f.key + "_prev"} align="right" style={{ fontSize: 11, fontWeight: 500, color: T.slate500 }}>Last Wk</Th>,
-                  <Th key={f.key + "_delta"} align="right" style={{ fontSize: 11, fontWeight: 500, color: T.slate500 }}>Δ</Th>,
-                ])}
-              </tr>
-            </thead>
-            <tbody>
-              {LOBS.map(({ lob, color, prefix }) => (
-                <tr key={lob}>
-                  <Td style={{ paddingLeft: 14, fontWeight: 700, color, borderRight: `1px solid ${T.slate100}` }}>{lob}</Td>
-                  {FIELDS.flatMap(f => {
-                    const col = prefix + f.key;
-                    const cur = report?.[col];
-                    const prev = reportPrior?.[col];
-                    return [
-                      editMode ? (
-                        <Td key={col + "_cur"} align="right" style={{ padding: 6, borderLeft: `1px solid ${T.slate100}` }}>
-                          <NumInputForField lobPrefix={prefix} fieldKey={f.key} kind={f.kind} />
-                        </Td>
-                      ) : (
-                        <Td key={col + "_cur"} align="right" style={{ fontWeight: f.key === "bonus" ? 700 : 500, color: T.slate900, borderLeft: `1px solid ${T.slate100}` }}>
-                          {fmtVal(cur, f.kind)}
-                        </Td>
-                      ),
-                      <Td key={col + "_prev"} align="right" style={{ color: T.slate500 }}>
-                        {fmtVal(prev, f.kind)}
-                      </Td>,
-                      <Td key={col + "_delta"} align="right" style={{ color: deltaColor(cur, prev, f.key), fontWeight: 600 }}>
-                        {fmtDelta(cur, prev, f.kind)}
-                      </Td>,
-                    ];
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
 
 function ClaimsSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
   if (editMode) {
@@ -1524,7 +1390,7 @@ function CampaignsSection({ report, campaignPriors, weekDate, editMode, formRepo
 
   return (
     <div>
-      <SectionHeader icon="📋" title="Campaigns" hint={editMode ? "Pick last run date — saved on this week's CPR row" : "Most recent run per type"} />
+      <SectionHeader icon="📋" title="Campaigns" />
       <Card>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 18px" }}>
           {TYPES.map(t => {
@@ -1588,7 +1454,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
   if (!details || details.length === 0) {
     return (
       <div>
-        <SectionHeader icon="🕐" title="Hours Worked" hint="🟢 in-office &nbsp;·&nbsp; 🟣 remote" />
+        <SectionHeader icon="🕐" title="Hours Worked" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -1598,7 +1464,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
   const DAY_LABELS = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri" };
   return (
     <div>
-      <SectionHeader icon="🕐" title="Hours Worked" hint="Runtime-computed from TimeClock + role defaults · 🟢 in-office · 🟣 remote" />
+      <SectionHeader icon="🕐" title="Hours Worked" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -1647,7 +1513,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
   if (!details || details.length === 0) {
     return (
       <div>
-        <SectionHeader icon="📊" title="Team Activity" hint="Quotes, Net Quotes, Sales Points, and 13-wk delta" />
+        <SectionHeader icon="📊" title="Team Activity" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -1655,7 +1521,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
   const sorted = sortByTenure(details, team);
   return (
     <div>
-      <SectionHeader icon="📊" title="Team Activity" hint={editMode ? "Quotes discussed + Sales Points are editable per person; Net Quotes is computed" : null} />
+      <SectionHeader icon="📊" title="Team Activity" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -1763,7 +1629,7 @@ function PayrollSection({ details, team }) {
   if (!details || details.length === 0) {
     return (
       <div>
-        <SectionHeader icon="💰" title="Payroll" hint="Per-person pay components" />
+        <SectionHeader icon="💰" title="Payroll" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -1831,7 +1697,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
   if (!truePayHistory || Object.keys(truePayHistory).length === 0) {
     return (
       <div>
-        <SectionHeader icon="📈" title="True Pay Bonus History" hint="Full weekly history + 5 averages (page-only detail)" />
+        <SectionHeader icon="📈" title="True Pay Bonus History" />
         <Card><Awaiting message="No True Pay Bonus history yet — populates as weekly_cpr_team_detail accumulates" /></Card>
       </div>
     );
@@ -1858,7 +1724,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
 
   return (
     <div>
-      <SectionHeader icon="📈" title="True Pay Bonus History" hint="13 most recent weeks (oldest → newest) + multi-window averages" />
+      <SectionHeader icon="📈" title="True Pay Bonus History" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -2266,17 +2132,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 11. SMVC & Scorecard */}
       <Section><SMVCScorecardSection section11={data.section11} /></Section>
 
-      {/* 11.5. Auto/Fire retention bonus + production (new/lost) */}
-      <Section>
-        <RetentionBonusSection
-          report={data.report}
-          reportPrior={data.reportPrior}
-          editMode={edit.active}
-          formReport={edit.form.report}
-          isReportDirty={edit.isReportDirty}
-          onReportChange={edit.setReportField}
-        />
-      </Section>
 
       {/* 12. Claims */}
       <Section>
