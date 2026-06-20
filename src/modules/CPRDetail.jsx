@@ -1648,7 +1648,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
 }
 
 // 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1%)
-function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange , lastWeekSalesPointsByMember, cycleStartISO }) {
+function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -2610,7 +2610,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
           onChange={edit.setDetailField}
-        lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
+        weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
       </Section>
 
       {/* 19. Payroll */}
