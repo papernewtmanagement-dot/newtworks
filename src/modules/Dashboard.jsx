@@ -109,7 +109,7 @@ const AIPPWidget = ({ data, onNavigate }) => {
 // ── Widget: Standing Goals Pace ────────────────────────────────
 // Tracks Peter's standing goals: 25% P&C premium growth, Champions Circle
 // qualification (400 Scorecard pts), and SMVC pace toward 2.70%.
-// Sources: book_snapshot · sf_on_time_snapshot · sf_program_targets · agency.
+// Sources: agency_snapshot · sf_program_targets · agency.
 const GoalsPaceWidget = ({ data, onNavigate }) => {
   const g = data.goalsPace || {};
 
@@ -179,7 +179,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
         pacePct={g.smvc?.pace_pct}
       />
       <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
-        {g.as_of_note || "Pace computed live · book_snapshot · sf_on_time_snapshot · sf_program_targets"}
+        {g.as_of_note || "Pace computed live · agency_snapshot · sf_program_targets"}
       </div>
     </Card>
   );
@@ -524,10 +524,10 @@ export default function Dashboard({ onNavigate = () => {} }) {
         // ─── Standing Goals pace computation ─────────────────────
         // Pull goal feeds in parallel
         const [bookRes, bookYsRes, bpgRes, sfRes, bandsRes] = await Promise.allSettled([
-          supabase.from("book_snapshot").select("snapshot_date, auto_pif, fire_pif, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
-          supabase.from("book_snapshot").select("snapshot_date, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).gte("snapshot_date", `${curYear}-01-01`).order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
+          supabase.from("agency_snapshot").select("snapshot_date, auto_pif, fire_pif, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("agency_snapshot").select("snapshot_date, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).gte("snapshot_date", `${curYear}-01-01`).order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
           supabase.from("book_performance_goals").select("lob, metric, target_value").eq("agency_id", AGENCY_ID).eq("year", curYear),
-          supabase.from("sf_on_time_snapshot").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("agency_snapshot").select("*").eq("agency_id", AGENCY_ID).not("auto_new_ytd","is",null).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
           supabase.from("sf_program_targets").select("program, bucket_name, min_target, max_target, percent_available").eq("agency_id", AGENCY_ID).eq("program_year", curYear).in("program", ["scorecard","smvc"]),
         ]);
         const book   = bookRes.status==="fulfilled"   ? bookRes.value.data   : null;
@@ -575,11 +575,11 @@ export default function Dashboard({ onNavigate = () => {} }) {
             const raw = ((val - min) / (max - min)) * capPts;
             return Math.max(0, Math.min(capPts, raw));
           };
-          const autoGainAnn = annualize((sf.auto_production_ytd||0) - (sf.auto_lapse_ytd||0));
-          const autoProdAnn = annualize(sf.auto_production_ytd||0);
-          const fireGainAnn = annualize((sf.fire_production_ytd||0) - (sf.fire_lapse_ytd||0));
-          const fireProdAnn = annualize(sf.fire_production_ytd||0);
-          const fsCreditsAnn= annualize((parseFloat(sf.life_premium_credits_ytd)||0) + (parseFloat(sf.ips_activity_ytd)||0));
+          const autoGainAnn = annualize((sf.auto_new_ytd||0) - (sf.auto_lost_ytd||0));
+          const autoProdAnn = annualize(sf.auto_new_ytd||0);
+          const fireGainAnn = annualize((sf.fire_new_ytd||0) - (sf.fire_lost_ytd||0));
+          const fireProdAnn = annualize(sf.fire_new_ytd||0);
+          const fsCreditsAnn= annualize((parseFloat(sf.life_paid_for_premium_ytd)||0) + (parseFloat(sf.ips_new_money_ytd)||0));
           const autoGainPts = scBands.auto_pif_gain        ? lin(autoGainAnn, scBands.auto_pif_gain.min, scBands.auto_pif_gain.max, 200) : 0;
           const autoProdPts = scBands.auto_pif_production  ? lin(autoProdAnn, scBands.auto_pif_production.min, scBands.auto_pif_production.max, 125) : 0;
           const fireGainPts = scBands.fire_pif_gain        ? lin(fireGainAnn, scBands.fire_pif_gain.min, scBands.fire_pif_gain.max, 100) : 0;
@@ -598,7 +598,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
         }
 
         // ─── Goal 3: SMVC pace (target 2.70%, below 3% Better Of cap) ───
-        // Computed client-side from sf_on_time_snapshot YTD inputs + smvcBands (sf_program_targets).
+        // Computed client-side from agency_snapshot YTD inputs + smvcBands (sf_program_targets).
         // Mirrors public.smvc_bucket_score / public.compute_on_time_smvc SQL math.
         let smvcPace = null;
         if (sf && Object.keys(smvcBands).length > 0) {
@@ -608,10 +608,10 @@ export default function Dashboard({ onNavigate = () => {} }) {
             if (b.max === b.min) return 0;
             return Math.min(b.pct, Math.max(0, ((actual - b.min) / (b.max - b.min)) * b.pct));
           };
-          const autoGain       = (sf.auto_production_ytd||0) - (sf.auto_lapse_ytd||0);
-          const fireGain       = (sf.fire_production_ytd||0) - (sf.fire_lapse_ytd||0);
-          const fsCreditsYTD   = parseFloat(sf.life_premium_credits_ytd) || 0;
-          const ipsActivityYTD = parseFloat(sf.ips_activity_ytd) || 0;
+          const autoGain       = (sf.auto_new_ytd||0) - (sf.auto_lost_ytd||0);
+          const fireGain       = (sf.fire_new_ytd||0) - (sf.fire_lost_ytd||0);
+          const fsCreditsYTD   = parseFloat(sf.life_paid_for_premium_ytd) || 0;
+          const ipsActivityYTD = parseFloat(sf.ips_new_money_ytd) || 0;
           const totalPct = score(autoGain,       smvcBands.auto_pif_gain)
                          + score(fireGain,       smvcBands.fire_pif_gain)
                          + score(fsCreditsYTD,   smvcBands.fs_credits)

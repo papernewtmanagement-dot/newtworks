@@ -391,10 +391,10 @@ function useCPRData(weekDate) {
     reportPrior: null,   // weekly_cpr_reports row for prior week (for Last Wk + Δ display)
     details: [],         // weekly_cpr_team_detail rows
     team: [],            // team table (active, by tenure)
-    snapshot: null,      // sf_on_time_snapshot row (most recent <= week end)
-    snapshotPrior: null, // sf_on_time_snapshot row (prior week)
-    bookYearStart: null, // book_snapshot row at year start
-    bookCurrent: null,   // book_snapshot row (most recent)
+    snapshot: null,      // agency_snapshot row with YTD data (most recent <= week end)
+    snapshotPrior: null, // agency_snapshot row with YTD data (prior week)
+    bookYearStart: null, // agency_snapshot row at year start
+    bookCurrent: null,   // agency_snapshot row (most recent)
     goals: [],           // book_performance_goals rows (current year)
     campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
@@ -451,27 +451,28 @@ function useCPRData(weekDate) {
           detailRows = dr || [];
         }
 
-        // 4. sf_on_time_snapshot — most recent on/before week end
+        // 4. agency_snapshot — most recent row WITH YTD data on/before week end
         const { data: snapRows } = await supabase
-          .from("sf_on_time_snapshot")
+          .from("agency_snapshot")
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .lte("snapshot_date", weekDate)
+          .not("auto_new_ytd", "is", null)
           .order("snapshot_date", { ascending: false })
           .limit(2);
         const snapshot = (snapRows && snapRows[0]) || null;
         const snapshotPrior = (snapRows && snapRows[1]) || null;
 
-        // 5. book_snapshot — year-start anchor + most recent
+        // 5. agency_snapshot — year-start anchor + most recent (stock data)
         const yearStart = `${year}-01-01`;
         const { data: bookYS } = await supabase
-          .from("book_snapshot")
+          .from("agency_snapshot")
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .eq("snapshot_date", yearStart)
           .maybeSingle();
         const { data: bookNowRows } = await supabase
-          .from("book_snapshot")
+          .from("agency_snapshot")
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .lte("snapshot_date", weekDate)
@@ -1035,14 +1036,14 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const daysElapsed = daysElapsedIntoYear(weekDate);
 
   // Pull metrics
-  const auto_new   = Number(snapshot.auto_production_ytd) || 0;
-  const auto_lost  = Number(snapshot.auto_lapse_ytd)      || 0;
-  const fire_new   = Number(snapshot.fire_production_ytd) || 0;
-  const fire_lost  = Number(snapshot.fire_lapse_ytd)      || 0;
-  const life_new   = Number(snapshot.life_production_ytd) || 0;
-  const life_lost  = Number(snapshot.life_loss_ytd)       || 0;
-  const life_count = Number(snapshot.life_paid_count_ytd) || 0;
-  const life_prem  = Number(snapshot.life_premium_credits_ytd) || 0;
+  const auto_new   = Number(snapshot.auto_new_ytd) || 0;
+  const auto_lost  = Number(snapshot.auto_lost_ytd)      || 0;
+  const fire_new   = Number(snapshot.fire_new_ytd) || 0;
+  const fire_lost  = Number(snapshot.fire_lost_ytd)      || 0;
+  const life_new   = Number(snapshot.life_new_ytd) || 0;
+  const life_lost  = Number(snapshot.life_lost_ytd)       || 0;
+  const life_count = Number(snapshot.life_paid_for_count_ytd) || 0;
+  const life_prem  = Number(snapshot.life_paid_for_premium_ytd) || 0;
 
   // Combined wk-delta for the On Time column when it represents Gain (new - lost)
   const gainWkD = (newKey, lostKey) => {
@@ -1055,26 +1056,26 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const rows = [
     {
       label: "Auto",
-      newYtd:  auto_new,  newWkD:  wkDelta(snapshot.auto_production_ytd, snapshotPrior?.auto_production_ytd),
-      lostYtd: auto_lost, lostWkD: wkDelta(snapshot.auto_lapse_ytd,      snapshotPrior?.auto_lapse_ytd),
+      newYtd:  auto_new,  newWkD:  wkDelta(snapshot.auto_new_ytd, snapshotPrior?.auto_new_ytd),
+      lostYtd: auto_lost, lostWkD: wkDelta(snapshot.auto_lost_ytd,      snapshotPrior?.auto_lost_ytd),
       gainYtd: auto_new - auto_lost,
-      onTimeWkD: gainWkD("auto_production_ytd", "auto_lapse_ytd"),
+      onTimeWkD: gainWkD("auto_new_ytd", "auto_lost_ytd"),
       goal: goalFor(goals, "auto", "gain"),
     },
     {
       label: "Fire",
-      newYtd:  fire_new,  newWkD:  wkDelta(snapshot.fire_production_ytd, snapshotPrior?.fire_production_ytd),
-      lostYtd: fire_lost, lostWkD: wkDelta(snapshot.fire_lapse_ytd,      snapshotPrior?.fire_lapse_ytd),
+      newYtd:  fire_new,  newWkD:  wkDelta(snapshot.fire_new_ytd, snapshotPrior?.fire_new_ytd),
+      lostYtd: fire_lost, lostWkD: wkDelta(snapshot.fire_lost_ytd,      snapshotPrior?.fire_lost_ytd),
       gainYtd: fire_new - fire_lost,
-      onTimeWkD: gainWkD("fire_production_ytd", "fire_lapse_ytd"),
+      onTimeWkD: gainWkD("fire_new_ytd", "fire_lost_ytd"),
       goal: goalFor(goals, "fire", "gain"),
     },
     {
       label: "Life",
-      newYtd:  life_new,  newWkD:  wkDelta(snapshot.life_production_ytd, snapshotPrior?.life_production_ytd),
-      lostYtd: life_lost, lostWkD: wkDelta(snapshot.life_loss_ytd,       snapshotPrior?.life_loss_ytd),
+      newYtd:  life_new,  newWkD:  wkDelta(snapshot.life_new_ytd, snapshotPrior?.life_new_ytd),
+      lostYtd: life_lost, lostWkD: wkDelta(snapshot.life_lost_ytd,       snapshotPrior?.life_lost_ytd),
       gainYtd: life_new - life_lost,
-      onTimeWkD: gainWkD("life_production_ytd", "life_loss_ytd"),
+      onTimeWkD: gainWkD("life_new_ytd", "life_lost_ytd"),
       goal: goalFor(goals, "life", "gain"),
     },
     {
@@ -1082,7 +1083,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_count,
-      onTimeWkD: wkDelta(snapshot.life_paid_count_ytd, snapshotPrior?.life_paid_count_ytd),
+      onTimeWkD: wkDelta(snapshot.life_paid_for_count_ytd, snapshotPrior?.life_paid_for_count_ytd),
       goal: goalFor(goals, "life", "net_paid_for"),
     },
     {
@@ -1090,7 +1091,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem,
-      onTimeWkD: wkDelta(snapshot.life_premium_credits_ytd, snapshotPrior?.life_premium_credits_ytd),
+      onTimeWkD: wkDelta(snapshot.life_paid_for_premium_ytd, snapshotPrior?.life_paid_for_premium_ytd),
       goal: goalFor(goals, "life", "premium"),
       isMoney: true,
     },
@@ -1277,7 +1278,7 @@ function SMVCScorecardSection({ section11 }) {
           WtQ Trip Budget: <span style={{ color: T.slate400 }}>—</span>
         </div>
         <div style={{ padding: "8px 18px 12px", fontSize: 11, color: T.slate400, fontStyle: "italic" }}>
-          SMVC row computed live from sf_on_time_snapshot + smvc_band_config. Scorecard Bonus + budgets pending compute_scorecard_bonus() function and budget formulas.
+          SMVC row computed live from agency_snapshot YTD + sf_program_targets bands. Scorecard Bonus + budgets pending compute_scorecard_bonus() function and budget formulas.
         </div>
       </Card>
     </div>

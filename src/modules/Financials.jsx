@@ -171,7 +171,7 @@ function useFinancialsData() {
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
 
         // Scorecard — bands only. Per the compensation_data_freshness principle, "actual" and
-        // achievement % are computed at runtime from sf_on_time_snapshot, never stored on the targets table.
+        // achievement % are computed at runtime from agency_snapshot, never stored on the targets table.
         // Map min/max into the legacy {metric, actual, target, pct} shape consumed by ScorecardSection;
         // actual/pct render as 0 until ScorecardSection is updated to call compute_on_time_smvc.
         const scorecard = (scorecardRows.data || []).map(s => ({
@@ -1127,8 +1127,8 @@ function useBookData() {
       setLoading(true);
       try {
         const [summaryRes, historyRes] = await Promise.all([
-          supabase.from("v_book_growth_summary").select("*").eq("agency_id", AGENCY_ID),
-          supabase.from("v_book_snapshot_with_changes").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date", { ascending: false }).limit(120),
+          supabase.from("v_agency_growth_summary").select("*").eq("agency_id", AGENCY_ID),
+          supabase.from("v_agency_snapshot_with_changes").select("*").eq("agency_id", AGENCY_ID).order("snapshot_date", { ascending: false }).limit(120),
         ]);
         if (cancelled) return;
         const summaries = Array.isArray(summaryRes?.data) ? summaryRes.data : [];
@@ -1185,14 +1185,14 @@ const BookAddForm = ({ onAdded }) => {
   const today = new Date().toISOString().slice(0, 10);
   const emptyForm = {
     snapshot_date: today, cadence: "weekly",
-    auto_premium: "", fire_premium: "", life_premium: "", health_premium: "",
-    auto_pif: "", fire_pif: "", life_pif: "", health_pif: "",
+    auto_premium: "", fire_premium: "", life_premium: "",
+    auto_pif: "", fire_pif: "", life_pif: "",
     household_count: "",
-    dss_pct: "", mld_pct: "",
-    auto_production_mtd: "", auto_lapse_mtd: "",
-    fire_production_mtd: "", fire_lapse_mtd: "",
-    life_production_mtd: "", life_lapse_mtd: "",
-    count_hh_1_lob: "", count_hh_2_lob: "", count_hh_3_lob: "",
+    auto_new_ytd: "", auto_lost_ytd: "",
+    fire_new_ytd: "", fire_lost_ytd: "",
+    life_new_ytd: "", life_lost_ytd: "",
+    life_paid_for_count_ytd: "", life_paid_for_premium_ytd: "",
+    ips_new_money_ytd: "",
     notes: "",
   };
   const [form, setForm] = useState(emptyForm);
@@ -1232,7 +1232,7 @@ const BookAddForm = ({ onAdded }) => {
       setErr(null);
       try {
         const { data, error } = await supabase
-          .from("book_snapshot")
+          .from("agency_snapshot")
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .eq("snapshot_date", form.snapshot_date)
@@ -1248,27 +1248,23 @@ const BookAddForm = ({ onAdded }) => {
         if (data) {
           setForm(f => ({
             ...f,
-            auto_premium:        data.auto_premium        ?? "",
-            fire_premium:        data.fire_premium        ?? "",
-            life_premium:        data.life_premium        ?? "",
-            health_premium:      data.health_premium      ?? "",
-            auto_pif:            data.auto_pif            ?? "",
-            fire_pif:            data.fire_pif            ?? "",
-            life_pif:            data.life_pif            ?? "",
-            health_pif:          data.health_pif          ?? "",
-            household_count:     data.household_count     ?? "",
-            dss_pct:             fmtPctForInput(data.dss_pct),
-            mld_pct:             fmtPctForInput(data.mld_pct),
-            auto_production_mtd: data.auto_production_mtd ?? "",
-            auto_lapse_mtd:      data.auto_lapse_mtd      ?? "",
-            fire_production_mtd: data.fire_production_mtd ?? "",
-            fire_lapse_mtd:      data.fire_lapse_mtd      ?? "",
-            life_production_mtd: data.life_production_mtd ?? "",
-            life_lapse_mtd:      data.life_lapse_mtd      ?? "",
-            count_hh_1_lob:      data.count_hh_1_lob      ?? "",
-            count_hh_2_lob:      data.count_hh_2_lob      ?? "",
-            count_hh_3_lob:      data.count_hh_3_lob      ?? "",
-            notes:               data.notes               ?? "",
+            auto_premium:              data.auto_premium              ?? "",
+            fire_premium:              data.fire_premium              ?? "",
+            life_premium:              data.life_premium              ?? "",
+            auto_pif:                  data.auto_pif                  ?? "",
+            fire_pif:                  data.fire_pif                  ?? "",
+            life_pif:                  data.life_pif                  ?? "",
+            household_count:           data.household_count           ?? "",
+            auto_new_ytd:              data.auto_new_ytd              ?? "",
+            auto_lost_ytd:             data.auto_lost_ytd             ?? "",
+            fire_new_ytd:              data.fire_new_ytd              ?? "",
+            fire_lost_ytd:             data.fire_lost_ytd             ?? "",
+            life_new_ytd:              data.life_new_ytd              ?? "",
+            life_lost_ytd:             data.life_lost_ytd             ?? "",
+            life_paid_for_count_ytd:   data.life_paid_for_count_ytd   ?? "",
+            life_paid_for_premium_ytd: data.life_paid_for_premium_ytd ?? "",
+            ips_new_money_ytd:         data.ips_new_money_ytd         ?? "",
+            notes:                     data.notes                     ?? "",
           }));
           setExistingSource(data.source || null);
         } else {
@@ -1290,33 +1286,29 @@ const BookAddForm = ({ onAdded }) => {
         agency_id: AGENCY_ID,
         snapshot_date: form.snapshot_date,
         cadence: form.cadence,
-        auto_premium:        numOrNull(form.auto_premium),
-        fire_premium:        numOrNull(form.fire_premium),
-        life_premium:        numOrNull(form.life_premium),
-        health_premium:      numOrNull(form.health_premium),
-        auto_pif:            numOrNull(form.auto_pif),
-        fire_pif:            numOrNull(form.fire_pif),
-        life_pif:            numOrNull(form.life_pif),
-        health_pif:          numOrNull(form.health_pif),
-        household_count:     numOrNull(form.household_count),
-        dss_pct:             pctOrNull(form.dss_pct),
-        mld_pct:             pctOrNull(form.mld_pct),
-        auto_production_mtd: numOrNull(form.auto_production_mtd),
-        auto_lapse_mtd:      numOrNull(form.auto_lapse_mtd),
-        fire_production_mtd: numOrNull(form.fire_production_mtd),
-        fire_lapse_mtd:      numOrNull(form.fire_lapse_mtd),
-        life_production_mtd: numOrNull(form.life_production_mtd),
-        life_lapse_mtd:      numOrNull(form.life_lapse_mtd),
-        count_hh_1_lob:      numOrNull(form.count_hh_1_lob),
-        count_hh_2_lob:      numOrNull(form.count_hh_2_lob),
-        count_hh_3_lob:      numOrNull(form.count_hh_3_lob),
+        auto_premium:              numOrNull(form.auto_premium),
+        fire_premium:              numOrNull(form.fire_premium),
+        life_premium:              numOrNull(form.life_premium),
+        auto_pif:                  numOrNull(form.auto_pif),
+        fire_pif:                  numOrNull(form.fire_pif),
+        life_pif:                  numOrNull(form.life_pif),
+        household_count:           numOrNull(form.household_count),
+        auto_new_ytd:              numOrNull(form.auto_new_ytd),
+        auto_lost_ytd:             numOrNull(form.auto_lost_ytd),
+        fire_new_ytd:              numOrNull(form.fire_new_ytd),
+        fire_lost_ytd:             numOrNull(form.fire_lost_ytd),
+        life_new_ytd:              numOrNull(form.life_new_ytd),
+        life_lost_ytd:             numOrNull(form.life_lost_ytd),
+        life_paid_for_count_ytd:   numOrNull(form.life_paid_for_count_ytd),
+        life_paid_for_premium_ytd: numOrNull(form.life_paid_for_premium_ytd),
+        ips_new_money_ytd:         numOrNull(form.ips_new_money_ytd),
         source: existingSource && existingSource.startsWith("sf_crm_analytics_email")
           ? "sf_crm_analytics_email_manual_review"
           : "manual_entry_bcc",
         notes: form.notes || null,
       };
       const { error } = await supabase
-        .from("book_snapshot")
+        .from("agency_snapshot")
         .upsert(row, { onConflict: "agency_id,snapshot_date,cadence" });
       if (error) throw error;
 
@@ -1357,7 +1349,7 @@ const BookAddForm = ({ onAdded }) => {
       )}
       {isAutoImport && !loadingExisting && (
         <div style={{ fontSize: 11, color: T.blue, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6, padding: "8px 10px", marginBottom: 12 }}>
-          Auto-imported from the SF CRM Analytics email. Fields the email carried are pre-filled. Add Health, MTD production/lapse, DSS/MLD, and LOB-per-HH counts from the weekly CPR sheet, then save.
+          Auto-imported from the SF CRM Analytics email. Premium and PIF fields are pre-filled. Add YTD new/lost, life paid-for count + premium, and IPS new money from the weekly CPR YTD column, then save.
         </div>
       )}
 
@@ -1378,7 +1370,6 @@ const BookAddForm = ({ onAdded }) => {
         {fld("auto_premium", "Auto premium")}
         {fld("fire_premium", "Fire premium")}
         {fld("life_premium", "Life premium")}
-        {fld("health_premium", "Health premium")}
       </div>
 
       <div style={groupHeaderStyle}>Policies in force</div>
@@ -1386,26 +1377,23 @@ const BookAddForm = ({ onAdded }) => {
         {fld("auto_pif", "Auto PIF")}
         {fld("fire_pif", "Fire PIF")}
         {fld("life_pif", "Life PIF")}
-        {fld("health_pif", "Health PIF")}
       </div>
 
-      <div style={groupHeaderStyle}>MTD production / lapse (from CPR sheet)</div>
+      <div style={groupHeaderStyle}>YTD new / lost (from CPR YTD column)</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
-        {fld("auto_production_mtd", "Auto production MTD")}
-        {fld("auto_lapse_mtd",      "Auto lapse/can MTD")}
-        {fld("fire_production_mtd", "Fire production MTD")}
-        {fld("fire_lapse_mtd",      "Fire lapse/can MTD")}
-        {fld("life_production_mtd", "Life production MTD")}
-        {fld("life_lapse_mtd",      "Life lapse/can MTD")}
+        {fld("auto_new_ytd",  "Auto new YTD")}
+        {fld("auto_lost_ytd", "Auto lost YTD")}
+        {fld("fire_new_ytd",  "Fire new YTD")}
+        {fld("fire_lost_ytd", "Fire lost YTD")}
+        {fld("life_new_ytd",  "Life new YTD")}
+        {fld("life_lost_ytd", "Life lost YTD")}
       </div>
 
-      <div style={groupHeaderStyle}>Distribution metrics</div>
+      <div style={groupHeaderStyle}>Life paid-for + IPS (YTD)</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
-        {fld("dss_pct", "DSS %", "number", "0.82 or 82")}
-        {fld("mld_pct", "MLD %", "number", "0.64 or 64")}
-        {fld("count_hh_1_lob", "# HH w/ 1 LOB")}
-        {fld("count_hh_2_lob", "# HH w/ 2 LOB")}
-        {fld("count_hh_3_lob", "# HH w/ 3 LOB")}
+        {fld("life_paid_for_count_ytd",   "Life paid-for count YTD")}
+        {fld("life_paid_for_premium_ytd", "Life paid-for premium YTD ($)")}
+        {fld("ips_new_money_ytd",         "IPS new money YTD ($)")}
       </div>
 
       <div style={{ marginTop: 10, marginBottom: 12 }}>
@@ -1497,7 +1485,7 @@ const BookSection = () => {
           <KPICard label="P&C Premium" value={fmt(summary.pc_premium)}
             sub={<span style={{ color: pctColor(getPct("pc")) }}>{fmtPct(getPct("pc"))} {horizonLabel}</span>}
             border={T.blue} />
-          <KPICard label="L&H Premium" value={fmt(summary.lh_premium)}
+          <KPICard label="Life Premium" value={fmt(summary.life_premium)}
             sub={<span style={{ color: pctColor(getPct("lh")) }}>{fmtPct(getPct("lh"))} {horizonLabel}</span>}
             border={T.purple} />
           <KPICard label="Households" value={summary.household_count ?? "—"}
@@ -1565,7 +1553,7 @@ const BookSection = () => {
                     <td style={bookTdStyle}>{fmtSnapDate(r?.snapshot_date)}</td>
                     <td style={bookTdStyle}>{r?.cadence}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(r?.pc_premium)}</td>
-                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{fmt(r?.lh_premium)}</td>
+                    <td style={{ ...bookTdStyle, textAlign: "right" }}>{fmt(r?.life_premium)}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.household_count ?? "—"}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.auto_pif ?? "—"}</td>
                     <td style={{ ...bookTdStyle, textAlign: "right" }}>{r?.fire_pif ?? "—"}</td>
