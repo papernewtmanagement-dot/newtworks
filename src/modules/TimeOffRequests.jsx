@@ -355,6 +355,331 @@ function MyRequestsView({ me }) {
   );
 }
 
+// HISTORY VIEW (Everyone reads; Owner edits) ===================
+function HistoryEditModal({ request, team, onClose, onSaved, onDeleted }) {
+  const [requestType, setRequestType] = useState(request.request_type);
+  const [partialDay, setPartialDay] = useState(request.partial_day || "none");
+  const [startDate, setStartDate] = useState(request.start_date);
+  const [endDate, setEndDate] = useState(request.end_date);
+  const [status, setStatus] = useState(request.status);
+  const [isPaid, setIsPaid] = useState(request.is_paid !== false);
+  const [isPlanned, setIsPlanned] = useState(!!request.is_planned);
+  const [notes, setNotes] = useState(request.notes || "");
+  const [decisionNote, setDecisionNote] = useState(request.decision_note || "");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function save() {
+    if (!startDate) { alert("Start date required"); return; }
+    setSaving(true);
+    try {
+      const { data, error } = await supabase
+        .from("time_off_requests")
+        .update({
+          request_type: requestType,
+          partial_day: partialDay,
+          start_date: startDate,
+          end_date: endDate || startDate,
+          status,
+          is_paid: isPaid,
+          is_planned: isPlanned,
+          notes: notes || null,
+          decision_note: decisionNote || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", request.id)
+        .select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert("Save returned 0 rows. RLS may have blocked the update.");
+        return;
+      }
+      if (typeof onSaved === "function") onSaved();
+      onClose();
+    } catch (e) {
+      alert("Save failed: " + (e?.message || "unknown"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function destroy() {
+    if (!confirm("Delete this time off record? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const { data, error } = await supabase
+        .from("time_off_requests")
+        .delete()
+        .eq("id", request.id)
+        .select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert("Delete returned 0 rows. RLS may have blocked the delete.");
+        return;
+      }
+      if (typeof onDeleted === "function") onDeleted();
+      onClose();
+    } catch (e) {
+      alert("Delete failed: " + (e?.message || "unknown"));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const inp = { padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, marginTop: 4, width: "100%", boxSizing: "border-box" };
+  const lbl = { fontSize: 12, fontWeight: 600, color: "#475569", display: "block" };
+  const requesterName = (team.find(t => t.id === request.requester_team_id) || {});
+  const reqLabel = `${requesterName.first_name || "?"} ${requesterName.last_name || ""}`.trim();
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1000 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: "min(560px, 100%)", maxHeight: "92vh", overflow: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 18 }}>Edit time off record</h3>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b", lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 12 }}>{reqLabel} · submitted {fmtDateTime(request.submitted_at)}</div>
+
+        <label style={lbl}>
+          Type
+          <select value={requestType} onChange={e => setRequestType(e.target.value)} style={inp}>
+            {REQUEST_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </label>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+          <label style={lbl}>
+            Day part
+            <select value={partialDay} onChange={e => setPartialDay(e.target.value)} style={inp}>
+              <option value="none">Full day</option>
+              <option value="morning">Morning</option>
+              <option value="afternoon">Afternoon</option>
+            </select>
+          </label>
+          <label style={lbl}>
+            Status
+            <select value={status} onChange={e => setStatus(e.target.value)} style={inp}>
+              <option value="approved">Approved</option>
+              <option value="denied">Denied</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="expired">Expired</option>
+              <option value="voting">Voting</option>
+              <option value="awaiting_decision">Awaiting Decision</option>
+              <option value="flagged_case_by_case">Case-by-Case</option>
+              <option value="pending">Pending</option>
+            </select>
+          </label>
+          <label style={lbl}>
+            Start date
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inp} />
+          </label>
+          <label style={lbl}>
+            End date
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inp} />
+          </label>
+          <label style={lbl}>
+            Pay
+            <select value={isPaid ? "paid" : "unpaid"} onChange={e => setIsPaid(e.target.value === "paid")} style={inp}>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
+          </label>
+          <label style={lbl}>
+            Planning
+            <select value={isPlanned ? "planned" : "unplanned"} onChange={e => setIsPlanned(e.target.value === "planned")} style={inp}>
+              <option value="unplanned">Unplanned</option>
+              <option value="planned">Planned</option>
+            </select>
+          </label>
+        </div>
+
+        <label style={{ ...lbl, marginTop: 12 }}>
+          Notes
+          <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Original notes from requester" style={inp} />
+        </label>
+        <label style={{ ...lbl, marginTop: 12 }}>
+          Decision note
+          <input type="text" value={decisionNote} onChange={e => setDecisionNote(e.target.value)} placeholder="Owner note attached to decision" style={inp} />
+        </label>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18 }}>
+          <button onClick={destroy} disabled={deleting || saving} style={{ ...btnBase, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" }}>
+            {deleting ? "Deleting…" : "Delete record"}
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} style={btnAbstain}>Cancel</button>
+            <button onClick={save} disabled={saving || deleting} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryView({ me }) {
+  const [requests, setRequests] = useState([]);
+  const [team, setTeam] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Filters
+  const [filterStatus, setFilterStatus] = useState("decided"); // decided | all | approved | denied | cancelled | etc.
+  const [filterTeamId, setFilterTeamId] = useState("");
+  const [filterYear, setFilterYear] = useState("all");
+
+  // Edit modal target
+  const [editing, setEditing] = useState(null);
+
+  const isOwner = me?.role_level === "Owner";
+
+  const bump = () => setRefreshKey(k => k + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!supabase) return;
+      setLoading(true);
+      try {
+        const teamRes = await supabase.from("team")
+          .select("id, first_name, last_name, role_level")
+          .eq("agency_id", AGENCY_ID)
+          .order("first_name");
+        if (!cancelled) setTeam(Array.isArray(teamRes.data) ? teamRes.data : []);
+
+        const reqRes = await supabase.from("time_off_requests")
+          .select("*")
+          .eq("agency_id", AGENCY_ID)
+          .order("start_date", { ascending: false })
+          .order("submitted_at", { ascending: false })
+          .limit(500);
+        if (!cancelled) setRequests(Array.isArray(reqRes.data) ? reqRes.data : []);
+      } catch (e) {
+        console.error("HistoryView load failed", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  const decidedStatuses = new Set(["approved", "denied", "cancelled", "expired"]);
+  const pendingStatuses = new Set(["voting", "awaiting_decision", "flagged_case_by_case", "pending"]);
+
+  const filtered = requests.filter(r => {
+    if (filterStatus === "decided" && !decidedStatuses.has(r.status)) return false;
+    if (filterStatus === "pending" && !pendingStatuses.has(r.status)) return false;
+    if (!["decided", "pending", "all"].includes(filterStatus) && r.status !== filterStatus) return false;
+    if (filterTeamId && r.requester_team_id !== filterTeamId) return false;
+    if (filterYear !== "all") {
+      const y = (r.start_date || "").slice(0, 4);
+      if (y !== filterYear) return false;
+    }
+    return true;
+  });
+
+  // Compute year options from data
+  const years = Array.from(new Set(requests.map(r => (r.start_date || "").slice(0, 4)).filter(Boolean))).sort().reverse();
+
+  // Lookup map for names
+  const nameById = {};
+  for (const t of team) nameById[t.id] = `${t.first_name || ""} ${t.last_name || ""}`.trim();
+
+  const selStyle = { padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, background: "#fff" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+        <label style={{ fontSize: 12, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
+          Status
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={selStyle}>
+            <option value="decided">Decided (approved/denied/cancelled/expired)</option>
+            <option value="approved">Approved only</option>
+            <option value="denied">Denied only</option>
+            <option value="cancelled">Cancelled only</option>
+            <option value="expired">Expired only</option>
+            <option value="pending">Pending</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label style={{ fontSize: 12, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
+          Person
+          <select value={filterTeamId} onChange={e => setFilterTeamId(e.target.value)} style={selStyle}>
+            <option value="">Everyone</option>
+            {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 12, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
+          Year
+          <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={selStyle}>
+            <option value="all">All years</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "#94a3b8" }}>
+          {filtered.length} record{filtered.length === 1 ? "" : "s"}
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ color: "#64748b" }}>Loading…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ color: "#64748b", padding: 24, textAlign: "center", background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 8 }}>
+          No records match these filters.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtered.map(r => {
+            const typeLabel = REQUEST_TYPES.find(t => t.id === r.request_type)?.label || r.request_type;
+            return (
+              <div key={r.id} style={cardStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 600 }}>{nameById[r.requester_team_id] || "Unknown"}</div>
+                      <StatusBadge status={r.status} />
+                      {r.is_paid === false && <span style={{ fontSize: 11, color: "#7c2d12", background: "#ffedd5", padding: "2px 8px", borderRadius: 10 }}>Unpaid</span>}
+                      {r.is_planned === false && (r.status === "approved" || r.status === "denied") && <span style={{ fontSize: 11, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 10 }}>Unplanned</span>}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>
+                      {typeLabel}{r.partial_day && r.partial_day !== "none" ? ` (${r.partial_day})` : ""}
+                      {" · "}
+                      {fmtDate(r.start_date)}{r.start_date !== r.end_date && ` → ${fmtDate(r.end_date)}`}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                      Submitted {fmtDateTime(r.submitted_at)}
+                      {r.decided_at && <> · Decided {fmtDateTime(r.decided_at)}</>}
+                    </div>
+                    {r.notes && <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}><span style={{ color: "#94a3b8" }}>Notes:</span> {r.notes}</div>}
+                    {r.decision_note && <div style={{ marginTop: 4, fontSize: 13, color: "#1e40af" }}><span style={{ color: "#94a3b8" }}>Decision note:</span> {r.decision_note}</div>}
+                  </div>
+                  {isOwner && (
+                    <button onClick={() => setEditing(r)} style={{ ...btnBase, background: "#f1f5f9", color: "#1e40af", border: "1px solid #cbd5e1" }}>
+                      Edit
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {editing && isOwner && (
+        <HistoryEditModal
+          request={editing}
+          team={team}
+          onClose={() => setEditing(null)}
+          onSaved={bump}
+          onDeleted={bump}
+        />
+      )}
+    </div>
+  );
+}
+
 // INBOX VIEW (Owner only) ================================================
 function LogTimeOffForm({ onLogged }) {
   const [team, setTeam] = useState([]);
@@ -674,9 +999,10 @@ export default function TimeOffRequests() {
 
   const isOwner = me?.role_level === "Owner";
   const tabs = [
-    { id: "submit", label: "Submit Request" },
-    { id: "vote",   label: "Vote on Requests" },
-    { id: "my",     label: "My Requests" }
+    { id: "submit",  label: "Submit Request" },
+    { id: "vote",    label: "Vote on Requests" },
+    { id: "my",      label: "My Requests" },
+    { id: "history", label: "History" }
   ];
   if (isOwner) tabs.push({ id: "inbox", label: "Inbox" });
 
@@ -731,6 +1057,7 @@ export default function TimeOffRequests() {
         {activeTab === "submit" && <SubmitView me={me} onSubmitted={bumpRefresh} />}
         {activeTab === "vote" && <VoteView me={me} />}
         {activeTab === "my" && <MyRequestsView me={me} />}
+        {activeTab === "history" && <HistoryView me={me} />}
         {activeTab === "inbox" && isOwner && <InboxView me={me} onDecided={bumpRefresh} />}
       </div>
     </div>
