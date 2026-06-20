@@ -1735,7 +1735,7 @@ function PayrollSection({ details, team, weekDate, onRefresh }) {
     ["weekly_pay", "Weekly Pay"],
     ["base_advance", "Base Advance"],
     ["health_bonus", "Health Bonus"],
-    ["service_surge_share", "Service Surge"],
+    ["service_surge_share", "Service Share"],
     ["true_pay_bonus", "True Pay Bonus"],
     ["manager_bonus", "Manager Bonus"],
     ["agency_profit_share", "Agency Profit"],
