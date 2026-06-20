@@ -403,12 +403,14 @@ function useCPRData(weekDate) {
       try {
         const year = parseInt(weekDate.slice(0, 4), 10);
 
-        // 1. Team (active, tenure order)
+        // 1. Team (ALL members, including archived, tenure order).
+        // Historical CPR rows can reference team_detail for members who have
+        // since been terminated/archived. Filtering by is_active here would
+        // leave those team_detail rows orphaned and display "(unknown)" on the page.
         const { data: teamRows } = await supabase
           .from("team")
           .select("id, first_name, last_name, nickname, hire_date, role, role_level, category")
           .eq("agency_id", AGENCY_ID)
-          .eq("is_active", true)
           .order("hire_date", { ascending: true })
           .order("first_name", { ascending: true });
 
