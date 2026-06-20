@@ -266,8 +266,8 @@ function LocationSelect({ value, onChange, dirty, style = {} }) {
 // Used by useEditForm to initialize form state and by save() to build UPDATEs.
 const EDIT_FIELDS = {
   report: [
-    // Opener
-    "notes",
+    // Opener + Looking-at-Next-Week (canonical fields, read by send_weekly_cpr_recap)
+    "opener_text", "looking_next_week_text",
     // Team checklist — single, report-level (was per-person × 5)
     "shareds_done", "texts_done", "deposits_done", "appts_done", "tasks_done",
     "cases_done", "no_onboarding_done", "no_fu_task_done", "new_opps_done",
@@ -590,9 +590,10 @@ function goalFor(goals, lob, metric) {
 
 // 1 — Opener
 function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange }) {
-  // Opener is Claude-drafted, stored in weekly_cpr_reports.notes for the page.
+  // Opener is Claude-drafted, stored in weekly_cpr_reports.opener_text.
+  // Same field is read by send_weekly_cpr_recap when the Saturday email goes out.
   // In edit mode: render textarea wired to form. In view mode: render text or Awaiting.
-  const text = report?.notes && report.notes.trim().length > 0 ? report.notes : null;
+  const text = report?.opener_text && report.opener_text.trim().length > 0 ? report.opener_text : null;
   return (
     <Card>
       <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6, fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>
@@ -601,7 +602,7 @@ function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange 
       {editMode ? (
         <TextArea
           value={formValue}
-          onChange={v => onChange("notes", v)}
+          onChange={v => onChange("opener_text", v)}
           dirty={dirty}
           rows={8}
           style={{ fontSize: 14, lineHeight: 1.7 }}
@@ -611,19 +612,36 @@ function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange 
           fontSize: 14, color: T.slate800, lineHeight: 1.7, whiteSpace: "pre-wrap",
         }}>{text}</div>
       ) : (
-        <Awaiting message="Opener pending — will be drafted from this week's data" />
+        <Awaiting message="Opener pending — ping Claude in chat to draft from this week's data" />
       )}
     </Card>
   );
 }
 
-// 3 — Looking At Next Week (Claude-drafted; not stored in DB yet)
-function LookingNextWeekSection() {
+// 3 — Looking At Next Week
+function LookingNextWeekSection({ report, editMode, formValue, dirty, onChange }) {
+  // Stored in weekly_cpr_reports.looking_next_week_text. Same field is read by
+  // send_weekly_cpr_recap when the Saturday email goes out.
+  const text = report?.looking_next_week_text && report.looking_next_week_text.trim().length > 0 ? report.looking_next_week_text : null;
   return (
     <div>
       <SectionHeader icon="🎯" title="Looking at Next Week" hint="Focus items drafted from real data" />
       <Card>
-        <Awaiting message="Next-week focus items pending" />
+        {editMode ? (
+          <TextArea
+            value={formValue}
+            onChange={v => onChange("looking_next_week_text", v)}
+            dirty={dirty}
+            rows={6}
+            style={{ fontSize: 14, lineHeight: 1.7 }}
+          />
+        ) : text ? (
+          <div style={{
+            fontSize: 14, color: T.slate800, lineHeight: 1.7, whiteSpace: "pre-wrap",
+          }}>{text}</div>
+        ) : (
+          <Awaiting message="Next-week focus items pending — ping Claude in chat to draft" />
+        )}
       </Card>
     </div>
   );
@@ -1788,14 +1806,22 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         <OpenerSection
           weekDate={weekDate} report={data.report}
           editMode={edit.active}
-          formValue={edit.form.report.notes}
-          dirty={edit.isReportDirty("notes")}
+          formValue={edit.form.report.opener_text}
+          dirty={edit.isReportDirty("opener_text")}
           onChange={edit.setReportField}
         />
       </Section>
 
       {/* 3. Looking at next week */}
-      <Section><LookingNextWeekSection /></Section>
+      <Section>
+        <LookingNextWeekSection
+          report={data.report}
+          editMode={edit.active}
+          formValue={edit.form.report.looking_next_week_text}
+          dirty={edit.isReportDirty("looking_next_week_text")}
+          onChange={edit.setReportField}
+        />
+      </Section>
 
       <Divider />
 
