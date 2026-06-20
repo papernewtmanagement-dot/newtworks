@@ -399,6 +399,7 @@ function useCPRData(weekDate) {
     campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
     anchorPayrollYtd: {},  // {team_member_id: payroll_ytd_paid as of 2026-04-04 anchor (or current cycle's prior-quarter-end)}
+    retentionBudgetAnnual: null,  // annual retention budget from compute_retention_budget_weekly().budget — surfaces next to Service Share
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
@@ -576,6 +577,21 @@ function useCPRData(weekDate) {
           console.warn("anchor payroll YTD fetch failed:", e);
         }
 
+        // Retention budget (annual). Shown as parenthetical next to "Service Share" label.
+        let retentionBudgetAnnual = null;
+        try {
+          const { data: rbData } = await supabase
+            .rpc("compute_retention_budget_weekly", {
+              p_agency_id: AGENCY_ID,
+              p_week_ending_date: weekDate,
+            });
+          if (rbData && typeof rbData === "object" && rbData.budget != null) {
+            retentionBudgetAnnual = Number(rbData.budget);
+          }
+        } catch (e) {
+          console.warn("compute_retention_budget_weekly failed:", e);
+        }
+
         // 9. Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
         const { data: hoursRows, error: hoursError } = await supabase.rpc("get_weekly_cpr_hours", {
           p_agency_id: AGENCY_ID,
@@ -664,6 +680,7 @@ function useCPRData(weekDate) {
           campaignPriors,
           truePayHistory,
           anchorPayrollYtd,
+          retentionBudgetAnnual,
           runtimeHours,
           runtimeReqs,
           section11,
@@ -1769,7 +1786,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
 // paid year-to-date through SurePayroll, through end of last pay period).
 // True Pay Bonus is computed off that value on save via write_weekly_pay RPC.
-function PayrollSection({ details, team, weekDate, anchorPayrollYtd, onRefresh }) {
+function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh }) {
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState(false);
@@ -1913,7 +1930,14 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, onRefresh }
             <tbody>
               {ROWS.map(([key, label]) => (
                 <tr key={key}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
+                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>
+                    {label}
+                    {key === "service_surge_share" && retentionBudgetAnnual != null && (
+                      <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: T.slate500 }}>
+                        ({fmtMoney(retentionBudgetAnnual)})
+                      </span>
+                    )}
+                  </Td>
                   {sorted.map(d => (
                     <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
                   ))}
@@ -2546,7 +2570,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} onRefresh={data.refresh} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} /></Section>
 
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
