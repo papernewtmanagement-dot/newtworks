@@ -27,7 +27,7 @@ The pattern is consistent:
 | Module | Primary tables | Secondary tables / views |
 |---|---|---|
 | Dashboard | `agency`, `tasks`, `alerts`, `compliance_rules`, `compliance_log`, `monthly_close_checklist`, `aipp_tracking` | `v_income_statement` (derived view) |
-| Financials | `comp_recap`, `journal_entries`, `journal_lines`, `chart_of_accounts`, `payroll_runs`, `payroll_detail`, `bank_accounts`, `credit_accounts`, `credit_transactions`, `aipp_tracking`, `sf_program_targets`, `sf_on_time_snapshot` | `v_income_statement`, `v_balance_sheet` |
+| Financials | `comp_recap`, `journal_entries`, `journal_lines`, `chart_of_accounts`, `payroll_runs`, `payroll_detail`, `bank_accounts`, `credit_accounts`, `credit_transactions`, `aipp_tracking`, `sf_program_targets`, `agency_snapshot` | `v_income_statement`, `v_balance_sheet`, `v_agency_growth_summary`, `v_agency_snapshot_with_changes` |
 | ComplianceCenter | `compliance_rules`, `compliance_log`, `compliance_calendar` | — |
 | Documents | `documents` | (mock fallback if empty) |
 | HRPeople | `staff`, `applicants`, `producer_production`, `payroll_detail`, `payroll_runs`, `comp_recap`, `commission_structures`, `staff_performance` | `agency.smvc_rate_pc`, `agency.blended_rate_other`, `agency.lapse_rate_annual` |
@@ -93,7 +93,7 @@ Each section below answers four questions Project Claude needs during debugging:
 - `credit_accounts` + `credit_transactions` — Credit tab
 - `aipp_tracking` — AIPP / Scorecard tab
 - `sf_program_targets` — Min/Target/Max band thresholds per bucket per year, discriminated by the `program` column (Scorecard, SMVC, Honor Club gates, Ambassador, Champions Circle). Replaces `scorecard_tracking` + `smvc_band_config` (consolidated 2026-06-20).
-- `sf_on_time_snapshot` — Raw YTD production/lapse/credits/IPS values; primary input to runtime on-time SMVC + Scorecard computations via `compute_on_time_smvc()`.
+- `agency_snapshot` — Merged book-of-business snapshot. Single source of truth for stock (premium $, PIF, household count) AND flow (YTD new/lost per LOB, life paid-for count + premium, IPS new money). YTD columns are the primary input to runtime on-time SMVC + Scorecard computations via `compute_on_time_smvc()`. Replaces `book_snapshot` + `sf_on_time_snapshot` (merged + dropped 2026-06-20). Stock columns auto-populate via the SF CRM Analytics Gmail-parse recipe; YTD columns are entered manually via Financials > Book of Business form.
 
 **If everything is empty:** Financials renders all tabs with EmptyState. Agent sees "$0 revenue, $0 expenses, no journal entries yet." Correct pre-data state.
 
