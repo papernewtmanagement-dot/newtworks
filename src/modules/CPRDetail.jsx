@@ -405,6 +405,7 @@ function useCPRData(weekDate) {
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
+    section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
   });
 
   useEffect(() => {
@@ -584,6 +585,17 @@ function useCPRData(weekDate) {
 
         if (cancelled) return;
 
+        // Section 11 data (SMVC & Scorecard) — fetched live via RPC
+        let section11 = null;
+        try {
+          const { data: sec11Data } = await supabase
+            .rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: weekDate });
+          if (!cancelled) section11 = sec11Data || null;
+        } catch (e) {
+          // Section 11 fetch failure shouldn't block the rest of the page
+          console.warn("get_cpr_section_11 failed:", e);
+        }
+
         setState({
           loading: false, error: null,
           report: reportRow || null,
@@ -599,6 +611,7 @@ function useCPRData(weekDate) {
           truePayHistory,
           runtimeHours,
           runtimeReqs,
+          section11,
         });
       } catch (err) {
         if (!cancelled) {
@@ -1184,20 +1197,81 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
 }
 
 // 11 — SMVC & Scorecard
-function SMVCScorecardSection({ snapshot }) {
-  if (!snapshot) {
+// Renders the SMVC row from get_cpr_section_11 (live computed) + a Scorecard Bonus
+// row + two budget lines as placeholders. The compute_scorecard_bonus() function
+// and budget formulas are pending; those cells show "—" until built.
+function SMVCScorecardSection({ section11 }) {
+  if (!section11) {
     return (
       <div>
         <SectionHeader icon="🎯" title="SMVC & Scorecard" />
-        <Card><Awaiting /></Card>
+        <Card><Awaiting message="No SMVC data loaded yet for this week" /></Card>
       </div>
     );
   }
+
+  const smvc = section11.smvc || {};
+  const onTime  = smvc.on_time     != null ? Number(smvc.on_time)     : null;
+  const lastWk  = smvc.last_wk     != null ? Number(smvc.last_wk)     : null;
+  const lastQ   = smvc.last_q      != null ? Number(smvc.last_q)      : null;
+  const current = smvc.current     != null ? Number(smvc.current)     : null;
+  const diff    = smvc.dollar_diff != null ? Number(smvc.dollar_diff) : null;
+
+  const fmtPct = (v) => v == null ? "—" : (v * 100).toFixed(2) + "%";
+  const fmtDiff = (v) => {
+    if (v == null) return "—";
+    const sign = v >= 0 ? "+" : "-";
+    return sign + "$" + Math.abs(Math.round(v)).toLocaleString("en-US");
+  };
+  const diffColor = diff == null ? T.slate500 : (diff >= 0 ? T.green : T.red);
+
   return (
     <div>
-      <SectionHeader icon="🎯" title="SMVC & Scorecard" />
-      <Card>
-        <Awaiting message="SMVC/Scorecard runtime calc pending — depends on the SMVC weekly calculator (deferred work item)" />
+      <SectionHeader icon="🎯" title="SMVC & Scorecard" hint="On-Time SMVC computed live · Scorecard Bonus + budget lines pending" />
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+            <thead>
+              <tr>
+                <Th align="left"></Th>
+                <Th align="right">On-Time</Th>
+                <Th align="right">Last Wk</Th>
+                <Th align="right">Last Q</Th>
+                <Th align="right" style={{ background: T.slate50 }}>Current</Th>
+                <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>$ Diff</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* SMVC row */}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>SMVC</Td>
+                <Td align="right">{fmtPct(onTime)}</Td>
+                <Td align="right">{fmtPct(lastWk)}</Td>
+                <Td align="right">{fmtPct(lastQ)}</Td>
+                <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtPct(current)}</Td>
+                <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>{fmtDiff(diff)}</Td>
+              </tr>
+              {/* Scorecard Bonus row — all placeholders for now */}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
+                <Td align="right" style={{ color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ background: T.slate50, color: T.slate500 }}>—</Td>
+                <Td align="right" style={{ background: T.blueLt, color: T.slate500 }}>—</Td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: "10px 18px 4px", borderTop: `1px solid ${T.slate100}`, fontSize: 12, color: T.slate600 }}>
+          Next Quarter On-Time Prize Cart Budget: <span style={{ color: T.slate400 }}>—</span>
+        </div>
+        <div style={{ padding: "0 18px 10px", fontSize: 12, color: T.slate600 }}>
+          Next Quarter On-Time WtQ Trip Budget: <span style={{ color: T.slate400 }}>—</span>
+        </div>
+        <div style={{ padding: "8px 18px 12px", fontSize: 11, color: T.slate400, fontStyle: "italic" }}>
+          SMVC row computed live from sf_on_time_snapshot + smvc_band_config. Scorecard Bonus + budgets pending compute_scorecard_bonus() function and budget formulas.
+        </div>
       </Card>
     </div>
   );
@@ -2169,7 +2243,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 11. SMVC & Scorecard */}
-      <Section><SMVCScorecardSection snapshot={data.snapshot} /></Section>
+      <Section><SMVCScorecardSection section11={data.section11} /></Section>
 
       {/* 11.5. Auto/Fire retention bonus + production (new/lost) */}
       <Section>
