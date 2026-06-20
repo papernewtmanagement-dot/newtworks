@@ -1558,12 +1558,15 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
   }
   const sorted = sortByTenure(details, team);
 
-  // Team aggregates pulled from the weekly_cpr_reports row (populated by the daily
-  // checkin pipeline + locked by the Saturday outcome writer). Falls back to
-  // computing from runtimeReqs / details when the report row is null.
-  const teamNetQuotesTotal = report?.quotes_total_net != null
-    ? Number(report.quotes_total_net)
-    : sorted.reduce((acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0), 0);
+  // Team Net Quotes Total = sum of per-person Net Quotes shown above (quotes_discussed − paid).
+  // We compute at runtime so the team-total cell always equals the sum of the per-person cells.
+  // Note: weekly_cpr_reports.quotes_total_net stores the team's GROSS quotes for the week
+  // (sum of latest team_checkins.quotes_week per member, written by weekly_cpr_compute_outcome)
+  // and is used by the Win-the-Week pass/fail math. It is NOT the Net Quotes display value.
+  const teamNetQuotesTotal = sorted.reduce(
+    (acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0),
+    0
+  );
   const teamSalesPtsTotal = report?.quarterly_sales_points_qtd != null
     ? Number(report.quarterly_sales_points_qtd)
     : sorted.reduce((acc, d) => acc + (Number(d.sales_points) || 0), 0);
@@ -1619,7 +1622,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                     ) : (
                       <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
                     )}
-                    <Td align="right" style={{ color: T.slate500 }}>{fmtSigned(netPreview)}</Td>
+                    <Td align="right" style={{ color: T.slate500 }}>{fmtInt(netPreview)}</Td>
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
                         <NumberInput
@@ -1642,7 +1645,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
               <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Team Total</Td>
                 <Td align="right"></Td>
-                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtSigned(teamNetQuotesTotal)}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(teamNetQuotesTotal)}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
                 <Td align="right"></Td>
               </tr>
