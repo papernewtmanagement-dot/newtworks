@@ -400,6 +400,8 @@ function useCPRData(weekDate) {
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
     anchorPayrollYtd: {},  // {team_member_id: payroll_ytd_paid as of 2026-04-04 anchor (or current cycle's prior-quarter-end)}
     retentionBudgetAnnual: null,  // annual retention budget from compute_retention_budget_weekly().budget — surfaces next to Service Share
+    lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
+    cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
@@ -518,11 +520,12 @@ function useCPRData(weekDate) {
           .order("week_ending_date", { ascending: false })
           .limit(39);
         let truePayHistory = {};
+        let lastWeekSalesPointsByMember = {};
         if (histReports && histReports.length > 0) {
           const reportIds = histReports.map(r => r.id);
           const { data: histDetail } = await supabase
             .from("weekly_cpr_team_detail")
-            .select("team_member_id, weekly_cpr_report_id, true_pay_bonus")
+            .select("team_member_id, weekly_cpr_report_id, true_pay_bonus, sales_points")
             .eq("agency_id", AGENCY_ID)
             .in("weekly_cpr_report_id", reportIds);
           const reportDateById = {};
@@ -538,12 +541,25 @@ function useCPRData(weekDate) {
           Object.keys(truePayHistory).forEach(k => {
             truePayHistory[k].sort((a, b) => a.week_ending_date.localeCompare(b.week_ending_date));
           });
+          // Last week's Q Sales Pts per member — used for the WoW delta indicator in Team Activity
+          const lastWeekDate = (() => {
+            const dt = new Date(weekDate + "T00:00:00Z");
+            dt.setUTCDate(dt.getUTCDate() - 7);
+            return dt.toISOString().slice(0, 10);
+          })();
+          (histDetail || []).forEach(d => {
+            const wkDate = reportDateById[d.weekly_cpr_report_id];
+            if (wkDate === lastWeekDate && d.sales_points != null) {
+              lastWeekSalesPointsByMember[d.team_member_id] = Number(d.sales_points);
+            }
+          });
         }
 
         // Prior-quarter-end payroll YTD anchor for this week. Cycle anchor 2026-04-05 means
         // prior-quarter-end for any week in cycle 2 is 2026-04-04. Generic: floor((week-anchor)/91)*91
         // + anchor - 1 day = the Saturday before this cycle began.
         let anchorPayrollYtd = {};
+        let cycleStartISO = null;
         try {
           const ANCHOR_DATE = "2026-04-05"; // cycle anchor (per settings cycle_anchor_date)
           const anchorMs = Date.UTC(2026, 3, 5);
@@ -555,6 +571,7 @@ function useCPRData(weekDate) {
           const daysSince = Math.floor((wkMs - anchorMs) / 86400000);
           const cyclesCompleted = Math.max(0, Math.floor(daysSince / 91));
           const cycleStartMs = anchorMs + cyclesCompleted * 91 * 86400000;
+          cycleStartISO = new Date(cycleStartMs).toISOString().slice(0,10);
           const priorQtrEndMs = cycleStartMs - 86400000;
           const priorQtrEndDate = new Date(priorQtrEndMs).toISOString().slice(0,10);
           const { data: anchorReport } = await supabase
@@ -681,6 +698,8 @@ function useCPRData(weekDate) {
           truePayHistory,
           anchorPayrollYtd,
           retentionBudgetAnnual,
+          lastWeekSalesPointsByMember,
+          cycleStartISO,
           runtimeHours,
           runtimeReqs,
           section11,
@@ -1629,7 +1648,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
 }
 
 // 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1%)
-function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange }) {
+function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange , lastWeekSalesPointsByMember, cycleStartISO }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -1722,7 +1741,32 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                         />
                       </Td>
                     ) : (
-                      <Td align="right">{d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}</Td>
+                      <Td align="right">
+                        {d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}
+                        {(() => {
+                          // WoW delta: this week's sales_points vs last week's, suppressed across cycle boundary.
+                          if (d.sales_points == null) return null;
+                          const last = lastWeekSalesPointsByMember?.[d.team_member_id];
+                          if (last == null) return null;
+                          // Suppress at start of a new cycle (last week belongs to prior quarter)
+                          if (cycleStartISO && weekDate) {
+                            const lastWeekDate = (() => {
+                              const dt = new Date(weekDate + "T00:00:00Z");
+                              dt.setUTCDate(dt.getUTCDate() - 7);
+                              return dt.toISOString().slice(0, 10);
+                            })();
+                            if (lastWeekDate < cycleStartISO) return null;
+                          }
+                          const delta = Number(d.sales_points) - Number(last);
+                          if (Math.abs(delta) < 0.005) return null;
+                          const up = delta > 0;
+                          return (
+                            <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: up ? T.green : T.red }}>
+                              {up ? "▲" : "▼"}{Math.abs(delta).toFixed(2)}
+                            </span>
+                          );
+                        })()}
+                      </Td>
                     )}
                     <Td align="right">—</Td>
                   </tr>
@@ -2566,7 +2610,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
           onChange={edit.setDetailField}
-        />
+        lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
       </Section>
 
       {/* 19. Payroll */}
