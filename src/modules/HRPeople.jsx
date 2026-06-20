@@ -60,7 +60,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -632,22 +632,27 @@ const StaffDirectory = ({ staff }) => {
       }
 
       // 3) Write the audit row to team_behavioral_notes (principle 500 documentation surface).
+      //    Errors here are non-blocking — termination already succeeded at the primary level —
+      //    but they MUST be surfaced loudly so silent failures (e.g. CHECK constraints) don't
+      //    leave us without a paper trail like the Jason Fuller case on 2026-06-20.
+      const warnings = [];
       const obsText = [
         `TERMINATION — ${reasonLabel}`,
         `End date: ${endDate}`,
         `Notes: ${notes}`,
       ].join("\n");
-      await supabase.from("team_behavioral_notes").insert({
+      const noteIns = await supabase.from("team_behavioral_notes").insert({
         agency_id: AGENCY_ID,
         team_member_id: member.id,
         observation_date: endDate,
         pattern_type: "termination",
         source: "termination_action",
         observation_text: obsText,
-      });
+      }).select("id");
+      if (noteIns.error) warnings.push(`audit note: ${noteIns.error.message}`);
 
       // 4) Open an offboarding follow-up task for the admin checklist.
-      await supabase.from("tasks").insert({
+      const taskIns = await supabase.from("tasks").insert({
         agency_id: AGENCY_ID,
         title: `Offboarding follow-up: ${expectedName} (${endDate})`,
         description: [
@@ -669,7 +674,14 @@ const StaffDirectory = ({ staff }) => {
         related_id: member.id,
         due_date: endDate,
         created_by: "termination_action",
-      });
+      }).select("id");
+      if (taskIns.error) warnings.push(`offboarding task: ${taskIns.error.message}`);
+
+      // Surface non-blocking failures loudly before closing the panel.
+      if (warnings.length > 0) {
+        console.error("[terminate] non-blocking failures:", warnings);
+        alert(`Termination saved, but some side effects failed:\n\n${warnings.join("\n")}\n\nTell Claude.`);
+      }
 
       // 5) Local UI update so the row disappears from the active list immediately.
       setTerminatedIds(prev => { const n = new Set(prev); n.add(member.id); return n; });
@@ -778,37 +790,52 @@ const StaffDirectory = ({ staff }) => {
       }
 
       // 3) Audit: reactivation note.
+      //    Secondary operations from here on are non-blocking — reactivation already succeeded —
+      //    but errors MUST be surfaced loudly so silent failures don't leave us without a trail.
+      const warnings = [];
       const obsText = [
         `REACTIVATION — team member returned to active status.`,
         `Prior end date: ${member.end_date || "unknown"}.`,
         note && note.trim() ? `Notes: ${note.trim()}` : null,
       ].filter(Boolean).join("\n");
-      await supabase.from("team_behavioral_notes").insert({
+      const reactNoteIns = await supabase.from("team_behavioral_notes").insert({
         agency_id: AGENCY_ID,
         team_member_id: member.id,
         observation_date: today,
         pattern_type: "reactivation",
         source: "reactivation_action",
         observation_text: obsText,
-      });
+      }).select("id");
+      if (reactNoteIns.error) warnings.push(`reactivation audit note: ${reactNoteIns.error.message}`);
 
-      // 4) Resolve the related termination note.
-      await supabase
+      // 4) Resolve the related termination note. 0 rows is OK (no prior termination note).
+      const resolveNote = await supabase
         .from("team_behavioral_notes")
         .update({ is_resolved: true, resolved_date: today, updated_at: nowIso })
         .eq("agency_id", AGENCY_ID)
         .eq("team_member_id", member.id)
         .eq("pattern_type", "termination")
-        .eq("is_resolved", false);
+        .eq("is_resolved", false)
+        .select("id");
+      if (resolveNote.error) warnings.push(`resolve termination note: ${resolveNote.error.message}`);
 
       // 5) Cancel any still-open offboarding follow-up task for this person.
-      await supabase
+      //    0 rows is OK (no open task to cancel).
+      const cancelTask = await supabase
         .from("tasks")
         .update({ status: "cancelled", completed_at: nowIso, updated_at: nowIso })
         .eq("agency_id", AGENCY_ID)
         .eq("related_id", member.id)
         .eq("module_reference", "hr_people")
-        .eq("status", "open");
+        .eq("status", "open")
+        .select("id");
+      if (cancelTask.error) warnings.push(`cancel offboarding task: ${cancelTask.error.message}`);
+
+      // Surface non-blocking failures loudly before closing the panel.
+      if (warnings.length > 0) {
+        console.error("[reactivate] non-blocking failures:", warnings);
+        alert(`Reactivation saved, but some side effects failed:\n\n${warnings.join("\n")}\n\nTell Claude.`);
+      }
 
       // 6) Local UI: drop from archived list immediately.
       setReactivatedIds(prev => { const n = new Set(prev); n.add(member.id); return n; });
