@@ -1189,12 +1189,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
           </table>
         </div>
         {(autoYsPIF || firePIF_YS || lifePIF_YS) ? (
-          <div style={{
-            padding: "10px 18px", borderTop: `1px solid ${T.slate100}`,
-            fontSize: 11, color: T.slate500,
-          }}>
-            Year-start PIF anchors: Auto {fmtInt(autoYsPIF)} &nbsp;·&nbsp; Fire {fmtInt(firePIF_YS)} &nbsp;·&nbsp; Life {fmtInt(lifePIF_YS)}
-          </div>
+
         ) : null}
       </Card>
     </div>
@@ -1276,9 +1271,6 @@ function SMVCScorecardSection({ section11 }) {
         </div>
         <div style={{ padding: "0 18px 10px", fontSize: 12, color: T.slate600 }}>
           WtQ Trip Budget: <span style={{ color: T.slate400 }}>—</span>
-        </div>
-        <div style={{ padding: "8px 18px 12px", fontSize: 11, color: T.slate400, fontStyle: "italic" }}>
-          SMVC row computed live from agency_snapshot YTD + sf_program_targets bands. Scorecard Bonus + budgets pending compute_scorecard_bonus() function and budget formulas.
         </div>
       </Card>
     </div>
@@ -1539,12 +1531,14 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
               {sorted.map(d => {
                 const row = formDetails?.[d.id] || {};
                 const r = runtimeReqs?.[d.team_member_id] || {};
-                // Net quotes is computed: quotes_discussed - total quotes owed.
-                // In edit mode we recompute from the dirty form value so the user sees
-                // the impact immediately; otherwise we use the runtime-computed value.
-                const quotesEdit = editMode ? (row.quotes_discussed ?? d.quotes_discussed ?? 0) : (d.quotes_discussed ?? 0);
+                // Net Quotes = quotes_discussed - total - modified.
+                // Single formula matching get_weekly_cpr_requirements (server). In edit
+                // mode, quotes and modified come from the dirty form so the user sees
+                // impact immediately; total is always runtime-computed from the RPC.
+                const quotesNow = Number(editMode ? (row.quotes_discussed ?? d.quotes_discussed ?? 0) : (d.quotes_discussed ?? 0));
+                const modifiedNow = Number(editMode ? (row.quotes_modified ?? d.quotes_modified ?? 0) : (d.quotes_modified ?? 0));
                 const totalOwed = Number(r.total) || 0;
-                const netPreview = editMode ? (Number(quotesEdit) - totalOwed) : (d.quotes_net != null ? Number(d.quotes_net) : (Number(r.net_quotes) || 0));
+                const netPreview = quotesNow - totalOwed - modifiedNow;
                 return (
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
@@ -1582,9 +1576,6 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
               })}
             </tbody>
           </table>
-        </div>
-        <div style={{ padding: "10px 18px", borderTop: `1px solid ${T.slate100}`, fontSize: 11, color: T.slate500 }}>
-          Net Quotes = Quotes − Total Owed (runtime). 13-wk delta column wiring pending.
         </div>
       </Card>
     </div>
@@ -1760,9 +1751,6 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
               ))}
             </tbody>
           </table>
-        </div>
-        <div style={{ padding: "10px 18px", borderTop: `1px solid ${T.slate100}`, fontSize: 11, color: T.slate500 }}>
-          Last Q / Q-2 / Q-3 averages pending — depend on quarter boundary helpers being wired.
         </div>
       </Card>
     </div>
