@@ -398,7 +398,7 @@ function useCPRData(weekDate) {
     goals: [],           // book_performance_goals rows (current year)
     campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
-    ytdPayByMember: {},  // {team_member_id: totalPayYTD} — sum of 7 pay components across YTD weeks
+    ytdPayByMember: {},  // {team_member_id: {ytd_total, weeks_with_pay}} — for On-Time annual projection
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
@@ -538,7 +538,10 @@ function useCPRData(weekDate) {
               week_ending_date: wkDate,
               true_pay_bonus: Number(d.true_pay_bonus) || 0,
             });
-            // YTD pay sum — include rows where week_ending_date is within current year and <= weekDate
+            // YTD pay sum — include rows in current year, <= week ending. Track BOTH the
+            // cumulative total and how many weeks contributed any pay. On-Time projection uses
+            // avg-per-week × 52 so it's meaningful even when only 1–2 weeks of pay data exist
+            // (the BCC weekly-pay writer was wired 2026-06-20; earlier weeks are NULL).
             if (wkDate && wkDate >= yearStartISO && wkDate <= weekDate) {
               const components = (Number(d.weekly_pay) || 0)
                 + (Number(d.base_advance) || 0)
@@ -547,7 +550,11 @@ function useCPRData(weekDate) {
                 + (Number(d.true_pay_bonus) || 0)
                 + (Number(d.manager_bonus) || 0)
                 + (Number(d.agency_profit_share) || 0);
-              ytdPayByMember[tmId] = (ytdPayByMember[tmId] || 0) + components;
+              if (components > 0) {
+                if (!ytdPayByMember[tmId]) ytdPayByMember[tmId] = { ytd_total: 0, weeks_with_pay: 0 };
+                ytdPayByMember[tmId].ytd_total += components;
+                ytdPayByMember[tmId].weeks_with_pay += 1;
+              }
             }
           });
           // Sort each person's history desc
@@ -1937,16 +1944,12 @@ function PayrollSection({ details, team, weekDate, ytdPayByMember, onRefresh }) 
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>On-Time</Td>
                 {sorted.map(d => {
-                  // On-Time projected annual = YTD pay (this year, through this week) × 365 / days elapsed.
-                  // Pulled from ytdPayByMember (sum of 7 components across YTD weekly_cpr_team_detail rows).
-                  const ytdPay = (ytdPayByMember && ytdPayByMember[d.team_member_id]) || 0;
-                  const dayOfYear = (() => {
-                    if (!weekDate) return 1;
-                    const dt = new Date(weekDate + "T00:00:00Z");
-                    const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-                    return Math.max(1, Math.floor((dt - ys) / 86400000) + 1);
-                  })();
-                  const onTimeAnnual = ytdPay > 0 ? (ytdPay * 365) / dayOfYear : null;
+                  // On-Time projected annual pay = avg per week (across YTD weeks with pay > 0) × 52.
+                  // Robust to thin data: returns a meaningful projection from week 1 of recorded pay.
+                  const entry = ytdPayByMember && ytdPayByMember[d.team_member_id];
+                  const onTimeAnnual = (entry && entry.weeks_with_pay > 0)
+                    ? (entry.ytd_total / entry.weeks_with_pay) * 52
+                    : null;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
                       {onTimeAnnual === null ? "—" : fmtMoneyCents(onTimeAnnual)}
