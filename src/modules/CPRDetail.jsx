@@ -275,6 +275,8 @@ const EDIT_FIELDS = {
     // Auto/Fire retention bonus
     "auto_ratio_pct", "auto_rank", "auto_bonus",
     "fire_ratio_pct", "fire_rank", "fire_bonus",
+    // Auto/Fire production (new + lost)
+    "auto_new", "auto_lost", "fire_new", "fire_lost",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
@@ -393,6 +395,7 @@ function useCPRData(weekDate) {
     loading: true,
     error: null,
     report: null,        // weekly_cpr_reports row
+    reportPrior: null,   // weekly_cpr_reports row for prior week (for Last Wk + Δ display)
     details: [],         // weekly_cpr_team_detail rows
     team: [],            // team table (active, by tenure)
     snapshot: null,      // sf_on_time_snapshot row (most recent <= week end)
@@ -432,6 +435,15 @@ function useCPRData(weekDate) {
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .eq("week_ending_date", weekDate)
+          .maybeSingle();
+
+        // 2b. Prior week's report row (for Last Wk + Δ display in Retention/Production section)
+        const priorWeekDate = addDaysISO(weekDate, -7);
+        const { data: reportPriorRow } = await supabase
+          .from("weekly_cpr_reports")
+          .select("*")
+          .eq("agency_id", AGENCY_ID)
+          .eq("week_ending_date", priorWeekDate)
           .maybeSingle();
 
         // 3. Detail rows for this week
@@ -577,6 +589,7 @@ function useCPRData(weekDate) {
         setState({
           loading: false, error: null,
           report: reportRow || null,
+          reportPrior: reportPriorRow || null,
           details: detailRows,
           team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)" })),
           snapshot,
@@ -813,9 +826,9 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
               />
             ) : (
               <span style={{ fontSize: 14, width: 16, display: "inline-block", textAlign: "center" }}>
-                {val === false
-                  ? <span style={{ color: T.red }}>✕</span>
-                  : <span style={{ color: T.green }}>✓</span>}
+                {val === true
+                  ? <span style={{ color: T.green }}>✓</span>
+                  : <span style={{ color: T.red, opacity: val === false ? 1 : 0.45 }}>✕</span>}
               </span>
             )}
             <span style={{ fontSize: 12, color: T.slate700 }}>{label}</span>
@@ -894,9 +907,9 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
                     }
                     return (
                       <Td key={key} align="center">
-                        {d[key] === false
-                          ? <span style={{ color: T.red, fontSize: 14 }}>✕</span>
-                          : <span style={{ color: T.green, fontSize: 14 }}>✓</span>}
+                        {d[key] === true
+                          ? <span style={{ color: T.green, fontSize: 14 }}>✓</span>
+                          : <span style={{ color: T.red, fontSize: 14, opacity: d[key] === false ? 1 : 0.45 }}>✕</span>}
                       </Td>
                     );
                   })}
@@ -1113,69 +1126,124 @@ function SMVCScorecardSection({ snapshot }) {
 }
 
 // 12 — Claims
-// 11.5 — Auto/Fire Retention Bonus (weekly SF retention competition)
-function RetentionBonusSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
-  const rowSpec = [
-    { lob: "Auto", color: T.blue, ratio: "auto_ratio_pct", rank: "auto_rank", bonus: "auto_bonus" },
-    { lob: "Fire", color: T.red,  ratio: "fire_ratio_pct", rank: "fire_rank", bonus: "fire_bonus" },
+// 11.5 — Auto/Fire Retention & Production (weekly SF retention + new/lost)
+// Renders one block per LOB with Last Wk / This Wk / Δ columns across
+// five rows: Retention %, Rank, Bonus, New, Lost.
+function RetentionBonusSection({ report, reportPrior, editMode, formReport, isReportDirty, onReportChange }) {
+  const FIELDS = [
+    { key: "ratio_pct", label: "Retention %", kind: "pct"   },
+    { key: "rank",      label: "Rank",        kind: "int"   },
+    { key: "bonus",     label: "Bonus",       kind: "money" },
+    { key: "new",       label: "New",         kind: "int"   },
+    { key: "lost",      label: "Lost",        kind: "int"   },
   ];
+  const LOBS = [
+    { lob: "Auto", color: T.blue, prefix: "auto_" },
+    { lob: "Fire", color: T.red,  prefix: "fire_" },
+  ];
+
+  const fmtVal = (v, kind) => {
+    if (v === null || v === undefined || v === "") return "—";
+    const n = Number(v);
+    if (!isFinite(n)) return "—";
+    if (kind === "pct")   return fmtPct(n);
+    if (kind === "money") return fmtMoneyCents(n);
+    return fmtInt(n);
+  };
+  const fmtDelta = (cur, prev, kind) => {
+    if (cur === null || cur === undefined || cur === "" ||
+        prev === null || prev === undefined || prev === "") return "—";
+    const a = Number(cur), b = Number(prev);
+    if (!isFinite(a) || !isFinite(b)) return "—";
+    const d = a - b;
+    if (Math.abs(d) < 0.001) return "0";
+    if (kind === "pct")   return (d > 0 ? "+" : "") + d.toFixed(2) + "%";
+    if (kind === "money") return (d > 0 ? "+" : "") + fmtMoneyCents(d);
+    return (d > 0 ? "+" : "") + Math.round(d).toLocaleString("en-US");
+  };
+  // Colorize delta: green when "better", red when "worse".
+  // For Rank: lower is better. For Lost: lower is better. Everything else: higher is better.
+  const deltaColor = (cur, prev, fieldKey) => {
+    if (cur === null || cur === undefined || prev === null || prev === undefined) return T.slate500;
+    const d = Number(cur) - Number(prev);
+    if (!isFinite(d) || Math.abs(d) < 0.001) return T.slate500;
+    const lowerIsBetter = (fieldKey === "rank" || fieldKey === "lost");
+    const improved = lowerIsBetter ? d < 0 : d > 0;
+    return improved ? T.green : T.red;
+  };
+
+  const NumInputForField = ({ lobPrefix, fieldKey, kind }) => {
+    const col = lobPrefix + fieldKey;
+    const step = (kind === "pct" || kind === "money") ? 0.01 : 1;
+    const minProp = fieldKey === "rank" ? { min: 1 } : {};
+    return (
+      <NumberInput
+        value={formReport[col]}
+        onChange={v => onReportChange(col, v)}
+        dirty={isReportDirty(col)}
+        step={step}
+        {...minProp}
+        style={{ width: 96 }}
+      />
+    );
+  };
+
   return (
     <div>
-      <SectionHeader icon="🏆" title="Auto/Fire Retention Bonus" hint={editMode ? "Weekly SF retention competition — ratio %, rank, $ bonus" : "Weekly SF retention competition"} />
+      <SectionHeader
+        icon="🏆"
+        title="Auto / Fire — Retention & Production"
+        hint={editMode
+          ? "Per LOB: Retention %, Rank, Bonus (weekly SF competition) + New + Lost"
+          : "Weekly SF retention competition + new business / lapses"}
+      />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
             <thead>
               <tr>
                 <Th align="left">LOB</Th>
-                <Th align="right">Retention %</Th>
-                <Th align="right">Rank</Th>
-                <Th align="right">Bonus</Th>
+                <Th align="left">Metric</Th>
+                <Th align="right">This Wk</Th>
+                <Th align="right">Last Wk</Th>
+                <Th align="right">Δ</Th>
               </tr>
             </thead>
             <tbody>
-              {rowSpec.map(spec => (
-                <tr key={spec.lob}>
-                  <Td style={{ paddingLeft: 14, fontWeight: 700, color: spec.color }}>{spec.lob}</Td>
-                  {editMode ? (
-                    <>
-                      <Td align="right" style={{ padding: 6 }}>
-                        <NumberInput
-                          value={formReport[spec.ratio]}
-                          onChange={v => onReportChange(spec.ratio, v)}
-                          dirty={isReportDirty(spec.ratio)}
-                          step={0.01}
-                          style={{ width: 96 }}
-                        />
+              {LOBS.map(({ lob, color, prefix }) => (
+                FIELDS.map((f, idx) => {
+                  const col = prefix + f.key;
+                  const cur = report?.[col];
+                  const prev = reportPrior?.[col];
+                  return (
+                    <tr key={col}>
+                      {idx === 0 ? (
+                        <Td
+                          rowSpan={FIELDS.length}
+                          style={{ paddingLeft: 14, fontWeight: 700, color, verticalAlign: "top", borderRight: `1px solid ${T.slate100}` }}
+                        >
+                          {lob}
+                        </Td>
+                      ) : null}
+                      <Td style={{ color: T.slate700 }}>{f.label}</Td>
+                      {editMode ? (
+                        <Td align="right" style={{ padding: 6 }}>
+                          <NumInputForField lobPrefix={prefix} fieldKey={f.key} kind={f.kind} />
+                        </Td>
+                      ) : (
+                        <Td align="right" style={{ fontWeight: f.key === "bonus" ? 700 : 500, color: T.slate900 }}>
+                          {fmtVal(cur, f.kind)}
+                        </Td>
+                      )}
+                      <Td align="right" style={{ color: T.slate500 }}>
+                        {fmtVal(prev, f.kind)}
                       </Td>
-                      <Td align="right" style={{ padding: 6 }}>
-                        <NumberInput
-                          value={formReport[spec.rank]}
-                          onChange={v => onReportChange(spec.rank, v)}
-                          dirty={isReportDirty(spec.rank)}
-                          min={1}
-                          step={1}
-                          style={{ width: 80 }}
-                        />
+                      <Td align="right" style={{ color: deltaColor(cur, prev, f.key), fontWeight: 600 }}>
+                        {fmtDelta(cur, prev, f.kind)}
                       </Td>
-                      <Td align="right" style={{ padding: 6 }}>
-                        <NumberInput
-                          value={formReport[spec.bonus]}
-                          onChange={v => onReportChange(spec.bonus, v)}
-                          dirty={isReportDirty(spec.bonus)}
-                          step={0.01}
-                          style={{ width: 96 }}
-                        />
-                      </Td>
-                    </>
-                  ) : (
-                    <>
-                      <Td align="right">{report?.[spec.ratio] != null ? fmtPct(report[spec.ratio]) : "—"}</Td>
-                      <Td align="right">{fmtInt(report?.[spec.rank])}</Td>
-                      <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtMoneyCents(report?.[spec.bonus])}</Td>
-                    </>
-                  )}
-                </tr>
+                    </tr>
+                  );
+                })
               ))}
             </tbody>
           </table>
@@ -1184,6 +1252,7 @@ function RetentionBonusSection({ report, editMode, formReport, isReportDirty, on
     </div>
   );
 }
+
 
 function ClaimsSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
   if (editMode) {
@@ -1407,7 +1476,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
   );
 }
 
-// 17 — Team Activity (Quotes / Net Quotes / Sales Pts / ↑ 1%)
+// 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1%)
 function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editMode, formDetails, isDirty, onChange }) {
   if (!details || details.length === 0) {
     return (
@@ -1429,7 +1498,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, editM
                 <Th align="left">Person</Th>
                 <Th align="right">Quotes</Th>
                 <Th align="right">Net Quotes</Th>
-                <Th align="right">Sales Pts</Th>
+                <Th align="right">Q Sales Pts</Th>
                 <Th align="right">↑ 1% vs 13-wk</Th>
               </tr>
             </thead>
@@ -2026,10 +2095,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 11. SMVC & Scorecard */}
       <Section><SMVCScorecardSection snapshot={data.snapshot} /></Section>
 
-      {/* 11.5. Auto/Fire retention bonus */}
+      {/* 11.5. Auto/Fire retention bonus + production (new/lost) */}
       <Section>
         <RetentionBonusSection
           report={data.report}
+          reportPrior={data.reportPrior}
           editMode={edit.active}
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
