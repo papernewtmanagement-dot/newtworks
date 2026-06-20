@@ -339,12 +339,18 @@ export default function MonthlyClose() {
     const ids = items.map(it => it.id);
     setData(prev => (prev || []).map(r => ids.includes(r.id) ? { ...r, is_closed:false } : r));
     if (supabase) {
-      await supabase
+      const { error } = await supabase
         .from("monthly_close_checklist")
         .update({ is_closed:false })
         .eq("agency_id", AGENCY_ID)
         .eq("period_year", activePeriod.year)
         .eq("period_month", activePeriod.month);
+      if (error) {
+        // Roll back the optimistic local update so UI matches the DB.
+        setData(prev => (prev || []).map(r => ids.includes(r.id) ? { ...r, is_closed:true } : r));
+        console.error("[MonthlyClose] reopenMonth failed:", error);
+        alert("Could not reopen month: " + error.message);
+      }
     }
     setClosing(false);
   };

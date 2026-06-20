@@ -839,7 +839,8 @@ export default function SocialMedia() {
   };
 
   const approvePost = async (postId) => {
-    await supabase.from("content_calendar").update({status:"approved", approved_at: new Date().toISOString()}).eq("id", postId);
+    const { error } = await supabase.from("content_calendar").update({status:"approved", approved_at: new Date().toISOString()}).eq("id", postId);
+    if (error) { console.error("[SocialMedia] approvePost failed:", error); alert("Could not approve post: " + error.message); return; }
     window.location.reload();
   };
 
