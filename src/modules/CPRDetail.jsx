@@ -1576,16 +1576,14 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
   const quoteGoal = carryover + freshNeeded;
   const salesPtsGoal = Number(report?.quarterly_sales_points_target) || 0;
 
-  const wtwHit = report?.won_the_week === true;
-  // quotesOwedNext is computed at runtime as the sum of per-person Next Wk values
-  // (= Σ total − paid via get_weekly_cpr_requirements). The stored
-  // weekly_cpr_reports.quotes_owed_next_week is a Saturday snapshot used only by
-  // next week's writer; the display always shows the live value so retroactive
-  // input edits propagate immediately.
-  const quotesOwedNext = sorted.reduce(
-    (acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.owed) || 0),
-    0
-  );
+  // Team-level Win-the-Week pass/fail + per-goal shortfall — computed at view
+  // time from carryover + fresh_needed vs team_net_quotes (and SP target vs QTD).
+  // The per-person chain (get_weekly_cpr_requirements) handles per-person
+  // checklist debt for Requirements + Payroll allocation, a separate concept.
+  const quotesPass = teamNetQuotesTotal >= quoteGoal;
+  const spPass = teamSalesPtsTotal >= salesPtsGoal;
+  const quotesShort = Math.max(0, quoteGoal - teamNetQuotesTotal);
+  const spShort = Math.max(0, salesPtsGoal - teamSalesPtsTotal);
 
   return (
     <div>
@@ -1672,14 +1670,20 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Td align="right"></Td>
               </tr>
 
-              {/* WtW Result row — status + quotes owed next week */}
+              {/* WtW Result row — per-column shortfall (centered) or ✓ Met */}
               <tr>
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate700 }}>Result</Td>
                 <Td align="right"></Td>
-                <Td align="right" style={{ fontWeight: 700, color: wtwHit ? T.green : T.red }}>
-                  {wtwHit ? "✓ Won" : `✗ ${quotesOwedNext} owed next wk`}
+                <Td align="center" style={{ fontWeight: 700, color: quotesPass ? T.green : T.red }}>
+                  {quotesPass
+                    ? "✓ Met"
+                    : `Carryover: ${quotesShort.toLocaleString()} quote${quotesShort === 1 ? "" : "s"}`}
                 </Td>
-                <Td align="right"></Td>
+                <Td align="center" style={{ fontWeight: 700, color: spPass ? T.green : T.red }}>
+                  {spPass
+                    ? "✓ Met"
+                    : `Carryover: ${Math.round(spShort).toLocaleString()} pts`}
+                </Td>
                 <Td align="right"></Td>
               </tr>
             </tbody>
