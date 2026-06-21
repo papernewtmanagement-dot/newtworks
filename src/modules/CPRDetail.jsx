@@ -146,12 +146,15 @@ const Th = ({ children, align = "left", w, style = {} }) => (
   }}>{children}</th>
 );
 
-const Td = ({ children, align = "left", style = {} }) => (
-  <td style={{
-    padding: "8px 8px", fontSize: 12, color: T.slate800,
-    textAlign: align, borderBottom: `1px solid ${T.slate100}`,
-    fontVariantNumeric: "tabular-nums", ...style,
-  }}>{children}</td>
+const Td = ({ children, align = "left", style = {}, ...rest }) => (
+  <td
+    {...rest}
+    style={{
+      padding: "8px 8px", fontSize: 12, color: T.slate800,
+      textAlign: align, borderBottom: `1px solid ${T.slate100}`,
+      fontVariantNumeric: "tabular-nums", ...style,
+    }}
+  >{children}</td>
 );
 
 // ── Edit-mode primitives ────────────────────────────────────
