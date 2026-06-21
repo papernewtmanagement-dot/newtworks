@@ -107,7 +107,7 @@ const Card = ({ children, style = {} }) => (
   }}>{children}</div>
 );
 
-const SectionHeader = ({ icon, title }) => (
+const SectionHeader = ({ icon, title, accessory }) => (
   <div style={{ marginBottom: 12 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       {icon ? <span style={{ fontSize: 18 }}>{icon}</span> : null}
@@ -115,6 +115,7 @@ const SectionHeader = ({ icon, title }) => (
         fontSize: 13, fontWeight: 800, color: T.slate800,
         textTransform: "uppercase", letterSpacing: 0.6,
       }}>{title}</span>
+      {accessory ? <span style={{ fontSize: 11, fontWeight: 400, color: T.slate500 }}>{accessory}</span> : null}
     </div>
   </div>
 );
@@ -1397,26 +1398,8 @@ function SMVCScorecardSection({ section11 }) {
             </tbody>
           </table>
         </div>
-        {(() => {
-          const fmtMoneyOrDash = (v) => v == null ? "—" : "$" + Math.round(Number(v)).toLocaleString("en-US");
-          const prizeBudget = section11?.prize_cart_budget?.value ?? null;
-          const wtqBudget   = section11?.wtq_trip_budget?.value ?? null;
-          return (
-            <div style={{
-              padding: "10px 18px",
-              borderTop: `1px solid ${T.slate100}`,
-              fontSize: 12, color: T.slate600,
-              display: "flex", gap: 32, justifyContent: "space-between", flexWrap: "wrap",
-            }}>
-              <div style={{ flex: "1 1 0", minWidth: 180, textAlign: "center" }}>
-                Prize Cart Budget: <span style={{ color: prizeBudget == null ? T.slate400 : T.slate800, fontWeight: prizeBudget == null ? 400 : 700 }}>{fmtMoneyOrDash(prizeBudget)}</span>
-              </div>
-              <div style={{ flex: "1 1 0", minWidth: 180, textAlign: "center" }}>
-                WtQ Trip Budget: <span style={{ color: wtqBudget == null ? T.slate400 : T.slate800, fontWeight: wtqBudget == null ? 400 : 700 }}>{fmtMoneyOrDash(wtqBudget)}</span>
-              </div>
-            </div>
-          );
-        })()}
+        {/* Budget row removed 2026-06-20 — Prize Cart Budget now appears inline on the Prize
+            Cart section header; WtQ Trip Budget removed entirely per Peter. */}
       </Card>
     </div>
   );
@@ -1800,10 +1783,8 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                   Win  (both conditions cleared): ✓ Win the Week!  (green)
                   Loss (either missed):           Carryover: N quotes / M pts  (each piece shown only if > 0, red) */}
               <tr>
-                <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate700 }}>Result</Td>
-                <Td align="right"></Td>
                 <Td
-                  colSpan={2}
+                  colSpan={5}
                   align="center"
                   style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red }}
                 >
@@ -1816,7 +1797,6 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                         return `Carryover: ${parts.join(" / ")}`;
                       })()}
                 </Td>
-                <Td align="right"></Td>
               </tr>
             </tbody>
           </table>
@@ -1833,6 +1813,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh }) {
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
+  const [hsmDrafts, setHsmDrafts] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
@@ -1840,10 +1821,13 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
   useEffect(() => {
     if (editMode && details && details.length > 0) {
       const init = {};
+      const initHsm = {};
       details.forEach(d => {
         init[d.team_member_id] = d.payroll_ytd_paid ?? null;
+        initHsm[d.team_member_id] = d.hsm_prior_total ?? null;
       });
       setDrafts(init);
+      setHsmDrafts(initHsm);
       setSaveError(null);
     }
   }, [editMode, details]);
@@ -1886,9 +1870,11 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
       for (const tmId of Object.keys(drafts)) {
         const raw = drafts[tmId];
         const val = raw === null || raw === undefined || raw === "" ? null : Number(raw);
+        const hsmRaw = hsmDrafts[tmId];
+        const hsmVal = (hsmRaw === null || hsmRaw === undefined || hsmRaw === "") ? null : Number(hsmRaw);
         const { error: updErr } = await supabase
           .from("weekly_cpr_team_detail")
-          .update({ payroll_ytd_paid: val })
+          .update({ payroll_ytd_paid: val, hsm_prior_total: hsmVal })
           .eq("weekly_cpr_report_id", reportRow.id)
           .eq("team_member_id", tmId);
         if (updErr) throw updErr;
@@ -2004,6 +1990,31 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                         value={drafts[d.team_member_id] ?? null}
                         onChange={v => setDrafts(prev => ({ ...prev, [d.team_member_id]: v }))}
                         dirty={drafts[d.team_member_id] !== (d.payroll_ytd_paid ?? null)}
+                        step={0.01}
+                        style={{ width: 100 }}
+                      />
+                    </Td>
+                  ))}
+                </tr>
+              )}
+              {/* Edit-only row: hsm_prior_total — cumulative Health + Service + Manager Bonus
+                  paid through prior weeks this quarter (excludes this week). Added to the
+                  sales_points pool when computing True Pay Bonus to compensate for prior weeks'
+                  H/S/M payments that hit payroll_ytd_paid but were funded outside the bonus pool. */}
+              {editMode && (
+                <tr style={{ background: T.amber50 || "#fef3c7" }}>
+                  <Td style={{ paddingLeft: 14, color: T.slate900, fontStyle: "italic" }}>
+                    HSM prior total
+                    <div style={{ fontSize: 11, color: T.slate600, fontWeight: 400 }}>
+                      Cumulative Health + Service + Manager bonus paid in prior weeks this quarter
+                    </div>
+                  </Td>
+                  {sorted.map(d => (
+                    <Td key={d.team_member_id} align="right">
+                      <NumberInput
+                        value={hsmDrafts[d.team_member_id] ?? null}
+                        onChange={v => setHsmDrafts(prev => ({ ...prev, [d.team_member_id]: v }))}
+                        dirty={hsmDrafts[d.team_member_id] !== (d.hsm_prior_total ?? null)}
                         step={0.01}
                         style={{ width: 100 }}
                       />
@@ -2156,14 +2167,17 @@ function LeaderboardsSection() {
 }
 
 // 22 — Prize Cart
-function PrizeCartSection({ prizeCart, team }) {
+function PrizeCartSection({ prizeCart, team, prizeBudget }) {
   const safe = Array.isArray(prizeCart) ? prizeCart : [];
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const budgetAccessory = prizeBudget == null
+    ? null
+    : `($${Math.round(Number(prizeBudget)).toLocaleString("en-US")})`;
 
   if (safe.length === 0) {
     return (
       <div>
-        <SectionHeader icon="🏆" title="Prize Cart" />
+        <SectionHeader icon="🏆" title="Prize Cart" accessory={budgetAccessory} />
         <Card><Awaiting message="No prizes loaded for this quarter yet" /></Card>
       </div>
     );
@@ -2171,7 +2185,7 @@ function PrizeCartSection({ prizeCart, team }) {
 
   return (
     <div>
-      <SectionHeader icon="🏆" title="Prize Cart" />
+      <SectionHeader icon="🏆" title="Prize Cart" accessory={budgetAccessory} />
       <Card style={{ padding: 0 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -2623,7 +2637,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section><LeaderboardsSection /></Section>
 
       {/* 22. Prize Cart */}
-      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} /></Section>
+      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} prizeBudget={data.section11?.prize_cart_budget?.value ?? null} /></Section>
 
       {/* Footer signoff */}
       <div style={{
