@@ -848,6 +848,180 @@ const StaffDirectory = ({ staff }) => {
     }
   };
 
+  // ── Add-member flow state (creates team row + invites a BCC user) ──
+  // Insert into public.team, then call invite-team-member edge function
+  // which sends a Supabase Auth invite email and creates the public.users
+  // row. Then link users.team_member_id = team.id so the sync_team_user_link
+  // trigger mirrors team.user_id. New rows are kept in `additions` so they
+  // appear immediately without a full reload of useProducerROI.
+  const [adding, setAdding] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addError, setAddError] = useState("");
+  const [addForm, setAddForm] = useState({
+    first_name:       "",
+    last_name:        "",
+    email_personal:   "",
+    role:             "",
+    role_category:    "",
+    role_level:       "",
+    category:         "agency",
+    employment_type:  "w2",
+    start_date:       new Date().toISOString().slice(0,10),
+    license_pc:       false,
+    license_lh:       false,
+    license_ips:      false,
+  });
+  const [additions, setAdditions] = useState([]);
+
+  const openAdd = () => {
+    setAddError("");
+    setAddOpen(true);
+    setAddForm({
+      first_name:      "",
+      last_name:       "",
+      email_personal:  "",
+      role:            "",
+      role_category:   "",
+      role_level:      "",
+      category:        "agency",
+      employment_type: "w2",
+      start_date:      new Date().toISOString().slice(0,10),
+      license_pc:      false,
+      license_lh:      false,
+      license_ips:     false,
+    });
+  };
+  const closeAdd = () => { setAddOpen(false); setAddError(""); };
+
+  const addMember = async () => {
+    if (adding) return;
+    setAddError("");
+
+    const firstName = (addForm.first_name || "").trim();
+    const lastName  = (addForm.last_name  || "").trim();
+    const email     = (addForm.email_personal || "").trim().toLowerCase();
+
+    if (!firstName || !lastName) { setAddError("First and last name are required."); return; }
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      setAddError("A valid personal email is required — the invite is sent there.");
+      return;
+    }
+    if (!supabase) { setAddError("No database connection."); return; }
+
+    setAdding(true);
+    const nowIso = new Date().toISOString();
+
+    try {
+      // Duplicate-email guard (active or archived).
+      const { data: existing, error: existErr } = await supabase
+        .from("team")
+        .select("id, first_name, last_name, is_active")
+        .eq("agency_id", AGENCY_ID)
+        .ilike("email_personal", email)
+        .limit(1);
+      if (existErr) { setAddError(`Duplicate check failed: ${existErr.message}`); setAdding(false); return; }
+      if (Array.isArray(existing) && existing.length > 0) {
+        const dup = existing[0];
+        setAddError(`A team member with that email already exists: ${dup.first_name} ${dup.last_name}${dup.is_active === false ? " (archived)" : ""}.`);
+        setAdding(false);
+        return;
+      }
+
+      // 1) Insert the team row. .select() forces PostgREST to return the new row.
+      const teamPayload = {
+        agency_id:       AGENCY_ID,
+        first_name:      firstName,
+        last_name:       lastName,
+        email_personal:  email,
+        role:            (addForm.role || "").trim() || null,
+        role_category:   (addForm.role_category || "").trim() || null,
+        role_level:      (addForm.role_level || "").trim() || null,
+        category:        (addForm.category || "agency").trim() || "agency",
+        employment_type: (addForm.employment_type || "").trim() || null,
+        start_date:      addForm.start_date || null,
+        hire_date:       addForm.start_date || null,
+        is_active:       true,
+        license_pc:      addForm.license_pc  === true,
+        license_lh:      addForm.license_lh  === true,
+        license_ips:     addForm.license_ips === true,
+        license_states:  [],
+        created_at:      nowIso,
+        updated_at:      nowIso,
+      };
+      const teamIns = await supabase
+        .from("team")
+        .insert(teamPayload)
+        .select("*")
+        .maybeSingle();
+      if (teamIns.error) {
+        setAddError(`team insert failed: ${teamIns.error.message}`);
+        setAdding(false);
+        return;
+      }
+      const newTeam = teamIns.data;
+      if (!newTeam || !newTeam.id) {
+        setAddError("team insert returned no row — RLS may be blocking the write. Tell Claude.");
+        setAdding(false);
+        return;
+      }
+
+      // 2) Send the invite via the invite-team-member edge function.
+      //    The function does its own owner/manager check off the caller's session.
+      const { data: invRes, error: invErr } = await supabase.functions.invoke(
+        "invite-team-member",
+        {
+          body: {
+            email,
+            full_name: `${firstName} ${lastName}`,
+            role:      "staff",
+          },
+        }
+      );
+      if (invErr || !invRes?.ok) {
+        // Roll the team row back so we don't leave an orphan.
+        await supabase.from("team").delete().eq("id", newTeam.id).eq("agency_id", AGENCY_ID);
+        const detail = invRes?.error || invRes?.detail || invErr?.message || "unknown error";
+        setAddError(`Invite failed (team row rolled back): ${detail}`);
+        setAdding(false);
+        return;
+      }
+
+      // 3) Link the freshly-created public.users row to this team row.
+      //    Non-blocking: warn if it fails — Claude can repair manually.
+      const warnings = [];
+      const userLink = await supabase
+        .from("users")
+        .update({ team_member_id: newTeam.id, updated_at: new Date().toISOString() })
+        .eq("agency_id", AGENCY_ID)
+        .ilike("email", email)
+        .is("team_member_id", null)
+        .select("id");
+      if (userLink.error) {
+        warnings.push(`users link: ${userLink.error.message}`);
+      } else if (!userLink.data || userLink.data.length === 0) {
+        warnings.push("users row not found to link — the invite went out but team.user_id will be empty until the user signs in.");
+      }
+      if (warnings.length > 0) {
+        console.error("[add member] non-blocking failures:", warnings);
+      }
+
+      // 4) Local UI: prepend the new row so it appears immediately.
+      setAdditions(prev => [newTeam, ...prev]);
+      setAddOpen(false);
+      setAddForm({
+        first_name:"", last_name:"", email_personal:"",
+        role:"", role_category:"", role_level:"",
+        category:"agency", employment_type:"w2",
+        start_date: new Date().toISOString().slice(0,10),
+        license_pc:false, license_lh:false, license_ips:false,
+      });
+    } catch (e) {
+      setAddError(e?.message || "Unexpected error while adding member.");
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const startEdit = (member) => {
     setSaveError("");
     setEditingId(member.id);
@@ -952,12 +1126,13 @@ const StaffDirectory = ({ staff }) => {
   const labelStyle = { fontSize:9, color:T.slate400, marginBottom:3, display:"block" };
 
   // Counts for the view toggle
-  const activeCount = (staff || []).filter(s => s.is_active && !terminatedIds.has(s.id)).length;
+  const mergedActive = [...additions, ...((staff || []).filter(s => !additions.some(a => a.id === s.id)))];
+  const activeCount = mergedActive.filter(s => s.is_active && !terminatedIds.has(s.id)).length;
   const archivedCount = archivedStaff.filter(s => !reactivatedIds.has(s.id)).length;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      {/* View toggle — Active vs Archived */}
+      {/* View toggle — Active vs Archived — plus Add member button */}
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
         <button
           onClick={() => setView("active")}
@@ -972,7 +1147,132 @@ const StaffDirectory = ({ staff }) => {
         {view === "archived" && archivedLoading && (
           <span style={{ fontSize:11, color:T.slate500 }}>Loading…</span>
         )}
+        <div style={{ flex:1 }} />
+        <button
+          onClick={() => addOpen ? closeAdd() : openAdd()}
+          disabled={adding}
+          style={{ padding:"6px 14px", fontSize:11, fontWeight:700, color:T.white, background:addOpen?T.slate500:T.slate900, border:"none", borderRadius:7, cursor:adding?"not-allowed":"pointer" }}>
+          {addOpen ? "Cancel" : "+ Add member"}
+        </button>
       </div>
+
+      {/* ============== ADD MEMBER PANEL ============== */}
+      {addOpen && (
+        <Card style={{ border:`2px solid ${T.slate900}`, background:T.white, marginBottom:4 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:6 }}>Add new team member</div>
+          <div style={{ fontSize:11, color:T.slate600, marginBottom:14, lineHeight:1.55 }}>
+            Creates a team row, sends a Supabase Auth invite to the personal email, and links the new BCC user back to this team row once they sign in. Role defaults to <code>staff</code> with no module access — set <code>allowed_modules</code> in Settings after they accept.
+          </div>
+
+          {/* Row 1: name + email */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.5fr", gap:10, marginBottom:10 }}>
+            <div>
+              <label style={labelStyle}>First name *</label>
+              <input style={inputStyle} value={addForm.first_name} onChange={e => setAddForm(f => ({ ...f, first_name: e.target.value }))} />
+            </div>
+            <div>
+              <label style={labelStyle}>Last name *</label>
+              <input style={inputStyle} value={addForm.last_name} onChange={e => setAddForm(f => ({ ...f, last_name: e.target.value }))} />
+            </div>
+            <div>
+              <label style={labelStyle}>Personal email * (invite is sent here)</label>
+              <input type="email" style={inputStyle} value={addForm.email_personal} onChange={e => setAddForm(f => ({ ...f, email_personal: e.target.value }))} placeholder="first.last@example.com" />
+            </div>
+          </div>
+
+          {/* Row 2: role, role category, role level */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+            <div>
+              <label style={labelStyle}>Role</label>
+              <select style={inputStyle} value={addForm.role} onChange={e => {
+                const r = e.target.value;
+                const rc = (r === "Acquisition" || r === "Inside Sales") ? "Sales"
+                         : (r === "Reception"   || r === "Escalation")   ? "Retention"
+                         : addForm.role_category;
+                setAddForm(f => ({ ...f, role: r, role_category: rc }));
+              }}>
+                <option value="">—</option>
+                <option value="Acquisition">Acquisition</option>
+                <option value="Inside Sales">Inside Sales</option>
+                <option value="Reception">Reception</option>
+                <option value="Escalation">Escalation</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Role category</label>
+              <select style={inputStyle} value={addForm.role_category} onChange={e => setAddForm(f => ({ ...f, role_category: e.target.value }))}>
+                <option value="">—</option>
+                <option value="Sales">Sales</option>
+                <option value="Retention">Retention</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Role level</label>
+              <select style={inputStyle} value={addForm.role_level} onChange={e => setAddForm(f => ({ ...f, role_level: e.target.value }))}>
+                <option value="">—</option>
+                <option value="Owner">Owner</option>
+                <option value="Office Manager">Office Manager</option>
+                <option value="Unit Manager">Unit Manager</option>
+                <option value="Section Manager">Section Manager</option>
+                <option value="Account Manager">Account Manager</option>
+                <option value="Account Associate">Account Associate</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Row 3: category, employment type, start date */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+            <div>
+              <label style={labelStyle}>Category</label>
+              <select style={inputStyle} value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))}>
+                <option value="agency">Agency team</option>
+                <option value="admin">Admin team</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Employment type</label>
+              <select style={inputStyle} value={addForm.employment_type} onChange={e => setAddForm(f => ({ ...f, employment_type: e.target.value }))}>
+                <option value="w2">W-2 Employee</option>
+                <option value="family">Family Employee (W-2)</option>
+                <option value="1099">1099 Contractor</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Start date</label>
+              <input type="date" style={inputStyle} value={addForm.start_date} onChange={e => setAddForm(f => ({ ...f, start_date: e.target.value }))} />
+            </div>
+          </div>
+
+          {/* Row 4: licensing */}
+          <div style={{ marginBottom:14 }}>
+            <label style={labelStyle}>Licensing (held today)</label>
+            <div style={{ display:"flex", gap:14, alignItems:"center", paddingTop:4 }}>
+              <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.slate800, cursor:"pointer" }}>
+                <input type="checkbox" checked={addForm.license_pc} onChange={e => setAddForm(f => ({ ...f, license_pc: e.target.checked }))} /> P&amp;C
+              </label>
+              <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.slate800, cursor:"pointer" }}>
+                <input type="checkbox" checked={addForm.license_lh} onChange={e => setAddForm(f => ({ ...f, license_lh: e.target.checked }))} /> L&amp;H
+              </label>
+              <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.slate800, cursor:"pointer" }}>
+                <input type="checkbox" checked={addForm.license_ips} onChange={e => setAddForm(f => ({ ...f, license_ips: e.target.checked }))} /> IPS
+              </label>
+            </div>
+          </div>
+
+          {addError && (
+            <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
+              {addError}
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+            <button onClick={closeAdd} disabled={adding} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:"none", borderRadius:7, cursor:adding?"not-allowed":"pointer" }}>Cancel</button>
+            <button onClick={addMember} disabled={adding} style={{ padding:"7px 16px", fontSize:11, fontWeight:700, color:T.white, background:adding?T.slate400:T.slate900, border:"none", borderRadius:7, cursor:adding?"not-allowed":"pointer" }}>
+              {adding ? "Adding…" : "Save & Invite"}
+            </button>
+          </div>
+        </Card>
+      )}
 
       {/* ============== ARCHIVED VIEW ============== */}
       {view === "archived" && !archivedLoading && archivedError && (
@@ -1058,7 +1358,7 @@ const StaffDirectory = ({ staff }) => {
       })}
 
       {/* ============== ACTIVE VIEW (existing card list) ============== */}
-      {view === "active" && staff.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
+      {view === "active" && mergedActive.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
         // Merge any saved override on top of the loaded row.
         const member = overrides[raw.id] ? { ...raw, ...overrides[raw.id] } : raw;
         const isExpanded = expanded === member.id;
