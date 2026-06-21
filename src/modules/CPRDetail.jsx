@@ -1813,7 +1813,6 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh }) {
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
-  const [hsmDrafts, setHsmDrafts] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
@@ -1821,13 +1820,10 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
   useEffect(() => {
     if (editMode && details && details.length > 0) {
       const init = {};
-      const initHsm = {};
       details.forEach(d => {
         init[d.team_member_id] = d.payroll_ytd_paid ?? null;
-        initHsm[d.team_member_id] = d.hsm_prior_total ?? null;
       });
       setDrafts(init);
-      setHsmDrafts(initHsm);
       setSaveError(null);
     }
   }, [editMode, details]);
@@ -1870,11 +1866,9 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
       for (const tmId of Object.keys(drafts)) {
         const raw = drafts[tmId];
         const val = raw === null || raw === undefined || raw === "" ? null : Number(raw);
-        const hsmRaw = hsmDrafts[tmId];
-        const hsmVal = (hsmRaw === null || hsmRaw === undefined || hsmRaw === "") ? null : Number(hsmRaw);
         const { error: updErr } = await supabase
           .from("weekly_cpr_team_detail")
-          .update({ payroll_ytd_paid: val, hsm_prior_total: hsmVal })
+          .update({ payroll_ytd_paid: val })
           .eq("weekly_cpr_report_id", reportRow.id)
           .eq("team_member_id", tmId);
         if (updErr) throw updErr;
@@ -1997,31 +1991,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                   ))}
                 </tr>
               )}
-              {/* Edit-only row: hsm_prior_total — cumulative Health + Service + Manager Bonus
-                  paid through prior weeks this quarter (excludes this week). Added to the
-                  sales_points pool when computing True Pay Bonus to compensate for prior weeks'
-                  H/S/M payments that hit payroll_ytd_paid but were funded outside the bonus pool. */}
-              {editMode && (
-                <tr style={{ background: T.amber50 || "#fef3c7" }}>
-                  <Td style={{ paddingLeft: 14, color: T.slate900, fontStyle: "italic" }}>
-                    HSM prior total
-                    <div style={{ fontSize: 11, color: T.slate600, fontWeight: 400 }}>
-                      Cumulative Health + Service + Manager bonus paid in prior weeks this quarter
-                    </div>
-                  </Td>
-                  {sorted.map(d => (
-                    <Td key={d.team_member_id} align="right">
-                      <NumberInput
-                        value={hsmDrafts[d.team_member_id] ?? null}
-                        onChange={v => setHsmDrafts(prev => ({ ...prev, [d.team_member_id]: v }))}
-                        dirty={hsmDrafts[d.team_member_id] !== (d.hsm_prior_total ?? null)}
-                        step={0.01}
-                        style={{ width: 100 }}
-                      />
-                    </Td>
-                  ))}
-                </tr>
-              )}
+
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week total</Td>
                 {sorted.map(d => {
