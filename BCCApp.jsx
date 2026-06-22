@@ -585,7 +585,7 @@ const ComingSoon = ({ module }) => (
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
 // for the Claude module which connects to Claude.ai externally.
-const ModuleRouter = ({ active, onNavigate, userRole }) => {
+const ModuleRouter = ({ active, onNavigate, userRole, allowedModules }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
@@ -622,12 +622,16 @@ const ModuleRouter = ({ active, onNavigate, userRole }) => {
       </div>
     ),
   };
-  // Access guard — enforce nav role at the module level so direct URL
-  // navigation (e.g. ?module=financials) cannot bypass the sidebar filter.
-  // Mirrors the same role check used by filteredNav in BCCApp().
+  // Access guard — enforce nav role + allowed_modules at the module level so
+  // direct URL navigation (e.g. ?module=financials) cannot bypass the sidebar
+  // filter. Mirrors the same checks used by filteredNav in BCCApp().
   const navItem = NAV_ITEMS.find(n => n.id === active);
-  if (navItem && !navItem.roles.includes(userRole)) {
-    return <AccessDenied />;
+  if (navItem) {
+    const roleOk = !navItem.roles || navItem.roles.includes(userRole);
+    const moduleOk = !Array.isArray(allowedModules) || allowedModules.includes(active);
+    if (!roleOk || !moduleOk) {
+      return <AccessDenied />;
+    }
   }
   return modules[active] || <ComingSoon module={active} />;
 };
@@ -644,13 +648,30 @@ const AccessDenied = () => (
   </div>
 );
 
-// ─── CPR Detail deep-link routing ─────────────────────────────────────────────
-// Detects URL path /cpr/YYYY-MM-DD and returns the date string; null otherwise.
-// Used to render the standalone Weekly CPR viewer in place of ModuleRouter.
-function detectCPRWeekDate() {
-  if (typeof window === "undefined") return null;
-  const m = /^\/cpr\/(\d{4}-\d{2}-\d{2})\/?$/.exec(window.location.pathname || "");
-  return m ? m[1] : null;
+// ─── URL ↔ App-state routing ──────────────────────────────────────────────────
+// Maps the browser URL pathname to {module, cprWeekDate} so refresh stays on the
+// same page. Vercel SPA fallback (vercel.json: /(.*) → /index.html) means any
+// path serves index.html; this function then resolves it back to app state.
+//   /                  → { module: "dashboard", cprWeekDate: null }
+//   /<navItemId>       → { module: <navItemId>, cprWeekDate: null }
+//   /cpr/YYYY-MM-DD    → { module: "cpr",       cprWeekDate: "YYYY-MM-DD" }
+//   anything else      → { module: "dashboard", cprWeekDate: null }
+const KNOWN_MODULE_IDS = NAV_ITEMS.filter(n => n.type !== "divider").map(n => n.id);
+function parseUrl(pathname) {
+  const p = (pathname || "/").replace(/\/+$/, "") || "/";
+  const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);
+  if (cprMatch) return { module: "cpr", cprWeekDate: cprMatch[1] };
+  if (p === "/" || p === "/dashboard") return { module: "dashboard", cprWeekDate: null };
+  const slugMatch = /^\/([a-z][a-z0-9-]*)$/.exec(p);
+  if (slugMatch && KNOWN_MODULE_IDS.includes(slugMatch[1])) {
+    return { module: slugMatch[1], cprWeekDate: null };
+  }
+  return { module: "dashboard", cprWeekDate: null };
+}
+function urlForState(moduleId, cprWeekDate) {
+  if (cprWeekDate) return `/cpr/${cprWeekDate}`;
+  if (moduleId === "dashboard") return "/";
+  return `/${moduleId}`;
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -666,29 +687,47 @@ export default function BCCApp() {
     return /type=(invite|recovery|signup)/.test(h);
   });
 
-  const [activeModule, setActiveModule] = useState("dashboard");
+  // Initial route read from the URL — refresh lands you on the same page.
+  const _initialRoute = (typeof window !== "undefined")
+    ? parseUrl(window.location.pathname)
+    : { module: "dashboard", cprWeekDate: null };
+  const [activeModule, setActiveModule] = useState(_initialRoute.module);
   // CPR detail deep-link state: set when URL matches /cpr/YYYY-MM-DD, cleared on close.
-  const [cprWeekDate, setCprWeekDate] = useState(() => detectCPRWeekDate());
-  // Re-evaluate the URL on browser back/forward so navigation stays in sync.
+  const [cprWeekDate, setCprWeekDate] = useState(_initialRoute.cprWeekDate);
+  // Browser back/forward: sync both pieces of state from the URL.
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const onPop = () => setCprWeekDate(detectCPRWeekDate());
+    const onPop = () => {
+      const r = parseUrl(window.location.pathname);
+      setActiveModule(r.module);
+      setCprWeekDate(r.cprWeekDate);
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  // Close the CPR detail page and return to the main BCC view.
+  // App-state → URL: any change to activeModule or cprWeekDate pushes the URL.
+  // Every nav click, dashboard tile, and child-component onNavigate call routes
+  // through this single effect, so there is no setActiveModule call site that
+  // needs to know about URLs.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const desired = urlForState(activeModule, cprWeekDate);
+    const current = window.location.pathname || "/";
+    if (current !== desired) {
+      window.history.pushState({}, "", desired);
+    }
+  }, [activeModule, cprWeekDate]);
+
+  // Navigate to a specific CPR week. URL sync happens in the activeModule/cprWeekDate effect.
   const handleNavigateCPRWeek = (newDateISO) => {
     if (!newDateISO || !/^\d{4}-\d{2}-\d{2}$/.test(newDateISO)) return;
+    setActiveModule("cpr");
     setCprWeekDate(newDateISO);
-    if (typeof window !== "undefined") {
-      window.history.pushState({}, "", `/cpr/${newDateISO}`);
-    }
   };
 
+  // Close the CPR detail page → land on the CPR list at /cpr (the URL effect pushes it).
   const handleCloseCPR = () => {
-    if (typeof window !== "undefined" && window.location.pathname.startsWith("/cpr/")) {
-      window.history.pushState({}, "", "/");
-    }
+    setActiveModule("cpr");
     setCprWeekDate(null);
   };
   const viewport = useViewport();
@@ -784,8 +823,9 @@ export default function BCCApp() {
     };
   }, []);
 
-  // (Per-user allowed_modules override was removed 2026-06-22. Access is now
-  // determined purely by users.role + NAV_ITEMS.roles allowlist.)
+  // allowed_modules for the logged-in user. null = all modules (owner/manager
+  // default). An array means "only these module ids are visible".
+  const [allowedModules, setAllowedModules] = useState(null);
 
   // Load real agency + the logged-in user's BCC profile once past the auth gate.
   useEffect(() => {
@@ -807,7 +847,7 @@ export default function BCCApp() {
       if (email) {
         const { data: rows } = await supabase
           .from("users")
-          .select("full_name, role, email")
+          .select("full_name, role, allowed_modules, email")
           .eq("agency_id", AGENCY_ID)
           .ilike("email", email)
           .limit(1);
@@ -818,6 +858,14 @@ export default function BCCApp() {
       // Previously fell back to "owner" — meant any authed user without a users
       // row got full admin access. Standing rule: deny by default.
       const role = profile?.role || "staff";
+      // allowed_modules override is bypassed for admin tier (owner+manager);
+      // they always get the full nav their role permits.
+      const mods = ADMIN_ROLES.includes(role)
+        ? null
+        : (Array.isArray(profile?.allowed_modules) && profile.allowed_modules.length > 0
+            ? profile.allowed_modules
+            : null);
+      setAllowedModules(mods);
 
       const displayName = profile?.full_name || ag?.owner_name || AGENCY_DEFAULTS.user.name;
       setAgency({
@@ -863,11 +911,14 @@ export default function BCCApp() {
   }
 
   // ── Authenticated app (unchanged below) ────────────────────────────────────
-  // Pure role-based filter (per-user narrowing was removed 2026-06-22).
-  // Dividers pass through unconditionally; the second pass below drops orphans.
+  // First pass: filter by role + allowed_modules, keeping divider sentinels.
   const filteredNav = NAV_ITEMS.filter(n => {
     if (n.type === "divider") return true;
-    return n.roles.includes(agency.user.role);
+    if (!n.roles.includes(agency.user.role)) return false;
+    // If allowed_modules is set (non-owner/manager with explicit module list),
+    // only show those modules. Settings always restricted to owner via roles.
+    if (Array.isArray(allowedModules)) return allowedModules.includes(n.id);
+    return true;
   });
   // Second pass: drop dividers that would render as visual artifacts
   // (leading, trailing, or adjacent to another divider after filtering).
@@ -1040,7 +1091,7 @@ export default function BCCApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} />
+                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} allowedModules={allowedModules} />
               )}
             </div>
 
