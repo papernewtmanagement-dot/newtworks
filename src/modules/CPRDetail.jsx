@@ -95,9 +95,31 @@ const fmtPct = (n, decimals = 2) => {
   return v.toFixed(decimals) + "%";
 };
 
+// ── Section navigator config ─────────────────────────────────
+// Anchor ids tag each <Section id=...> below; the nav at the top of the
+// CPR page jumps to them via in-page anchor scroll. Keep in render order.
+const SECTION_NAV = [
+  { id: "opener",         label: "Opener" },
+  { id: "next-week",      label: "Next Wk" },
+  { id: "codes",          label: "Codes" },
+  { id: "team-check",     label: "Team ✓" },
+  { id: "personal-check", label: "Personal ✓" },
+  { id: "reqs",           label: "Reqs" },
+  { id: "agency-perf",    label: "Agency" },
+  { id: "smvc",           label: "SMVC" },
+  { id: "claims",         label: "Claims" },
+  { id: "non-pays",       label: "Non-Pays" },
+  { id: "campaigns",      label: "Campaigns" },
+  { id: "hours",          label: "Hours" },
+  { id: "team-activity",  label: "Activity" },
+  { id: "payroll",        label: "Payroll" },
+  { id: "leaderboards",   label: "Leaders" },
+  { id: "prize-cart",     label: "Prizes" },
+];
+
 // ── Layout primitives ─────────────────────────────────────────
-const Section = ({ children, style = {} }) => (
-  <section style={{ marginBottom: 20, ...style }}>{children}</section>
+const Section = ({ children, id, style = {} }) => (
+  <section id={id} style={{ marginBottom: 20, scrollMarginTop: 70, ...style }}>{children}</section>
 );
 
 const Card = ({ children, style = {} }) => (
@@ -2396,70 +2418,113 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     );
   }
 
+  // Smooth scroll to a section anchor without changing the URL hash (avoids
+  // polluting browser history). Used by the section navigator chip bar.
+  const scrollToSection = (id) => {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const canGoNext = !!onNavigateWeek && addDaysISO(weekDate, 7) <= todayISO();
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      {/* Top breadcrumb / back / edit */}
+      {/* ── Top controls: title · week · nav · actions — one line, wraps on phone ── */}
       <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 16, gap: 12, flexWrap: "wrap",
+        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        marginBottom: 12,
       }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>
-            📊 CPR Recap {edit.active && <span style={{ fontSize: 13, color: T.amber700 || "#a16207", fontWeight: 700, marginLeft: 10 }}>· Editing</span>}
-          </div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {onNavigateWeek && !edit.active ? (
-              <button
-                onClick={() => onNavigateWeek(addDaysISO(weekDate, -7))}
-                style={{
-                  padding: "3px 8px", fontSize: 11, fontWeight: 600,
-                  background: T.white, color: T.slate700,
-                  border: `1px solid ${T.slate300}`, borderRadius: 5,
-                  cursor: "pointer",
-                }}
-                title={`Go to week ending ${addDaysISO(weekDate, -7)}`}
-              >← Prev week</button>
-            ) : null}
-            <span>Week ending {fmtDateLong(weekDate)} &nbsp;·&nbsp; ({fmtRange(weekDate)})</span>
-            {onNavigateWeek && !edit.active && addDaysISO(weekDate, 7) && addDaysISO(weekDate, 7) <= todayISO() ? (
-              <button
-                onClick={() => onNavigateWeek(addDaysISO(weekDate, 7))}
-                style={{
-                  padding: "3px 8px", fontSize: 11, fontWeight: 600,
-                  background: T.white, color: T.slate700,
-                  border: `1px solid ${T.slate300}`, borderRadius: 5,
-                  cursor: "pointer",
-                }}
-                title={`Go to week ending ${addDaysISO(weekDate, 7)}`}
-              >Next week →</button>
-            ) : null}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {canEdit && !edit.active && (
-            <button
-              onClick={doStartEdit}
-              style={{
-                padding: "8px 14px", fontSize: 12, fontWeight: 700,
-                background: T.blue, color: T.white, border: "none",
-                borderRadius: 8, cursor: "pointer",
-              }}
-            >✎ Edit</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden="true">📊</span>
+          <span style={{
+            fontSize: 15, fontWeight: 800, color: T.slate900,
+            letterSpacing: "-0.02em", whiteSpace: "nowrap",
+          }}>CPR · {fmtRange(weekDate)}</span>
+          {edit.active && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: "#a16207",
+              background: "#fef3c7", padding: "2px 7px", borderRadius: 4,
+              letterSpacing: 0.4, textTransform: "uppercase",
+            }}>Editing</span>
           )}
-          <button
-            onClick={onClose}
-            disabled={edit.active && edit.totalDirty > 0 ? false : false}
-            style={{
-              padding: "8px 14px", fontSize: 12, fontWeight: 600,
-              background: T.white, color: T.slate700, border: `1px solid ${T.slate300}`,
-              borderRadius: 8, cursor: "pointer",
-            }}
-          >← Back to BCC</button>
         </div>
+        {onNavigateWeek && !edit.active && (
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <button
+              onClick={() => onNavigateWeek(addDaysISO(weekDate, -7))}
+              title={`Week ending ${addDaysISO(weekDate, -7)}`}
+              aria-label="Previous week"
+              style={{
+                padding: "5px 9px", fontSize: 12, fontWeight: 700,
+                background: T.white, color: T.slate700,
+                border: `1px solid ${T.slate300}`, borderRadius: 6,
+                cursor: "pointer", lineHeight: 1,
+              }}
+            >◀</button>
+            <button
+              onClick={() => canGoNext && onNavigateWeek(addDaysISO(weekDate, 7))}
+              disabled={!canGoNext}
+              title={canGoNext ? `Week ending ${addDaysISO(weekDate, 7)}` : "No later week yet"}
+              aria-label="Next week"
+              style={{
+                padding: "5px 9px", fontSize: 12, fontWeight: 700,
+                background: T.white, color: canGoNext ? T.slate700 : T.slate400,
+                border: `1px solid ${T.slate300}`, borderRadius: 6,
+                cursor: canGoNext ? "pointer" : "not-allowed", lineHeight: 1,
+                opacity: canGoNext ? 1 : 0.55,
+              }}
+            >▶</button>
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 4 }} aria-hidden="true" />
+        {canEdit && !edit.active && (
+          <button
+            onClick={doStartEdit}
+            style={{
+              padding: "6px 12px", fontSize: 12, fontWeight: 700,
+              background: T.blue, color: T.white, border: "none",
+              borderRadius: 7, cursor: "pointer", flexShrink: 0,
+            }}
+          >✎ Edit</button>
+        )}
+        <button
+          onClick={onClose}
+          style={{
+            padding: "6px 12px", fontSize: 12, fontWeight: 600,
+            background: T.white, color: T.slate700, border: `1px solid ${T.slate300}`,
+            borderRadius: 7, cursor: "pointer", flexShrink: 0,
+          }}
+        >← Back</button>
       </div>
 
+      {/* ── Section navigator — horizontal-scroll chip bar; click jumps to section ── */}
+      <nav
+        aria-label="CPR section navigator"
+        style={{
+          marginBottom: 16,
+          overflowX: "auto", WebkitOverflowScrolling: "touch",
+          background: T.slate50, border: `1px solid ${T.slate200}`,
+          borderRadius: 8, padding: "6px 8px",
+        }}
+      >
+        <div style={{ display: "flex", gap: 5, whiteSpace: "nowrap" }}>
+          {SECTION_NAV.map(sec => (
+            <button
+              key={sec.id}
+              onClick={() => scrollToSection(sec.id)}
+              style={{
+                fontSize: 11, fontWeight: 600, color: T.slate700,
+                padding: "5px 10px", borderRadius: 6,
+                border: `1px solid ${T.slate200}`, background: T.white,
+                cursor: "pointer", flexShrink: 0,
+              }}
+            >{sec.label}</button>
+          ))}
+        </div>
+      </nav>
+
       {/* 1. Opener */}
-      <Section>
+      <Section id="opener">
         <OpenerSection
           weekDate={weekDate} report={data.report}
           editMode={edit.active}
@@ -2470,7 +2535,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 3. Looking at next week */}
-      <Section>
+      <Section id="next-week">
         <LookingNextWeekSection
           report={data.report}
           editMode={edit.active}
@@ -2483,7 +2548,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Divider />
 
       {/* 5. Code reds/yellows */}
-      <Section>
+      <Section id="codes">
         <CodeRedsYellowsSection
           details={data.details} team={data.team}
           editMode={edit.active}
@@ -2494,7 +2559,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 6. Team checklist — single, report-level */}
-      <Section>
+      <Section id="team-check">
         <TeamChecklistSection
           report={data.report}
           editMode={edit.active}
@@ -2505,7 +2570,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 7. Personal checklist */}
-      <Section>
+      <Section id="personal-check">
         <PersonalChecklistSection
           details={data.details} team={data.team}
           editMode={edit.active}
@@ -2516,7 +2581,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 8. Requirements — Modified column editable */}
-      <Section>
+      <Section id="reqs">
         <RequirementsSection
           details={data.details} team={data.team}
           runtimeReqs={data.runtimeReqs}
@@ -2530,7 +2595,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Divider />
 
       {/* 10. Agency performance */}
-      <Section>
+      <Section id="agency-perf">
         <AgencyPerformanceSection
           snapshot={data.snapshot}
           snapshotPrior={data.snapshotPrior}
@@ -2541,11 +2606,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 11. SMVC & Scorecard */}
-      <Section><SMVCScorecardSection section11={data.section11} /></Section>
+      <Section id="smvc"><SMVCScorecardSection section11={data.section11} /></Section>
 
 
       {/* 12. Claims */}
-      <Section>
+      <Section id="claims">
         <ClaimsSection
           report={data.report}
           editMode={edit.active}
@@ -2556,7 +2621,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 13. Non-pays */}
-      <Section>
+      <Section id="non-pays">
         <NonPaysSection
           report={data.report}
           editMode={edit.active}
@@ -2567,7 +2632,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 14. Campaigns */}
-      <Section>
+      <Section id="campaigns">
         <CampaignsSection
           report={data.report}
           campaignPriors={data.campaignPriors}
@@ -2582,7 +2647,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Divider />
 
       {/* 16. Hours worked — read-only, runtime-computed from TimeClock */}
-      <Section>
+      <Section id="hours">
         <HoursWorkedSection
           details={data.details} team={data.team}
           runtimeHours={data.runtimeHours}
@@ -2590,7 +2655,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 17. Team activity */}
-      <Section>
+      <Section id="team-activity">
         <TeamActivitySection
           details={data.details} team={data.team}
           truePayHistory={data.truePayHistory}
@@ -2604,16 +2669,16 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} /></Section>
+      <Section id="payroll"><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} /></Section>
 
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
 
       {/* 21. Leaderboards */}
-      <Section><LeaderboardsSection /></Section>
+      <Section id="leaderboards"><LeaderboardsSection /></Section>
 
       {/* 22. Prize Cart */}
-      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} prizeBudget={data.section11?.prize_cart_budget?.value ?? null} /></Section>
+      <Section id="prize-cart"><PrizeCartSection prizeCart={data.prizeCart} team={data.team} prizeBudget={data.section11?.prize_cart_budget?.value ?? null} /></Section>
 
       {/* Footer signoff */}
       <div style={{
