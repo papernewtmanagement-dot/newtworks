@@ -585,7 +585,7 @@ const ComingSoon = ({ module }) => (
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
 // for the Claude module which connects to Claude.ai externally.
-const ModuleRouter = ({ active, onNavigate, userRole, allowedModules }) => {
+const ModuleRouter = ({ active, onNavigate, userRole }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
@@ -622,14 +622,14 @@ const ModuleRouter = ({ active, onNavigate, userRole, allowedModules }) => {
       </div>
     ),
   };
-  // Access guard — enforce nav role + allowed_modules at the module level so
-  // direct URL navigation (e.g. ?module=financials) cannot bypass the sidebar
-  // filter. Mirrors the same checks used by filteredNav in BCCApp().
+  // Access guard — enforce nav role at the module level so direct URL
+  // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
+  // the same role check used by filteredNav in BCCApp(). Per-user module
+  // overrides were dropped (migration 032 / 2026-06-22) — role-only now.
   const navItem = NAV_ITEMS.find(n => n.id === active);
   if (navItem) {
     const roleOk = !navItem.roles || navItem.roles.includes(userRole);
-    const moduleOk = !Array.isArray(allowedModules) || allowedModules.includes(active);
-    if (!roleOk || !moduleOk) {
+    if (!roleOk) {
       return <AccessDenied />;
     }
   }
@@ -823,10 +823,6 @@ export default function BCCApp() {
     };
   }, []);
 
-  // allowed_modules for the logged-in user. null = all modules (owner/manager
-  // default). An array means "only these module ids are visible".
-  const [allowedModules, setAllowedModules] = useState(null);
-
   // Load real agency + the logged-in user's BCC profile once past the auth gate.
   useEffect(() => {
     if (authState !== "in") return;
@@ -858,12 +854,6 @@ export default function BCCApp() {
       // Previously fell back to "owner" — meant any authed user without a users
       // row got full admin access. Standing rule: deny by default.
       const role = profile?.role || "staff";
-      // Per-user allowed_modules was dropped (migration 032 / 2026-06-22).
-      // Access is now purely role-based; allowedModules stays null for everyone
-      // so filteredNav falls through to the role check. Kept the state slot for
-      // the ModuleRouter prop wiring rather than ripping it out everywhere.
-      setAllowedModules(null);
-
       const displayName = profile?.full_name || ag?.owner_name || AGENCY_DEFAULTS.user.name;
       setAgency({
         name: ag?.name || AGENCY_DEFAULTS.name,
@@ -908,14 +898,10 @@ export default function BCCApp() {
   }
 
   // ── Authenticated app (unchanged below) ────────────────────────────────────
-  // First pass: filter by role + allowed_modules, keeping divider sentinels.
+  // First pass: filter by role, keeping divider sentinels.
   const filteredNav = NAV_ITEMS.filter(n => {
     if (n.type === "divider") return true;
-    if (!n.roles.includes(agency.user.role)) return false;
-    // If allowed_modules is set (non-owner/manager with explicit module list),
-    // only show those modules. Settings always restricted to owner via roles.
-    if (Array.isArray(allowedModules)) return allowedModules.includes(n.id);
-    return true;
+    return n.roles.includes(agency.user.role);
   });
   // Second pass: drop dividers that would render as visual artifacts
   // (leading, trailing, or adjacent to another divider after filtering).
@@ -1088,7 +1074,7 @@ export default function BCCApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} allowedModules={allowedModules} />
+                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} />
               )}
             </div>
 

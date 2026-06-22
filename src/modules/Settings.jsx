@@ -39,30 +39,6 @@ const ROLES = {
   accountant:{ label:"Accountant", color:T.purple, bg:T.purpleLt,description:"Financials and Documents read-only access" },
 };
 
-// Canonical module list — ids MUST match NAV_ITEMS in BCCApp.jsx.
-// Used by the invite flow to grant module-level access per teammate.
-const MODULES = [
-  { id:"dashboard",   label:"Dashboard"     },
-  { id:"financials",  label:"Financials"    },
-  { id:"memory",      label:"Memory"        },
-  { id:"compliance",  label:"Compliance"    },
-  { id:"automations", label:"Automations"   },
-  { id:"social",      label:"Social Media"  },
-  { id:"tasks",       label:"Tasks & Goals" },
-  { id:"alerts",      label:"Alerts"        },
-  { id:"documents",   label:"Documents"     },
-  { id:"monthlyclose",label:"Monthly Close" },
-  { id:"hr",          label:"HR & People"   },
-  { id:"chat",        label:"Claude Chat"   },
-];
-
-// Sensible default module sets per role (owner/manager = all -> null).
-const DEFAULT_MODULES_BY_ROLE = {
-  staff:      ["dashboard","social","tasks","alerts","documents","chat"],
-  readonly:   ["dashboard","tasks","alerts","chat"],
-  accountant: ["dashboard","financials","documents","monthlyclose","alerts","chat"],
-};
-
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
@@ -142,27 +118,15 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
 };
 
 // ─── Invite Modal ─────────────────────────────────────────────
+// Per-user module overrides were dropped (migration 032 / 2026-06-22).
+// Access is now purely role-based — owner/manager get full nav, all other
+// roles see the team-tier modules defined in BCCApp.jsx TEAM_VISIBLE_ROLES.
 const InviteModal = ({ onSave, onCancel, sending }) => {
   const [form, setForm] = useState({ email:"", name:"", role:"staff" });
-  // Module selection. Initialize from the role default; owner/manager = all.
-  const [mods, setMods] = useState(() => DEFAULT_MODULES_BY_ROLE["staff"] || []);
-  const [touchedMods, setTouchedMods] = useState(false);
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
+  const pickRole = (key) => set("role", key);
 
-  const pickRole = (key) => {
-    set("role", key);
-    // If the admin hasn't manually edited modules yet, refresh to the role default.
-    if (!touchedMods) {
-      if (key === "manager") setMods(MODULES.map(m => m.id));
-      else setMods(DEFAULT_MODULES_BY_ROLE[key] || []);
-    }
-  };
-  const toggleMod = (id) => {
-    setTouchedMods(true);
-    setMods(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
-  const valid = form.email.trim() && form.name.trim() && mods.length > 0;
+  const valid = form.email.trim() && form.name.trim();
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
@@ -197,38 +161,11 @@ const InviteModal = ({ onSave, onCancel, sending }) => {
               ))}
             </div>
           </div>
-          {/* Module access */}
-          <div style={{ marginBottom:4 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-              <label style={{ fontSize:11, fontWeight:600, color:T.slate600 }}>MODULE ACCESS</label>
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={() => { setTouchedMods(true); setMods(MODULES.map(m=>m.id)); }}
-                  style={{ fontSize:10, color:T.blue, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>Select all</button>
-                <button onClick={() => { setTouchedMods(true); setMods([]); }}
-                  style={{ fontSize:10, color:T.slate400, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>Clear</button>
-              </div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:6 }}>
-              {MODULES.map(m => {
-                const on = mods.includes(m.id);
-                return (
-                  <div key={m.id} onClick={() => toggleMod(m.id)}
-                    style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, cursor:"pointer", border:`1px solid ${on?T.slate900:T.slate200}`, background:on?T.slate100:T.white }}>
-                    <div style={{ width:14, height:14, borderRadius:4, border:`2px solid ${on?T.slate900:T.slate300}`, background:on?T.slate900:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                      {on && <span style={{ color:T.white, fontSize:9, lineHeight:1 }}>✓</span>}
-                    </div>
-                    <span style={{ fontSize:11, color:on?T.slate900:T.slate600, fontWeight:on?600:500 }}>{m.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ fontSize:10, color:T.slate400, marginTop:6 }}>{mods.length} module{mods.length===1?"":"s"} selected. They will see only these tabs.</div>
-          </div>
         </div>
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8, position:"sticky", bottom:0, background:T.white }}>
           <button onClick={onCancel} disabled={sending} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
           <button
-            onClick={() => valid && !sending && onSave({ ...form, allowed_modules: mods })}
+            onClick={() => valid && !sending && onSave(form)}
             disabled={!valid || sending}
             style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:(valid&&!sending)?T.blue:"#94A3B8", border:"none", borderRadius:7, cursor:(valid&&!sending)?"pointer":"default" }}
           >{sending ? "Sending…" : "Send Invite"}</button>
@@ -267,8 +204,8 @@ const TeamAccess = ({ users }) => {
 
   // Real invite: calls the invite-team-member edge function, which (1) sends a
   // Supabase Auth invite email with a magic link, and (2) upserts the users row
-  // with role + allowed_modules. The caller's JWT is forwarded so the function
-  // can verify the caller is an owner/manager before inviting.
+  // with role. The caller's JWT is forwarded so the function can verify the
+  // caller is an owner/manager before inviting.
   const handleInvite = async (form) => {
     setSending(true);
     try {
@@ -288,7 +225,6 @@ const TeamAccess = ({ users }) => {
           email:           form.email.trim(),
           full_name:       form.name.trim(),
           role:            form.role || "staff",
-          allowed_modules: form.allowed_modules || null,
           redirect_to:     window.location.origin + "/welcome",
         }),
       });
@@ -308,7 +244,6 @@ const TeamAccess = ({ users }) => {
           name:       form.name.trim(),
           email:      form.email.trim(),
           role:       form.role || "staff",
-          allowed_modules: form.allowed_modules || null,
           last_login: "Never",
           is_active:  true,
           is_current: false,
@@ -376,11 +311,6 @@ const TeamAccess = ({ users }) => {
                   {user.pending   && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>Invite Pending</span>}
                 </div>
                 <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{user.email} · Last login: {user.last_login}</div>
-                <div style={{ fontSize:10, color:T.slate400, marginTop:2 }}>
-                  {user.role === "owner" || user.role === "manager" || !Array.isArray(user.allowed_modules)
-                    ? "Access: all modules"
-                    : `Access: ${user.allowed_modules.length} module${user.allowed_modules.length===1?"":"s"}`}
-                </div>
               </div>
 
               {/* Role */}
@@ -976,7 +906,6 @@ export default function Settings() {
                   ? new Date(u.last_login).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })
                   : "Never",
     is_active:  u.is_active !== false,
-    allowed_modules: Array.isArray(u.allowed_modules) ? u.allowed_modules : null,
     pending:    u.invite_status === "invited" || u.invite_status === "pending" || !u.auth_user_id,
     is_current: false,
   }));
