@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
@@ -383,7 +383,30 @@ export default function Playbook() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
+  // ── URL ↔ selectedId sync ─────────────────────────────────────────
+  // Page id is carried in the URL as /playbook/<confluence_page_id>.
+  // Refresh keeps you on the same page; back/forward navigates between visits.
+  const _initialSelectedId = (typeof window !== "undefined")
+    ? (/^\/playbook\/([^/]+)\/?$/.exec(window.location.pathname || "")?.[1] || null)
+    : null;
+  const [selectedId, setSelectedId] = useState(_initialSelectedId);
+  const selectPage = useCallback((id, replace = false) => {
+    setSelectedId(id);
+    if (typeof window === "undefined" || !id) return;
+    const desired = `/playbook/${encodeURIComponent(id)}`;
+    if (window.location.pathname === desired) return;
+    if (replace) window.history.replaceState({}, "", desired);
+    else window.history.pushState({}, "", desired);
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onPop = () => {
+      const m = /^\/playbook\/([^/]+)\/?$/.exec(window.location.pathname || "");
+      setSelectedId(m ? decodeURIComponent(m[1]) : null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const _vp = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -408,10 +431,9 @@ export default function Playbook() {
           const list = Array.isArray(data) ? data : [];
           setRows(list);
           // Default selection: root (no parent), or first row if no root
-          if (list.length && !selectedId) {
-            const root = list.find(r => !r.parent_page_id);
-            setSelectedId(root?.confluence_page_id || list[0]?.confluence_page_id);
-          }
+          // Default selection deferred to the auto-default useEffect below,
+          // which fires once rows are loaded AND selectedId is still null.
+          // This avoids stomping the URL-derived initial selectedId.
         }
       } catch (e) {
         if (!cancelled) { setError(e?.message || "Failed to load handbook."); setRows([]); }
@@ -422,6 +444,17 @@ export default function Playbook() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-default selection: once rows are loaded and selectedId is still
+  // null (i.e. URL was bare /playbook), pick the root page and
+  // replaceState so the address bar reflects what is being shown without
+  // adding a spurious history entry.
+  useEffect(() => {
+    if (!rows.length || selectedId) return;
+    const root = rows.find(r => !r.parent_page_id);
+    const defaultId = root?.confluence_page_id || rows[0]?.confluence_page_id;
+    if (defaultId) selectPage(defaultId, true);
+  }, [rows, selectedId, selectPage]);
 
   const tree = useMemo(() => buildTree(rows), [rows]);
   const flat = useMemo(() => flattenTree(tree), [tree]);
@@ -564,7 +597,7 @@ export default function Playbook() {
             return (
               <button
                 key={node.confluence_page_id}
-                onClick={() => { setSelectedId(node.confluence_page_id); if (_vp.isPhone) setDrawerOpen(false); }}
+                onClick={() => { selectPage(node.confluence_page_id); if (_vp.isPhone) setDrawerOpen(false); }}
                 style={{
                   width: "100%",
                   textAlign: "left",

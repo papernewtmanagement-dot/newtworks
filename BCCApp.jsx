@@ -662,7 +662,10 @@ function parseUrl(pathname) {
   const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);
   if (cprMatch) return { module: "cpr", cprWeekDate: cprMatch[1] };
   if (p === "/" || p === "/dashboard") return { module: "dashboard", cprWeekDate: null };
-  const slugMatch = /^\/([a-z][a-z0-9-]*)$/.exec(p);
+  // Accept /<module> AND /<module>/<sub-path>. Modules like handbook, playbook,
+  // and admin own their own sub-route (e.g. /handbook/<page-id>) — BCCApp only
+  // resolves the top-level module here and leaves the sub-path to the module.
+  const slugMatch = /^\/([a-z][a-z0-9-]*)(?:\/.*)?$/.exec(p);
   if (slugMatch && KNOWN_MODULE_IDS.includes(slugMatch[1])) {
     return { module: slugMatch[1], cprWeekDate: null };
   }
@@ -708,11 +711,21 @@ export default function BCCApp() {
   // App-state → URL: any change to activeModule or cprWeekDate pushes the URL.
   // Every nav click, dashboard tile, and child-component onNavigate call routes
   // through this single effect, so there is no setActiveModule call site that
-  // needs to know about URLs.
+  // needs to know about URLs. Modules that own a sub-path (handbook/playbook/
+  // admin, e.g. /handbook/<page-id>) manage that segment themselves — we only
+  // push when the TOP-LEVEL module changes, not when the full path differs.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const desired = urlForState(activeModule, cprWeekDate);
     const current = window.location.pathname || "/";
+    const currentParsed = parseUrl(current);
+    if (
+      currentParsed.module === activeModule &&
+      currentParsed.cprWeekDate === cprWeekDate
+    ) {
+      // URL already represents the same module — leave any sub-path intact.
+      return;
+    }
+    const desired = urlForState(activeModule, cprWeekDate);
     if (current !== desired) {
       window.history.pushState({}, "", desired);
     }
