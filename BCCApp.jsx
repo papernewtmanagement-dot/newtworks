@@ -847,7 +847,7 @@ export default function BCCApp() {
       if (email) {
         const { data: rows } = await supabase
           .from("users")
-          .select("full_name, role, allowed_modules, email")
+          .select("full_name, role, email")
           .eq("agency_id", AGENCY_ID)
           .ilike("email", email)
           .limit(1);
@@ -858,14 +858,11 @@ export default function BCCApp() {
       // Previously fell back to "owner" — meant any authed user without a users
       // row got full admin access. Standing rule: deny by default.
       const role = profile?.role || "staff";
-      // allowed_modules override is bypassed for admin tier (owner+manager);
-      // they always get the full nav their role permits.
-      const mods = ADMIN_ROLES.includes(role)
-        ? null
-        : (Array.isArray(profile?.allowed_modules) && profile.allowed_modules.length > 0
-            ? profile.allowed_modules
-            : null);
-      setAllowedModules(mods);
+      // Per-user allowed_modules was dropped (migration 032 / 2026-06-22).
+      // Access is now purely role-based; allowedModules stays null for everyone
+      // so filteredNav falls through to the role check. Kept the state slot for
+      // the ModuleRouter prop wiring rather than ripping it out everywhere.
+      setAllowedModules(null);
 
       const displayName = profile?.full_name || ag?.owner_name || AGENCY_DEFAULTS.user.name;
       setAgency({
