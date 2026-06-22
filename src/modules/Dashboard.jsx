@@ -151,7 +151,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
 
   return (
     <Card>
-      <SectionTitle icon="🎯" title="Standing Goals — Pace Check"
+      <SectionTitle icon="🎯" title="Standing Goals — On-Time Pace"
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Financials →</button>}
       />
       <Row
@@ -179,7 +179,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
         pacePct={g.smvc?.pace_pct}
       />
       <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
-        {g.as_of_note || "Pace computed live · agency_snapshot · sf_program_targets"}
+        {g.as_of_note || "On-time = annualized projection at current pace · Live"}
       </div>
     </Card>
   );
@@ -564,9 +564,11 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           const fmtUsd = (n) => `$${Math.round(n).toLocaleString()}`;
           const fmtUsdSigned = (n) => `${n>=0?"+":"−"}$${Math.abs(Math.round(n)).toLocaleString()}`;
           pc = {
-            current_label: fmtUsdSigned(netYTD),
+            // On-time headline: annualized growth projection vs target growth ($ for $).
+            // Sub shows YTD-actual growth as context + on-time % vs the 25% goal.
+            current_label: fmtUsdSigned(annualGain),
             target_label:  `+${fmtUsd(tgtGain)}`,
-            sub: `Book ${fmtUsd(curPCPrem)} of ${fmtUsd(ysPCPrem * 1.25)} · on-time ${fmtUsdSigned(annualGain)} · ${growthPctYTD.toFixed(1)}% / 25%`,
+            sub: `${fmtUsdSigned(netYTD)} YTD actual · ${growthPctOnTime.toFixed(1)}% / 25%`,
             pace_pct,
           };
         }
@@ -629,7 +631,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           smvcPace = {
             current_label: `${capped.toFixed(2)}%`,
             target_label:  `${tgtSmvc.toFixed(2)}%`,
-            sub: `Currently applied ${appliedSmvc.toFixed(2)}% · capped at 3.00% Better Of`,
+            sub: `Currently applied ${appliedSmvc.toFixed(2)}%`,
             pace_pct: tgtSmvc > 0 ? (capped / tgtSmvc) * 100 : 0,
           };
         }
@@ -637,8 +639,8 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
         const goalsPace = {
           pc, cc, smvc: smvcPace,
           as_of_note: sf?.snapshot_date
-            ? `Live as of ${sf.snapshot_date} · day ${daysElapsed} of 365`
-            : `Live · day ${daysElapsed} of 365`,
+            ? `On-time = annualized projection at current pace · As of ${sf.snapshot_date} · day ${daysElapsed} of 365`
+            : `On-time = annualized projection at current pace · Day ${daysElapsed} of 365`,
         };
 
         setDashData({
