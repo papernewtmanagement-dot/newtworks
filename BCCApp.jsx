@@ -15,6 +15,8 @@ import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Handbook from "./src/modules/Handbook.jsx";
+import Playbook from "./src/modules/Playbook.jsx";
+import Admin from "./src/modules/Admin.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
@@ -90,10 +92,12 @@ const NAV_ITEMS = [
   { type: "divider",   id: "_div_team_top" },
   { id: "time",        label: "Hours",       icon: "clock",    roles: ["owner","manager","staff"] },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
+  { id: "playbook",    label: "Playbook",    icon: "folder",   roles: ["owner","manager","staff","readonly","accountant"] },
   { type: "divider",   id: "_div_team_bot" },
   { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
   { id: "memory",      label: "Memory",      icon: "brain",    roles: ["owner","manager"] },
   { id: "principles",  label: "Principles",  icon: "book",     roles: ["owner","manager"] },
+  { id: "admin",       label: "Admin",       icon: "shield",   roles: ["owner"] },
   { id: "settings",    label: "Settings",    icon: "settings", roles: ["owner"] },
 ];
 
@@ -541,6 +545,8 @@ const ModuleRouter = ({ active, onNavigate }) => {
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
+    playbook:    <ErrorBoundary name="Playbook"><Playbook /></ErrorBoundary>,
+    admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,
