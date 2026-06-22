@@ -463,7 +463,11 @@ const WeeklyCPRWidget = ({ data, onOpen }) => {
   );
 };
 
-export default function Dashboard({ onNavigate = () => {} }) {
+// Admin tier (owner+manager) sees all widgets; team sees only Standing Goals.
+const ADMIN_ROLES = ["owner", "manager"];
+
+export default function Dashboard({ onNavigate = () => {}, userRole = "staff" }) {
+  const isAdmin = ADMIN_ROLES.includes(userRole);
   const [dashData, setDashData] = useState({});
   const [loading, setLoading] = useState(true);
   const [agencyName, setAgencyName] = useState("Your Agency");
@@ -694,31 +698,36 @@ export default function Dashboard({ onNavigate = () => {} }) {
         <GoalsPaceWidget data={dashData} onNavigate={onNavigate} />
       </div>
 
-      {/* Second Row — Financial + AIPP */}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
-        <FinancialWidget data={dashData} onNavigate={onNavigate} />
-        <AIPPWidget data={dashData} onNavigate={onNavigate} />
-      </div>
+      {/* Admin-tier-only widgets — team sees only the Standing Goals widget above. */}
+      {isAdmin && (
+        <>
+          {/* Second Row — Financial + AIPP */}
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
+            <FinancialWidget data={dashData} onNavigate={onNavigate} />
+            <AIPPWidget data={dashData} onNavigate={onNavigate} />
+          </div>
 
-      {/* Second Row — Monthly Close + Alerts */}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
-        <MonthlyCloseWidget data={dashData} onNavigate={onNavigate} />
-        <AlertsWidget data={dashData} onNavigate={onNavigate} />
-      </div>
+          {/* Second Row — Monthly Close + Alerts */}
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
+            <MonthlyCloseWidget data={dashData} onNavigate={onNavigate} />
+            <AlertsWidget data={dashData} onNavigate={onNavigate} />
+          </div>
 
-      {/* Third Row — Tasks + Compliance */}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
-        <TasksWidget data={dashData} onNavigate={onNavigate} />
-        <ComplianceWidget data={dashData} onNavigate={onNavigate} />
-      </div>
+          {/* Third Row — Tasks + Compliance */}
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
+            <TasksWidget data={dashData} onNavigate={onNavigate} />
+            <ComplianceWidget data={dashData} onNavigate={onNavigate} />
+          </div>
 
-      {/* Fourth Row — Weekly CPR (full width) */}
-      <div style={{marginBottom:14}}>
-        <WeeklyCPRWidget data={dashData} onOpen={() => setShowCPR(true)} />
-      </div>
+          {/* Fourth Row — Weekly CPR (full width) */}
+          <div style={{marginBottom:14}}>
+            <WeeklyCPRWidget data={dashData} onOpen={() => setShowCPR(true)} />
+          </div>
 
-      {/* Bottom Row — Open Items (full width) */}
-      <OpenItemsWidget data={dashData} onNavigate={onNavigate} />
+          {/* Bottom Row — Open Items (full width) */}
+          <OpenItemsWidget data={dashData} onNavigate={onNavigate} />
+        </>
+      )}
 
       {/* Weekly CPR overlay (modal) */}
       {showCPR ? <WeeklyCPR onClose={() => setShowCPR(false)} /> : null}

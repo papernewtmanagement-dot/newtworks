@@ -80,25 +80,35 @@ const AGENCY_DEFAULTS = {
 };
 
 // ─── Navigation Config ────────────────────────────────────────────────────────
+// ─── Access model ─────────────────────────────────────────────────────────────
+// admin tier = ["owner","manager"] — full access to every module.
+// team tier  = anyone else (staff/readonly/accountant) — sees ONLY the 5
+//              team-visible sections (dashboard, cpr, time, handbook, playbook).
+// Standing rule (Peter 2026-06-22): webapp defaults to admin-only. Any NEW
+// module added below MUST default to roles: ADMIN_ROLES unless Peter explicitly
+// authorizes team visibility. See persistent_memory operational_rule
+// "BCC webapp default visibility — owner-only unless Peter authorizes team access".
+const ADMIN_ROLES = ["owner", "manager"];
+const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
 const NAV_ITEMS = [
-  { id: "dashboard",   label: "Dashboard",   icon: "grid",     roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "cpr",         label: "CPR",         icon: "calendar", roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "alerts",      label: "Alerts",      icon: "bell",     roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "tasks",       label: "Tasks",       icon: "check",    roles: ["owner","manager","staff","readonly"] },
-  { id: "chat",        label: "Claude",      icon: "message",  roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "financials",  label: "Financials",  icon: "dollar",   roles: ["owner","manager","accountant"] },
-  { id: "hr",          label: "Team",        icon: "users",    roles: ["owner","manager"] },
-  { id: "social",      label: "Social",      icon: "share",    roles: ["owner","manager","staff"] },
+  { id: "dashboard",   label: "Dashboard",   icon: "grid",     roles: TEAM_VISIBLE_ROLES },
+  { id: "cpr",         label: "CPR",         icon: "calendar", roles: TEAM_VISIBLE_ROLES },
+  { id: "alerts",      label: "Alerts",      icon: "bell",     roles: ADMIN_ROLES },
+  { id: "tasks",       label: "Tasks",       icon: "check",    roles: ADMIN_ROLES },
+  { id: "chat",        label: "Claude",      icon: "message",  roles: ADMIN_ROLES },
+  { id: "financials",  label: "Financials",  icon: "dollar",   roles: ADMIN_ROLES },
+  { id: "hr",          label: "Team",        icon: "users",    roles: ADMIN_ROLES },
+  { id: "social",      label: "Social",      icon: "share",    roles: ADMIN_ROLES },
   { type: "divider",   id: "_div_team_top" },
-  { id: "time",        label: "Hours",       icon: "clock",    roles: ["owner","manager","staff"] },
-  { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "playbook",    label: "Playbook",    icon: "folder",   roles: ["owner","manager","staff","readonly","accountant"] },
+  { id: "time",        label: "Hours",       icon: "clock",    roles: TEAM_VISIBLE_ROLES },
+  { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: TEAM_VISIBLE_ROLES },
+  { id: "playbook",    label: "Playbook",    icon: "folder",   roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_team_bot" },
-  { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
-  { id: "memory",      label: "Memory",      icon: "brain",    roles: ["owner","manager"] },
-  { id: "principles",  label: "Principles",  icon: "book",     roles: ["owner","manager"] },
-  { id: "admin",       label: "Admin",       icon: "shield",   roles: ["owner"] },
-  { id: "settings",    label: "Settings",    icon: "settings", roles: ["owner"] },
+  { id: "automations", label: "Automations", icon: "zap",      roles: ADMIN_ROLES },
+  { id: "memory",      label: "Memory",      icon: "brain",    roles: ADMIN_ROLES },
+  { id: "principles",  label: "Principles",  icon: "book",     roles: ADMIN_ROLES },
+  { id: "admin",       label: "Admin",       icon: "shield",   roles: ADMIN_ROLES },
+  { id: "settings",    label: "Settings",    icon: "settings", roles: ADMIN_ROLES },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -192,21 +202,7 @@ const css = {
   body: { display: "flex", flex: 1, overflow: "hidden" },
 
   // Sidebar Nav
-  // On phone the nav becomes a slide-over drawer (position:fixed, transform-translate).
-  // On tablet/desktop it stays in-flow as a collapsible rail.
-  nav: (collapsed, isPhone) => isPhone ? ({
-    position: "fixed",
-    top: 58, bottom: 0, left: 0,
-    width: 260, maxWidth: "82vw",
-    background: TOKENS.chromeBg,
-    borderRight: `1px solid ${TOKENS.chromeBorder}`,
-    display: "flex", flexDirection: "column",
-    transform: collapsed ? "translateX(-100%)" : "translateX(0)",
-    transition: "transform 0.22s ease",
-    boxShadow: collapsed ? "none" : "4px 0 16px rgba(0,0,0,0.18)",
-    overflow: "hidden",
-    zIndex: 150,
-  }) : ({
+  nav: (collapsed) => ({
     width: collapsed ? 56 : 220,
     background: TOKENS.chromeBg,
     borderRight: `1px solid ${TOKENS.chromeBorder}`,
@@ -216,25 +212,6 @@ const css = {
     overflow: "hidden",
     zIndex: 50,
   }),
-  // Backdrop scrim behind the phone drawer.
-  navBackdrop: (open) => ({
-    position: "fixed",
-    top: 58, bottom: 0, left: 0, right: 0,
-    background: "rgba(15, 23, 42, 0.45)",
-    opacity: open ? 1 : 0,
-    pointerEvents: open ? "auto" : "none",
-    transition: "opacity 0.18s ease",
-    zIndex: 140,
-  }),
-  // Hamburger trigger in the header (phone only).
-  hamburger: {
-    display: "flex", alignItems: "center", justifyContent: "center",
-    width: 36, height: 36,
-    border: "none", background: "transparent",
-    borderRadius: 8, cursor: "pointer",
-    color: TOKENS.chromeText,
-    padding: 0, marginRight: 4,
-  },
   navScroll: { flex: 1, overflowY: "auto", overflowX: "hidden", padding: "8px 0" },
   navDivider: { height: 1, background: TOKENS.chromeBorder, margin: "8px 12px" },
   navItem: (active, collapsed) => ({
@@ -571,9 +548,9 @@ const ComingSoon = ({ module }) => (
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
 // for the Claude module which connects to Claude.ai externally.
-const ModuleRouter = ({ active, onNavigate }) => {
+const ModuleRouter = ({ active, onNavigate, userRole, allowedModules }) => {
   const modules = {
-    dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} /></ErrorBoundary>,
+    dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
@@ -608,8 +585,31 @@ const ModuleRouter = ({ active, onNavigate }) => {
       </div>
     ),
   };
+  // Access guard — enforce nav role + allowed_modules at the module level so
+  // direct URL navigation (e.g. ?module=financials) cannot bypass the sidebar
+  // filter. Mirrors the same checks used by filteredNav in BCCApp().
+  const navItem = NAV_ITEMS.find(n => n.id === active);
+  if (navItem) {
+    const roleOk = !navItem.roles || navItem.roles.includes(userRole);
+    const moduleOk = !Array.isArray(allowedModules) || allowedModules.includes(active);
+    if (!roleOk || !moduleOk) {
+      return <AccessDenied />;
+    }
+  }
   return modules[active] || <ComingSoon module={active} />;
 };
+
+const AccessDenied = () => (
+  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, gap: 12, padding: 40, textAlign: "center" }}>
+    <div style={{ width: 56, height: 56, borderRadius: 16, background: TOKENS.slate100, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Icon name="shield" size={24} color={TOKENS.slate500} />
+    </div>
+    <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900 }}>Restricted</div>
+    <div style={{ fontSize: 13, color: TOKENS.slate500, maxWidth: 320, lineHeight: 1.6 }}>
+      This section isn't available for your role. If you think this is a mistake, contact the agency owner.
+    </div>
+  </div>
+);
 
 // ─── CPR Detail deep-link routing ─────────────────────────────────────────────
 // Detects URL path /cpr/YYYY-MM-DD and returns the date string; null otherwise.
@@ -782,9 +782,13 @@ export default function BCCApp() {
         profile = (rows && rows[0]) || null;
       }
 
-      const role = profile?.role || "owner"; // fallback: treat unknown as owner
-      // allowed_modules: null/empty for owner & manager = full access.
-      const mods = (role === "owner" || role === "manager")
+      // SECURITY: default to "staff" (team-tier, restricted) if no profile row.
+      // Previously fell back to "owner" — meant any authed user without a users
+      // row got full admin access. Standing rule: deny by default.
+      const role = profile?.role || "staff";
+      // allowed_modules override is bypassed for admin tier (owner+manager);
+      // they always get the full nav their role permits.
+      const mods = ADMIN_ROLES.includes(role)
         ? null
         : (Array.isArray(profile?.allowed_modules) && profile.allowed_modules.length > 0
             ? profile.allowed_modules
@@ -864,33 +868,14 @@ export default function BCCApp() {
         <DemoBanner />
 
         {/* ── Header ── */}
-        <header style={{ ...css.header, padding: viewport.isPhone ? "0 8px" : "0 20px" }}>
+        <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
           <div style={css.headerLeft}>
-            {viewport.isPhone && (
-              <button
-                type="button"
-                aria-label={navCollapsed ? "Open navigation" : "Close navigation"}
-                aria-expanded={!navCollapsed}
-                style={css.hamburger}
-                onClick={() => setNavCollapsed(c => !c)}
-              >
-                <Icon name={navCollapsed ? "menu" : "x"} size={20} color={TOKENS.chromeText} />
-              </button>
-            )}
             <div style={css.headerLogo}>
-              <img
-                src="/paper-newt-master.png"
-                alt="paper newt"
-                width={viewport.isPhone ? 88 : 136}
-                height={viewport.isPhone ? 36 : 56}
-                style={{ display: "block" }}
-              />
+              <img src="/paper-newt-master.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
             </div>
-            {!viewport.isPhone && (
-              <div>
-                <div style={css.agencyName}>paper newt</div>
-              </div>
-            )}
+            <div>
+              <div style={css.agencyName}>paper newt</div>
+            </div>
           </div>
 
           <div style={css.headerRight}>
@@ -907,12 +892,10 @@ export default function BCCApp() {
                 onClick={() => setUserMenuOpen(o => !o)}
               >
                 <div style={css.avatar}>{agency.user.initials}</div>
-                {!viewport.isPhone && (
-                  <div>
-                    <div style={css.userName}>{agency.user.name}</div>
-                    <div style={css.userRole}>{agency.user.role}</div>
-                  </div>
-                )}
+                <div>
+                  <div style={css.userName}>{agency.user.name}</div>
+                  <div style={css.userRole}>{agency.user.role}</div>
+                </div>
               </div>
               {userMenuOpen && (
                 <div style={{
@@ -947,47 +930,28 @@ export default function BCCApp() {
         {/* ── Body ── */}
         <div style={css.body} onClick={() => userMenuOpen && setUserMenuOpen(false)}>
 
-          {/* Backdrop scrim for the phone drawer */}
-          {viewport.isPhone && (
-            <div
-              style={css.navBackdrop(!navCollapsed)}
-              onClick={() => setNavCollapsed(true)}
-              aria-hidden={navCollapsed}
-            />
-          )}
-
           {/* ── Sidebar ── */}
-          <nav
-            style={css.nav(navCollapsed, viewport.isPhone)}
-            aria-hidden={viewport.isPhone && navCollapsed}
-          >
+          <nav style={css.nav(navCollapsed)}>
             <div style={css.navScroll}>
               {visibleNav.map(item => {
                 if (item.type === "divider") {
                   return <div key={item.id} style={css.navDivider} aria-hidden="true" />;
                 }
                 const active = activeModule === item.id;
-                // On phone the nav is always rendered expanded inside the drawer,
-                // so force collapsed=false for nav-item styling there.
-                const itemCollapsed = viewport.isPhone ? false : navCollapsed;
                 return (
                   <div
                     key={item.id}
-                    style={css.navItem(active, itemCollapsed)}
-                    onClick={() => {
-                      if (cprWeekDate) handleCloseCPR();
-                      setActiveModule(item.id);
-                      if (viewport.isPhone) setNavCollapsed(true);
-                    }}
-                    title={itemCollapsed ? item.label : ""}
+                    style={css.navItem(active, navCollapsed)}
+                    onClick={() => { if (cprWeekDate) handleCloseCPR(); setActiveModule(item.id); }}
+                    title={navCollapsed ? item.label : ""}
                   >
                     <Icon
                       name={item.icon}
                       size={15}
                       color={active ? TOKENS.chromeText : TOKENS.chromeTextDim}
                     />
-                    <span style={css.navLabel(itemCollapsed)}>{item.label}</span>
-                    {item.id === "alerts" && !itemCollapsed && agency.alerts > 0 && (
+                    <span style={css.navLabel(navCollapsed)}>{item.label}</span>
+                    {item.id === "alerts" && !navCollapsed && agency.alerts > 0 && (
                       <span style={{ ...css.pill("danger"), marginLeft: "auto", fontSize: 9, padding: "2px 6px" }}>
                         {agency.alerts}
                       </span>
@@ -997,16 +961,14 @@ export default function BCCApp() {
               })}
             </div>
 
-            {/* Collapse Toggle — tablet/desktop only; phone drawer closes via tap-item / backdrop / header X */}
-            {!viewport.isPhone && (
-              <div
-                style={css.navCollapseBtn}
-                onClick={() => setNavCollapsed(c => !c)}
-                title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-              >
-                <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
-              </div>
-            )}
+            {/* Collapse Toggle */}
+            <div
+              style={css.navCollapseBtn}
+              onClick={() => setNavCollapsed(c => !c)}
+              title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            >
+              <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
+            </div>
           </nav>
 
           {/* ── Main Content ── */}
@@ -1015,7 +977,7 @@ export default function BCCApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={activeModule} onNavigate={setActiveModule} />
+                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} allowedModules={allowedModules} />
               )}
             </div>
 
