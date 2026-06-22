@@ -4,7 +4,8 @@
 // PURPOSE: Invite a teammate to the BCC web app.
 //   1. Verifies the caller is the agency owner (via their JWT)
 //   2. Sends a Supabase Auth invite email (magic link -> set password)
-//   3. Upserts a public.users row with role + allowed_modules
+//   3. Upserts a public.users row with role (admin tier = owner/manager;
+//      everyone else is team tier — sees dashboard, cpr, hours, handbook, playbook)
 //
 // AUTH:
 //   verify_jwt = true  — the caller must be a logged-in BCC user. We further
@@ -77,11 +78,6 @@ Deno.serve(async (req) => {
     const email = (body.email || "").trim().toLowerCase();
     const fullName = (body.full_name || body.name || "").trim();
     const role = (body.role || "staff").trim();
-    // allowed_modules: array of module ids, or null for "all"
-    let allowedModules: string[] | null = Array.isArray(body.allowed_modules)
-      ? body.allowed_modules
-      : null;
-    if (role === "owner") allowedModules = null; // owners see everything
 
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return json({ error: "A valid email is required" }, 400);
@@ -122,7 +118,6 @@ Deno.serve(async (req) => {
       email,
       full_name: fullName,
       role,
-      allowed_modules: allowedModules,
       auth_user_id: authUserId,
       invited_by: callerRow.id,  // FK -> public.users.id (NOT auth uid)
       invited_at: new Date().toISOString(),
@@ -153,7 +148,6 @@ Deno.serve(async (req) => {
       auth_user_id: authUserId,
       email,
       role,
-      allowed_modules: allowedModules,
     });
   } catch (e) {
     return json({ error: "Unexpected error", detail: String(e?.message || e) }, 500);

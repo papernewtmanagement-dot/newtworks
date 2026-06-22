@@ -1161,7 +1161,7 @@ const StaffDirectory = ({ staff }) => {
         <Card style={{ border:`2px solid ${T.slate900}`, background:T.white, marginBottom:4 }}>
           <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:6 }}>Add new team member</div>
           <div style={{ fontSize:11, color:T.slate600, marginBottom:14, lineHeight:1.55 }}>
-            Creates a team row, sends a Supabase Auth invite to the personal email, and links the new BCC user back to this team row once they sign in. Role defaults to <code>staff</code> with no module access — set <code>allowed_modules</code> in Settings after they accept.
+            Creates a team row, sends a Supabase Auth invite to the personal email, and links the new BCC user back to this team row once they sign in. Role defaults to <code>staff</code> (team tier — sees Dashboard, CPR, Hours, Handbook, Playbook). To grant admin access, change role to <code>owner</code> or <code>manager</code> after they accept.
           </div>
 
           {/* Row 1: name + email */}

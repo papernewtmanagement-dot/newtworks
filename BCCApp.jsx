@@ -91,25 +91,24 @@ const AGENCY_DEFAULTS = {
 const ADMIN_ROLES = ["owner", "manager"];
 const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
 const NAV_ITEMS = [
-  { id: "dashboard",   label: "Dashboard",   icon: "grid",          roles: TEAM_VISIBLE_ROLES },
+  { id: "dashboard",   label: "Dashboard",   icon: "grid",     roles: TEAM_VISIBLE_ROLES },
+  { id: "cpr",         label: "CPR",         icon: "calendar", roles: TEAM_VISIBLE_ROLES },
+  { id: "alerts",      label: "Alerts",      icon: "bell",     roles: ADMIN_ROLES },
+  { id: "tasks",       label: "Tasks",       icon: "check",    roles: ADMIN_ROLES },
+  { id: "chat",        label: "Claude",      icon: "message",  roles: ADMIN_ROLES },
+  { id: "financials",  label: "Financials",  icon: "dollar",   roles: ADMIN_ROLES },
+  { id: "hr",          label: "Team",        icon: "users",    roles: ADMIN_ROLES },
+  { id: "social",      label: "Social",      icon: "share",    roles: ADMIN_ROLES },
   { type: "divider",   id: "_div_team_top" },
-  { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
-  { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
-  { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
-  { id: "playbook",    label: "Playbook",    icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
-  { type: "divider",   id: "_div_admin_top" },
-  { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
-  { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
-  { id: "chat",        label: "Claude",      icon: "message",       roles: ADMIN_ROLES },
-  { id: "financials",  label: "Financials",  icon: "dollar",        roles: ADMIN_ROLES },
-  { id: "hr",          label: "Team",        icon: "users",         roles: ADMIN_ROLES },
-  { id: "social",      label: "Social",      icon: "share",         roles: ADMIN_ROLES },
-  { type: "divider",   id: "_div_admin_bot" },
-  { id: "automations", label: "Automations", icon: "zap",           roles: ADMIN_ROLES },
-  { id: "memory",      label: "Memory",      icon: "brain",         roles: ADMIN_ROLES },
-  { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
-  { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
-  { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
+  { id: "time",        label: "Hours",       icon: "clock",    roles: TEAM_VISIBLE_ROLES },
+  { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: TEAM_VISIBLE_ROLES },
+  { id: "playbook",    label: "Playbook",    icon: "folder",   roles: TEAM_VISIBLE_ROLES },
+  { type: "divider",   id: "_div_team_bot" },
+  { id: "automations", label: "Automations", icon: "zap",      roles: ADMIN_ROLES },
+  { id: "memory",      label: "Memory",      icon: "brain",    roles: ADMIN_ROLES },
+  { id: "principles",  label: "Principles",  icon: "book",     roles: ADMIN_ROLES },
+  { id: "admin",       label: "Admin",       icon: "shield",   roles: ADMIN_ROLES },
+  { id: "settings",    label: "Settings",    icon: "settings", roles: ADMIN_ROLES },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -142,9 +141,6 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     lightning:  <svg style={s} viewBox="0 0 24 24" fill={color} stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
     externalLink:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
     calendarOff:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M4.2 4.2A2 2 0 0 0 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.8-1.2"/><path d="M21 15.5V6a2 2 0 0 0-2-2H9.5"/><line x1="3" y1="10" x2="14" y2="10"/><path d="M16 2v4"/><path d="M8 2v2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>,
-    trendingUp:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
-    clipboardList:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>,
-    briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
   return icons[name] || null;
 };
@@ -206,21 +202,7 @@ const css = {
   body: { display: "flex", flex: 1, overflow: "hidden" },
 
   // Sidebar Nav
-  // On phone the nav becomes a slide-over drawer (position:fixed, transform-translate).
-  // On tablet/desktop it stays in-flow as a collapsible rail.
-  nav: (collapsed, isPhone) => isPhone ? ({
-    position: "fixed",
-    top: 58, bottom: 0, left: 0,
-    width: 260, maxWidth: "82vw",
-    background: TOKENS.chromeBg,
-    borderRight: `1px solid ${TOKENS.chromeBorder}`,
-    display: "flex", flexDirection: "column",
-    transform: collapsed ? "translateX(-100%)" : "translateX(0)",
-    transition: "transform 0.22s ease",
-    boxShadow: collapsed ? "none" : "4px 0 16px rgba(0,0,0,0.18)",
-    overflow: "hidden",
-    zIndex: 150,
-  }) : ({
+  nav: (collapsed) => ({
     width: collapsed ? 56 : 220,
     background: TOKENS.chromeBg,
     borderRight: `1px solid ${TOKENS.chromeBorder}`,
@@ -230,25 +212,6 @@ const css = {
     overflow: "hidden",
     zIndex: 50,
   }),
-  // Backdrop scrim behind the phone drawer.
-  navBackdrop: (open) => ({
-    position: "fixed",
-    top: 58, bottom: 0, left: 0, right: 0,
-    background: "rgba(15, 23, 42, 0.45)",
-    opacity: open ? 1 : 0,
-    pointerEvents: open ? "auto" : "none",
-    transition: "opacity 0.18s ease",
-    zIndex: 140,
-  }),
-  // Hamburger trigger in the header (phone only).
-  hamburger: {
-    display: "flex", alignItems: "center", justifyContent: "center",
-    width: 36, height: 36,
-    border: "none", background: "transparent",
-    borderRadius: 8, cursor: "pointer",
-    color: TOKENS.chromeText,
-    padding: 0, marginRight: 4,
-  },
   navScroll: { flex: 1, overflowY: "auto", overflowX: "hidden", padding: "8px 0" },
   navDivider: { height: 1, background: TOKENS.chromeBorder, margin: "8px 12px" },
   navItem: (active, collapsed) => ({
@@ -585,7 +548,7 @@ const ComingSoon = ({ module }) => (
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
 // for the Claude module which connects to Claude.ai externally.
-const ModuleRouter = ({ active, onNavigate, userRole, allowedModules }) => {
+const ModuleRouter = ({ active, onNavigate, userRole }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
@@ -622,16 +585,12 @@ const ModuleRouter = ({ active, onNavigate, userRole, allowedModules }) => {
       </div>
     ),
   };
-  // Access guard — enforce nav role + allowed_modules at the module level so
-  // direct URL navigation (e.g. ?module=financials) cannot bypass the sidebar
-  // filter. Mirrors the same checks used by filteredNav in BCCApp().
+  // Access guard — enforce nav role at the module level so direct URL
+  // navigation (e.g. ?module=financials) cannot bypass the sidebar filter.
+  // Mirrors the same role check used by filteredNav in BCCApp().
   const navItem = NAV_ITEMS.find(n => n.id === active);
-  if (navItem) {
-    const roleOk = !navItem.roles || navItem.roles.includes(userRole);
-    const moduleOk = !Array.isArray(allowedModules) || allowedModules.includes(active);
-    if (!roleOk || !moduleOk) {
-      return <AccessDenied />;
-    }
+  if (navItem && !navItem.roles.includes(userRole)) {
+    return <AccessDenied />;
   }
   return modules[active] || <ComingSoon module={active} />;
 };
@@ -788,9 +747,8 @@ export default function BCCApp() {
     };
   }, []);
 
-  // allowed_modules for the logged-in user. null = all modules (owner/manager
-  // default). An array means "only these module ids are visible".
-  const [allowedModules, setAllowedModules] = useState(null);
+  // (Per-user allowed_modules override was removed 2026-06-22. Access is now
+  // determined purely by users.role + NAV_ITEMS.roles allowlist.)
 
   // Load real agency + the logged-in user's BCC profile once past the auth gate.
   useEffect(() => {
@@ -812,7 +770,7 @@ export default function BCCApp() {
       if (email) {
         const { data: rows } = await supabase
           .from("users")
-          .select("full_name, role, allowed_modules, email")
+          .select("full_name, role, email")
           .eq("agency_id", AGENCY_ID)
           .ilike("email", email)
           .limit(1);
@@ -823,14 +781,6 @@ export default function BCCApp() {
       // Previously fell back to "owner" — meant any authed user without a users
       // row got full admin access. Standing rule: deny by default.
       const role = profile?.role || "staff";
-      // allowed_modules override is bypassed for admin tier (owner+manager);
-      // they always get the full nav their role permits.
-      const mods = ADMIN_ROLES.includes(role)
-        ? null
-        : (Array.isArray(profile?.allowed_modules) && profile.allowed_modules.length > 0
-            ? profile.allowed_modules
-            : null);
-      setAllowedModules(mods);
 
       const displayName = profile?.full_name || ag?.owner_name || AGENCY_DEFAULTS.user.name;
       setAgency({
@@ -876,14 +826,11 @@ export default function BCCApp() {
   }
 
   // ── Authenticated app (unchanged below) ────────────────────────────────────
-  // First pass: filter by role + allowed_modules, keeping divider sentinels.
+  // Pure role-based filter (per-user narrowing was removed 2026-06-22).
+  // Dividers pass through unconditionally; the second pass below drops orphans.
   const filteredNav = NAV_ITEMS.filter(n => {
     if (n.type === "divider") return true;
-    if (!n.roles.includes(agency.user.role)) return false;
-    // If allowed_modules is set (non-owner/manager with explicit module list),
-    // only show those modules. Settings always restricted to owner via roles.
-    if (Array.isArray(allowedModules)) return allowedModules.includes(n.id);
-    return true;
+    return n.roles.includes(agency.user.role);
   });
   // Second pass: drop dividers that would render as visual artifacts
   // (leading, trailing, or adjacent to another divider after filtering).
@@ -905,33 +852,14 @@ export default function BCCApp() {
         <DemoBanner />
 
         {/* ── Header ── */}
-        <header style={{ ...css.header, padding: viewport.isPhone ? "0 8px" : "0 20px" }}>
+        <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
           <div style={css.headerLeft}>
-            {viewport.isPhone && (
-              <button
-                type="button"
-                aria-label={navCollapsed ? "Open navigation" : "Close navigation"}
-                aria-expanded={!navCollapsed}
-                style={css.hamburger}
-                onClick={() => setNavCollapsed(c => !c)}
-              >
-                <Icon name={navCollapsed ? "menu" : "x"} size={20} color={TOKENS.chromeText} />
-              </button>
-            )}
             <div style={css.headerLogo}>
-              <img
-                src="/paper-newt-master.png"
-                alt="paper newt"
-                width={viewport.isPhone ? 88 : 136}
-                height={viewport.isPhone ? 36 : 56}
-                style={{ display: "block" }}
-              />
+              <img src="/paper-newt-master.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
             </div>
-            {!viewport.isPhone && (
-              <div>
-                <div style={css.agencyName}>paper newt</div>
-              </div>
-            )}
+            <div>
+              <div style={css.agencyName}>paper newt</div>
+            </div>
           </div>
 
           <div style={css.headerRight}>
@@ -948,12 +876,10 @@ export default function BCCApp() {
                 onClick={() => setUserMenuOpen(o => !o)}
               >
                 <div style={css.avatar}>{agency.user.initials}</div>
-                {!viewport.isPhone && (
-                  <div>
-                    <div style={css.userName}>{agency.user.name}</div>
-                    <div style={css.userRole}>{agency.user.role}</div>
-                  </div>
-                )}
+                <div>
+                  <div style={css.userName}>{agency.user.name}</div>
+                  <div style={css.userRole}>{agency.user.role}</div>
+                </div>
               </div>
               {userMenuOpen && (
                 <div style={{
@@ -988,47 +914,28 @@ export default function BCCApp() {
         {/* ── Body ── */}
         <div style={css.body} onClick={() => userMenuOpen && setUserMenuOpen(false)}>
 
-          {/* Backdrop scrim for the phone drawer */}
-          {viewport.isPhone && (
-            <div
-              style={css.navBackdrop(!navCollapsed)}
-              onClick={() => setNavCollapsed(true)}
-              aria-hidden={navCollapsed}
-            />
-          )}
-
           {/* ── Sidebar ── */}
-          <nav
-            style={css.nav(navCollapsed, viewport.isPhone)}
-            aria-hidden={viewport.isPhone && navCollapsed}
-          >
+          <nav style={css.nav(navCollapsed)}>
             <div style={css.navScroll}>
               {visibleNav.map(item => {
                 if (item.type === "divider") {
                   return <div key={item.id} style={css.navDivider} aria-hidden="true" />;
                 }
                 const active = activeModule === item.id;
-                // On phone the nav is always rendered expanded inside the drawer,
-                // so force collapsed=false for nav-item styling there.
-                const itemCollapsed = viewport.isPhone ? false : navCollapsed;
                 return (
                   <div
                     key={item.id}
-                    style={css.navItem(active, itemCollapsed)}
-                    onClick={() => {
-                      if (cprWeekDate) handleCloseCPR();
-                      setActiveModule(item.id);
-                      if (viewport.isPhone) setNavCollapsed(true);
-                    }}
-                    title={itemCollapsed ? item.label : ""}
+                    style={css.navItem(active, navCollapsed)}
+                    onClick={() => { if (cprWeekDate) handleCloseCPR(); setActiveModule(item.id); }}
+                    title={navCollapsed ? item.label : ""}
                   >
                     <Icon
                       name={item.icon}
                       size={15}
                       color={active ? TOKENS.chromeText : TOKENS.chromeTextDim}
                     />
-                    <span style={css.navLabel(itemCollapsed)}>{item.label}</span>
-                    {item.id === "alerts" && !itemCollapsed && agency.alerts > 0 && (
+                    <span style={css.navLabel(navCollapsed)}>{item.label}</span>
+                    {item.id === "alerts" && !navCollapsed && agency.alerts > 0 && (
                       <span style={{ ...css.pill("danger"), marginLeft: "auto", fontSize: 9, padding: "2px 6px" }}>
                         {agency.alerts}
                       </span>
@@ -1038,16 +945,14 @@ export default function BCCApp() {
               })}
             </div>
 
-            {/* Collapse Toggle — tablet/desktop only; phone drawer closes via tap-item / backdrop / header X */}
-            {!viewport.isPhone && (
-              <div
-                style={css.navCollapseBtn}
-                onClick={() => setNavCollapsed(c => !c)}
-                title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-              >
-                <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
-              </div>
-            )}
+            {/* Collapse Toggle */}
+            <div
+              style={css.navCollapseBtn}
+              onClick={() => setNavCollapsed(c => !c)}
+              title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            >
+              <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
+            </div>
           </nav>
 
           {/* ── Main Content ── */}
@@ -1056,7 +961,7 @@ export default function BCCApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} allowedModules={allowedModules} />
+                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} />
               )}
             </div>
 
