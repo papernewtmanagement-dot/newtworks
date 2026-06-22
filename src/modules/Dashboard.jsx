@@ -564,9 +564,9 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           const fmtUsd = (n) => `$${Math.round(n).toLocaleString()}`;
           const fmtUsdSigned = (n) => `${n>=0?"+":"−"}$${Math.abs(Math.round(n)).toLocaleString()}`;
           pc = {
-            current_label: fmtUsd(curPCPrem),
-            target_label:  fmtUsd(ysPCPrem * 1.25),
-            sub: `${fmtUsdSigned(netYTD)} YTD · on-time ${fmtUsdSigned(annualGain)} (need +${fmtUsd(tgtGain)}) · ${growthPctYTD.toFixed(1)}% / 25%`,
+            current_label: fmtUsdSigned(netYTD),
+            target_label:  `+${fmtUsd(tgtGain)}`,
+            sub: `Book ${fmtUsd(curPCPrem)} of ${fmtUsd(ysPCPrem * 1.25)} · on-time ${fmtUsdSigned(annualGain)} · ${growthPctYTD.toFixed(1)}% / 25%`,
             pace_pct,
           };
         }
@@ -612,14 +612,17 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
             if (b.max === b.min) return 0;
             return Math.min(b.pct, Math.max(0, ((actual - b.min) / (b.max - b.min)) * b.pct));
           };
-          const autoGain       = (sf.auto_new_ytd||0) - (sf.auto_lost_ytd||0);
-          const fireGain       = (sf.fire_new_ytd||0) - (sf.fire_lost_ytd||0);
-          const fsCreditsYTD   = parseFloat(sf.life_paid_for_premium_ytd) || 0;
-          const ipsActivityYTD = parseFloat(sf.ips_new_money_ytd) || 0;
-          const totalPct = score(autoGain,       smvcBands.auto_pif_gain)
-                         + score(fireGain,       smvcBands.fire_pif_gain)
-                         + score(fsCreditsYTD,   smvcBands.fs_credits)
-                         + score(ipsActivityYTD, smvcBands.ips_activity);
+          // On-time SMVC: annualize YTD inputs before scoring (mirrors compute_on_time_smvc).
+          // Bug fix 2026-06-22 — was scoring raw YTD, which displayed YTD-earned (~1.82%)
+          // instead of on-time pace (~2.77%).
+          const autoGainAnn = annualize((sf.auto_new_ytd||0) - (sf.auto_lost_ytd||0));
+          const fireGainAnn = annualize((sf.fire_new_ytd||0) - (sf.fire_lost_ytd||0));
+          const fsCreditsAnn   = annualize(parseFloat(sf.life_paid_for_premium_ytd) || 0);
+          const ipsActivityAnn = annualize(parseFloat(sf.ips_new_money_ytd) || 0);
+          const totalPct = score(autoGainAnn,    smvcBands.auto_pif_gain)
+                         + score(fireGainAnn,    smvcBands.fire_pif_gain)
+                         + score(fsCreditsAnn,   smvcBands.fs_credits)
+                         + score(ipsActivityAnn, smvcBands.ips_activity);
           const capped      = Math.min(3.0, totalPct);
           const tgtSmvc     = 2.70;
           const appliedSmvc = (parseFloat(agency?.smvc_rate_pc)||0) * 100;
