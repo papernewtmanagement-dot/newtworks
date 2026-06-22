@@ -91,24 +91,25 @@ const AGENCY_DEFAULTS = {
 const ADMIN_ROLES = ["owner", "manager"];
 const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
 const NAV_ITEMS = [
-  { id: "dashboard",   label: "Dashboard",   icon: "grid",     roles: TEAM_VISIBLE_ROLES },
-  { id: "cpr",         label: "CPR",         icon: "calendar", roles: TEAM_VISIBLE_ROLES },
-  { id: "alerts",      label: "Alerts",      icon: "bell",     roles: ADMIN_ROLES },
-  { id: "tasks",       label: "Tasks",       icon: "check",    roles: ADMIN_ROLES },
-  { id: "chat",        label: "Claude",      icon: "message",  roles: ADMIN_ROLES },
-  { id: "financials",  label: "Financials",  icon: "dollar",   roles: ADMIN_ROLES },
-  { id: "hr",          label: "Team",        icon: "users",    roles: ADMIN_ROLES },
-  { id: "social",      label: "Social",      icon: "share",    roles: ADMIN_ROLES },
+  { id: "dashboard",   label: "Dashboard",   icon: "grid",          roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_team_top" },
-  { id: "time",        label: "Hours",       icon: "clock",    roles: TEAM_VISIBLE_ROLES },
-  { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: TEAM_VISIBLE_ROLES },
-  { id: "playbook",    label: "Playbook",    icon: "folder",   roles: TEAM_VISIBLE_ROLES },
-  { type: "divider",   id: "_div_team_bot" },
-  { id: "automations", label: "Automations", icon: "zap",      roles: ADMIN_ROLES },
-  { id: "memory",      label: "Memory",      icon: "brain",    roles: ADMIN_ROLES },
-  { id: "principles",  label: "Principles",  icon: "book",     roles: ADMIN_ROLES },
-  { id: "admin",       label: "Admin",       icon: "shield",   roles: ADMIN_ROLES },
-  { id: "settings",    label: "Settings",    icon: "settings", roles: ADMIN_ROLES },
+  { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
+  { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
+  { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
+  { id: "playbook",    label: "Playbook",    icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
+  { type: "divider",   id: "_div_admin_top" },
+  { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
+  { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
+  { id: "chat",        label: "Claude",      icon: "message",       roles: ADMIN_ROLES },
+  { id: "financials",  label: "Financials",  icon: "dollar",        roles: ADMIN_ROLES },
+  { id: "hr",          label: "Team",        icon: "users",         roles: ADMIN_ROLES },
+  { id: "social",      label: "Social",      icon: "share",         roles: ADMIN_ROLES },
+  { type: "divider",   id: "_div_admin_bot" },
+  { id: "automations", label: "Automations", icon: "zap",           roles: ADMIN_ROLES },
+  { id: "memory",      label: "Memory",      icon: "brain",         roles: ADMIN_ROLES },
+  { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
+  { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
+  { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -141,6 +142,9 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     lightning:  <svg style={s} viewBox="0 0 24 24" fill={color} stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
     externalLink:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
     calendarOff:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M4.2 4.2A2 2 0 0 0 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.8-1.2"/><path d="M21 15.5V6a2 2 0 0 0-2-2H9.5"/><line x1="3" y1="10" x2="14" y2="10"/><path d="M16 2v4"/><path d="M8 2v2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>,
+    trendingUp:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
+    clipboardList:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>,
+    briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
   return icons[name] || null;
 };
