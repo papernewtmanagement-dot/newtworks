@@ -191,6 +191,69 @@ export function mdToHtml(md) {
       i++; continue;
     }
 
+    // Markdown pipe table (GFM-style)
+    //   | h1 | h2 |
+    //   | --- | --- |
+    //   | c1 | c2 |
+    // Detected by current line being a pipe row AND next line being a separator.
+    const _isPipeRow = (s) => /^\s*\|.*\|\s*$/.test(s);
+    const _isPipeSep = (s) => /^\s*\|[\s\-:|]+\|\s*$/.test(s);
+    if (_isPipeRow(line) && i + 1 < lines.length && _isPipeSep(lines[i + 1])) {
+      flushPara(); flushList();
+
+      const splitRow = (s) => {
+        const inner = s.trim().replace(/^\|/, "").replace(/\|$/, "");
+        const parts = [];
+        let buf = "";
+        for (let k = 0; k < inner.length; k++) {
+          if (inner[k] === "\\" && inner[k + 1] === "|") { buf += "|"; k++; continue; }
+          if (inner[k] === "|") { parts.push(buf.trim()); buf = ""; continue; }
+          buf += inner[k];
+        }
+        parts.push(buf.trim());
+        return parts;
+      };
+
+      const sepCells = splitRow(lines[i + 1]);
+      const align = sepCells.map(c => {
+        const L = c.startsWith(":");
+        const R = c.endsWith(":");
+        if (L && R) return "center";
+        if (R) return "right";
+        if (L) return "left";
+        return null;
+      });
+
+      const headerCells = splitRow(line);
+      i += 2;
+      const bodyRows = [];
+      while (i < lines.length && _isPipeRow(lines[i]) && !_isPipeSep(lines[i])) {
+        bodyRows.push(splitRow(lines[i]));
+        i++;
+      }
+
+      const cell = (tag, txt, idx) => {
+        const a = align[idx];
+        const styleAttr = a ? ` style="text-align:${a}"` : "";
+        return `<${tag}${styleAttr}>${inlineMd(txt)}</${tag}>`;
+      };
+
+      let html = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table>`;
+      html += "<thead><tr>";
+      headerCells.forEach((c, idx) => { html += cell("th", c, idx); });
+      html += "</tr></thead><tbody>";
+      bodyRows.forEach(row => {
+        html += "<tr>";
+        for (let k = 0; k < headerCells.length; k++) {
+          html += cell("td", row[k] ?? "", k);
+        }
+        html += "</tr>";
+      });
+      html += "</tbody></table></div>";
+      out.push(html);
+      continue;
+    }
+
     // Markdown blockquote (single-line style: "> text")
     const bq = /^>\s?(.*)$/.exec(line);
     if (bq) {
