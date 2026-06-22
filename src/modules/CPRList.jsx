@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
 
 // ============================================================
@@ -76,6 +77,9 @@ function openCPR(weekDate) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function CPRList() {
+  const _vp = useViewport();
+  const _pad = _vp.isPhone ? "16px" : _vp.isTablet ? "20px 18px 40px" : "30px 30px 60px";
+
   const [state, setState] = useState({
     loading: true,
     error: null,
@@ -136,7 +140,7 @@ export default function CPRList() {
 
   if (state.loading) {
     return (
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "30px 30px 60px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: _pad }}>
         <Header />
         <Card>
           <div style={{ fontSize: 13, color: T.slate500 }}>Loading CPR Recaps…</div>
@@ -147,7 +151,7 @@ export default function CPRList() {
 
   if (state.error) {
     return (
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "30px 30px 60px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: _pad }}>
         <Header />
         <Card>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.red, marginBottom: 8 }}>
@@ -161,7 +165,7 @@ export default function CPRList() {
 
   if (state.reports.length === 0) {
     return (
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "30px 30px 60px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: _pad }}>
         <Header />
         <Card>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.7 }}>
@@ -173,7 +177,7 @@ export default function CPRList() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "30px 30px 60px" }}>
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: _pad }}>
       <Header />
 
       <div style={{

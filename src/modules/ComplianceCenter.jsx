@@ -681,7 +681,7 @@ export default function ComplianceCenter() {
   return (
     <div>
       {/* Module Header */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Compliance Center</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>

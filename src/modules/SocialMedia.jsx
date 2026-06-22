@@ -464,6 +464,7 @@ const Analytics = ({ analytics, loaded }) => {
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Performance by platform — this week</div>
           <AskBtn size="small" context={`My social media analytics this week:\n${analytics.by_platform.map(p=>`${p.platform}: ${p.posts} posts, ${p.reach} reach, ${p.likes} likes, ${p.comments} comments, ${p.shares} shares. Best post: "${p.best_post}"`).join("\n")}\n\nAnalyze my platform performance. Which platform is performing best? What content is working? What should I focus on next week?`} />
         </div>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
             <tr style={{ borderBottom:`1px solid ${T.slate200}` }}>
@@ -486,6 +487,7 @@ const Analytics = ({ analytics, loaded }) => {
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {/* By Pillar */}
@@ -848,7 +850,7 @@ export default function SocialMedia() {
   return (
     <div>
       {/* Module Header */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Social Media</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>

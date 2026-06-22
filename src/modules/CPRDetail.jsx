@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
 
 // =============================================================
@@ -820,7 +821,7 @@ function CodeRedsYellowsSection({ details, team, editMode, formDetails, isDirty,
                   <div style={{
                     fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 8,
                   }}>{firstName(d.__name)}</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                     <div>
                       <div style={{ fontSize: 11, color: T.red, fontWeight: 700, marginBottom: 4 }}>🔴 Code Reds</div>
                       <TextArea
@@ -2160,6 +2161,7 @@ function PrizeCartSection({ prizeCart, team, prizeBudget }) {
     <div>
       <SectionHeader icon="🏆" title="Prize Cart" accessory={budgetAccessory} />
       <Card style={{ padding: 0 }}>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -2195,6 +2197,7 @@ function PrizeCartSection({ prizeCart, team, prizeBudget }) {
             })}
           </tbody>
         </table>
+        </div>
       </Card>
     </div>
   );
@@ -2398,7 +2401,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* Top breadcrumb / back / edit */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 16, gap: 12,
+        marginBottom: 16, gap: 12, flexWrap: "wrap",
       }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>

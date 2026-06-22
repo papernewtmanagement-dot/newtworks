@@ -278,7 +278,7 @@ const NewTaskModal = ({ onSave, onCancel }) => {
       <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:500, boxShadow:"0 20px 60px rgba(0,0,0,0.2)", overflow:"hidden" }}>
         <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>New Task</span>
-          <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:18, color:T.slate400, cursor:"pointer" }}>×</button>
+          <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:22, color:T.slate400, cursor:"pointer", padding:"4px 10px", lineHeight:1 }}>×</button>
         </div>
         <div style={{ padding:20 }}>
           {[
@@ -676,7 +676,7 @@ export default function TasksGoals({ onNavigate }) {
   return (
     <div>
       {/* Module Header */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Tasks & Goals</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>

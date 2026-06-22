@@ -84,3 +84,34 @@ export function useSupabaseQuery(queryFn, deps = []) {
 
   return { data, loading, error };
 }
+
+/**
+ * useViewport — responsive breakpoint hook used by BCCApp shell + modules.
+ * Pixel 8 Pro ~412px wide portrait; iPad 10 ~820px portrait; 15" laptop ~1440px+.
+ * Phone: <640. Tablet: 640-1023. Desktop: >=1024.
+ *
+ * Usage:
+ *   import { useViewport } from "../lib/hooks.js";
+ *   const { isPhone, isTablet, isDesktop, width } = useViewport();
+ */
+export function useViewport() {
+  const compute = () => {
+    if (typeof window === "undefined") {
+      return { width: 1024, isPhone: false, isTablet: false, isDesktop: true };
+    }
+    const w = window.innerWidth;
+    return {
+      width: w,
+      isPhone:   w < 640,
+      isTablet:  w >= 640 && w < 1024,
+      isDesktop: w >= 1024,
+    };
+  };
+  const [vp, setVp] = useState(compute);
+  useEffect(() => {
+    const onResize = () => setVp(compute());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return vp;
+}

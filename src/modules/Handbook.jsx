@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 
 // ============================================================
 // BCC HANDBOOK MODULE v1.0
@@ -523,6 +524,9 @@ export default function Handbook() {
 
 // ─── Page detail view ─────────────────────────────────────────
 function HandbookPage({ page }) {
+  const _vp = useViewport();
+  const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
+
   const html = useMemo(() => mdToHtml(page?.content || ""), [page?.content]);
   const askContext = useMemo(() => {
     return `I'm looking at this page from our team handbook:
@@ -546,7 +550,7 @@ What I'd like to discuss:
   const icon = iconForTitle(page?.title);
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 40px 80px 40px" }}>
+    <div style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
       {/* Inline style block for HTML-rendered handbook content.
           Scoped via a wrapper class so it can't bleed into other modules. */}
       <style>{`

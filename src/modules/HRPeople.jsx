@@ -1165,7 +1165,7 @@ const StaffDirectory = ({ staff }) => {
           </div>
 
           {/* Row 1: name + email */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.5fr", gap:10, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10 }}>
             <div>
               <label style={labelStyle}>First name *</label>
               <input style={inputStyle} value={addForm.first_name} onChange={e => setAddForm(f => ({ ...f, first_name: e.target.value }))} />
@@ -1181,7 +1181,7 @@ const StaffDirectory = ({ staff }) => {
           </div>
 
           {/* Row 2: role, role category, role level */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:10, marginBottom:10 }}>
             <div>
               <label style={labelStyle}>Role</label>
               <select style={inputStyle} value={addForm.role} onChange={e => {
@@ -1221,7 +1221,7 @@ const StaffDirectory = ({ staff }) => {
           </div>
 
           {/* Row 3: category, employment type, start date */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:10, marginBottom:10 }}>
             <div>
               <label style={labelStyle}>Category</label>
               <select style={inputStyle} value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))}>
@@ -2768,6 +2768,7 @@ const RetentionBudgetSection = () => {
 
         <div style={{ marginTop:12, padding:12, background:T.slate50, borderRadius:8 }}>
           <div style={{ fontSize:11, fontWeight:600, color:T.slate700, marginBottom:8 }}>Formula breakdown</div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width:"100%", fontSize:12, color:T.slate700 }}>
             <tbody>
               <tr>
@@ -2792,6 +2793,7 @@ const RetentionBudgetSection = () => {
               </tr>
             </tbody>
           </table>
+          </div>
           <div style={{ fontSize:10, color:T.slate500, marginTop:8 }}>
             Premium snapshot: {state.snapshot?.snapshot_date || "no snapshot on file"} — Auto {money(autoPrem)}, Fire {money(firePrem)}, Life {money(lifePrem)}. Health excluded by design.
           </div>
@@ -2808,6 +2810,7 @@ const RetentionBudgetSection = () => {
               ? <>Budget is short of wages by <strong>{money(Math.abs(marginRaw))}</strong> — body cut or rate intervention needed.</>
               : <>Budget is <strong>{money(marginRaw)}</strong> above wages — that is the room for service surge and bonus accruals.</>}
           </div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width:"100%", fontSize:11, color:T.slate600 }}>
             <thead>
               <tr style={{ color:T.slate500, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>
@@ -2828,6 +2831,7 @@ const RetentionBudgetSection = () => {
               ))}
             </tbody>
           </table>
+          </div>
           <div style={{ fontSize:11, color:T.slate500, marginTop:8, lineHeight:1.5 }}>
             Payroll burden (×{burdenMult.toFixed(2)}) adds <strong>{money(annualWageLoaded - annualWageRaw)}</strong> on top
             ({money(annualWageLoaded)} fully loaded) — that's paid from agency overhead, not from this budget.
@@ -2840,6 +2844,7 @@ const RetentionBudgetSection = () => {
         <div style={{ fontSize:11, color:T.slate500, marginBottom:10 }}>
           Schedule shows the zero-SMVC floor. Effective + budget assume current SMVC of {pct(smvc, 2)} holds.
         </div>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width:"100%", fontSize:12 }}>
           <thead>
             <tr style={{ color:T.slate500, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>
@@ -2876,6 +2881,7 @@ const RetentionBudgetSection = () => {
             )}
           </tbody>
         </table>
+        </div>
       </Card>
 
       <Card style={{ background:T.slate50 }}>
@@ -2958,7 +2964,7 @@ export default function HRPeople() {
   return (
     <div>
       {/* Module Header */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Team</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>

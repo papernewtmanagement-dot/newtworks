@@ -16,7 +16,7 @@ const Card = ({children, style={}}) => (
 );
 
 const SectionTitle = ({icon, title, action}) => (
-  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
+  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8}}>
     <div style={{display:"flex", alignItems:"center", gap:8}}>
       <span style={{fontSize:16}}>{icon}</span>
       <span style={{fontSize:13, fontWeight:700, color:T.slate800}}>{title}</span>
@@ -67,7 +67,7 @@ const FinancialWidget = ({ data, onNavigate }) => {
       <SectionTitle icon="💰" title="Financial Overview"
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View Full P&L →</button>}
       />
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10}}>
         {kpis.map((k,i) => (
           <div key={i} style={{padding:"10px 12px", borderRadius:8, border:`1px solid ${k.border}20`, background:`${k.border}08`}}>
             <div style={{fontSize:10, color:T.slate500, marginBottom:4, fontWeight:600}}>{k.label}</div>
@@ -402,7 +402,7 @@ const ComplianceWidget = ({ data, onNavigate }) => {
           <span style={{color:T.slate500}}>Ask Claude: "Seed my SF compliance rules"</span>
         </div>
       ) : (
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8}}>
+        <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(96px, 1fr))", gap:8}}>
           {[
             {label:"Compliant", value:compliant, color:T.green, bg:T.greenLt},
             {label:"Pending",   value:pending,   color:T.amber, bg:T.amberLt},
@@ -435,7 +435,7 @@ const WeeklyCPRWidget = ({ data, onOpen }) => {
           <div style={{fontSize:11, color:T.slate500, marginBottom:10}}>
             Latest week ending <span style={{fontWeight:700, color:T.slate800}}>{fmtD(r.week_ending_date)}</span>
           </div>
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:10, marginBottom:10}}>
             <div style={{padding:"8px 10px", borderRadius:8, border:`1px solid ${T.blue}30`, background:`${T.blue}08`}}>
               <div style={{fontSize:10, color:T.slate500, fontWeight:600}}>AUTO</div>
               <div style={{fontSize:16, fontWeight:800, color:T.blue}}>{fmtP(r.auto_ratio_pct)}</div>
@@ -447,7 +447,7 @@ const WeeklyCPRWidget = ({ data, onOpen }) => {
               <div style={{fontSize:10, color:T.slate500}}>rank {r.fire_rank ?? "—"}</div>
             </div>
           </div>
-          <div style={{display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:6}}>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(72px, 1fr))", gap:6}}>
             {[["Non Pays", r.non_pays],["New", r.new_claims],["Open", r.open_claims],["Unreview", r.unreviewed_claims]].map(([lbl, val], i) => (
               <div key={i} style={{padding:"6px 8px", borderRadius:6, background:T.slate50, border:`1px solid ${T.slate200}`}}>
                 <div style={{fontSize:9, color:T.slate500, fontWeight:600}}>{lbl}</div>

@@ -371,7 +371,7 @@ const Card = ({ children, style = {} }) => (
 );
 
 const CardHeader = ({ title, sub, action }) => (
-  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
+  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
     <div>
       <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{title}</div>
       {sub && <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>{sub}</div>}
@@ -726,6 +726,7 @@ const CompRecapSection = ({ data }) => {
         ))}
       </div>
 
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
@@ -755,6 +756,7 @@ const CompRecapSection = ({ data }) => {
           </tr>
         </tfoot>
       </table>
+      </div>
     </Card>
   );
 };
@@ -887,6 +889,7 @@ const PayrollSection = ({ data }) => {
         sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}`}
         action={<AskBtn context={`My agency payroll YTD: Gross ${fmt(ytdGross)}, Employer taxes ${fmt(ytdTax)}. Help me review payroll expenses and identify any concerns.`} />}
       />
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
@@ -910,6 +913,7 @@ const PayrollSection = ({ data }) => {
           ))}
         </tbody>
       </table>
+      </div>
     </Card>
   );
 };
@@ -1042,6 +1046,7 @@ const BalanceSheetSection = ({ data }) => {
         </div>
       )}
 
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
           <Row name="ASSETS" bold />
@@ -1064,6 +1069,7 @@ const BalanceSheetSection = ({ data }) => {
           <Row name="Total Liabilities + Equity" amount={totalLE} bold />
         </tbody>
       </table>
+      </div>
     </Card>
   );
 };
@@ -1076,6 +1082,7 @@ const GLSection = ({ data }) => (
       sub="Last 30 days · All accounts"
       action={<AskBtn context="I am reviewing my General Ledger recent entries. Help me verify these entries look correct and identify anything that needs attention." />}
     />
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <thead>
         <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
@@ -1097,6 +1104,7 @@ const GLSection = ({ data }) => (
         ))}
       </tbody>
     </table>
+    </div>
   </Card>
 );
 
@@ -1587,6 +1595,7 @@ const PrintTable = ({ title, sub, rows, cols }) => (
   <div style={{ marginBottom: 22 }}>
     <div style={{ fontSize: 15, fontWeight: 700, color: "#0F172A", marginBottom: 2 }}>{title}</div>
     {sub && <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>{sub}</div>}
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
       <thead>
         <tr style={{ borderBottom: "2px solid #334155" }}>
@@ -1607,6 +1616,7 @@ const PrintTable = ({ title, sub, rows, cols }) => (
         ))}
       </tbody>
     </table>
+    </div>
   </div>
 );
 
@@ -1735,7 +1745,7 @@ export default function Financials() {
   return (
     <div>
       {/* Module Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>Financials</div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>

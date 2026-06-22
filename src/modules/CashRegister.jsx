@@ -424,6 +424,7 @@ function WeeklySnapshotSection({ snapshots, weeklyView }) {
                 {rows.reduce((s,r)=>s+(r.txn_count||0),0)} transactions
               </span>
             </div>
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
               <thead>
                 <tr style={{ background:T.slate50 }}>
@@ -461,6 +462,7 @@ function WeeklySnapshotSection({ snapshots, weeklyView }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         );
       })}
@@ -647,7 +649,7 @@ export default function CashRegister() {
 
   const tabStyle = (active) => ({
     padding:"9px 18px", border:"none", borderRadius:"8px 8px 0 0",
-    fontSize:13, fontWeight:600, cursor:"pointer",
+    fontSize:13, fontWeight:600, cursor:"pointer", flexShrink:0,
     background: active ? T.white : "transparent",
     color:      active ? T.slate900  : T.slate500,
     borderBottom: active ? `2px solid ${T.blue}` : "2px solid transparent",
@@ -683,7 +685,8 @@ export default function CashRegister() {
 
       {/* Tab Nav */}
       <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.slate200}`,
-                    marginBottom:20, background:T.slate100, padding:"0 4px", borderRadius:"10px 10px 0 0" }}>
+                    marginBottom:20, background:T.slate100, padding:"0 4px", borderRadius:"10px 10px 0 0",
+                    overflowX:"auto", WebkitOverflowScrolling:"touch", whiteSpace:"nowrap" }}>
         {tabs.map(t => (
           <button key={t.id} style={tabStyle(activeTab===t.id)} onClick={()=>setActiveTab(t.id)}>
             {t.label}

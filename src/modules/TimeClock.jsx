@@ -1,4 +1,5 @@
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 import { useState, useEffect, useMemo, useCallback } from "react";
 
 // =====================================================================
@@ -277,9 +278,11 @@ export default function TimeClock() {
   const { user, loading: userLoading } = useCurrentUser();
   const canSeeAdmin = !!user && ["owner", "manager"].includes(user.role);
   const [tab, setTab] = useState("kiosk");
+  const _vp = useViewport();
+  const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 
   return (
-    <div style={{ padding: "20px 24px", maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ padding: _pad, maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: T.slate900, margin: 0 }}>Time Clock</h1>

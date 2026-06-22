@@ -15,13 +15,12 @@ import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Handbook from "./src/modules/Handbook.jsx";
-import Playbook from "./src/modules/Playbook.jsx";
-import Admin from "./src/modules/Admin.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
+import { useViewport } from "./src/lib/hooks.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
 
 import { TOKENS } from "./src/lib/theme.js";
@@ -62,28 +61,7 @@ import { TOKENS } from "./src/lib/theme.js";
 // ============================================================
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
-// Viewport hook (responsive design)
-// Pixel 8 Pro ~412px wide portrait; iPad 10 ~820px portrait; 15" laptop ~1440px+.
-// Phone: <640. Tablet: 640-1023. Desktop: >=1024.
-function useViewport() {
-  const compute = () => {
-    if (typeof window === "undefined") return { width: 1024, isPhone: false, isTablet: false, isDesktop: true };
-    const w = window.innerWidth;
-    return {
-      width: w,
-      isPhone:   w < 640,
-      isTablet:  w >= 640 && w < 1024,
-      isDesktop: w >= 1024,
-    };
-  };
-  const [vp, setVp] = useState(compute);
-  useEffect(() => {
-    const onResize = () => setVp(compute());
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  return vp;
-}
+// useViewport now lives in src/lib/hooks.js — imported above and used by modules too.
 
 // ─── App Context ──────────────────────────────────────────────────────────────
 const AppContext = createContext(null);
@@ -112,12 +90,10 @@ const NAV_ITEMS = [
   { type: "divider",   id: "_div_team_top" },
   { id: "time",        label: "Hours",       icon: "clock",    roles: ["owner","manager","staff"] },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen", roles: ["owner","manager","staff","readonly","accountant"] },
-  { id: "playbook",    label: "Playbook",    icon: "folder",   roles: ["owner","manager","staff","readonly","accountant"] },
   { type: "divider",   id: "_div_team_bot" },
   { id: "automations", label: "Automations", icon: "zap",      roles: ["owner","manager"] },
   { id: "memory",      label: "Memory",      icon: "brain",    roles: ["owner","manager"] },
   { id: "principles",  label: "Principles",  icon: "book",     roles: ["owner","manager"] },
-  { id: "admin",       label: "Admin",       icon: "shield",   roles: ["owner"] },
   { id: "settings",    label: "Settings",    icon: "settings", roles: ["owner"] },
 ];
 
@@ -565,8 +541,6 @@ const ModuleRouter = ({ active, onNavigate }) => {
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
-    playbook:    <ErrorBoundary name="Playbook"><Playbook /></ErrorBoundary>,
-    admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,

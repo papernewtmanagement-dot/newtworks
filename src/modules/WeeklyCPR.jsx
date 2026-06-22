@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 
 // ── Design tokens (mirrors Dashboard.jsx) ──────────────────────
 import { T } from "../lib/theme.js";
@@ -380,6 +381,8 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   }
 
   async function handlePreviewEmail() {
+  const _vp = useViewport();
+
     if (!supabase) return;
     if (previewing || saving || loading) return;
     setPreviewing(true);
@@ -414,7 +417,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)",
-      zIndex: 1000, overflow: "auto", padding: "24px 16px",
+      zIndex: 1000, overflow: "auto", padding: _vp.isPhone ? "8px 8px 16px" : "24px 16px",
     }}>
       <div style={{
         maxWidth: 1240, margin: "0 auto", background: T.slate50,
@@ -423,8 +426,10 @@ export default function WeeklyCPR({ onClose = () => {} }) {
       }}>
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "16px 22px", borderBottom: `1px solid ${T.slate200}`,
+          padding: _vp.isPhone ? "12px 14px" : "16px 22px",
+          borderBottom: `1px solid ${T.slate200}`,
           background: T.white, borderRadius: "14px 14px 0 0",
+          flexWrap: "wrap", gap: 12,
         }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
@@ -474,7 +479,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
             <Card>
               <SectionHeader icon="📈" title="Retention ratios — this week"
                 hint="Last week's values shown in grey for reference (read-only)." />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
                 {[
                   { key: "auto", label: "AUTO", color: T.blue },
                   { key: "fire", label: "FIRE", color: T.amber },
@@ -488,7 +493,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
                       border: `1px solid ${color}30`, background: `${color}08`,
                     }}>
                       <div style={{ fontSize: 11, fontWeight: 800, color, letterSpacing: 0.6, marginBottom: 10 }}>{label}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 10 }}>
                         <div>
                           <Label>Ratio %</Label>
                           <NumInput value={report?.[ratioK]} onChange={(v) => updateReport({ [ratioK]: v })} width="100%" step="0.01" />
@@ -513,7 +518,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
 
             <Card>
               <SectionHeader icon="📂" title="Claims summary" />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 12 }}>
                 {[
                   ["non_pays", "Non Pays"],
                   ["new_claims", "New Claims"],
@@ -648,7 +653,7 @@ export default function WeeklyCPR({ onClose = () => {} }) {
               <SectionHeader icon="📧" title="Email recap — opener + looking ahead"
                 hint="Claude writes both fields after you ping with the data filled in. Cron auto-sends Sat 11:59 PM CT (Sun 11:59 PM CT backup)." />
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
                 <div>
                   <Label>Opener</Label>
                   <textarea

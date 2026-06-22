@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 import { mdToHtml } from "./Handbook.jsx";
 
 // ============================================================
@@ -190,7 +191,7 @@ function SubmitView({ me, onSubmitted }) {
   const canSubmit = startDate && (isPartial || endDate || isChange) && !submitting;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
       <div>
         <h3 style={{ marginTop: 0 }}>New Request</h3>
         <label style={labelStyle}>Type</label>
@@ -447,7 +448,7 @@ function HistoryEditModal({ request, team, onClose, onSaved, onDeleted }) {
           </select>
         </label>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginTop: 12 }}>
           <label style={lbl}>
             Day part
             <select value={partialDay} onChange={e => setPartialDay(e.target.value)} style={inp}>
@@ -767,7 +768,7 @@ function LogTimeOffForm({ onLogged }) {
             </select>
           </label>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginTop: 12 }}>
             <label style={lbl}>
               Type
               <select value={type} onChange={e => setType(e.target.value)} style={inp}>
@@ -901,7 +902,7 @@ function InboxView({ me, onDecided }) {
               <StatusBadge status={r.status} />
             </div>
             {r.notes && <div style={{ fontSize: 13, fontStyle: "italic", color: "#475569", marginBottom: 8 }}>"{r.notes}"</div>}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
               <CheckCard title="Notice" ok={notice?.passes === true} detail={notice ? `${notice.provided_days}/${notice.required_days} days` : "—"} />
               <CheckCard title="Eligibility" ok={elig?.overall_eligibility === "eligible"} warn={elig?.overall_eligibility === "pending_review"} detail={elig?.overall_eligibility || "—"} />
               <div>{cov ? <CoverageBadge severity={cov.severity} messages={cov.messages} /> : <div style={{ fontSize: 12, color: "#94a3b8" }}>—</div>}</div>
@@ -1007,10 +1008,12 @@ export default function TimeOffRequests() {
   if (isOwner) tabs.push({ id: "inbox", label: "Inbox" });
 
   const bumpRefresh = () => setRefreshKey(k => k + 1);
+  const _vp = useViewport();
+  const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : 24;
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+    <div style={{ padding: _pad, maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Time Off & Remote</h1>
         <div style={{ fontSize: 13, color: "#64748b" }}>{me?.first_name} {me?.last_name} · {me?.role_level || "—"}</div>
       </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { useViewport } from "../lib/hooks.js";
 import ComplianceCenter from "./ComplianceCenter.jsx";
 
 // ============================================================
@@ -294,6 +295,9 @@ function PrinciplesView() {
 
 // ─── Detail View ──────────────────────────────────────────────
 function PrincipleDetail({ principle }) {
+  const _vp = useViewport();
+  const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
+
   const m = metaFor(principle?.domain);
   const books = Array.isArray(principle?.books_referenced) ? principle.books_referenced : [];
   const askContext = useMemo(() => {
@@ -316,7 +320,7 @@ What I'd like to discuss:
     : null;
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 40px 80px 40px" }}>
+    <div style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
       {/* Title block */}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 24 }}>
         <div style={{ fontSize: 44, lineHeight: 1 }}>{m.icon}</div>
@@ -421,7 +425,7 @@ export default function CorePrinciples() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: T.slate50, minHeight: 0 }}>
       {/* Outer tab bar */}
-      <div style={{ display: "flex", gap: 2, padding: "10px 16px 0 16px", background: T.white, borderBottom: `1px solid ${T.slate200}`, flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 2, padding: "10px 16px 0 16px", background: T.white, borderBottom: `1px solid ${T.slate200}`, flexShrink: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {tabs.map(t => {
           const isActive = outerTab === t.id;
           return (
