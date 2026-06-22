@@ -206,7 +206,21 @@ const css = {
   body: { display: "flex", flex: 1, overflow: "hidden" },
 
   // Sidebar Nav
-  nav: (collapsed) => ({
+  // On phone the nav becomes a slide-over drawer (position:fixed, transform-translate).
+  // On tablet/desktop it stays in-flow as a collapsible rail.
+  nav: (collapsed, isPhone) => isPhone ? ({
+    position: "fixed",
+    top: 58, bottom: 0, left: 0,
+    width: 260, maxWidth: "82vw",
+    background: TOKENS.chromeBg,
+    borderRight: `1px solid ${TOKENS.chromeBorder}`,
+    display: "flex", flexDirection: "column",
+    transform: collapsed ? "translateX(-100%)" : "translateX(0)",
+    transition: "transform 0.22s ease",
+    boxShadow: collapsed ? "none" : "4px 0 16px rgba(0,0,0,0.18)",
+    overflow: "hidden",
+    zIndex: 150,
+  }) : ({
     width: collapsed ? 56 : 220,
     background: TOKENS.chromeBg,
     borderRight: `1px solid ${TOKENS.chromeBorder}`,
@@ -216,6 +230,25 @@ const css = {
     overflow: "hidden",
     zIndex: 50,
   }),
+  // Backdrop scrim behind the phone drawer.
+  navBackdrop: (open) => ({
+    position: "fixed",
+    top: 58, bottom: 0, left: 0, right: 0,
+    background: "rgba(15, 23, 42, 0.45)",
+    opacity: open ? 1 : 0,
+    pointerEvents: open ? "auto" : "none",
+    transition: "opacity 0.18s ease",
+    zIndex: 140,
+  }),
+  // Hamburger trigger in the header (phone only).
+  hamburger: {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 36, height: 36,
+    border: "none", background: "transparent",
+    borderRadius: 8, cursor: "pointer",
+    color: TOKENS.chromeText,
+    padding: 0, marginRight: 4,
+  },
   navScroll: { flex: 1, overflowY: "auto", overflowX: "hidden", padding: "8px 0" },
   navDivider: { height: 1, background: TOKENS.chromeBorder, margin: "8px 12px" },
   navItem: (active, collapsed) => ({
@@ -856,14 +889,33 @@ export default function BCCApp() {
         <DemoBanner />
 
         {/* ── Header ── */}
-        <header style={{ ...css.header, padding: viewport.isPhone ? "0 10px" : "0 20px" }}>
+        <header style={{ ...css.header, padding: viewport.isPhone ? "0 8px" : "0 20px" }}>
           <div style={css.headerLeft}>
+            {viewport.isPhone && (
+              <button
+                type="button"
+                aria-label={navCollapsed ? "Open navigation" : "Close navigation"}
+                aria-expanded={!navCollapsed}
+                style={css.hamburger}
+                onClick={() => setNavCollapsed(c => !c)}
+              >
+                <Icon name={navCollapsed ? "menu" : "x"} size={20} color={TOKENS.chromeText} />
+              </button>
+            )}
             <div style={css.headerLogo}>
-              <img src="/paper-newt-master.png" alt="paper newt" width="136" height="56" style={{ display: "block" }} />
+              <img
+                src="/paper-newt-master.png"
+                alt="paper newt"
+                width={viewport.isPhone ? 88 : 136}
+                height={viewport.isPhone ? 36 : 56}
+                style={{ display: "block" }}
+              />
             </div>
-            <div>
-              <div style={css.agencyName}>paper newt</div>
-            </div>
+            {!viewport.isPhone && (
+              <div>
+                <div style={css.agencyName}>paper newt</div>
+              </div>
+            )}
           </div>
 
           <div style={css.headerRight}>
@@ -880,10 +932,12 @@ export default function BCCApp() {
                 onClick={() => setUserMenuOpen(o => !o)}
               >
                 <div style={css.avatar}>{agency.user.initials}</div>
-                <div>
-                  <div style={css.userName}>{agency.user.name}</div>
-                  <div style={css.userRole}>{agency.user.role}</div>
-                </div>
+                {!viewport.isPhone && (
+                  <div>
+                    <div style={css.userName}>{agency.user.name}</div>
+                    <div style={css.userRole}>{agency.user.role}</div>
+                  </div>
+                )}
               </div>
               {userMenuOpen && (
                 <div style={{
@@ -918,28 +972,47 @@ export default function BCCApp() {
         {/* ── Body ── */}
         <div style={css.body} onClick={() => userMenuOpen && setUserMenuOpen(false)}>
 
+          {/* Backdrop scrim for the phone drawer */}
+          {viewport.isPhone && (
+            <div
+              style={css.navBackdrop(!navCollapsed)}
+              onClick={() => setNavCollapsed(true)}
+              aria-hidden={navCollapsed}
+            />
+          )}
+
           {/* ── Sidebar ── */}
-          <nav style={css.nav(navCollapsed)}>
+          <nav
+            style={css.nav(navCollapsed, viewport.isPhone)}
+            aria-hidden={viewport.isPhone && navCollapsed}
+          >
             <div style={css.navScroll}>
               {visibleNav.map(item => {
                 if (item.type === "divider") {
                   return <div key={item.id} style={css.navDivider} aria-hidden="true" />;
                 }
                 const active = activeModule === item.id;
+                // On phone the nav is always rendered expanded inside the drawer,
+                // so force collapsed=false for nav-item styling there.
+                const itemCollapsed = viewport.isPhone ? false : navCollapsed;
                 return (
                   <div
                     key={item.id}
-                    style={css.navItem(active, navCollapsed)}
-                    onClick={() => { if (cprWeekDate) handleCloseCPR(); setActiveModule(item.id); }}
-                    title={navCollapsed ? item.label : ""}
+                    style={css.navItem(active, itemCollapsed)}
+                    onClick={() => {
+                      if (cprWeekDate) handleCloseCPR();
+                      setActiveModule(item.id);
+                      if (viewport.isPhone) setNavCollapsed(true);
+                    }}
+                    title={itemCollapsed ? item.label : ""}
                   >
                     <Icon
                       name={item.icon}
                       size={15}
                       color={active ? TOKENS.chromeText : TOKENS.chromeTextDim}
                     />
-                    <span style={css.navLabel(navCollapsed)}>{item.label}</span>
-                    {item.id === "alerts" && !navCollapsed && agency.alerts > 0 && (
+                    <span style={css.navLabel(itemCollapsed)}>{item.label}</span>
+                    {item.id === "alerts" && !itemCollapsed && agency.alerts > 0 && (
                       <span style={{ ...css.pill("danger"), marginLeft: "auto", fontSize: 9, padding: "2px 6px" }}>
                         {agency.alerts}
                       </span>
@@ -949,14 +1022,16 @@ export default function BCCApp() {
               })}
             </div>
 
-            {/* Collapse Toggle */}
-            <div
-              style={css.navCollapseBtn}
-              onClick={() => setNavCollapsed(c => !c)}
-              title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-            >
-              <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
-            </div>
+            {/* Collapse Toggle — tablet/desktop only; phone drawer closes via tap-item / backdrop / header X */}
+            {!viewport.isPhone && (
+              <div
+                style={css.navCollapseBtn}
+                onClick={() => setNavCollapsed(c => !c)}
+                title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+              >
+                <Icon name={navCollapsed ? "chevronRight" : "chevronLeft"} size={14} color={TOKENS.chromeTextDim} />
+              </div>
+            )}
           </nav>
 
           {/* ── Main Content ── */}
