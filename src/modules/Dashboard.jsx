@@ -151,7 +151,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
 
   return (
     <Card>
-      <SectionTitle icon="🎯" title="Standing Goals — On-Time Pace"
+      <SectionTitle icon="🎯" title="Goals: On-Time"
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Financials →</button>}
       />
       <Row
@@ -178,9 +178,6 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
         sub={g.smvc?.sub}
         pacePct={g.smvc?.pace_pct}
       />
-      <div style={{fontSize:10, color:T.slate400, marginTop:10, textAlign:"center"}}>
-        {g.as_of_note || "On-time = annualized projection at current pace · Live"}
-      </div>
     </Card>
   );
 };
@@ -568,7 +565,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
             // Sub shows YTD-actual growth as context + on-time % vs the 25% goal.
             current_label: fmtUsdSigned(annualGain),
             target_label:  `+${fmtUsd(tgtGain)}`,
-            sub: `${fmtUsdSigned(netYTD)} YTD actual · ${growthPctOnTime.toFixed(1)}% / 25%`,
+            sub: `${growthPctOnTime.toFixed(1)}% / 25%`,
             pace_pct,
           };
         }
@@ -636,12 +633,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           };
         }
 
-        const goalsPace = {
-          pc, cc, smvc: smvcPace,
-          as_of_note: sf?.snapshot_date
-            ? `On-time = annualized projection at current pace · As of ${sf.snapshot_date} · day ${daysElapsed} of 365`
-            : `On-time = annualized projection at current pace · Day ${daysElapsed} of 365`,
-        };
+        const goalsPace = { pc, cc, smvc: smvcPace };
 
         setDashData({
           agency,
