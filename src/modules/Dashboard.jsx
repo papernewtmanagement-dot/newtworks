@@ -151,9 +151,7 @@ const GoalsPaceWidget = ({ data, onNavigate }) => {
 
   return (
     <Card>
-      <SectionTitle icon="🎯" title="Goals: On-Time"
-        action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Financials →</button>}
-      />
+      <SectionTitle icon="🎯" title="Goals: On-Time" />
       <Row
         icon="📈"
         title="P&C Premium Growth (25%/yr)"
