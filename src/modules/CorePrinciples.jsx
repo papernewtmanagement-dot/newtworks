@@ -145,6 +145,7 @@ function PrinciplesView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const _vp = useViewport();
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +163,7 @@ function PrinciplesView() {
         else {
           const rows = Array.isArray(data) ? data : [];
           setPrinciples(rows);
-          if (rows.length && !selectedId) setSelectedId(rows[0].id);
+          if (rows.length && !selectedId && !(typeof window !== "undefined" && window.innerWidth < 640)) setSelectedId(rows[0].id);
         }
       } catch (e) {
         if (!cancelled) { setError(e?.message || "Failed to load core principles"); setPrinciples([]); }
@@ -217,7 +218,14 @@ function PrinciplesView() {
   return (
     <div style={{ display: "flex", height: "100%", background: T.slate50 }}>
       {/* Sidebar */}
-      <div style={{ width: 320, borderRight: `1px solid ${T.slate200}`, background: T.white, display: "flex", flexDirection: "column" }}>
+      {/* Phone: full-width when nothing selected; hidden when reading.   */}
+      {/* Tablet/desktop: persistent 320px panel as before.               */}
+      {(!_vp.isPhone || !selectedId) && (
+      <div style={{
+        width: _vp.isPhone ? "100%" : 320,
+        borderRight: _vp.isPhone ? "none" : `1px solid ${T.slate200}`,
+        background: T.white, display: "flex", flexDirection: "column"
+      }}>
         {/* Header */}
         <div style={{ padding: "20px 20px 16px 20px", borderBottom: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
@@ -282,13 +290,49 @@ function PrinciplesView() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Main pane */}
+      {/* Phone: full-width with sticky back button when reading. */}
+      {(!_vp.isPhone || selectedId) && (
       <div style={{ flex: 1, overflowY: "auto" }}>
+        {_vp.isPhone && selectedId && (
+          <div style={{
+            position: "sticky", top: 0, zIndex: 10,
+            background: T.white,
+            borderBottom: `1px solid ${T.slate200}`,
+            padding: "10px 14px",
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <button
+              type="button"
+              onClick={() => setSelectedId(null)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                background: "transparent",
+                border: `1px solid ${T.slate200}`,
+                borderRadius: 8,
+                padding: "7px 12px",
+                fontSize: 13, fontWeight: 600,
+                color: T.slate700, cursor: "pointer",
+              }}
+              aria-label="Back to principles"
+            >
+              <span aria-hidden="true">‹</span> Back
+            </button>
+            <div style={{
+              fontSize: 12, fontWeight: 600, color: T.slate500,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {prettyDomain(selected?.domain)}
+            </div>
+          </div>
+        )}
         {selected && (
           <PrincipleDetail principle={selected} />
         )}
       </div>
+      )}
     </div>
   );
 }

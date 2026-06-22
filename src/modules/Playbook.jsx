@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
@@ -320,6 +321,7 @@ export default function Playbook() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const _vp = useViewport();
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -421,9 +423,12 @@ export default function Playbook() {
   return (
     <div style={{ display: "flex", height: "100%", background: T.slate50 }}>
       {/* ─── Sidebar ──────────────────────────────────────── */}
+      {/* Phone: full-width when no page selected; hidden when reading.    */}
+      {/* Tablet/desktop: persistent 320px panel as before.                */}
+      {(!_vp.isPhone || !selectedId) && (
       <div style={{
-        width: 320, flexShrink: 0,
-        borderRight: `1px solid ${T.slate200}`,
+        width: _vp.isPhone ? "100%" : 320, flexShrink: 0,
+        borderRight: _vp.isPhone ? "none" : `1px solid ${T.slate200}`,
         background: T.white,
         display: "flex", flexDirection: "column",
       }}>
@@ -511,15 +516,51 @@ export default function Playbook() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ─── Main pane ─────────────────────────────────────── */}
+      {/* Phone: full-width with sticky back button when reading. */}
+      {(!_vp.isPhone || selectedId) && (
       <div style={{ flex: 1, overflowY: "auto" }}>
+        {_vp.isPhone && selectedId && (
+          <div style={{
+            position: "sticky", top: 0, zIndex: 10,
+            background: T.white,
+            borderBottom: `1px solid ${T.slate200}`,
+            padding: "10px 14px",
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <button
+              type="button"
+              onClick={() => setSelectedId(null)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                background: "transparent",
+                border: `1px solid ${T.slate200}`,
+                borderRadius: 8,
+                padding: "7px 12px",
+                fontSize: 13, fontWeight: 600,
+                color: T.slate700, cursor: "pointer",
+              }}
+              aria-label="Back to list"
+            >
+              <span aria-hidden="true">‹</span> Back
+            </button>
+            <div style={{
+              fontSize: 12, fontWeight: 600, color: T.slate500,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {selected?.title || "Untitled"}
+            </div>
+          </div>
+        )}
         {selected ? <PlaybookPage page={selected} /> : (
           <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
             Select a page from the sidebar.
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

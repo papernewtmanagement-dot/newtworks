@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
@@ -278,8 +279,15 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
 };
 
 // ─── Category Sidebar ─────────────────────────────────────────
-const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
-  <div style={{
+const CategorySidebar = ({ categories, activeCategory, counts, onChange, isPhone }) => (
+  <div style={isPhone ? {
+    width: "100%",
+    display: "flex", flexDirection: "row",
+    gap: 6, marginBottom: 12,
+    overflowX: "auto",
+    WebkitOverflowScrolling: "touch",
+    paddingBottom: 4,
+  } : {
     width: 200, flexShrink: 0,
     display: "flex", flexDirection: "column", gap: 4,
   }}>
@@ -288,6 +296,7 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
       style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "9px 12px", borderRadius: 8, cursor: "pointer",
+        flexShrink: 0, whiteSpace: "nowrap",
         background: activeCategory === "all" ? T.slate900 : "transparent",
         border: `1px solid ${activeCategory === "all" ? T.slate900 : T.slate200}`,
         fontSize: 12, fontWeight: activeCategory === "all" ? 600 : 400,
@@ -313,6 +322,7 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "9px 12px", borderRadius: 8, cursor: "pointer",
+            flexShrink: 0, whiteSpace: "nowrap",
             background: active ? cat.colorLt : "transparent",
             border: `1px solid ${active ? cat.color : T.slate200}`,
             fontSize: 12, fontWeight: active ? 600 : 400,
@@ -338,6 +348,7 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
 
 // ─── Main Module ──────────────────────────────────────────────
 export default function PersistentMemory() {
+  const _vp = useViewport();
   const [memories,        setMemories]        = useState([]);
   const [loading,         setLoading]          = useState(true);
   const [saveError,       setSaveError]        = useState(null);
@@ -540,7 +551,12 @@ export default function PersistentMemory() {
 
       {/* Body — Sidebar + Cards */}
       {!loading && (
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <div style={{
+        display: "flex",
+        flexDirection: _vp.isPhone ? "column" : "row",
+        gap: _vp.isPhone ? 0 : 16,
+        alignItems: _vp.isPhone ? "stretch" : "flex-start",
+      }}>
 
         {/* Category Sidebar */}
         <CategorySidebar
@@ -548,6 +564,7 @@ export default function PersistentMemory() {
           activeCategory={activeCategory}
           counts={counts}
           onChange={setActiveCategory}
+          isPhone={_vp.isPhone}
         />
 
         {/* Memory Cards */}
