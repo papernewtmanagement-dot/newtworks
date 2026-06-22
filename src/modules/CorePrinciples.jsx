@@ -146,6 +146,7 @@ function PrinciplesView() {
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const _vp = useViewport();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,7 +164,7 @@ function PrinciplesView() {
         else {
           const rows = Array.isArray(data) ? data : [];
           setPrinciples(rows);
-          if (rows.length && !selectedId && !(typeof window !== "undefined" && window.innerWidth < 640)) setSelectedId(rows[0].id);
+          if (rows.length && !selectedId) setSelectedId(rows[0].id);
         }
       } catch (e) {
         if (!cancelled) { setError(e?.message || "Failed to load core principles"); setPrinciples([]); }
@@ -217,15 +218,42 @@ function PrinciplesView() {
   // ─── Layout ───────────────────────────────────────────────
   return (
     <div style={{ display: "flex", height: "100%", background: T.slate50 }}>
-      {/* Sidebar */}
-      {/* Phone: full-width when nothing selected; hidden when reading.   */}
-      {/* Tablet/desktop: persistent 320px panel as before.               */}
-      {(!_vp.isPhone || !selectedId) && (
-      <div style={{
-        width: _vp.isPhone ? "100%" : 320,
-        borderRight: _vp.isPhone ? "none" : `1px solid ${T.slate200}`,
-        background: T.white, display: "flex", flexDirection: "column"
-      }}>
+      {/* Backdrop (phone drawer only) */}
+      {_vp.isPhone && (
+        <div
+          style={{
+            position: "fixed", top: 58, bottom: 0, left: 0, right: 0,
+            background: "rgba(15, 23, 42, 0.45)",
+            opacity: drawerOpen ? 1 : 0,
+            pointerEvents: drawerOpen ? "auto" : "none",
+            transition: "opacity 0.18s ease",
+            zIndex: 140,
+          }}
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden={!drawerOpen}
+        />
+      )}
+
+      {/* Sidebar — desktop in-flow; phone slide-over drawer */}
+      <div
+        style={_vp.isPhone ? {
+          position: "fixed", top: 58, bottom: 0, left: 0,
+          width: 280, maxWidth: "85vw",
+          background: T.white,
+          borderRight: `1px solid ${T.slate200}`,
+          display: "flex", flexDirection: "column",
+          transform: drawerOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 0.22s ease",
+          boxShadow: drawerOpen ? "4px 0 16px rgba(0,0,0,0.18)" : "none",
+          overflow: "hidden",
+          zIndex: 150,
+        } : {
+          width: 320,
+          borderRight: `1px solid ${T.slate200}`,
+          background: T.white, display: "flex", flexDirection: "column"
+        }}
+        aria-hidden={_vp.isPhone && !drawerOpen}
+      >
         {/* Header */}
         <div style={{ padding: "20px 20px 16px 20px", borderBottom: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
@@ -247,7 +275,7 @@ function PrinciplesView() {
             return (
               <button
                 key={p.id}
-                onClick={() => setSelectedId(p.id)}
+                onClick={() => { setSelectedId(p.id); if (_vp.isPhone) setDrawerOpen(false); }}
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -290,41 +318,42 @@ function PrinciplesView() {
           </div>
         </div>
       </div>
-      )}
 
       {/* Main pane */}
-      {/* Phone: full-width with sticky back button when reading. */}
-      {(!_vp.isPhone || selectedId) && (
+      {/* Always rendered. On phone, a sticky top bar opens the principle */}
+      {/* drawer so the user can jump to any principle directly.          */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {_vp.isPhone && selectedId && (
+        {_vp.isPhone && (
           <div style={{
             position: "sticky", top: 0, zIndex: 10,
             background: T.white,
             borderBottom: `1px solid ${T.slate200}`,
-            padding: "10px 14px",
-            display: "flex", alignItems: "center", gap: 8,
+            padding: "8px 12px",
+            display: "flex", alignItems: "center", gap: 10,
           }}>
             <button
               type="button"
-              onClick={() => setSelectedId(null)}
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open principles"
               style={{
                 display: "flex", alignItems: "center", gap: 6,
-                background: "transparent",
+                background: T.white,
                 border: `1px solid ${T.slate200}`,
                 borderRadius: 8,
                 padding: "7px 12px",
                 fontSize: 13, fontWeight: 600,
                 color: T.slate700, cursor: "pointer",
+                flexShrink: 0,
               }}
-              aria-label="Back to principles"
             >
-              <span aria-hidden="true">‹</span> Back
+              <span style={{ fontSize: 16, lineHeight: 1 }} aria-hidden="true">☰</span>
+              Principles
             </button>
             <div style={{
               fontSize: 12, fontWeight: 600, color: T.slate500,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              {prettyDomain(selected?.domain)}
+              {selected ? prettyDomain(selected?.domain) : "Pick a principle"}
             </div>
           </div>
         )}
@@ -332,7 +361,6 @@ function PrinciplesView() {
           <PrincipleDetail principle={selected} />
         )}
       </div>
-      )}
     </div>
   );
 }

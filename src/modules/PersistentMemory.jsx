@@ -279,15 +279,8 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
 };
 
 // ─── Category Sidebar ─────────────────────────────────────────
-const CategorySidebar = ({ categories, activeCategory, counts, onChange, isPhone }) => (
-  <div style={isPhone ? {
-    width: "100%",
-    display: "flex", flexDirection: "row",
-    gap: 6, marginBottom: 12,
-    overflowX: "auto",
-    WebkitOverflowScrolling: "touch",
-    paddingBottom: 4,
-  } : {
+const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
+  <div style={{
     width: 200, flexShrink: 0,
     display: "flex", flexDirection: "column", gap: 4,
   }}>
@@ -296,7 +289,6 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange, isPhone
       style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "9px 12px", borderRadius: 8, cursor: "pointer",
-        flexShrink: 0, whiteSpace: "nowrap",
         background: activeCategory === "all" ? T.slate900 : "transparent",
         border: `1px solid ${activeCategory === "all" ? T.slate900 : T.slate200}`,
         fontSize: 12, fontWeight: activeCategory === "all" ? 600 : 400,
@@ -322,7 +314,6 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange, isPhone
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "9px 12px", borderRadius: 8, cursor: "pointer",
-            flexShrink: 0, whiteSpace: "nowrap",
             background: active ? cat.colorLt : "transparent",
             border: `1px solid ${active ? cat.color : T.slate200}`,
             fontSize: 12, fontWeight: active ? 600 : 400,
@@ -349,6 +340,7 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange, isPhone
 // ─── Main Module ──────────────────────────────────────────────
 export default function PersistentMemory() {
   const _vp = useViewport();
+  const [drawerOpen,      setDrawerOpen]      = useState(false);
   const [memories,        setMemories]        = useState([]);
   const [loading,         setLoading]          = useState(true);
   const [saveError,       setSaveError]        = useState(null);
@@ -549,23 +541,92 @@ export default function PersistentMemory() {
         />
       </div>
 
+      {/* Phone: sticky top bar opens the category drawer */}
+      {_vp.isPhone && !loading && (
+        <div style={{
+          position: "sticky", top: 0, zIndex: 10,
+          background: T.white,
+          borderBottom: `1px solid ${T.slate200}`,
+          padding: "8px 12px",
+          margin: "0 0 12px 0",
+          display: "flex", alignItems: "center", gap: 10,
+          borderRadius: 8,
+        }}>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open categories"
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: T.white,
+              border: `1px solid ${T.slate200}`,
+              borderRadius: 8,
+              padding: "7px 12px",
+              fontSize: 13, fontWeight: 600,
+              color: T.slate700, cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 16, lineHeight: 1 }} aria-hidden="true">☰</span>
+            Categories
+          </button>
+          <div style={{
+            fontSize: 12, fontWeight: 600, color: T.slate500,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {activeCategory === "all"
+              ? `All Memories (${counts.all})`
+              : (categories.find(c => c.id === activeCategory)?.label || activeCategory)}
+          </div>
+        </div>
+      )}
+
+      {/* Phone: backdrop scrim behind the drawer */}
+      {_vp.isPhone && (
+        <div
+          style={{
+            position: "fixed", top: 58, bottom: 0, left: 0, right: 0,
+            background: "rgba(15, 23, 42, 0.45)",
+            opacity: drawerOpen ? 1 : 0,
+            pointerEvents: drawerOpen ? "auto" : "none",
+            transition: "opacity 0.18s ease",
+            zIndex: 140,
+          }}
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden={!drawerOpen}
+        />
+      )}
+
       {/* Body — Sidebar + Cards */}
       {!loading && (
-      <div style={{
-        display: "flex",
-        flexDirection: _vp.isPhone ? "column" : "row",
-        gap: _vp.isPhone ? 0 : 16,
-        alignItems: _vp.isPhone ? "stretch" : "flex-start",
-      }}>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
 
-        {/* Category Sidebar */}
-        <CategorySidebar
-          categories={categories}
-          activeCategory={activeCategory}
-          counts={counts}
-          onChange={setActiveCategory}
-          isPhone={_vp.isPhone}
-        />
+        {/* Category Sidebar — desktop in-flow; phone slide-over drawer */}
+        <div
+          style={_vp.isPhone ? {
+            position: "fixed", top: 58, bottom: 0, left: 0,
+            width: 280, maxWidth: "85vw",
+            background: T.white,
+            borderRight: `1px solid ${T.slate200}`,
+            padding: "16px 12px",
+            transform: drawerOpen ? "translateX(0)" : "translateX(-100%)",
+            transition: "transform 0.22s ease",
+            boxShadow: drawerOpen ? "4px 0 16px rgba(0,0,0,0.18)" : "none",
+            overflowY: "auto",
+            zIndex: 150,
+          } : undefined}
+          aria-hidden={_vp.isPhone && !drawerOpen}
+        >
+          <CategorySidebar
+            categories={categories}
+            activeCategory={activeCategory}
+            counts={counts}
+            onChange={(cat) => {
+              setActiveCategory(cat);
+              if (_vp.isPhone) setDrawerOpen(false);
+            }}
+          />
+        </div>
 
         {/* Memory Cards */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 20 }}>

@@ -319,6 +319,7 @@ export default function Handbook() {
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const _vp = useViewport();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -419,16 +420,45 @@ export default function Handbook() {
 
   return (
     <div style={{ display: "flex", height: "100%", background: T.slate50 }}>
+      {/* Backdrop (phone drawer only) */}
+      {_vp.isPhone && (
+        <div
+          style={{
+            position: "fixed", top: 58, bottom: 0, left: 0, right: 0,
+            background: "rgba(15, 23, 42, 0.45)",
+            opacity: drawerOpen ? 1 : 0,
+            pointerEvents: drawerOpen ? "auto" : "none",
+            transition: "opacity 0.18s ease",
+            zIndex: 140,
+          }}
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden={!drawerOpen}
+        />
+      )}
+
       {/* ─── Sidebar ──────────────────────────────────────── */}
-      {/* Phone: full-width when no page selected; hidden when reading.    */}
-      {/* Tablet/desktop: persistent 320px panel as before.                */}
-      {(!_vp.isPhone || !selectedId) && (
-      <div style={{
-        width: _vp.isPhone ? "100%" : 320, flexShrink: 0,
-        borderRight: _vp.isPhone ? "none" : `1px solid ${T.slate200}`,
-        background: T.white,
-        display: "flex", flexDirection: "column",
-      }}>
+      {/* Desktop/tablet: persistent 320px panel.                          */}
+      {/* Phone: slide-over drawer mirroring the main-nav drawer pattern.  */}
+      <div
+        style={_vp.isPhone ? {
+          position: "fixed", top: 58, bottom: 0, left: 0,
+          width: 280, maxWidth: "85vw",
+          background: T.white,
+          borderRight: `1px solid ${T.slate200}`,
+          display: "flex", flexDirection: "column",
+          transform: drawerOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 0.22s ease",
+          boxShadow: drawerOpen ? "4px 0 16px rgba(0,0,0,0.18)" : "none",
+          overflow: "hidden",
+          zIndex: 150,
+        } : {
+          width: 320, flexShrink: 0,
+          borderRight: `1px solid ${T.slate200}`,
+          background: T.white,
+          display: "flex", flexDirection: "column",
+        }}
+        aria-hidden={_vp.isPhone && !drawerOpen}
+      >
         <div style={{ padding: "20px 20px 14px 20px", borderBottom: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
             Team Reference
@@ -468,7 +498,7 @@ export default function Handbook() {
             return (
               <button
                 key={node.confluence_page_id}
-                onClick={() => setSelectedId(node.confluence_page_id)}
+                onClick={() => { setSelectedId(node.confluence_page_id); if (_vp.isPhone) setDrawerOpen(false); }}
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -513,51 +543,51 @@ export default function Handbook() {
           </div>
         </div>
       </div>
-      )}
 
       {/* ─── Main pane ─────────────────────────────────────── */}
-      {/* Phone: full-width with sticky back button when reading. */}
-      {(!_vp.isPhone || selectedId) && (
+      {/* Always rendered. On phone, a sticky top bar opens the section  */}
+      {/* drawer so the user can pop to anywhere directly.               */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {_vp.isPhone && selectedId && (
+        {_vp.isPhone && (
           <div style={{
             position: "sticky", top: 0, zIndex: 10,
             background: T.white,
             borderBottom: `1px solid ${T.slate200}`,
-            padding: "10px 14px",
-            display: "flex", alignItems: "center", gap: 8,
+            padding: "8px 12px",
+            display: "flex", alignItems: "center", gap: 10,
           }}>
             <button
               type="button"
-              onClick={() => setSelectedId(null)}
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open sections"
               style={{
                 display: "flex", alignItems: "center", gap: 6,
-                background: "transparent",
+                background: T.white,
                 border: `1px solid ${T.slate200}`,
                 borderRadius: 8,
                 padding: "7px 12px",
                 fontSize: 13, fontWeight: 600,
                 color: T.slate700, cursor: "pointer",
+                flexShrink: 0,
               }}
-              aria-label="Back to list"
             >
-              <span aria-hidden="true">‹</span> Back
+              <span style={{ fontSize: 16, lineHeight: 1 }} aria-hidden="true">☰</span>
+              Sections
             </button>
             <div style={{
               fontSize: 12, fontWeight: 600, color: T.slate500,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              {selected?.title || "Untitled"}
+              {selected?.title || "Pick a section"}
             </div>
           </div>
         )}
         {selected ? <HandbookPage page={selected} /> : (
           <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
-            Select a page from the sidebar.
+            {_vp.isPhone ? 'Tap "Sections" to choose a page.' : 'Select a page from the sidebar.'}
           </div>
         )}
       </div>
-      )}
     </div>
   );
 }
