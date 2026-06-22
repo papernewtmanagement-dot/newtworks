@@ -658,6 +658,17 @@ export default function BCCApp() {
       return;
     }
 
+    // Race any supabase call against a timeout so a hung network (corp WiFi
+    // blocking the project subdomain, slow proxy, etc.) can't pin the auth
+    // gate on "checking" forever. The real promise keeps running in the
+    // background; if it ever resolves, the auth state will update via
+    // onAuthStateChange. Worst case the user falls through to LoginScreen
+    // after the timeout and can try signing in manually.
+    const withTimeout = (promise, ms, fallback) => Promise.race([
+      promise,
+      new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+    ]);
+
     // Belt-and-suspenders invite detection. The URL-hash regex below races with
     // Supabase JS auto-consuming the hash on construction (invite flow gives us
     // a SIGNED_IN event, not PASSWORD_RECOVERY, so the hash is the only fast
@@ -667,18 +678,26 @@ export default function BCCApp() {
     const checkInviteStatus = async (authUserId) => {
       if (!authUserId) return false;
       try {
-        const { data } = await supabase
-          .from("users")
-          .select("invite_status")
-          .eq("auth_user_id", authUserId)
-          .maybeSingle();
-        return data?.invite_status === "invited";
+        const result = await withTimeout(
+          supabase
+            .from("users")
+            .select("invite_status")
+            .eq("auth_user_id", authUserId)
+            .maybeSingle(),
+          3000,
+          { data: null },
+        );
+        return result?.data?.invite_status === "invited";
       } catch (_e) {
         return false;
       }
     };
 
-    supabase.auth.getSession().then(async ({ data }) => {
+    withTimeout(
+      supabase.auth.getSession(),
+      8000,
+      { data: { session: null } },
+    ).then(async ({ data }) => {
       if (!mounted) return;
       const session = data?.session || null;
       setSessionEmail(session?.user?.email || "");
