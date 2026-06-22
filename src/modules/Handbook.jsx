@@ -719,27 +719,6 @@ What I'd like to discuss:
 
       {/* Action row */}
       <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
-        {page?.source_url && (
-          <a
-            href={page.source_url}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              background: T.white, color: T.slate700,
-              border: `1px solid ${T.slate200}`, borderRadius: 7,
-              padding: "8px 14px",
-              fontSize: 12, fontWeight: 600,
-              textDecoration: "none",
-              transition: "all 0.15s",
-            }}
-            onMouseOver={(e) => { e.currentTarget.style.borderColor = T.blue; e.currentTarget.style.color = T.blue; }}
-            onMouseOut={(e) => { e.currentTarget.style.borderColor = T.slate200; e.currentTarget.style.color = T.slate700; }}
-            title="Open this page in Confluence (source of truth)"
-          >
-            ↗ Edit in Confluence
-          </a>
-        )}
         <AskBtn context={askContext} />
       </div>
 
