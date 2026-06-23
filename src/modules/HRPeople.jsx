@@ -58,8 +58,8 @@ function useProducerROI() {
         const currentYear  = new Date().getFullYear();
         const currentMonth = new Date().getMonth() + 1;
 
-        const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes] = await Promise.all([
-          supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
+        const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
+          supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
           supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id"),
@@ -67,6 +67,7 @@ function useProducerROI() {
           supabase.from("comp_recap").select("period_year, period_month, comp_type, comp_category, amount").eq("agency_id", AGENCY_ID),
           supabase.from("v_aipp_projection").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
           supabase.from("aipp_tracking").select("*").eq("agency_id", AGENCY_ID).order("program_year",{ascending:false}).limit(1),
+          supabase.from("v_lapse_rate_current").select("annualized_rate").eq("agency_id", AGENCY_ID).eq("line", "blended").maybeSingle(),
         ]);
 
         const agency = agencyRes.data || {};
@@ -76,7 +77,7 @@ function useProducerROI() {
         const payrollRuns = payrollRunsRes.data || [];
         const compRecaps = compRes.data || [];
 
-        // Lapse rate from comp_recap: prior-year vs current-year auto+fire YTD renewals
+        // P&C renewal YTD context (prior year vs current year) — shown for reference only.
         const isPC = (cat) => {
           const c = (cat || "").toLowerCase();
           return c.includes("auto") || c.includes("home") || c.includes("fire") || c.includes("umbrella");
@@ -87,13 +88,12 @@ function useProducerROI() {
 
         const priorRenewals = renewalsYtd(currentYear - 1);
         const currentRenewals = renewalsYtd(currentYear);
-        let computedLapse = null;
-        if (priorRenewals > 0) {
-          computedLapse = Math.max(0, Math.min(50, (1 - currentRenewals / priorRenewals) * 100));
-        }
-        const lapseRate = agency.lapse_rate_annual != null
-          ? (parseFloat(agency.lapse_rate_annual) <= 1 ? parseFloat(agency.lapse_rate_annual) * 100 : parseFloat(agency.lapse_rate_annual))
-          : (computedLapse != null ? computedLapse : 10);
+
+        // Authoritative lapse rate: server-computed from agency_snapshot YTD via compute_lapse_rate().
+        // Per the "Lapse rate — never store, compute at runtime" operational rule, the rate is
+        // always derived live from policies lost YTD ÷ starting PIF, dollar-weighted across Auto/Fire/Life.
+        const serverLapse = parseFloat(lapseRes?.data?.annualized_rate);
+        const lapseRate = Number.isFinite(serverLapse) ? serverLapse * 100 : 10;
 
         // Per-producer monthly gross pay from last 3 payroll runs (×2 for semi-monthly)
         const last3RunIds = new Set(payrollRuns.slice(0, 3).map(r => r.id));
@@ -199,8 +199,6 @@ function useProducerROI() {
           smvcRate: smvc,
           blendedRate: blended,
           lapseRate,
-          lapseRateComputed: computedLapse,
-          lapseRateOverride: agency.lapse_rate_annual != null,
           ratesAreDefaults: agency.rates_are_defaults === true,
           priorRenewals,
           currentRenewals,
@@ -1757,7 +1755,7 @@ const PerformanceSection = ({ roi }) => {
     );
   }
 
-  const { smvcRate, blendedRate, lapseRate, lapseRateComputed, lapseRateOverride,
+  const { smvcRate, blendedRate, lapseRate,
           priorRenewals, currentRenewals, producerRows,
           ratesAreDefaults, aipp, aippTracking, hasProductionData } = roi;
 
@@ -1771,7 +1769,7 @@ const PerformanceSection = ({ roi }) => {
 
       {ratesAreDefaults && (
         <div style={{ padding: "9px 13px", background: T.amberLt, border: `1px solid ${T.amber}`, borderRadius: 8, fontSize: 11.5, color: "#92400E", lineHeight: 1.5 }}>
-          <strong>Estimated rates in use.</strong> SMVC, blended, and lapse rates below are placeholder defaults until your actual AA05 numbers are confirmed. Tell your Claude your real P&C SMVC rate to lock these in.
+          <strong>Estimated rates in use.</strong> SMVC and blended rates below are placeholder defaults until your actual AA05 numbers are confirmed. Tell your Claude your real P&C SMVC rate to lock these in. (Lapse rate is always computed live from your book.)
         </div>
       )}
 
@@ -1789,10 +1787,10 @@ const PerformanceSection = ({ roi }) => {
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Book Lapse Rate (P&C, YTD)</div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-              Same-period auto + fire renewal commission: prior year vs current year
+              Annualized YTD: lost policies ÷ starting in-force, dollar-weighted across Auto / Fire / Life
             </div>
           </div>
-          <AskBtn size="small" context={`My agency book lapse rate analysis:\nPrior year YTD P&C renewal commission: $${Math.round(priorRenewals).toLocaleString()}\nCurrent year YTD P&C renewal commission: $${Math.round(currentRenewals).toLocaleString()}\nComputed lapse rate: ${(lapseRateComputed || 0).toFixed(1)}%\nApplied lapse rate (used in projections): ${lapseRate.toFixed(1)}%\n\nIs this lapse rate normal for our book? What should I focus on to reduce it?`} />
+          <AskBtn size="small" context={`My agency book lapse rate analysis:\nPrior year YTD P&C renewal commission: $${Math.round(priorRenewals).toLocaleString()}\nCurrent year YTD P&C renewal commission: $${Math.round(currentRenewals).toLocaleString()}\nAnnualized lapse rate (server-computed, blended): ${lapseRate.toFixed(1)}%\n\nIs this lapse rate normal for our book? What should I focus on to reduce it?`} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
@@ -1810,7 +1808,7 @@ const PerformanceSection = ({ roi }) => {
           </div>
           <div style={{ background: lapseRate > 15 ? T.redLt : lapseRate > 10 ? T.amberLt : T.greenLt, padding: "10px 12px", borderRadius: 8 }}>
             <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>
-              Lapse Rate {lapseRateOverride ? "(manual)" : "(computed)"}
+              Lapse Rate (YTD annualized)
             </div>
             <div style={{ fontSize: 16, fontWeight: 700, color: lapseRate > 15 ? "#991B1B" : lapseRate > 10 ? "#92400E" : "#065F46" }}>
               {lapseRate.toFixed(1)}%
