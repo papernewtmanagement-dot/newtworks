@@ -472,6 +472,19 @@ function useCPRData(weekDate) {
         const snapshot = (snapRows && snapRows[0]) || null;
         const snapshotPrior = (snapRows && snapRows[1]) || null;
 
+        // 4b. Lapse rate (canonical, server-computed). Single source of truth via
+        // public.compute_lapse_rate(agency_id, as_of). See op-rule
+        // "Lapse rate — never store, compute at runtime".
+        const { data: lapseRows } = await supabase
+          .rpc("compute_lapse_rate", { p_agency_id: AGENCY_ID, p_as_of: weekDate });
+        const lapseRates = {};
+        for (const r of (lapseRows || [])) {
+          // annualized_rate is a decimal (0.3169 = 31.69%); consumers want percent
+          if (r && r.line && r.annualized_rate != null) {
+            lapseRates[r.line] = parseFloat(r.annualized_rate) * 100;
+          }
+        }
+
         // 5. agency_snapshot — year-start anchor + most recent (stock data)
         const yearStart = `${year}-01-01`;
         const { data: bookYS } = await supabase
@@ -696,6 +709,7 @@ function useCPRData(weekDate) {
           team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)" })),
           snapshot,
           snapshotPrior,
+          lapseRates,
           bookYearStart: bookYS || null,
           bookCurrent,
           goals: goalRows || [],
@@ -1117,7 +1131,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates }) {
   if (!snapshot) {
     return (
       <div>
@@ -1171,9 +1185,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: auto_new - auto_lost,
       onTimeWkD: gainWkD("auto_new_ytd", "auto_lost_ytd"),
       goal: goalFor(goals, "auto", "gain"),
-      lapseRate: (Number(snapshot.auto_pif) > 0)
-        ? (auto_lost * 365 / daysElapsed) / Number(snapshot.auto_pif) * 100
-        : null,
+      lapseRate: (lapseRates && lapseRates.auto != null) ? lapseRates.auto : null,
     },
     {
       label: "Fire",
@@ -1182,9 +1194,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: fire_new - fire_lost,
       onTimeWkD: gainWkD("fire_new_ytd", "fire_lost_ytd"),
       goal: goalFor(goals, "fire", "gain"),
-      lapseRate: (Number(snapshot.fire_pif) > 0)
-        ? (fire_lost * 365 / daysElapsed) / Number(snapshot.fire_pif) * 100
-        : null,
+      lapseRate: (lapseRates && lapseRates.fire != null) ? lapseRates.fire : null,
     },
     {
       label: "Life",
@@ -1193,7 +1203,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       gainYtd: life_new - life_lost,
       onTimeWkD: gainWkD("life_new_ytd", "life_lost_ytd"),
       goal: goalFor(goals, "life", "gain"),
-      lapseRate: null,
+      lapseRate: (lapseRates && lapseRates.life != null) ? lapseRates.life : null,
     },
     {
       label: "Life #",
@@ -2644,6 +2654,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           bookYearStart={data.bookYearStart}
           goals={data.goals}
           weekDate={weekDate}
+          lapseRates={data.lapseRates}
         />
       </Section>
 
