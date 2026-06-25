@@ -990,6 +990,10 @@ export default function TimeOffRequests() {
     loadPolicy();
   }, []);
 
+  // Hooks must run on every render — declare BEFORE any early returns.
+  const _vp = useViewport();
+  const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : 24;
+
   if (loading) return <div style={{ padding: 40, color: "#64748b" }}>Loading…</div>;
   if (!me) return (
     <div style={{ padding: 40 }}>
@@ -1008,8 +1012,6 @@ export default function TimeOffRequests() {
   if (isOwner) tabs.push({ id: "inbox", label: "Inbox" });
 
   const bumpRefresh = () => setRefreshKey(k => k + 1);
-  const _vp = useViewport();
-  const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : 24;
 
   return (
     <div style={{ padding: _pad, maxWidth: 1200, margin: "0 auto" }}>
