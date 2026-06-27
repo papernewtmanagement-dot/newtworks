@@ -282,6 +282,7 @@ const EDIT_FIELDS = {
     "fire_new_ytd_manual", "fire_lost_ytd_manual",
     "life_new_ytd_manual", "life_lost_ytd_manual",
     "life_paid_for_count_ytd_manual",
+    "life_paid_for_premium_ytd_manual",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
@@ -1183,7 +1184,8 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const resolvedFireLost  = src.fire_lost_ytd_manual  ?? snapshot.fire_lost_ytd;
   const resolvedLifeNew   = src.life_new_ytd_manual   ?? snapshot.life_new_ytd;
   const resolvedLifeLost  = src.life_lost_ytd_manual  ?? snapshot.life_lost_ytd;
-  const resolvedLifeCount = src.life_paid_for_count_ytd_manual ?? snapshot.life_paid_for_count_ytd;
+  const resolvedLifeCount   = src.life_paid_for_count_ytd_manual   ?? snapshot.life_paid_for_count_ytd;
+  const resolvedLifePremium = src.life_paid_for_premium_ytd_manual ?? snapshot.life_paid_for_premium_ytd;
 
   // Prior week's resolved values — manual override on prior CPR report wins over prior snapshot.
   // Weekly deltas are computed against THESE so they stay meaningful when overrides are in play.
@@ -1194,7 +1196,8 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const priorFireLost = priorSrc.fire_lost_ytd_manual ?? snapshotPrior?.fire_lost_ytd;
   const priorLifeNew   = priorSrc.life_new_ytd_manual  ?? snapshotPrior?.life_new_ytd;
   const priorLifeLost  = priorSrc.life_lost_ytd_manual ?? snapshotPrior?.life_lost_ytd;
-  const priorLifeCount = priorSrc.life_paid_for_count_ytd_manual ?? snapshotPrior?.life_paid_for_count_ytd;
+  const priorLifeCount   = priorSrc.life_paid_for_count_ytd_manual   ?? snapshotPrior?.life_paid_for_count_ytd;
+  const priorLifePremium = priorSrc.life_paid_for_premium_ytd_manual ?? snapshotPrior?.life_paid_for_premium_ytd;
 
   // Pull metrics (numeric, resolved)
   const auto_new   = Number(resolvedAutoNew)  || 0;
@@ -1204,7 +1207,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const life_new   = Number(resolvedLifeNew)  || 0;
   const life_lost  = Number(resolvedLifeLost) || 0;
   const life_count = Number(resolvedLifeCount) || 0;
-  const life_prem  = Number(snapshot.life_paid_for_premium_ytd) || 0;
+  const life_prem  = Number(resolvedLifePremium) || 0;
 
   // Combined wk-delta for the On Time column when it represents Gain (new - lost).
   // Takes resolved values so it stays accurate when manual overrides are in play.
@@ -1260,11 +1263,12 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       lapseRate: null,
     },
     {
-      label: "Life $", editable: false,
+      label: "Life $", editable: true,
+      ytdKey: "life_paid_for_premium_ytd_manual",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem,
-      onTimeWkD: wkDelta(snapshot.life_paid_for_premium_ytd, snapshotPrior?.life_paid_for_premium_ytd),
+      onTimeWkD: wkDelta(resolvedLifePremium, priorLifePremium),
       goal: goalFor(goals, "life", "premium"),
       isMoney: true,
       lapseRate: null,
@@ -2535,7 +2539,8 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       fire_lost_ytd_manual:           snap.fire_lost_ytd,
       life_new_ytd_manual:            snap.life_new_ytd,
       life_lost_ytd_manual:           snap.life_lost_ytd,
-      life_paid_for_count_ytd_manual: snap.life_paid_for_count_ytd,
+      life_paid_for_count_ytd_manual:   snap.life_paid_for_count_ytd,
+      life_paid_for_premium_ytd_manual: snap.life_paid_for_premium_ytd,
     };
     edit.begin(data.report, data.details, prefills);
   }
