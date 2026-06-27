@@ -1619,6 +1619,15 @@ function CampaignsSection({ report, campaignPriors, weekDate, editMode, formRepo
 
   const currentSat = weekDate || null;
   const currentMonth = weekDate ? (weekDate.slice(0, 7) + "-01") : null;
+  // Month math: add n months to a YYYY-MM-01 date string, return YYYY-MM-01.
+  const addMonths = (iso, n) => {
+    if (!iso) return null;
+    const [y, m] = iso.split("-").map(Number);
+    const total = y * 12 + (m - 1) + n;
+    const ny = Math.floor(total / 12);
+    const nm = (total % 12) + 1;
+    return `${ny}-${String(nm).padStart(2, "0")}-01`;
+  };
   const fmtMonthYear = (iso) => {
     if (!iso) return "—";
     const d = new Date(iso + "T00:00:00Z");
@@ -1642,14 +1651,37 @@ function CampaignsSection({ report, campaignPriors, weekDate, editMode, formRepo
             const dirty = editMode ? isReportDirty(t.key) : false;
 
             if (editMode) {
-              // Build option list — dedupe if prior === current
-              const opts = [];
-              if (priorValue && priorValue !== currentValue) {
-                opts.push({ value: priorValue, label: `${display(priorValue, t.cadence)} (prior)` });
+              // Build candidate list:
+              //   - week cadence (Onboarding): this week + prior week.
+              //   - month cadence (Defectors / Single-Line / A/F Renewals):
+              //       month+2, month+1, this month, prior month.
+              //   - Also include saved value as a fallback option so the select can
+              //     always display whatever's currently stored.
+              // Dedupe by value, then sort most recent first (date desc).
+              const candidates = [];
+              if (t.cadence === "month") {
+                candidates.push({ value: addMonths(currentMonth, 2), kind: "future" });
+                candidates.push({ value: addMonths(currentMonth, 1), kind: "future" });
               }
-              if (currentValue) {
-                opts.push({ value: currentValue, label: `${display(currentValue, t.cadence)} (this ${t.cadence})` });
+              if (currentValue) candidates.push({ value: currentValue, kind: "current" });
+              if (priorValue)   candidates.push({ value: priorValue,   kind: "prior" });
+              if (savedValue)   candidates.push({ value: savedValue,   kind: "saved" });
+
+              const seen = new Set();
+              const unique = [];
+              for (const c of candidates) {
+                if (!c.value || seen.has(c.value)) continue;
+                seen.add(c.value);
+                unique.push(c);
               }
+              unique.sort((a, b) => (a.value < b.value ? 1 : a.value > b.value ? -1 : 0));
+
+              const opts = unique.map(c => {
+                const label = display(c.value, t.cadence);
+                if (c.kind === "current") return { value: c.value, label: `${label} (this ${t.cadence})` };
+                if (c.kind === "prior")   return { value: c.value, label: `${label} (prior)` };
+                return { value: c.value, label };
+              });
               return (
                 <div key={t.key} style={{
                   display: "flex", flexDirection: "column", gap: 4,
