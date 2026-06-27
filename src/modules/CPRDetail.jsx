@@ -284,11 +284,12 @@ const EDIT_FIELDS = {
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
     "campaign_onboarding_date", "campaign_defectors_date",
     "campaign_single_line_date", "campaign_af_renewals_date",
+    // EUR notes (free-form, weekly)
+    "eur",
   ],
   detail: [
     "code_reds", "code_yellows",
     "cpr_reply_done", "wrapup_done", "inbox_done",
-    "eur_count",
     "quotes_discussed", "sales_points",
     "quotes_modified",
   ],
@@ -1013,7 +1014,6 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
                 {PERSONAL_CHECKLIST_KEYS.map(([key, label]) => (
                   <Th key={key} align="center">{label}</Th>
                 ))}
-                <Th align="center" title="Underwriting Reports — customers w/ 3+ UW reports on a single LOB this week. Not counted against requirements.">EUR</Th>
               </tr>
             </thead>
             <tbody>
@@ -1040,24 +1040,6 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
                       </Td>
                     );
                   })}
-                  {editMode ? (
-                    <Td align="center" style={{ padding: 4 }}>
-                      <NumberInput
-                        value={formDetails[d.id]?.eur_count}
-                        onChange={v => onChange(d.id, "eur_count", v)}
-                        dirty={isDirty(d.id, "eur_count")}
-                        min={0}
-                        step={1}
-                        style={{ width: 60 }}
-                      />
-                    </Td>
-                  ) : (
-                    <Td align="center">
-                      {(d.eur_count === null || d.eur_count === undefined)
-                        ? <span style={{ color: T.slate400 }}>—</span>
-                        : <span style={{ color: T.slate900, fontWeight: 500 }}>{fmtInt(d.eur_count)}</span>}
-                    </Td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -1542,6 +1524,38 @@ function ClaimsSection({ report, editMode, formReport, isReportDirty, onReportCh
           Unreviewed: <strong>{fmtInt(report?.unreviewed_claims)}</strong> &nbsp;•&nbsp;
           Open: <strong>{fmtInt(report?.open_claims)}</strong>
         </div>
+      </Card>
+    </div>
+  );
+}
+
+// 13.5 — EUR (Underwriting Reports) — free-form text, after Non-Pays
+function EURSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  if (editMode) {
+    return (
+      <div>
+        <SectionHeader icon="🧾" title="EUR" />
+        <Card>
+          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6, lineHeight: 1.4 }}>
+            Underwriting Reports — customers with 3+ UW reports run on a single LOB this week. Tracked but not counted against Requirements.
+          </div>
+          <TextArea
+            value={formReport.eur}
+            onChange={v => onReportChange("eur", v)}
+            dirty={isReportDirty("eur")}
+            rows={4}
+          />
+        </Card>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <SectionHeader icon="🧾" title="EUR" />
+      <Card>
+        {report?.eur
+          ? <div style={{ fontSize: 13, color: T.slate800, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{report.eur}</div>
+          : <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>No EUR notes for this week.</div>}
       </Card>
     </div>
   );
@@ -2764,6 +2778,17 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 13. Non-pays */}
       <Section>
         <NonPaysSection
+          report={data.report}
+          editMode={edit.active}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
+        />
+      </Section>
+
+      {/* 13.5. EUR (Underwriting Reports) — text notes */}
+      <Section>
+        <EURSection
           report={data.report}
           editMode={edit.active}
           formReport={edit.form.report}
