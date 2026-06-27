@@ -338,9 +338,15 @@ function useEditForm() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  const begin = (report, details) => {
+  // prefills (optional): { field_name: fallback_value } — used when DB value is null/undefined.
+  // Prefilled fields are visible in inputs but NOT marked dirty, so "accept the prefill" is a no-op save.
+  // Only fields the user actually edits get persisted.
+  const begin = (report, details, prefills = {}) => {
     const r = {};
-    for (const k of EDIT_FIELDS.report) r[k] = report?.[k] ?? null;
+    for (const k of EDIT_FIELDS.report) {
+      const dbVal = report?.[k];
+      r[k] = (dbVal !== null && dbVal !== undefined) ? dbVal : (prefills[k] ?? null);
+    }
     const d = {};
     for (const row of details || []) {
       const v = {};
@@ -2476,7 +2482,23 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     edit.cancel();
   }
   function doStartEdit() {
-    edit.begin(data.report, data.details);
+    // Prefill the 9 Agency-Performance manual-override fields with their fallback values
+    // (snapshot YTDs + computed lapse rates) so the inputs show the current numbers and
+    // Peter can tweak them in place instead of typing from scratch.
+    const snap = data.snapshot || {};
+    const lapse = data.lapseRates || {};
+    const prefills = {
+      auto_new_ytd_manual:   snap.auto_new_ytd,
+      auto_lost_ytd_manual:  snap.auto_lost_ytd,
+      fire_new_ytd_manual:   snap.fire_new_ytd,
+      fire_lost_ytd_manual:  snap.fire_lost_ytd,
+      life_new_ytd_manual:   snap.life_new_ytd,
+      life_lost_ytd_manual:  snap.life_lost_ytd,
+      auto_lapse_pct_manual: lapse.auto,
+      fire_lapse_pct_manual: lapse.fire,
+      life_lapse_pct_manual: lapse.life,
+    };
+    edit.begin(data.report, data.details, prefills);
   }
 
   // Validate route param
