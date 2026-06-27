@@ -288,6 +288,7 @@ const EDIT_FIELDS = {
   detail: [
     "code_reds", "code_yellows",
     "cpr_reply_done", "wrapup_done", "inbox_done",
+    "eur_count",
     "quotes_discussed", "sales_points",
     "quotes_modified",
   ],
@@ -1012,6 +1013,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
                 {PERSONAL_CHECKLIST_KEYS.map(([key, label]) => (
                   <Th key={key} align="center">{label}</Th>
                 ))}
+                <Th align="center" title="Underwriting Reports — customers w/ 3+ UW reports on a single LOB this week. Not counted against requirements.">EUR</Th>
               </tr>
             </thead>
             <tbody>
@@ -1038,6 +1040,24 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
                       </Td>
                     );
                   })}
+                  {editMode ? (
+                    <Td align="center" style={{ padding: 4 }}>
+                      <NumberInput
+                        value={formDetails[d.id]?.eur_count}
+                        onChange={v => onChange(d.id, "eur_count", v)}
+                        dirty={isDirty(d.id, "eur_count")}
+                        min={0}
+                        step={1}
+                        style={{ width: 60 }}
+                      />
+                    </Td>
+                  ) : (
+                    <Td align="center">
+                      {(d.eur_count === null || d.eur_count === undefined)
+                        ? <span style={{ color: T.slate400 }}>—</span>
+                        : <span style={{ color: T.slate900, fontWeight: 500 }}>{fmtInt(d.eur_count)}</span>}
+                    </Td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1135,7 +1155,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, report, editMode, formReport, isReportDirty, onReportChange }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, report, reportPrior, editMode, formReport, isReportDirty, onReportChange }) {
   if (!snapshot) {
     return (
       <div>
@@ -1163,27 +1183,28 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   };
   const daysElapsed = daysElapsedIntoYear(weekDate);
 
-  // Manual override source — edit mode reads from in-progress form; otherwise saved report.
-  // Manual override (when set) wins over snapshot. Solves partial-snapshot rows
-  // (e.g. when SF-source ingest fills *_pif/*_premium but YTD bucket inputs come back NULL).
+  // Resolved values: manual override (this week) wins over snapshot.
+  // src = in-progress edit form OR saved report row.
   const src = editMode ? (formReport || {}) : (report || {});
-  const resolvedAutoNew  = src.auto_new_ytd_manual   ?? snapshot.auto_new_ytd;
-  const resolvedAutoLost = src.auto_lost_ytd_manual  ?? snapshot.auto_lost_ytd;
-  const resolvedFireNew  = src.fire_new_ytd_manual   ?? snapshot.fire_new_ytd;
-  const resolvedFireLost = src.fire_lost_ytd_manual  ?? snapshot.fire_lost_ytd;
-  const resolvedLifeNew  = src.life_new_ytd_manual   ?? snapshot.life_new_ytd;
-  const resolvedLifeLost = src.life_lost_ytd_manual  ?? snapshot.life_lost_ytd;
+  const resolvedAutoNew   = src.auto_new_ytd_manual   ?? snapshot.auto_new_ytd;
+  const resolvedAutoLost  = src.auto_lost_ytd_manual  ?? snapshot.auto_lost_ytd;
+  const resolvedFireNew   = src.fire_new_ytd_manual   ?? snapshot.fire_new_ytd;
+  const resolvedFireLost  = src.fire_lost_ytd_manual  ?? snapshot.fire_lost_ytd;
+  const resolvedLifeNew   = src.life_new_ytd_manual   ?? snapshot.life_new_ytd;
+  const resolvedLifeLost  = src.life_lost_ytd_manual  ?? snapshot.life_lost_ytd;
   const resolvedAutoLapse = src.auto_lapse_pct_manual ?? lapseRates?.auto;
   const resolvedFireLapse = src.fire_lapse_pct_manual ?? lapseRates?.fire;
   const resolvedLifeLapse = src.life_lapse_pct_manual ?? lapseRates?.life;
 
-  // Override flags — weekly delta from snapshot is not meaningful when manual override set.
-  const autoNewOv  = src.auto_new_ytd_manual  != null;
-  const autoLostOv = src.auto_lost_ytd_manual != null;
-  const fireNewOv  = src.fire_new_ytd_manual  != null;
-  const fireLostOv = src.fire_lost_ytd_manual != null;
-  const lifeNewOv  = src.life_new_ytd_manual  != null;
-  const lifeLostOv = src.life_lost_ytd_manual != null;
+  // Prior week's resolved values — manual override on prior CPR report wins over prior snapshot.
+  // Weekly deltas are computed against THESE so they stay meaningful when overrides are in play.
+  const priorSrc = reportPrior || {};
+  const priorAutoNew  = priorSrc.auto_new_ytd_manual  ?? snapshotPrior?.auto_new_ytd;
+  const priorAutoLost = priorSrc.auto_lost_ytd_manual ?? snapshotPrior?.auto_lost_ytd;
+  const priorFireNew  = priorSrc.fire_new_ytd_manual  ?? snapshotPrior?.fire_new_ytd;
+  const priorFireLost = priorSrc.fire_lost_ytd_manual ?? snapshotPrior?.fire_lost_ytd;
+  const priorLifeNew  = priorSrc.life_new_ytd_manual  ?? snapshotPrior?.life_new_ytd;
+  const priorLifeLost = priorSrc.life_lost_ytd_manual ?? snapshotPrior?.life_lost_ytd;
 
   // Pull metrics (numeric, resolved)
   const auto_new   = Number(resolvedAutoNew)  || 0;
@@ -1195,43 +1216,46 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const life_count = Number(snapshot.life_paid_for_count_ytd) || 0;
   const life_prem  = Number(snapshot.life_paid_for_premium_ytd) || 0;
 
-  // Combined wk-delta for the On Time column when it represents Gain (new - lost)
-  const gainWkD = (newKey, lostKey) => {
-    const a = wkDelta(snapshot[newKey],  snapshotPrior?.[newKey]);
-    const b = wkDelta(snapshot[lostKey], snapshotPrior?.[lostKey]);
+  // Combined wk-delta for the On Time column when it represents Gain (new - lost).
+  // Takes resolved values so it stays accurate when manual overrides are in play.
+  const gainWkDR = (curNew, priorNew, curLost, priorLost) => {
+    const a = wkDelta(curNew, priorNew);
+    const b = wkDelta(curLost, priorLost);
     return (a === null || b === null) ? null : (a - b);
   };
 
   // Row definitions — one row per LOB / metric category.
   // Auto/Fire/Life are editable (new/lost/lapse); Life #/Life $ remain read-only.
+  // Weekly deltas compare RESOLVED values (this week's override or snapshot) against
+  // RESOLVED prior values (prior week's override or prior snapshot).
   const rows = [
     {
       label: "Auto", editable: true,
       newKey: "auto_new_ytd_manual", lostKey: "auto_lost_ytd_manual", lapseKey: "auto_lapse_pct_manual",
-      newYtd:  auto_new,  newWkD:  autoNewOv  ? null : wkDelta(snapshot.auto_new_ytd,  snapshotPrior?.auto_new_ytd),
-      lostYtd: auto_lost, lostWkD: autoLostOv ? null : wkDelta(snapshot.auto_lost_ytd, snapshotPrior?.auto_lost_ytd),
+      newYtd:  auto_new,  newWkD:  wkDelta(resolvedAutoNew,  priorAutoNew),
+      lostYtd: auto_lost, lostWkD: wkDelta(resolvedAutoLost, priorAutoLost),
       gainYtd: auto_new - auto_lost,
-      onTimeWkD: (autoNewOv || autoLostOv) ? null : gainWkD("auto_new_ytd", "auto_lost_ytd"),
+      onTimeWkD: gainWkDR(resolvedAutoNew, priorAutoNew, resolvedAutoLost, priorAutoLost),
       goal: goalFor(goals, "auto", "gain"),
       lapseRate: (resolvedAutoLapse != null) ? resolvedAutoLapse : null,
     },
     {
       label: "Fire", editable: true,
       newKey: "fire_new_ytd_manual", lostKey: "fire_lost_ytd_manual", lapseKey: "fire_lapse_pct_manual",
-      newYtd:  fire_new,  newWkD:  fireNewOv  ? null : wkDelta(snapshot.fire_new_ytd,  snapshotPrior?.fire_new_ytd),
-      lostYtd: fire_lost, lostWkD: fireLostOv ? null : wkDelta(snapshot.fire_lost_ytd, snapshotPrior?.fire_lost_ytd),
+      newYtd:  fire_new,  newWkD:  wkDelta(resolvedFireNew,  priorFireNew),
+      lostYtd: fire_lost, lostWkD: wkDelta(resolvedFireLost, priorFireLost),
       gainYtd: fire_new - fire_lost,
-      onTimeWkD: (fireNewOv || fireLostOv) ? null : gainWkD("fire_new_ytd", "fire_lost_ytd"),
+      onTimeWkD: gainWkDR(resolvedFireNew, priorFireNew, resolvedFireLost, priorFireLost),
       goal: goalFor(goals, "fire", "gain"),
       lapseRate: (resolvedFireLapse != null) ? resolvedFireLapse : null,
     },
     {
       label: "Life", editable: true,
       newKey: "life_new_ytd_manual", lostKey: "life_lost_ytd_manual", lapseKey: "life_lapse_pct_manual",
-      newYtd:  life_new,  newWkD:  lifeNewOv  ? null : wkDelta(snapshot.life_new_ytd,  snapshotPrior?.life_new_ytd),
-      lostYtd: life_lost, lostWkD: lifeLostOv ? null : wkDelta(snapshot.life_lost_ytd, snapshotPrior?.life_lost_ytd),
+      newYtd:  life_new,  newWkD:  wkDelta(resolvedLifeNew,  priorLifeNew),
+      lostYtd: life_lost, lostWkD: wkDelta(resolvedLifeLost, priorLifeLost),
       gainYtd: life_new - life_lost,
-      onTimeWkD: (lifeNewOv || lifeLostOv) ? null : gainWkD("life_new_ytd", "life_lost_ytd"),
+      onTimeWkD: gainWkDR(resolvedLifeNew, priorLifeNew, resolvedLifeLost, priorLifeLost),
       goal: goalFor(goals, "life", "gain"),
       lapseRate: (resolvedLifeLapse != null) ? resolvedLifeLapse : null,
     },
@@ -2714,6 +2738,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           weekDate={weekDate}
           lapseRates={data.lapseRates}
           report={data.report}
+          reportPrior={data.reportPrior}
           editMode={edit.active}
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
