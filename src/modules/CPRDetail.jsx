@@ -1344,15 +1344,18 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 const renderEditOrVal = (key, ytd, wkD, bg) => {
                   if (editableRow && key) {
                     return (
-                      <Td align="right" style={{ background: bg, padding: 4 }}>
+                      <Td align="right" style={{ background: bg, padding: 4, whiteSpace: "nowrap" }}>
                         <NumberInput
                           value={formReport?.[key]}
                           onChange={v => onReportChange(key, v)}
                           dirty={isReportDirty?.(key)}
                           min={0}
                           step={1}
-                          style={{ width: 80 }}
+                          style={{ width: 70 }}
                         />
+                        <span style={{ marginLeft: 6, color: deltaColor(wkD), fontWeight: 600, fontSize: 11 }}>
+                          {deltaText(wkD, r.isMoney)}
+                        </span>
                       </Td>
                     );
                   }
@@ -1369,15 +1372,18 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                         : <span style={{ color: T.slate900, fontWeight: 500 }}>{Number(r.lapseRate).toFixed(1)}%</span>}
                     </Td>
                     {editableRow && r.ytdKey ? (
-                      <Td align="right" style={{ padding: 4 }}>
+                      <Td align="right" style={{ padding: 4, whiteSpace: "nowrap" }}>
                         <NumberInput
                           value={formReport?.[r.ytdKey]}
                           onChange={v => onReportChange(r.ytdKey, v)}
                           dirty={isReportDirty?.(r.ytdKey)}
                           min={0}
                           step={1}
-                          style={{ width: 80 }}
+                          style={{ width: 70 }}
                         />
+                        <span style={{ marginLeft: 6, color: deltaColor(r.onTimeWkD), fontWeight: 600, fontSize: 11 }}>
+                          {deltaText(r.onTimeWkD, r.isMoney)}
+                        </span>
                       </Td>
                     ) : renderValDelta(r.gainYtd, r.onTimeWkD, undefined, false)}
                     {renderValDelta(onTimeRounded, r.onTimeWkD, T.slate50, true)}
