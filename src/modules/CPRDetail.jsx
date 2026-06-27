@@ -2602,9 +2602,14 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      {/* ── Top controls: title · week · nav · actions — one line, wraps on phone ── */}
+      {/* ── Top controls: title · week · nav · actions — one line, wraps on phone.
+            Sticky to top of scroll container so it stays visible while scrolling. ── */}
       <div style={{
         display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        position: "sticky", top: 0, zIndex: 30,
+        background: T.white,
+        paddingTop: 10, paddingBottom: 10,
+        borderBottom: `1px solid ${T.slate200}`,
         marginBottom: 12,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
