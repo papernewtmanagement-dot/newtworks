@@ -544,6 +544,7 @@ const StaffDirectory = ({ staff }) => {
     setTermForm({
       reason_category: "",
       end_date: new Date().toISOString().slice(0,10),
+      final_paycheck_date: "",
       notes: "",
       confirm_name: "",
     });
@@ -556,6 +557,7 @@ const StaffDirectory = ({ staff }) => {
     const reason = (termForm.reason_category || "").trim();
     const notes = (termForm.notes || "").trim();
     const endDate = termForm.end_date || new Date().toISOString().slice(0,10);
+    const finalPaycheckDate = (termForm.final_paycheck_date || "").trim() || null;
     const typedName = (termForm.confirm_name || "").trim();
 
     // Principle 500 enforcement: require structured reason + free-text documentation.
@@ -570,7 +572,6 @@ const StaffDirectory = ({ staff }) => {
     setTerminating(true);
     setTermError("");
 
-    const nowIso = new Date().toISOString();
     const reasonLabel = {
       ethics_breach:   "Ethics breach (immediate, per principle 500)",
       pip_not_met:     "Signed PIP not met (per principle 500)",
@@ -580,65 +581,45 @@ const StaffDirectory = ({ staff }) => {
     }[reason] || reason;
 
     try {
-      // 1) Deactivate the team row. .select() forces PostgREST to return the
-      //    affected rows so we can detect silent RLS denial (0 rows = no error
-      //    but nothing actually changed in the database).
-      const teamUpdate = await supabase
-        .from("team")
-        .update({
-          is_active: false,
-          end_date: endDate,
-          archived_at: nowIso,
-          updated_at: nowIso,
-        })
-        .eq("id", member.id)
-        .eq("agency_id", AGENCY_ID)
-        .select("id");
-      if (teamUpdate.error) {
-        setTermError(`team update failed: ${teamUpdate.error.message}`);
+      // Delegate the whole termination to the terminate-team-member edge fn.
+      // It orchestrates: team archive + linked user deactivation,
+      // team_telegram_map exclusion, Team List playbook strip, the
+      // termination-notice email to Peter's SF address, and the Telegram
+      // group kick. Email + Telegram are best-effort and surface as
+      // warnings; the DB state is always consistent on the function's return.
+      const { data: result, error: fnErr } = await supabase.functions.invoke("terminate-team-member", {
+        body: {
+          team_id: member.id,
+          termination_date: endDate,
+          reason_category: reasonLabel,
+          termination_reason: notes,
+          final_paycheck_date: finalPaycheckDate,
+        },
+      });
+      if (fnErr) {
+        setTermError(`Termination edge fn failed: ${fnErr.message}`);
         setTerminating(false);
         return;
       }
-      if (!teamUpdate.data || teamUpdate.data.length === 0) {
-        setTermError("Termination did not affect any rows — RLS may be blocking the write. Tell Claude.");
+      if (!result || result.success !== true) {
+        setTermError(`Termination failed: ${result?.error || "unknown error from edge fn"}`);
         setTerminating(false);
         return;
       }
 
-      // 2) Deactivate the linked user account if one exists. team.user_id is the canonical link.
-      if (member.user_id) {
-        const userUpdate = await supabase
-          .from("users")
-          .update({
-            is_active: false,
-            invite_status: "deactivated",
-            updated_at: nowIso,
-          })
-          .eq("id", member.user_id)
-          .eq("agency_id", AGENCY_ID);
-        if (userUpdate.error) {
-          // Roll back the team change so we don't leave an inconsistent state.
-          await supabase.from("team").update({
-            is_active: true,
-            end_date: null,
-            archived_at: null,
-          }).eq("id", member.id).eq("agency_id", AGENCY_ID);
-          setTermError(`users update failed (team row rolled back): ${userUpdate.error.message}`);
-          setTerminating(false);
-          return;
-        }
-      }
-
-      // 3) Write the audit row to team_behavioral_notes (principle 500 documentation surface).
-      //    Errors here are non-blocking — termination already succeeded at the primary level —
-      //    but they MUST be surfaced loudly so silent failures (e.g. CHECK constraints) don't
-      //    leave us without a paper trail like the Jason Fuller case on 2026-06-20.
-      const warnings = [];
+      // Write the audit row to team_behavioral_notes (principle 500). Non-blocking;
+      // the canonical record of WHAT happened is the edge fn's automation_run_log row,
+      // this is the local HR-pattern view.
+      const warnings = Array.isArray(result.warnings) ? result.warnings : [];
       const obsText = [
         `TERMINATION — ${reasonLabel}`,
         `End date: ${endDate}`,
+        finalPaycheckDate ? `Final paycheck date: ${finalPaycheckDate}` : null,
         `Notes: ${notes}`,
-      ].join("\n");
+        `Notification email: ${result.email_sent ? "sent" : "FAILED — alert created"}`,
+        `Telegram group kick: ${result.telegram_kicked ? "done" : "not done"}`,
+        warnings.length > 0 ? `Edge fn warnings: ${warnings.join("; ")}` : null,
+      ].filter(Boolean).join("\n");
       const noteIns = await supabase.from("team_behavioral_notes").insert({
         agency_id: AGENCY_ID,
         team_member_id: member.id,
@@ -647,41 +628,22 @@ const StaffDirectory = ({ staff }) => {
         source: "termination_action",
         observation_text: obsText,
       }).select("id");
-      if (noteIns.error) warnings.push(`audit note: ${noteIns.error.message}`);
+      if (noteIns.error) console.error("[terminate] audit note failed:", noteIns.error.message);
 
-      // 4) Open an offboarding follow-up task for the admin checklist.
-      const taskIns = await supabase.from("tasks").insert({
-        agency_id: AGENCY_ID,
-        title: `Offboarding follow-up: ${expectedName} (${endDate})`,
-        description: [
-          `Reason: ${reasonLabel}`,
-          `End date: ${endDate}`,
-          ``,
-          `Offboarding checklist:`,
-          `- [ ] Revoke SF / Outlook / shared logins`,
-          `- [ ] Recover agency equipment, keys, badges`,
-          `- [ ] Final payroll cut + commission true-up`,
-          `- [ ] Remove from Telegram team groups + checkin recipes`,
-          `- [ ] Remove from time-off coverage rotation`,
-          `- [ ] Reassign book of business / open tasks`,
-          `- [ ] Update org chart + handbook references`,
-        ].join("\n"),
-        status: "open",
-        priority: reason === "ethics_breach" ? "high" : "medium",
-        module_reference: "hr_people",
-        related_id: member.id,
-        due_date: endDate,
-        created_by: "termination_action",
-      }).select("id");
-      if (taskIns.error) warnings.push(`offboarding task: ${taskIns.error.message}`);
-
-      // Surface non-blocking failures loudly before closing the panel.
-      if (warnings.length > 0) {
-        console.error("[terminate] non-blocking failures:", warnings);
-        alert(`Termination saved, but some side effects failed:\n\n${warnings.join("\n")}\n\nTell Claude.`);
+      // Surface partial-success warnings without rolling back. The DB state is
+      // already what it needs to be — the alerts table holds the recovery path.
+      if (warnings.length > 0 || !result.email_sent) {
+        console.warn("[terminate] partial success:", { email_sent: result.email_sent, telegram_kicked: result.telegram_kicked, warnings });
+        alert(
+          `${expectedName} terminated, but with warnings:\n\n` +
+          `• Notification email: ${result.email_sent ? "sent ✓" : "NOT sent ✗"}\n` +
+          `• Telegram kick: ${result.telegram_kicked ? "done ✓" : "skipped/failed"}\n` +
+          (warnings.length > 0 ? `\nDetails:\n${warnings.join("\n")}\n` : "") +
+          `\nAn alert has been logged. Tell Claude.`
+        );
       }
 
-      // 5) Local UI update so the row disappears from the active list immediately.
+      // Local UI: drop the row from the active list immediately.
       setTerminatedIds(prev => { const n = new Set(prev); n.add(member.id); return n; });
       setTerminatingId(null);
       setTermForm({});
@@ -859,6 +821,12 @@ const StaffDirectory = ({ staff }) => {
     first_name:       "",
     last_name:        "",
     email_personal:   "",
+    phone_personal:   "",
+    address_line1:    "",
+    address_line2:    "",
+    city:             "",
+    state:            "",
+    zip_code:         "",
     role:             "",
     role_category:    "",
     role_level:       "",
@@ -878,6 +846,12 @@ const StaffDirectory = ({ staff }) => {
       first_name:      "",
       last_name:       "",
       email_personal:  "",
+      phone_personal:  "",
+      address_line1:   "",
+      address_line2:   "",
+      city:            "",
+      state:           "",
+      zip_code:        "",
       role:            "",
       role_category:   "",
       role_level:      "",
@@ -931,6 +905,12 @@ const StaffDirectory = ({ staff }) => {
         first_name:      firstName,
         last_name:       lastName,
         email_personal:  email,
+        phone_personal:  (addForm.phone_personal || "").trim() || null,
+        address_line1:   (addForm.address_line1 || "").trim() || null,
+        address_line2:   (addForm.address_line2 || "").trim() || null,
+        city:            (addForm.city || "").trim() || null,
+        state:           (addForm.state || "").trim().toUpperCase() || null,
+        zip_code:        (addForm.zip_code || "").trim() || null,
         role:            (addForm.role || "").trim() || null,
         role_category:   (addForm.role_category || "").trim() || null,
         role_level:      (addForm.role_level || "").trim() || null,
@@ -1257,6 +1237,39 @@ const StaffDirectory = ({ staff }) => {
             </div>
           </div>
 
+          {/* Row 5: personal phone + address — captured at hire, used in termination notice email */}
+          <div style={{ fontSize:11, fontWeight:600, color:T.slate700, textTransform:"uppercase", letterSpacing:"0.04em", margin:"4px 0 8px 0" }}>
+            Personal contact (used in offboarding notification)
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10, marginBottom:10 }}>
+            <div>
+              <label style={labelStyle}>Personal phone</label>
+              <input style={inputStyle} value={addForm.phone_personal} onChange={e => setAddForm(f => ({ ...f, phone_personal: e.target.value }))} placeholder="(210) 555-0123" />
+            </div>
+            <div>
+              <label style={labelStyle}>Address line 1</label>
+              <input style={inputStyle} value={addForm.address_line1} onChange={e => setAddForm(f => ({ ...f, address_line1: e.target.value }))} placeholder="123 Main St" />
+            </div>
+            <div>
+              <label style={labelStyle}>Address line 2 (optional)</label>
+              <input style={inputStyle} value={addForm.address_line2} onChange={e => setAddForm(f => ({ ...f, address_line2: e.target.value }))} placeholder="Apt 4B" />
+            </div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10, marginBottom:14 }}>
+            <div>
+              <label style={labelStyle}>City</label>
+              <input style={inputStyle} value={addForm.city} onChange={e => setAddForm(f => ({ ...f, city: e.target.value }))} placeholder="San Antonio" />
+            </div>
+            <div>
+              <label style={labelStyle}>State</label>
+              <input style={inputStyle} value={addForm.state} onChange={e => setAddForm(f => ({ ...f, state: e.target.value.toUpperCase().slice(0,2) }))} placeholder="TX" maxLength={2} />
+            </div>
+            <div>
+              <label style={labelStyle}>ZIP</label>
+              <input style={inputStyle} value={addForm.zip_code} onChange={e => setAddForm(f => ({ ...f, zip_code: e.target.value }))} placeholder="78260" maxLength={10} />
+            </div>
+          </div>
+
           {addError && (
             <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
               {addError}
@@ -1450,7 +1463,7 @@ const StaffDirectory = ({ staff }) => {
                   ⚠ End Employment — {member.first_name} {member.last_name}
                 </div>
                 <div style={{ fontSize:11, color:T.slate600, marginBottom:12, lineHeight:1.55 }}>
-                  This is the documented record of the termination decision (core principle 500). It deactivates the team row, deactivates the linked user login if one exists, writes the reason and notes to <code>team_behavioral_notes</code>, and opens an offboarding follow-up task.
+                  This is the documented record of the termination decision (core principle 500). It archives the team row, deactivates the linked user login, strips the person from the Team List playbook page, marks them excluded from Telegram check-ins, kicks them from the team Telegram group, and emails the termination notice (with the AAO checklist pre-filled) to Peter's State Farm address.
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:10, marginBottom:10 }}>
                   <div>
@@ -1467,6 +1480,10 @@ const StaffDirectory = ({ staff }) => {
                   <div>
                     <label style={labelStyle}>End date *</label>
                     <input style={inputStyle} type="date" value={termForm.end_date || ""} onChange={e=>setTermForm({...termForm, end_date:e.target.value})} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Final paycheck date (optional)</label>
+                    <input style={inputStyle} type="date" value={termForm.final_paycheck_date || ""} onChange={e=>setTermForm({...termForm, final_paycheck_date:e.target.value})} />
                   </div>
                 </div>
                 <div style={{ marginBottom:10 }}>
