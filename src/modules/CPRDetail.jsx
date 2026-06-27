@@ -275,6 +275,10 @@ const EDIT_FIELDS = {
     // Auto/Fire retention bonus
     "auto_ratio_pct", "auto_rank", "auto_bonus",
     "fire_ratio_pct", "fire_rank", "fire_bonus",
+    // Agency Performance manual overrides (NULL = use snapshot / computed lapse)
+    "auto_new_ytd_manual", "auto_lost_ytd_manual", "auto_lapse_pct_manual",
+    "fire_new_ytd_manual", "fire_lost_ytd_manual", "fire_lapse_pct_manual",
+    "life_new_ytd_manual", "life_lost_ytd_manual", "life_lapse_pct_manual",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
@@ -1131,7 +1135,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, report, editMode, formReport, isReportDirty, onReportChange }) {
   if (!snapshot) {
     return (
       <div>
@@ -1159,13 +1163,35 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   };
   const daysElapsed = daysElapsedIntoYear(weekDate);
 
-  // Pull metrics
-  const auto_new   = Number(snapshot.auto_new_ytd) || 0;
-  const auto_lost  = Number(snapshot.auto_lost_ytd)      || 0;
-  const fire_new   = Number(snapshot.fire_new_ytd) || 0;
-  const fire_lost  = Number(snapshot.fire_lost_ytd)      || 0;
-  const life_new   = Number(snapshot.life_new_ytd) || 0;
-  const life_lost  = Number(snapshot.life_lost_ytd)       || 0;
+  // Manual override source — edit mode reads from in-progress form; otherwise saved report.
+  // Manual override (when set) wins over snapshot. Solves partial-snapshot rows
+  // (e.g. when SF-source ingest fills *_pif/*_premium but YTD bucket inputs come back NULL).
+  const src = editMode ? (formReport || {}) : (report || {});
+  const resolvedAutoNew  = src.auto_new_ytd_manual   ?? snapshot.auto_new_ytd;
+  const resolvedAutoLost = src.auto_lost_ytd_manual  ?? snapshot.auto_lost_ytd;
+  const resolvedFireNew  = src.fire_new_ytd_manual   ?? snapshot.fire_new_ytd;
+  const resolvedFireLost = src.fire_lost_ytd_manual  ?? snapshot.fire_lost_ytd;
+  const resolvedLifeNew  = src.life_new_ytd_manual   ?? snapshot.life_new_ytd;
+  const resolvedLifeLost = src.life_lost_ytd_manual  ?? snapshot.life_lost_ytd;
+  const resolvedAutoLapse = src.auto_lapse_pct_manual ?? lapseRates?.auto;
+  const resolvedFireLapse = src.fire_lapse_pct_manual ?? lapseRates?.fire;
+  const resolvedLifeLapse = src.life_lapse_pct_manual ?? lapseRates?.life;
+
+  // Override flags — weekly delta from snapshot is not meaningful when manual override set.
+  const autoNewOv  = src.auto_new_ytd_manual  != null;
+  const autoLostOv = src.auto_lost_ytd_manual != null;
+  const fireNewOv  = src.fire_new_ytd_manual  != null;
+  const fireLostOv = src.fire_lost_ytd_manual != null;
+  const lifeNewOv  = src.life_new_ytd_manual  != null;
+  const lifeLostOv = src.life_lost_ytd_manual != null;
+
+  // Pull metrics (numeric, resolved)
+  const auto_new   = Number(resolvedAutoNew)  || 0;
+  const auto_lost  = Number(resolvedAutoLost) || 0;
+  const fire_new   = Number(resolvedFireNew)  || 0;
+  const fire_lost  = Number(resolvedFireLost) || 0;
+  const life_new   = Number(resolvedLifeNew)  || 0;
+  const life_lost  = Number(resolvedLifeLost) || 0;
   const life_count = Number(snapshot.life_paid_for_count_ytd) || 0;
   const life_prem  = Number(snapshot.life_paid_for_premium_ytd) || 0;
 
@@ -1176,37 +1202,41 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     return (a === null || b === null) ? null : (a - b);
   };
 
-  // Row definitions — one row per LOB / metric category
+  // Row definitions — one row per LOB / metric category.
+  // Auto/Fire/Life are editable (new/lost/lapse); Life #/Life $ remain read-only.
   const rows = [
     {
-      label: "Auto",
-      newYtd:  auto_new,  newWkD:  wkDelta(snapshot.auto_new_ytd, snapshotPrior?.auto_new_ytd),
-      lostYtd: auto_lost, lostWkD: wkDelta(snapshot.auto_lost_ytd,      snapshotPrior?.auto_lost_ytd),
+      label: "Auto", editable: true,
+      newKey: "auto_new_ytd_manual", lostKey: "auto_lost_ytd_manual", lapseKey: "auto_lapse_pct_manual",
+      newYtd:  auto_new,  newWkD:  autoNewOv  ? null : wkDelta(snapshot.auto_new_ytd,  snapshotPrior?.auto_new_ytd),
+      lostYtd: auto_lost, lostWkD: autoLostOv ? null : wkDelta(snapshot.auto_lost_ytd, snapshotPrior?.auto_lost_ytd),
       gainYtd: auto_new - auto_lost,
-      onTimeWkD: gainWkD("auto_new_ytd", "auto_lost_ytd"),
+      onTimeWkD: (autoNewOv || autoLostOv) ? null : gainWkD("auto_new_ytd", "auto_lost_ytd"),
       goal: goalFor(goals, "auto", "gain"),
-      lapseRate: (lapseRates && lapseRates.auto != null) ? lapseRates.auto : null,
+      lapseRate: (resolvedAutoLapse != null) ? resolvedAutoLapse : null,
     },
     {
-      label: "Fire",
-      newYtd:  fire_new,  newWkD:  wkDelta(snapshot.fire_new_ytd, snapshotPrior?.fire_new_ytd),
-      lostYtd: fire_lost, lostWkD: wkDelta(snapshot.fire_lost_ytd,      snapshotPrior?.fire_lost_ytd),
+      label: "Fire", editable: true,
+      newKey: "fire_new_ytd_manual", lostKey: "fire_lost_ytd_manual", lapseKey: "fire_lapse_pct_manual",
+      newYtd:  fire_new,  newWkD:  fireNewOv  ? null : wkDelta(snapshot.fire_new_ytd,  snapshotPrior?.fire_new_ytd),
+      lostYtd: fire_lost, lostWkD: fireLostOv ? null : wkDelta(snapshot.fire_lost_ytd, snapshotPrior?.fire_lost_ytd),
       gainYtd: fire_new - fire_lost,
-      onTimeWkD: gainWkD("fire_new_ytd", "fire_lost_ytd"),
+      onTimeWkD: (fireNewOv || fireLostOv) ? null : gainWkD("fire_new_ytd", "fire_lost_ytd"),
       goal: goalFor(goals, "fire", "gain"),
-      lapseRate: (lapseRates && lapseRates.fire != null) ? lapseRates.fire : null,
+      lapseRate: (resolvedFireLapse != null) ? resolvedFireLapse : null,
     },
     {
-      label: "Life",
-      newYtd:  life_new,  newWkD:  wkDelta(snapshot.life_new_ytd, snapshotPrior?.life_new_ytd),
-      lostYtd: life_lost, lostWkD: wkDelta(snapshot.life_lost_ytd,       snapshotPrior?.life_lost_ytd),
+      label: "Life", editable: true,
+      newKey: "life_new_ytd_manual", lostKey: "life_lost_ytd_manual", lapseKey: "life_lapse_pct_manual",
+      newYtd:  life_new,  newWkD:  lifeNewOv  ? null : wkDelta(snapshot.life_new_ytd,  snapshotPrior?.life_new_ytd),
+      lostYtd: life_lost, lostWkD: lifeLostOv ? null : wkDelta(snapshot.life_lost_ytd, snapshotPrior?.life_lost_ytd),
       gainYtd: life_new - life_lost,
-      onTimeWkD: gainWkD("life_new_ytd", "life_lost_ytd"),
+      onTimeWkD: (lifeNewOv || lifeLostOv) ? null : gainWkD("life_new_ytd", "life_lost_ytd"),
       goal: goalFor(goals, "life", "gain"),
-      lapseRate: (lapseRates && lapseRates.life != null) ? lapseRates.life : null,
+      lapseRate: (resolvedLifeLapse != null) ? resolvedLifeLapse : null,
     },
     {
-      label: "Life #",
+      label: "Life #", editable: false,
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_count,
@@ -1215,7 +1245,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       lapseRate: null,
     },
     {
-      label: "Life $",
+      label: "Life $", editable: false,
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem,
@@ -1295,15 +1325,43 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                   );
                 };
 
+                const editableRow = editMode && r.editable;
+                const renderEditOrVal = (key, ytd, wkD, bg) => {
+                  if (editableRow && key) {
+                    return (
+                      <Td align="right" style={{ background: bg, padding: 4 }}>
+                        <NumberInput
+                          value={formReport?.[key]}
+                          onChange={v => onReportChange(key, v)}
+                          dirty={isReportDirty?.(key)}
+                          min={0}
+                          step={1}
+                          style={{ width: 80 }}
+                        />
+                      </Td>
+                    );
+                  }
+                  return renderValDelta(ytd, wkD, bg, false);
+                };
                 return (
                   <tr key={r.label}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{r.label}</Td>
-                    {renderValDelta(r.newYtd,  r.newWkD,  undefined, false)}
-                    {renderValDelta(r.lostYtd, r.lostWkD, undefined, false)}
-                    <Td align="right">
-                      {(r.lapseRate === null || r.lapseRate === undefined)
+                    {renderEditOrVal(r.newKey,  r.newYtd,  r.newWkD,  undefined)}
+                    {renderEditOrVal(r.lostKey, r.lostYtd, r.lostWkD, undefined)}
+                    <Td align="right" style={{ padding: editableRow && r.lapseKey ? 4 : undefined }}>
+                      {editableRow && r.lapseKey ? (
+                        <NumberInput
+                          value={formReport?.[r.lapseKey]}
+                          onChange={v => onReportChange(r.lapseKey, v)}
+                          dirty={isReportDirty?.(r.lapseKey)}
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          style={{ width: 80 }}
+                        />
+                      ) : (r.lapseRate === null || r.lapseRate === undefined)
                         ? <span style={{ color: T.slate400 }}>—</span>
-                        : <span style={{ color: T.slate900, fontWeight: 500 }}>{r.lapseRate.toFixed(1)}%</span>}
+                        : <span style={{ color: T.slate900, fontWeight: 500 }}>{Number(r.lapseRate).toFixed(1)}%</span>}
                     </Td>
                     {renderValDelta(r.gainYtd, r.onTimeWkD, undefined, false)}
                     {renderValDelta(onTimeRounded, r.onTimeWkD, T.slate50, true)}
@@ -2655,6 +2713,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           goals={data.goals}
           weekDate={weekDate}
           lapseRates={data.lapseRates}
+          report={data.report}
+          editMode={edit.active}
+          formReport={edit.form.report}
+          isReportDirty={edit.isReportDirty}
+          onReportChange={edit.setReportField}
         />
       </Section>
 
