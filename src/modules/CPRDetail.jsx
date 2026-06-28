@@ -443,7 +443,7 @@ function useCPRData(weekDate) {
         // leave those team_detail rows orphaned and display "(unknown)" on the page.
         const { data: teamRows } = await supabase
           .from("team")
-          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at")
+          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at, annual_benefits_value")
           .eq("agency_id", AGENCY_ID)
           .order("hire_date", { ascending: true })
           .order("first_name", { ascending: true });
@@ -2129,6 +2129,20 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                   ))}
                 </tr>
               ))}
+              {/* Benefits row — sourced from team.annual_benefits_value / 52.
+                  Mirrors the email composer (which renders the Benefits column from
+                  the team table, not weekly_cpr_team_detail). Excluded from On-Time
+                  annualization — flat-added below to avoid compounding. */}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate700 }}>Benefits</Td>
+                {sorted.map(d => {
+                  const member = (team || []).find(t => t.id === d.team_member_id);
+                  const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
+                  return (
+                    <Td key={d.team_member_id} align="right">{fmtMoneyCents(weeklyBenefits)}</Td>
+                  );
+                })}
+              </tr>
               {/* Edit-only row: payroll_ytd_paid (cumulative SurePayroll YTD paid through
                   end of last pay period). Combined with the prior-quarter-end anchor
                   to derive QTD paid, which gates True Pay Bonus. Hidden in normal view. */}
@@ -2157,7 +2171,10 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week total</Td>
                 {sorted.map(d => {
-                  const total = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
+                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
+                  const member = (team || []).find(t => t.id === d.team_member_id);
+                  const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
+                  const total = compsTotal + weeklyBenefits;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>
                       {fmtMoneyCents(total)}
@@ -2177,12 +2194,12 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                     ? null : Number(d.payroll_ytd_paid);
                   const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
                   const ytdWithThisWeek = ytdPaid === null ? null : ytdPaid + thisWeekTotal;
+                  const member = (team || []).find(t => t.id === d.team_member_id);
                   const daysEmployedThisYear = (() => {
                     if (!weekDate) return 1;
                     const dt = new Date(weekDate + "T00:00:00Z");
                     const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-                    // Look up team member's start_date; fall back to Jan 1 if missing.
-                    const member = (team || []).find(t => t.id === d.team_member_id);
+                    // Use team member's start_date if mid-year hire; otherwise Jan 1.
                     const startDateStr = member && (member.start_date || member.hire_date);
                     const startDt = startDateStr
                       ? new Date(startDateStr + "T00:00:00Z")
@@ -2190,7 +2207,10 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                     const effectiveStart = startDt > ys ? startDt : ys;
                     return Math.max(1, Math.floor((dt - effectiveStart) / 86400000) + 1);
                   })();
-                  const onTimeAnnual = ytdWithThisWeek === null ? null : (ytdWithThisWeek * 365) / daysEmployedThisYear;
+                  // On-Time mirrors email composer: annualize the 7 detail-sourced
+                  // components, then flat-add full annual benefits (no compounding).
+                  const annualBenefits = Number(member?.annual_benefits_value || 0);
+                  const onTimeAnnual = ytdWithThisWeek === null ? null : ((ytdWithThisWeek * 365) / daysEmployedThisYear) + annualBenefits;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
                       {onTimeAnnual === null ? "—" : fmtMoneyCents(onTimeAnnual)}
