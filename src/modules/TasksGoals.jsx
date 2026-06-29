@@ -214,7 +214,7 @@ const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
 };
 
 // ─── Task Card Component ──────────────────────────────────────
-const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, collapsedChildren=false, onToggleCollapse }) => {
+const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, isExpanded=false, onToggleExpand }) => {
   const [expanded, setExpanded] = useState(false);
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
   const cat = categoryConfig(task.task_category);
@@ -255,17 +255,6 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           </div>
         )}
 
-        {/* Collapse caret — only for epics/stories with children */}
-        {children.length > 0 && (task.task_type === "epic" || task.task_type === "story") && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleCollapse && onToggleCollapse(task.id); }}
-            title={collapsedChildren ? "Show children" : "Hide children"}
-            style={{ width:22, height:22, padding:0, border:"none", background:"transparent", color:T.slate500, fontSize:11, cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:4 }}
-          >
-            {collapsedChildren ? "▶" : "▼"}
-          </button>
-        )}
-
         {/* Content */}
         <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={() => setExpanded(e => !e)}>
           {/* Parent breadcrumb */}
@@ -285,7 +274,31 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
             <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:20, background:typ.bg, color:typ.color, border:`1px solid ${typ.color}30`, textTransform:"uppercase", letterSpacing:"0.04em" }}>{typ.icon} {typ.label}</span>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
-            {children.length > 0 && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>{childOpen}/{children.length} open</span>}
+            {children.length > 0 && (task.task_type === "epic" || task.task_type === "story") ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
+                title={isExpanded ? `Hide ${task.task_type === "epic" ? "stories" : "tasks"}` : `Show ${task.task_type === "epic" ? "stories" : "tasks"}`}
+                style={{
+                  display:"inline-flex", alignItems:"center", gap:5,
+                  fontSize:10, fontWeight:600,
+                  padding:"3px 9px 3px 7px", borderRadius:14,
+                  background: isExpanded ? typ.bg : T.slate100,
+                  color: isExpanded ? typ.color : T.slate600,
+                  border: `1px solid ${isExpanded ? typ.color + "55" : T.slate200}`,
+                  cursor:"pointer", lineHeight:1,
+                  boxShadow: isExpanded ? "none" : "0 1px 0 rgba(0,0,0,0.02)",
+                  transition:"background 0.12s, color 0.12s, border-color 0.12s"
+                }}
+              >
+                <span style={{ fontSize:8, lineHeight:1 }}>{isExpanded ? "▼" : "▶"}</span>
+                <span>{childOpen}/{children.length}</span>
+                <span style={{ opacity:0.85, fontWeight:500 }}>
+                  {task.task_type === "epic" ? (children.length === 1 ? "story" : "stories") : (children.length === 1 ? "task" : "tasks")}
+                </span>
+              </button>
+            ) : children.length > 0 ? (
+              <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>{childOpen}/{children.length} open</span>
+            ) : null}
             {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
               {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
@@ -611,35 +624,39 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
   const [taskCat,    setTaskCat]    = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");          // all | epic | story | task
   const [viewMode,   setViewMode]   = useState("nested");        // nested | flat
-  // Collapsed epics/stories (children hidden in nested view). Persists across sessions.
-  const [collapsedIds, setCollapsedIds] = useState(() => {
+  // Expanded epics/stories. Default = ALL COLLAPSED (empty set). Persists across sessions.
+  const EXPAND_KEY = "bcc:tg:expanded";
+  const [expandedIds, setExpandedIds] = useState(() => {
     try {
-      const raw = (typeof window !== "undefined") ? window.localStorage.getItem("bcc:tg:collapsed") : null;
+      const raw = (typeof window !== "undefined") ? window.localStorage.getItem(EXPAND_KEY) : null;
       return new Set(raw ? JSON.parse(raw) : []);
     } catch { return new Set(); }
   });
-  const toggleCollapse = (id) => {
-    setCollapsedIds(prev => {
+  const persistExpanded = (set) => {
+    try { window.localStorage.setItem(EXPAND_KEY, JSON.stringify(Array.from(set))); } catch {}
+  };
+  const toggleExpand = (id) => {
+    setExpandedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
-      try { window.localStorage.setItem("bcc:tg:collapsed", JSON.stringify(Array.from(next))); } catch {}
+      persistExpanded(next);
       return next;
     });
   };
   const expandAll = () => {
-    setCollapsedIds(new Set());
-    try { window.localStorage.setItem("bcc:tg:collapsed", "[]"); } catch {}
-  };
-  const collapseAll = () => {
-    // Collapse every epic + story that has children
+    // Expand every epic + story that has children
     const ids = new Set();
     for (const t of tasks) {
       if ((t.task_type === "epic" || t.task_type === "story") && tasks.some(c => c.parent_task_id === t.id)) {
         ids.add(t.id);
       }
     }
-    setCollapsedIds(ids);
-    try { window.localStorage.setItem("bcc:tg:collapsed", JSON.stringify(Array.from(ids))); } catch {}
+    setExpandedIds(ids);
+    persistExpanded(ids);
+  };
+  const collapseAll = () => {
+    setExpandedIds(new Set());
+    persistExpanded(new Set());
   };
   const [showModal,  setShowModal]  = useState(false);
   const [newType,    setNewType]    = useState("task");          // type for the "+ New" modal
@@ -684,8 +701,8 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       } else if (!passType(e)) continue;
       rows.push({ task:e, depth:0 });
       seen.add(e.id);
-      // If this epic is collapsed, mark descendants as seen (so they don't fall to orphans) and skip rendering.
-      if (collapsedIds.has(e.id)) {
+      // If this epic is not expanded, mark descendants as seen (so they don't fall to orphans) and skip rendering.
+      if (!expandedIds.has(e.id)) {
         const descendants = tasks.filter(t => t.parent_task_id === e.id);
         for (const d of descendants) {
           seen.add(d.id);
@@ -701,8 +718,8 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           rows.push({ task:s, depth:1 });
           seen.add(s.id);
         }
-        // Story collapsed → skip its tasks
-        if (collapsedIds.has(s.id)) {
+        // Story not expanded → skip its tasks
+        if (!expandedIds.has(s.id)) {
           const grand = tasks.filter(t => t.parent_task_id === s.id);
           for (const g of grand) seen.add(g.id);
           continue;
@@ -737,7 +754,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       });
     for (const o of orphans) rows.push({ task:o, depth:0 });
     return rows;
-  }, [tasks, filter, priority, taskCat, typeFilter, viewMode, collapsedIds]);
+  }, [tasks, filter, priority, taskCat, typeFilter, viewMode, expandedIds]);
 
   return (
     <div>
@@ -767,12 +784,12 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
         {viewMode === "nested" && (
           <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
             <button onClick={expandAll} title="Expand all epics + stories"
-              style={{ padding:"6px 10px", fontSize:11, fontWeight:400, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
-              ▼ All
+              style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
+              ▼ Expand all
             </button>
             <button onClick={collapseAll} title="Collapse all epics + stories"
-              style={{ padding:"6px 10px", fontSize:11, fontWeight:400, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
-              ▶ All
+              style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
+              ▶ Collapse all
             </button>
           </div>
         )}
@@ -876,8 +893,8 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           (nestedRows || []).map(({ task, depth }) => (
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={depth}
               onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
-              collapsedChildren={collapsedIds.has(task.id)}
-              onToggleCollapse={toggleCollapse} />
+              isExpanded={expandedIds.has(task.id)}
+              onToggleExpand={toggleExpand} />
           ))
         ) : (
           filtered.map(task => (
