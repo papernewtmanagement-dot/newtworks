@@ -214,7 +214,7 @@ const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
 };
 
 // ─── Task Card Component ──────────────────────────────────────
-const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus }) => {
+const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, collapsedChildren=false, onToggleCollapse }) => {
   const [expanded, setExpanded] = useState(false);
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
   const cat = categoryConfig(task.task_category);
@@ -253,6 +253,17 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           <div style={{ width:20, height:20, borderRadius:5, background:T.green, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
             <span style={{ color:T.white, fontSize:11, lineHeight:1 }}>✓</span>
           </div>
+        )}
+
+        {/* Collapse caret — only for epics/stories with children */}
+        {children.length > 0 && (task.task_type === "epic" || task.task_type === "story") && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleCollapse && onToggleCollapse(task.id); }}
+            title={collapsedChildren ? "Show children" : "Hide children"}
+            style={{ width:22, height:22, padding:0, border:"none", background:"transparent", color:T.slate500, fontSize:11, cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:4 }}
+          >
+            {collapsedChildren ? "▶" : "▼"}
+          </button>
         )}
 
         {/* Content */}
@@ -600,6 +611,36 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
   const [taskCat,    setTaskCat]    = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");          // all | epic | story | task
   const [viewMode,   setViewMode]   = useState("nested");        // nested | flat
+  // Collapsed epics/stories (children hidden in nested view). Persists across sessions.
+  const [collapsedIds, setCollapsedIds] = useState(() => {
+    try {
+      const raw = (typeof window !== "undefined") ? window.localStorage.getItem("bcc:tg:collapsed") : null;
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+  const toggleCollapse = (id) => {
+    setCollapsedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { window.localStorage.setItem("bcc:tg:collapsed", JSON.stringify(Array.from(next))); } catch {}
+      return next;
+    });
+  };
+  const expandAll = () => {
+    setCollapsedIds(new Set());
+    try { window.localStorage.setItem("bcc:tg:collapsed", "[]"); } catch {}
+  };
+  const collapseAll = () => {
+    // Collapse every epic + story that has children
+    const ids = new Set();
+    for (const t of tasks) {
+      if ((t.task_type === "epic" || t.task_type === "story") && tasks.some(c => c.parent_task_id === t.id)) {
+        ids.add(t.id);
+      }
+    }
+    setCollapsedIds(ids);
+    try { window.localStorage.setItem("bcc:tg:collapsed", JSON.stringify(Array.from(ids))); } catch {}
+  };
   const [showModal,  setShowModal]  = useState(false);
   const [newType,    setNewType]    = useState("task");          // type for the "+ New" modal
   const [newParentId, setNewParentId] = useState(null);          // optional preset parent
@@ -643,12 +684,28 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       } else if (!passType(e)) continue;
       rows.push({ task:e, depth:0 });
       seen.add(e.id);
+      // If this epic is collapsed, mark descendants as seen (so they don't fall to orphans) and skip rendering.
+      if (collapsedIds.has(e.id)) {
+        const descendants = tasks.filter(t => t.parent_task_id === e.id);
+        for (const d of descendants) {
+          seen.add(d.id);
+          const grand = tasks.filter(t => t.parent_task_id === d.id);
+          for (const g of grand) seen.add(g.id);
+        }
+        continue;
+      }
       const stories = tasks.filter(t => t.parent_task_id === e.id && t.task_type === "story" && pass(t))
         .sort((a,b) => (a.title||"").localeCompare(b.title||""));
       for (const s of stories) {
         if (typeFilter === "all" || typeFilter === "story" || typeFilter === "task") {
           rows.push({ task:s, depth:1 });
           seen.add(s.id);
+        }
+        // Story collapsed → skip its tasks
+        if (collapsedIds.has(s.id)) {
+          const grand = tasks.filter(t => t.parent_task_id === s.id);
+          for (const g of grand) seen.add(g.id);
+          continue;
         }
         const grand = tasks.filter(t => t.parent_task_id === s.id && pass(t))
           .sort((a,b) => (a.title||"").localeCompare(b.title||""));
@@ -680,7 +737,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       });
     for (const o of orphans) rows.push({ task:o, depth:0 });
     return rows;
-  }, [tasks, filter, priority, taskCat, typeFilter, viewMode]);
+  }, [tasks, filter, priority, taskCat, typeFilter, viewMode, collapsedIds]);
 
   return (
     <div>
@@ -706,6 +763,19 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
             </button>
           ))}
         </div>
+        {/* Expand / Collapse all (nested view only) */}
+        {viewMode === "nested" && (
+          <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
+            <button onClick={expandAll} title="Expand all epics + stories"
+              style={{ padding:"6px 10px", fontSize:11, fontWeight:400, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
+              ▼ All
+            </button>
+            <button onClick={collapseAll} title="Collapse all epics + stories"
+              style={{ padding:"6px 10px", fontSize:11, fontWeight:400, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
+              ▶ All
+            </button>
+          </div>
+        )}
         {/* "+ New" with type choice */}
         <div style={{ display:"flex", gap:0, borderRadius:8, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
           <button onClick={() => { setNewType("task"); setNewParentId(null); setShowModal(true); }} title="New Task (concrete action)"
@@ -805,7 +875,9 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
         ) : viewMode === "nested" ? (
           (nestedRows || []).map(({ task, depth }) => (
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={depth}
-              onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} />
+              onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
+              collapsedChildren={collapsedIds.has(task.id)}
+              onToggleCollapse={toggleCollapse} />
           ))
         ) : (
           filtered.map(task => (
