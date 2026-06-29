@@ -568,66 +568,49 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           };
         }
 
-        // ─── Goal 2: Champions Circle (400 pts, Auto + Fire + FS only) ───
+        // ─── Goal 2 + Goal 3 — Champions Circle (Scorecard pts) + SMVC on-time ───
+        // Both computed by the canonical RPC pipeline (get_cpr_section_11).
+        // Anchored to the latest CPR week so manual YTD overrides flow through
+        // (matches CPR Detail Section 11). Single RPC call replaces ~60 lines of
+        // client-side mirrored math — closes the drift bug AND the FS Commissions
+        // / annualization-anchor bugs in one move (migrations 040-042).
         let cc = null;
-        if (sf) {
-          const lin = (val, min, max, capPts) => {
-            if (!max || max <= min) return 0;
-            const raw = ((val - min) / (max - min)) * capPts;
-            return Math.max(0, Math.min(capPts, raw));
-          };
-          const autoGainAnn = annualize((sf.auto_new_ytd||0) - (sf.auto_lost_ytd||0));
-          const autoProdAnn = annualize(sf.auto_new_ytd||0);
-          const fireGainAnn = annualize((sf.fire_new_ytd||0) - (sf.fire_lost_ytd||0));
-          const fireProdAnn = annualize(sf.fire_new_ytd||0);
-          const fsCreditsAnn= annualize((parseFloat(sf.life_paid_for_premium_ytd)||0) + (parseFloat(sf.ips_new_money_ytd)||0));
-          const autoGainPts = scBands.auto_pif_gain        ? lin(autoGainAnn, scBands.auto_pif_gain.min, scBands.auto_pif_gain.max, 200) : 0;
-          const autoProdPts = scBands.auto_pif_production  ? lin(autoProdAnn, scBands.auto_pif_production.min, scBands.auto_pif_production.max, 125) : 0;
-          const fireGainPts = scBands.fire_pif_gain        ? lin(fireGainAnn, scBands.fire_pif_gain.min, scBands.fire_pif_gain.max, 100) : 0;
-          const fireProdPts = scBands.fire_pif_production  ? lin(fireProdAnn, scBands.fire_pif_production.min, scBands.fire_pif_production.max, 100) : 0;
-          const fsPts       = scBands.fs_credits           ? lin(fsCreditsAnn, scBands.fs_credits.min, scBands.fs_credits.max, 225) : 0;
-          const autoPts     = Math.max(autoGainPts, autoProdPts);
-          const firePts     = Math.max(fireGainPts, fireProdPts);
-          const totalPts    = autoPts + firePts + fsPts;
-          const pace_pct    = (totalPts / 400) * 100;
+        let smvcPace = null;
+        const cprLatestWk = cprRes.status === "fulfilled" ? cprRes.value.data?.week_ending_date : null;
+        const s11AsOf = cprLatestWk || new Date().toISOString().split("T")[0];
+        let s11 = null;
+        try {
+          const { data, error } = await supabase.rpc("get_cpr_section_11", {
+            p_agency_id: AGENCY_ID,
+            p_week_ending_date: s11AsOf,
+          });
+          if (!error) s11 = data;
+        } catch (e) {
+          // swallow — widget falls back to nulls below
+        }
+        if (s11?.scorecard_bonus?.computed_breakdown?.points_breakdown) {
+          const pb = s11.scorecard_bonus.computed_breakdown.points_breakdown;
+          const autoBest = parseFloat(pb.auto_best) || 0;
+          const fireBest = parseFloat(pb.fire_best) || 0;
+          const fsPts    = parseFloat(pb.fs_credits) || 0;
+          // Champions Circle = Auto + Fire + FS only (Honor Club excluded per SF rule).
+          const ccTotalPts = autoBest + fireBest + fsPts;
           cc = {
-            current_label: `${Math.round(totalPts)} pts`,
+            current_label: `${Math.round(ccTotalPts)} pts`,
             target_label:  `400 pts`,
-            sub: `Auto ${Math.round(autoPts)} · Fire ${Math.round(firePts)} · FS ${Math.round(fsPts)}`,
-            pace_pct,
+            sub: `Auto ${Math.round(autoBest)} · Fire ${Math.round(fireBest)} · FS ${Math.round(fsPts)}`,
+            pace_pct: (ccTotalPts / 400) * 100,
           };
         }
-
-        // ─── Goal 3: SMVC pace (target 2.70%, below 3% Better Of cap) ───
-        // Computed client-side from agency_snapshot YTD inputs + smvcBands (sf_program_targets).
-        // Mirrors public.smvc_bucket_score / public.compute_on_time_smvc SQL math.
-        let smvcPace = null;
-        if (sf && Object.keys(smvcBands).length > 0) {
-          const score = (actual, b) => {
-            if (!b || b.min == null || b.max == null || !b.pct) return 0;
-            if (actual == null) return 0;
-            if (b.max === b.min) return 0;
-            return Math.min(b.pct, Math.max(0, ((actual - b.min) / (b.max - b.min)) * b.pct));
-          };
-          // On-time SMVC: annualize YTD inputs before scoring (mirrors compute_on_time_smvc).
-          // Bug fix 2026-06-22 — was scoring raw YTD, which displayed YTD-earned (~1.82%)
-          // instead of on-time pace (~2.77%).
-          const autoGainAnn = annualize((sf.auto_new_ytd||0) - (sf.auto_lost_ytd||0));
-          const fireGainAnn = annualize((sf.fire_new_ytd||0) - (sf.fire_lost_ytd||0));
-          const fsCreditsAnn   = annualize(parseFloat(sf.life_paid_for_premium_ytd) || 0);
-          const ipsActivityAnn = annualize(parseFloat(sf.ips_new_money_ytd) || 0);
-          const totalPct = score(autoGainAnn,    smvcBands.auto_pif_gain)
-                         + score(fireGainAnn,    smvcBands.fire_pif_gain)
-                         + score(fsCreditsAnn,   smvcBands.fs_credits)
-                         + score(ipsActivityAnn, smvcBands.ips_activity);
-          const capped      = Math.min(3.0, totalPct);
-          const tgtSmvc     = 2.70;
-          const appliedSmvc = (parseFloat(agency?.smvc_rate_pc)||0) * 100;
+        if (s11?.smvc?.on_time != null) {
+          const onTimePct  = (parseFloat(s11.smvc.on_time) || 0) * 100;
+          const appliedPct = (parseFloat(s11.smvc.applied) || 0) * 100;
+          const tgtSmvc    = 2.70;
           smvcPace = {
-            current_label: `${capped.toFixed(2)}%`,
+            current_label: `${onTimePct.toFixed(2)}%`,
             target_label:  `${tgtSmvc.toFixed(2)}%`,
-            sub: `Currently applied ${appliedSmvc.toFixed(2)}%`,
-            pace_pct: tgtSmvc > 0 ? (capped / tgtSmvc) * 100 : 0,
+            sub: `Currently applied ${appliedPct.toFixed(2)}%`,
+            pace_pct: tgtSmvc > 0 ? (onTimePct / tgtSmvc) * 100 : 0,
           };
         }
 
