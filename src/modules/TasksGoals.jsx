@@ -4,24 +4,28 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// BCC TASKS & GOALS MODULE v1.0
+// BCC TASKS & GOALS MODULE v1.2
 // Business Command Center — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
-//   1. Overview    — Quick wins, due today, goal progress summary
-//   2. Tasks       — Full task list, create, filter, complete
-//   3. Goals       — Annual goals with progress tracking
-//   4. Completed   — History of completed tasks
+//   1. Overview   — Quick wins, due today, goal progress summary
+//   2. To-Dos     — Tasks pushed to this week's focus, grouped by category
+//   3. Tasks      — Full task list, create, filter, complete
+//   4. Goals      — Annual goals with progress tracking
+//   5. Completed  — History of completed tasks
 //
 // KEY FEATURES:
-//   • Tasks link to BCC modules (click → opens in context)
+//   • Six fixed task categories (web app, admin, marketing,
+//     training, handbook, playbook) backed by DB CHECK constraint
+//   • Star toggle pushes a task to This Week's to-dos
 //   • Priority system: critical / high / medium / low
 //   • Tasks created by agent, Claude, or automations
 //   • Goals track revenue, AIPP, team, compliance, personal
-//   • Everything tied to agency_id in Supabase
 //
-// DATA: Reads tasks, goals tables in Supabase
+// DATA: Reads tasks, goals tables in Supabase.
+//       module_reference column removed 2026-06-29; Module concept
+//       collapsed into task_category.
 // ============================================================
 
 
@@ -35,25 +39,6 @@ const PRIORITY = {
   medium:   { color:T.amber,  bg:T.amberLt,  label:"Medium",   dot:"🟡" },
   low:      { color:T.slate500,bg:T.slate100, label:"Low",      dot:"⚪" },
 };
-
-// ─── Module Reference Config ──────────────────────────────────
-const MODULES = {
-  financials:   { label:"Financials",   color:T.blue,    icon:"💰" },
-  compliance:   { label:"Compliance",   color:T.red,     icon:"🛡️" },
-  social:       { label:"Social Media", color:T.purple,  icon:"📱" },
-  automations:  { label:"Automations",  color:T.teal,    icon:"⚡" },
-  hr:           { label:"HR & People",  color:T.green,   icon:"👥" },
-  documents:    { label:"Documents",    color:T.amber,   icon:"📁" },
-  memory:       { label:"Memory",       color:T.slate900,    icon:"🧠" },
-  marketing:    { label:"Marketing",    color:T.purple,  icon:"📣" },
-  team:         { label:"Team",         color:T.green,   icon:"👥" },
-  business_dev: { label:"Business Dev", color:T.blue,    icon:"📈" },
-  operations:   { label:"Operations",   color:T.slate500,icon:"⚙️" },
-  general:      { label:"General",      color:T.slate500,icon:"📋" },
-};
-
-// Defensive lookup so unknown module_reference values render gracefully
-const moduleConfig = (key) => MODULES[key] || MODULES.general;
 
 // ─── Task Category Config ─────────────────────────────────────
 // Six fixed categories on every task — distinct from module_reference (related BCC area).
@@ -217,7 +202,6 @@ const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
 const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
   const [expanded, setExpanded] = useState(false);
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
-  const mod = moduleConfig(task.module) || MODULES.general;
   const cat = categoryConfig(task.task_category);
   const overdue = task.status === "open" && isOverdue(task.due_date);
   const days = daysUntil(task.due_date);
@@ -256,7 +240,6 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
-            <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:mod.color+"20", color:mod.color }}>{mod.icon} {mod.label}</span>
             {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
               {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
@@ -277,17 +260,6 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
           </button>
         )}
 
-        {/* Module link */}
-        {!isCompleted && task.module !== "general" && (
-          <button
-            onClick={() => onNavigate(task.module)}
-            style={{ fontSize:10, color:mod.color, background:mod.color+"15", border:"none", borderRadius:6, padding:"4px 8px", cursor:"pointer", flexShrink:0 }}
-            title={`Go to ${mod.label}`}
-          >
-            Open →
-          </button>
-        )}
-
         <span style={{ color:T.slate400, fontSize:11, flexShrink:0, cursor:"pointer" }} onClick={() => setExpanded(e => !e)}>
           {expanded ? "▲" : "▼"}
         </span>
@@ -298,7 +270,7 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
           <div style={{ fontSize:12, color:T.slate600, lineHeight:1.6, marginTop:8, marginBottom:8 }}>
             {task.description}
           </div>
-          <AskBtn size="small" context={`Task context:\nTitle: ${task.title}\nPriority: ${task.priority}\nDue: ${task.due_date}\nModule: ${task.module}\nAssigned to: ${task.assigned_to}\nDescription: ${task.description}\n\nHelp me think through how to complete this task efficiently.`} />
+          <AskBtn size="small" context={`Task context:\nTitle: ${task.title}\nPriority: ${task.priority}\nDue: ${task.due_date}\nCategory: ${task.task_category || "uncategorized"}\nAssigned to: ${task.assigned_to}\nDescription: ${task.description}\n\nHelp me think through how to complete this task efficiently.`} />
         </div>
       )}
     </div>
@@ -307,7 +279,7 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
 
 // ─── New Task Modal ───────────────────────────────────────────
 const NewTaskModal = ({ onSave, onCancel }) => {
-  const [form, setForm] = useState({ title:"", description:"", priority:"medium", module:"general", task_category:"", in_weekly_focus:false, due_date:"", assigned_to:"Jane Smith" });
+  const [form, setForm] = useState({ title:"", description:"", priority:"medium", task_category:"", in_weekly_focus:false, due_date:"", assigned_to:"Jane Smith" });
   const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
 
   return (
@@ -341,14 +313,7 @@ const NewTaskModal = ({ onSave, onCancel }) => {
                 {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
               </select>
             </div>
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>MODULE</label>
-              <select value={form.module} onChange={e => set("module", e.target.value)}
-                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
-                {Object.keys(MODULES).map(m => <option key={m} value={m}>{moduleConfig(m).icon} {moduleConfig(m).label}</option>)}
-              </select>
-            </div>
-            <div>
+<div>
               <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>CATEGORY</label>
               <select value={form.task_category} onChange={e => set("task_category", e.target.value)}
                 style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
@@ -421,13 +386,13 @@ const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
             <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Due this week</span>
-            <AskBtn size="small" context={`My tasks due this week:\n${dueThisWeek.map(t=>`• ${t.title} (${t.priority}, due ${t.due_date}, module: ${t.module})`).join("\n")}\n\nHelp me prioritize these tasks and create an action plan for the week.`} />
+            <AskBtn size="small" context={`My tasks due this week:\n${dueThisWeek.map(t=>`• ${t.title} (${t.priority}, due ${t.due_date}, category: ${t.task_category||"uncategorized"})`).join("\n")}\n\nHelp me prioritize these tasks and create an action plan for the week.`} />
           </div>
           {dueThisWeek.length === 0 ? (
             <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"16px 0" }}>Nothing due this week 🎉</div>
           ) : dueThisWeek.map((task,i) => {
             const pr = PRIORITY[task.priority] || PRIORITY.medium;
-            const mod = moduleConfig(task.module);
+            const cat = categoryConfig(task.task_category);
             const days = daysUntil(task.due_date);
             return (
               <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"9px 0", borderBottom:i<dueThisWeek.length-1?`1px solid ${T.slate100}`:"none" }}>
@@ -435,7 +400,7 @@ const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:12, fontWeight:500, color:T.slate800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{task.title}</div>
                   <div style={{ fontSize:10, color:T.slate400, marginTop:1 }}>
-                    {mod.icon} {mod.label} · {days===0?"Due today":days===1?"Due tomorrow":`${days} days`}
+                    {cat ? `${cat.icon} ${cat.label} · ` : ""}{days===0?"Due today":days===1?"Due tomorrow":`${days} days`}
                   </div>
                 </div>
                 <button onClick={() => onComplete(task.id)} title="Mark this task complete" style={{ fontSize:9, color:T.green, background:"transparent", border:`1px solid ${T.green}`, borderRadius:5, padding:"3px 8px", cursor:"pointer", flexShrink:0, fontWeight:600 }}>✓ Mark done</button>
@@ -553,7 +518,6 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
 const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
   const [filter,     setFilter]     = useState("open");
   const [priority,   setPriority]   = useState("all");
-  const [module,     setModule]     = useState("all");
   const [taskCat,    setTaskCat]    = useState("all");
   const [showModal,  setShowModal]  = useState(false);
 
@@ -562,10 +526,9 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
     if (filter === "completed"   && t.status !== "completed")  return false;
     if (filter === "in_progress" && t.status !== "in_progress")return false;
     if (priority !== "all" && t.priority !== priority) return false;
-    if (module   !== "all" && t.module   !== module)   return false;
     if (taskCat  !== "all" && t.task_category !== taskCat) return false;
     return true;
-  }), [tasks, filter, priority, module, taskCat]);
+  }), [tasks, filter, priority, taskCat]);
 
   return (
     <div>
@@ -582,11 +545,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           <option value="all">All Priority</option>
           {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
         </select>
-        <select value={module} onChange={e => setModule(e.target.value)} style={{ padding:"7px 10px", fontSize:11, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:7, background:T.white, outline:"none" }}>
-          <option value="all">All Modules</option>
-          {Object.keys(MODULES).map(m => <option key={m} value={m}>{moduleConfig(m).icon} {moduleConfig(m).label}</option>)}
-        </select>
-        <select value={taskCat} onChange={e => setTaskCat(e.target.value)} style={{ padding:"7px 10px", fontSize:11, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:7, background:T.white, outline:"none" }}>
+<select value={taskCat} onChange={e => setTaskCat(e.target.value)} style={{ padding:"7px 10px", fontSize:11, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:7, background:T.white, outline:"none" }}>
           <option value="all">All Categories</option>
           {TASK_CATEGORY_ORDER.map(c => <option key={c} value={c}>{TASK_CATEGORIES[c].icon} {TASK_CATEGORIES[c].label}</option>)}
         </select>
@@ -713,7 +672,7 @@ const CompletedSection = ({ tasks }) => {
       <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
         {completed.map((task,i) => {
           const pr = PRIORITY[task.priority] || PRIORITY.medium;
-          const mod = moduleConfig(task.module);
+          const cat = categoryConfig(task.task_category);
           return (
             <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:i<completed.length-1?`1px solid ${T.slate100}`:"none", opacity:0.7 }}>
               <div style={{ width:18, height:18, borderRadius:4, background:T.green, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
@@ -721,7 +680,7 @@ const CompletedSection = ({ tasks }) => {
               </div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:12, color:T.slate600, textDecoration:"line-through", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{task.title}</div>
-                <div style={{ fontSize:10, color:T.slate400, marginTop:1 }}>{mod.icon} {mod.label} · Completed {task.completed_at}</div>
+                <div style={{ fontSize:10, color:T.slate400, marginTop:1 }}>{cat ? `${cat.icon} ${cat.label} · ` : ""}Completed {task.completed_at}</div>
               </div>
               <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color, flexShrink:0 }}>{pr.label}</span>
             </div>
@@ -742,7 +701,7 @@ export default function TasksGoals({ onNavigate }) {
   const [tasks, setTasks] = useState(useMockData ? MOCK_TASKS : []);
   useEffect(() => {
     if (liveTasks && liveTasks.length > 0) {
-      // Alias schema fields so existing render code (task.module, task.due_date, etc.) keeps working.
+      // Alias schema fields so existing render code (task.due_date, task.completed_at, etc.) keeps working.
       // IMPORTANT: the DB status vocabulary is open/closed; this module's render
       // code checks for "completed"/"in_progress". Normalize here at the source so
       // counts, the Completed tab, the Open filter, and badges all stay consistent.
@@ -755,7 +714,6 @@ export default function TasksGoals({ onNavigate }) {
       setTasks(liveTasks.map(t => ({
         ...t,
         status:         normStatus(t.status),
-        module:         t.module_reference || t.module || "general",
         task_category:  t.task_category || null,
         in_weekly_focus:!!t.in_weekly_focus,
         due_date:       t.due_date ? new Date(t.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
@@ -802,7 +760,6 @@ export default function TasksGoals({ onNavigate }) {
       description:      taskFromModal.description || null,
       priority:         taskFromModal.priority || "medium",
       status:           "open",
-      module_reference: taskFromModal.module && taskFromModal.module !== "general" ? taskFromModal.module : null,
       task_category:    taskFromModal.task_category || null,
       in_weekly_focus:  !!taskFromModal.in_weekly_focus,
       due_date:         dueIso,
@@ -815,7 +772,6 @@ export default function TasksGoals({ onNavigate }) {
         setTasks(prev => [{
           ...data,
           status:         "open",
-          module:         data.module_reference || "general",
           task_category:  data.task_category || null,
           in_weekly_focus:!!data.in_weekly_focus,
           due_date:       data.due_date ? new Date(data.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
@@ -824,7 +780,7 @@ export default function TasksGoals({ onNavigate }) {
       }
     }
     // Mock fallback
-    setTasks(prev => [{ ...taskFromModal, status:"open", module:taskFromModal.module || "general" }, ...prev]);
+    setTasks(prev => [{ ...taskFromModal, status:"open" }, ...prev]);
   };
 
   const toggleFocus = async (id, next) => {
