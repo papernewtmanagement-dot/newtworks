@@ -215,7 +215,7 @@ const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
 
 // ─── Task Card Component ──────────────────────────────────────
 const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, isExpanded=false, onToggleExpand }) => {
-  const [expanded, setExpanded] = useState(false);
+  // Expansion state is lifted to TasksList (expandedIds) so it can drive both description and children visibility.
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
   const cat = categoryConfig(task.task_category);
   const typ = typeConfig(task.task_type || "task");
@@ -229,30 +229,19 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
   const children = (Array.isArray(allTasks) && (task.task_type === "epic" || task.task_type === "story"))
     ? allTasks.filter(t => t.parent_task_id === task.id) : [];
   const childOpen = children.filter(c => c.status !== "completed").length;
-  // For epics: compute the full subtree (descendants at any depth) so the toggle pill
-  // can label what expanding will reveal: stories AND tasks.
-  const subtree = (Array.isArray(allTasks) && task.task_type === "epic")
-    ? (() => {
-        const out = [];
-        const queue = [task.id];
-        while (queue.length) {
-          const pid = queue.shift();
-          for (const t of allTasks) {
-            if (t.parent_task_id === pid) { out.push(t); queue.push(t.id); }
-          }
-        }
-        return out;
-      })()
-    : [];
-  const subtreeStories = subtree.filter(t => t.task_type === "story").length;
-  const subtreeTasks   = subtree.filter(t => (t.task_type || "task") === "task").length;
+  // Direct-children counts power the pill label (drill-down: each level's toggle reveals its own children).
+  const childStories = children.filter(c => c.task_type === "story").length;
+  const childTasks   = children.filter(c => (c.task_type || "task") === "task").length;
+  const hasDescription = !!task.description;
+  const hasChildren    = children.length > 0 && (task.task_type === "epic" || task.task_type === "story");
+  const showPill       = hasChildren || hasDescription;
   // Indent based on depth in nested view (max 2 levels visible)
   const indent = Math.min(depth, 2) * 18;
 
   return (
     <div style={{
       background:T.white,
-      border:`1px solid ${expanded?T.blue:overdue?T.red:T.slate200}`,
+      border:`1px solid ${isExpanded?T.blue:overdue?T.red:T.slate200}`,
       borderLeft:`4px solid ${overdue?T.red:typ.color}`,
       borderRadius:10, overflow:"hidden",
       opacity:isCompleted?0.7:1,
@@ -273,7 +262,7 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
         )}
 
         {/* Content */}
-        <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={() => setExpanded(e => !e)}>
+        <div style={{ flex:1, minWidth:0, cursor: showPill ? "pointer" : "default" }} onClick={() => showPill && onToggleExpand && onToggleExpand(task.id)}>
           {/* Parent breadcrumb */}
           {parent && (
             <div style={{ fontSize:10, color:T.slate400, marginBottom:2, display:"flex", alignItems:"center", gap:4, flexWrap:"wrap" }}>
@@ -291,38 +280,41 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
             <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:20, background:typ.bg, color:typ.color, border:`1px solid ${typ.color}30`, textTransform:"uppercase", letterSpacing:"0.04em" }}>{typ.icon} {typ.label}</span>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
-            {task.task_type === "epic" && (subtreeStories + subtreeTasks) > 0 ? (
-              (() => {
-                const parts = [];
-                if (subtreeStories > 0) parts.push(`${subtreeStories} ${subtreeStories === 1 ? "story" : "stories"}`);
-                if (subtreeTasks   > 0) parts.push(`${subtreeTasks} ${subtreeTasks === 1 ? "task" : "tasks"}`);
-                const label = parts.join(" · ");
-                return (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
-                    title={isExpanded ? "Collapse — hide all work under this epic" : "Expand — show all stories and tasks under this epic"}
-                    style={{
-                      display:"inline-flex", alignItems:"center", gap:6,
-                      fontSize:10, fontWeight:600,
-                      padding:"4px 11px 4px 9px", borderRadius:14,
-                      background: isExpanded ? typ.bg : T.slate100,
-                      color:      isExpanded ? typ.color : T.slate600,
-                      border:     `1px solid ${isExpanded ? typ.color + "55" : T.slate200}`,
-                      cursor:"pointer", lineHeight:1,
-                      transition:"background 0.12s, color 0.12s, border-color 0.12s"
-                    }}
-                  >
-                    <span style={{ fontSize:9, lineHeight:1 }}>{isExpanded ? "▼" : "▶"}</span>
-                    <span>{label}</span>
-                  </button>
-                );
-              })()
-            ) : task.task_type === "story" && children.length > 0 ? (
-              // Stories: non-interactive indicator only — tasks render automatically when the parent epic is expanded
-              <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>
-                {children.length} {children.length === 1 ? "task" : "tasks"}
-              </span>
-            ) : null}
+            {showPill && (() => {
+              // Build label: "N stories" / "N tasks" / "Details" depending on what expanding reveals.
+              const labelParts = [];
+              if (task.task_type === "epic" && childStories > 0) {
+                labelParts.push(`${childStories} ${childStories === 1 ? "story" : "stories"}`);
+              }
+              if ((task.task_type === "epic" || task.task_type === "story") && childTasks > 0) {
+                labelParts.push(`${childTasks} ${childTasks === 1 ? "task" : "tasks"}`);
+              }
+              if (labelParts.length === 0 && hasDescription) {
+                labelParts.push("Details");
+              }
+              const label = labelParts.join(" · ");
+              return (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
+                  title={isExpanded
+                    ? (hasChildren ? "Collapse — hide children" + (hasDescription ? " and description" : "") : "Hide details")
+                    : (hasChildren ? "Expand — show children" + (hasDescription ? " and description" : "") : "Show details")}
+                  style={{
+                    display:"inline-flex", alignItems:"center", gap:6,
+                    fontSize:10, fontWeight:600,
+                    padding:"4px 11px 4px 9px", borderRadius:14,
+                    background: isExpanded ? typ.bg     : T.slate100,
+                    color:      isExpanded ? typ.color  : T.slate600,
+                    border:     `1px solid ${isExpanded ? typ.color + "55" : T.slate200}`,
+                    cursor:"pointer", lineHeight:1,
+                    transition:"background 0.12s, color 0.12s, border-color 0.12s"
+                  }}
+                >
+                  <span style={{ fontSize:9, lineHeight:1 }}>{isExpanded ? "▼" : "▶"}</span>
+                  <span>{label}</span>
+                </button>
+              );
+            })()}
             {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
               {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
@@ -343,12 +335,10 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           </button>
         )}
 
-        <span style={{ color:T.slate400, fontSize:11, flexShrink:0, cursor:"pointer" }} onClick={() => setExpanded(e => !e)}>
-          {expanded ? "▲" : "▼"}
-        </span>
+
       </div>
 
-      {expanded && task.description && (
+      {isExpanded && task.description && (
         <div style={{ padding:"0 12px 12px 46px", borderTop:`1px solid ${T.slate100}` }}>
           <div style={{ fontSize:12, color:T.slate600, lineHeight:1.6, marginTop:8, marginBottom:8 }}>
             {task.description}
@@ -668,10 +658,10 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
     });
   };
   const expandAll = () => {
-    // Expand every epic that has any descendants
+    // One click reveals every level: add every epic + every story that has any children.
     const ids = new Set();
     for (const t of tasks) {
-      if (t.task_type === "epic" && tasks.some(c => c.parent_task_id === t.id)) {
+      if ((t.task_type === "epic" || t.task_type === "story") && tasks.some(c => c.parent_task_id === t.id)) {
         ids.add(t.id);
       }
     }
@@ -725,7 +715,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       } else if (!passType(e)) continue;
       rows.push({ task:e, depth:0 });
       seen.add(e.id);
-      // Epic not expanded → mark every descendant as seen and skip rendering.
+      // Epic not expanded → mark every descendant as seen so they don't fall to the orphan bucket.
       if (!expandedIds.has(e.id)) {
         const q = [e.id];
         while (q.length) {
@@ -736,13 +726,20 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
         }
         continue;
       }
-      // Epic expanded → render full subtree: stories with their tasks, then direct tasks.
+      // Epic expanded → render its direct stories + direct tasks. Stories drill down further only if they too are expanded.
       const stories = tasks.filter(t => t.parent_task_id === e.id && t.task_type === "story" && pass(t))
         .sort((a,b) => (a.title||"").localeCompare(b.title||""));
       for (const s of stories) {
         if (typeFilter === "all" || typeFilter === "story" || typeFilter === "task") {
           rows.push({ task:s, depth:1 });
           seen.add(s.id);
+        }
+        if (!expandedIds.has(s.id)) {
+          // Story not expanded → mark its tasks as seen, skip rendering them.
+          for (const t of tasks) {
+            if (t.parent_task_id === s.id) seen.add(t.id);
+          }
+          continue;
         }
         const grand = tasks.filter(t => t.parent_task_id === s.id && pass(t))
           .sort((a,b) => (a.title||"").localeCompare(b.title||""));
@@ -802,11 +799,11 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
         {/* Expand / Collapse all (nested view only) */}
         {viewMode === "nested" && (
           <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
-            <button onClick={expandAll} title="Expand all epics"
+            <button onClick={expandAll} title="Expand everything — every epic and every story"
               style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
               ▼ Expand all
             </button>
-            <button onClick={collapseAll} title="Collapse all epics"
+            <button onClick={collapseAll} title="Collapse everything"
               style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
               ▶ Collapse all
             </button>
