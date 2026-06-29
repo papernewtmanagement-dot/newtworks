@@ -55,6 +55,20 @@ const TASK_CATEGORIES = {
 const TASK_CATEGORY_ORDER = ["web_app","admin","finances","marketing","team_development","handbook","playbook"];
 const categoryConfig = (key) => TASK_CATEGORIES[key] || null;
 
+// ─── Task Type Config (Epic > Story > Task) ───────────────────
+// Three-level hierarchy added by migration 040.
+//   Epic  = big body of work (weeks/months). Cannot have a parent.
+//   Story = unit of value (days). Parent should be an Epic.
+//   Task  = concrete action (hours). Parent should be a Story (or another Task).
+// DB columns: task_type (CHECK 'epic'|'story'|'task'), parent_task_id (FK self).
+const TASK_TYPES = {
+  epic:  { label:"Epic",  color:T.purple,   bg:"#F5F3FF", icon:"🎯", desc:"Big body of work · weeks–months" },
+  story: { label:"Story", color:T.blue,     bg:T.blueLt || "#EFF6FF", icon:"📖", desc:"Unit of value · days" },
+  task:  { label:"Task",  color:T.slate500, bg:T.slate100, icon:"✓",  desc:"Concrete action · hours" },
+};
+const TASK_TYPE_ORDER = ["epic","story","task"];
+const typeConfig = (key) => TASK_TYPES[key] || TASK_TYPES.task;
+
 // ─── Goal Category Config ─────────────────────────────────────
 const GOAL_CATS = {
   aipp:       { label:"AIPP",       color:T.green,  icon:"🎯" },
@@ -200,22 +214,32 @@ const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
 };
 
 // ─── Task Card Component ──────────────────────────────────────
-const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
+const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus }) => {
   const [expanded, setExpanded] = useState(false);
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
   const cat = categoryConfig(task.task_category);
+  const typ = typeConfig(task.task_type || "task");
   const overdue = task.status === "open" && isOverdue(task.due_date);
   const days = daysUntil(task.due_date);
   const isCompleted = task.status === "completed";
   const inFocus = !!task.in_weekly_focus;
+  // Hierarchy context (read-only):
+  const parent = (task.parent_task_id && Array.isArray(allTasks))
+    ? allTasks.find(t => t.id === task.parent_task_id) : null;
+  const children = (Array.isArray(allTasks) && (task.task_type === "epic" || task.task_type === "story"))
+    ? allTasks.filter(t => t.parent_task_id === task.id) : [];
+  const childOpen = children.filter(c => c.status !== "completed").length;
+  // Indent based on depth in nested view (max 2 levels visible)
+  const indent = Math.min(depth, 2) * 18;
 
   return (
     <div style={{
       background:T.white,
       border:`1px solid ${expanded?T.blue:overdue?T.red:T.slate200}`,
-      borderLeft:`4px solid ${overdue?T.red:pr.color}`,
+      borderLeft:`4px solid ${overdue?T.red:typ.color}`,
       borderRadius:10, overflow:"hidden",
       opacity:isCompleted?0.7:1,
+      marginLeft:indent,
     }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 12px", flexWrap:"wrap" }}>
         {/* Checkbox */}
@@ -233,14 +257,24 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
 
         {/* Content */}
         <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={() => setExpanded(e => !e)}>
+          {/* Parent breadcrumb */}
+          {parent && (
+            <div style={{ fontSize:10, color:T.slate400, marginBottom:2, display:"flex", alignItems:"center", gap:4, flexWrap:"wrap" }}>
+              <span style={{ opacity:0.7 }}>{typeConfig(parent.task_type || "task").icon}</span>
+              <span style={{ whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:240 }}>{parent.title}</span>
+              <span style={{ opacity:0.5 }}>›</span>
+            </div>
+          )}
           <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3, flexWrap:"wrap" }}>
             <span style={{ fontSize:12, fontWeight:isCompleted?400:600, color:isCompleted?T.slate400:T.slate800, textDecoration:isCompleted?"line-through":"none" }}>
               {task.title}
             </span>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+            <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:20, background:typ.bg, color:typ.color, border:`1px solid ${typ.color}30`, textTransform:"uppercase", letterSpacing:"0.04em" }}>{typ.icon} {typ.label}</span>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
+            {children.length > 0 && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>{childOpen}/{children.length} open</span>}
             {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
               {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
@@ -279,15 +313,39 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
 };
 
 // ─── New Task Modal ───────────────────────────────────────────
-const NewTaskModal = ({ onSave, onCancel }) => {
-  const [form, setForm] = useState({ title:"", description:"", priority:"medium", task_category:"", in_weekly_focus:false, due_date:"", assigned_to:"Jane Smith" });
-  const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
+const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", defaultParentId = null }) => {
+  const [form, setForm] = useState({
+    title:"", description:"", priority:"medium", task_category:"",
+    in_weekly_focus:false, due_date:"", assigned_to:"Jane Smith",
+    task_type: defaultType,
+    parent_task_id: defaultParentId || "",
+  });
+  const set = (k, v) => setForm(f => {
+    const next = { ...f, [k]:v };
+    // Epics cannot have a parent; clear parent if type changes to epic.
+    if (k === "task_type" && v === "epic") next.parent_task_id = "";
+    return next;
+  });
+
+  // Eligible parents depend on type:
+  //   epic  -> none (epics are top-level)
+  //   story -> any epic
+  //   task  -> any story OR any task (lets us nest task-under-task if needed)
+  const eligibleParents = (() => {
+    if (form.task_type === "epic") return [];
+    if (form.task_type === "story") return allTasks.filter(t => t.task_type === "epic" && t.status !== "completed");
+    // task
+    return allTasks.filter(t => (t.task_type === "story" || t.task_type === "task") && t.status !== "completed");
+  })();
+
+  const typ = typeConfig(form.task_type);
+  const heading = `New ${typ.label}`;
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
       <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:500, boxShadow:"0 20px 60px rgba(0,0,0,0.2)", overflow:"hidden" }}>
         <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>New Task</span>
+          <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{typ.icon} {heading}</span>
           <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:22, color:T.slate400, cursor:"pointer", padding:"4px 10px", lineHeight:1 }}>×</button>
         </div>
         <div style={{ padding:20 }}>
@@ -306,6 +364,28 @@ const NewTaskModal = ({ onSave, onCancel }) => {
               )}
             </div>
           ))}
+          {/* Type + Parent — hierarchy controls */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:12, marginBottom:12 }}>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>TYPE</label>
+              <select value={form.task_type} onChange={e => set("task_type", e.target.value)}
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
+                {TASK_TYPE_ORDER.map(t => <option key={t} value={t}>{TASK_TYPES[t].icon} {TASK_TYPES[t].label}</option>)}
+              </select>
+              <div style={{ fontSize:10, color:T.slate400, marginTop:4 }}>{typ.desc}</div>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>PARENT</label>
+              <select value={form.parent_task_id || ""} onChange={e => set("parent_task_id", e.target.value || null)}
+                disabled={form.task_type === "epic"}
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:form.task_type==="epic"?T.slate400:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:form.task_type==="epic"?T.slate100:T.white, outline:"none" }}>
+                <option value="">{form.task_type === "epic" ? "— Epics are top-level —" : "— None (standalone) —"}</option>
+                {eligibleParents.map(p => (
+                  <option key={p.id} value={p.id}>{typeConfig(p.task_type||"task").icon} {p.title.length>60 ? p.title.slice(0,60)+"…" : p.title}</option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:12, marginBottom:12 }}>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>PRIORITY</label>
@@ -340,10 +420,18 @@ const NewTaskModal = ({ onSave, onCancel }) => {
         </div>
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8 }}>
           <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
-          <button onClick={() => form.title.trim() && onSave({ ...form, id:`t${Date.now()}`, status:"open", created_by:"Jane Smith", created_at:"Today" })}
+          <button onClick={() => form.title.trim() && onSave({
+              ...form,
+              id:`t${Date.now()}`,
+              status:"open",
+              created_by:"Jane Smith",
+              created_at:"Today",
+              parent_task_id: form.parent_task_id || null,
+              task_type: form.task_type || "task",
+            })}
             disabled={!form.title.trim()}
             style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.title.trim()?T.blue:"#94A3B8", border:"none", borderRadius:7, cursor:form.title.trim()?"pointer":"not-allowed" }}>
-            Create Task
+            Create {typ.label}
           </button>
         </div>
       </div>
@@ -510,16 +598,89 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
   const [filter,     setFilter]     = useState("open");
   const [priority,   setPriority]   = useState("all");
   const [taskCat,    setTaskCat]    = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");          // all | epic | story | task
+  const [viewMode,   setViewMode]   = useState("nested");        // nested | flat
   const [showModal,  setShowModal]  = useState(false);
+  const [newType,    setNewType]    = useState("task");          // type for the "+ New" modal
+  const [newParentId, setNewParentId] = useState(null);          // optional preset parent
 
-  const filtered = useMemo(() => tasks.filter(t => {
+  const statusPriorityCatPass = (t) => {
     if (filter === "open"        && t.status === "completed")  return false;
     if (filter === "completed"   && t.status !== "completed")  return false;
     if (filter === "in_progress" && t.status !== "in_progress")return false;
     if (priority !== "all" && t.priority !== priority) return false;
     if (taskCat  !== "all" && t.task_category !== taskCat) return false;
     return true;
-  }), [tasks, filter, priority, taskCat]);
+  };
+
+  // Flat filtered list — used by typeFilter="all" + flat view + counts
+  const filtered = useMemo(() => tasks.filter(t => {
+    if (!statusPriorityCatPass(t)) return false;
+    if (typeFilter !== "all" && (t.task_type || "task") !== typeFilter) return false;
+    return true;
+  }), [tasks, filter, priority, taskCat, typeFilter]);
+
+  // Hierarchy ordering for nested view.
+  // For an epic, include the epic + all its descendant stories + tasks (limited to 2 levels deep).
+  // Orphan stories (parent not present or null) render at root. Orphan tasks too.
+  const nestedRows = useMemo(() => {
+    if (viewMode !== "nested") return null;
+    const pass = (t) => statusPriorityCatPass(t);
+    const passType = (t) => typeFilter === "all" || (t.task_type || "task") === typeFilter;
+    const rows = [];
+    const seen = new Set();
+    // Epics first
+    const epics = tasks.filter(t => (t.task_type === "epic") && pass(t)).sort((a,b) => (a.title||"").localeCompare(b.title||""));
+    for (const e of epics) {
+      // If filtering by a child type, only show epic when it has matching descendants
+      if (typeFilter !== "all" && typeFilter !== "epic") {
+        const hasMatch = tasks.some(t => t.parent_task_id === e.id && passType(t) && pass(t))
+          || tasks.some(t => {
+              const p = tasks.find(p => p.id === t.parent_task_id);
+              return p && p.parent_task_id === e.id && passType(t) && pass(t);
+            });
+        if (!hasMatch) continue;
+      } else if (!passType(e)) continue;
+      rows.push({ task:e, depth:0 });
+      seen.add(e.id);
+      const stories = tasks.filter(t => t.parent_task_id === e.id && t.task_type === "story" && pass(t))
+        .sort((a,b) => (a.title||"").localeCompare(b.title||""));
+      for (const s of stories) {
+        if (typeFilter === "all" || typeFilter === "story" || typeFilter === "task") {
+          rows.push({ task:s, depth:1 });
+          seen.add(s.id);
+        }
+        const grand = tasks.filter(t => t.parent_task_id === s.id && pass(t))
+          .sort((a,b) => (a.title||"").localeCompare(b.title||""));
+        for (const g of grand) {
+          if (typeFilter === "all" || typeFilter === (g.task_type || "task")) {
+            rows.push({ task:g, depth:2 });
+            seen.add(g.id);
+          }
+        }
+      }
+      // Tasks directly under the epic (no story layer)
+      const directTasks = tasks.filter(t => t.parent_task_id === e.id && t.task_type !== "story" && pass(t))
+        .sort((a,b) => (a.title||"").localeCompare(b.title||""));
+      for (const dt of directTasks) {
+        if (typeFilter === "all" || typeFilter === (dt.task_type || "task")) {
+          rows.push({ task:dt, depth:1 });
+          seen.add(dt.id);
+        }
+      }
+    }
+    // Orphans — anything not already rendered and not under an in-view epic
+    const orphans = tasks.filter(t => !seen.has(t.id) && pass(t) && passType(t))
+      .sort((a,b) => {
+        // Stories first, then tasks
+        const ar = a.task_type === "story" ? 0 : 1;
+        const br = b.task_type === "story" ? 0 : 1;
+        if (ar !== br) return ar - br;
+        return (a.title||"").localeCompare(b.title||"");
+      });
+    for (const o of orphans) rows.push({ task:o, depth:0 });
+    return rows;
+  }, [tasks, filter, priority, taskCat, typeFilter, viewMode]);
 
   return (
     <div>
@@ -537,10 +698,63 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
         </select>
 <div style={{ flex:1 }} />
-        <button onClick={() => setShowModal(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer" }}>
-          + New Task
-        </button>
+        {/* View mode toggle: nested (hierarchy) vs flat */}
+        <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
+          {[{id:"nested",label:"Nested",icon:"≡"},{id:"flat",label:"Flat",icon:"☰"}].map(v => (
+            <button key={v.id} onClick={() => setViewMode(v.id)} style={{ padding:"6px 10px", fontSize:11, fontWeight:viewMode===v.id?600:400, color:viewMode===v.id?T.slate900:T.slate500, background:viewMode===v.id?T.white:"transparent", border:"none", borderRadius:6, cursor:"pointer", boxShadow:viewMode===v.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+              {v.icon} {v.label}
+            </button>
+          ))}
+        </div>
+        {/* "+ New" with type choice */}
+        <div style={{ display:"flex", gap:0, borderRadius:8, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
+          <button onClick={() => { setNewType("task"); setNewParentId(null); setShowModal(true); }} title="New Task (concrete action)"
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 12px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", cursor:"pointer", borderRight:`1px solid rgba(255,255,255,0.2)` }}>
+            + Task
+          </button>
+          <button onClick={() => { setNewType("story"); setNewParentId(null); setShowModal(true); }} title="New Story (bucket of value)"
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 10px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", cursor:"pointer", borderRight:`1px solid rgba(255,255,255,0.2)` }}>
+            📖
+          </button>
+          <button onClick={() => { setNewType("epic"); setNewParentId(null); setShowModal(true); }} title="New Epic (big body of work)"
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 10px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", cursor:"pointer" }}>
+            🎯
+          </button>
+        </div>
         <AskBtn context="Review my open task list and help me prioritize. What should I focus on first today? Are there any tasks I should delegate, defer, or eliminate?" />
+      </div>
+
+      {/* Type filter — Epic / Story / Task */}
+      <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap", alignItems:"center" }}>
+        <span style={{ fontSize:10, color:T.slate400, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em" }}>Type:</span>
+        {(() => {
+          const baseFiltered = tasks.filter(statusPriorityCatPass);
+          const counts = { all: baseFiltered.length };
+          for (const k of TASK_TYPE_ORDER) counts[k] = baseFiltered.filter(t => (t.task_type || "task") === k).length;
+          const chips = [{ key:"all", label:"All", icon:"", color:T.slate700 },
+                         ...TASK_TYPE_ORDER.map(k => ({ key:k, ...TASK_TYPES[k] }))];
+          return chips.map(c => {
+            const active = typeFilter === c.key;
+            const n = counts[c.key] || 0;
+            return (
+              <button key={c.key} onClick={() => setTypeFilter(c.key)}
+                style={{
+                  display:"inline-flex", alignItems:"center", gap:5,
+                  padding:"5px 10px", fontSize:11, fontWeight:active?700:500,
+                  color: active ? T.white : c.color,
+                  background: active ? c.color : (c.color === T.slate700 ? T.slate100 : (c.color + "15")),
+                  border: active ? `1px solid ${c.color}` : `1px solid ${c.color === T.slate700 ? T.slate200 : c.color + "30"}`,
+                  borderRadius:18, cursor:"pointer", transition:"all 0.12s",
+                }}>
+                {c.icon && <span>{c.icon}</span>}
+                <span>{c.label}</span>
+                <span style={{ fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:10,
+                  background: active ? "rgba(255,255,255,0.25)" : T.white,
+                  color: active ? T.white : (c.color === T.slate700 ? T.slate600 : c.color) }}>{n}</span>
+              </button>
+            );
+          });
+        })()}
       </div>
 
       {/* Category chips — one tap to filter; horizontal scroll on phone */}
@@ -584,17 +798,28 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
 
       {/* Task List */}
       <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-        {filtered.length === 0 ? (
+        {(viewMode === "nested" ? (nestedRows || []).length : filtered.length) === 0 ? (
           <div style={{ textAlign:"center", padding:"40px 20px", color:T.slate400, fontSize:13 }}>
             No tasks match your current filters.
           </div>
-        ) : filtered.map(task => (
-          <TaskCard key={task.id} task={task} onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} />
-        ))}
+        ) : viewMode === "nested" ? (
+          (nestedRows || []).map(({ task, depth }) => (
+            <TaskCard key={task.id} task={task} allTasks={tasks} depth={depth}
+              onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} />
+          ))
+        ) : (
+          filtered.map(task => (
+            <TaskCard key={task.id} task={task} allTasks={tasks} depth={0}
+              onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} />
+          ))
+        )}
       </div>
 
       {showModal && (
         <NewTaskModal
+          allTasks={tasks}
+          defaultType={newType}
+          defaultParentId={newParentId}
           onSave={(task) => { onAdd(task); setShowModal(false); }}
           onCancel={() => setShowModal(false)}
         />
@@ -741,6 +966,8 @@ export default function TasksGoals({ onNavigate }) {
         ...t,
         status:         normStatus(t.status),
         task_category:  t.task_category || null,
+        task_type:      t.task_type || "task",
+        parent_task_id: t.parent_task_id || null,
         in_weekly_focus:!!t.in_weekly_focus,
         due_date:       t.due_date ? new Date(t.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
         completed_at:   t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
@@ -787,6 +1014,8 @@ export default function TasksGoals({ onNavigate }) {
       priority:         taskFromModal.priority || "medium",
       status:           "open",
       task_category:    taskFromModal.task_category || null,
+      task_type:        taskFromModal.task_type || "task",
+      parent_task_id:   taskFromModal.parent_task_id || null,
       in_weekly_focus:  !!taskFromModal.in_weekly_focus,
       due_date:         dueIso,
       created_by:       "BCC user",
@@ -799,6 +1028,8 @@ export default function TasksGoals({ onNavigate }) {
           ...data,
           status:         "open",
           task_category:  data.task_category || null,
+          task_type:      data.task_type || "task",
+          parent_task_id: data.parent_task_id || null,
           in_weekly_focus:!!data.in_weekly_focus,
           due_date:       data.due_date ? new Date(data.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
         }, ...prev]);
