@@ -44,14 +44,15 @@ const PRIORITY = {
 // Six fixed categories on every task — distinct from module_reference (related BCC area).
 // DB column: task_category, vocabulary locked by CHECK constraint (migration 040).
 const TASK_CATEGORIES = {
-  web_app:   { label:"Web App",   icon:"💻", color:T.teal     },
-  admin:     { label:"Admin",     icon:"🗂️", color:T.slate500 },
-  marketing: { label:"Marketing", icon:"📣", color:T.purple   },
-  training:  { label:"Training",  icon:"🎓", color:T.amber    },
-  handbook:  { label:"Handbook",  icon:"📕", color:T.red      },
-  playbook:  { label:"Playbook",  icon:"📘", color:T.green    },
+  web_app:           { label:"Web App",          icon:"💻", color:T.teal     },
+  admin:             { label:"Admin",            icon:"🗂️", color:T.slate500 },
+  finances:          { label:"Finances",         icon:"💰", color:T.blue     },
+  marketing:         { label:"Marketing",        icon:"📣", color:T.purple   },
+  team_development:  { label:"Team Development", icon:"🎓", color:T.amber    },
+  handbook:          { label:"Handbook",         icon:"📕", color:T.red      },
+  playbook:          { label:"Playbook",         icon:"📘", color:T.green    },
 };
-const TASK_CATEGORY_ORDER = ["web_app","admin","marketing","training","handbook","playbook"];
+const TASK_CATEGORY_ORDER = ["web_app","admin","finances","marketing","team_development","handbook","playbook"];
 const categoryConfig = (key) => TASK_CATEGORIES[key] || null;
 
 // ─── Goal Category Config ─────────────────────────────────────
