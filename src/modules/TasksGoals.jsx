@@ -449,11 +449,7 @@ const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
 
 // ─── Section: This Week's To-Dos ──────────────────────────────
 const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
-  const [taskCat, setTaskCat] = useState("all");
-
-  const focusOpen = tasks
-    .filter(t => t.in_weekly_focus && t.status !== "completed")
-    .filter(t => taskCat === "all" || t.task_category === taskCat);
+  const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed");
 
   const byCat = {};
   for (const t of focusOpen) {
@@ -476,13 +472,7 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
             {focusOpen.length} open · star ☆ any task in the Tasks tab to add it here · grouped by category
           </div>
         </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <select value={taskCat} onChange={e => setTaskCat(e.target.value)} style={{ padding:"7px 10px", fontSize:11, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:7, background:T.white, outline:"none" }}>
-            <option value="all">All Categories</option>
-            {TASK_CATEGORY_ORDER.map(c => <option key={c} value={c}>{TASK_CATEGORIES[c].icon} {TASK_CATEGORIES[c].label}</option>)}
-          </select>
-          <AskBtn size="small" context={askContext} />
-        </div>
+        <AskBtn size="small" context={askContext} />
       </div>
 
       {focusOpen.length === 0 ? (
@@ -546,15 +536,50 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           <option value="all">All Priority</option>
           {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
         </select>
-<select value={taskCat} onChange={e => setTaskCat(e.target.value)} style={{ padding:"7px 10px", fontSize:11, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:7, background:T.white, outline:"none" }}>
-          <option value="all">All Categories</option>
-          {TASK_CATEGORY_ORDER.map(c => <option key={c} value={c}>{TASK_CATEGORIES[c].icon} {TASK_CATEGORIES[c].label}</option>)}
-        </select>
-        <div style={{ flex:1 }} />
+<div style={{ flex:1 }} />
         <button onClick={() => setShowModal(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer" }}>
           + New Task
         </button>
         <AskBtn context="Review my open task list and help me prioritize. What should I focus on first today? Are there any tasks I should delegate, defer, or eliminate?" />
+      </div>
+
+      {/* Category chips — one tap to filter; horizontal scroll on phone */}
+      <div style={{ display:"flex", gap:6, marginBottom:14, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
+        {(() => {
+          const baseFiltered = tasks.filter(t => {
+            if (filter === "open"        && t.status === "completed")  return false;
+            if (filter === "completed"   && t.status !== "completed")  return false;
+            if (filter === "in_progress" && t.status !== "in_progress")return false;
+            if (priority !== "all" && t.priority !== priority) return false;
+            return true;
+          });
+          const counts = { all: baseFiltered.length };
+          for (const k of TASK_CATEGORY_ORDER) counts[k] = baseFiltered.filter(t => t.task_category === k).length;
+          const chips = [{ key:"all", label:"All", icon:"", color:T.slate700 },
+                         ...TASK_CATEGORY_ORDER.map(k => ({ key:k, ...TASK_CATEGORIES[k] }))];
+          return chips.map(c => {
+            const active = taskCat === c.key;
+            const n = counts[c.key] || 0;
+            return (
+              <button key={c.key} onClick={() => setTaskCat(c.key)}
+                style={{
+                  flexShrink:0, whiteSpace:"nowrap",
+                  display:"inline-flex", alignItems:"center", gap:5,
+                  padding:"6px 11px", fontSize:11, fontWeight:active?700:500,
+                  color: active ? T.white : c.color,
+                  background: active ? c.color : (c.color === T.slate700 ? T.slate100 : c.color + "15"),
+                  border: active ? `1px solid ${c.color}` : `1px solid ${c.color === T.slate700 ? T.slate200 : c.color + "30"}`,
+                  borderRadius:18, cursor:"pointer", transition:"all 0.12s",
+                }}>
+                {c.icon && <span>{c.icon}</span>}
+                <span>{c.label}</span>
+                <span style={{ fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:10,
+                  background: active ? "rgba(255,255,255,0.25)" : T.white,
+                  color: active ? T.white : (c.color === T.slate700 ? T.slate600 : c.color) }}>{n}</span>
+              </button>
+            );
+          });
+        })()}
       </div>
 
       {/* Task List */}
