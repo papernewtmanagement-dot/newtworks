@@ -229,6 +229,23 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
   const children = (Array.isArray(allTasks) && (task.task_type === "epic" || task.task_type === "story"))
     ? allTasks.filter(t => t.parent_task_id === task.id) : [];
   const childOpen = children.filter(c => c.status !== "completed").length;
+  // For epics: compute the full subtree (descendants at any depth) so the toggle pill
+  // can label what expanding will reveal: stories AND tasks.
+  const subtree = (Array.isArray(allTasks) && task.task_type === "epic")
+    ? (() => {
+        const out = [];
+        const queue = [task.id];
+        while (queue.length) {
+          const pid = queue.shift();
+          for (const t of allTasks) {
+            if (t.parent_task_id === pid) { out.push(t); queue.push(t.id); }
+          }
+        }
+        return out;
+      })()
+    : [];
+  const subtreeStories = subtree.filter(t => t.task_type === "story").length;
+  const subtreeTasks   = subtree.filter(t => (t.task_type || "task") === "task").length;
   // Indent based on depth in nested view (max 2 levels visible)
   const indent = Math.min(depth, 2) * 18;
 
@@ -274,30 +291,37 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
             <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:20, background:typ.bg, color:typ.color, border:`1px solid ${typ.color}30`, textTransform:"uppercase", letterSpacing:"0.04em" }}>{typ.icon} {typ.label}</span>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
-            {children.length > 0 && (task.task_type === "epic" || task.task_type === "story") ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
-                title={isExpanded ? `Hide ${task.task_type === "epic" ? "stories" : "tasks"}` : `Show ${task.task_type === "epic" ? "stories" : "tasks"}`}
-                style={{
-                  display:"inline-flex", alignItems:"center", gap:5,
-                  fontSize:10, fontWeight:600,
-                  padding:"3px 9px 3px 7px", borderRadius:14,
-                  background: isExpanded ? typ.bg : T.slate100,
-                  color: isExpanded ? typ.color : T.slate600,
-                  border: `1px solid ${isExpanded ? typ.color + "55" : T.slate200}`,
-                  cursor:"pointer", lineHeight:1,
-                  boxShadow: isExpanded ? "none" : "0 1px 0 rgba(0,0,0,0.02)",
-                  transition:"background 0.12s, color 0.12s, border-color 0.12s"
-                }}
-              >
-                <span style={{ fontSize:8, lineHeight:1 }}>{isExpanded ? "▼" : "▶"}</span>
-                <span>{childOpen}/{children.length}</span>
-                <span style={{ opacity:0.85, fontWeight:500 }}>
-                  {task.task_type === "epic" ? (children.length === 1 ? "story" : "stories") : (children.length === 1 ? "task" : "tasks")}
-                </span>
-              </button>
-            ) : children.length > 0 ? (
-              <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>{childOpen}/{children.length} open</span>
+            {task.task_type === "epic" && (subtreeStories + subtreeTasks) > 0 ? (
+              (() => {
+                const parts = [];
+                if (subtreeStories > 0) parts.push(`${subtreeStories} ${subtreeStories === 1 ? "story" : "stories"}`);
+                if (subtreeTasks   > 0) parts.push(`${subtreeTasks} ${subtreeTasks === 1 ? "task" : "tasks"}`);
+                const label = parts.join(" · ");
+                return (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
+                    title={isExpanded ? "Collapse — hide all work under this epic" : "Expand — show all stories and tasks under this epic"}
+                    style={{
+                      display:"inline-flex", alignItems:"center", gap:6,
+                      fontSize:10, fontWeight:600,
+                      padding:"4px 11px 4px 9px", borderRadius:14,
+                      background: isExpanded ? typ.bg : T.slate100,
+                      color:      isExpanded ? typ.color : T.slate600,
+                      border:     `1px solid ${isExpanded ? typ.color + "55" : T.slate200}`,
+                      cursor:"pointer", lineHeight:1,
+                      transition:"background 0.12s, color 0.12s, border-color 0.12s"
+                    }}
+                  >
+                    <span style={{ fontSize:9, lineHeight:1 }}>{isExpanded ? "▼" : "▶"}</span>
+                    <span>{label}</span>
+                  </button>
+                );
+              })()
+            ) : task.task_type === "story" && children.length > 0 ? (
+              // Stories: non-interactive indicator only — tasks render automatically when the parent epic is expanded
+              <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>
+                {children.length} {children.length === 1 ? "task" : "tasks"}
+              </span>
             ) : null}
             {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
@@ -644,10 +668,10 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
     });
   };
   const expandAll = () => {
-    // Expand every epic + story that has children
+    // Expand every epic that has any descendants
     const ids = new Set();
     for (const t of tasks) {
-      if ((t.task_type === "epic" || t.task_type === "story") && tasks.some(c => c.parent_task_id === t.id)) {
+      if (t.task_type === "epic" && tasks.some(c => c.parent_task_id === t.id)) {
         ids.add(t.id);
       }
     }
@@ -701,28 +725,24 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       } else if (!passType(e)) continue;
       rows.push({ task:e, depth:0 });
       seen.add(e.id);
-      // If this epic is not expanded, mark descendants as seen (so they don't fall to orphans) and skip rendering.
+      // Epic not expanded → mark every descendant as seen and skip rendering.
       if (!expandedIds.has(e.id)) {
-        const descendants = tasks.filter(t => t.parent_task_id === e.id);
-        for (const d of descendants) {
-          seen.add(d.id);
-          const grand = tasks.filter(t => t.parent_task_id === d.id);
-          for (const g of grand) seen.add(g.id);
+        const q = [e.id];
+        while (q.length) {
+          const pid = q.shift();
+          for (const t of tasks) {
+            if (t.parent_task_id === pid) { seen.add(t.id); q.push(t.id); }
+          }
         }
         continue;
       }
+      // Epic expanded → render full subtree: stories with their tasks, then direct tasks.
       const stories = tasks.filter(t => t.parent_task_id === e.id && t.task_type === "story" && pass(t))
         .sort((a,b) => (a.title||"").localeCompare(b.title||""));
       for (const s of stories) {
         if (typeFilter === "all" || typeFilter === "story" || typeFilter === "task") {
           rows.push({ task:s, depth:1 });
           seen.add(s.id);
-        }
-        // Story not expanded → skip its tasks
-        if (!expandedIds.has(s.id)) {
-          const grand = tasks.filter(t => t.parent_task_id === s.id);
-          for (const g of grand) seen.add(g.id);
-          continue;
         }
         const grand = tasks.filter(t => t.parent_task_id === s.id && pass(t))
           .sort((a,b) => (a.title||"").localeCompare(b.title||""));
@@ -733,7 +753,6 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           }
         }
       }
-      // Tasks directly under the epic (no story layer)
       const directTasks = tasks.filter(t => t.parent_task_id === e.id && t.task_type !== "story" && pass(t))
         .sort((a,b) => (a.title||"").localeCompare(b.title||""));
       for (const dt of directTasks) {
@@ -783,11 +802,11 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
         {/* Expand / Collapse all (nested view only) */}
         {viewMode === "nested" && (
           <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
-            <button onClick={expandAll} title="Expand all epics + stories"
+            <button onClick={expandAll} title="Expand all epics"
               style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
               ▼ Expand all
             </button>
-            <button onClick={collapseAll} title="Collapse all epics + stories"
+            <button onClick={collapseAll} title="Collapse all epics"
               style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
               ▶ Collapse all
             </button>
