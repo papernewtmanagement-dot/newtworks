@@ -172,14 +172,22 @@ const fmt = (n, unit) => {
   if (unit === "percentage") return n + "%";
   return n.toString();
 };
-const isOverdue = (due) => {
-  const dueDate = new Date(due + ", 2026");
-  return dueDate < new Date();
+const parseDueDate = (s) => {
+  if (!s) return null;
+  // Accept "Apr 27, 2026" (normalized) or bare "Apr 27" (mock — assume current year).
+  const d = /,\s*\d{4}/.test(s) ? new Date(s) : new Date(s + ", " + new Date().getFullYear());
+  return Number.isNaN(d.getTime()) ? null : d;
 };
 const daysUntil = (due) => {
-  const dueDate = new Date(due + ", 2026");
-  const today = new Date();
-  return Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+  const d = parseDueDate(due);
+  if (!d) return Infinity;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(d); target.setHours(0,0,0,0);
+  return Math.round((target - today) / 86400000);
+};
+const isOverdue = (due) => {
+  const n = daysUntil(due);
+  return Number.isFinite(n) && n < 0;
 };
 
 // ─── Shared Components ────────────────────────────────────────
@@ -224,7 +232,7 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
       borderRadius:10, overflow:"hidden",
       opacity:isCompleted?0.7:1,
     }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 12px" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 12px", flexWrap:"wrap" }}>
         {/* Checkbox */}
         {!isCompleted ? (
           <div
@@ -249,6 +257,7 @@ const TaskCard = ({ task, onComplete, onNavigate, onToggleFocus }) => {
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:mod.color+"20", color:mod.color }}>{mod.icon} {mod.label}</span>
+            {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
               {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
             </span>
