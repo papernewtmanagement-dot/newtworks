@@ -72,7 +72,7 @@ const fmtMoney = (n) => {
 const fmtMoneyCents = (n) => {
   if (n === null || n === undefined || n === "") return "—";
   const v = Number(n);
-  if (!isFinite(v)) return "—";
+  if (!isFinite(v) || v === 0) return "—";
   return v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 const fmtInt = (n) => {
@@ -628,7 +628,7 @@ function useCPRData(weekDate) {
           console.warn("anchor payroll YTD fetch failed:", e);
         }
 
-        // Retention budget (annual). Shown as parenthetical next to "Service Share" label.
+        // Retention budget (annual). Shown as parenthetical next to "Retention" label.
         let retentionBudgetAnnual = null;
         try {
           const { data: rbData } = await supabase
@@ -1776,11 +1776,11 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
                       const icon = loc === "remote" ? " 🟣" : (loc === "in_office" || loc === "office") ? " 🟢" : "";
                       return (
                         <Td key={day} align="center">
-                          <span>{Number(cell.hours).toFixed(1)}{icon}</span>
+                          <span>{Number(cell.hours).toFixed(2)}{icon}</span>
                         </Td>
                       );
                     })}
-                    <Td align="right" style={{ fontWeight: 700 }}>{total > 0 ? total.toFixed(1) : "—"}</Td>
+                    <Td align="right" style={{ fontWeight: 700 }}>{total > 0 ? total.toFixed(2) : "—"}</Td>
                   </tr>
                 );
               })}
@@ -2003,7 +2003,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     ["weekly_pay", "Weekly Pay"],
     ["base_advance", "Base Advance"],
     ["health_bonus", "Health Bonus"],
-    ["service_surge_share", "Service Share"],
+    ["service_surge_share", "Retention"],
     ["true_pay_bonus", "True Pay Bonus"],
     ["manager_bonus", "Manager Bonus"],
     ["agency_profit_share", "Agency Profit"],
