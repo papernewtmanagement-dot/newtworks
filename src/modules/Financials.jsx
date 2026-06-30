@@ -1,5 +1,5 @@
  import { useState, useEffect } from "react";
-import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CashRegister from "./CashRegister.jsx";
 import Documents from "./Documents.jsx";
 import MonthlyClose from "./MonthlyClose.jsx";
@@ -77,16 +77,19 @@ function useFinancialsData() {
               journal_entries!inner ( entry_date, reference_number, description, source ),
               chart_of_accounts!inner ( account_name )
             `)
+            .eq("business_entity_id", BUSINESS_ENTITY_ID)
             .order("created_at", { ascending: false }).limit(50),
 
           // Payroll runs (header)
           supabase.from("payroll_runs")
             .select("id, pay_period_start, pay_period_end, pay_date, payroll_provider, gross_payroll, employer_taxes, net_payroll, status")
+            .eq("business_entity_id", BUSINESS_ENTITY_ID)
             .order("pay_date", { ascending: false }).limit(200),   // show full payroll history; YTD totals on this tab sum these rows
 
           // Payroll detail (per-employee)
           supabase.from("payroll_detail")
-            .select("payroll_run_id, gross_pay, federal_tax, state_tax, social_security, medicare, other_deductions, net_pay, employment_type"),
+            .select("payroll_run_id, gross_pay, federal_tax, state_tax, social_security, medicare, other_deductions, net_pay, employment_type")
+            .eq("business_entity_id", BUSINESS_ENTITY_ID),
 
           // AIPP — real schema
           supabase.from("aipp_tracking")
