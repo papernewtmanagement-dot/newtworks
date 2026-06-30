@@ -85,10 +85,10 @@ const MOCK_TASKS = [
   { id:"t2",  title:"Complete monthly auto application compliance review",        priority:"high",     status:"open",        module:"compliance",  due_date:"Apr 30, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"Pull RAZ000BT report. Review all required auto app metrics. Review SAM report (RAZ000BV). Document findings.", created_at:"Apr 25" },
   { id:"t3",  title:"Complete monthly Altered Monies history review",             priority:"high",     status:"open",        module:"financials",  due_date:"Apr 30, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"Review and document Altered Monies history for April. Required standing compliance item.", created_at:"Apr 25" },
   { id:"t4",  title:"Manually post Instagram content — Monday April 27",          priority:"high",     status:"open",        module:"social",      due_date:"Apr 27, 2026", assigned_to:"Jane Smith",  created_by:"automations", description:"Behind the scenes at the agency this Monday morning. Coffee, team huddle, and a full week ahead. ☕ — scheduled for 11AM", created_at:"Today" },
-  { id:"t5",  title:"Review Q1 bank reconciliation",                               priority:"medium",   status:"open",        module:"financials",  due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"claude",      description:"Q1 bank reconciliation is ready to review. Verify all GL entries match bank statements for January, February, and March.", created_at:"Apr 26" },
+  { id:"t5",  title:"Review Q1 bank reconciliation",                               priority:"medium",   status:"open",        module:"financials",  due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"automation",      description:"Q1 bank reconciliation is ready to review. Verify all GL entries match bank statements for January, February, and March.", created_at:"Apr 26" },
   { id:"t6",  title:"Send Kimberly Yow reseller agreement for signature",          priority:"medium",   status:"in_progress", module:"general",     due_date:"May 5, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Channel partner reseller agreement ready. Send via DocuSign and follow up within 3 business days.", created_at:"Apr 24" },
   { id:"t7",  title:"Schedule discovery call with new prospect — Mike Anderson",   priority:"medium",   status:"open",        module:"general",     due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Referred by Alyssa. Auto agency owner. Interested in BCC setup.", created_at:"Apr 23" },
-  { id:"t8",  title:"Post resume — April interview focus review with Marcus",      priority:"medium",   status:"open",        module:"hr",          due_date:"Apr 29, 2026", assigned_to:"Marcus T.",   created_by:"automations", description:"New applicant received — Jamie Chen. Claude score: 8/10. Review One Page Interview Focus together before scheduling interview.", created_at:"Apr 26" },
+  { id:"t8",  title:"Post resume — April interview focus review with Marcus",      priority:"medium",   status:"open",        module:"hr",          due_date:"Apr 29, 2026", assigned_to:"Marcus T.",   created_by:"automations", description:"New applicant received — Jamie Chen. AI score: 8/10. Review One Page Interview Focus together before scheduling interview.", created_at:"Apr 26" },
   { id:"t9",  title:"Begin E&O insurance renewal process",                         priority:"low",      status:"open",        module:"compliance",  due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"system",      description:"E&O insurance renews August 2026. Begin renewal process 90 days in advance. Contact Hartford for renewal quote.", created_at:"Apr 27" },
   { id:"t10", title:"Update staff performance metrics for March",                  priority:"low",      status:"open",        module:"hr",          due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"system",      description:"Log March KPIs for Marcus Thompson and Priya Patel in the staff performance table.", created_at:"Apr 1" },
   { id:"t11", title:"Draft April social media batch for next week",                priority:"low",      status:"open",        module:"social",      due_date:"Apr 30, 2026", assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Batch create May 4-8 social posts. Use content calendar framework: Mon Educate, Tue Community, Wed Connect, Thu Educate/Celebrate, Fri Invite.", created_at:"Apr 26" },
@@ -196,12 +196,6 @@ const Card = ({ children, style={} }) => (
   </div>
 );
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
   const p = pct(value, max);
@@ -366,7 +360,7 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           <div style={{ fontSize:12, color:T.slate600, lineHeight:1.6, marginTop:8, marginBottom:8 }}>
             {task.description}
           </div>
-          <AskBtn size="small" context={`Task context:\nTitle: ${task.title}\nPriority: ${task.priority}\nDue: ${task.due_date}\nCategory: ${task.task_category || "uncategorized"}\nAssigned to: ${task.assigned_to_name || task.assigned_to || "unassigned"}\nDescription: ${task.description}\n\nHelp me think through how to complete this task efficiently.`} />
+          
         </div>
       )}
     </div>
@@ -536,7 +530,7 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
             {focusOpen.length} open · star ☆ any task in the Tasks tab to add it here · grouped by category
           </div>
         </div>
-        <AskBtn size="small" context={askContext} />
+        
       </div>
 
       {focusOpen.length === 0 ? (
@@ -743,7 +737,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus, userRo
           style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
           + New
         </button>
-        <AskBtn context="Review my open task list and help me prioritize. What should I focus on first today? Are there any tasks I should delegate, defer, or eliminate?" />
+        
       </div>
 
       {/* Assignee filter chips — owner-only, shown when 2+ admins exist.
@@ -865,7 +859,7 @@ const GoalsSection = ({ goals }) => {
         <div style={{ fontSize:13, color:T.slate500 }}>
           Track your agency goals and progress toward each target for {new Date().getFullYear()}.
         </div>
-        <AskBtn context={`My full goal progress for 2026:\n${goals.map(g=>`• ${g.title} (${g.category}): ${fmt(g.current_value,g.unit)} of ${fmt(g.target_value,g.unit)} = ${pct(g.current_value,g.target_value)}% — ${g.notes}`).join("\n")}\n\nGive me a comprehensive goal review. Which goals are at risk? What specific actions would move the needle most this month?`} />
+        
       </div>
 
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -925,7 +919,7 @@ const GoalsSection = ({ goals }) => {
                   <div style={{ fontSize:12, color:T.slate600, lineHeight:1.7, marginTop:10, marginBottom:10 }}>
                     {goal.notes}
                   </div>
-                  <AskBtn size="small" context={`Goal deep dive:\nTitle: ${goal.title}\nCategory: ${goal.category}\nTarget: ${fmt(goal.target_value,goal.unit)}\nCurrent: ${fmt(goal.current_value,goal.unit)}\nProgress: ${p}%\nDue: ${goal.target_date}\nNotes: ${goal.notes}\n\nHelp me build a specific action plan to hit this goal. What do I need to do this month?`} />
+                  
                 </div>
               )}
             </div>
@@ -1132,7 +1126,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
             {tasks.filter(t=>t.status!=="completed").length} open tasks · {goals.length} active goals · {tasks.filter(t=>t.status==="completed").length} completed this month
           </div>
         </div>
-        <AskBtn context="Give me a complete review of my tasks and goals. What are the most critical items I should focus on today? What's at risk of falling behind? Help me build a clear action plan for this week." />
+        
       </div>
 
       {/* Section Navigation */}

@@ -140,7 +140,7 @@ const MOCK_ALERTS = [
   {
     id:"a8", alert_type:"hr", severity:"info",
     title:"New Applicant — Jamie Chen (Score 8/10)",
-    message:"Resume received via Gmail from Jamie Chen for Licensed Sales Agent position. Claude score: 8/10. One Page Interview Focus generated and ready to review. Strengths: 3 years P&C experience, currently licensed IL.",
+    message:"Resume received via Gmail from Jamie Chen for Licensed Sales Agent position. AI score: 8/10. One Page Interview Focus generated and ready to review. Strengths: 3 years P&C experience, currently licensed IL.",
     module_reference:"hr",
     is_read:false, is_resolved:false,
     due_date:null,
@@ -228,12 +228,6 @@ const Card = ({ children, style={} }) => (
   </div>
 );
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 // ─── Alert Card Component ─────────────────────────────────────
 const AlertCard = ({ alert, onRead, onResolve, onNavigate }) => {
@@ -301,7 +295,7 @@ const AlertCard = ({ alert, onRead, onResolve, onNavigate }) => {
                 ✓ Mark Resolved
               </button>
             )}
-            <AskBtn size="small" context={`Alert details:\nType: ${alert.alert_type}\nSeverity: ${alert.severity}\nTitle: ${alert.title}\nMessage: ${alert.message}\n${alert.due_date?"Due: "+alert.due_date:""}\n\nHelp me understand this alert and what specific action I should take to resolve it.`} />
+            
           </div>
         </div>
       )}
@@ -602,7 +596,7 @@ export default function AlertsNotifications({ onNavigate }) {
             {active.length} active · {unread} unread · {critical > 0 ? `${critical} critical` : "No critical alerts"}
           </div>
         </div>
-        <AskBtn context={`My active BCC alerts:\nCritical: ${critical}\nUnread: ${unread}\nTotal active: ${active.length}\n\nTop alerts:\n${active.slice(0,5).map(a=>`• [${a.severity.toUpperCase()}] ${a.title} — ${a.message.slice(0,100)}...`).join("\n")}\n\nHelp me prioritize these alerts and build an action plan to resolve the most critical items first.`} />
+        
       </div>
 
       {/* Critical Banner */}
@@ -616,7 +610,7 @@ export default function AlertsNotifications({ onNavigate }) {
               {alerts.filter(a=>a.severity==="critical"&&!a.is_resolved).map(a=>a.title).join(" · ")}
             </div>
           </div>
-          <AskBtn size="small" context={`I have ${critical} critical alert(s) in my BCC:\n${alerts.filter(a=>a.severity==="critical"&&!a.is_resolved).map(a=>`• ${a.title}: ${a.message}`).join("\n\n")}\n\nWhat should I do RIGHT NOW to address these critical items? Give me a step-by-step action plan.`} />
+          
         </div>
       )}
 

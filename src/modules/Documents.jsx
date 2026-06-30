@@ -11,7 +11,7 @@ import EmptyState from "../components/EmptyState.jsx";
 //   1. Overview     — Recent activity, storage summary, quick stats
 //   2. Library      — All documents, searchable, filterable by type
 //   3. Intake Log   — What was received, when, what it loaded
-//   4. Upload       — Dual path: database import or Claude chat
+//   4. Upload       — Database import path
 //
 // DUAL UPLOAD PATHS:
 //   Path A — Upload to Database
@@ -20,9 +20,9 @@ import EmptyState from "../components/EmptyState.jsx";
 //     → Logged in documents table with tables_updated
 //     → Saved to Google Drive in correct folder
 //
-//   Path B — Upload to Claude Chat
+//   (Path B — Claude Chat — removed 2026-06-30)
 //     → Temporary context for current conversation
-//     → Not persisted to database unless Claude extracts data
+//     → Legacy: was non-persistent conversation context
 //     → Agent uses for quick analysis, one-off questions
 //
 // AUTO-INTAKE:
@@ -198,12 +198,6 @@ const Card = ({ children, style={} }) => (
   </div>
 );
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 const DocTypeBadge = ({ type }) => {
   const dt = DOC_TYPES[type] || DOC_TYPES.other;
@@ -265,7 +259,7 @@ const DocCard = ({ doc, onNavigate }) => {
               { label:"Source",        value:src.label },
               { label:"Uploaded",      value:doc.uploaded_at },
               { label:"Processed",     value:doc.processed_at },
-              { label:"Import Type",   value:doc.processing_type === "database_import" ? "Database Import" : doc.processing_type === "archive" ? "Archived" : "Claude Context" },
+              { label:"Import Type",   value:doc.processing_type === "database_import" ? "Database Import" : doc.processing_type === "archive" ? "Archived" : "External" },
               { label:"Records Created",value:(doc.records_created ?? 0).toString() },
             ].map((d,i) => (
               <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
@@ -319,7 +313,7 @@ const DocCard = ({ doc, onNavigate }) => {
                 📁 Not yet filed in Drive
               </span>
             )}
-            <AskBtn size="small" context={`Document in my BCC:\nFile: ${doc.file_name}\nType: ${DOC_TYPES[doc.doc_type]?.label||doc.doc_type}\nSource: ${doc.upload_source}\nStatus: ${doc.processing_status}\nProcessed: ${doc.processed_at}\nTables updated: ${doc.tables_updated?.join(", ")||"None"}\nRecords created: ${doc.records_created}\nNotes: ${doc.notes}\n\nHelp me understand this document and verify the data was imported correctly. Are there any follow-up actions needed?`} />
+            
           </div>
         </div>
       )}
@@ -371,7 +365,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
             <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Recently processed</span>
-            <AskBtn size="small" context="Review my recent document imports. Are there any documents that need follow-up? Any data that should be verified against the GL?" />
+            
           </div>
           {recent.map((doc,i) => {
             const dt = DOC_TYPES[doc.doc_type] || DOC_TYPES.other;
@@ -479,7 +473,7 @@ const IntakeLog = ({ log }) => (
   <Card>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
       <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Document intake log</div>
-      <AskBtn size="small" context="Review my document intake log. Are there any gaps in my financial document history? What documents should I be sending that I haven't sent yet?" />
+      
     </div>
     <div style={{ fontSize:11, color:T.slate500, marginBottom:16 }}>Everything received, when it arrived, and what it loaded</div>
 
@@ -546,7 +540,7 @@ const UploadSection = () => {
   return (
     <div>
       <div style={{ fontSize:13, color:T.slate500, marginBottom:16, lineHeight:1.6 }}>
-        Choose how you want to use this document. Documents can go to your database for permanent storage, or to Claude Chat for a one-time conversation.
+        Drop a document below to import it to your database. Groq classifies it and routes the data to the correct Supabase tables.
       </div>
 
       {/* Path Selection */}
@@ -567,20 +561,6 @@ const UploadSection = () => {
             <div style={{ fontSize:11, color:T.green, fontWeight:600 }}>Best for: COMP_RECAP, payroll, bank statements, resumes, tax documents</div>
           </div>
 
-          {/* Path B */}
-          <div
-            onClick={() => setUploadPath("chat")}
-            style={{ border:`2px solid ${T.slate200}`, borderRadius:14, padding:"24px 20px", cursor:"pointer", transition:"all 0.15s", background:T.white }}
-            onMouseEnter={e => e.currentTarget.style.borderColor=T.blue}
-            onMouseLeave={e => e.currentTarget.style.borderColor=T.slate200}
-          >
-            <div style={{ fontSize:32, marginBottom:12 }}>💬</div>
-            <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upload to Claude Chat</div>
-            <div style={{ fontSize:12, color:T.slate500, lineHeight:1.7, marginBottom:12 }}>
-              Document is passed to Claude as temporary conversation context. Not saved to your database unless Claude extracts and stores specific data. Use for quick analysis.
-            </div>
-            <div style={{ fontSize:11, color:T.blue, fontWeight:600 }}>Best for: one-off analysis, contract review, quick questions about a document</div>
-          </div>
         </div>
       )}
 
@@ -643,63 +623,6 @@ const UploadSection = () => {
               ))}
             </div>
           </div>
-        </Card>
-      )}
-
-      {/* Upload Path B — Claude Chat */}
-      {uploadPath === "chat" && (
-        <Card>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-            <div>
-              <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>💬 Upload to Claude Chat</div>
-              <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Document becomes context for your next Claude conversation</div>
-            </div>
-            <button onClick={() => setUploadPath(null)} style={{ fontSize:11, color:T.slate500, background:"none", border:`1px solid ${T.slate200}`, borderRadius:7, padding:"5px 10px", cursor:"pointer" }}>← Back</button>
-          </div>
-
-          {/* Drop Zone */}
-          <div
-            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={e => { e.preventDefault(); setDragOver(false); }}
-            style={{
-              border:`2px dashed ${dragOver?T.blue:T.slate300}`,
-              borderRadius:12, padding:"40px 20px",
-              textAlign:"center", cursor:"pointer",
-              background:dragOver?T.blueLt:T.slate50,
-              transition:"all 0.15s", marginBottom:16,
-            }}
-            onClick={() => document.getElementById("file-input-chat")?.click()}
-          >
-            <div style={{ fontSize:36, marginBottom:8 }}>💬</div>
-            <div style={{ fontSize:13, fontWeight:600, color:T.slate700, marginBottom:4 }}>Drop your document here or click to browse</div>
-            <div style={{ fontSize:11, color:T.slate400 }}>PDF, DOCX — max 10MB</div>
-            <input id="file-input-chat" type="file" accept=".pdf,.docx" style={{ display:"none" }} />
-          </div>
-
-          {/* What happens */}
-          <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderRadius:10, padding:"12px 14px", marginBottom:16 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:T.slate900, marginBottom:8 }}>What happens after you upload:</div>
-            {[
-              { step:"1", text:"Document is attached to your next Claude.ai conversation" },
-              { step:"2", text:"Claude can read, analyze, and answer questions about it" },
-              { step:"3", text:"Not saved to your Supabase database automatically" },
-              { step:"4", text:"If Claude finds data worth saving, it can write to your database during the conversation" },
-              { step:"5", text:"Use for: contract review, one-off analysis, understanding a document before deciding to import it" },
-            ].map((s,i) => (
-              <div key={i} style={{ display:"flex", gap:10, marginBottom:i<4?6:0 }}>
-                <span style={{ fontSize:11, fontWeight:700, color:T.blue, flexShrink:0, width:16 }}>{s.step}</span>
-                <span style={{ fontSize:11, color:T.slate600 }}>{s.text}</span>
-              </div>
-            ))}
-          </div>
-
-          <button
-            onClick={() => { window.open("https://claude.ai","_blank"); }}
-            style={{ width:"100%", padding:"11px", fontSize:12, fontWeight:700, color:T.white, background:T.blue, border:"none", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
-          >
-            ⚡ Open Claude.ai to upload and discuss this document
-          </button>
         </Card>
       )}
 
@@ -766,7 +689,7 @@ export default function Documents() {
             {documents.length} documents · Auto-intake active · Groq processing · Google Drive filing
           </div>
         </div>
-        <AskBtn context="Review my document library. Are there any gaps in my financial document history? What documents should I have that I might be missing? What needs follow-up?" />
+        
       </div>
 
       {/* Section Navigation */}

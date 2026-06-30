@@ -359,25 +359,6 @@ function flattenTree(roots) {
   return out;
 }
 
-// ─── Ask Claude button (mirrors CorePrinciples) ───────────────
-const AskBtn = ({ context, label = "Ask Claude about this" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai", "_blank"); }}
-    style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      background: T.blue, color: T.white,
-      border: "none", borderRadius: 7,
-      padding: "8px 14px",
-      fontSize: 12, fontWeight: 600, cursor: "pointer",
-      transition: "background 0.15s",
-    }}
-    onMouseOver={(e) => { e.currentTarget.style.background = T.slate900; }}
-    onMouseOut={(e) => { e.currentTarget.style.background = T.blue; }}
-    title="Copy this page to clipboard and open Claude.ai"
-  >
-    💬 {label}
-  </button>
-);
 
 // ─── Module ───────────────────────────────────────────────────
 export default function Admin() {
@@ -511,7 +492,7 @@ export default function Admin() {
         <div style={{ background: T.slate50, padding: 24, borderRadius: 12, border: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No admin pages yet</div>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-            The admin_pages table is empty. The Confluence ingestion pipeline writes here — ask Claude to run a fresh pull.
+            The admin_pages table is empty. The Confluence ingestion pipeline writes here.
           </div>
         </div>
       </div>
@@ -816,7 +797,7 @@ What I'd like to discuss:
 
       {/* Action row */}
       <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
-        <AskBtn context={askContext} />
+        
       </div>
 
       {/* Content */}

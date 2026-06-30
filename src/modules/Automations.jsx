@@ -193,12 +193,6 @@ const CategoryBadge = ({ category }) => {
   return <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:s.bg, color:s.color }}>{s.label}</span>;
 };
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 // ─── Section: Overview ────────────────────────────────────────
 const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
@@ -253,7 +247,7 @@ const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
             <div key={idx} style={{ fontSize:12, color:"#991B1B", marginBottom:2 }}>• {(r.recipe_name || "A recipe")} failed — {(r.error_message || "see Run Log").slice(0,120)}</div>
           ))}
           <div style={{ marginTop:8 }}>
-            <AskBtn size="small" context="My BCC Automations Overview is showing recent failures or connection issues. Help me understand what steps I need to take to reconnect Gmail in Composio and get my Daily Briefing running again." />
+            
           </div>
         </div>
       )}
@@ -263,9 +257,9 @@ const AutomationOverview = ({ recipes, runLog, connections, queueStats }) => {
         <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderLeft:`4px solid ${T.amber}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>⏳ LLM Queue Backlog</div>
           <div style={{ fontSize:12, color:"#92400E", marginBottom:2 }}>• {qStuck} item{qStuck===1?"":"s"} stuck in the LLM parse queue. Oldest is {qStuckHrs} hours old.</div>
-          <div style={{ fontSize:11, color:"#92400E", marginTop:2 }}>The drainer is a manual workbench process — ask Claude to "drain the queue" to clear it.</div>
+          <div style={{ fontSize:11, color:"#92400E", marginTop:2 }}>The drainer is a manual workbench process — run docs/drainer.py to clear it.</div>
           <div style={{ marginTop:8 }}>
-            <AskBtn size="small" context="My BCC has stuck items in the llm_parse_queue. Drain the queue using docs/drainer.py and tell me what processed, what failed, and why." />
+            
           </div>
         </div>
       )}
@@ -367,7 +361,7 @@ const RunLog = ({ runLog }) => {
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Automation Run Log</div>
           <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Every execution — what ran, what succeeded, what failed</div>
         </div>
-        <AskBtn context="I'm reviewing my automation run log. Help me understand any failures or partial runs and what I should do to fix them." />
+        
       </div>
 
       {/* Filters */}
@@ -413,7 +407,7 @@ const RunLog = ({ runLog }) => {
                     </div>
                   )}
                   <div style={{ marginTop:8 }}>
-                    <AskBtn size="small" context={`Automation run details:\nRecipe: ${run.recipe_name}\nStatus: ${run.status}\nTime: ${run.run_at}\nDuration: ${run.duration_seconds}s\nRecords processed: ${run.records_processed}\nSummary: ${run.output_summary}${run.error_message?"\nError: "+run.error_message:""}\n\nHelp me understand this result and what action I should take.`} />
+                    
                   </div>
                 </div>
               )}
@@ -497,7 +491,7 @@ const Recipes = ({ recipes, onToggle }) => {
                       </div>
                     ))}
                   </div>
-                  <AskBtn size="small" context={`Automation recipe details:\nName: ${recipe.recipe_name}\nDescription: ${recipe.recipe_description}\nTrigger: ${recipe.cron_label}\nComposio Action: ${recipe.composio_action || "None"}\nConnection: ${recipe.composio_connection || "None"}\nUses Groq: ${recipe.uses_groq}\nSuccess Rate: ${recipe.success_rate}%\n\nHelp me understand what this automation does and whether it's configured optimally for my agency.`} />
+                  
                 </div>
               )}
             </div>
@@ -579,7 +573,7 @@ const DailyBriefingSection = ({ briefings }) => {
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>{current.date} — Briefing Content</div>
-            <AskBtn size="small" context={`My daily briefing from ${current.date}:\n\n${current.content}\n\nBased on this briefing, what should be my top 3 priorities today?`} />
+            
           </div>
           <div style={{ background:T.slate50, borderRadius:10, padding:"14px 16px", fontSize:12, color:T.slate700, lineHeight:1.8, whiteSpace:"pre-line", fontFamily:"inherit" }}>
             {current.content}
@@ -617,7 +611,7 @@ const DocImporter = ({ imports }) => {
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Document Importer — Processing History</div>
           <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Documents received via Gmail, processed by Groq, loaded to Supabase</div>
         </div>
-        <AskBtn context="I'm reviewing my document importer history. Are there any documents that failed or need manual review? What should I follow up on?" />
+        
       </div>
 
       {/* How It Works */}
@@ -674,7 +668,7 @@ const DocImporter = ({ imports }) => {
                       ⚠ Partial import — one or more pages could not be parsed. File saved to Google Drive for manual review.
                     </div>
                   )}
-                  <AskBtn size="small" context={`Document import record:\nFile: ${doc.file_name}\nDate: ${doc.date}\nSource: ${doc.source}\nGroq Classification: ${doc.groq_type}\nStatus: ${doc.status}\nRecords loaded: ${doc.records}\nTables updated: ${(doc.tables || []).join(", ")}\n\nHelp me verify this import looks correct and identify any follow-up needed.`} />
+                  
                 </div>
               )}
             </div>
@@ -773,17 +767,17 @@ export default function Automations() {
         status = engineHealthy ? "healthy" : "error";
         connected_account = engineHealthy ? s.account : "No recent successful runs";
         last_sync = engineHealthy ? "active" : "—";
-        note = engineHealthy ? s.note : "No automations have succeeded in the last 24h — ask Claude to check the run log";
+        note = engineHealthy ? s.note : "No automations have succeeded in the last 24h — investigate the run log";
       } else if (s.setupLater && !present) {
         status = "notset";
         connected_account = "Not set up yet";
         last_sync = "—";
-        note = "Optional — set up when you're ready. Ask Claude to 'connect " + s.platform + "'";
+        note = "Optional — set up when you're ready.";
       } else {
         status = present ? "healthy" : "error";
         connected_account = present ? s.account : "Not connected";
         last_sync = present ? "active" : "—";
-        note = present ? s.note : "Ask Claude to connect this — say 'connect " + s.platform + "'";
+        note = present ? s.note : "Reconnect this integration in Composio.";
       }
       return { id: s.id, platform: s.platform, icon: s.icon, status, connected_account, last_sync, note };
     });
@@ -873,7 +867,7 @@ export default function Automations() {
             {recipes.length} active recipes · Composio executes · Groq processes · All results logged here
           </div>
         </div>
-        <AskBtn context="I'm reviewing my BCC automations. Give me a health check — what's running well, what needs attention, and are there any automation improvements I should consider for my agency?" />
+        
       </div>
 
       {/* Section Navigation */}

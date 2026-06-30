@@ -414,20 +414,6 @@ const Pill = ({ children, type = "info" }) => {
   );
 };
 
-const AskBtn = ({ context }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{
-      display: "flex", alignItems: "center", gap: 5,
-      background: T.blue, color: T.white,
-      border: "none", borderRadius: 7,
-      padding: "6px 12px", fontSize: 11, fontWeight: 600,
-      cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-    }}
-  >
-    ⚡ Ask Claude
-  </button>
-);
 
 const TabBar = ({ tabs, active, onChange }) => (
   <div style={{
@@ -591,7 +577,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
           active={period}
           onChange={setPeriod}
         />
-        <AskBtn context={`My agency financials — ${period.toUpperCase()}: Revenue $${revenue}, Expenses $${expenses}, Net Income $${netIncome}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
+        
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
@@ -655,7 +641,6 @@ const PLSection = ({ data }) => {
       <CardHeader
         title="Profit & Loss Statement"
         sub={`Cash basis · Calendar year ${data?.currentYear || ""}`}
-        action={<AskBtn context={`My P&L: YTD Revenue $${totalIncomeYTD}, YTD Expenses $${totalExpYTD}, Net Income $${totalIncomeYTD - totalExpYTD}. Expense ratio ${totalIncomeYTD ? Math.round((totalExpYTD/totalIncomeYTD)*100) : 0}%. Help me analyze my profitability and identify areas to improve.`} />}
       />
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -712,7 +697,6 @@ const CompRecapSection = ({ data }) => {
       <CardHeader
         title="SF COMP_RECAP Detail"
         sub="State Farm compensation breakdown by period"
-        action={<AskBtn context={`My SF COMP_RECAP for ${period}: Total $${total}. AIPP eligible: $${aippTotal}. Help me reconcile this to my GL and confirm my AIPP calculation.`} />}
       />
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
         {periods.map(p => (
@@ -783,7 +767,6 @@ const AIPPSection = ({ data }) => {
         <Card>
           <CardHeader
             title={`AIPP ${year} — Annual Incentive Progress`}
-            action={<AskBtn context={`AIPP ${year}: Target $${target}, Earned YTD $${earned}, Achievement ${achievement}%, Projected $${projected}, Prior Year $${priorYear}. Am I on track? What do I need to focus on?`} />}
           />
           {hasAippData ? (
             <>
@@ -840,7 +823,6 @@ const AIPPSection = ({ data }) => {
           <CardHeader
             title={`Scorecard Metrics — ${year}`}
             sub="Progress toward performance recognition"
-            action={<AskBtn context={`My Scorecard metrics for ${year}: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention.`} />}
           />
           {scorecard.length > 0 ? (
             scorecard.map((m, i) => (
@@ -887,7 +869,6 @@ const PayrollSection = ({ data }) => {
       <CardHeader
         title="Payroll History"
         sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}`}
-        action={<AskBtn context={`My agency payroll YTD: Gross ${fmt(ytdGross)}, Employer taxes ${fmt(ytdTax)}. Help me review payroll expenses and identify any concerns.`} />}
       />
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -976,7 +957,7 @@ const CreditSection = ({ data }) => {
                 <div style={{ marginTop: 4 }}><Pill type="warning">Review</Pill></div>
               ) : null}
             </div>
-            <AskBtn context={`${a.name}: Balance ${fmt(a.balance)}, Rate ${a.rate}%, Payment due on the ${a.dueDay}. Minimum payment: ${fmt(a.payment)}. Help me think about this debt.`} />
+            
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px,1fr))", gap: 10 }}>
@@ -1037,7 +1018,6 @@ const BalanceSheetSection = ({ data }) => {
       <CardHeader
         title="Balance Sheet"
         sub={`Anchored to 4/30/2026 close + live GL · As of ${bs.asOfLabel || "current"}`}
-        action={<AskBtn context={`My balance sheet: Total Assets ${fmt(bs.totalAssets)}, Total Liabilities ${fmt(bs.totalLiabilities)}, Total Equity ${fmt(bs.totalEquity)}. Help me understand my financial position.`} />}
       />
 
       {!ties && (
@@ -1080,7 +1060,6 @@ const GLSection = ({ data }) => (
     <CardHeader
       title="General Ledger — Recent Entries"
       sub="Last 30 days · All accounts"
-      action={<AskBtn context="I am reviewing my General Ledger recent entries. Help me verify these entries look correct and identify anything that needs attention." />}
     />
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1765,7 +1744,7 @@ export default function Financials() {
           >
             🖨 Print / Save PDF
           </button>
-          <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
+          
         </div>
       </div>
 

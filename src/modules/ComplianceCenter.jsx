@@ -77,7 +77,7 @@ const SOCIAL_MEDIA_CHECKLIST = Array.from({ length: 26 }, (_, i) => ({
     "No referral rewards advertised on social",
   ][i],
   severity: [0,1,2,3,4,5,6,7,8,11,12,13,14,16,17,18,23,25].includes(i) ? "critical" : "warning",
-  source: "Social Chef Claude Compliance KB v2.1 — Section 18",
+  source: "Social Chef Compliance KB v2.1 — Section 18",
 }));
 
 
@@ -119,12 +119,6 @@ const Pill = ({ type, children }) => {
   );
 };
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 const TabBar = ({ tabs, active, onChange }) => (
   <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3, marginBottom:16, flexWrap:"wrap" }}>
@@ -164,7 +158,7 @@ const ComplianceDashboard = ({ rules = [], calendar = [], log = [] }) => {
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
             <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Upcoming deadlines</span>
-            <AskBtn size="small" context="Here are my upcoming compliance deadlines. Help me prioritize what needs my immediate attention and what I should plan for in the next 90 days." />
+            
           </div>
           {(calendar || []).slice(0,6).map((item,i) => {
             const sc = statusConfig(item.status);
@@ -312,7 +306,7 @@ const RulesLibrary = ({ rules = [] }) => {
                     <div style={{ fontSize:10, color:T.slate400 }}>
                       📜 <em>{rule.source}</em>
                     </div>
-                    <AskBtn size="small" context={`Compliance rule: ${rule.title} (${rule.rule_code})\n\nRule description: ${rule.description}\n\nSource: ${rule.source}\n\nHelp me understand this rule and how it applies to my agency. What are the most common ways agents accidentally violate this?`} />
+                    
                   </div>
                 </div>
               )}
@@ -346,7 +340,7 @@ const PrePostChecklist = () => {
           <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Run every piece of content through all 26 items before publishing · {sessionDate}</div>
         </div>
         <div style={{ display:"flex", gap:8 }}>
-          <AskBtn context={`I just completed the social media pre-post compliance checklist. ${checkedCount} of 26 items passed. ${allPassed ? "All items cleared." : "Some items need attention."} Help me review any compliance concerns before I publish this content.`} />
+          
           <button onClick={resetChecklist} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Reset</button>
         </div>
       </div>
@@ -444,7 +438,7 @@ const ComplianceCalendar = ({ calendar = [] }) => {
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Compliance Calendar</div>
           <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Annual and recurring compliance deadlines</div>
         </div>
-        <AskBtn context="I am reviewing my compliance calendar. Help me prioritize the most urgent items and create an action plan for the next 90 days." />
+        
       </div>
 
       <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
@@ -685,10 +679,10 @@ export default function ComplianceCenter() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Compliance Center</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {rules.length} rules · AA05 contract-based · Claude enforces these in every conversation
+            {rules.length} rules · AA05 contract-based
           </div>
         </div>
-        <AskBtn context="I am reviewing my compliance center. I need you to act as my compliance advisor. What are the most critical compliance items I should be focused on right now as a State Farm agent? What are the most common compliance mistakes agents make?" />
+        
       </div>
 
       {/* AA05 Notice Banner */}
@@ -699,7 +693,7 @@ export default function ComplianceCenter() {
             These rules are grounded in your AA05 Agent Agreement
           </div>
           <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
-            Every compliance rule in this library cites the AA05 clause or regulatory requirement that makes it binding. Your Claude uses this library as guardrails in every conversation — it will push back when you ask it to generate non-compliant content, and it will explain exactly which contract clause applies.
+            Every compliance rule in this library cites the AA05 clause or regulatory requirement that makes it binding.
           </div>
         </div>
       </div>

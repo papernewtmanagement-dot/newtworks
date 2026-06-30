@@ -767,7 +767,7 @@ function goalFor(goals, lob, metric) {
 
 // 1 — Opener
 function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange }) {
-  // Opener is Claude-drafted, stored in weekly_cpr_reports.opener_text.
+  // Opener stored in weekly_cpr_reports.opener_text.
   // Same field is read by send_weekly_cpr_recap when the Saturday email goes out.
   // In edit mode: render textarea wired to form. In view mode: render text or Awaiting.
   const text = report?.opener_text && report.opener_text.trim().length > 0 ? report.opener_text : null;
@@ -789,7 +789,7 @@ function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange 
           fontSize: 14, color: T.slate800, lineHeight: 1.7, whiteSpace: "pre-wrap",
         }}>{text}</div>
       ) : (
-        <Awaiting message="Opener pending — ping Claude in chat to draft from this week's data" />
+        <Awaiting message="Opener pending" />
       )}
     </Card>
   );
@@ -817,7 +817,7 @@ function LookingNextWeekSection({ report, editMode, formValue, dirty, onChange }
             fontSize: 14, color: T.slate800, lineHeight: 1.7, whiteSpace: "pre-wrap",
           }}>{text}</div>
         ) : (
-          <Awaiting message="Next-week focus items pending — ping Claude in chat to draft" />
+          <Awaiting message="Next-week focus items pending" />
         )}
       </Card>
     </div>

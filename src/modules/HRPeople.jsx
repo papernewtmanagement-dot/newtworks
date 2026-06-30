@@ -233,12 +233,6 @@ const Card = ({ children, style={} }) => (
   </div>
 );
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 const ProgressBar = ({ value, max, color=T.blue, height=6 }) => (
   <div style={{ height, background:T.slate100, borderRadius:height/2, overflow:"hidden" }}>
@@ -465,13 +459,13 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
                 <span style={{ fontSize:18, fontWeight:700, color:scoreColor(selectedApp.claude_score) }}>{selectedApp.claude_score}</span>
               </div>
               <StageBadge status={selectedApp.status} />
-              <AskBtn size="small" context={`Applicant profile:\nName: ${selectedApp.first_name} ${selectedApp.last_name}\nPosition: ${selectedApp.position}\nClaude Score: ${selectedApp.claude_score}/10\nSummary: ${selectedApp.claude_summary}\n${selectedApp.interview_focus?"Interview Focus:\n"+selectedApp.interview_focus:""}\n${selectedApp.interview_notes?"Interview Notes: "+selectedApp.interview_notes:""}\n\nHelp me think through this candidate. Should I move forward? What should I focus on in the interview?`} />
+              
             </div>
           </div>
 
-          {/* Claude Summary */}
+          {/* AI Summary */}
           <div style={{ background:T.slate50, borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:T.slate600, marginBottom:4 }}>CLAUDE SUMMARY (Groq Analysis)</div>
+            <div style={{ fontSize:11, fontWeight:600, color:T.slate600, marginBottom:4 }}>RESUME ANALYSIS (Groq)</div>
             <div style={{ fontSize:12, color:T.slate700, lineHeight:1.7 }}>{selectedApp.claude_summary}</div>
           </div>
 
@@ -639,7 +633,7 @@ const StaffDirectory = ({ staff }) => {
           `• Notification email: ${result.email_sent ? "sent ✓" : "NOT sent ✗"}\n` +
           `• Telegram kick: ${result.telegram_kicked ? "done ✓" : "skipped/failed"}\n` +
           (warnings.length > 0 ? `\nDetails:\n${warnings.join("\n")}\n` : "") +
-          `\nAn alert has been logged. Tell Claude.`
+          `\nAn alert has been logged.`
         );
       }
 
@@ -725,7 +719,7 @@ const StaffDirectory = ({ staff }) => {
         .select("id");
       if (teamUpdate.error) { setReactivateError(`team update failed: ${teamUpdate.error.message}`); setReactivating(false); return; }
       if (!teamUpdate.data || teamUpdate.data.length === 0) {
-        setReactivateError("Reactivation did not affect any rows — RLS may be blocking the write. Tell Claude.");
+        setReactivateError("Reactivation did not affect any rows — RLS may be blocking the write.");
         setReactivating(false);
         return;
       }
@@ -794,7 +788,7 @@ const StaffDirectory = ({ staff }) => {
       // Surface non-blocking failures loudly before closing the panel.
       if (warnings.length > 0) {
         console.error("[reactivate] non-blocking failures:", warnings);
-        alert(`Reactivation saved, but some side effects failed:\n\n${warnings.join("\n")}\n\nTell Claude.`);
+        alert(`Reactivation saved, but some side effects failed:\n\n${warnings.join("\n")}`);
       }
 
       // 6) Local UI: drop from archived list immediately.
@@ -938,7 +932,7 @@ const StaffDirectory = ({ staff }) => {
       }
       const newTeam = teamIns.data;
       if (!newTeam || !newTeam.id) {
-        setAddError("team insert returned no row — RLS may be blocking the write. Tell Claude.");
+        setAddError("team insert returned no row — RLS may be blocking the write.");
         setAdding(false);
         return;
       }
@@ -1085,7 +1079,7 @@ const StaffDirectory = ({ staff }) => {
         return;
       }
       if (!data || data.length === 0) {
-        setSaveError("Save did not affect any rows — RLS may be blocking the write. Tell Claude.");
+        setSaveError("Save did not affect any rows — RLS may be blocking the write.");
         setSaving(false);
         return;
       }
@@ -1452,7 +1446,7 @@ const StaffDirectory = ({ staff }) => {
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.white, border:`1px solid ${T.red}`, borderRadius:7, cursor:"pointer", marginLeft:"auto" }}>
                     End Employment…
                   </button>
-                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name || ""} ${member.last_name || ""}\nRole: ${member.role || "-"}${member.role_level ? " · " + member.role_level : ""}\nTeam: ${member.category || "agency"}\nEmployment: ${member.employment_type || "-"}\nPay: ${member.pay_type || "-"} - ${member.pay_rate == null ? "-" : (member.pay_type || "").toLowerCase()==="hourly" ? "$"+Number(member.pay_rate).toFixed(2)+"/hr" : "$"+Number(member.pay_rate).toLocaleString()+"/period"}\nLicenses: ${[member.license_pc && "P&C", member.license_lh && "L&H", member.license_ips && "IPS"].filter(Boolean).join(", ") || "None"}${((member.license_states||[]).length ? " (states: " + (member.license_states||[]).join(", ") + ")" : "")}\nStart: ${member.start_date || "-"}\nNotes: ${member.notes || "-"}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                  
                 </div>
               </div>
             )}
@@ -1704,9 +1698,7 @@ const AippProjectionCard = ({ aipp, aippTracking, hasProductionData }) => {
             {ratePct.toFixed(0)}% of qualifying NEW P&amp;C premium issued · paid each January
           </div>
         </div>
-        <AskBtn size="small" context={hasProjection
-          ? `My AIPP projection for ${aipp.program_year}:\nQualifying new P&C premium YTD (through month ${aipp.through_month}): ${money(aipp.qualifying_premium_ytd)}\nProjected full-year qualifying premium: ${money(aipp.projected_full_year_premium)}\nAIPP earned YTD: ${money(aipp.aipp_earned_ytd)}\nProjected AIPP payout: ${money(aipp.aipp_projected_payout)} (paid ~${aipp.projected_payout_date})\n\nAm I on pace? Which product lines should I push to lift this?`
-          : `I do not yet have producer production data loaded, so my AIPP projection is empty. AIPP is 5% of qualifying NEW P&C premium issued, paid each January. What should I do to get my production reports flowing so this projects automatically?`} />
+        
       </div>
 
       {hasProjection ? (
@@ -1786,7 +1778,7 @@ const PerformanceSection = ({ roi }) => {
 
       {ratesAreDefaults && (
         <div style={{ padding: "9px 13px", background: T.amberLt, border: `1px solid ${T.amber}`, borderRadius: 8, fontSize: 11.5, color: "#92400E", lineHeight: 1.5 }}>
-          <strong>Estimated rates in use.</strong> SMVC and blended rates below are placeholder defaults until your actual AA05 numbers are confirmed. Tell your Claude your real P&C SMVC rate to lock these in. (Lapse rate is always computed live from your book.)
+          <strong>Estimated rates in use.</strong> SMVC and blended rates below are placeholder defaults until your actual AA05 numbers are confirmed. Update agency.smvc_rate to lock these in. (Lapse rate is always computed live from your book.)
         </div>
       )}
 
@@ -1807,7 +1799,7 @@ const PerformanceSection = ({ roi }) => {
               Annualized YTD: lost policies ÷ starting in-force, dollar-weighted across Auto / Fire / Life
             </div>
           </div>
-          <AskBtn size="small" context={`My agency book lapse rate analysis:\nPrior year YTD P&C renewal commission: $${Math.round(priorRenewals).toLocaleString()}\nCurrent year YTD P&C renewal commission: $${Math.round(currentRenewals).toLocaleString()}\nAnnualized lapse rate (server-computed, blended): ${lapseRate.toFixed(1)}%\n\nIs this lapse rate normal for our book? What should I focus on to reduce it?`} />
+          
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
@@ -1989,7 +1981,7 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
           <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 10px", borderRadius: 20, background: statusBg, color: statusColor }}>{status}</span>
-          <AskBtn size="small" context={`Producer ROI analysis — ${producer.name}\nRole: ${producer.role}\nTenure: ${producer.tenureMonths} months\nMonthly issued premium (P&C avg): $${Math.round(producer.avgPC).toLocaleString()}\nMonthly issued premium (other avg): $${Math.round(producer.avgOther).toLocaleString()}\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNew-business commission this month: $${Math.round(currentNewCommission).toLocaleString()} (issued premium × SMVC rate)\nMonthly fully-loaded cost: $${Math.round(monthlyLoaded).toLocaleString()}\nNet to agency this month (new-biz only): $${Math.round(currentNetToAgency).toLocaleString()}\nProjected breakeven (when renewal stack-up + new biz covers cost): ${breakevenLabel || "outside 24 months"}\nLapse rate applied: ${lapseRate.toFixed(1)}%\nSMVC rate: ${smvcRate.toFixed(2)}% on P&C, ${blendedRate.toFixed(2)}% blended on other lines\n\nIs this producer on track? Should I increase their production target? What should I be doing differently?`} />
+          
         </div>
       </div>
 
@@ -2164,7 +2156,7 @@ const CommissionsSection = ({ commissions }) => (
           </div>
         )}
 
-        <AskBtn size="small" context={`Commission structure review:\nTeam member: ${c.team_member_name}\nStructure: ${c.structure_name}\nThis month earned: $${c.this_month}\nYTD earned: $${c.ytd_earned}\nTiers: ${c.tiers.map(t=>`$${t.min}-${t.max||"+"} at ${t.rate}%`).join(", ")}\n\nHelp me verify this commission calculation is correct and review if the structure still makes sense given current production levels.`} />
+        
       </Card>
     ))}
   </div>
@@ -2756,7 +2748,7 @@ const RetentionBudgetSection = () => {
               {phaseLabel} · Schedule is a permanent ramp; current on-time SMVC adds to the floor each week.
             </div>
           </div>
-          <AskBtn size="small" context={askCtx} />
+          
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(170px, 1fr))", gap:10 }}>
@@ -2986,7 +2978,7 @@ export default function HRPeople() {
             {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","rejected"].includes(a.status)).length} applicants in pipeline · Resume scanner active
           </div>
         </div>
-        <AskBtn context="Give me a complete HR review. How is my recruiting pipeline looking? Any compliance concerns with my current team? What HR actions should I take this week?" />
+        
       </div>
 
       {/* Section Navigation */}

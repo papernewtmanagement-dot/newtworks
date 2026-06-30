@@ -28,12 +28,12 @@ const CATEGORY_META = {
   business_context:  { label: "Business Context",  icon: "🧭", color: "#0EA5E9", colorLt: "#E0F2FE", description: "Who the agent is and how the business operates",          order: 2 },
   accounting_rules:  { label: "Accounting Rules",  icon: "📒", color: "#10B981", colorLt: "#D1FAE5", description: "Cash-basis rules, two-entity convention, GL conventions",  order: 3 },
   financial_context: { label: "Financial Context", icon: "💰", color: "#10B981", colorLt: "#D1FAE5", description: "Accounting setup, CPA details, compensation structure",   order: 4 },
-  business_rules:    { label: "Business Rules",    icon: "⚙️", color: "#1E3A8A", colorLt: "#F1F5F9", description: "Rules Claude must always follow in every conversation",   order: 5 },
+  business_rules:    { label: "Business Rules",    icon: "⚙️", color: "#1E3A8A", colorLt: "#F1F5F9", description: "Business rules — always-on guardrails",   order: 5 },
   staff:             { label: "Staff & Team",      icon: "👥", color: "#A855F7", colorLt: "#FAF5FF", description: "Team members, roles, employment details",                 order: 6 },
   goals:             { label: "Goals & Priorities",icon: "🎯", color: "#F59E0B", colorLt: "#FEF3C7", description: "Current targets, priorities, milestones",                 order: 7 },
   relationships:     { label: "Key Relationships", icon: "🤝", color: "#14B8A6", colorLt: "#CCFBF1", description: "CPA, vendors, SF contacts, key business relationships",   order: 8 },
   compliance_notes:  { label: "Compliance Notes",  icon: "🛡️", color: "#EF4444", colorLt: "#FEE2E2", description: "Agency-specific compliance reminders and notes",          order: 9 },
-  session_note:      { label: "Session Notes",     icon: "📝", color: "#64748B", colorLt: "#F1F5F9", description: "Working notes Claude wrote at the end of past sessions",  order: 99 },
+  session_note:      { label: "Session Notes",     icon: "📝", color: "#64748B", colorLt: "#F1F5F9", description: "Working notes from past sessions",  order: 99 },
 };
 const DEFAULT_CATEGORY_META = { label: null, icon: "📌", color: "#64748B", colorLt: "#F1F5F9", description: "", order: 50 };
 const metaFor = (id) => {
@@ -45,19 +45,7 @@ const ALL_CATEGORIES = Object.entries(CATEGORY_META)
   .sort((a, b) => (a.order || 50) - (b.order || 50));
 
 // ─── Shared Components ────────────────────────────────────────
-const AskBtn = ({ context, size = "normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{
-      display: "flex", alignItems: "center", gap: 5,
-      background: T.blue, color: T.white,
-      border: "none", borderRadius: 7,
-      padding: size === "small" ? "5px 10px" : "7px 13px",
-      fontSize: size === "small" ? 10 : 11,
-      fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-    }}
-  >⚡ Ask Claude</button>
-);
+
 
 // ─── Memory Card ──────────────────────────────────────────────
 const MemoryCard = ({ item, categoryConfig, onEdit }) => {
@@ -89,7 +77,7 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <AskBtn size="small" context={`Memory context — ${item.title}:\n\n${item.content}\n\nHelp me review and update this information if needed.`} />
+          
           <button
             onClick={() => onEdit(item)}
             style={{
@@ -216,7 +204,7 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
             <textarea
               value={content}
               onChange={e => setContent(e.target.value)}
-              placeholder="Enter the information Claude should remember..."
+              placeholder="Enter the information to remember..."
               rows={8}
               style={{
                 width: "100%", padding: "10px",
@@ -230,7 +218,7 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
             />
           </div>
           <div style={{ fontSize: 10, color: T.slate400, marginBottom: 16 }}>
-            Claude reads this in every conversation. Be specific and complete.
+            Loaded as context in every session. Be specific and complete.
           </div>
         </div>
 
@@ -472,13 +460,11 @@ export default function PersistentMemory() {
             Persistent Memory
           </div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
-            {counts.all} memory entries · Claude reads all of these in every conversation
+            {counts.all} memory entries · loaded as context every session
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <AskBtn
-            context={`Here is my complete agency memory context — everything I want you to know about my business:\n\n${allContext}\n\nPlease review this and tell me: (1) Is anything missing? (2) Is anything outdated? (3) Are there any inconsistencies you notice?`}
-          />
+          
           <button
             onClick={() => setShowNewModal(true)}
             style={{
@@ -492,7 +478,7 @@ export default function PersistentMemory() {
         </div>
       </div>
 
-      {/* How Claude Uses This — Info Banner */}
+      {/* How Memory Is Used — Info Banner */}
       <div style={{
         background: T.blueLt,
         border: `1px solid ${T.blue}20`,
@@ -504,10 +490,10 @@ export default function PersistentMemory() {
         <span style={{ fontSize: 20, flexShrink: 0 }}>💡</span>
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 3 }}>
-            How Claude uses this memory
+            How memory is used
           </div>
           <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.6 }}>
-            Every entry here is passed to Claude as context at the start of each conversation. Claude uses it to give you answers that are specific to your agency — not generic advice. The more complete and accurate this memory is, the more useful your Claude becomes. You and Claude can both add, edit, and update these entries at any time.
+            Every entry here is passed as context at the start of each session. Used to give answers specific to your agency — not generic advice. Both you and the SQL pipeline can add, edit, and update these entries at any time.
           </div>
         </div>
       </div>

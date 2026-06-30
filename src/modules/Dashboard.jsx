@@ -205,7 +205,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
       <Card>
         <SectionTitle icon="📅" title="Monthly Close" />
         <div style={{padding:"16px 0", fontSize:12, color:T.slate400, textAlign:"center"}}>
-          Ask your Claude to set up your monthly close checklist
+          Monthly close checklist not yet generated for this period
         </div>
       </Card>
     );
@@ -318,11 +318,11 @@ const OpenItemsWidget = ({ data, onNavigate }) => {
     .slice(0, 5);
   return (
     <Card>
-      <SectionTitle icon="🔍" title="Open Items — Claude Needs Your Input"
+      <SectionTitle icon="🔍" title="Open Items"
         action={<button onClick={()=>onNavigate("memory")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
       />
       {openItems.length === 0 ? (
-        <EmptyRow message="No open items — Claude has everything it needs ✨" />
+        <EmptyRow message="No open items — you're all clear ✨" />
       ) : (
         <div style={{display:"flex", flexDirection:"column", gap:8}}>
           {openItems.map((item,i) => (
@@ -394,7 +394,7 @@ const ComplianceWidget = ({ data, onNavigate }) => {
       {total === 0 ? (
         <div style={{fontSize:11, color:T.amber, textAlign:"center", padding:"12px 0"}}>
           ⚠️ Compliance rules not seeded yet<br/>
-          <span style={{color:T.slate500}}>Ask Claude: "Seed my SF compliance rules"</span>
+          <span style={{color:T.slate500}}>Seed your SF compliance rules via SQL</span>
         </div>
       ) : (
         <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(96px, 1fr))", gap:8}}>

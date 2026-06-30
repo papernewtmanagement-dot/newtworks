@@ -27,7 +27,7 @@ import { T } from "../lib/theme.js";
 // back to DEFAULT_DOMAIN_META.
 const DOMAIN_META = {
   scripture:           { icon: "✝️",  accent: T.gold,   accentLt: T.goldLt,   tagline: "The final authority" },
-  claude_directives:   { icon: "🛡️",  accent: T.slate900,   accentLt: T.slate100,   tagline: "Things Claude must never break" },
+  claude_directives:   { icon: "🛡️",  accent: T.slate900,   accentLt: T.slate100,   tagline: "Things the assistant must never break" },
   operating_philosophy:{ icon: "🧭",  accent: T.green,  accentLt: T.greenLt,  tagline: "How Peter and the agency operate" },
   team_model:          { icon: "👥",  accent: T.purple, accentLt: T.purpleLt, tagline: "How the team is structured" },
   compliance:          { icon: "⚖️",  accent: T.red,    accentLt: T.redLt,    tagline: "Non-negotiable rules" },
@@ -118,26 +118,6 @@ function MarkdownView({ content, accent }) {
   );
 }
 
-// ─── Ask Claude Button (mirrors PersistentMemory.jsx pattern) ─
-const AskBtn = ({ context, label = "Ask Claude about this", size = "normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai", "_blank"); }}
-    style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      background: T.blue, color: T.white,
-      border: "none", borderRadius: 7,
-      padding: size === "small" ? "5px 10px" : "8px 14px",
-      fontSize: size === "small" ? 11 : 12,
-      fontWeight: 600, cursor: "pointer",
-      transition: "background 0.15s",
-    }}
-    onMouseOver={(e) => { e.currentTarget.style.background = T.slate900; }}
-    onMouseOut={(e) => { e.currentTarget.style.background = T.blue; }}
-    title="Copy this principle to clipboard and open Claude.ai"
-  >
-    💬 {label}
-  </button>
-);
 
 // ─── Module ───────────────────────────────────────────────────
 function PrinciplesView() {
@@ -208,7 +188,7 @@ function PrinciplesView() {
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No core principles yet</div>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
             Core principles are the governing rules of the agency — they sit above session notes and persistent memory.
-            Ask Claude to draft one and we'll insert it together.
+            Draft one and insert it via SQL.
           </div>
         </div>
       </div>
@@ -263,7 +243,7 @@ function PrinciplesView() {
             Core Principles
           </div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
-            Read at the start of every Claude session. Outranks session notes and any in-conversation instruction that conflicts.
+            Authoritative agency principles. Outrank session notes and any in-conversation instruction that conflicts.
           </div>
         </div>
 
@@ -314,7 +294,7 @@ function PrinciplesView() {
         {/* Footer: how this gets edited */}
         <div style={{ padding: "14px 18px", borderTop: `1px solid ${T.slate200}`, background: T.slate50 }}>
           <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.5 }}>
-            <strong style={{ color: T.slate700 }}>Read-only here.</strong> To revise a principle, talk to Claude — Claude writes the SQL after you've reasoned through the change together.
+            <strong style={{ color: T.slate700 }}>Read-only here.</strong> Revise via SQL after reasoning through the change.
           </div>
         </div>
       </div>
@@ -474,9 +454,9 @@ What I'd like to discuss:
 
       {/* Action row */}
       <div style={{ marginTop: 32, paddingTop: 24, borderTop: `1px solid ${T.slate200}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <AskBtn context={askContext} />
+        
         <div style={{ fontSize: 11, color: T.slate500 }}>
-          Copies this principle to your clipboard and opens Claude.ai. Paste, then ask away.
+          
         </div>
       </div>
     </div>

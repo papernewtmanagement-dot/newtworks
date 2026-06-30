@@ -93,12 +93,6 @@ const Card = ({ children, style={} }) => (
   </div>
 );
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context || ""); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 const StatusPill = ({ status }) => {
   const sc = statusConfig(status);
@@ -385,7 +379,7 @@ export default function MonthlyClose() {
       <EmptyState
         icon="🗓️"
         title="No close checklist yet"
-        description="Your monthly close checklist is generated on the 1st of each month. Ask your Claude: &quot;Generate this month's close checklist.&quot;"
+        description="Your monthly close checklist is generated on the 1st of each month."
         module="documents"
       />
     );
@@ -419,7 +413,7 @@ export default function MonthlyClose() {
               ))}
             </select>
           )}
-          <AskBtn context={askContext} />
+          
         </div>
       </div>
 

@@ -391,7 +391,7 @@ const ConnectedAccounts = ({ connections }) => (
                    style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:8, cursor:"pointer", textDecoration:"none" }}>
                   Reconnect in Composio
                 </a>
-                <span style={{ fontSize:9, color:T.slate400 }}>then tell Claude to re-sync</span>
+                <span style={{ fontSize:9, color:T.slate400 }}>then trigger a re-sync</span>
               </div>
             )}
             {conn.status === "healthy" && (
@@ -512,13 +512,6 @@ const About = ({ agency: agencyProp }) => {
 
   const components = [
     {
-      key: "claude", name: "Claude.ai", role: "Intelligence Layer",
-      accent: "#F59E0B", letter: "C",
-      description: "Your AI business partner. Reads your data, advises on strategy, fixes the system, writes content, answers questions. Claude Chat in the BCC connects directly here.",
-      login: agency.google_account_email || agency.primary_email || "your Google account",
-      url: "https://claude.ai",
-    },
-    {
       key: "supabase", name: "Supabase", role: "Database & Memory",
       accent: "#3ECF8E", letter: "S",
       description: "Every number, document, staff record, automation log, and memory lives here. This is the brain of the BCC — all modules read and write from Supabase.",
@@ -528,7 +521,7 @@ const About = ({ agency: agencyProp }) => {
     {
       key: "composio", name: "Composio", role: "Automation Engine",
       accent: "#8B5CF6", letter: "C",
-      description: "Runs all your automation recipes on schedule — comp recap intake, bank statements, payroll filing, daily briefing email, inbox cleanup, monthly close. Also gives Claude access to Gmail, Drive, Calendar, and GitHub.",
+      description: "Runs all your automation recipes on schedule — comp recap intake, bank statements, payroll filing, daily briefing email, inbox cleanup, monthly close.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://app.composio.dev/",
     },
@@ -542,14 +535,14 @@ const About = ({ agency: agencyProp }) => {
     {
       key: "gmail", name: "Gmail", role: "Document Intake",
       accent: "#EA4335", letter: "G",
-      description: "Front door for incoming documents. Composio watches this inbox, reads what arrives, sends it to Supabase, and files the original to Drive. Claude also sends your daily briefing from here.",
+      description: "Front door for incoming documents. Composio watches this inbox, reads what arrives, sends it to Supabase, and files the original to Drive. Daily briefing also sends from here.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://mail.google.com",
     },
     {
       key: "github", name: "GitHub", role: "Code Repository",
       accent: "#181717", letter: "G",
-      description: "Your BCC's source code lives here. Every change Claude makes to the app is committed here first, then auto-deployed to Vercel.",
+      description: "Your BCC's source code lives here. Every change to the app is committed here first, then auto-deployed to Vercel.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://github.com",
     },
@@ -565,7 +558,6 @@ const About = ({ agency: agencyProp }) => {
   const tabs = [
     { id:"stack",     label:"⚡  Tech Stack" },
     { id:"how",       label:"🔄 How It Works" },
-    { id:"connected", label:"🔗 Keep It Connected" },
   ];
 
   return (
@@ -581,7 +573,7 @@ const About = ({ agency: agencyProp }) => {
             <div>
               <div style={{ fontSize:17, fontWeight:700, color:T.white }}>Business Command Center</div>
               <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>State Farm Agent Edition · v1.0 · Built by Imaginary Farms LLC</div>
-              <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", marginTop:2 }}>imaginary-farms.com  ·  The Claude Whisperer</div>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", marginTop:2 }}>imaginary-farms.com</div>
             </div>
           </div>
           <div style={{ textAlign:"right" }}>
@@ -665,8 +657,6 @@ const About = ({ agency: agencyProp }) => {
                 detail:"After processing, the original PDF/CSV moves to your Google Drive in the right folder." },
               { step:"6", title:"This BCC web app reads from Supabase",
                 detail:"Every module you see — Financials, Compliance, HR, Tasks — pulls live from Supabase." },
-              { step:"7", title:"Claude reads everything and advises",
-                detail:"Open Claude Chat from any module. Claude has read-access to your Supabase data and can answer questions, run analysis, draft reports, and write code changes." },
             ].map(s => (
               <div key={s.step} style={{ display:"flex", gap:14, alignItems:"flex-start" }}>
                 <div style={{ width:30, height:30, borderRadius:8, background:T.blueLt, color:T.blue, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 }}>{s.step}</div>
@@ -680,148 +670,16 @@ const About = ({ agency: agencyProp }) => {
         </Card>
       )}
 
-      {tab === "connected" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-
-          {/* HERO: The self-heal model */}
-          <Card style={{ borderLeft:`4px solid ${T.green}`, background:"linear-gradient(180deg, #F0FDF4 0%, #FFFFFF 60%)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-              <span style={{ fontSize:24 }}>💚</span>
-              <div>
-                <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>When something breaks, ask your Claude first</div>
-                <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
-                  Your Claude knows your stack and can fix or guide you through almost anything
-                </div>
-              </div>
-            </div>
-            <div style={{ fontSize:12, color:T.slate700, lineHeight:1.6, marginBottom:12 }}>
-              The BCC is designed to <strong>self-heal with your Claude as the operator</strong>. You should never have to remember which dashboard to log into, what to click, or what to do next when an alert pops up. Your Claude is your business partner — that includes maintenance.
-            </div>
-            <div style={{ background:T.white, padding:"12px 14px", borderRadius:10, border:`1px solid ${T.slate200}` }}>
-              <div style={{ fontSize:11, fontWeight:700, color:T.slate800, marginBottom:8 }}>The pattern, every time:</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10, fontSize:11, color:T.slate600 }}>
-                <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>📸</div>
-                  <strong style={{ color:T.slate900 }}>1. Screenshot the error</strong>
-                  <div style={{ marginTop:3, lineHeight:1.5 }}>Whatever you&apos;re seeing — alert banner, broken module, failed automation</div>
-                </div>
-                <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>💬</div>
-                  <strong style={{ color:T.slate900 }}>2. Paste it to your Claude</strong>
-                  <div style={{ marginTop:3, lineHeight:1.5 }}>&quot;Help me fix this&quot; is enough — your Claude has full context on your stack</div>
-                </div>
-                <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-                  <div style={{ fontSize:18, marginBottom:4 }}>✅</div>
-                  <strong style={{ color:T.slate900 }}>3. Follow the steps</strong>
-                  <div style={{ marginTop:3, lineHeight:1.5 }}>Your Claude either fixes it directly or walks you through it click-by-click</div>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* TWO-TIER MODEL: What can break */}
-          <Card>
-            <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:4 }}>What your Claude can reconnect</div>
-            <div style={{ fontSize:11, color:T.slate500, marginBottom:14 }}>
-              Two layers — your Claude knows the difference and will tell you which one needs attention
-            </div>
-
-            {/* Layer 1: Claude.ai connectors */}
-            <div style={{ marginBottom:18 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                <span style={{ fontSize:11, fontWeight:700, color:T.white, background:T.blue, padding:"2px 8px", borderRadius:10 }}>Layer 1</span>
-                <span style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Claude.ai connectors</span>
-                <span style={{ fontSize:11, color:T.slate500 }}>— the BCC&apos;s core systems</span>
-              </div>
-              <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6, marginBottom:10 }}>
-                These four connectors live in <strong>Claude.ai → Settings → Connectors</strong>. They power your BCC&apos;s memory, gateway, code, and hosting:
-              </div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:8 }}>
-                {[
-                  { name:"Supabase",  icon:"💾", role:"Persistent memory + database" },
-                  { name:"Composio",  icon:"🔌", role:"Gateway to all your other tools" },
-                  { name:"GitHub",    icon:"📦", role:"BCC web app source code" },
-                  { name:"Vercel",    icon:"🚀", role:"BCC web app hosting & deploys" },
-                ].map(c => (
-                  <div key={c.name} style={{ background:T.slate50, padding:"10px 12px", borderRadius:8, border:`1px solid ${T.slate200}` }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                      <span style={{ fontSize:14 }}>{c.icon}</span>
-                      <strong style={{ fontSize:12, color:T.slate900 }}>{c.name}</strong>
-                    </div>
-                    <div style={{ fontSize:10, color:T.slate600, lineHeight:1.4 }}>{c.role}</div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop:10, fontSize:11, color:T.slate600, lineHeight:1.6, fontStyle:"italic" }}>
-                If one of these disconnects, your Claude will tell you exactly what to click in Claude.ai settings to reconnect it.
-              </div>
-            </div>
-
-            {/* Layer 2: Composio integrations */}
-            <div>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                <span style={{ fontSize:11, fontWeight:700, color:T.white, background:T.purple || "#7C3AED", padding:"2px 8px", borderRadius:10 }}>Layer 2</span>
-                <span style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Composio integrations</span>
-                <span style={{ fontSize:11, color:T.slate500 }}>— the apps your BCC reaches out to</span>
-              </div>
-              <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6, marginBottom:10 }}>
-                These integrations live inside <strong>Composio</strong> (Layer 1 reaches them on your behalf). When one disconnects — usually because an OAuth token expired — your Claude can generate a fresh authorization link for you:
-              </div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-                {["Gmail", "Google Drive", "Google Calendar", "LinkedIn", "Facebook", "Instagram", "YouTube", "+ more"].map(app => (
-                  <span key={app} style={{ fontSize:11, padding:"4px 10px", background:T.slate100, color:T.slate700, borderRadius:14, border:`1px solid ${T.slate200}` }}>{app}</span>
-                ))}
-              </div>
-              <div style={{ background:T.blueLt, padding:"10px 12px", borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
-                <strong>Just ask your Claude:</strong> &quot;Gmail looks disconnected — give me the Composio reauthorization link.&quot; Your Claude will produce the exact link to click. One screen, one OAuth prompt, done.
-              </div>
-            </div>
-          </Card>
-
-          {/* HOW YOU&apos;LL KNOW */}
-          <Card>
-            <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:10 }}>How you&apos;ll know something needs attention</div>
-            <ul style={{ fontSize:12, color:T.slate600, lineHeight:1.7, paddingLeft:20, margin:0 }}>
-              <li>An <strong>alert</strong> appears in the Alerts module flagging the disconnection</li>
-              <li>The <strong>Automations Run Log</strong> shows recent runs as &quot;failed&quot; with an auth error</li>
-              <li>You stop receiving the morning briefing</li>
-              <li>New documents stop appearing in Drive after they hit Gmail</li>
-              <li>A module in your BCC suddenly shows &quot;Something went wrong&quot; — that&apos;s the ErrorBoundary catching something</li>
-            </ul>
-            <div style={{ marginTop:12, padding:"10px 12px", background:T.amberLt, borderRadius:8, fontSize:11, color:"#92400E", lineHeight:1.6 }}>
-              <strong>In every case:</strong> screenshot what you see, paste it to your Claude, and ask for help. Your Claude can read the screenshot, identify the issue, and either fix it directly or walk you through the fix in plain English.
-            </div>
-          </Card>
-
-          {/* QUICK LINKS */}
-          <Card style={{ background:T.slate50, border:"none" }}>
-            <div style={{ fontSize:11, fontWeight:700, color:T.slate800, marginBottom:8 }}>Quick links (only when your Claude tells you to use them)</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-              <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener noreferrer" style={{
-                fontSize:11, fontWeight:600, color:T.white, textDecoration:"none",
-                padding:"7px 12px", borderRadius:7, background:T.blue, display:"inline-block",
-              }}>Claude.ai Connectors </a>
-              <a href="https://app.composio.dev/" target="_blank" rel="noopener noreferrer" style={{
-                fontSize:11, fontWeight:600, color:T.white, textDecoration:"none",
-                padding:"7px 12px", borderRadius:7, background:T.purple || "#7C3AED", display:"inline-block",
-              }}>Composio Dashboard </a>
-            </div>
-            <div style={{ marginTop:10, fontSize:10, color:T.slate500, lineHeight:1.5 }}>
-              💡 You shouldn&apos;t need these on your own. Your Claude will give you the exact link, the exact step, and the exact thing to click whenever something needs attention. The BCC is built so you spend your time selling and serving — not managing infrastructure.
-            </div>
-          </Card>
-        </div>
-      )}
 
       {/* Footer */}
       <Card style={{ textAlign:"center", padding:"18px 20px", background:T.slate50, border:"none" }}>
-        <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:4 }}>Built by Imaginary Farms LLC · The Claude Whisperer</div>
+        <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:4 }}>Built by Imaginary Farms LLC</div>
         <a href="https://imaginary-farms.com" target="_blank" rel="noopener noreferrer"
           style={{ fontSize:12, color:T.blue, textDecoration:"none", fontWeight:500 }}>
           imaginary-farms.com
         </a>
         <div style={{ marginTop:10, fontSize:11, color:T.slate500, lineHeight:1.5 }}>
-          You own everything. Your BCC is not a subscription. Your Vercel hosts the app · your GitHub holds the code · your Supabase stores your data · your Composio connects your accounts · your Claude.ai provides the intelligence.
+          You own everything. Your BCC is not a subscription. Your Vercel hosts the app · your GitHub holds the code · your Supabase stores your data · your Composio connects your accounts.
         </div>
       </Card>
     </div>
@@ -955,7 +813,7 @@ export default function Settings() {
     status: _engineHealthy ? "healthy" : (settingsMap["composio_api_key"] ? "error" : "error"),
     account: settingsMap["composio_api_key"] ? "API key present" : "API key missing",
     last_sync: _engineHealthy ? _syncLabel : "—",
-    note: _engineHealthy ? "Action layer + LLM parsing active" : "No successful runs in last 24h — ask Claude to check",
+    note: _engineHealthy ? "Action layer + LLM parsing active" : "No successful runs in last 24h — investigate run log",
   });
 
   const liveConfig = {

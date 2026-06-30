@@ -11,7 +11,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 //   2. Calendar      — Full content calendar with status tracking
 //   3. Analytics     — Engagement by platform and post type
 //   4. Platforms     — Per-platform rules, accounts, settings
-//   5. Create        — Compliance-aware content request to Claude
+//   5. Create        — Compliance-aware content request builder
 //
 // KEY RULES ENFORCED IN THIS MODULE:
 //   • Instagram requires manual daily posting — no API scheduling
@@ -120,12 +120,6 @@ const StatusBadge = ({ status, manual }) => {
   return <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:s.bg, color:s.color, whiteSpace:"nowrap" }}>{s.label}</span>;
 };
 
-const AskBtn = ({ context, size="normal" }) => (
-  <button
-    onClick={() => { navigator.clipboard?.writeText(context); window.open("https://claude.ai","_blank"); }}
-    style={{ display:"flex", alignItems:"center", gap:5, background:T.blue, color:T.white, border:"none", borderRadius:7, padding:size==="small"?"5px 10px":"7px 13px", fontSize:size==="small"?10:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}
-  >⚡ Ask Claude</button>
-);
 
 // ─── Mini Stat Bar ────────────────────────────────────────────
 const StatBar = ({ value, max, color }) => (
@@ -157,9 +151,9 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
         <div style={{ fontSize:40, marginBottom:12 }}>📱</div>
         <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>No social content yet</div>
         <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto 16px", lineHeight:1.6 }}>
-          Your content calendar is empty. Head to the <strong>Create Content</strong> tab to build your first compliance-aware post, or ask Claude to draft a week of content for you.
+          Your content calendar is empty. Head to the <strong>Create Content</strong> tab to build your first compliance-aware post.
         </div>
-        <AskBtn context="My social media content calendar is empty. Draft me a week of compliance-aware posts following the 80/20 rule across my content pillars (Educate, Community, Connect, Celebrate, Invite). Save them to my content_calendar as drafts." />
+        
       </div>
     );
   }
@@ -210,7 +204,7 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
 <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
             <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Today — {new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" })}</span>
-            <AskBtn size="small" context={`Today's social media posts:\n${todayPosts.map(p=>`${p.platform.toUpperCase()} at ${p.time}: "${p.caption}" — Status: ${p.status}${p.requires_manual?" (MANUAL POSTING REQUIRED)":""}`).join("\n")}\n\nHelp me review today's content for compliance and engagement quality. Check against the 80/20 rule and the pre-post checklist.`} />
+            
           </div>
           {todayPosts.length === 0 ? (
             <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"20px 0" }}>No posts scheduled for today</div>
@@ -262,7 +256,7 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
             <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>80/20 Content Mix — This Month</div>
             <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>80% value-first · 20% business-adjacent · Never hard-sell</div>
           </div>
-          <AskBtn size="small" context="Review my social media content mix for this month. Am I following the 80/20 rule correctly? 80% should be value-first (educate, community, connect, celebrate) and max 20% business-adjacent (invite). Never hard-sell." />
+          
         </div>
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
           {analytics.by_pillar.map((p,i) => {
@@ -316,7 +310,7 @@ const ContentCalendar = ({ posts, loaded }) => {
         <div style={{ fontSize:13, color:T.slate500, maxWidth:440, margin:"0 auto 16px", lineHeight:1.6 }}>
           Once you create or schedule posts, they'll appear here grouped by date. Use the Create Content tab to get started.
         </div>
-        <AskBtn context="Draft and schedule a week of compliance-aware social posts to my content calendar, following the 80/20 rule." />
+        
       </div>
     );
   }
@@ -336,7 +330,7 @@ const ContentCalendar = ({ posts, loaded }) => {
           <option value="posted">Posted</option>
           <option value="failed">Failed</option>
         </select>
-        <AskBtn context={`I need help planning my social media content for next week. My content pillars are: Educate (Mon), Community (Tue), Connect (Wed), Educate/Celebrate (Thu), Invite/Celebrate (Fri). Platforms: Facebook (auto-schedule), LinkedIn (auto-schedule), Instagram (manual daily), X/Twitter. Remember: 80/20 rule, all content in English, no pricing or product specifics, no scare tactics. Help me draft 5 posts for next week.`} />
+        
       </div>
 
       {/* Calendar */}
@@ -408,7 +402,7 @@ const ContentCalendar = ({ posts, loaded }) => {
                             🔴 Post failed — repost manually or reschedule.
                           </div>
                         )}
-                        <AskBtn size="small" context={`Social media post review:\nPlatform: ${post.platform}\nDate: ${post.date} at ${post.time}\nPillar: ${post.pillar}\nStatus: ${post.status}\nCaption: "${post.caption}"\n${post.engagement?`Engagement: ${post.engagement.likes} likes, ${post.engagement.comments} comments, ${post.engagement.shares} shares, ${post.engagement.reach} reach`:"No engagement data yet"}\n\nRun this post through the compliance pre-post checklist and tell me if anything needs to be changed. Also evaluate engagement quality.`} />
+                        
                       </div>
                     )}
                   </div>
@@ -462,7 +456,7 @@ const Analytics = ({ analytics, loaded }) => {
       <Card>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Performance by platform — this week</div>
-          <AskBtn size="small" context={`My social media analytics this week:\n${analytics.by_platform.map(p=>`${p.platform}: ${p.posts} posts, ${p.reach} reach, ${p.likes} likes, ${p.comments} comments, ${p.shares} shares. Best post: "${p.best_post}"`).join("\n")}\n\nAnalyze my platform performance. Which platform is performing best? What content is working? What should I focus on next week?`} />
+          
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
@@ -632,13 +626,12 @@ Please draft a complete, compliant post ready to publish. Include:
     navigator.clipboard?.writeText(prompt);
     setCopyDone(true);
     setTimeout(() => setCopyDone(false), 2000);
-    window.open("https://claude.ai","_blank");
   };
 
   return (
     <div>
       <div style={{ fontSize:13, color:T.slate500, marginBottom:16, lineHeight:1.6 }}>
-        Build a compliance-aware content request for your Claude. Fill in the details below, then click Send to Claude — your prompt will be pre-loaded with your platform rules, content pillar guidance, and all compliance requirements.
+        Build a compliance-aware content request. Fill in the details below — the resulting prompt will include your platform rules, content pillar guidance, and all compliance requirements.
       </div>
 
       <Card>
@@ -691,7 +684,7 @@ Please draft a complete, compliant post ready to publish. Include:
 
         {/* Compliance reminder */}
         <div style={{ background:T.slate50, border:`1px solid ${T.slate200}`, borderRadius:8, padding:"10px 12px", marginBottom:14 }}>
-          <div style={{ fontSize:11, fontWeight:600, color:T.slate700, marginBottom:4 }}>Your Claude will automatically apply these rules to every post:</div>
+          <div style={{ fontSize:11, fontWeight:600, color:T.slate700, marginBottom:4 }}>These rules apply to every post:</div>
           <div style={{ fontSize:10, color:T.slate500, lineHeight:1.8 }}>
             Customer not client (AA05 I.B) · Agent not expert (AA05 I.O) · No pricing or rates (AA05 I.N) · No absolutes or guarantees · English only (FINRA) · 26-item pre-post checklist · Platform-specific formatting and timing
           </div>
@@ -703,7 +696,7 @@ Please draft a complete, compliant post ready to publish. Include:
           disabled={!topic.trim()}
           style={{ width:"100%", padding:"12px", fontSize:13, fontWeight:700, color:T.white, background:topic.trim()?T.blue:"#94A3B8", border:"none", borderRadius:10, cursor:topic.trim()?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
         >
-          {copyDone ? "✓ Prompt copied — Claude.ai opened!" : "⚡ Build prompt and send to Claude"}
+          {copyDone ? "✓ Prompt copied to clipboard" : "⚡ Build & copy prompt"}
         </button>
       </Card>
     </div>
@@ -857,7 +850,7 @@ export default function SocialMedia() {
             Facebook · Instagram · LinkedIn · X/Twitter · Compliance-aware content creation
           </div>
         </div>
-        <AskBtn context="I need a full social media review. Check my content mix (80/20 rule), platform performance, upcoming schedule, and flag any compliance concerns. What should I prioritize this week?" />
+        
       </div>
 
       {/* Section Navigation */}

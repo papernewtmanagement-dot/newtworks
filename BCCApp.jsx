@@ -38,13 +38,9 @@ import { TOKENS } from "./src/lib/theme.js";
 // │  Data:      Supabase (SUPABASE_URL + ANON_KEY only) │
 // │  Execution: Composio (connected accounts)            │
 // │  Processing: Groq via Composio (free, no API key)   │
-// │  Intelligence: Claude.ai (client's subscription)    │
-// │  Hosting:   Vercel (client's free account)          │
+// │  Hosting:   Vercel (client's account)               │
 // │  Recipes:   Stored in automation_recipes table      │
 // │  Schedules: Cron triggers in Supabase               │
-// │                                                      │
-// │  NO Anthropic API key required in this app.         │
-// │  Claude.ai opens in a new tab with context.         │
 // └─────────────────────────────────────────────────────┘
 //
 // AUTH (Path 1 — login gates the UI):
@@ -100,7 +96,6 @@ const NAV_ITEMS = [
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
-  { id: "chat",        label: "Claude",      icon: "message",       roles: ADMIN_ROLES },
   { id: "financials",  label: "Financials",  icon: "dollar",        roles: ADMIN_ROLES },
   { id: "hr",          label: "Team",        icon: "users",         roles: ADMIN_ROLES },
   { id: "social",      label: "Social",      icon: "share",         roles: ADMIN_ROLES },
@@ -307,19 +302,6 @@ const css = {
     fontSize: 12, color: TOKENS.slate500, marginTop: 3,
   },
 
-  // Ask Claude Button
-  askBtn: {
-    display: "flex", alignItems: "center", gap: 6,
-    background: TOKENS.blue, color: TOKENS.white,
-    border: "none", borderRadius: 8,
-    padding: "8px 14px",
-    fontSize: 12, fontWeight: 600,
-    cursor: "pointer",
-    transition: "background 0.15s, transform 0.1s",
-    whiteSpace: "nowrap",
-    flexShrink: 0,
-  },
-
   // Cards
   card: {
     background: TOKENS.white,
@@ -379,29 +361,6 @@ const css = {
   },
 };
 
-// ─── Ask Claude Button Component ──────────────────────────────────────────────
-const AskClaudeBtn = ({ context, size = "normal" }) => {
-  const handleClick = () => {
-    const prompt = context || "I am reviewing my Business Command Center. Help me analyze what I'm seeing.";
-    navigator.clipboard?.writeText(prompt).catch(() => {});
-    window.open("https://claude.ai", "_blank");
-  };
-  return (
-    <button
-      style={{
-        ...css.askBtn,
-        padding: size === "small" ? "5px 10px" : "8px 14px",
-        fontSize: size === "small" ? 11 : 12,
-      }}
-      onClick={handleClick}
-      title="Copies context to clipboard and opens Claude.ai"
-    >
-      <Icon name="lightning" size={12} color={TOKENS.white} />
-      Ask Claude
-      <Icon name="externalLink" size={11} color="rgba(255,255,255,0.7)" />
-    </button>
-  );
-};
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 // Path 1 auth: this gates the UI. The data layer (anon reads) is untouched,
@@ -582,9 +541,8 @@ const ComingSoon = ({ module }) => (
 );
 
 // ─── Module Router ────────────────────────────────────────────────────────────
-// All 11 modules built. In production each is imported from src/modules/.
-// This shell routes to each module component. ComingSoon is only used
-// for the Claude module which connects to Claude.ai externally.
+// All modules built. In production each is imported from src/modules/.
+// This shell routes to each module component.
 const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
@@ -602,25 +560,6 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
-    chat: (
-      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex:1, gap:16, padding:40, textAlign:"center" }}>
-        <div style={{ fontSize:40 }}>💬</div>
-        <div style={{ fontSize:18, fontWeight:700, color:TOKENS.slate900 }}>Claude</div>
-        <div style={{ fontSize:13, color:TOKENS.slate500, maxWidth:360, lineHeight:1.7 }}>
-          Your Claude.ai account is your intelligence layer. Open it in a new tab and your BCC data is already in context through your Project instructions.
-        </div>
-        <button
-          onClick={() => window.open("https://claude.ai","_blank")}
-          style={{ display:"flex", alignItems:"center", gap:8, background:TOKENS.blue, color:"#fff", border:"none", borderRadius:10, padding:"12px 24px", fontSize:13, fontWeight:700, cursor:"pointer" }}
-        >
-          <Icon name="externalLink" size={14} color="#fff" />
-          Open Claude.ai
-        </button>
-        <div style={{ fontSize:11, color:TOKENS.slate400, maxWidth:320, lineHeight:1.6 }}>
-          Tip: Use the Ask Claude buttons throughout your BCC — they open Claude.ai with your data already in the prompt. One paste and Claude knows exactly what you're looking at.
-        </div>
-      </div>
-    ),
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
