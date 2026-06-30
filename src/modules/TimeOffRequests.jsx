@@ -829,11 +829,107 @@ function LogTimeOffForm({ onLogged }) {
 }
 
 
+// Approval defaults — follow the rules:
+// - PTO: eligibility=eligible → paid; not_eligible → unpaid; pending_review → paid (data gap, benefit of doubt)
+// - Sick: paid by default (handbook policy)
+// - Remote / 4-day off-day change: paid (still working, just different location/schedule)
+function computeDefaultPaid(req) {
+  if (!req) return true;
+  const t = req.request_type || "";
+  if (t.startsWith("remote")) return true;
+  if (t === "four_day_off_change") return true;
+  if (t === "sick") return true;
+  if (t.startsWith("pto")) {
+    const elig = req.eligibility_check_result?.overall_eligibility;
+    if (elig === "eligible") return true;
+    if (elig === "not_eligible") return false;
+    return true;
+  }
+  return true;
+}
+
+function computeDefaultPaidReason(req) {
+  if (!req) return "";
+  const t = req.request_type || "";
+  if (t.startsWith("remote")) return "Working remotely — still paid.";
+  if (t === "four_day_off_change") return "4-day off-day change — still paid.";
+  if (t === "sick") return "Sick day — paid by default.";
+  if (t.startsWith("pto")) {
+    const elig = req.eligibility_check_result?.overall_eligibility;
+    if (elig === "eligible") return "Sales Points rating Good+ — earned PTO is paid.";
+    if (elig === "not_eligible") return "Sales Points below Good — unpaid by policy.";
+    if (elig === "pending_review") return "Eligibility pending review — defaulting to paid.";
+    return "";
+  }
+  return "";
+}
+
+function ApproveModal({ request, onCancel, onConfirm }) {
+  const defaultPaid = computeDefaultPaid(request);
+  const defaultReason = computeDefaultPaidReason(request);
+  const [isPaid, setIsPaid] = useState(defaultPaid);
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!request) return null;
+
+  const reqLabel = (REQUEST_TYPES.find(t => t.id === request.request_type)?.label) || request.request_type;
+  const lbl = { fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 };
+  const radioRow = (val, label, isDefault) => (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: isPaid === val ? "2px solid #2563eb" : "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", background: isPaid === val ? "#eff6ff" : "#fff" }}>
+      <input type="radio" checked={isPaid === val} onChange={() => setIsPaid(val)} />
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{label}</span>
+        {isDefault && <span style={{ fontSize: 11, color: "#64748b" }}>Default — {defaultReason}</span>}
+      </div>
+    </label>
+  );
+
+  async function confirm() {
+    setSubmitting(true);
+    try {
+      await onConfirm(note.trim() || null, isPaid);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1000 }} onClick={onCancel}>
+      <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: "min(480px, 100%)", maxHeight: "92vh", overflow: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 18 }}>Approve {reqLabel}</h3>
+          <button onClick={onCancel} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b" }}>×</button>
+        </div>
+
+        <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+          <div style={lbl}>Paid or unpaid?</div>
+          {radioRow(true,  "Paid",   defaultPaid === true)}
+          {radioRow(false, "Unpaid", defaultPaid === false)}
+        </div>
+
+        <label style={lbl}>
+          Note to requester (optional)
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={3} style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, marginTop: 4, width: "100%", boxSizing: "border-box", resize: "vertical" }} placeholder="e.g. 'have a great trip'" />
+        </label>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+          <button onClick={onCancel} disabled={submitting} style={{ padding: "8px 14px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: submitting ? "wait" : "pointer" }}>Cancel</button>
+          <button onClick={confirm} disabled={submitting} style={{ padding: "8px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: submitting ? "wait" : "pointer", opacity: submitting ? 0.6 : 1 }}>
+            {submitting ? "Approving…" : `Approve as ${isPaid ? "PAID" : "UNPAID"}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InboxView({ me, onDecided }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [voteStatuses, setVoteStatuses] = useState({});
   const [deciding, setDeciding] = useState({});
+  const [approving, setApproving] = useState(null);
 
   const load = useCallback(async () => {
     if (!supabase || !me?.id) return;
@@ -858,16 +954,20 @@ function InboxView({ me, onDecided }) {
 
   useEffect(() => { load(); }, [load]);
 
-  async function decide(reqId, decision, note) {
+  async function decide(reqId, decision, note, isPaid) {
     if (!supabase || !me?.id) return;
     setDeciding(d => ({ ...d, [reqId]: true }));
     try {
-      const { error } = await supabase.from("time_off_requests").update({
+      const update = {
         status: decision,
         decided_by_team_id: me.id,
         decided_at: new Date().toISOString(),
         decision_note: note || null
-      }).eq("id", reqId);
+      };
+      if (decision === "approved" && typeof isPaid === "boolean") {
+        update.is_paid = isPaid;
+      }
+      const { error } = await supabase.from("time_off_requests").update(update).eq("id", reqId);
       if (error) throw error;
       await load();
       if (typeof onDecided === "function") onDecided();
@@ -919,7 +1019,7 @@ function InboxView({ me, onDecided }) {
               </div>
             )}
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => decide(r.id, "approved", window.prompt("Approval note (optional):"))} disabled={deciding[r.id]} style={btnApprove}>Approve</button>
+              <button onClick={() => setApproving(r)} disabled={deciding[r.id]} style={btnApprove}>Approve</button>
               <button onClick={() => decide(r.id, "denied", window.prompt("Denial reason (optional):"))} disabled={deciding[r.id]} style={btnDeny}>Deny</button>
               {r.status === "voting" && <button onClick={() => decide(r.id, "awaiting_decision", "Vote closed early by agent")} disabled={deciding[r.id]} style={btnAbstain}>Close voting now</button>}
             </div>
@@ -927,6 +1027,17 @@ function InboxView({ me, onDecided }) {
         );
       })}
         </div>
+      )}
+      {approving && (
+        <ApproveModal
+          request={approving}
+          onCancel={() => setApproving(null)}
+          onConfirm={async (note, isPaid) => {
+            const req = approving;
+            setApproving(null);
+            await decide(req.id, "approved", note, isPaid);
+          }}
+        />
       )}
     </div>
   );
