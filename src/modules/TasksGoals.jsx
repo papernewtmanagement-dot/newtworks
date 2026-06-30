@@ -328,18 +328,37 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           <button
             onClick={(e) => { e.stopPropagation(); onToggleFocus && onToggleFocus(task.id, !inFocus); }}
             title={inFocus ? "Remove from this week's to-dos" : "Push to this week's to-dos"}
-            style={{ fontSize:14, lineHeight:1, color:inFocus?T.amber:T.slate300, background:inFocus?T.amberLt:"transparent", border:"none", borderRadius:6, padding:"4px 7px", cursor:"pointer", flexShrink:0 }}
+            aria-label={inFocus ? "Remove from this week's to-dos" : "Push to this week's to-dos"}
+            style={{
+              width:40, height:40, padding:0,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:20, lineHeight:1,
+              color: inFocus ? T.amber : T.slate400,
+              background: inFocus ? T.amberLt : "transparent",
+              border:"none", borderRadius:10, cursor:"pointer", flexShrink:0,
+              WebkitTapHighlightColor:"transparent"
+            }}
           >
             {inFocus ? "★" : "☆"}
           </button>
         )}
 
 
-        <span style={{ color:T.slate400, fontSize:11, flexShrink:0, cursor:"pointer", padding:"0 4px" }}
+        <button
           onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
-          title={isExpanded ? "Collapse" : "Expand"}>
+          title={isExpanded ? "Collapse" : "Expand"}
+          aria-label={isExpanded ? "Collapse" : "Expand"}
+          style={{
+            width:40, height:40, padding:0,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:14, lineHeight:1,
+            color:T.slate500,
+            background:"transparent", border:"none", borderRadius:10,
+            cursor:"pointer", flexShrink:0,
+            WebkitTapHighlightColor:"transparent"
+          }}>
           {isExpanded ? "▲" : "▼"}
-        </span>
+        </button>
       </div>
 
       {isExpanded && task.description && (
@@ -557,6 +576,21 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
   const persistExpanded = (set) => {
     try { window.localStorage.setItem(EXPAND_KEY, JSON.stringify(Array.from(set))); } catch {}
   };
+  // Safety net: re-persist whenever the set changes, regardless of how it was changed.
+  useEffect(() => {
+    try { window.localStorage.setItem(EXPAND_KEY, JSON.stringify(Array.from(expandedIds))); } catch {}
+  }, [expandedIds]);
+  // Cross-tab sync: pick up changes made in other open tabs.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== EXPAND_KEY) return;
+      try { setExpandedIds(new Set(e.newValue ? JSON.parse(e.newValue) : [])); } catch {}
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", onStorage);
+      return () => window.removeEventListener("storage", onStorage);
+    }
+  }, []);
   const toggleExpand = (id) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
