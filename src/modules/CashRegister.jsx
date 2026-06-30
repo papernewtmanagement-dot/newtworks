@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 
 // ============================================================
 // BCC CASH REGISTER MODULE v1.0
@@ -557,7 +557,7 @@ function useCashRegisterData() {
       ] = await Promise.all([
         supabase.from("bank_register_preliminary")
           .select("*")
-          .eq("agency_id", AGENCY_ID)
+          .eq("business_entity_id", BUSINESS_ENTITY_ID)
           .order("txn_date", { ascending: false })
           .order("amount", { ascending: false })
           .limit(200),
@@ -582,7 +582,7 @@ function useCashRegisterData() {
 
         supabase.from("bank_register_weekly_snapshot")
           .select("*")
-          .eq("agency_id", AGENCY_ID)
+          .eq("business_entity_id", BUSINESS_ENTITY_ID)
           .order("week_ending", { ascending: false })
           .limit(12),
 
@@ -604,7 +604,7 @@ function useCashRegisterData() {
       }
       // Accounts with no transactions yet — pull from account_starting_balances
       if (projBalances.length === 0) {
-        const sbRes = await supabase.from("account_starting_balances").select("*").eq("agency_id", AGENCY_ID);
+        const sbRes = await supabase.from("account_starting_balances").select("*").eq("business_entity_id", BUSINESS_ENTITY_ID);
         for (const s of (sbRes.data || [])) {
           projBalances.push({ account_last4: s.account_last4, account_label: s.account_label,
                               account_type: s.account_type, projected_balance: parseFloat(s.balance),
