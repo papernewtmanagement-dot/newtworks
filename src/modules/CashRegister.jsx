@@ -588,6 +588,7 @@ function useCashRegisterData() {
 
         supabase.from("chart_of_accounts")
           .select("account_code, account_name")
+          .eq("business_entity_id", BUSINESS_ENTITY_ID)
           .order("account_code"),
       ]);
 
