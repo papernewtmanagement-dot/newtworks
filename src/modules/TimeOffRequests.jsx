@@ -834,34 +834,97 @@ function LogTimeOffForm({ onLogged }) {
 // - Sick: paid by default (handbook policy)
 // - Remote / 4-day off-day change: paid (still working, just different location/schedule)
 function computeDefaultPaid(req) {
-  if (!req) return true;
+  if (!req) return false;
   const t = req.request_type || "";
+  const e = req.eligibility_check_result || {};
+  // Still working that day — paid
   if (t.startsWith("remote")) return true;
   if (t === "four_day_off_change") return true;
   if (t === "sick") return true;
+  // PTO — handbook §02 v25 rules
   if (t.startsWith("pto")) {
-    const elig = req.eligibility_check_result?.overall_eligibility;
-    if (elig === "eligible") return true;
-    if (elig === "not_eligible") return false;
-    return true;
+    // Owner — own rules
+    if (e.is_owner) return true;
+    // Account Associate (= Account Representative in handbook) — accrued PTO ONLY.
+    // 0 days year 1, 5 days year 2, 10 days year 3+. Default UNPAID; Peter
+    // verifies YTD balance against accrual_cap in the modal before marking paid.
+    if (e.is_account_associate) return false;
+    // Account Manager and above — unlimited PTO subject to Sales Points Good+
+    if (e.is_manager_tier) {
+      const o = e.overall_eligibility;
+      if (o === "eligible") return true;
+      if (o === "ineligible") return false;
+      return true; // pending_review — data gap, benefit of doubt for AMs
+    }
+    return false;
   }
-  return true;
+  return false;
 }
 
 function computeDefaultPaidReason(req) {
   if (!req) return "";
   const t = req.request_type || "";
+  const e = req.eligibility_check_result || {};
   if (t.startsWith("remote")) return "Working remotely — still paid.";
   if (t === "four_day_off_change") return "4-day off-day change — still paid.";
   if (t === "sick") return "Sick day — paid by default.";
   if (t.startsWith("pto")) {
-    const elig = req.eligibility_check_result?.overall_eligibility;
-    if (elig === "eligible") return "Sales Points rating Good+ — earned PTO is paid.";
-    if (elig === "not_eligible") return "Sales Points below Good — unpaid by policy.";
-    if (elig === "pending_review") return "Eligibility pending review — defaulting to paid.";
-    return "";
+    if (e.is_owner) return "Owner — sets own rules.";
+    if (e.is_account_associate) {
+      const cap = e.aa_pto_days_per_year ?? 0;
+      const band = e.aa_year_band;
+      if (band === "year_1") return "Account Associate, year 1 — no PTO accrued yet (handbook §02).";
+      if (band === "year_2") return `Account Associate, year 2 — ${cap} days/year accrued. Verify YTD balance before marking paid.`;
+      if (band === "year_3_plus") return `Account Associate, year 3+ — ${cap} days/year accrued. Verify YTD balance before marking paid.`;
+      return "Account Associate — accrued PTO only (handbook §02). Verify balance.";
+    }
+    if (e.is_manager_tier) {
+      const o = e.overall_eligibility;
+      if (o === "eligible") return "Account Manager, Sales Points Good+ — unlimited PTO is paid.";
+      if (o === "ineligible") return "Account Manager, Sales Points below Good — unpaid by policy.";
+      if (o === "pending_review") return "Account Manager, eligibility pending review — defaulting to paid.";
+      return "";
+    }
+    return "Role not mapped to PTO eligibility — verify manually.";
   }
   return "";
+}
+
+// Sum approved+paid PTO days for a requester in the requested calendar year.
+// Half-day partial = 0.5; full day = 1; multi-day span = (end - start + 1) * dayVal.
+async function fetchYtdPaidPtoDays(requesterTeamId, year) {
+  if (!supabase || !requesterTeamId) return 0;
+  const { data, error } = await supabase
+    .from("time_off_requests")
+    .select("start_date, end_date, partial_day, request_type, is_paid, status")
+    .eq("agency_id", AGENCY_ID)
+    .eq("requester_team_id", requesterTeamId)
+    .like("request_type", "pto%")
+    .eq("status", "approved")
+    .eq("is_paid", true)
+    .gte("start_date", `${year}-01-01`)
+    .lte("end_date", `${year}-12-31`);
+  if (error) { console.error(error); return 0; }
+  let used = 0;
+  for (const r of (data || [])) {
+    const s = new Date(r.start_date);
+    const e = new Date(r.end_date);
+    const span = Math.round((e - s) / 86400000) + 1;
+    const dayVal = r.partial_day && r.partial_day !== "none" ? 0.5 : 1;
+    used += span * dayVal;
+  }
+  return used;
+}
+
+// Day-count for the request being approved (so we can compare requested vs remaining)
+function ptoDaysForRequest(req) {
+  if (!req) return 0;
+  if (!(req.request_type || "").startsWith("pto")) return 0;
+  const s = new Date(req.start_date);
+  const e = new Date(req.end_date);
+  const span = Math.round((e - s) / 86400000) + 1;
+  const dayVal = req.partial_day && req.partial_day !== "none" ? 0.5 : 1;
+  return span * dayVal;
 }
 
 function ApproveModal({ request, onCancel, onConfirm }) {
@@ -870,6 +933,31 @@ function ApproveModal({ request, onCancel, onConfirm }) {
   const [isPaid, setIsPaid] = useState(defaultPaid);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [aaBalance, setAaBalance] = useState(null); // { cap, used, remaining, requested }
+
+  const elig = request?.eligibility_check_result || {};
+  const isAa = !!elig.is_account_associate;
+
+  // For AAs: fetch YTD used + show balance context. Auto-bump default to PAID if
+  // (a) we haven't taken a user override, AND (b) balance remaining covers this request.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadBalance() {
+      if (!request || !isAa) { setAaBalance(null); return; }
+      const cap = elig.aa_pto_days_per_year ?? 0;
+      const year = new Date(request.start_date).getFullYear();
+      const used = await fetchYtdPaidPtoDays(request.requester_team_id, year);
+      const requested = ptoDaysForRequest(request);
+      const remaining = Math.max(cap - used, 0);
+      if (cancelled) return;
+      setAaBalance({ cap, used, remaining, requested });
+      // Smart-default: if AA has remaining balance >= requested, default PAID
+      // (still safer to UNPAID for year 1 where cap=0 — remaining will be 0)
+      if (remaining >= requested && requested > 0) setIsPaid(true);
+    }
+    loadBalance();
+    return () => { cancelled = true; };
+  }, [request?.id, isAa]);
 
   if (!request) return null;
 
@@ -901,6 +989,22 @@ function ApproveModal({ request, onCancel, onConfirm }) {
           <h3 style={{ margin: 0, fontSize: 18 }}>Approve {reqLabel}</h3>
           <button onClick={onCancel} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b" }}>×</button>
         </div>
+
+        {isAa && aaBalance && (
+          <div style={{ background: aaBalance.remaining >= aaBalance.requested ? "#ecfdf5" : "#fef2f2", border: `1px solid ${aaBalance.remaining >= aaBalance.requested ? "#a7f3d0" : "#fecaca"}`, borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 13 }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>Account Associate accrual (handbook §02)</div>
+            <div>
+              {aaBalance.cap === 0
+                ? `Year 1 — no PTO accrued yet (0 days/year).`
+                : `${aaBalance.cap} days/year accrued · ${aaBalance.used} used YTD · ${aaBalance.remaining} remaining · this request = ${aaBalance.requested} day(s)`}
+            </div>
+            {aaBalance.cap > 0 && aaBalance.remaining < aaBalance.requested && (
+              <div style={{ color: "#991b1b", marginTop: 4, fontWeight: 600 }}>
+                ⚠ Insufficient balance for paid PTO ({aaBalance.requested} requested vs {aaBalance.remaining} remaining)
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
           <div style={lbl}>Paid or unpaid?</div>
