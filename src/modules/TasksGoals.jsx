@@ -536,8 +536,14 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
     return next;
   });
 
+  // Top-level focus items: focused items whose parent is NOT also focused.
+  // Ensures we render the highest focused ancestor and let expansion reveal the rest.
+  // A child that's also starred appears once (under its parent), never twice.
+  const focusIds = new Set(focusOpen.map(t => t.id));
+  const topLevel = focusOpen.filter(t => !t.parent_task_id || !focusIds.has(t.parent_task_id));
+
   const byCat = {};
-  for (const t of focusOpen) {
+  for (const t of topLevel) {
     const k = t.task_category || "_uncategorized";
     (byCat[k] = byCat[k] || []).push(t);
   }
@@ -545,6 +551,31 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
     ...TASK_CATEGORY_ORDER.filter(k => byCat[k]),
     ...(byCat._uncategorized ? ["_uncategorized"] : []),
   ];
+
+  // Recursive renderer: top-level focused items + ALL uncompleted descendants when
+  // their parent is expanded. Children appear regardless of in_weekly_focus status —
+  // starring the parent implies committing to its breakdown.
+  const renderTodoTree = (task, depth) => {
+    const isOpen = todoExpanded.has(task.id);
+    const kids = (task.task_type === "epic" || task.task_type === "story")
+      ? tasks.filter(c => c.parent_task_id === task.id && c.status !== "completed")
+      : [];
+    return (
+      <div key={task.id} style={{ display:"flex", flexDirection:"column", gap:4 }}>
+        <TaskCard
+          task={task}
+          allTasks={tasks}
+          depth={depth}
+          onComplete={onComplete}
+          onNavigate={onNavigate}
+          onToggleFocus={onToggleFocus}
+          isExpanded={isOpen}
+          onToggleExpand={toggleTodoExpand}
+        />
+        {isOpen && kids.length > 0 && kids.map(k => renderTodoTree(k, depth + 1))}
+      </div>
+    );
+  };
 
   const askContext = `My this-week to-dos:\n${focusOpen.map(t => `• [${t.task_category || "uncategorized"}] ${t.title} (${t.priority}, due ${t.due_date || "no date"})`).join("\n")}\n\nHelp me sequence these for the week.`;
 
@@ -579,9 +610,7 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
               <span style={{ fontSize:10, color:T.slate400 }}>({list.length})</span>
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-              {list.map(task => (
-                <TaskCard key={task.id} task={task} onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} isExpanded={todoExpanded.has(task.id)} onToggleExpand={toggleTodoExpand} />
-              ))}
+              {list.map(task => renderTodoTree(task, 0))}
             </div>
           </div>
         );
