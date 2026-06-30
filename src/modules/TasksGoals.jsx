@@ -9,11 +9,10 @@ import EmptyState from "../components/EmptyState.jsx";
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
-//   1. Overview   — Quick wins, due today, goal progress summary
-//   2. To-Dos     — Tasks pushed to this week's focus, grouped by category
-//   3. Tasks      — Full task list, create, filter, complete
-//   4. Goals      — Annual goals with progress tracking
-//   5. Completed  — History of completed tasks
+//   1. To-Dos     — Tasks pushed to this week's focus, grouped by category (default landing)
+//   2. Overview   — Full task list (epics + stories + tasks), create, filter, complete
+//   3. Goals      — Annual goals with progress tracking
+//   4. Completed  — History of completed tasks
 //
 // KEY FEATURES:
 //   • Six fixed task categories (web app, admin, marketing,
@@ -336,6 +335,11 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
         )}
 
 
+        <span style={{ color:T.slate400, fontSize:11, flexShrink:0, cursor:"pointer", padding:"0 4px" }}
+          onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
+          title={isExpanded ? "Collapse" : "Expand"}>
+          {isExpanded ? "▲" : "▼"}
+        </span>
       </div>
 
       {isExpanded && task.description && (
@@ -477,102 +481,6 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
   );
 };
 
-// ─── Section: Overview ────────────────────────────────────────
-const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
-  const open       = tasks.filter(t => t.status !== "completed");
-  const critical   = open.filter(t => t.priority === "critical");
-  const dueThisWeek= open.filter(t => {
-    if (!t.due_date) return false;            // no due date -> not "due this week"
-    const d = daysUntil(t.due_date);
-    return Number.isFinite(d) && d <= 7 && d >= -14;  // upcoming within a week, or overdue up to 2 weeks
-  });
-  const overdue    = open.filter(t => isOverdue(t.due_date));
-  const completedThisMonth = tasks.filter(t => t.status === "completed").length;
-
-  const topGoals = goals.slice(0, 3);
-
-  return (
-    <div>
-      {/* KPI Row */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
-        {[
-          { label:"Open Tasks",         value:open.length,             color:T.blue,  border:T.blue  },
-          { label:"Critical",           value:critical.length,         color:critical.length>0?T.red:T.green,   border:critical.length>0?T.red:T.green   },
-          { label:"Due This Week",      value:dueThisWeek.length,      color:dueThisWeek.length>2?T.amber:T.green, border:dueThisWeek.length>2?T.amber:T.green },
-          { label:"Completed This Month",value:completedThisMonth,     color:T.green, border:T.green },
-        ].map((k,i) => (
-          <div key={i} style={{ background:T.white, border:`1px solid ${T.slate200}`, borderTop:`3px solid ${k.border}`, borderRadius:12, padding:"14px 16px" }}>
-            <div style={{ fontSize:11, color:T.slate500, fontWeight:500, marginBottom:6 }}>{k.label}</div>
-            <div style={{ fontSize:24, fontWeight:700, color:k.color, letterSpacing:"-0.02em" }}>{k.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))", gap:12 }}>
-        {/* Due This Week */}
-        <Card>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Due this week</span>
-            <AskBtn size="small" context={`My tasks due this week:\n${dueThisWeek.map(t=>`• ${t.title} (${t.priority}, due ${t.due_date}, category: ${t.task_category||"uncategorized"})`).join("\n")}\n\nHelp me prioritize these tasks and create an action plan for the week.`} />
-          </div>
-          {dueThisWeek.length === 0 ? (
-            <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"16px 0" }}>Nothing due this week 🎉</div>
-          ) : dueThisWeek.map((task,i) => {
-            const pr = PRIORITY[task.priority] || PRIORITY.medium;
-            const cat = categoryConfig(task.task_category);
-            const days = daysUntil(task.due_date);
-            return (
-              <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"9px 0", borderBottom:i<dueThisWeek.length-1?`1px solid ${T.slate100}`:"none" }}>
-                <div style={{ width:8, height:8, borderRadius:"50%", background:pr.color, flexShrink:0, marginTop:4 }} />
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12, fontWeight:500, color:T.slate800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{task.title}</div>
-                  <div style={{ fontSize:10, color:T.slate400, marginTop:1 }}>
-                    {cat ? `${cat.icon} ${cat.label} · ` : ""}{days===0?"Due today":days===1?"Due tomorrow":`${days} days`}
-                  </div>
-                </div>
-                <button onClick={() => onComplete(task.id)} title="Mark this task complete" style={{ fontSize:9, color:T.green, background:"transparent", border:`1px solid ${T.green}`, borderRadius:5, padding:"3px 8px", cursor:"pointer", flexShrink:0, fontWeight:600 }}>✓ Mark done</button>
-              </div>
-            );
-          })}
-        </Card>
-
-        {/* Goal Highlights */}
-        <Card>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Goal progress</span>
-            <AskBtn size="small" context={`My top agency goals and progress:\n${topGoals.map(g=>`• ${g.title}: ${fmt(g.current_value,g.unit)} of ${fmt(g.target_value,g.unit)} (${pct(g.current_value,g.target_value)}%)\n  ${g.notes}`).join("\n\n")}\n\nAnalyze my goal progress. Which goals need the most attention? What actions should I take this week to stay on track?`} />
-          </div>
-          {topGoals.map((goal,i) => {
-            const cat = GOAL_CATS[goal.category] || GOAL_CATS.personal;
-            const p = pct(goal.current_value, goal.target_value);
-            const onTrack = p >= 40;
-            return (
-              <div key={goal.id} style={{ marginBottom:i<topGoals.length-1?14:0, paddingBottom:i<topGoals.length-1?14:0, borderBottom:i<topGoals.length-1?`1px solid ${T.slate100}`:"none" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <span style={{ fontSize:13 }}>{cat.icon}</span>
-                    <span style={{ fontSize:12, fontWeight:500, color:T.slate800 }}>{goal.title}</span>
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <span style={{ fontSize:11, fontWeight:700, color:onTrack?T.green:T.amber }}>{p}%</span>
-                    <span style={{ fontSize:9, padding:"2px 6px", borderRadius:20, background:onTrack?T.greenLt:T.amberLt, color:onTrack?"#065F46":"#92400E", fontWeight:600 }}>
-                      {onTrack?"On track":"Needs focus"}
-                    </span>
-                  </div>
-                </div>
-                <div style={{ fontSize:11, color:T.slate500, marginBottom:4 }}>
-                  {fmt(goal.current_value, goal.unit)} of {fmt(goal.target_value, goal.unit)}
-                </div>
-                <ProgressBar value={goal.current_value} max={goal.target_value} color={onTrack?T.green:T.amber} height={6} />
-              </div>
-            );
-          })}
-        </Card>
-      </div>
-    </div>
-  );
-};
-
 // ─── Section: This Week's To-Dos ──────────────────────────────
 const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
   const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed");
@@ -637,7 +545,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
   const [priority,   setPriority]   = useState("all");
   const [taskCat,    setTaskCat]    = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");          // all | epic | story | task
-  const [viewMode,   setViewMode]   = useState("nested");        // nested | flat
+  const viewMode = "nested"; // view mode toggle was removed; nested is the only mode
   // Expanded epics/stories. Default = ALL COLLAPSED (empty set). Persists across sessions.
   const EXPAND_KEY = "bcc:tg:expanded";
   const [expandedIds, setExpandedIds] = useState(() => {
@@ -657,21 +565,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       return next;
     });
   };
-  const expandAll = () => {
-    // One click reveals every level: add every epic + every story that has any children.
-    const ids = new Set();
-    for (const t of tasks) {
-      if ((t.task_type === "epic" || t.task_type === "story") && tasks.some(c => c.parent_task_id === t.id)) {
-        ids.add(t.id);
-      }
-    }
-    setExpandedIds(ids);
-    persistExpanded(ids);
-  };
-  const collapseAll = () => {
-    setExpandedIds(new Set());
-    persistExpanded(new Set());
-  };
+  // expandAll/collapseAll removed — per-card chevron is the only expand mechanism.
   const [showModal,  setShowModal]  = useState(false);
   const [newType,    setNewType]    = useState("task");          // type for the "+ New" modal
   const [newParentId, setNewParentId] = useState(null);          // optional preset parent
@@ -788,76 +682,12 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
         </select>
 <div style={{ flex:1 }} />
-        {/* View mode toggle: nested (hierarchy) vs flat */}
-        <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
-          {[{id:"nested",label:"Nested",icon:"≡"},{id:"flat",label:"Flat",icon:"☰"}].map(v => (
-            <button key={v.id} onClick={() => setViewMode(v.id)} style={{ padding:"6px 10px", fontSize:11, fontWeight:viewMode===v.id?600:400, color:viewMode===v.id?T.slate900:T.slate500, background:viewMode===v.id?T.white:"transparent", border:"none", borderRadius:6, cursor:"pointer", boxShadow:viewMode===v.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
-              {v.icon} {v.label}
-            </button>
-          ))}
-        </div>
-        {/* Expand / Collapse all (nested view only) */}
-        {viewMode === "nested" && (
-          <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
-            <button onClick={expandAll} title="Expand everything — every epic and every story"
-              style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
-              ▼ Expand all
-            </button>
-            <button onClick={collapseAll} title="Collapse everything"
-              style={{ padding:"6px 10px", fontSize:11, fontWeight:500, color:T.slate600, background:"transparent", border:"none", borderRadius:6, cursor:"pointer" }}>
-              ▶ Collapse all
-            </button>
-          </div>
-        )}
-        {/* "+ New" with type choice */}
-        <div style={{ display:"flex", gap:0, borderRadius:8, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
-          <button onClick={() => { setNewType("task"); setNewParentId(null); setShowModal(true); }} title="New Task (concrete action)"
-            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 12px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", cursor:"pointer", borderRight:`1px solid rgba(255,255,255,0.2)` }}>
-            + Task
-          </button>
-          <button onClick={() => { setNewType("story"); setNewParentId(null); setShowModal(true); }} title="New Story (bucket of value)"
-            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 10px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", cursor:"pointer", borderRight:`1px solid rgba(255,255,255,0.2)` }}>
-            📖
-          </button>
-          <button onClick={() => { setNewType("epic"); setNewParentId(null); setShowModal(true); }} title="New Epic (big body of work)"
-            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 10px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", cursor:"pointer" }}>
-            🎯
-          </button>
-        </div>
+        {/* "+ New" — pick type inside the modal */}
+        <button onClick={() => { setNewType("task"); setNewParentId(null); setShowModal(true); }} title="New item"
+          style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
+          + New
+        </button>
         <AskBtn context="Review my open task list and help me prioritize. What should I focus on first today? Are there any tasks I should delegate, defer, or eliminate?" />
-      </div>
-
-      {/* Type filter — Epic / Story / Task */}
-      <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap", alignItems:"center" }}>
-        <span style={{ fontSize:10, color:T.slate400, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em" }}>Type:</span>
-        {(() => {
-          const baseFiltered = tasks.filter(statusPriorityCatPass);
-          const counts = { all: baseFiltered.length };
-          for (const k of TASK_TYPE_ORDER) counts[k] = baseFiltered.filter(t => (t.task_type || "task") === k).length;
-          const chips = [{ key:"all", label:"All", icon:"", color:T.slate700 },
-                         ...TASK_TYPE_ORDER.map(k => ({ key:k, ...TASK_TYPES[k] }))];
-          return chips.map(c => {
-            const active = typeFilter === c.key;
-            const n = counts[c.key] || 0;
-            return (
-              <button key={c.key} onClick={() => setTypeFilter(c.key)}
-                style={{
-                  display:"inline-flex", alignItems:"center", gap:5,
-                  padding:"5px 10px", fontSize:11, fontWeight:active?700:500,
-                  color: active ? T.white : c.color,
-                  background: active ? c.color : (c.color === T.slate700 ? T.slate100 : (c.color + "15")),
-                  border: active ? `1px solid ${c.color}` : `1px solid ${c.color === T.slate700 ? T.slate200 : c.color + "30"}`,
-                  borderRadius:18, cursor:"pointer", transition:"all 0.12s",
-                }}>
-                {c.icon && <span>{c.icon}</span>}
-                <span>{c.label}</span>
-                <span style={{ fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:10,
-                  background: active ? "rgba(255,255,255,0.25)" : T.white,
-                  color: active ? T.white : (c.color === T.slate700 ? T.slate600 : c.color) }}>{n}</span>
-              </button>
-            );
-          });
-        })()}
       </div>
 
       {/* Category chips — one tap to filter; horizontal scroll on phone */}
@@ -1049,7 +879,7 @@ const CompletedSection = ({ tasks }) => {
 
 // ─── Main Tasks & Goals Module ────────────────────────────────
 export default function TasksGoals({ onNavigate }) {
-  const [section,  setSection]  = useState("overview");
+  const [section,  setSection]  = useState("todos");
   const { data: liveTasks, loading: tasksLoading } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
   const { data: liveGoals, loading: goalsLoading } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
@@ -1161,9 +991,8 @@ export default function TasksGoals({ onNavigate }) {
   const focusCount = tasks.filter(t => t.in_weekly_focus && t.status !== "completed").length;
 
   const sections = [
-    { id:"overview",  label:"Overview"                   },
     { id:"todos",     label:`To-Dos${focusCount?` (${focusCount})`:""}` },
-    { id:"tasks",     label:"Tasks"                      },
+    { id:"overview",  label:"Overview"                   },
     { id:"goals",     label:"Goals"                      },
     { id:"completed", label:"Completed"                  },
   ];
@@ -1191,9 +1020,8 @@ export default function TasksGoals({ onNavigate }) {
       </div>
 
       {/* Section Content */}
-      {section === "overview"  && <TasksOverview tasks={tasks} goals={goals} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} />}
       {section === "todos"     && <ToDosSection  tasks={tasks} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} />}
-      {section === "tasks"     && <TasksList     tasks={tasks} onComplete={completeTask} onNavigate={onNavigate||(() =>{})} onAdd={addTask} onToggleFocus={toggleFocus} />}
+      {section === "overview"  && <TasksList     tasks={tasks} onComplete={completeTask} onNavigate={onNavigate||(() =>{})} onAdd={addTask} onToggleFocus={toggleFocus} />}
       {section === "goals"     && <GoalsSection  goals={goals} />}
       {section === "completed" && <CompletedSection tasks={tasks} />}
     </div>
