@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -63,7 +63,7 @@ function useProducerROI() {
           supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id"),
-          supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
+          supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
           supabase.from("comp_recap").select("period_year, period_month, comp_type, comp_category, amount").eq("agency_id", AGENCY_ID),
           supabase.from("v_aipp_projection").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
           supabase.from("aipp_tracking").select("*").eq("agency_id", AGENCY_ID).order("program_year",{ascending:false}).limit(1),
@@ -2599,7 +2599,7 @@ const RetentionBudgetSection = () => {
           const payrollRes = await supabase
             .from("payroll_detail")
             .select("team_member_id, gross_pay, payroll_runs!inner(pay_period_start, pay_period_end)")
-            .eq("agency_id", AGENCY_ID)
+            .eq("business_entity_id", BUSINESS_ENTITY_ID)
             .in("team_member_id", teamIds)
             .gte("payroll_runs.pay_period_end", cutoff);
           (Array.isArray(payrollRes?.data) ? payrollRes.data : []).forEach(row => {
