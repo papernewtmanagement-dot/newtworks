@@ -318,7 +318,7 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
               {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
             </span>
-            {task.assigned_to && <span style={{ fontSize:10, color:T.slate400 }}>→ {task.assigned_to}</span>}
+            {task.assigned_to && <span style={{ fontSize:10, color:T.slate400 }}>→ {task.assigned_to_name || task.assigned_to}</span>}
             <span style={{ fontSize:9, color:T.slate400, fontStyle:"italic" }}>by {task.created_by}</span>
           </div>
         </div>
@@ -366,7 +366,7 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           <div style={{ fontSize:12, color:T.slate600, lineHeight:1.6, marginTop:8, marginBottom:8 }}>
             {task.description}
           </div>
-          <AskBtn size="small" context={`Task context:\nTitle: ${task.title}\nPriority: ${task.priority}\nDue: ${task.due_date}\nCategory: ${task.task_category || "uncategorized"}\nAssigned to: ${task.assigned_to}\nDescription: ${task.description}\n\nHelp me think through how to complete this task efficiently.`} />
+          <AskBtn size="small" context={`Task context:\nTitle: ${task.title}\nPriority: ${task.priority}\nDue: ${task.due_date}\nCategory: ${task.task_category || "uncategorized"}\nAssigned to: ${task.assigned_to_name || task.assigned_to || "unassigned"}\nDescription: ${task.description}\n\nHelp me think through how to complete this task efficiently.`} />
         </div>
       )}
     </div>
@@ -374,10 +374,15 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
 };
 
 // ─── New Task Modal ───────────────────────────────────────────
-const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", defaultParentId = null }) => {
+const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", defaultParentId = null, adminUsers = [], currentUserId = null, currentUserRole = null }) => {
+  // Owner can assign to any admin; manager can only assign to themselves.
+  const canAssignOthers = currentUserRole === "owner";
+  const assignableUsers = canAssignOthers
+    ? adminUsers
+    : adminUsers.filter(u => u.id === currentUserId);
   const [form, setForm] = useState({
     title:"", description:"", priority:"medium", task_category:"",
-    in_weekly_focus:false, due_date:"", assigned_to:"Jane Smith",
+    in_weekly_focus:false, due_date:"", assigned_to: currentUserId || "",
     task_type: defaultType,
     parent_task_id: defaultParentId || "",
   });
@@ -470,8 +475,14 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>ASSIGNED TO</label>
-              <input type="text" value={form.assigned_to} onChange={e => set("assigned_to", e.target.value)} placeholder="Jane Smith"
-                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+              <select value={form.assigned_to || ""} onChange={e => set("assigned_to", e.target.value || null)}
+                disabled={!canAssignOthers || assignableUsers.length <= 1}
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, background:canAssignOthers?T.white:T.slate100, outline:"none", boxSizing:"border-box" }}>
+                {assignableUsers.length === 0 && <option value="">— Unassigned —</option>}
+                {assignableUsers.map(u => (
+                  <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                ))}
+              </select>
             </div>
           </div>
           <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:T.slate700, cursor:"pointer", padding:"6px 0" }}>
@@ -559,7 +570,10 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
 };
 
 // ─── Section: Tasks List ──────────────────────────────────────
-const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
+const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus, userRole, userId, adminUsers = [] }) => {
+  const isOwner = userRole === "owner";
+  // Owner picks All / Mine / each other admin. Managers see only own via RLS; chips hidden.
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [filter,     setFilter]     = useState("open");
   const [priority,   setPriority]   = useState("all");
   const [taskCat,    setTaskCat]    = useState("all");
@@ -610,6 +624,14 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
     if (filter === "in_progress" && t.status !== "in_progress")return false;
     if (priority !== "all" && t.priority !== priority) return false;
     if (taskCat  !== "all" && t.task_category !== taskCat) return false;
+    // Assignee scope (owner-only; managers are RLS-scoped to own).
+    if (isOwner && assigneeFilter !== "all") {
+      if (assigneeFilter === "mine") {
+        if (t.assigned_to !== userId) return false;
+      } else if (t.assigned_to !== assigneeFilter) {
+        return false;
+      }
+    }
     return true;
   };
 
@@ -618,7 +640,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
     if (!statusPriorityCatPass(t)) return false;
     if (typeFilter !== "all" && (t.task_type || "task") !== typeFilter) return false;
     return true;
-  }), [tasks, filter, priority, taskCat, typeFilter]);
+  }), [tasks, filter, priority, taskCat, typeFilter, assigneeFilter, isOwner, userId]);
 
   // Hierarchy ordering for nested view.
   // For an epic, include the epic + all its descendant stories + tasks (limited to 2 levels deep).
@@ -698,7 +720,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
       });
     for (const o of orphans) rows.push({ task:o, depth:0 });
     return rows;
-  }, [tasks, filter, priority, taskCat, typeFilter, viewMode, expandedIds]);
+  }, [tasks, filter, priority, taskCat, typeFilter, viewMode, expandedIds, assigneeFilter, isOwner, userId]);
 
   return (
     <div>
@@ -723,6 +745,39 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
         </button>
         <AskBtn context="Review my open task list and help me prioritize. What should I focus on first today? Are there any tasks I should delegate, defer, or eliminate?" />
       </div>
+
+      {/* Assignee filter chips — owner-only, shown when 2+ admins exist.
+          Manager sees only own tasks via RLS, so chips are hidden for them. */}
+      {isOwner && adminUsers.length > 1 && (
+        <div style={{ display:"flex", gap:6, marginBottom:10, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
+          {[
+            { key:"all",  label:"All",  count: tasks.length },
+            { key:"mine", label:"Mine", count: tasks.filter(t => t.assigned_to === userId).length },
+            ...adminUsers
+              .filter(u => u.id !== userId)
+              .map(u => ({ key: u.id, label: (u.full_name || u.email || "Unknown").split(" ")[0], count: tasks.filter(t => t.assigned_to === u.id).length })),
+          ].map(c => {
+            const active = assigneeFilter === c.key;
+            return (
+              <button key={c.key} onClick={() => setAssigneeFilter(c.key)}
+                style={{
+                  flexShrink:0, whiteSpace:"nowrap",
+                  display:"inline-flex", alignItems:"center", gap:5,
+                  padding:"6px 11px", fontSize:11, fontWeight: active ? 700 : 500,
+                  color: active ? T.white : T.slate700,
+                  background: active ? T.blue : T.slate100,
+                  border: active ? `1px solid ${T.blue}` : `1px solid ${T.slate200}`,
+                  borderRadius:18, cursor:"pointer", transition:"all 0.12s",
+                }}>
+                <span>{c.label}</span>
+                <span style={{ fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:10,
+                  background: active ? "rgba(255,255,255,0.25)" : T.white,
+                  color: active ? T.white : T.slate600 }}>{c.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Category chips — one tap to filter; horizontal scroll on phone */}
       <div style={{ display:"flex", gap:6, marginBottom:14, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
@@ -789,6 +844,9 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus }) => {
           allTasks={tasks}
           defaultType={newType}
           defaultParentId={newParentId}
+          adminUsers={adminUsers}
+          currentUserId={userId}
+          currentUserRole={userRole}
           onSave={(task) => { onAdd(task); setShowModal(false); }}
           onCancel={() => setShowModal(false)}
         />
@@ -912,11 +970,32 @@ const CompletedSection = ({ tasks }) => {
 };
 
 // ─── Main Tasks & Goals Module ────────────────────────────────
-export default function TasksGoals({ onNavigate }) {
+export default function TasksGoals({ onNavigate, userRole, userId }) {
   const [section,  setSection]  = useState("todos");
   const { data: liveTasks, loading: tasksLoading } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
   const { data: liveGoals, loading: goalsLoading } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
+
+  // Admin users (owner + manager) — assignee dropdown source + UUID→name lookup.
+  // Per-admin task scoping (migration 043): owner sees all, manager only own (RLS).
+  const [adminUsers, setAdminUsers] = useState([]);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("users")
+        .select("id, full_name, email, role")
+        .eq("agency_id", AGENCY_ID)
+        .in("role", ["owner", "manager"])
+        .eq("is_active", true)
+        .order("role", { ascending: true });
+      if (cancelled) return;
+      if (error) { console.error("[TasksGoals] adminUsers load failed:", error); return; }
+      setAdminUsers(data || []);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const [tasks, setTasks] = useState(useMockData ? MOCK_TASKS : []);
   useEffect(() => {
@@ -947,6 +1026,17 @@ export default function TasksGoals({ onNavigate }) {
   const goals = (liveGoals && liveGoals.length > 0)
     ? liveGoals
     : useMockData ? MOCK_GOALS : [];
+
+  // Resolve assigned_to UUIDs to display names. Falls through to raw value when
+  // adminUsers hasn't loaded yet (mock data still renders).
+  const tasksWithDisplay = useMemo(() => {
+    if (!adminUsers || adminUsers.length === 0) return tasks;
+    const nameById = new Map(adminUsers.map(u => [u.id, u.full_name || u.email || "Unknown"]));
+    return tasks.map(t => ({
+      ...t,
+      assigned_to_name: t.assigned_to ? (nameById.get(t.assigned_to) || t.assigned_to) : null,
+    }));
+  }, [tasks, adminUsers]);
 
   if (tasksLoading || goalsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading tasks and goals…</div>;
   if (tasks.length === 0 && goals.length === 0) return <EmptyState module="tasks" />;
@@ -987,6 +1077,7 @@ export default function TasksGoals({ onNavigate }) {
       parent_task_id:   taskFromModal.parent_task_id || null,
       in_weekly_focus:  !!taskFromModal.in_weekly_focus,
       due_date:         dueIso,
+      assigned_to:      taskFromModal.assigned_to || userId || null,
       created_by:       "BCC user",
     };
     if (supabase && !useMockData) {
@@ -1054,10 +1145,10 @@ export default function TasksGoals({ onNavigate }) {
       </div>
 
       {/* Section Content */}
-      {section === "todos"     && <ToDosSection  tasks={tasks} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} />}
-      {section === "overview"  && <TasksList     tasks={tasks} onComplete={completeTask} onNavigate={onNavigate||(() =>{})} onAdd={addTask} onToggleFocus={toggleFocus} />}
+      {section === "todos"     && <ToDosSection  tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} />}
+      {section === "overview"  && <TasksList     tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(() =>{})} onAdd={addTask} onToggleFocus={toggleFocus} userRole={userRole} userId={userId} adminUsers={adminUsers} />}
       {section === "goals"     && <GoalsSection  goals={goals} />}
-      {section === "completed" && <CompletedSection tasks={tasks} />}
+      {section === "completed" && <CompletedSection tasks={tasksWithDisplay} />}
     </div>
   );
 }

@@ -75,7 +75,7 @@ const useApp = () => useContext(AppContext);
 const AGENCY_DEFAULTS = {
   name: "Paper Newt Management LLC",
   agentCode: "TX-2277768",
-  user: { name: "Peter Story", initials: "PS", role: "owner", email: "paper.newt.management@gmail.com" },
+  user: { id: null, name: "Peter Story", initials: "PS", role: "owner", email: "paper.newt.management@gmail.com" },
   alerts: 0,
 };
 
@@ -585,7 +585,7 @@ const ComingSoon = ({ module }) => (
 // All 11 modules built. In production each is imported from src/modules/.
 // This shell routes to each module component. ComingSoon is only used
 // for the Claude module which connects to Claude.ai externally.
-const ModuleRouter = ({ active, onNavigate, userRole }) => {
+const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
@@ -597,7 +597,7 @@ const ModuleRouter = ({ active, onNavigate, userRole }) => {
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,
-    tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals /></ErrorBoundary>,
+    tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals userRole={userRole} userId={userId} /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
@@ -856,7 +856,7 @@ export default function BCCApp() {
       if (email) {
         const { data: rows } = await supabase
           .from("users")
-          .select("full_name, role, email")
+          .select("id, full_name, role, email")
           .eq("agency_id", AGENCY_ID)
           .ilike("email", email)
           .limit(1);
@@ -872,6 +872,7 @@ export default function BCCApp() {
         name: ag?.name || AGENCY_DEFAULTS.name,
         agentCode: ag?.state_farm_agent_code || AGENCY_DEFAULTS.agentCode,
         user: {
+          id: profile?.id || null,
           name: displayName,
           initials: (displayName || "?").split(" ").map(n => n?.[0] || "").join("").toUpperCase().slice(0,2),
           role,
@@ -1087,7 +1088,7 @@ export default function BCCApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} />
+                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} userId={agency.user.id} />
               )}
             </div>
 
