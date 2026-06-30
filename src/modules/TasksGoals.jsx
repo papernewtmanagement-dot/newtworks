@@ -231,11 +231,19 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
   // Indent based on depth in nested view (max 2 levels visible)
   const indent = Math.min(depth, 2) * 18;
 
+  // Visual hierarchy by task_type — epic > story > task carries visible weight.
+  const isEpic  = task.task_type === "epic";
+  const isStory = task.task_type === "story";
+  const cardBg     = (isEpic || isStory) ? typ.bg : T.white;
+  const accentW    = isEpic ? 6 : isStory ? 4 : 3;
+  const titleSize  = isEpic ? 14 : isStory ? 13 : 12;
+  const titleWt    = isCompleted ? 400 : isEpic ? 700 : 600;
+
   return (
     <div style={{
-      background:T.white,
+      background:cardBg,
       border:`1px solid ${isExpanded?T.blue:overdue?T.red:T.slate200}`,
-      borderLeft:`4px solid ${overdue?T.red:typ.color}`,
+      borderLeft:`${accentW}px solid ${overdue?T.red:typ.color}`,
       borderRadius:10, overflow:"hidden",
       opacity:isCompleted?0.7:1,
       marginLeft:indent,
@@ -264,13 +272,23 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
               <span style={{ opacity:0.5 }}>›</span>
             </div>
           )}
-          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3, flexWrap:"wrap" }}>
-            <span style={{ fontSize:12, fontWeight:isCompleted?400:600, color:isCompleted?T.slate400:T.slate800, textDecoration:isCompleted?"line-through":"none" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3, flexWrap:"wrap" }}>
+            <span style={{
+              display:"inline-flex", alignItems:"center", gap:4,
+              fontSize:9, fontWeight:700,
+              padding:"3px 8px", borderRadius:20,
+              background:typ.color, color:T.white,
+              textTransform:"uppercase", letterSpacing:"0.04em",
+              flexShrink:0, lineHeight:1
+            }}>
+              <span style={{ fontSize:11, lineHeight:1 }}>{typ.icon}</span>
+              {typ.label}
+            </span>
+            <span style={{ fontSize:titleSize, fontWeight:titleWt, color:isCompleted?T.slate400:T.slate800, textDecoration:isCompleted?"line-through":"none" }}>
               {task.title}
             </span>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-            <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:20, background:typ.bg, color:typ.color, border:`1px solid ${typ.color}30`, textTransform:"uppercase", letterSpacing:"0.04em" }}>{typ.icon} {typ.label}</span>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
             {showPill && (() => {
