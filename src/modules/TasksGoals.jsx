@@ -527,6 +527,15 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
 const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
   const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed");
 
+  // Local expand state — independent of Overview's expandedIds. Non-persistent: a fresh
+  // weekly-focus view each session matches the "working list" mental model.
+  const [todoExpanded, setTodoExpanded] = useState(() => new Set());
+  const toggleTodoExpand = (id) => setTodoExpanded(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
   const byCat = {};
   for (const t of focusOpen) {
     const k = t.task_category || "_uncategorized";
@@ -571,7 +580,7 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
               {list.map(task => (
-                <TaskCard key={task.id} task={task} onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} />
+                <TaskCard key={task.id} task={task} onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} isExpanded={todoExpanded.has(task.id)} onToggleExpand={toggleTodoExpand} />
               ))}
             </div>
           </div>
