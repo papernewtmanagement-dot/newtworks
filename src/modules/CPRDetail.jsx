@@ -445,6 +445,7 @@ function useCPRData(weekDate) {
           .from("team")
           .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at, annual_benefits_value")
           .eq("agency_id", AGENCY_ID)
+          .eq("is_admin_backoffice", false)
           .order("hire_date", { ascending: true })
           .order("first_name", { ascending: true });
 
