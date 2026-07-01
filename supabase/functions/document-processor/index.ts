@@ -48,7 +48,7 @@ import { parseCompRecap } from "./parsers/comp_recap.ts";
 import { parseDeductionStatement } from "./parsers/deduction.ts";
 import { parsePayrollRun } from "./parsers/payroll.ts";
 import { parseProductionReport } from "./parsers/production.ts";
-import { postJournalEntry } from "./gl-poster.ts";
+import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
 import { createSuspenseTask } from "./suspense.ts";
 
 interface RunCtx {
@@ -415,6 +415,10 @@ async function handleBankStatement(
   ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
 ): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string }> {
+  // Reset per-doc reference counter so identical-fingerprint txns across
+  // different documents don't leak :N suffixes to each other.
+  resetReferenceCounters();
+
   const extracted = await extractText(ctx, att, bytesB64);
   if (!extracted.ok) return { jeCount: 0, suspenseCount: 0, error: extracted.error };
 
@@ -462,9 +466,23 @@ async function handleBankStatement(
 
 function resolveSourceAccount(fromEmail: string, subject: string, fileName: string): string {
   const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
+
+  // ---- US Bank sub-account routing (order matters — most specific first).
+  // File naming convention (Marie's spec): "US Bank {Label} {YY-MM}.pdf" where
+  // Label is one of Income (3977, QBO-007), Expenses (4335, QBO-006), CC (3447,
+  // QBO-014). Account numbers also match if statement text is scanned in.
+  if (/us\s*bank\s*income|\b3977\b/.test(blob)) return "QBO-007";
+  if (/us\s*bank\s*expenses|\b4335\b/.test(blob)) return "QBO-006";
+  if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "QBO-014";
+  // Generic US Bank fallback — Income (conservative default, matches historic behavior)
   if (/usbank|us[\s_-]?bank/.test(blob)) return "QBO-007";
+
+  // ---- Chase — Mktg 2 (QBO-012) holds all post-cutover activity.
+  // Mktg 1 (QBO-011) is inactive post-cutover; require explicit "mktg 1" match.
+  if (/chase[\s\-_]*(mktg|marketing)[\s\-_]*1/.test(blob)) return "QBO-011";
+  if (/chase/.test(blob)) return "QBO-012";
+
   if (/truist|trb/.test(blob)) return "QBO-004";
-  if (/chase/.test(blob)) return "QBO-011";
   if (/statefarm|sf[\s.-]?ach/.test(blob)) return "QBO-024";
   if (/amex|american[\s_-]?express/.test(blob)) return "QBO-009";
   if (/capital[\s_-]?one/.test(blob)) return "QBO-010";

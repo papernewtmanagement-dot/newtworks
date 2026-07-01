@@ -27,13 +27,31 @@ export interface PostGLResult {
   isSuspense: boolean;
 }
 
+// In-memory counter to disambiguate multiple bank txns that share the same
+// (source, date, amount, payee-short) fingerprint (e.g., 5 identical Plarium
+// $32.39 charges on the same day). First occurrence uses the base reference;
+// subsequent occurrences append :2, :3, etc. Preserves idempotency across
+// re-runs of the same document since txn order is stable.
+//
+// MUST be reset at the start of processing each document via
+// resetReferenceCounters(); otherwise counter state leaks across docs and a
+// later doc's identical-fingerprint txn gets a spurious :N suffix.
+const refCounters = new Map<string, number>();
+
+export function resetReferenceCounters(): void {
+  refCounters.clear();
+}
+
 function makeReference(input: PostGLInput): string {
   const payeeShort = (input.txn.payee || "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "")
     .slice(0, 20);
   const amtCents = Math.round(Math.abs(input.txn.signedAmount) * 100);
-  return `dp:${input.txn.sourceAccountCode}:${input.txnDate}:${amtCents}:${payeeShort}`;
+  const base = `dp:${input.txn.sourceAccountCode}:${input.txnDate}:${amtCents}:${payeeShort}`;
+  const count = (refCounters.get(base) ?? 0) + 1;
+  refCounters.set(base, count);
+  return count === 1 ? base : `${base}:${count}`;
 }
 
 async function lookupAccountId(agencyId: string, accountCode: string): Promise<string | null> {
