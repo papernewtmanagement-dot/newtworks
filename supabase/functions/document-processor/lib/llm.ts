@@ -18,7 +18,18 @@
 import { sb, stripFences, getSetting } from "./supabase.ts";
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
+const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
+
+// Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
+// if the row is missing OR the settings read errors.
+async function getDefaultModel(agencyId: string): Promise<string> {
+  try {
+    const v = await getSetting(agencyId, "groq_model_default");
+    return (v && v.trim()) || LLM_MODEL_FALLBACK;
+  } catch (_e) {
+    return LLM_MODEL_FALLBACK;
+  }
+}
 
 export interface ParseLLMOpts {
   agencyId: string;
@@ -87,6 +98,9 @@ async function callGroqDirect(opts: {
 }
 
 export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> {
+  // Step 0: resolve the model once — settings.groq_model_default or fallback
+  const model = opts.model ?? await getDefaultModel(opts.agencyId);
+
   // Step 1: load the Groq API key for this agency
   const groqKey = await getSetting(opts.agencyId, "groq_api_key");
 
@@ -94,7 +108,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
   if (groqKey) {
     const llm = await callGroqDirect({
       apiKey: groqKey,
-      model: opts.model ?? LLM_MODEL_DEFAULT,
+      model,
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
       maxTokens: opts.maxTokens ?? 4000,
@@ -121,7 +135,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       purpose: opts.purpose,
       system_prompt: opts.systemPrompt,
       user_content: opts.userContent,
-      model: opts.model ?? LLM_MODEL_DEFAULT,
+      model,
       status: "pending",
     })
     .select("id")
