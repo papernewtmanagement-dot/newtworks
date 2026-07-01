@@ -155,7 +155,7 @@ function SubmitView({ me, onSubmitted }) {
       const initialStatus = isCaseByCase ? "flagged_case_by_case" : "voting";
 
       const voteOpenedAt = initialStatus === "voting" ? new Date().toISOString() : null;
-      const voteClosesAt = initialStatus === "voting" ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null;
+      const voteClosesAt = initialStatus === "voting" ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() : null;
 
       const { error: insErr } = await supabase
         .from("time_off_requests")
@@ -180,7 +180,7 @@ function SubmitView({ me, onSubmitted }) {
 
       setStartDate(""); setEndDate(""); setNotes(""); setProposedDay(""); setChecks(null);
       if (typeof onSubmitted === "function") onSubmitted();
-      alert(initialStatus === "voting" ? "Submitted. Team has 24 hours to vote, then Peter decides." : "Submitted as case-by-case. Peter will review directly.");
+      alert(initialStatus === "voting" ? "Submitted. Team has 2 days to vote, then Peter decides." : "Submitted as case-by-case. Peter will review directly.");
     } catch (e) {
       setError(e?.message || "Failed to submit request");
     } finally {
