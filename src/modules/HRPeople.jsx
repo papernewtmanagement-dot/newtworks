@@ -2245,6 +2245,7 @@ const BookAssignmentsSection = () => {
         .select("id, first_name, last_name, nickname")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", true)
+        .eq("is_admin_backoffice", false)
         .order("last_name"),
     ]);
     if (rowsRes?.error || teamRes?.error) {
