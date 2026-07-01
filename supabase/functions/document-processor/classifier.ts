@@ -98,11 +98,18 @@ export async function classifyBankTxn(agencyId: string, txn: BankTxn): Promise<C
       isSuspense: rule.confidence === "suspense",
     };
   }
+  // Suspense: preserve source-account attribution on the appropriate leg so
+  // bank/CC balance in journal_lines reflects unclassified activity. When the
+  // agent classifies the item later, only the QBO-SUSP leg swaps to the real
+  // expense/income account.
+  //   Outflow (money leaves bank/increases CC): DEBIT SUSP,   CREDIT source
+  //   Inflow  (money enters bank/reduces CC):   DEBIT source, CREDIT SUSP
+  const isOutflow = txn.signedAmount < 0;
   return {
     ruleId: "00000000-0000-0000-0000-000000000000",
     ruleName: "SUSPENSE (synthetic — no catch-all rule found)",
-    debitAccountCode: "QBO-SUSP",
-    creditAccountCode: "QBO-SUSP",
+    debitAccountCode: isOutflow ? "QBO-SUSP" : txn.sourceAccountCode,
+    creditAccountCode: isOutflow ? txn.sourceAccountCode : "QBO-SUSP",
     subCategoryLabel: "Pending agent classification",
     confidence: "suspense",
     isSuspense: true,
