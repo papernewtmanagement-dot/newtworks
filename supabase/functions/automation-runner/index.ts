@@ -73,11 +73,22 @@ const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 // causing "Tool not found" errors when the runner invoked it. Direct calls use the
 // existing groq_api_key in settings and Groq's native JSON-mode output.
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-// 2026-06-18 v15.2: Back to 70b after adding Gmail pre-processing.
-// Pre-processing strips Gmail responses to ~5% of original size (decoded plain
-// text body + subject/from/date only), so 70b's 12K TPM is now plenty.
-// 70b gives better extraction quality than 8b for structured email parsing.
-const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
+// 2026-06-30 v18: Centralized model via settings.groq_model_default. Old default
+// llama-3.3-70b-versatile deprecated by Groq 2026-08-16. New default openai/gpt-oss-120b
+// (hosted on Groq — same api key + free dev tier). Set via settings row per agency.
+// LLM_MODEL_FALLBACK is used only when the settings row is missing or the read errors.
+const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
+
+// Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
+// if the row is missing OR the settings read errors.
+async function getDefaultModel(agencyId: string): Promise<string> {
+  try {
+    const v = await getSetting(agencyId, "groq_model_default");
+    return (v && v.trim()) || LLM_MODEL_FALLBACK;
+  } catch (_e) {
+    return LLM_MODEL_FALLBACK;
+  }
+}
 
 function stripFences(s: string): string {
   return s.trim()
@@ -163,6 +174,7 @@ async function callComposio(opts: {
 }
 
 async function callGroqLLM(opts: {
+  agencyId: string;
   groqApiKey: string;
   systemPrompt: string;
   userContent: string;
@@ -172,8 +184,10 @@ async function callGroqLLM(opts: {
   // v15: direct call to Groq's OpenAI-compatible chat completions endpoint.
   // Uses native JSON-mode (response_format: json_object) — Groq guarantees valid
   // JSON output, no markdown fences or prose. No stripFences pass needed.
+  // v18 (2026-06-30): model resolved from settings.groq_model_default at call time.
+  const model = opts.model ?? await getDefaultModel(opts.agencyId);
   const body = {
-    model: opts.model ?? LLM_MODEL_DEFAULT,
+    model,
     messages: [
       { role: "system", content: opts.systemPrompt },
       { role: "user", content: opts.userContent },
@@ -1469,6 +1483,7 @@ async function executeRecipe(
       } else {
         const inputForLLM = JSON.stringify(inputData).slice(0, 50000);
         const llmResult = await callGroqLLM({
+          agencyId: recipe.agency_id,
           groqApiKey,
           systemPrompt: recipe.groq_prompt +
             '\n\nReturn a JSON object: {"records": [...]} where records is an array of objects ready to insert into the output_table. Return {"records": []} if nothing applicable.',
