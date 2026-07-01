@@ -546,6 +546,7 @@ function HistoryView({ me }) {
         const teamRes = await supabase.from("team")
           .select("id, first_name, last_name, role_level")
           .eq("agency_id", AGENCY_ID)
+          .eq("is_admin_backoffice", false)
           .order("first_name");
         if (!cancelled) setTeam(Array.isArray(teamRes.data) ? teamRes.data : []);
 
@@ -702,6 +703,7 @@ function LogTimeOffForm({ onLogged }) {
         .select("id, first_name, last_name")
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
+        .eq("is_admin_backoffice", false)
         .is("archived_at", null)
         .neq("is_test_user", true)
         .order("first_name");
