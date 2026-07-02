@@ -35,6 +35,8 @@
 // deno-lint-ignore-file no-explicit-any
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { BlobReader, ZipReader, Uint8ArrayWriter } from "jsr:@zip-js/zip-js@2";
+// v4 (2026-07-01): unpdf replaces removed Composio pdf-to-text tool
+import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
 import { sb, getSetting, jsonResponse } from "./lib/supabase.ts";
 import { callComposio } from "./lib/composio.ts";
 import {
@@ -389,24 +391,30 @@ async function markDocument(
 // ---- Text extraction -------------------------------------------------------
 
 async function extractText(
-  ctx: RunCtx, att: AttachmentInput, bytesB64: string,
+  _ctx: RunCtx, att: AttachmentInput, bytesB64: string,
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   if (att.mimeType.startsWith("text/") || att.fileName.endsWith(".txt") || att.fileName.endsWith(".csv")) {
     try { return { ok: true, text: atob(bytesB64) }; }
     catch (e) { return { ok: false, error: `text decode failed: ${String(e)}` }; }
   }
-
-  const res = await callComposio({
-    apiKey: ctx.composioApiKey,
-    userId: ctx.composioUserId,
-    connectedAccountId: ctx.composioUserId,
-    toolSlug: "COMPOSIO_SEARCH_PDF_TO_TEXT",
-    toolArguments: { file_base64: bytesB64 },
-  });
-  if (!res.ok) return { ok: false, error: `pdf-to-text tool failed: ${res.error}` };
-  const text = res.data?.text ?? res.data?.content ?? "";
-  if (!text) return { ok: false, error: "pdf-to-text returned empty content" };
-  return { ok: true, text };
+  // v4: unpdf (pure JS, edge-runtime-compatible). Image-based PDFs
+  // return empty text -> route to Drive OCR folder for manual review.
+  try {
+    const bin = atob(bytesB64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await unpdfExtractText(pdf, { mergePages: true });
+    let merged = Array.isArray(text) ? text.join("\n") : String(text ?? "");
+    if (!merged.trim()) {
+      return { ok: false, error: "unpdf returned empty text (likely image-based PDF)" };
+    }
+    // SF PDFs collapse each logical row into " 1<caps>" — reinject newlines
+    merged = merged.replace(/ (?=1[A-Z ])/g, "\n");
+    return { ok: true, text: merged };
+  } catch (e) {
+    return { ok: false, error: `unpdf extraction failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }
 
 // ---- Bank handler ----------------------------------------------------------
