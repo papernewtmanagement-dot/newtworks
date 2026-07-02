@@ -27,6 +27,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 // =====================================================================
 
 import { T } from "../lib/theme.js";
+import { StaffRequestSection, AdminApprovalQueue } from "./TimeClockEditRequests.jsx";
 
 const YELLOW_HR = 39;
 const RED_HR = 40;
@@ -449,6 +450,16 @@ function KioskView({ user }) {
         );
       })}
       </div>
+      {user && user.role !== "owner" && user.role !== "manager" && (
+        <div style={{ marginTop: 4 }}>
+          <StaffRequestSection
+            user={user}
+            entries={entries}
+            weekStart={weekStart}
+            onChange={() => { reloadStaff(); reloadEntries(); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -529,6 +540,10 @@ function AdminView({ user }) {
 
   return (
     <div>
+      <AdminApprovalQueue
+        user={user}
+        onResolved={() => { reloadStaff(); reloadEntries(); }}
+      />
       {/* Week navigator */}
       <Card style={{ marginBottom: 14, padding: "12px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
