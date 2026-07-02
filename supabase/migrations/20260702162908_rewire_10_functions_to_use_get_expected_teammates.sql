@@ -1,0 +1,33 @@
+-- Migration: rewire_10_functions_to_use_get_expected_teammates
+-- Version: 20260702162908
+-- Applied via Supabase MCP apply_migration
+--
+-- Rewired the following functions to use get_expected_teammates as the
+-- canonical roster filter (single source of truth for who counts as an
+-- expected teammate for each purpose). All functional behavior preserved;
+-- only the filter clause was replaced.
+--
+-- Functions rewired:
+--   1. team_checkin_tag_missing         → uses 'work_checkin' purpose
+--   2. team_health_checkin_compile      → uses 'health_checkin' purpose
+--   3. get_win_the_week_state           → uses 'wtw_am_sales' + 'wtw_am_retention' with as_of_date
+--   4. get_wtw_am_counts                → uses 'wtw_am_sales' + 'wtw_am_retention' with as_of_date
+--   5. weekly_cpr_stamp_required_count  → uses 'agency_am_um' purpose with as_of_date
+--   6. time_off_check_coverage          → uses 'time_off_participant' purpose
+--   7. time_off_notification_dispatch   → uses 'work_checkin' purpose (voter loops)
+--   8. process_time_off_email_vote_reply → uses 'work_checkin' purpose (voter eligibility)
+--   9. time_off_vote_status             → uses 'work_checkin' purpose (quorum count aligns
+--                                          with actual voter set — Owner no longer counted
+--                                          as eligible voter, fixing latent quorum-inflation bug)
+--
+-- Full current-state definitions for all rewired functions are in
+-- supabase/schema_snapshots/functions_2026-07-02.sql
+--
+-- Regenerate this migration's exact SQL via:
+--   SELECT pg_get_functiondef(oid) FROM pg_proc
+--   WHERE pronamespace = 'public'::regnamespace
+--     AND proname IN ('team_checkin_tag_missing','team_health_checkin_compile',
+--                     'get_win_the_week_state','get_wtw_am_counts',
+--                     'weekly_cpr_stamp_required_count','time_off_check_coverage',
+--                     'time_off_notification_dispatch','process_time_off_email_vote_reply',
+--                     'time_off_vote_status');

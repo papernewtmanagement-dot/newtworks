@@ -1,0 +1,18 @@
+-- Migration: add_admin_backoffice_defensive_filters_final_4
+-- Version: 20260702163143
+-- Applied via Supabase MCP apply_migration
+--
+-- Added inline `AND is_admin_backoffice = false` filters to the 4 remaining
+-- functions that do individual team lookups (Peter, weekly_cpr_team_detail
+-- joins) rather than iterating a full roster — shared function doesn't fit
+-- cleanly, so inline filter is the right pattern.
+--
+-- Functions updated:
+--   10. compute_weekly_pay                        → added to v_team_total_sp aggregation
+--                                                    + base CTE join (two team joins)
+--   11. nudge_peter_for_cpr_drafts                → added to Peter lookup
+--   12. try_send_weekly_cpr_recap                 → added to both Peter lookups
+--                                                    (main + exception handler)
+--   13. dispatch_time_clock_edit_notifications    → added to Peter lookup
+--
+-- Full current-state definitions in supabase/schema_snapshots/functions_2026-07-02.sql
