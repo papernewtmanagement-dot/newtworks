@@ -3,13 +3,14 @@ import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC ADMIN MODULE v1.0
+// BCC ADMIN MODULE v1.1
 // Business Command Center — State Farm Agent Edition
 //
 // PURPOSE:
-// Read-only viewer for back-office and owner notes. Source
-// of truth lives in Confluence (pjsagency.atlassian.net);
-// BCC mirrors it into public.admin_pages.
+// Viewer for back-office and owner-only pages. BCC is the
+// source of truth; content lives in public.admin_pages.
+// The original Confluence tree was ingested here and Confluence
+// is deprecated for writes.
 //
 // GATED: this module is visible only to users with role='owner'
 // via the nav array in BCCApp.jsx. The select itself is
@@ -17,16 +18,17 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // effective access control.
 //
 // DATA SHAPE (public.admin_pages):
-//   - one row per Confluence page
+//   - one row per page
 //   - tree via parent_page_id (NULL = root)
 //   - content stored as Markdown with embedded HTML for
 //     <details>/<summary> expand sections, <blockquote>
 //     callouts, and tables that contain expands
+//   - confluence_page_id is retained as the stable page key /
+//     routing slug (works for both legacy Confluence-sourced
+//     rows and BCC-native rows; native rows use a
+//     "bcc-native-*" slug)
 //   - versioned: is_active=true for the current version,
 //     prior versions kept with archived_at set
-//
-// THIS MODULE IS READ-ONLY BY DESIGN.
-// Edits happen in Confluence. The mirror is one-way.
 // ============================================================
 
 // ─── Design Tokens ────────────────────────────────────────────
@@ -492,7 +494,7 @@ export default function Admin() {
         <div style={{ background: T.slate50, padding: 24, borderRadius: 12, border: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No admin pages yet</div>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-            The admin_pages table is empty. The Confluence ingestion pipeline writes here.
+            The admin_pages table is empty. Author rows directly via SQL (Confluence deprecated for writes).
           </div>
         </div>
       </div>
@@ -548,7 +550,7 @@ export default function Admin() {
             Admin
           </div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
-            Back-office and internal notes. Owner-only access. Mirrored from Confluence.
+            Back-office and internal notes. Owner-only access.
           </div>
           <input
             type="search"
