@@ -388,6 +388,16 @@ export default function Handbook() {
   const _vp = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [search, setSearch] = useState("");
+  // Collapse state — Set of confluence_page_ids whose children are shown.
+  // Top-level pages are always visible; children hidden unless parent is here.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const toggleExpand = useCallback((id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -436,6 +446,44 @@ export default function Handbook() {
 
   const tree = useMemo(() => buildTree(rows), [rows]);
   const flat = useMemo(() => flattenTree(tree), [tree]);
+
+  // When a page is selected (URL deep-link, search jump, initial default),
+  // auto-expand its ancestor chain so the selection is visible in the tree.
+  useEffect(() => {
+    if (!selectedId || !rows.length) return;
+    const byId = new Map(rows.map(r => [r.confluence_page_id, r]));
+    const ancestors = [];
+    let cur = byId.get(selectedId);
+    while (cur && cur.parent_page_id) {
+      ancestors.push(cur.parent_page_id);
+      cur = byId.get(cur.parent_page_id);
+    }
+    if (!ancestors.length) return;
+    setExpandedIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of ancestors) {
+        if (!next.has(id)) { next.add(id); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedId, rows]);
+
+  // Nodes visible right now: depth-0 always; deeper only if every ancestor
+  // is in expandedIds. Pre-computed via a DFS that skips branches whose
+  // parent isn't expanded. Flag hasChildren so the row renders a chevron.
+  const visibleFlat = useMemo(() => {
+    const out = [];
+    const walk = (n, d) => {
+      const kids = Array.isArray(n?.children) ? n.children : [];
+      out.push({ node: n, depth: d, hasChildren: kids.length > 0 });
+      if (expandedIds.has(n?.confluence_page_id)) {
+        for (const c of kids) walk(c, d + 1);
+      }
+    };
+    for (const r of (tree || [])) walk(r, 0);
+    return out;
+  }, [tree, expandedIds]);
 
   // Search filter — match on title or content (case-insensitive)
   const visibleIds = useMemo(() => {
@@ -567,48 +615,94 @@ export default function Handbook() {
 
         {/* Tree */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-          {flat.map(({ node, depth }) => {
+          {(visibleIds ? flat : visibleFlat).map((entry) => {
+            const node = entry.node;
+            const depth = entry.depth;
             const isActive = node.confluence_page_id === selectedId;
             const hidden = visibleIds && !visibleIds.has(node.confluence_page_id);
             if (hidden) return null;
+            // In search mode we synthesize hasChildren from tree; otherwise it's on entry.
+            const hasChildren = "hasChildren" in entry
+              ? entry.hasChildren
+              : (Array.isArray(node.children) && node.children.length > 0);
+            const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
             return (
-              <button
+              <div
                 key={node.confluence_page_id}
-                onClick={() => { selectPage(node.confluence_page_id); if (_vp.isPhone) setDrawerOpen(false); }}
                 style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: isActive ? T.blueLt : "transparent",
-                  border: "none",
-                  borderLeft: isActive ? `3px solid ${T.blue}` : "3px solid transparent",
-                  padding: `10px 16px 10px ${16 + depth * 16}px`,
-                  cursor: "pointer",
                   display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
+                  alignItems: "stretch",
+                  background: isActive ? T.blueLt : "transparent",
+                  borderLeft: isActive ? `3px solid ${T.blue}` : "3px solid transparent",
                   transition: "background 0.12s",
                 }}
                 onMouseOver={(e) => { if (!isActive) e.currentTarget.style.background = T.slate50; }}
                 onMouseOut={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
               >
-                <div style={{ fontSize: 16, lineHeight: 1.2, marginTop: 1 }}>{icon}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: depth === 0 ? 700 : 600,
-                    color: isActive ? T.slate900 : T.slate900,
-                    letterSpacing: "-0.01em",
-                    lineHeight: 1.3,
-                  }}>
-                    {node.title || "Untitled"}
-                  </div>
-                  {depth === 0 && (
-                    <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.4, marginTop: 2 }}>
-                      {previewText(node.content, 70) || "—"}
+                {/* Chevron column — reserved width so titles align regardless of children */}
+                <button
+                  type="button"
+                  onClick={(ev) => { ev.stopPropagation(); if (hasChildren) toggleExpand(node.confluence_page_id); }}
+                  aria-label={hasChildren ? (isExpanded ? "Collapse" : "Expand") : ""}
+                  tabIndex={hasChildren ? 0 : -1}
+                  style={{
+                    width: 28,
+                    minWidth: 28,
+                    marginLeft: 4 + depth * 16,
+                    padding: 0,
+                    background: "transparent",
+                    border: "none",
+                    cursor: hasChildren ? "pointer" : "default",
+                    color: T.slate500,
+                    fontSize: 11,
+                    lineHeight: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    userSelect: "none",
+                  }}
+                >
+                  {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectPage(node.confluence_page_id);
+                    if (hasChildren && !isExpanded) toggleExpand(node.confluence_page_id);
+                    if (_vp.isPhone) setDrawerOpen(false);
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    background: "transparent",
+                    border: "none",
+                    padding: "10px 16px 10px 4px",
+                    cursor: "pointer",
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <div style={{ fontSize: 16, lineHeight: 1.2, marginTop: 1 }}>{icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: depth === 0 ? 700 : 600,
+                      color: T.slate900,
+                      letterSpacing: "-0.01em",
+                      lineHeight: 1.3,
+                    }}>
+                      {node.title || "Untitled"}
                     </div>
-                  )}
-                </div>
-              </button>
+                    {depth === 0 && (
+                      <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.4, marginTop: 2 }}>
+                        {previewText(node.content, 70) || "—"}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              </div>
             );
           })}
         </div>
