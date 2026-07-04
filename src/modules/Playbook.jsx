@@ -12,7 +12,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // mirrors it into public.playbook for offline reference and
 // quick in-app lookup.
 //
-// Trees: Checklists, Product Knowledge, Tech Support, Training
+// Trees: Checklists (processes), Product Knowledge, Training
 // (all grouped under tree_root in the playbook table).
 //
 // DATA SHAPE (public.playbook):
@@ -36,20 +36,13 @@ import { T } from "../lib/theme.js";
 function iconForTitle(title) {
   const t = String(title || "").toLowerCase();
 
-  // ── Techbook-specific (tree_root = "Tech Support") ──────────────────
-  if (/racing snail/.test(t))                                     return "🐌";
-  if (/blackberry/.test(t))                                       return "📱";
-  if (/cloud drive/.test(t))                                      return "☁️";
-  if (/ctrl-d|reports?\b/.test(t))                                return "📊";
+  // ── Icons for moved-in ex-Techbook pages (still live in Playbook) ────
   if (/fax\b/.test(t))                                            return "📠";
-  if (/gnc|troubleshoot/.test(t))                                 return "⚙️";
-  if (/social media/.test(t))                                     return "📲";
   if (/spam|voicemail|attendant/.test(t))                         return "📞";
   if (/team by the minute/.test(t))                               return "⏱️";
-  if (/^team list$/.test(t))                                      return "👥";
-  if (/^tech support$/.test(t))                                   return "🔧";
-  if (/systems setup|office - systems|desk checklist/.test(t))    return "🖥️";
+  if (/office - systems|desk checklist/.test(t))                  return "🖥️";
   if (/policyholder list/.test(t))                                return "📋";
+  if (/^dss/.test(t))                                             return "✍️";
 
   // ── Playbook: role/setup pages ──────────────────────────────────────
   if (/new (account manager|reception) setup/.test(t))            return "🧑\u200d💼";
@@ -412,22 +405,15 @@ function flattenTree(roots) {
 
 
 // ─── Module ───────────────────────────────────────────────────
-export default function Playbook({ mode = "playbook" } = {}) {
-  // ── Mode config ───────────────────────────────────────────────────
-  // "playbook"    → everything EXCEPT tree_root='Tech Support'; URL /playbook/
-  // "techsupport" → ONLY tree_root='Tech Support';                 URL /tech-support/
-  const isTech = mode === "techsupport";
-  const basePath      = isTech ? "/tech-support"                                 : "/playbook";
-  const moduleTitle   = isTech ? "Techbook"                                      : "Playbook";
-  const moduleSubtitle= isTech
-    ? "Tech reference — systems, tools, and workarounds. Mirrored from Confluence."
-    : "Operational reference — processes, product knowledge, training. Mirrored from Confluence.";
-  const searchPlaceholder = isTech ? "Search techbook…" : "Search playbook…";
-  const emptyLabel        = isTech ? "techbook"          : "playbook";
-  // URL regex escapes the basePath slashes/hyphens automatically since we only use word chars + hyphen
-  const urlRe = isTech
-    ? /^\/tech-support\/([^/]+)\/?$/
-    : /^\/playbook\/([^/]+)\/?$/;
+export default function Playbook() {
+  // Playbook renders everything in the playbook table (tree_root in
+  // {Checklists, Product Knowledge}). Tech Book was dismantled 2026-07-04.
+  const basePath          = "/playbook";
+  const moduleTitle       = "Playbook";
+  const moduleSubtitle    = "Operational reference — processes, product knowledge, training. Mirrored from Confluence.";
+  const searchPlaceholder = "Search playbook…";
+  const emptyLabel        = "playbook";
+  const urlRe             = /^\/playbook\/([^/]+)\/?$/;
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -483,8 +469,6 @@ export default function Playbook({ mode = "playbook" } = {}) {
           .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, version, is_active, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
-        // Scope by mode: playbook excludes Tech Support; techsupport is exclusively Tech Support.
-        q = isTech ? q.eq("tree_root", "Tech Support") : q.neq("tree_root", "Tech Support");
         const { data, error: qErr } = await q;
         if (cancelled) return;
         if (qErr) { setError(qErr.message); setRows([]); }

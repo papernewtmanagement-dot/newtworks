@@ -16,7 +16,6 @@ import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Handbook from "./src/modules/Handbook.jsx";
 import Playbook from "./src/modules/Playbook.jsx";
-import TechSupport from "./src/modules/TechSupport.jsx";
 import Admin from "./src/modules/Admin.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
@@ -96,7 +95,6 @@ const NAV_ITEMS = [
   { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "playbook",    label: "Playbook",    icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
-  { id: "techsupport", label: "Techbook",     icon: "wrench",        roles: TEAM_VISIBLE_ROLES },
   { id: "renewals",    label: "Renewals",    icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
@@ -145,7 +143,6 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     trendingUp:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
     clipboardList:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>,
     briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
-    wrench:   <svg style={s} viewBox="0 0 24 24" {...p}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>,
   };
   return icons[name] || null;
 };
@@ -557,7 +554,6 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
     playbook:    <ErrorBoundary name="Playbook"><Playbook /></ErrorBoundary>,
-    techsupport: <ErrorBoundary name="TechSupport"><TechSupport /></ErrorBoundary>,
     admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
