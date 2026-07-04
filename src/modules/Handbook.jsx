@@ -73,16 +73,16 @@ function buildTree(rows) {
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
-  // Sort:
-  //   1. Rows with sort_order set (manual pins) sort AFTER unpinned rows.
-  //      Among pinned rows, ascending by sort_order.
-  //   2. Unpinned rows keep the natural-ish sort — numeric prefixes first (01, 02…), then alpha.
+  // Sort into three zones by sort_order:
+  //   -1 (top)    : sort_order < 0  — pinned above the rest (e.g. Team List at -1000)
+  //    0 (middle) : sort_order NULL — natural-ish sort (01, 02… numeric prefix first, then alpha)
+  //    1 (bottom) : sort_order > 0  — pinned below the rest (e.g. Signature Page at 9999)
+  const zoneOf = (sr) => sr == null ? 0 : (sr < 0 ? -1 : 1);
   const cmp = (a, b) => {
-    const asr = a?.sort_order;
-    const bsr = b?.sort_order;
-    if (asr != null && bsr == null) return 1;
-    if (asr == null && bsr != null) return -1;
-    if (asr != null && bsr != null) return asr - bsr;
+    const az = zoneOf(a?.sort_order);
+    const bz = zoneOf(b?.sort_order);
+    if (az !== bz) return az - bz;
+    if (az !== 0) return (a.sort_order ?? 0) - (b.sort_order ?? 0);
     const at = (a?.title || "");
     const bt = (b?.title || "");
     const an = /^(\d+)/.exec(at);
@@ -112,6 +112,112 @@ function flattenTree(roots) {
   };
   (roots || []).forEach(r => walk(r, 0));
   return out;
+}
+
+
+// ─── Dynamic (live) handbook pages ────────────────────────────
+// Pages whose body is generated at render time from another table rather than
+// from the stored handbook.content. Keyed by confluence_page_id.
+const DYNAMIC_HANDBOOK_PAGES = {
+  "345407825": "team_roster", // Team List — renders live from public.team
+};
+
+// Live roster component for the Team List page.
+// Pulls active, non-admin-backoffice, non-test team members and groups by function.
+function TeamRoster() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: e } = await supabase
+          .from("team")
+          .select("first_name, last_name, nickname, role, role_category, primary_function, account_alpha, sf_alias, phone_extension, phone_personal, email_personal, work_location, four_day_off_day, license_states, license_pc, license_lh")
+          .eq("agency_id", AGENCY_ID)
+          .eq("is_active", true)
+          .eq("is_admin_backoffice", false)
+          .eq("is_test_user", false)
+          .is("archived_at", null)
+          .order("last_name", { ascending: true });
+        if (cancelled) return;
+        if (e) { setError(e.message); setLoading(false); return; }
+        setRows(data || []);
+        setLoading(false);
+      } catch (err) {
+        if (!cancelled) { setError(err?.message || String(err)); setLoading(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return <p style={{ color: T.slate500, fontStyle: "italic" }}>Loading team roster…</p>;
+  }
+  if (error) {
+    return <p style={{ color: "#b91c1c" }}>Couldn't load team roster: {error}</p>;
+  }
+  if (!rows.length) {
+    return <p style={{ color: T.slate500, fontStyle: "italic" }}>No active team members found.</p>;
+  }
+
+  // Group by role_category, with Ownership pulled out for primary_function=owner.
+  const groupOf = (m) => {
+    if (m.primary_function === "owner") return "Ownership";
+    if (m.role_category === "Sales") return "Sales";
+    if (m.role_category === "Retention") return "Retention";
+    return "Other";
+  };
+  const groupOrder = ["Ownership", "Sales", "Retention", "Other"];
+  const groups = {};
+  for (const m of rows) {
+    const g = groupOf(m);
+    (groups[g] = groups[g] || []).push(m);
+  }
+
+  const displayName = (m) => {
+    const nn = m.nickname ? ` "${m.nickname}"` : "";
+    return `${m.first_name}${nn} ${m.last_name}`;
+  };
+
+  const roleLine = (m) => {
+    const parts = [];
+    if (m.role) parts.push(m.role);
+    if (m.account_alpha) parts.push(`Accounts ${m.account_alpha}`);
+    if (m.work_location === "remote") parts.push("Remote");
+    return parts.join(" · ");
+  };
+
+  return (
+    <div>
+      <p style={{ margin: "0 0 22px 0", fontSize: 12.5, color: T.slate500, fontStyle: "italic" }}>
+        Generated live from the team roster. To add, edit, or remove someone, use the Team panel in the BCC — this page updates on next load.
+      </p>
+      {groupOrder.filter((g) => groups[g]?.length).map((g) => (
+        <section key={g} style={{ marginBottom: 8 }}>
+          <h2>{g}</h2>
+          {groups[g].map((m) => (
+            <div key={`${m.first_name}-${m.last_name}-${m.sf_alias || ""}`} style={{ marginBottom: 18 }}>
+              <h4 style={{ margin: "0 0 2px 0" }}>{displayName(m)}</h4>
+              {roleLine(m) && (
+                <p style={{ margin: "0 0 6px 0", fontSize: 13, color: T.slate600 }}>{roleLine(m)}</p>
+              )}
+              <ul style={{ margin: "4px 0 0 0" }}>
+                {m.sf_alias && <li>Alias: {String(m.sf_alias).toUpperCase()}</li>}
+                {m.phone_extension && <li>Ext: {m.phone_extension}</li>}
+                {m.phone_personal && <li>Cell: {m.phone_personal}</li>}
+                {m.email_personal && (
+                  <li>Email: <a href={`mailto:${m.email_personal}`}>{m.email_personal}</a></li>
+                )}
+              </ul>
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
 }
 
 
@@ -386,12 +492,12 @@ export default function Handbook() {
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
-            // Divider above the first pinned-to-end entry — marks the visual break
-            // between alphabetized pages and manually pinned pages (e.g. Signature Page).
+            // Divider between sort zones — top vs middle, middle vs bottom.
             // Skipped in search mode where the natural ordering context isn't shown.
-            const showDivider = !visibleIds
-              && node.sort_order != null
-              && (idx === 0 || (arr[idx - 1]?.node?.sort_order ?? null) == null);
+            const _zoneOf = (sr) => sr == null ? 0 : (sr < 0 ? -1 : 1);
+            const currentZone = _zoneOf(node?.sort_order);
+            const prevZone = idx > 0 ? _zoneOf(arr[idx - 1]?.node?.sort_order) : null;
+            const showDivider = !visibleIds && prevZone !== null && currentZone !== prevZone;
             return (
               <Fragment key={node.confluence_page_id}>
               {showDivider && (
@@ -718,7 +824,11 @@ What I'd like to discuss:
         border: `1px solid ${T.slate200}`,
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
-        {(page?.content || "").trim() ? (
+        {DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "team_roster" ? (
+          <div className="bcc-handbook-body">
+            <TeamRoster />
+          </div>
+        ) : (page?.content || "").trim() ? (
           <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
@@ -732,7 +842,9 @@ What I'd like to discuss:
 
       {/* Footer note */}
       <div style={{ marginTop: 22, fontSize: 11, color: T.slate400, lineHeight: 1.6 }}>
-        Source of truth: Confluence (page id {page?.confluence_page_id || "—"}). Changes made here would not persist — edit the page in Confluence and the next mirror sync will refresh it.
+        {DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "team_roster"
+          ? "Source of truth: team roster (public.team). This page regenerates live on each visit — no manual sync needed."
+          : `Source of truth: Confluence (page id ${page?.confluence_page_id || "—"}). Changes made here would not persist — edit the page in Confluence and the next mirror sync will refresh it.`}
       </div>
     </div>
   );
