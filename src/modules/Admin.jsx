@@ -39,51 +39,63 @@ import { T } from "../lib/theme.js";
 function iconForTitle(title) {
   const t = String(title || "").toLowerCase();
 
-  // ── Hiring / onboarding process (01-06 sequence) ────────────────────
-  if (/^0[1-6] (hiring|video ama|meet|final interview|reference check|orientation)/.test(t)) return "🎯";
-  if (/hiring|interview|reference check|orientation|termination|new team process/.test(t)) return "🧑\u200d💼";
+  // ── Hiring process 01-06 (each step distinct) ────────────────────────
+  if (/^01 hiring prep/.test(t))                                    return "🎯";
+  if (/^02 video ama/.test(t))                                      return "🎥";
+  if (/^03 meet & greet/.test(t))                                   return "🤝";
+  if (/^04 final interview/.test(t))                                return "🎤";
+  if (/^05 reference check/.test(t))                                return "📞";
+  if (/^06 orientation/.test(t))                                    return "🎊";
+  if (/hiring|termination|new team process/.test(t))                return "🧑\u200d💼";
 
-  // ── Money & books ───────────────────────────────────────────────────
-  if (/bookkeeping/.test(t))                         return "📚";
-  if (/payroll/.test(t))                             return "💰";
-  if (/tax\b/.test(t))                               return "🧾";
-  if (/compensation/.test(t))                        return "💵";
+  // ── Money & books ────────────────────────────────────────────────────
+  if (/bookkeeping/.test(t))                                        return "🧮";
+  if (/payroll/.test(t))                                            return "💰";
+  if (/tax\b/.test(t))                                              return "🧾";
+  if (/compensation/.test(t))                                       return "💵";
 
-  // ── Ops routines & to-dos ───────────────────────────────────────────
-  if (/to-?dos?\b|daily to-?dos|weekly to-?dos|periodic to-?dos/.test(t)) return "✅";
-  if (/vendor management/.test(t))                   return "🤝";
-  if (/reports?\b/.test(t))                          return "📊";
+  // ── Ops routines & to-dos ────────────────────────────────────────────
+  if (/to-?dos?:? alvi|alvi to-?dos?|daily to-?dos|weekly to-?dos|periodic to-?dos/.test(t)) return "✅";
+  if (/tools - peter to-?dos/.test(t))                              return "📝";
+  if (/payroll process - peter to-?dos/.test(t))                    return "💰";
+  if (/vendor management/.test(t))                                  return "🏬";
+  if (/^reports$|^reports\b/.test(t))                               return "📊";
 
-  // ── Training & references (external tools/coaches) ──────────────────
-  if (/roleplaying/.test(t))                         return "🎭";
-  if (/video ama|zoom meeting|onboarding powerpoint/.test(t)) return "🎥";
-  if (/financial literacy|unit \d|semester/.test(t)) return "🎓";
-  if (/shattuck|steve suggs|can they sell|hierarchy of needs/.test(t)) return "📚";
-  if (/designations|ce\b|renewals/.test(t))          return "🎓";
-  if (/tools -|tips -|u4 updates/.test(t))           return "🧰";
-  if (/agency learnings|my agency/.test(t))          return "📓";
-  if (/braindump|ai workflow|script ideas/.test(t)) return "🧠";
+  // ── Training & reference ─────────────────────────────────────────────
+  if (/roleplaying/.test(t))                                        return "🎭";
+  if (/zoom meetings/.test(t))                                      return "💻";
+  if (/onboarding powerpoint/.test(t))                              return "📽️";
+  if (/financial literacy course|^\d\d\/\d\d.*unit \d|semester \d|^01\/15|^02\/19|^08\/2\d|^09\/\d\d|^10\/\d\d/.test(t)) return "📖";
+  if (/shattuck|steve suggs|can they sell|hierarchy of needs/.test(t)) return "🎓";
+  if (/designations|\bce\b|renewals - tools/.test(t))               return "📜";
+  if (/tools - hr/.test(t))                                         return "🧰";
+  if (/tips - tools/.test(t))                                       return "💡";
+  if (/u4 updates/.test(t))                                         return "🔄";
+  if (/my agency learnings/.test(t))                                return "📓";
+  if (/script ideas/.test(t))                                       return "✏️";
+  if (/braindump|ai workflow/.test(t))                              return "🧠";
+  if (/training & reference resources/.test(t))                     return "📚";
 
-  // ── Growth / management planning ────────────────────────────────────
-  if (/growth hierarchy|management duties/.test(t)) return "📈";
-  if (/preferred travel/.test(t))                    return "✈️";
+  // ── Growth / lifestyle ──────────────────────────────────────────────
+  if (/growth hierarchy|management duties/.test(t))                 return "📈";
+  if (/preferred travel/.test(t))                                   return "✈️";
 
-  // ── Peter's personal LOB categories on Admin ────────────────────────
-  if (/home process/.test(t))                        return "🏠";
-  if (/^fire$/.test(t))                              return "🔥";
-  if (/^life$/.test(t))                              return "🕯️";
-  if (/^commercial$/.test(t))                        return "🏢";
-  if (/liquor store/.test(t))                        return "🥃";
-  if (/loan organization/.test(t))                   return "🏦";
+  // ── Peter's personal LOB categories (bare titles: Home Processes, Fire, Life, Commercial) ─
+  if (/home processes/.test(t))                                     return "🏡";
+  if (/^fire$/.test(t))                                             return "🔥";
+  if (/^life$/.test(t))                                             return "❤️";
+  if (/^commercial$/.test(t))                                       return "🏢";
+  if (/liquor store/.test(t))                                       return "🥃";
+  if (/loan organization/.test(t))                                  return "🏦";
 
-  // ── Named personal properties (rentals/etc.) ────────────────────────
-  if (/bramblemaw|anthony|boulevard|creek|encore|marquis|toscana|vantage|vineyard|viridian|abbey|the rim/.test(t)) return "🏘️";
+  // ── Named personal properties / rentals ─────────────────────────────
+  if (/bramblemaw|anthony, the|boulevard|creekstone|encore 281|marquis|toscana|vantage|vineyard|viridian|abbey|the rim|liquor|liquor store/.test(t)) return "🏘️";
 
-  // ── Team & housekeeping ─────────────────────────────────────────────
-  if (/^~?admin/.test(t))                            return "⚙️";
-  if (/team details|team\s/.test(t))                 return "👥";
-  if (/young guns/.test(t))                          return "🚀";
-  if (/welcome/.test(t))                             return "🎉";
+  // ── Housekeeping / team ─────────────────────────────────────────────
+  if (/^\* ?team details|^team details/.test(t))                    return "👥";
+  if (/^~admin\b|^admin$/.test(t))                                  return "⚙️";
+  if (/young guns/.test(t))                                         return "🚀";
+  if (/^welcome/.test(t))                                           return "🎉";
 
   return "📄";
 }
