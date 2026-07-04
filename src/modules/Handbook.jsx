@@ -32,21 +32,21 @@ import { T } from "../lib/theme.js";
 // Map page title to a small emoji glyph so the sidebar reads at a glance.
 function iconForTitle(title) {
   const t = String(title || "").toLowerCase();
-  if (/^handbook\b/.test(t))                  return "📘";
-  if (/benefits/.test(t))                     return "💼";
-  if (/hours|time\s*off|pto|vacation/.test(t))return "⏰";
-  if (/bonus|pay|compensation/.test(t))       return "💵";
-  if (/win the week|wtw/.test(t))             return "🏆";
-  if (/development|training/.test(t))         return "🎓";
-  if (/culture|professional/.test(t))         return "🤝";
-  if (/employment|termination|hire|fire/.test(t)) return "📝";
-  if (/health|safety|security/.test(t) && !/info/.test(t)) return "🛡️";
-  if (/information security|spi|privacy/.test(t)) return "🔒";
-  if (/meeting|review|report/.test(t))        return "📊";
-  if (/property|system|information/.test(t))  return "🖥️";
-  if (/vehicle/.test(t))                      return "🚗";
-  if (/protecting spi/.test(t))               return "🔐";
-  if (/personal information/.test(t))         return "🪪";
+  if (/^handbook\b/.test(t))                          return "📘";
+  if (/benefits/.test(t))                              return "🎁";
+  if (/hours|time\s*off|pto|vacation/.test(t))         return "🏖️";
+  if (/bonus|pay|compensation/.test(t))                return "💰";
+  if (/win the week|wtw/.test(t))                      return "🏆";
+  if (/development|training/.test(t))                  return "🌱";
+  if (/culture|professional/.test(t))                  return "🌟";
+  if (/employment|termination|hire|fire/.test(t))      return "🖋️";
+  if (/protecting spi/.test(t))                        return "🕵️";
+  if (/information security|spi|privacy/.test(t))      return "🔒";
+  if (/health|safety|security/.test(t) && !/info/.test(t)) return "⛑️";
+  if (/meeting|review|report/.test(t))                 return "🗓️";
+  if (/property|system|information/.test(t))           return "🖥️";
+  if (/vehicle/.test(t))                               return "🚙";
+  if (/personal information/.test(t))                  return "🪪";
   return "📄";
 }
 
