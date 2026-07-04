@@ -22,6 +22,7 @@ import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Renewals from "./src/modules/Renewals.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
+import OnboardingPreview from "./src/modules/OnboardingPreview.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -109,6 +110,7 @@ const NAV_ITEMS = [
   { id: "memory",      label: "Memory",      icon: "brain",         roles: ADMIN_ROLES },
   { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
   { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
+  { id: "onboarding_preview", label: "Onboarding (Preview)", icon: "clipboardList", roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
 ];
 
@@ -557,6 +559,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
     playbook:    <ErrorBoundary name="Playbook"><Playbook /></ErrorBoundary>,
     admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
+    onboarding_preview: <ErrorBoundary name="Onboarding Preview"><OnboardingPreview /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,
