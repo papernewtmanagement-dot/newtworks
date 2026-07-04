@@ -32,283 +32,34 @@ import { T } from "../lib/theme.js";
 // Map page title to a small emoji glyph so the sidebar reads at a glance.
 function iconForTitle(title) {
   const t = String(title || "").toLowerCase();
-  if (/^handbook\b/.test(t))                          return "📘";
-  if (/benefits/.test(t))                              return "🎁";
-  if (/hours|time\s*off|pto|vacation/.test(t))         return "🏖️";
-  if (/bonus|pay|compensation/.test(t))                return "💰";
-  if (/win the week|wtw/.test(t))                      return "🏆";
-  if (/development|training/.test(t))                  return "🌱";
-  if (/culture|professional/.test(t))                  return "🌟";
-  if (/employment|termination|hire|fire/.test(t))      return "🖋️";
-  if (/protecting spi/.test(t))                        return "🕵️";
-  if (/information security|spi|privacy/.test(t))      return "🔒";
-  if (/health|safety|security/.test(t) && !/info/.test(t)) return "⛑️";
-  if (/meeting|review|report/.test(t))                 return "🗓️";
-  if (/property|system|information/.test(t))           return "🖥️";
-  if (/vehicle/.test(t))                               return "🚙";
-  if (/personal information/.test(t))                  return "🪪";
+  if (/^handbook\b/.test(t))                  return "📘";
+  if (/benefits/.test(t))                     return "💼";
+  if (/hours|time\s*off|pto|vacation/.test(t))return "⏰";
+  if (/bonus|pay|compensation/.test(t))       return "💵";
+  if (/win the week|wtw/.test(t))             return "🏆";
+  if (/development|training/.test(t))         return "🎓";
+  if (/culture|professional/.test(t))         return "🤝";
+  if (/employment|termination|hire|fire/.test(t)) return "📝";
+  if (/health|safety|security/.test(t) && !/info/.test(t)) return "🛡️";
+  if (/information security|spi|privacy/.test(t)) return "🔒";
+  if (/meeting|review|report/.test(t))        return "📊";
+  if (/property|system|information/.test(t))  return "🖥️";
+  if (/vehicle/.test(t))                      return "🚗";
+  if (/protecting spi/.test(t))               return "🔐";
+  if (/personal information/.test(t))         return "🪪";
   return "📄";
 }
 
-// ─── Markdown → HTML (lightweight, with HTML passthrough) ─────
-// Handles the subset of markdown the handbook ingestion produces:
-//   #..######, paragraphs, - and * bullets, 1. ordered lists,
-//   **bold**, *italic*, `code`, [text](url), --- hr, ``` fences.
-// Plus: passes through block HTML for <details>, <summary>,
-// <blockquote>, <table>, <div>, <figure>, <aside>.
-// Unescapes backslash-escaped asterisks/underscores so labels
-// like \*\*Info:\*\* render bold (the ingestion over-escaped them).
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function inlineMd(s) {
-  if (!s) return "";
-  let out = String(s);
-
-  // Unescape \* \_ before inline parsing so escaped bold/italic still renders.
-  out = out.replace(/\\([*_`\[\]])/g, "$1");
-
-  // Links [text](url) — guard against javascript: scheme.
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
-    const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : "#";
-    return `<a href="${safe}" target="_blank" rel="noreferrer noopener">${txt}</a>`;
-  });
-
-  // Bold (** or __)
-  out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
-
-  // Italic (* or _), not consuming **
-  out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
-  out = out.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
-
-  // Inline code
-  out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-  return out;
-}
-
-const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
-
-export function mdToHtml(md) {
-  const src = String(md || "");
-  if (!src.trim()) return "";
-
-  const lines = src.split(/\r?\n/);
-  const out = [];
-  let i = 0;
-  let inCode = false;
-  let codeBuf = [];
-  let listType = null; // "ul" | "ol"
-  let paraBuf = [];
-
-  const flushPara = () => {
-    if (paraBuf.length) {
-      out.push("<p>" + inlineMd(paraBuf.join(" ")) + "</p>");
-      paraBuf = [];
-    }
-  };
-  const flushList = () => {
-    if (listType) {
-      out.push(`</${listType}>`);
-      listType = null;
-    }
-  };
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Code fence
-    if (/^```/.test(line)) {
-      if (inCode) {
-        out.push(`<pre><code>${escapeHtml(codeBuf.join("\n"))}</code></pre>`);
-        codeBuf = [];
-        inCode = false;
-      } else {
-        flushPara(); flushList();
-        inCode = true;
-      }
-      i++; continue;
-    }
-    if (inCode) { codeBuf.push(line); i++; continue; }
-
-    // HTML block passthrough
-    const htmlOpen = new RegExp(`^\\s*<(${PASSTHROUGH_TAGS.join("|")})\\b`, "i").exec(line);
-    if (htmlOpen) {
-      flushPara(); flushList();
-      const tag = htmlOpen[1].toLowerCase();
-      const closeRe = new RegExp(`</\\s*${tag}\\s*>`, "i");
-      // Single-line self-contained block
-      if (closeRe.test(line)) {
-        out.push(line);
-        i++; continue;
-      }
-      // Multi-line: consume until matching close
-      const buf = [line];
-      i++;
-      let depth = 1;
-      const openRe = new RegExp(`<\\s*${tag}\\b`, "gi");
-      while (i < lines.length && depth > 0) {
-        buf.push(lines[i]);
-        const ln = lines[i];
-        const opens = (ln.match(openRe) || []).length;
-        const closes = (ln.match(new RegExp(`</\\s*${tag}\\s*>`, "gi")) || []).length;
-        depth += opens - closes;
-        i++;
-        if (depth <= 0) break;
-      }
-      out.push(buf.join("\n"));
-      continue;
-    }
-
-    // Blank line
-    if (!line.trim()) {
-      flushPara(); flushList();
-      i++; continue;
-    }
-
-    // Heading
-    const h = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (h) {
-      flushPara(); flushList();
-      const lvl = h[1].length;
-      out.push(`<h${lvl}>${inlineMd(h[2])}</h${lvl}>`);
-      i++; continue;
-    }
-
-    // Horizontal rule
-    if (/^[-*_]{3,}\s*$/.test(line)) {
-      flushPara(); flushList();
-      out.push("<hr/>");
-      i++; continue;
-    }
-
-    // Markdown pipe table (GFM-style)
-    //   | h1 | h2 |
-    //   | --- | --- |
-    //   | c1 | c2 |
-    // Detected by current line being a pipe row AND next line being a separator.
-    const _isPipeRow = (s) => /^\s*\|.*\|\s*$/.test(s);
-    const _isPipeSep = (s) => /^\s*\|[\s\-:|]+\|\s*$/.test(s);
-    if (_isPipeRow(line) && i + 1 < lines.length && _isPipeSep(lines[i + 1])) {
-      flushPara(); flushList();
-
-      const splitRow = (s) => {
-        const inner = s.trim().replace(/^\|/, "").replace(/\|$/, "");
-        const parts = [];
-        let buf = "";
-        for (let k = 0; k < inner.length; k++) {
-          if (inner[k] === "\\" && inner[k + 1] === "|") { buf += "|"; k++; continue; }
-          if (inner[k] === "|") { parts.push(buf.trim()); buf = ""; continue; }
-          buf += inner[k];
-        }
-        parts.push(buf.trim());
-        return parts;
-      };
-
-      const sepCells = splitRow(lines[i + 1]);
-      const align = sepCells.map(c => {
-        const L = c.startsWith(":");
-        const R = c.endsWith(":");
-        if (L && R) return "center";
-        if (R) return "right";
-        if (L) return "left";
-        return null;
-      });
-
-      const headerCells = splitRow(line);
-      i += 2;
-      const bodyRows = [];
-      while (i < lines.length && _isPipeRow(lines[i]) && !_isPipeSep(lines[i])) {
-        bodyRows.push(splitRow(lines[i]));
-        i++;
-      }
-
-      const cell = (tag, txt, idx) => {
-        const a = align[idx];
-        const styleAttr = a ? ` style="text-align:${a}"` : "";
-        return `<${tag}${styleAttr}>${inlineMd(txt)}</${tag}>`;
-      };
-
-      let html = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table>`;
-      html += "<thead><tr>";
-      headerCells.forEach((c, idx) => { html += cell("th", c, idx); });
-      html += "</tr></thead><tbody>";
-      bodyRows.forEach(row => {
-        html += "<tr>";
-        for (let k = 0; k < headerCells.length; k++) {
-          html += cell("td", row[k] ?? "", k);
-        }
-        html += "</tr>";
-      });
-      html += "</tbody></table></div>";
-      out.push(html);
-      continue;
-    }
-
-    // Markdown blockquote (single-line style: "> text")
-    const bq = /^>\s?(.*)$/.exec(line);
-    if (bq) {
-      flushPara(); flushList();
-      const buf = [bq[1]];
-      i++;
-      while (i < lines.length) {
-        const nxt = /^>\s?(.*)$/.exec(lines[i]);
-        if (!nxt) break;
-        buf.push(nxt[1]);
-        i++;
-      }
-      // Render inner as markdown paragraphs (light) inside the blockquote
-      const inner = buf
-        .map(seg => seg.trim() ? `<p>${inlineMd(seg)}</p>` : "")
-        .filter(Boolean)
-        .join("");
-      out.push(`<blockquote>${inner}</blockquote>`);
-      continue;
-    }
-
-    // Unordered list
-    const ul = /^[-*]\s+(.*)$/.exec(line);
-    if (ul) {
-      flushPara();
-      if (listType !== "ul") { flushList(); out.push("<ul>"); listType = "ul"; }
-      out.push("<li>" + inlineMd(ul[1]) + "</li>");
-      i++; continue;
-    }
-
-    // Ordered list
-    const ol = /^\d+\.\s+(.*)$/.exec(line);
-    if (ol) {
-      flushPara();
-      if (listType !== "ol") { flushList(); out.push("<ol>"); listType = "ol"; }
-      out.push("<li>" + inlineMd(ol[1]) + "</li>");
-      i++; continue;
-    }
-
-    // Paragraph
-    flushList();
-    paraBuf.push(line);
-    i++;
-  }
-  flushPara(); flushList();
-  if (inCode) out.push(`<pre><code>${escapeHtml(codeBuf.join("\n"))}</code></pre>`);
-  return out.join("\n");
-}
-
-// ─── Strip markdown to a short preview for sidebar ────────────
-function previewText(content, n = 90) {
-  if (!content) return "";
-  const stripped = String(content)
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[#>*_`\[\]\(\)\\]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return stripped.length > n ? stripped.slice(0, n - 1).trimEnd() + "…" : stripped;
-}
+// ─── Markdown → HTML + preview helpers ────────────────────────
+// Shared implementation lives in src/lib/markdown.js so all three
+// books render identically, and support Confluence-style
+// [Included from: X] transclusion via the resolveInclude option.
+import {
+  mdToHtml,
+  previewText,
+  buildIncludeLookup,
+  makeIncludeResolver,
+} from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
 function buildTree(rows) {
@@ -672,57 +423,42 @@ export default function Handbook() {
                   tabIndex={hasChildren ? 0 : -1}
                   onMouseOver={(e) => {
                     if (hasChildren) {
-                      e.currentTarget.style.background = T.slate100;
-                      e.currentTarget.style.color = T.slate900;
+                      e.currentTarget.style.background = T.blueLt;
+                      e.currentTarget.style.color = T.blue;
+                      e.currentTarget.style.borderColor = T.blue;
                     }
                   }}
                   onMouseOut={(e) => {
                     if (hasChildren) {
-                      e.currentTarget.style.background = "transparent";
-                      e.currentTarget.style.color = T.slate500;
+                      e.currentTarget.style.background = T.slate100;
+                      e.currentTarget.style.color = T.slate700;
+                      e.currentTarget.style.borderColor = T.slate300;
                     }
                   }}
                   style={{
-                    width: 22,
-                    minWidth: 22,
-                    height: 22,
+                    width: 24,
+                    minWidth: 24,
+                    height: 24,
                     alignSelf: "center",
                     marginLeft: 6 + depth * 16,
                     marginRight: 4,
                     padding: 0,
-                    background: "transparent",
-                    border: "none",
+                    background: hasChildren ? T.slate100 : "transparent",
+                    border: hasChildren ? `1px solid ${T.slate300}` : "1px solid transparent",
                     borderRadius: 6,
                     cursor: hasChildren ? "pointer" : "default",
-                    color: hasChildren ? T.slate500 : "transparent",
+                    color: hasChildren ? T.slate700 : "transparent",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    lineHeight: 1,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     userSelect: "none",
-                    transition: "background 0.15s, color 0.15s",
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
                   }}
                 >
-                  {hasChildren ? (
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      style={{
-                        transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                        transition: "transform 0.18s ease",
-                      }}
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M3.5 2 L6.5 5 L3.5 8"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : ""}
+                  {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
                 </button>
                 <button
                   type="button"
@@ -813,7 +549,7 @@ export default function Handbook() {
             </div>
           </div>
         )}
-        {selected ? <HandbookPage page={selected} /> : (
+        {selected ? <HandbookPage page={selected} allRows={rows} /> : (
           <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
             {_vp.isPhone ? 'Tap "Sections" to choose a page.' : 'Select a page from the sidebar.'}
           </div>
@@ -824,11 +560,18 @@ export default function Handbook() {
 }
 
 // ─── Page detail view ─────────────────────────────────────────
-function HandbookPage({ page }) {
+function HandbookPage({ page, allRows }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
 
-  const html = useMemo(() => mdToHtml(page?.content || ""), [page?.content]);
+  const resolveInclude = useMemo(
+    () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
+    [allRows]
+  );
+  const html = useMemo(
+    () => mdToHtml(page?.content || "", { resolveInclude }),
+    [page?.content, resolveInclude]
+  );
   const askContext = useMemo(() => {
     return `I'm looking at this page from our team handbook:
 

@@ -36,375 +36,78 @@ import { T } from "../lib/theme.js";
 function iconForTitle(title) {
   const t = String(title || "").toLowerCase();
 
-  // ── Ex-Techbook titles (tree_root 'Tech Support' — folded into Processes) ─
-  if (/racing snail/.test(t))                                       return "🐌";
-  if (/blackberry/.test(t))                                         return "📱";
-  if (/cloud drive/.test(t))                                        return "☁️";
-  if (/ctrl-d|reports?\b/.test(t))                                  return "📊";
-  if (/fax\b/.test(t))                                              return "📠";
-  if (/gnc troubleshoot/.test(t))                                   return "🔧";
-  if (/social media/.test(t))                                       return "📲";
-  if (/spam listings|voicemail|automated attendant/.test(t))        return "📞";
-  if (/team by the minute/.test(t))                                 return "⏱️";
-  if (/^team list$/.test(t))                                        return "👥";
-  if (/^tech support$/.test(t))                                     return "🛠️";
-  if (/systems setup|office - systems|desk checklist/.test(t))      return "💻";
-  if (/policyholder list/.test(t))                                  return "🧾";
+  // ── Icons for moved-in ex-Techbook pages (still live in Playbook) ────
+  if (/fax\b/.test(t))                                            return "📠";
+  if (/spam|voicemail|attendant/.test(t))                         return "📞";
+  if (/team by the minute/.test(t))                               return "⏱️";
+  if (/office - systems|desk checklist/.test(t))                  return "🖥️";
+  if (/policyholder list/.test(t))                                return "📋";
+  if (/^dss/.test(t))                                             return "✍️";
 
-  // ── Setup / role onboarding ────────────────────────────────────────────
-  if (/new (account manager|reception) setup/.test(t))              return "🧑\u200d💼";
-  if (/^0[1-9] reception/.test(t))                                  return "🛎️";
-  if (/^0[1-9] admin setup/.test(t))                                return "🗂️";
-  if (/^0[1-9] tech setup/.test(t))                                 return "🔌";
+  // ── Playbook: role/setup pages ──────────────────────────────────────
+  if (/new (account manager|reception) setup/.test(t))            return "🧑\u200d💼";
+  if (/^0[1-9] reception/.test(t) || /welcome.*reception/.test(t))return "🛎️";
+  if (/^0[1-9] admin setup|^0[1-9] tech setup/.test(t))           return "🖥️";
+  if (/daily checklist|daily rhythm|team huddle/.test(t))         return "✅";
 
-  // ── Daily rhythm / huddle / retention flow ─────────────────────────────
-  if (/daily checklist|daily rhythm/.test(t))                       return "📅";
-  if (/team huddle/.test(t))                                        return "🎙️";
-  if (/retention (appointment|task)/.test(t))                       return "🔁";
+  // ── Playbook: FIT / sales conversations ─────────────────────────────
+  if (/simple .+ fit|fit opener|fit closer|fit conversations?/.test(t)) return "🎯";
+  if (/objection|overcomer/.test(t))                              return "🤔";
+  if (/referral/.test(t))                                         return "🤝";
+  if (/prospect|lead process|lead file|get new leads/.test(t))    return "🎣";
+  if (/appointment/.test(t))                                      return "📅";
+  if (/icebreaker|frogs?\b/.test(t))                              return "🎤";
 
-  // ── Sales conversations & pipeline ─────────────────────────────────────
-  if (/simple .+ fit|^fit (opener|closer)|fit conversations?|fit closer - auto/.test(t)) return "🎯";
-  if (/^prospect|lead process|lead file|get new leads|caboom leads/.test(t)) return "🎣";
-  if (/objection|overcomer/.test(t))                                return "🤔";
-  if (/^referral|referral script|referrals$/.test(t))               return "🔗";
-  if (/appointment (setting|scheduling|verify|remind|create)/.test(t)) return "🗓️";
-  if (/icebreaker/.test(t))                                         return "🧊";
-  if (/\bfrogs?\b/.test(t))                                        return "🐸";
-  if (/value statements/.test(t))                                   return "⭐";
+  // ── Playbook: LOB knowledge / tasks ─────────────────────────────────
+  if (/auto (knowledge|tasks?)|farm auto|commercial auto|single line auto|auto no home/.test(t)) return "🚗";
+  if (/home ?owner|fire (knowledge|tasks?)|dwelling|rental condominium|apartment specifications/.test(t)) return "🏠";
+  if (/life (knowledge|tasks?|review|beneficiary|funding|proximity)|funeral|lna|birthday life|first.last chance life|cop term|no life\b|extended life/.test(t)) return "🕯️";
+  if (/health (knowledge|tasks?)|medicare|medsupp|ltc\b/.test(t)) return "🩺";
+  if (/investing|401k|529|jackson|ips|annuity|retirement|brokerage/.test(t)) return "📈";
+  if (/mortgage|quicken|loan protection|refi/.test(t))            return "🏦";
+  if (/^boat|boatowner/.test(t))                                  return "⛵";
+  if (/business|commercial\b/.test(t))                            return "🏢";
+  if (/liability|plup|clup|umbi|umpd|professional liability/.test(t)) return "🛡️";
+  if (/valuables|jewelry/.test(t))                                return "💎";
+  if (/disability|^di\b|di (bridge|fit)/.test(t))                 return "♿";
+  if (/^hi\b|hi (bridge|fit)|income protection/.test(t))          return "🏥";
+  if (/flood/.test(t))                                            return "🌊";
+  if (/earthquake/.test(t))                                       return "🌎";
+  if (/identity theft/.test(t))                                   return "🕵️";
+  if (/roof/.test(t))                                             return "🏚️";
+  if (/water damage/.test(t))                                     return "💧";
 
-  // ── Lines of business (each LOB, one icon) ─────────────────────────────
-  if (/auto (knowledge|tasks?|no home)|farm auto|commercial auto|single line auto|added.replaced auto|dss - auto/.test(t)) return "🚗";
-  if (/homeowner|home (endorsement|processes)|fire (knowledge|tasks?)|dwelling|rental condominium|apartment specifications|optional endorsements - home|^ting\b|ting -/.test(t)) return "🏠";
-  if (/life (knowledge|tasks?|review|beneficiary|funding|proximity|specific|specialist)|funeral|lna|birthday life|first.last chance life|cop term|no life\b|extended life|minor beneficiary|other life lists|coverage limitations - life/.test(t)) return "🕯️";
-  if (/health (knowledge|tasks?)|medicare|medsupp|ltc\b|health & lifestyle/.test(t)) return "🩺";
-  if (/investing|401k|529|jackson|ips|annuity|retirement (insurance )?(bridge|seed|fit)?|brokerage|product details & fees/.test(t)) return "📈";
-  if (/mortgage|quicken|loan protection|refi/.test(t))              return "🏦";
-  if (/^boat|boatowner/.test(t))                                    return "⛵";
-  if (/^business\b|^commercial$/.test(t))                           return "🏢";
-  if (/liability|plup|clup|umbi|umpd|professional liability/.test(t)) return "⚖️";
-  if (/valuables|jewelry/.test(t))                                  return "💎";
-  if (/disability|^di\b|di (bridge|fit)/.test(t))                   return "♿";
-  if (/^hi\b|hi (bridge|fit)|income protection/.test(t))            return "🏥";
-  if (/flood/.test(t))                                              return "🌊";
-  if (/earthquake/.test(t))                                         return "🌋";
-  if (/identity theft/.test(t))                                     return "🕵️";
-  if (/roof(er)?/.test(t))                                          return "🏚️";
-  if (/water damage/.test(t))                                       return "💧";
-  if (/youthful driver/.test(t))                                    return "🚙";
-  if (/trupanion/.test(t))                                          return "🐾";
+  // ── Playbook: service, ops, messaging ───────────────────────────────
+  if (/claim/.test(t))                                            return "📋";
+  if (/dss|beacon|odometer/.test(t))                              return "📡";
+  if (/bridge the gap/.test(t))                                   return "🌉";
+  if (/cancel|late pay|payment/.test(t))                          return "⛔";
+  if (/salt (messages?)?/.test(t))                                return "🧂";
+  if (/(script|template|message|opener|closer|salt|sympathy|thank you|congratulation|welcome)/.test(t)) return "💬";
+  if (/task/.test(t))                                             return "✅";
 
-  // ── Ops, claims, service ───────────────────────────────────────────────
-  if (/expecting cat|catastroph|emergency event/.test(t))           return "🚨";
-  if (/claim/.test(t))                                              return "🆘";
-  if (/dss|beacon|odometer/.test(t))                                return "📡";
-  if (/bridge the gap/.test(t))                                     return "🌉";
-  if (/exposure notice/.test(t))                                    return "⚠️";
-  if (/underwriting/.test(t))                                       return "⏳";
-  if (/appraisal|pap appraisers/.test(t))                           return "🔍";
-  if (/estate planning attorneys/.test(t))                          return "🏛️";
-  if (/office cleaning|supply.stocking|physical systems|binder.folder/.test(t)) return "🧹";
-  if (/bod message process/.test(t))                                return "🌅";
-  if (/automated task closure/.test(t))                             return "🤖";
-  if (/case organization/.test(t))                                  return "📁";
-  if (/task organization|task prefixes|task subject/.test(t))       return "📇";
-  if (/background tasks|weekly - background|monthly - background|daily - background|^auto tasks$|^fire tasks$|^health tasks$|^life tasks$|^billing tasks$/.test(t)) return "✅";
-  if (/renewal premium change|renewal - policy issued|^conversion$/.test(t)) return "🔄";
-  if (/opportunity required fields/.test(t))                        return "📝";
+  // ── Playbook: apartments / properties (fallback for named complexes) ─
+  if (/\bthe\s*$|^\bthe\b|apartments?|landmark|oaks?|creek|ridge|encore|marquis|toscana|vantage|vineyard|viridian|abbey|anthony|boulevard|crest|grandview|hawthorne|montecristo|retreat|savannah|sendera|tribute|ventura|west oaks|bramblemaw/.test(t)) return "🏘️";
 
-  // ── Messages, scripts, comms ──────────────────────────────────────────
-  if (/salt (messages?|template)/.test(t))                          return "🧂";
-  if (/onboarding messages|sale completed|welcome & setup/.test(t)) return "🎁";
-  if (/information messages|documents (sent|needed)|authorize info/.test(t)) return "📤";
-  if (/policy issued messages/.test(t))                             return "📜";
-  if (/update messages|general follow-up|inbound, no contact|daily - update messages/.test(t)) return "📢";
-  if (/service messages/.test(t))                                   return "✉️";
-  if (/late pay(ment)?|cancellation/.test(t))                       return "💸";
-  if (/payment (script|processes)/.test(t))                         return "💳";
-  if (/sympathy/.test(t))                                           return "💐";
-  if (/thank you/.test(t))                                          return "🙏";
-  if (/congratulation/.test(t))                                     return "🎊";
-  if (/^welcome/.test(t))                                           return "👋";
-  if (/cards & letters/.test(t))                                    return "💌";
-  if (/setup complete|setup incomplete/.test(t))                    return "🎛️";
-  if (/setup gnc/.test(t))                                          return "🎚️";
-  if (/quotes - motivation|videos - motivation/.test(t))            return "🎬";
-  if (/soft referral/.test(t))                                      return "🤲";
-  if (/types of insurance documents/.test(t))                       return "📑";
-  if (/reminder-email|reminder email/.test(t))                      return "📨";
-  if (/^inbound calls$/.test(t))                                    return "📥";
-  if (/^inbound texts$/.test(t))                                    return "📩";
-  if (/outlook shared folders/.test(t))                             return "📂";
-  if (/paid training programs|coaching/.test(t))                    return "🎓";
-
-  // ── Named properties / apartment complexes ─────────────────────────────
-  if (/apartments?\b|landmark|encore 281|marquis at|toscana|vantage at|vineyard springs|viridian|abbey at|anthony, the|boulevard at|crest round|creekstone|grandview|hawthorne at|montecristo|retreat at|savannah oaks|sendera|tribute at|ventura ridge|west oaks|bramblemaw|lakeview loancare/.test(t)) return "🏘️";
-  if (/, the$/.test(t))                                             return "🏘️";
-
-  // ── Checklist / verify-list bundles ────────────────────────────────────
-  if (/verify-list|life-event trigger|code reds? list/.test(t))     return "📋";
+  // ── Handbook-style fallbacks (rare in playbook, but harmless) ───────
+  if (/^handbook\b/.test(t))                                      return "📘";
+  if (/benefits/.test(t))                                         return "💼";
+  if (/vehicle/.test(t))                                          return "🚗";
+  if (/training|course|coaching/.test(t))                         return "🎓";
 
   return "📄";
 }
 
-// ─── Markdown → HTML (lightweight, with HTML passthrough) ─────
-// Handles the subset of markdown the handbook ingestion produces:
-//   #..######, paragraphs, - and * bullets, 1. ordered lists,
-//   **bold**, *italic*, `code`, [text](url), --- hr, ``` fences.
-// Plus: passes through block HTML for <details>, <summary>,
-// <blockquote>, <table>, <div>, <figure>, <aside>.
-// Unescapes backslash-escaped asterisks/underscores so labels
-// like \*\*Info:\*\* render bold (the ingestion over-escaped them).
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function inlineMd(s) {
-  if (!s) return "";
-  let out = String(s);
-
-  // Unescape \* \_ before inline parsing so escaped bold/italic still renders.
-  out = out.replace(/\\([*_`\[\]])/g, "$1");
-
-  // Links [text](url) — guard against javascript: scheme.
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
-    const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : "#";
-    return `<a href="${safe}" target="_blank" rel="noreferrer noopener">${txt}</a>`;
-  });
-
-  // Bold (** or __)
-  out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
-
-  // Italic (* or _), not consuming **
-  out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
-  out = out.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
-
-  // Inline code
-  out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-  return out;
-}
-
-const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
-
-export function mdToHtml(md) {
-  const src = String(md || "");
-  if (!src.trim()) return "";
-
-  const lines = src.split(/\r?\n/);
-  const out = [];
-  let i = 0;
-  let inCode = false;
-  let codeBuf = [];
-  let listType = null; // "ul" | "ol"
-  let paraBuf = [];
-
-  const flushPara = () => {
-    if (paraBuf.length) {
-      out.push("<p>" + inlineMd(paraBuf.join(" ")) + "</p>");
-      paraBuf = [];
-    }
-  };
-  const flushList = () => {
-    if (listType) {
-      out.push(`</${listType}>`);
-      listType = null;
-    }
-  };
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Code fence
-    if (/^```/.test(line)) {
-      if (inCode) {
-        out.push(`<pre><code>${escapeHtml(codeBuf.join("\n"))}</code></pre>`);
-        codeBuf = [];
-        inCode = false;
-      } else {
-        flushPara(); flushList();
-        inCode = true;
-      }
-      i++; continue;
-    }
-    if (inCode) { codeBuf.push(line); i++; continue; }
-
-    // HTML block passthrough
-    const htmlOpen = new RegExp(`^\\s*<(${PASSTHROUGH_TAGS.join("|")})\\b`, "i").exec(line);
-    if (htmlOpen) {
-      flushPara(); flushList();
-      const tag = htmlOpen[1].toLowerCase();
-      const closeRe = new RegExp(`</\\s*${tag}\\s*>`, "i");
-      // Single-line self-contained block
-      if (closeRe.test(line)) {
-        out.push(line);
-        i++; continue;
-      }
-      // Multi-line: consume until matching close
-      const buf = [line];
-      i++;
-      let depth = 1;
-      const openRe = new RegExp(`<\\s*${tag}\\b`, "gi");
-      while (i < lines.length && depth > 0) {
-        buf.push(lines[i]);
-        const ln = lines[i];
-        const opens = (ln.match(openRe) || []).length;
-        const closes = (ln.match(new RegExp(`</\\s*${tag}\\s*>`, "gi")) || []).length;
-        depth += opens - closes;
-        i++;
-        if (depth <= 0) break;
-      }
-      out.push(buf.join("\n"));
-      continue;
-    }
-
-    // Blank line
-    if (!line.trim()) {
-      flushPara(); flushList();
-      i++; continue;
-    }
-
-    // Heading
-    const h = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (h) {
-      flushPara(); flushList();
-      const lvl = h[1].length;
-      out.push(`<h${lvl}>${inlineMd(h[2])}</h${lvl}>`);
-      i++; continue;
-    }
-
-    // Horizontal rule
-    if (/^[-*_]{3,}\s*$/.test(line)) {
-      flushPara(); flushList();
-      out.push("<hr/>");
-      i++; continue;
-    }
-
-    // Markdown pipe table (GFM-style)
-    //   | h1 | h2 |
-    //   | --- | --- |
-    //   | c1 | c2 |
-    // Detected by current line being a pipe row AND next line being a separator.
-    const _isPipeRow = (s) => /^\s*\|.*\|\s*$/.test(s);
-    const _isPipeSep = (s) => /^\s*\|[\s\-:|]+\|\s*$/.test(s);
-    if (_isPipeRow(line) && i + 1 < lines.length && _isPipeSep(lines[i + 1])) {
-      flushPara(); flushList();
-
-      const splitRow = (s) => {
-        const inner = s.trim().replace(/^\|/, "").replace(/\|$/, "");
-        const parts = [];
-        let buf = "";
-        for (let k = 0; k < inner.length; k++) {
-          if (inner[k] === "\\" && inner[k + 1] === "|") { buf += "|"; k++; continue; }
-          if (inner[k] === "|") { parts.push(buf.trim()); buf = ""; continue; }
-          buf += inner[k];
-        }
-        parts.push(buf.trim());
-        return parts;
-      };
-
-      const sepCells = splitRow(lines[i + 1]);
-      const align = sepCells.map(c => {
-        const L = c.startsWith(":");
-        const R = c.endsWith(":");
-        if (L && R) return "center";
-        if (R) return "right";
-        if (L) return "left";
-        return null;
-      });
-
-      const headerCells = splitRow(line);
-      i += 2;
-      const bodyRows = [];
-      while (i < lines.length && _isPipeRow(lines[i]) && !_isPipeSep(lines[i])) {
-        bodyRows.push(splitRow(lines[i]));
-        i++;
-      }
-
-      const cell = (tag, txt, idx) => {
-        const a = align[idx];
-        const styleAttr = a ? ` style="text-align:${a}"` : "";
-        return `<${tag}${styleAttr}>${inlineMd(txt)}</${tag}>`;
-      };
-
-      let html = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table>`;
-      html += "<thead><tr>";
-      headerCells.forEach((c, idx) => { html += cell("th", c, idx); });
-      html += "</tr></thead><tbody>";
-      bodyRows.forEach(row => {
-        html += "<tr>";
-        for (let k = 0; k < headerCells.length; k++) {
-          html += cell("td", row[k] ?? "", k);
-        }
-        html += "</tr>";
-      });
-      html += "</tbody></table></div>";
-      out.push(html);
-      continue;
-    }
-
-    // Markdown blockquote (single-line style: "> text")
-    const bq = /^>\s?(.*)$/.exec(line);
-    if (bq) {
-      flushPara(); flushList();
-      const buf = [bq[1]];
-      i++;
-      while (i < lines.length) {
-        const nxt = /^>\s?(.*)$/.exec(lines[i]);
-        if (!nxt) break;
-        buf.push(nxt[1]);
-        i++;
-      }
-      // Render inner as markdown paragraphs (light) inside the blockquote
-      const inner = buf
-        .map(seg => seg.trim() ? `<p>${inlineMd(seg)}</p>` : "")
-        .filter(Boolean)
-        .join("");
-      out.push(`<blockquote>${inner}</blockquote>`);
-      continue;
-    }
-
-    // Unordered list
-    const ul = /^[-*]\s+(.*)$/.exec(line);
-    if (ul) {
-      flushPara();
-      if (listType !== "ul") { flushList(); out.push("<ul>"); listType = "ul"; }
-      out.push("<li>" + inlineMd(ul[1]) + "</li>");
-      i++; continue;
-    }
-
-    // Ordered list
-    const ol = /^\d+\.\s+(.*)$/.exec(line);
-    if (ol) {
-      flushPara();
-      if (listType !== "ol") { flushList(); out.push("<ol>"); listType = "ol"; }
-      out.push("<li>" + inlineMd(ol[1]) + "</li>");
-      i++; continue;
-    }
-
-    // Paragraph
-    flushList();
-    paraBuf.push(line);
-    i++;
-  }
-  flushPara(); flushList();
-  if (inCode) out.push(`<pre><code>${escapeHtml(codeBuf.join("\n"))}</code></pre>`);
-  return out.join("\n");
-}
-
-// ─── Strip markdown to a short preview for sidebar ────────────
-function previewText(content, n = 90) {
-  if (!content) return "";
-  const stripped = String(content)
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[#>*_`\[\]\(\)\\]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return stripped.length > n ? stripped.slice(0, n - 1).trimEnd() + "…" : stripped;
-}
+// ─── Markdown → HTML + preview helpers ────────────────────────
+// Shared implementation lives in src/lib/markdown.js so all three
+// books render identically, and support Confluence-style
+// [Included from: X] transclusion via the resolveInclude option.
+import {
+  mdToHtml,
+  previewText,
+  buildIncludeLookup,
+  makeIncludeResolver,
+} from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
 function buildTree(rows) {
@@ -457,10 +160,10 @@ export default function Playbook() {
   // Playbook renders everything in the playbook table (tree_root in
   // {Checklists, Product Knowledge}). Tech Book was dismantled 2026-07-04.
   const basePath          = "/playbook";
-  const moduleTitle       = "Processes";
+  const moduleTitle       = "Playbook";
   const moduleSubtitle    = "Operational reference — processes, product knowledge, training. Mirrored from Confluence.";
-  const searchPlaceholder = "Search processes…";
-  const emptyLabel        = "processes";
+  const searchPlaceholder = "Search playbook…";
+  const emptyLabel        = "playbook";
   const urlRe             = /^\/playbook\/([^/]+)\/?$/;
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -751,57 +454,42 @@ export default function Playbook() {
                   tabIndex={hasChildren ? 0 : -1}
                   onMouseOver={(e) => {
                     if (hasChildren) {
-                      e.currentTarget.style.background = T.slate100;
-                      e.currentTarget.style.color = T.slate900;
+                      e.currentTarget.style.background = T.blueLt;
+                      e.currentTarget.style.color = T.blue;
+                      e.currentTarget.style.borderColor = T.blue;
                     }
                   }}
                   onMouseOut={(e) => {
                     if (hasChildren) {
-                      e.currentTarget.style.background = "transparent";
-                      e.currentTarget.style.color = T.slate500;
+                      e.currentTarget.style.background = T.slate100;
+                      e.currentTarget.style.color = T.slate700;
+                      e.currentTarget.style.borderColor = T.slate300;
                     }
                   }}
                   style={{
-                    width: 22,
-                    minWidth: 22,
-                    height: 22,
+                    width: 24,
+                    minWidth: 24,
+                    height: 24,
                     alignSelf: "center",
                     marginLeft: 6 + depth * 16,
                     marginRight: 4,
                     padding: 0,
-                    background: "transparent",
-                    border: "none",
+                    background: hasChildren ? T.slate100 : "transparent",
+                    border: hasChildren ? `1px solid ${T.slate300}` : "1px solid transparent",
                     borderRadius: 6,
                     cursor: hasChildren ? "pointer" : "default",
-                    color: hasChildren ? T.slate500 : "transparent",
+                    color: hasChildren ? T.slate700 : "transparent",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    lineHeight: 1,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     userSelect: "none",
-                    transition: "background 0.15s, color 0.15s",
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
                   }}
                 >
-                  {hasChildren ? (
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      style={{
-                        transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                        transition: "transform 0.18s ease",
-                      }}
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M3.5 2 L6.5 5 L3.5 8"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : ""}
+                  {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
                 </button>
                 <button
                   type="button"
@@ -891,7 +579,7 @@ export default function Playbook() {
             </div>
           </div>
         )}
-        {selected ? <PlaybookPage page={selected} /> : (
+        {selected ? <PlaybookPage page={selected} allRows={rows} /> : (
           <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
             {_vp.isPhone ? 'Tap "Sections" to choose a page.' : 'Select a page from the sidebar.'}
           </div>
@@ -902,8 +590,15 @@ export default function Playbook() {
 }
 
 // ─── Page detail view ─────────────────────────────────────────
-function PlaybookPage({ page }) {
-  const html = useMemo(() => mdToHtml(page?.content || ""), [page?.content]);
+function PlaybookPage({ page, allRows }) {
+  const resolveInclude = useMemo(
+    () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
+    [allRows]
+  );
+  const html = useMemo(
+    () => mdToHtml(page?.content || "", { resolveInclude }),
+    [page?.content, resolveInclude]
+  );
   const askContext = useMemo(() => {
     return `I'm looking at this page from our team handbook:
 
