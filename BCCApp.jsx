@@ -21,6 +21,7 @@ import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Renewals from "./src/modules/Renewals.jsx";
+import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -96,6 +97,7 @@ const NAV_ITEMS = [
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "playbook",    label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "renewals",    label: "Renewals",    icon: "shield",        roles: TEAM_VISIBLE_ROLES },
+  { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
@@ -564,6 +566,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     renewals:    <ErrorBoundary name="Renewals"><Renewals userRole={userRole} userId={userId} /></ErrorBoundary>,
+    scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
