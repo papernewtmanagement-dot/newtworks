@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 
@@ -322,8 +322,16 @@ function buildTree(rows) {
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
-  // Natural-ish sort: numeric prefixes first (01, 02…), then alpha
+  // Sort:
+  //   1. Rows with sort_order set (manual pins) sort AFTER unpinned rows.
+  //      Among pinned rows, ascending by sort_order.
+  //   2. Unpinned rows keep the natural-ish sort — numeric prefixes first (01, 02…), then alpha.
   const cmp = (a, b) => {
+    const asr = a?.sort_order;
+    const bsr = b?.sort_order;
+    if (asr != null && bsr == null) return 1;
+    if (asr == null && bsr != null) return -1;
+    if (asr != null && bsr != null) return asr - bsr;
     const at = (a?.title || "");
     const bt = (b?.title || "");
     const an = /^(\d+)/.exec(at);
@@ -410,7 +418,7 @@ export default function Handbook() {
         }
         const { data, error: qErr } = await supabase
           .from("handbook")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, version, is_active, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
         if (cancelled) return;
@@ -615,7 +623,7 @@ export default function Handbook() {
 
         {/* Tree */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-          {(visibleIds ? flat : visibleFlat).map((entry) => {
+          {(visibleIds ? flat : visibleFlat).map((entry, idx, arr) => {
             const node = entry.node;
             const depth = entry.depth;
             const isActive = node.confluence_page_id === selectedId;
@@ -627,9 +635,25 @@ export default function Handbook() {
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
+            // Divider above the first pinned-to-end entry — marks the visual break
+            // between alphabetized pages and manually pinned pages (e.g. Signature Page).
+            // Skipped in search mode where the natural ordering context isn't shown.
+            const showDivider = !visibleIds
+              && node.sort_order != null
+              && (idx === 0 || (arr[idx - 1]?.node?.sort_order ?? null) == null);
             return (
+              <Fragment key={node.confluence_page_id}>
+              {showDivider && (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    height: 1,
+                    background: T.slate200,
+                    margin: "14px 12px 10px 12px",
+                  }}
+                />
+              )}
               <div
-                key={node.confluence_page_id}
                 style={{
                   display: "flex",
                   alignItems: "stretch",
@@ -723,6 +747,7 @@ export default function Handbook() {
                   </div>
                 </button>
               </div>
+              </Fragment>
             );
           })}
         </div>
