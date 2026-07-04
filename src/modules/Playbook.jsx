@@ -360,7 +360,22 @@ function flattenTree(roots) {
 
 
 // ─── Module ───────────────────────────────────────────────────
-export default function Playbook() {
+export default function Playbook({ mode = "playbook" } = {}) {
+  // ── Mode config ───────────────────────────────────────────────────
+  // "playbook"    → everything EXCEPT tree_root='Tech Support'; URL /playbook/
+  // "techsupport" → ONLY tree_root='Tech Support';                 URL /tech-support/
+  const isTech = mode === "techsupport";
+  const basePath      = isTech ? "/tech-support"                                 : "/playbook";
+  const moduleTitle   = isTech ? "Tech Support"                                  : "Playbook";
+  const moduleSubtitle= isTech
+    ? "Troubleshooting reference — systems, tools, and workarounds. Mirrored from Confluence."
+    : "Operational reference — processes, product knowledge, training. Mirrored from Confluence.";
+  const searchPlaceholder = isTech ? "Search tech support…" : "Search playbook…";
+  const emptyLabel        = isTech ? "tech support"          : "playbook";
+  // URL regex escapes the basePath slashes/hyphens automatically since we only use word chars + hyphen
+  const urlRe = isTech
+    ? /^\/tech-support\/([^/]+)\/?$/
+    : /^\/playbook\/([^/]+)\/?$/;
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -368,13 +383,13 @@ export default function Playbook() {
   // Page id is carried in the URL as /playbook/<confluence_page_id>.
   // Refresh keeps you on the same page; back/forward navigates between visits.
   const _initialSelectedId = (typeof window !== "undefined")
-    ? (/^\/playbook\/([^/]+)\/?$/.exec(window.location.pathname || "")?.[1] || null)
+    ? (urlRe.exec(window.location.pathname || "")?.[1] || null)
     : null;
   const [selectedId, setSelectedId] = useState(_initialSelectedId);
   const selectPage = useCallback((id, replace = false) => {
     setSelectedId(id);
     if (typeof window === "undefined" || !id) return;
-    const desired = `/playbook/${encodeURIComponent(id)}`;
+    const desired = `${basePath}/${encodeURIComponent(id)}`;
     if (window.location.pathname === desired) return;
     if (replace) window.history.replaceState({}, "", desired);
     else window.history.pushState({}, "", desired);
@@ -382,7 +397,7 @@ export default function Playbook() {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const onPop = () => {
-      const m = /^\/playbook\/([^/]+)\/?$/.exec(window.location.pathname || "");
+      const m = urlRe.exec(window.location.pathname || "");
       setSelectedId(m ? decodeURIComponent(m[1]) : null);
     };
     window.addEventListener("popstate", onPop);
@@ -401,11 +416,14 @@ export default function Playbook() {
           if (!cancelled) { setError("Supabase client not initialized."); setRows([]); }
           return;
         }
-        const { data, error: qErr } = await supabase
+        let q = supabase
           .from("playbook")
           .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, version, is_active, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
+        // Scope by mode: playbook excludes Tech Support; techsupport is exclusively Tech Support.
+        q = isTech ? q.eq("tree_root", "Tech Support") : q.neq("tree_root", "Tech Support");
+        const { data, error: qErr } = await q;
         if (cancelled) return;
         if (qErr) { setError(qErr.message); setRows([]); }
         else {
@@ -417,7 +435,7 @@ export default function Playbook() {
           // This avoids stomping the URL-derived initial selectedId.
         }
       } catch (e) {
-        if (!cancelled) { setError(e?.message || "Failed to load handbook."); setRows([]); }
+        if (!cancelled) { setError(e?.message || `Failed to load ${emptyLabel}.`); setRows([]); }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -471,7 +489,7 @@ export default function Playbook() {
   if (loading) {
     return (
       <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
-        Loading playbook…
+        Loading {moduleTitle.toLowerCase()}…
       </div>
     );
   }
@@ -479,7 +497,7 @@ export default function Playbook() {
     return (
       <div style={{ padding: 40 }}>
         <div style={{ background: T.redLt, color: T.red, padding: 16, borderRadius: 10, fontSize: 13, border: `1px solid ${T.red}33` }}>
-          <strong>Could not load the playbook.</strong><br />
+          <strong>Could not load the {emptyLabel}.</strong><br />
           {error}
         </div>
       </div>
@@ -489,9 +507,9 @@ export default function Playbook() {
     return (
       <div style={{ padding: 40 }}>
         <div style={{ background: T.slate50, padding: 24, borderRadius: 12, border: `1px solid ${T.slate200}` }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No playbook pages yet</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No {emptyLabel} pages yet</div>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-            The playbook table is empty. The Confluence ingestion pipeline writes here.
+            The {emptyLabel} tree is empty. The Confluence ingestion pipeline writes here.
           </div>
         </div>
       </div>
@@ -544,16 +562,16 @@ export default function Playbook() {
             Team Operations
           </div>
           <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>
-            Playbook
+            {moduleTitle}
           </div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
-            Operational reference — checklists, product knowledge, tech support, training. Mirrored from Confluence.
+            {moduleSubtitle}
           </div>
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search playbook…"
+            placeholder={searchPlaceholder}
             style={{
               width: "100%", marginTop: 12,
               padding: "8px 12px",
