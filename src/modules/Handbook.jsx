@@ -672,42 +672,57 @@ export default function Handbook() {
                   tabIndex={hasChildren ? 0 : -1}
                   onMouseOver={(e) => {
                     if (hasChildren) {
-                      e.currentTarget.style.background = T.blueLt;
-                      e.currentTarget.style.color = T.blue;
-                      e.currentTarget.style.borderColor = T.blue;
+                      e.currentTarget.style.background = T.slate100;
+                      e.currentTarget.style.color = T.slate900;
                     }
                   }}
                   onMouseOut={(e) => {
                     if (hasChildren) {
-                      e.currentTarget.style.background = T.slate100;
-                      e.currentTarget.style.color = T.slate700;
-                      e.currentTarget.style.borderColor = T.slate300;
+                      e.currentTarget.style.background = "transparent";
+                      e.currentTarget.style.color = T.slate500;
                     }
                   }}
                   style={{
-                    width: 24,
-                    minWidth: 24,
-                    height: 24,
+                    width: 22,
+                    minWidth: 22,
+                    height: 22,
                     alignSelf: "center",
                     marginLeft: 6 + depth * 16,
                     marginRight: 4,
                     padding: 0,
-                    background: hasChildren ? T.slate100 : "transparent",
-                    border: hasChildren ? `1px solid ${T.slate300}` : "1px solid transparent",
+                    background: "transparent",
+                    border: "none",
                     borderRadius: 6,
                     cursor: hasChildren ? "pointer" : "default",
-                    color: hasChildren ? T.slate700 : "transparent",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    lineHeight: 1,
+                    color: hasChildren ? T.slate500 : "transparent",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     userSelect: "none",
-                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                    transition: "background 0.15s, color 0.15s",
                   }}
                 >
-                  {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
+                  {hasChildren ? (
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      style={{
+                        transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                        transition: "transform 0.18s ease",
+                      }}
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M3.5 2 L6.5 5 L3.5 8"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : ""}
                 </button>
                 <button
                   type="button"
