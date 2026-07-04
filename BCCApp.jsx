@@ -94,7 +94,7 @@ const NAV_ITEMS = [
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
   { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
-  { id: "playbook",    label: "Playbook",    icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
+  { id: "playbook",    label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "renewals",    label: "Renewals",    icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
@@ -106,7 +106,7 @@ const NAV_ITEMS = [
   { id: "automations", label: "Automations", icon: "zap",           roles: ADMIN_ROLES },
   { id: "memory",      label: "Memory",      icon: "brain",         roles: ADMIN_ROLES },
   { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
-  { id: "admin",       label: "Admin Book",  icon: "briefcase",     roles: ADMIN_ROLES },
+  { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
 ];
 
