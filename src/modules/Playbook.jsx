@@ -66,7 +66,6 @@ function iconForTitle(title) {
   if (/investing|401k|529|jackson|ips|annuity|retirement|brokerage/.test(t)) return "📈";
   if (/mortgage|quicken|loan protection|refi/.test(t))            return "🏦";
   if (/^boat|boatowner/.test(t))                                  return "⛵";
-  if (/business|commercial\b/.test(t))                            return "🏢";
   if (/liability|plup|clup|umbi|umpd|professional liability/.test(t)) return "🛡️";
   if (/valuables|jewelry/.test(t))                                return "💎";
   if (/disability|^di\b|di (bridge|fit)/.test(t))                 return "♿";
@@ -90,9 +89,6 @@ function iconForTitle(title) {
   if (/\bthe\s*$|^\bthe\b|apartments?|landmark|oaks?|creek|ridge|encore|marquis|toscana|vantage|vineyard|viridian|abbey|anthony|boulevard|crest|grandview|hawthorne|montecristo|retreat|savannah|sendera|tribute|ventura|west oaks|bramblemaw/.test(t)) return "🏘️";
 
   // ── Handbook-style fallbacks (rare in playbook, but harmless) ───────
-  if (/^handbook\b/.test(t))                                      return "📘";
-  if (/benefits/.test(t))                                         return "💼";
-  if (/vehicle/.test(t))                                          return "🚗";
   if (/training|course|coaching/.test(t))                         return "🎓";
 
   return "📄";
