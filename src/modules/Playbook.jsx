@@ -35,21 +35,73 @@ import { T } from "../lib/theme.js";
 // Map page title to a small emoji glyph so the sidebar reads at a glance.
 function iconForTitle(title) {
   const t = String(title || "").toLowerCase();
-  if (/^handbook\b/.test(t))                  return "📘";
-  if (/benefits/.test(t))                     return "💼";
-  if (/hours|time\s*off|pto|vacation/.test(t))return "⏰";
-  if (/bonus|pay|compensation/.test(t))       return "💵";
-  if (/win the week|wtw/.test(t))             return "🏆";
-  if (/development|training/.test(t))         return "🎓";
-  if (/culture|professional/.test(t))         return "🤝";
-  if (/employment|termination|hire|fire/.test(t)) return "📝";
-  if (/health|safety|security/.test(t) && !/info/.test(t)) return "🛡️";
-  if (/information security|spi|privacy/.test(t)) return "🔒";
-  if (/meeting|review|report/.test(t))        return "📊";
-  if (/property|system|information/.test(t))  return "🖥️";
-  if (/vehicle/.test(t))                      return "🚗";
-  if (/protecting spi/.test(t))               return "🔐";
-  if (/personal information/.test(t))         return "🪪";
+
+  // ── Techbook-specific (tree_root = "Tech Support") ──────────────────
+  if (/racing snail/.test(t))                                     return "🐌";
+  if (/blackberry/.test(t))                                       return "📱";
+  if (/cloud drive/.test(t))                                      return "☁️";
+  if (/ctrl-d|reports?\b/.test(t))                                return "📊";
+  if (/fax\b/.test(t))                                            return "📠";
+  if (/gnc|troubleshoot/.test(t))                                 return "⚙️";
+  if (/social media/.test(t))                                     return "📲";
+  if (/spam|voicemail|attendant/.test(t))                         return "📞";
+  if (/team by the minute/.test(t))                               return "⏱️";
+  if (/^team list$/.test(t))                                      return "👥";
+  if (/^tech support$/.test(t))                                   return "🔧";
+  if (/systems setup|office - systems|desk checklist/.test(t))    return "🖥️";
+  if (/policyholder list/.test(t))                                return "📋";
+
+  // ── Playbook: role/setup pages ──────────────────────────────────────
+  if (/new (account manager|reception) setup/.test(t))            return "🧑\u200d💼";
+  if (/^0[1-9] reception/.test(t) || /welcome.*reception/.test(t))return "🛎️";
+  if (/^0[1-9] admin setup|^0[1-9] tech setup/.test(t))           return "🖥️";
+  if (/daily checklist|daily rhythm|team huddle/.test(t))         return "✅";
+
+  // ── Playbook: FIT / sales conversations ─────────────────────────────
+  if (/simple .+ fit|fit opener|fit closer|fit conversations?/.test(t)) return "🎯";
+  if (/objection|overcomer/.test(t))                              return "🤔";
+  if (/referral/.test(t))                                         return "🤝";
+  if (/prospect|lead process|lead file|get new leads/.test(t))    return "🎣";
+  if (/appointment/.test(t))                                      return "📅";
+  if (/icebreaker|frogs?\b/.test(t))                              return "🎤";
+
+  // ── Playbook: LOB knowledge / tasks ─────────────────────────────────
+  if (/auto (knowledge|tasks?)|farm auto|commercial auto|single line auto|auto no home/.test(t)) return "🚗";
+  if (/home ?owner|fire (knowledge|tasks?)|dwelling|rental condominium|apartment specifications/.test(t)) return "🏠";
+  if (/life (knowledge|tasks?|review|beneficiary|funding|proximity)|funeral|lna|birthday life|first.last chance life|cop term|no life\b|extended life/.test(t)) return "🕯️";
+  if (/health (knowledge|tasks?)|medicare|medsupp|ltc\b/.test(t)) return "🩺";
+  if (/investing|401k|529|jackson|ips|annuity|retirement|brokerage/.test(t)) return "📈";
+  if (/mortgage|quicken|loan protection|refi/.test(t))            return "🏦";
+  if (/^boat|boatowner/.test(t))                                  return "⛵";
+  if (/business|commercial\b/.test(t))                            return "🏢";
+  if (/liability|plup|clup|umbi|umpd|professional liability/.test(t)) return "🛡️";
+  if (/valuables|jewelry/.test(t))                                return "💎";
+  if (/disability|^di\b|di (bridge|fit)/.test(t))                 return "♿";
+  if (/^hi\b|hi (bridge|fit)|income protection/.test(t))          return "🏥";
+  if (/flood/.test(t))                                            return "🌊";
+  if (/earthquake/.test(t))                                       return "🌎";
+  if (/identity theft/.test(t))                                   return "🕵️";
+  if (/roof/.test(t))                                             return "🏚️";
+  if (/water damage/.test(t))                                     return "💧";
+
+  // ── Playbook: service, ops, messaging ───────────────────────────────
+  if (/claim/.test(t))                                            return "📋";
+  if (/dss|beacon|odometer/.test(t))                              return "📡";
+  if (/bridge the gap/.test(t))                                   return "🌉";
+  if (/cancel|late pay|payment/.test(t))                          return "⛔";
+  if (/salt (messages?)?/.test(t))                                return "🧂";
+  if (/(script|template|message|opener|closer|salt|sympathy|thank you|congratulation|welcome)/.test(t)) return "💬";
+  if (/task/.test(t))                                             return "✅";
+
+  // ── Playbook: apartments / properties (fallback for named complexes) ─
+  if (/\bthe\s*$|^\bthe\b|apartments?|landmark|oaks?|creek|ridge|encore|marquis|toscana|vantage|vineyard|viridian|abbey|anthony|boulevard|crest|grandview|hawthorne|montecristo|retreat|savannah|sendera|tribute|ventura|west oaks|bramblemaw/.test(t)) return "🏘️";
+
+  // ── Handbook-style fallbacks (rare in playbook, but harmless) ───────
+  if (/^handbook\b/.test(t))                                      return "📘";
+  if (/benefits/.test(t))                                         return "💼";
+  if (/vehicle/.test(t))                                          return "🚗";
+  if (/training|course|coaching/.test(t))                         return "🎓";
+
   return "📄";
 }
 
@@ -366,12 +418,12 @@ export default function Playbook({ mode = "playbook" } = {}) {
   // "techsupport" → ONLY tree_root='Tech Support';                 URL /tech-support/
   const isTech = mode === "techsupport";
   const basePath      = isTech ? "/tech-support"                                 : "/playbook";
-  const moduleTitle   = isTech ? "Tech Support"                                  : "Playbook";
+  const moduleTitle   = isTech ? "Techbook"                                      : "Playbook";
   const moduleSubtitle= isTech
-    ? "Troubleshooting reference — systems, tools, and workarounds. Mirrored from Confluence."
+    ? "Tech reference — systems, tools, and workarounds. Mirrored from Confluence."
     : "Operational reference — processes, product knowledge, training. Mirrored from Confluence.";
-  const searchPlaceholder = isTech ? "Search tech support…" : "Search playbook…";
-  const emptyLabel        = isTech ? "tech support"          : "playbook";
+  const searchPlaceholder = isTech ? "Search techbook…" : "Search playbook…";
+  const emptyLabel        = isTech ? "techbook"          : "playbook";
   // URL regex escapes the basePath slashes/hyphens automatically since we only use word chars + hyphen
   const urlRe = isTech
     ? /^\/tech-support\/([^/]+)\/?$/
@@ -406,6 +458,16 @@ export default function Playbook({ mode = "playbook" } = {}) {
   const _vp = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [search, setSearch] = useState("");
+  // Collapse state — Set of confluence_page_ids whose children are shown.
+  // Top-level pages are always visible; children hidden unless parent is here.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const toggleExpand = useCallback((id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -457,6 +519,44 @@ export default function Playbook({ mode = "playbook" } = {}) {
 
   const tree = useMemo(() => buildTree(rows), [rows]);
   const flat = useMemo(() => flattenTree(tree), [tree]);
+
+  // When a page is selected (URL deep-link, search jump, initial default),
+  // auto-expand its ancestor chain so the selection is visible in the tree.
+  useEffect(() => {
+    if (!selectedId || !rows.length) return;
+    const byId = new Map(rows.map(r => [r.confluence_page_id, r]));
+    const ancestors = [];
+    let cur = byId.get(selectedId);
+    while (cur && cur.parent_page_id) {
+      ancestors.push(cur.parent_page_id);
+      cur = byId.get(cur.parent_page_id);
+    }
+    if (!ancestors.length) return;
+    setExpandedIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of ancestors) {
+        if (!next.has(id)) { next.add(id); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedId, rows]);
+
+  // Nodes visible right now: depth-0 always; deeper only if every ancestor
+  // is in expandedIds. Pre-computed via a DFS that skips branches whose
+  // parent isn't expanded. Flag hasChildren so the row renders a chevron.
+  const visibleFlat = useMemo(() => {
+    const out = [];
+    const walk = (n, d) => {
+      const kids = Array.isArray(n?.children) ? n.children : [];
+      out.push({ node: n, depth: d, hasChildren: kids.length > 0 });
+      if (expandedIds.has(n?.confluence_page_id)) {
+        for (const c of kids) walk(c, d + 1);
+      }
+    };
+    for (const r of (tree || [])) walk(r, 0);
+    return out;
+  }, [tree, expandedIds]);
 
   // Search filter — match on title or content (case-insensitive)
   const visibleIds = useMemo(() => {
@@ -588,48 +688,92 @@ export default function Playbook({ mode = "playbook" } = {}) {
 
         {/* Tree */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-          {flat.map(({ node, depth }) => {
+          {(visibleIds ? flat : visibleFlat).map((entry) => {
+            const node = entry.node;
+            const depth = entry.depth;
             const isActive = node.confluence_page_id === selectedId;
             const hidden = visibleIds && !visibleIds.has(node.confluence_page_id);
             if (hidden) return null;
+            const hasChildren = "hasChildren" in entry
+              ? entry.hasChildren
+              : (Array.isArray(node.children) && node.children.length > 0);
+            const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
             return (
-              <button
+              <div
                 key={node.confluence_page_id}
-                onClick={() => { selectPage(node.confluence_page_id); if (_vp.isPhone) setDrawerOpen(false); }}
                 style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: isActive ? T.blueLt : "transparent",
-                  border: "none",
-                  borderLeft: isActive ? `3px solid ${T.blue}` : "3px solid transparent",
-                  padding: `10px 16px 10px ${16 + depth * 16}px`,
-                  cursor: "pointer",
                   display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
+                  alignItems: "stretch",
+                  background: isActive ? T.blueLt : "transparent",
+                  borderLeft: isActive ? `3px solid ${T.blue}` : "3px solid transparent",
                   transition: "background 0.12s",
                 }}
                 onMouseOver={(e) => { if (!isActive) e.currentTarget.style.background = T.slate50; }}
                 onMouseOut={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
               >
-                <div style={{ fontSize: 16, lineHeight: 1.2, marginTop: 1 }}>{icon}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: depth === 0 ? 700 : 600,
-                    color: isActive ? T.slate900 : T.slate900,
-                    letterSpacing: "-0.01em",
-                    lineHeight: 1.3,
-                  }}>
-                    {node.title || "Untitled"}
-                  </div>
-                  {depth === 0 && (
-                    <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.4, marginTop: 2 }}>
-                      {previewText(node.content, 70) || "—"}
+                <button
+                  type="button"
+                  onClick={(ev) => { ev.stopPropagation(); if (hasChildren) toggleExpand(node.confluence_page_id); }}
+                  aria-label={hasChildren ? (isExpanded ? "Collapse" : "Expand") : ""}
+                  tabIndex={hasChildren ? 0 : -1}
+                  style={{
+                    width: 28,
+                    minWidth: 28,
+                    marginLeft: 4 + depth * 16,
+                    padding: 0,
+                    background: "transparent",
+                    border: "none",
+                    cursor: hasChildren ? "pointer" : "default",
+                    color: T.slate500,
+                    fontSize: 11,
+                    lineHeight: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    userSelect: "none",
+                  }}
+                >
+                  {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectPage(node.confluence_page_id);
+                    if (hasChildren && !isExpanded) toggleExpand(node.confluence_page_id);
+                    if (_vp.isPhone) setDrawerOpen(false);
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    background: "transparent",
+                    border: "none",
+                    padding: "10px 16px 10px 4px",
+                    cursor: "pointer",
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <div style={{ fontSize: 16, lineHeight: 1.2, marginTop: 1 }}>{icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: depth === 0 ? 700 : 600,
+                      color: T.slate900,
+                      letterSpacing: "-0.01em",
+                      lineHeight: 1.3,
+                    }}>
+                      {node.title || "Untitled"}
                     </div>
-                  )}
-                </div>
-              </button>
+                    {depth === 0 && (
+                      <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.4, marginTop: 2 }}>
+                        {previewText(node.content, 70) || "—"}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              </div>
             );
           })}
         </div>
