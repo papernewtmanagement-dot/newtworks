@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
@@ -106,6 +106,11 @@ import {
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
+// Team Huddle is the daily anchor page and is pinned to the top of the
+// Playbook root nav regardless of alpha/numeric sort. A visual divider is
+// rendered under it in the sidebar (see the tree map below).
+const TEAM_HUDDLE_ID = "bcc-native-team-huddle";
+
 function buildTree(rows) {
   const byId = new Map();
   for (const r of (rows || [])) {
@@ -135,6 +140,12 @@ function buildTree(rows) {
     }
   };
   roots.sort(cmp);
+  // Pin Team Huddle to top of roots regardless of sort order
+  const huddleIdx = roots.findIndex(r => r?.confluence_page_id === TEAM_HUDDLE_ID);
+  if (huddleIdx > 0) {
+    const [huddle] = roots.splice(huddleIdx, 1);
+    roots.unshift(huddle);
+  }
   roots.forEach(sortRec);
   return roots;
 }
@@ -430,9 +441,10 @@ export default function Playbook() {
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
+            const isHuddleTopLevel = depth === 0 && node.confluence_page_id === TEAM_HUDDLE_ID;
             return (
+              <React.Fragment key={node.confluence_page_id}>
               <div
-                key={node.confluence_page_id}
                 style={{
                   display: "flex",
                   alignItems: "stretch",
@@ -525,6 +537,17 @@ export default function Playbook() {
                   </div>
                 </button>
               </div>
+              {isHuddleTopLevel && (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    height: 1,
+                    background: T.slate200,
+                    margin: "6px 12px 6px 12px",
+                  }}
+                />
+              )}
+              </React.Fragment>
             );
           })}
         </div>
