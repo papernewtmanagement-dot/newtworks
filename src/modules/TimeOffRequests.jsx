@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
-import { mdToHtml } from "./Handbook.jsx";
+import { mdToHtml } from "../lib/markdown.js";
 
 // ============================================================
 // Time Off & Remote Request Module
