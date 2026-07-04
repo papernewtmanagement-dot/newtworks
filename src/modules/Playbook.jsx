@@ -717,21 +717,41 @@ export default function Playbook({ mode = "playbook" } = {}) {
                   onClick={(ev) => { ev.stopPropagation(); if (hasChildren) toggleExpand(node.confluence_page_id); }}
                   aria-label={hasChildren ? (isExpanded ? "Collapse" : "Expand") : ""}
                   tabIndex={hasChildren ? 0 : -1}
+                  onMouseOver={(e) => {
+                    if (hasChildren) {
+                      e.currentTarget.style.background = T.blueLt;
+                      e.currentTarget.style.color = T.blue;
+                      e.currentTarget.style.borderColor = T.blue;
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (hasChildren) {
+                      e.currentTarget.style.background = T.slate100;
+                      e.currentTarget.style.color = T.slate700;
+                      e.currentTarget.style.borderColor = T.slate300;
+                    }
+                  }}
                   style={{
-                    width: 28,
-                    minWidth: 28,
-                    marginLeft: 4 + depth * 16,
+                    width: 24,
+                    minWidth: 24,
+                    height: 24,
+                    alignSelf: "center",
+                    marginLeft: 6 + depth * 16,
+                    marginRight: 4,
                     padding: 0,
-                    background: "transparent",
-                    border: "none",
+                    background: hasChildren ? T.slate100 : "transparent",
+                    border: hasChildren ? `1px solid ${T.slate300}` : "1px solid transparent",
+                    borderRadius: 6,
                     cursor: hasChildren ? "pointer" : "default",
-                    color: T.slate500,
-                    fontSize: 11,
+                    color: hasChildren ? T.slate700 : "transparent",
+                    fontSize: 13,
+                    fontWeight: 700,
                     lineHeight: 1,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     userSelect: "none",
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
                   }}
                 >
                   {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
@@ -914,9 +934,23 @@ What I'd like to discuss:
           cursor: pointer;
           font-weight: 600;
           color: ${T.slate900};
-          padding: 2px 0;
+          padding: 2px 0 2px 22px;
           user-select: none;
+          list-style: none;
+          position: relative;
         }
+        .bcc-handbook-body summary::-webkit-details-marker { display: none; }
+        .bcc-handbook-body summary::before {
+          content: "▸";
+          position: absolute;
+          left: 0;
+          top: 2px;
+          color: ${T.blue};
+          font-size: 14px;
+          font-weight: 700;
+          display: inline-block;
+        }
+        .bcc-handbook-body details[open] > summary::before { content: "▾"; }
         .bcc-handbook-body details > *:not(summary) { margin-top: 10px; }
         .bcc-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
       `}</style>
