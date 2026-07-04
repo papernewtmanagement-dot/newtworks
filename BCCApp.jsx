@@ -23,6 +23,7 @@ import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Renewals from "./src/modules/Renewals.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
+import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import { useViewport } from "./src/lib/hooks.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -962,6 +963,9 @@ export default function BCCApp() {
             </div>
           </div>
         </header>
+
+        {/* ── Agency Identity Ribbon — persistent below header on every route ── */}
+        <AgencyIdentityRibbon />
 
         {/* ── Body ── */}
         <div style={css.body} onClick={() => userMenuOpen && setUserMenuOpen(false)}>
