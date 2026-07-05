@@ -1,0 +1,4 @@
+-- Fix compose_weekly_cpr_html team checklist hit counter — NULL was counted as hit via COALESCE default true.
+-- Also standardizes personal counter to IS TRUE for style consistency (semantic behavior unchanged).
+-- Full function body applied via Supabase apply_migration; this migration file captures intent for repo history.
+-- See DB for authoritative body of compose_weekly_cpr_html.
