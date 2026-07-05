@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
-import WeeklyCPR from "./WeeklyCPR.jsx";
 
 // ── Design Tokens ──────────────────────────────────────────────
 import { T } from "../lib/theme.js";
@@ -467,7 +466,6 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
   const [loading, setLoading] = useState(true);
   const [agencyName, setAgencyName] = useState("Your Agency");
   const [greeting, setGreeting] = useState("Good morning");
-  const [showCPR, setShowCPR] = useState(false);
 
   useEffect(() => {
     const hr = new Date().getHours();
@@ -699,7 +697,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
 
           {/* Fourth Row — Weekly CPR (full width) */}
           <div style={{marginBottom:14}}>
-            <WeeklyCPRWidget data={dashData} onOpen={() => setShowCPR(true)} />
+            <WeeklyCPRWidget data={dashData} onOpen={() => onNavigate('cpr')} />
           </div>
 
           {/* Bottom Row — Open Items (full width) */}
@@ -707,8 +705,6 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
         </>
       )}
 
-      {/* Weekly CPR overlay (modal) */}
-      {showCPR ? <WeeklyCPR onClose={() => setShowCPR(false)} /> : null}
     </div>
   );
 }
