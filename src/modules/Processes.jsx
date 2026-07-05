@@ -3,19 +3,19 @@ import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC PLAYBOOK MODULE v1.0
+// BCC PROCESSES MODULE v1.0
 // Business Command Center — State Farm Agent Edition
 //
 // PURPOSE:
-// Read-only viewer for the operational playbook. Source of
+// Read-only viewer for the operational processes reference. Source of
 // truth lives in Confluence (pjsagency.atlassian.net); BCC
-// mirrors it into public.playbook for offline reference and
+// mirrors it into public.processes for offline reference and
 // quick in-app lookup.
 //
 // Trees: Checklists (processes), Product Knowledge, Training
-// (all grouped under tree_root in the playbook table).
+// (all grouped under tree_root in the processes table).
 //
-// DATA SHAPE (public.playbook):
+// DATA SHAPE (public.processes):
 //   - one row per Confluence page
 //   - tree via parent_page_id (NULL = root)
 //   - content stored as Markdown with embedded HTML for
@@ -44,13 +44,13 @@ function iconForTitle(title) {
   if (/policyholder list/.test(t))                                return "📋";
   if (/^dss/.test(t))                                             return "✍️";
 
-  // ── Playbook: role/setup pages ──────────────────────────────────────
+  // ── Processes: role/setup pages ──────────────────────────────────────
   if (/new (account manager|reception) setup/.test(t))            return "🧑\u200d💼";
   if (/^0[1-9] reception/.test(t) || /welcome.*reception/.test(t))return "🛎️";
   if (/^0[1-9] admin setup|^0[1-9] tech setup/.test(t))           return "🖥️";
   if (/daily checklist|daily rhythm|team huddle/.test(t))         return "✅";
 
-  // ── Playbook: FIT / sales conversations ─────────────────────────────
+  // ── Processes: FIT / sales conversations ─────────────────────────────
   if (/simple .+ fit|fit opener|fit closer|fit conversations?/.test(t)) return "🎯";
   if (/objection|overcomer/.test(t))                              return "🤔";
   if (/referral/.test(t))                                         return "🤝";
@@ -58,7 +58,7 @@ function iconForTitle(title) {
   if (/appointment/.test(t))                                      return "📅";
   if (/icebreaker|frogs?\b/.test(t))                              return "🎤";
 
-  // ── Playbook: LOB knowledge / tasks ─────────────────────────────────
+  // ── Processes: LOB knowledge / tasks ─────────────────────────────────
   if (/auto (knowledge|tasks?)|farm auto|commercial auto|single line auto|auto no home/.test(t)) return "🚗";
   if (/home ?owner|fire (knowledge|tasks?)|dwelling|rental condominium|apartment specifications/.test(t)) return "🏠";
   if (/life (knowledge|tasks?|review|beneficiary|funding|proximity)|funeral|lna|birthday life|first.last chance life|cop term|no life\b|extended life/.test(t)) return "🕯️";
@@ -76,7 +76,7 @@ function iconForTitle(title) {
   if (/roof/.test(t))                                             return "🏚️";
   if (/water damage/.test(t))                                     return "💧";
 
-  // ── Playbook: service, ops, messaging ───────────────────────────────
+  // ── Processes: service, ops, messaging ───────────────────────────────
   if (/claim/.test(t))                                            return "📋";
   if (/dss|beacon|odometer/.test(t))                              return "📡";
   if (/bridge the gap/.test(t))                                   return "🌉";
@@ -85,10 +85,10 @@ function iconForTitle(title) {
   if (/(script|template|message|opener|closer|salt|sympathy|thank you|congratulation|welcome)/.test(t)) return "💬";
   if (/task/.test(t))                                             return "✅";
 
-  // ── Playbook: apartments / properties (fallback for named complexes) ─
+  // ── Processes: apartments / properties (fallback for named complexes) ─
   if (/\bthe\s*$|^\bthe\b|apartments?|landmark|oaks?|creek|ridge|encore|marquis|toscana|vantage|vineyard|viridian|abbey|anthony|boulevard|crest|grandview|hawthorne|montecristo|retreat|savannah|sendera|tribute|ventura|west oaks|bramblemaw/.test(t)) return "🏘️";
 
-  // ── Handbook-style fallbacks (rare in playbook, but harmless) ───────
+  // ── Handbook-style fallbacks (rare in processes, but harmless) ───────
   if (/training|course|coaching/.test(t))                         return "🎓";
 
   return "📄";
@@ -175,20 +175,20 @@ function flattenTree(roots) {
 
 
 // ─── Module ───────────────────────────────────────────────────
-export default function Playbook() {
-  // Playbook renders everything in the playbook table (tree_root in
+export default function Processes() {
+  // Processes renders everything in the processes table (tree_root in
   // {Checklists, Product Knowledge}). Tech Book was dismantled 2026-07-04.
-  const basePath          = "/playbook";
+  const basePath          = "/processes";
   const moduleTitle       = "Processes";
   const moduleSubtitle    = "Operational reference — processes, product knowledge, training.";
   const searchPlaceholder = "Search processes…";
   const emptyLabel        = "processes";
-  const urlRe             = /^\/playbook\/([^/]+)\/?$/;
+  const urlRe             = /^\/processes\/([^/]+)\/?$/;
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // ── URL ↔ selectedId sync ─────────────────────────────────────────
-  // Page id is carried in the URL as /playbook/<confluence_page_id>.
+  // Page id is carried in the URL as /processes/<confluence_page_id>.
   // Refresh keeps you on the same page; back/forward navigates between visits.
   const _initialSelectedId = (typeof window !== "undefined")
     ? (urlRe.exec(window.location.pathname || "")?.[1] || null)
@@ -235,7 +235,7 @@ export default function Playbook() {
           return;
         }
         let q = supabase
-          .from("playbook")
+          .from("processes")
           .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, sort_order, version, is_active, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
@@ -603,7 +603,7 @@ export default function Playbook() {
             </div>
           </div>
         )}
-        {selected ? <PlaybookPage page={selected} allRows={rows} /> : (
+        {selected ? <ProcessesPage page={selected} allRows={rows} /> : (
           <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
             {_vp.isPhone ? 'Tap "Sections" to choose a page.' : 'Select a page from the sidebar.'}
           </div>
@@ -614,7 +614,7 @@ export default function Playbook() {
 }
 
 // ─── Page detail view ─────────────────────────────────────────
-function PlaybookPage({ page, allRows }) {
+function ProcessesPage({ page, allRows }) {
   const resolveInclude = useMemo(
     () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
     [allRows]

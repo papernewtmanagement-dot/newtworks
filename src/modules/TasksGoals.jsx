@@ -49,9 +49,9 @@ const TASK_CATEGORIES = {
   marketing:         { label:"Marketing",        icon:"📣", color:T.purple   },
   team_development:  { label:"Team Development", icon:"🎓", color:T.amber    },
   handbook:          { label:"Handbook",         icon:"📕", color:T.red      },
-  playbook:          { label:"Processes",        icon:"📘", color:T.green    },
+  processes:         { label:"Processes",        icon:"📘", color:T.green    },
 };
-const TASK_CATEGORY_ORDER = ["web_app","admin","finances","marketing","team_development","handbook","playbook"];
+const TASK_CATEGORY_ORDER = ["web_app","admin","finances","marketing","team_development","handbook","processes"];
 const categoryConfig = (key) => TASK_CATEGORIES[key] || null;
 
 // ─── Task Type Config (Epic > Story > Task) ───────────────────

@@ -5,7 +5,7 @@
 //   1. Verifies the caller is the agency owner (via their JWT)
 //   2. Sends a Supabase Auth invite email (magic link -> set password)
 //   3. Upserts a public.users row with role (admin tier = owner/manager;
-//      everyone else is team tier — sees dashboard, cpr, hours, handbook, playbook)
+//      everyone else is team tier — sees dashboard, cpr, hours, handbook, processes)
 //
 // AUTH:
 //   verify_jwt = true  — the caller must be a logged-in BCC user. We further

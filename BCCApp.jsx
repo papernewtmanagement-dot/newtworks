@@ -15,7 +15,7 @@ import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Handbook from "./src/modules/Handbook.jsx";
-import Playbook from "./src/modules/Playbook.jsx";
+import Processes from "./src/modules/Processes.jsx";
 import Admin from "./src/modules/Admin.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
@@ -82,7 +82,7 @@ const AGENCY_DEFAULTS = {
 // ─── Access model ─────────────────────────────────────────────────────────────
 // admin tier = ["owner","manager"] — full access to every module.
 // team tier  = anyone else (staff/readonly/accountant) — sees ONLY the 5
-//              team-visible sections (dashboard, cpr, time, handbook, playbook).
+//              team-visible sections (dashboard, cpr, time, handbook, processes).
 // Standing rule (Peter 2026-06-22): webapp defaults to admin-only. Any NEW
 // module added below MUST default to roles: ADMIN_ROLES unless Peter explicitly
 // authorizes team visibility. See persistent_memory operational_rule
@@ -95,7 +95,7 @@ const NAV_ITEMS = [
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
   { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
-  { id: "playbook",    label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
+  { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "renewals",    label: "Renewals",    icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
@@ -555,7 +555,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
-    playbook:    <ErrorBoundary name="Processes"><Playbook /></ErrorBoundary>,
+    processes:   <ErrorBoundary name="Processes"><Processes /></ErrorBoundary>,
     admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
@@ -608,7 +608,16 @@ function parseUrl(pathname) {
   const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);
   if (cprMatch) return { module: "cpr", cprWeekDate: cprMatch[1] };
   if (p === "/" || p === "/dashboard") return { module: "dashboard", cprWeekDate: null };
-  // Accept /<module> AND /<module>/<sub-path>. Modules like handbook, playbook,
+  // Back-compat: /playbook* was renamed to /processes* on 2026-07-05. Rewrite
+  // in place so old bookmarks and cross-links keep resolving to the new module.
+  if (p === "/playbook" || p.startsWith("/playbook/")) {
+    const rewritten = "/processes" + p.slice("/playbook".length);
+    if (typeof window !== "undefined" && window.history?.replaceState) {
+      window.history.replaceState({}, "", rewritten);
+    }
+    return parseUrl(rewritten);
+  }
+  // Accept /<module> AND /<module>/<sub-path>. Modules like handbook, processes,
   // and admin own their own sub-route (e.g. /handbook/<page-id>) — BCCApp only
   // resolves the top-level module here and leaves the sub-path to the module.
   const slugMatch = /^\/([a-z][a-z0-9-]*)(?:\/.*)?$/.exec(p);
@@ -657,7 +666,7 @@ export default function BCCApp() {
   // App-state → URL: any change to activeModule or cprWeekDate pushes the URL.
   // Every nav click, dashboard tile, and child-component onNavigate call routes
   // through this single effect, so there is no setActiveModule call site that
-  // needs to know about URLs. Modules that own a sub-path (handbook/playbook/
+  // needs to know about URLs. Modules that own a sub-path (handbook/processes/
   // admin, e.g. /handbook/<page-id>) manage that segment themselves — we only
   // push when the TOP-LEVEL module changes, not when the full path differs.
   useEffect(() => {

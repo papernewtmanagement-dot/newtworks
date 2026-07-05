@@ -9,7 +9,7 @@
 //      final_paycheck_date.
 //   4. Deactivates the linked users row if present.
 //   5. Sets team_telegram_map.is_excluded=true with excluded_reason='terminated'.
-//   6. Strips the person's block from the "Team List" playbook page.
+//   6. Strips the person's block from the "Team List" processes page.
 //   7. Sends the email to Peter's State Farm address via Composio Gmail.
 //   8. Kicks the user from the team Telegram group (ban + unban → no permanent
 //      ban list).
@@ -238,7 +238,7 @@ ${checklistMdToHtml(checklistMd)}
 <ul style="line-height:1.7;font-size:13px;margin:8px 0 0 0;padding-left:20px;">
 <li>Archived in BCC database (<code>team.archived_at</code>)</li>
 <li>Linked user login deactivated (if any)</li>
-<li>Stripped from the Team List page in the playbook</li>
+<li>Stripped from the Team List page in Processes</li>
 <li>Excluded from Telegram check-ins (<code>team_telegram_map.is_excluded=true</code>)</li>
 <li>Kicked from the team Telegram group</li>
 </ul>
@@ -289,14 +289,14 @@ Sent by the Business Command Center on ${new Date().toLocaleString("en-US", { ti
     else if (tgm) auditLog.push("team_telegram_map.is_excluded=true");
     const telegramUserId: number | null = tgm?.telegram_user_id ?? null;
 
-    // 7) Strip from "Team List" playbook page (best-effort)
+    // 7) Strip from "Team List" processes page (best-effort)
     try {
-      const { data: pages, error: pbErr } = await sb.from("playbook")
+      const { data: pages, error: pbErr } = await sb.from("processes")
         .select("id, content")
         .eq("agency_id", AGENCY_ID)
         .eq("title", "Team List")
         .limit(1);
-      if (pbErr) warnings.push(`playbook lookup: ${pbErr.message}`);
+      if (pbErr) warnings.push(`processes lookup: ${pbErr.message}`);
       else if (pages && pages.length > 0) {
         const page = pages[0];
         const original: string = page.content || "";
@@ -307,20 +307,20 @@ Sent by the Business Command Center on ${new Date().toLocaleString("en-US", { ti
         let next = original.replace(nameRe, (_match, lead) => lead || "");
         next = next.replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "") + "\n";
         if (next !== original) {
-          const { error: upErr } = await sb.from("playbook").update({
+          const { error: upErr } = await sb.from("processes").update({
             content: next,
             updated_at: nowIso,
           }).eq("id", page.id);
-          if (upErr) warnings.push(`playbook update: ${upErr.message}`);
-          else auditLog.push("Stripped from Team List playbook page");
+          if (upErr) warnings.push(`processes update: ${upErr.message}`);
+          else auditLog.push("Stripped from Team List processes page");
         } else {
           warnings.push(`Could not locate ${fullName}'s block in Team List page`);
         }
       } else {
-        warnings.push("Team List playbook page not found");
+        warnings.push("Team List processes page not found");
       }
     } catch (e) {
-      warnings.push(`playbook strip exception: ${e instanceof Error ? e.message : String(e)}`);
+      warnings.push(`processes strip exception: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // 8) Send email via Composio Gmail (best-effort)

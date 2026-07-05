@@ -388,7 +388,7 @@ You have full visibility into the BCC. All tables, all data, all principles, all
 
 Posture:
 - Helpful teammate tone. Professional, warm, direct.
-- Scoped access: ${speakerName}'s own production and compensation, general agency info, the handbook, the playbook, principles, operational guidance.
+- Scoped access: ${speakerName}'s own production and compensation, general agency info, the handbook, processes, principles, operational guidance.
 - Do NOT surface other team members' compensation, payroll, or personal info.
 - Do NOT surface owner draws, strategic financials, or anything not directly relevant to ${speakerName}'s role.
 - Strategic decisions, hiring/firing, compensation policy — redirect to Peter kindly.
@@ -408,8 +408,8 @@ Even though internal, the State Farm Agent's Agreement governs:
 
 You have two tools. Call them when the answer needs live data or specific stored knowledge — do not guess.
 
-- read_sql(sql): SELECT or WITH-prefixed CTE against the BCC Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, journal_entries, payroll_runs, persistent_memory, core_principles, handbook, playbook, automation_recipes, automation_run_log, settings, and ~70 others.
-- search_knowledge(query, max_per_table): keyword search across persistent_memory, core_principles, handbook, and playbook simultaneously.
+- read_sql(sql): SELECT or WITH-prefixed CTE against the BCC Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, journal_entries, payroll_runs, persistent_memory, core_principles, handbook, processes, automation_recipes, automation_run_log, settings, and ~70 others.
+- search_knowledge(query, max_per_table): keyword search across persistent_memory, core_principles, handbook, and processes simultaneously.
 
 IMPORTANT: When you call a tool, use the structured tool_calls format the API expects. Do not write tool calls inline as text or in custom syntax — emit them through the standard function-calling channel.
 
@@ -452,7 +452,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_knowledge",
-      description: "Keyword search across persistent_memory, core_principles, handbook, and playbook simultaneously. Returns matching rows from each.",
+      description: "Keyword search across persistent_memory, core_principles, handbook, and processes simultaneously. Returns matching rows from each.",
       parameters: {
         type: "object",
         properties: {
@@ -500,7 +500,7 @@ async function executeTool(name: string, input: any): Promise<any> {
           .or(`title.ilike.${like},content.ilike.${like},domain.ilike.${like}`).limit(maxPer),
         sb.from("handbook").select("page_title, content")
           .or(`page_title.ilike.${like},content.ilike.${like}`).limit(maxPer),
-        sb.from("playbook").select("page_title, content")
+        sb.from("processes").select("page_title, content")
           .or(`page_title.ilike.${like},content.ilike.${like}`).limit(maxPer),
       ]);
 
@@ -508,7 +508,7 @@ async function executeTool(name: string, input: any): Promise<any> {
         persistent_memory: pm.data || [],
         core_principles: cp.data || [],
         handbook: hb.data || [],
-        playbook: pb.data || [],
+        processes: pb.data || [],
       };
     }
 
@@ -686,7 +686,7 @@ async function handleCommand(
       const senderName = speaker.first_name || "there";
       let text = `Hey ${senderName} — Paper Newt here.\n\n`;
       if (isPeter) text += `I'm your Pocket CFO/COO. Same intelligence layer that runs the BCC, available wherever you are.\n\n`;
-      else text += `I'm the agency's intelligence-layer assistant. Ask me about the agency, the handbook, the playbook, your production — whatever's in scope for your role.\n\n`;
+      else text += `I'm the agency's intelligence-layer assistant. Ask me about the agency, the handbook, processes, your production — whatever's in scope for your role.\n\n`;
       if (inGroup) text += `In groups: @ me (@${BOT_USERNAME}), reply to my messages, or use slash commands. I won't see normal group chatter.\n\n`;
       text += `Commands:\n/start, /help — this message\n/whoami — show what I know about you\n/reset — clear my memory of our conversation\n\nOtherwise, just talk to me.`;
       await sendMessage(chatId, text, messageId);
