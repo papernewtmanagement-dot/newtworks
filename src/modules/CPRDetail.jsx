@@ -937,9 +937,10 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
     );
   }
   // Count hits when not editing — across both subsections combined
+  // NULL = false per Peter directive 2026-07-05 (only strict true counts as a hit)
   const hits = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] === true).length;
   const total = TEAM_CHECKLIST_KEYS.length;
-  const misses = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] === false);
+  const misses = TEAM_CHECKLIST_KEYS.filter(([k]) => report[k] !== true);
 
   // Render one subsection's grid
   const renderGrid = (keys) => (
@@ -967,7 +968,7 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
               <span style={{ fontSize: 14, width: 16, display: "inline-block", textAlign: "center" }}>
                 {val === true
                   ? <span style={{ color: T.green }}>✓</span>
-                  : <span style={{ color: T.red, opacity: val === false ? 1 : 0.45 }}>✕</span>}
+                  : <span style={{ color: T.red }}>✕</span>}
               </span>
             )}
             <span style={{ fontSize: 12, color: T.slate700 }}>{label}</span>
@@ -1047,7 +1048,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
                       <Td key={key} align="center">
                         {d[key] === true
                           ? <span style={{ color: T.green, fontSize: 14 }}>✓</span>
-                          : <span style={{ color: T.red, fontSize: 14, opacity: d[key] === false ? 1 : 0.45 }}>✕</span>}
+                          : <span style={{ color: T.red, fontSize: 14 }}>✕</span>}
                       </Td>
                     );
                   })}
