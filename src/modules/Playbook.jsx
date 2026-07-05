@@ -106,11 +106,8 @@ import {
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
-// Team Huddle is the daily anchor page and is pinned to the top of the
-// Playbook root nav regardless of alpha/numeric sort. A visual divider is
-// rendered under it in the sidebar (see the tree map below).
-const TEAM_HUDDLE_ID = "bcc-native-team-huddle";
-
+// Ordering: sort_order ASC (NULLS LAST), then title alpha. Display numbers are
+// computed as siblings' rank within their parent (see annotateDisplayNumbers).
 function buildTree(rows) {
   const byId = new Map();
   for (const r of (rows || [])) {
@@ -122,16 +119,15 @@ function buildTree(rows) {
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
-  // Natural-ish sort: numeric prefixes first (01, 02…), then alpha
   const cmp = (a, b) => {
-    const at = (a?.title || "");
-    const bt = (b?.title || "");
-    const an = /^(\d+)/.exec(at);
-    const bn = /^(\d+)/.exec(bt);
-    if (an && bn) return parseInt(an[1], 10) - parseInt(bn[1], 10);
-    if (an && !bn) return -1;
-    if (!an && bn) return 1;
-    return at.localeCompare(bt);
+    const ao = a?.sort_order;
+    const bo = b?.sort_order;
+    const aNull = ao == null;
+    const bNull = bo == null;
+    if (aNull && !bNull) return 1;
+    if (!aNull && bNull) return -1;
+    if (!aNull && !bNull && ao !== bo) return ao - bo;
+    return (a?.title || "").localeCompare(b?.title || "");
   };
   const sortRec = (node) => {
     if (Array.isArray(node?.children)) {
@@ -140,14 +136,30 @@ function buildTree(rows) {
     }
   };
   roots.sort(cmp);
-  // Pin Team Huddle to top of roots regardless of sort order
-  const huddleIdx = roots.findIndex(r => r?.confluence_page_id === TEAM_HUDDLE_ID);
-  if (huddleIdx > 0) {
-    const [huddle] = roots.splice(huddleIdx, 1);
-    roots.unshift(huddle);
-  }
   roots.forEach(sortRec);
   return roots;
+}
+
+// Attach two-digit rank prefix ("01", "02", …) to each node based on its
+// position among siblings. Returns a Map by confluence_page_id for non-tree lookups.
+function annotateDisplayNumbers(roots) {
+  const byPid = new Map();
+  const walk = (nodes) => {
+    (nodes || []).forEach((n, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      n._displayNumber = num;
+      byPid.set(n.confluence_page_id, n);
+      if (Array.isArray(n.children) && n.children.length) walk(n.children);
+    });
+  };
+  walk(roots);
+  return byPid;
+}
+
+function withNumber(n) {
+  if (!n) return "";
+  const t = n.title || "Untitled";
+  return n._displayNumber ? `${n._displayNumber}  ${t}` : t;
 }
 
 // ─── Flatten tree for keyboard / next-prev nav (V2) ───────────
@@ -224,7 +236,7 @@ export default function Playbook() {
         }
         let q = supabase
           .from("playbook")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, version, is_active, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, sort_order, version, is_active, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
         const { data, error: qErr } = await q;
@@ -259,7 +271,11 @@ export default function Playbook() {
     if (defaultId) selectPage(defaultId, true);
   }, [rows, selectedId, selectPage]);
 
-  const tree = useMemo(() => buildTree(rows), [rows]);
+  const { tree, nodeById } = useMemo(() => {
+    const roots = buildTree(rows);
+    const byPid = annotateDisplayNumbers(roots);
+    return { tree: roots, nodeById: byPid };
+  }, [rows]);
   const flat = useMemo(() => flattenTree(tree), [tree]);
 
   // When a page is selected (URL deep-link, search jump, initial default),
@@ -323,8 +339,8 @@ export default function Playbook() {
   }, [search, rows]);
 
   const selected = useMemo(
-    () => (rows || []).find(r => r.confluence_page_id === selectedId) || null,
-    [rows, selectedId]
+    () => nodeById.get(selectedId) || (rows || []).find(r => r.confluence_page_id === selectedId) || null,
+    [nodeById, rows, selectedId]
   );
 
   // ─── Loading / Error / Empty ──────────────────────────────
@@ -441,7 +457,6 @@ export default function Playbook() {
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
-            const isHuddleTopLevel = depth === 0 && node.confluence_page_id === TEAM_HUDDLE_ID;
             return (
               <React.Fragment key={node.confluence_page_id}>
               <div
@@ -527,7 +542,7 @@ export default function Playbook() {
                       letterSpacing: "-0.01em",
                       lineHeight: 1.3,
                     }}>
-                      {node.title || "Untitled"}
+                      {withNumber(node)}
                     </div>
                     {depth === 0 && (
                       <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.4, marginTop: 2 }}>
@@ -537,16 +552,6 @@ export default function Playbook() {
                   </div>
                 </button>
               </div>
-              {isHuddleTopLevel && (
-                <div
-                  aria-hidden="true"
-                  style={{
-                    height: 1,
-                    background: T.slate200,
-                    margin: "6px 12px 6px 12px",
-                  }}
-                />
-              )}
               </React.Fragment>
             );
           })}
@@ -594,7 +599,7 @@ export default function Playbook() {
               fontSize: 12, fontWeight: 600, color: T.slate500,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              {selected?.title || "Pick a section"}
+              {selected ? withNumber(selected) : "Pick a section"}
             </div>
           </div>
         )}
@@ -743,7 +748,7 @@ What I'd like to discuss:
             )}
           </div>
           <h1 style={{ fontSize: 28, fontWeight: 800, color: T.slate900, margin: 0, letterSpacing: "-0.025em", lineHeight: 1.25 }}>
-            {page?.title || "Untitled page"}
+            {page ? withNumber(page) : "Untitled page"}
           </h1>
         </div>
       </div>

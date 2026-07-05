@@ -55,6 +55,8 @@ import {
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
+// Ordering: sort_order ASC (NULLS LAST), then title alpha. Display numbers
+// are computed as siblings' rank within their parent (see annotateDisplayNumbers).
 function buildTree(rows) {
   const byId = new Map();
   for (const r of (rows || [])) {
@@ -66,25 +68,15 @@ function buildTree(rows) {
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
-  // Sort into four zones by sort_order (divider drawn at every zone boundary):
-  //   -2 (very-top): sort_order <= -1000 — deep pin (e.g. Team List at -1000)
-  //   -1 (top)     : -1000 < sort_order < 0 — pinned above middle (e.g. 01-04 numbered pages)
-  //    0 (middle)  : sort_order NULL — natural-ish sort (01, 02… numeric prefix first, then alpha)
-  //    1 (bottom)  : sort_order > 0 — pinned below middle (e.g. Signature Page at 9999)
-  const zoneOf = (sr) => sr == null ? 0 : (sr <= -1000 ? -2 : sr < 0 ? -1 : 1);
   const cmp = (a, b) => {
-    const az = zoneOf(a?.sort_order);
-    const bz = zoneOf(b?.sort_order);
-    if (az !== bz) return az - bz;
-    if (az !== 0) return (a.sort_order ?? 0) - (b.sort_order ?? 0);
-    const at = (a?.title || "");
-    const bt = (b?.title || "");
-    const an = /^(\d+)/.exec(at);
-    const bn = /^(\d+)/.exec(bt);
-    if (an && bn) return parseInt(an[1], 10) - parseInt(bn[1], 10);
-    if (an && !bn) return -1;
-    if (!an && bn) return 1;
-    return at.localeCompare(bt);
+    const ao = a?.sort_order;
+    const bo = b?.sort_order;
+    const aNull = ao == null;
+    const bNull = bo == null;
+    if (aNull && !bNull) return 1;
+    if (!aNull && bNull) return -1;
+    if (!aNull && !bNull && ao !== bo) return ao - bo;
+    return (a?.title || "").localeCompare(b?.title || "");
   };
   const sortRec = (node) => {
     if (Array.isArray(node?.children)) {
@@ -95,6 +87,30 @@ function buildTree(rows) {
   roots.sort(cmp);
   roots.forEach(sortRec);
   return roots;
+}
+
+// Attach a two-digit rank prefix ("01", "02", …) to each node based on its
+// position among siblings. Also builds a Map keyed by confluence_page_id so
+// non-tree consumers (selected header, page detail) can look up the same number.
+function annotateDisplayNumbers(roots) {
+  const byPid = new Map();
+  const walk = (nodes) => {
+    (nodes || []).forEach((n, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      n._displayNumber = num;
+      byPid.set(n.confluence_page_id, n);
+      if (Array.isArray(n.children) && n.children.length) walk(n.children);
+    });
+  };
+  walk(roots);
+  return byPid;
+}
+
+// Render a node's title with its computed display number prefix.
+function withNumber(n) {
+  if (!n) return "";
+  const t = n.title || "Untitled";
+  return n._displayNumber ? `${n._displayNumber}  ${t}` : t;
 }
 
 // ─── Flatten tree for keyboard / next-prev nav (V2) ───────────
@@ -303,7 +319,11 @@ export default function Handbook() {
     if (defaultId) selectPage(defaultId, true);
   }, [rows, selectedId, selectPage]);
 
-  const tree = useMemo(() => buildTree(rows), [rows]);
+  const { tree, nodeById } = useMemo(() => {
+    const roots = buildTree(rows);
+    const byPid = annotateDisplayNumbers(roots);
+    return { tree: roots, nodeById: byPid };
+  }, [rows]);
   const flat = useMemo(() => flattenTree(tree), [tree]);
 
   // When a page is selected (URL deep-link, search jump, initial default),
@@ -367,8 +387,8 @@ export default function Handbook() {
   }, [search, rows]);
 
   const selected = useMemo(
-    () => (rows || []).find(r => r.confluence_page_id === selectedId) || null,
-    [rows, selectedId]
+    () => nodeById.get(selectedId) || (rows || []).find(r => r.confluence_page_id === selectedId) || null,
+    [nodeById, rows, selectedId]
   );
 
   // ─── Loading / Error / Empty ──────────────────────────────
@@ -474,7 +494,7 @@ export default function Handbook() {
 
         {/* Tree */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-          {(visibleIds ? flat : visibleFlat).map((entry, idx, arr) => {
+          {(visibleIds ? flat : visibleFlat).map((entry) => {
             const node = entry.node;
             const depth = entry.depth;
             const isActive = node.confluence_page_id === selectedId;
@@ -486,24 +506,8 @@ export default function Handbook() {
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = iconForTitle(node.title);
-            // Divider between sort zones — top vs middle, middle vs bottom.
-            // Skipped in search mode where the natural ordering context isn't shown.
-            const _zoneOf = (sr) => sr == null ? 0 : (sr <= -1000 ? -2 : sr < 0 ? -1 : 1);
-            const currentZone = _zoneOf(node?.sort_order);
-            const prevZone = idx > 0 ? _zoneOf(arr[idx - 1]?.node?.sort_order) : null;
-            const showDivider = !visibleIds && prevZone !== null && currentZone !== prevZone;
             return (
               <Fragment key={node.confluence_page_id}>
-              {showDivider && (
-                <div
-                  aria-hidden="true"
-                  style={{
-                    height: 1,
-                    background: T.slate200,
-                    margin: "14px 12px 10px 12px",
-                  }}
-                />
-              )}
               <div
                 style={{
                   display: "flex",
@@ -588,7 +592,7 @@ export default function Handbook() {
                       letterSpacing: "-0.01em",
                       lineHeight: 1.3,
                     }}>
-                      {node.title || "Untitled"}
+                      {withNumber(node)}
                     </div>
                     {depth === 0 && (
                       <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.4, marginTop: 2 }}>
@@ -645,7 +649,7 @@ export default function Handbook() {
               fontSize: 12, fontWeight: 600, color: T.slate500,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              {selected?.title || "Pick a section"}
+              {selected ? withNumber(selected) : "Pick a section"}
             </div>
           </div>
         )}
@@ -797,7 +801,7 @@ What I'd like to discuss:
             )}
           </div>
           <h1 style={{ fontSize: 28, fontWeight: 800, color: T.slate900, margin: 0, letterSpacing: "-0.025em", lineHeight: 1.25 }}>
-            {page?.title || "Untitled page"}
+            {page ? withNumber(page) : "Untitled page"}
           </h1>
         </div>
       </div>
