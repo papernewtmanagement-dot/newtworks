@@ -86,7 +86,7 @@ const BANNER_STYLE_CYCLE =
 function bannerMissing(target) {
   return (
     `<div style="${BANNER_STYLE_MISSING}">` +
-    `⚠️ <strong>Missing include:</strong> "${escapeHtml(target)}" was referenced here on Confluence ` +
+    `⚠️ <strong>Missing include:</strong> "${escapeHtml(target)}" was referenced here ` +
     `but was not migrated. Author the page or remove the include marker.` +
     `</div>`
   );

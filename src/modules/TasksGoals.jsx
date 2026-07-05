@@ -49,7 +49,7 @@ const TASK_CATEGORIES = {
   marketing:         { label:"Marketing",        icon:"📣", color:T.purple   },
   team_development:  { label:"Team Development", icon:"🎓", color:T.amber    },
   handbook:          { label:"Handbook",         icon:"📕", color:T.red      },
-  playbook:          { label:"Playbook",         icon:"📘", color:T.green    },
+  playbook:          { label:"Processes",        icon:"📘", color:T.green    },
 };
 const TASK_CATEGORY_ORDER = ["web_app","admin","finances","marketing","team_development","handbook","playbook"];
 const categoryConfig = (key) => TASK_CATEGORIES[key] || null;

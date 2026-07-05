@@ -415,7 +415,7 @@ export default function Handbook() {
         <div style={{ background: T.slate50, padding: 24, borderRadius: 12, border: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No handbook pages yet</div>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-            The handbook table is empty. The Confluence ingestion pipeline writes here.
+            The handbook table is empty.
           </div>
         </div>
       </div>
@@ -470,9 +470,6 @@ export default function Handbook() {
           <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>
             Handbook
           </div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
-            Mirrored from Confluence. Read-only here — edits happen in Confluence.
-          </div>
           <input
             type="search"
             value={search}
@@ -508,6 +505,9 @@ export default function Handbook() {
             const icon = iconForTitle(node.title);
             return (
               <Fragment key={node.confluence_page_id}>
+              {!visibleIds && depth === 0 && node.title === "Signature Page" && (
+                <div style={{ height: 1, background: T.slate200, margin: "8px 16px" }} aria-hidden="true" />
+              )}
               <div
                 style={{
                   display: "flex",
@@ -602,6 +602,9 @@ export default function Handbook() {
                   </div>
                 </button>
               </div>
+              {!visibleIds && depth === 0 && node.title === "Team List" && (
+                <div style={{ height: 1, background: T.slate200, margin: "8px 16px" }} aria-hidden="true" />
+              )}
               </Fragment>
             );
           })}
@@ -610,7 +613,7 @@ export default function Handbook() {
         {/* Footer */}
         <div style={{ padding: "12px 18px", borderTop: `1px solid ${T.slate200}`, background: T.slate50 }}>
           <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.5 }}>
-            <strong style={{ color: T.slate700 }}>{rows.length} pages.</strong> Source of truth: Confluence.
+            <strong style={{ color: T.slate700 }}>{rows.length} pages.</strong>
           </div>
         </div>
       </div>
@@ -830,20 +833,17 @@ What I'd like to discuss:
           <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
-            This page has no text content. {page?.notes ? `(${page.notes})` : "It may be an attachment-only page in Confluence."}
-            {page?.source_url && (
-              <> View it directly at <a href={page.source_url} target="_blank" rel="noreferrer noopener" style={{ color: T.blue }}>Confluence</a>.</>
-            )}
+            This page has no text content.{page?.notes ? ` (${page.notes})` : ""}
           </div>
         )}
       </div>
 
-      {/* Footer note */}
-      <div style={{ marginTop: 22, fontSize: 11, color: T.slate400, lineHeight: 1.6 }}>
-        {DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "team_roster"
-          ? "Source of truth: team roster (public.team). This page regenerates live on each visit — no manual sync needed."
-          : `Source of truth: Confluence (page id ${page?.confluence_page_id || "—"}). Changes made here would not persist — edit the page in Confluence and the next mirror sync will refresh it.`}
-      </div>
+      {/* Footer note (team roster only — regenerates live from public.team) */}
+      {DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "team_roster" && (
+        <div style={{ marginTop: 22, fontSize: 11, color: T.slate400, lineHeight: 1.6 }}>
+          Source of truth: team roster (public.team). This page regenerates live on each visit — no manual sync needed.
+        </div>
+      )}
     </div>
   );
 }

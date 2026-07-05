@@ -555,7 +555,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
-    playbook:    <ErrorBoundary name="Playbook"><Playbook /></ErrorBoundary>,
+    playbook:    <ErrorBoundary name="Processes"><Playbook /></ErrorBoundary>,
     admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,

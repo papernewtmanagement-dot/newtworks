@@ -348,7 +348,7 @@ export default function Admin() {
         <div style={{ background: T.slate50, padding: 24, borderRadius: 12, border: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>No admin pages yet</div>
           <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-            The admin_pages table is empty. Author rows directly via SQL (Confluence deprecated for writes).
+            The admin_pages table is empty. Author rows directly via SQL.
           </div>
         </div>
       </div>
@@ -540,7 +540,7 @@ export default function Admin() {
         {/* Footer */}
         <div style={{ padding: "12px 18px", borderTop: `1px solid ${T.slate200}`, background: T.slate50 }}>
           <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.5 }}>
-            <strong style={{ color: T.slate700 }}>{rows.length} pages.</strong> Source of truth: Confluence.
+            <strong style={{ color: T.slate700 }}>{rows.length} pages.</strong>
           </div>
         </div>
       </div>
@@ -753,18 +753,11 @@ What I'd like to discuss:
           <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
-            This page has no text content. {page?.notes ? `(${page.notes})` : "It may be an attachment-only page in Confluence."}
-            {page?.source_url && (
-              <> View it directly at <a href={page.source_url} target="_blank" rel="noreferrer noopener" style={{ color: T.blue }}>Confluence</a>.</>
-            )}
+            This page has no text content.{page?.notes ? ` (${page.notes})` : ""}
           </div>
         )}
       </div>
 
-      {/* Footer note */}
-      <div style={{ marginTop: 22, fontSize: 11, color: T.slate400, lineHeight: 1.6 }}>
-        Source of truth: Confluence (page id {page?.confluence_page_id || "—"}). Changes made here would not persist — edit the page in Confluence and the next mirror sync will refresh it.
-      </div>
     </div>
   );
 }
