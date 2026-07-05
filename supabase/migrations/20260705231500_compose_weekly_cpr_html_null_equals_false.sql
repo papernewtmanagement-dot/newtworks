@@ -1,4 +1,12 @@
--- Fix compose_weekly_cpr_html team checklist hit counter — NULL was counted as hit via COALESCE default true.
--- Also standardizes personal counter to IS TRUE for style consistency (semantic behavior unchanged).
--- Full function body applied via Supabase apply_migration; this migration file captures intent for repo history.
--- See DB for authoritative body of compose_weekly_cpr_html.
+-- Fix: compose_weekly_cpr_html team-checklist hit count treated NULL as ✓ via COALESCE(x, true).
+-- This produced wrong "Hit: 11 of 11" header, wrong "extra quotes owed" penalty, wrong ✓ mark.
+-- Also standardizes personal counter from `CASE WHEN d.field` to `CASE WHEN d.field IS TRUE`
+-- (semantic behavior unchanged — NULL still falls through as 0 — but explicit intent).
+--
+-- Full function body applied via Supabase apply_migration on 2026-07-05.
+-- Peter directive 2026-07-05: NULL = false everywhere. All checklist hit counting → IS TRUE.
+--
+-- To reproduce this migration in a clean environment:
+--   SELECT pg_get_functiondef('public.compose_weekly_cpr_html'::regproc);
+-- and CREATE OR REPLACE using the returned body. The body is >8KB so it lives in DB
+-- as the canonical source (schema_snapshots pattern per coding_rules).
