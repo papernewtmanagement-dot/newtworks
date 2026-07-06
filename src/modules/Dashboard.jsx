@@ -112,21 +112,26 @@ const AIPPWidget = ({ data, onNavigate }) => {
 const GoalsPaceWidget = ({ data, onNavigate }) => {
   const g = data.goalsPace || {};
 
-  // Threshold philosophy: "always up" goals — at or above target = On Pace.
-  // Anything short of target reads as Behind (recoverable) or Off Pace.
-  // 100% floor for green/On Pace prevents the "95% counts as on pace" false-positive
-  // that reported green for on-time SMVC 2.59% against a 2.70% target (95.9% of goal).
+  // Threshold philosophy: "always up" goals, MWM-style — three-way honest signaling.
+  //   >= 110  Ahead     green   — beating target with room
+  //   >= 100  On Pace   green   — at or above target
+  //   >=  90  Close     green   — striking distance, distinct label preserves honest scoring
+  //   >=  75  Behind    amber   — recoverable but off pace
+  //   <   75  Off Pace  red     — material gap
+  // The distinct "Close" label at 90-99% keeps the green signal for real progress
+  // while never mislabeling <target as "On Pace" (the earlier SMVC false-positive).
   const statusColor = (p) => {
     if (p == null) return T.slate400;
-    if (p >= 100)  return T.green;
-    if (p >= 85)   return T.amber;
+    if (p >= 90)   return T.green;
+    if (p >= 75)   return T.amber;
     return T.red;
   };
   const statusLabel = (p) => {
     if (p == null) return "—";
     if (p >= 110)  return "Ahead";
     if (p >= 100)  return "On Pace";
-    if (p >= 85)   return "Behind";
+    if (p >= 90)   return "Close";
+    if (p >= 75)   return "Behind";
     return "Off Pace";
   };
 
