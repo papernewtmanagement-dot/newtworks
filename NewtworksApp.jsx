@@ -376,6 +376,32 @@ const LoginScreen = ({ onSignedIn }) => {
   const [password, setPassword] = useState("");
   const [busy, setBusy]         = useState(false);
   const [error, setError]       = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [resetMsg, setResetMsg]   = useState("");
+
+  const sendReset = async () => {
+    if (resetting) return;
+    setError("");
+    setResetMsg("");
+    const em = email.trim();
+    if (!em) { setError("Enter your email above, then click Forgot password?"); return; }
+    if (!supabase) { setError("Auth is not configured. Check Supabase connection."); return; }
+    setResetting(true);
+    try {
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(em, {
+        redirectTo: window.location.origin,
+      });
+      if (resetErr) {
+        setError(resetErr.message || "Could not send reset email.");
+      } else {
+        setResetMsg(`Reset link sent to ${em}. Check your inbox (and spam).`);
+      }
+    } catch (err) {
+      setError(err?.message || "Unexpected error sending reset email.");
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const submit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -445,6 +471,12 @@ const LoginScreen = ({ onSignedIn }) => {
             </div>
           )}
 
+          {resetMsg && (
+            <div style={{ fontSize: 12, color: "#065F46", background: "#D1FAE5", border: `1px solid #A7F3D0`, borderRadius: 8, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 }}>
+              {resetMsg}
+            </div>
+          )}
+
           <button
             type="submit" disabled={busy}
             style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, color: TOKENS.white, background: busy ? TOKENS.slate400 : TOKENS.blue, border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer", transition: "background 0.15s" }}
@@ -452,6 +484,15 @@ const LoginScreen = ({ onSignedIn }) => {
             {busy ? "Signing in…" : "Sign In"}
           </button>
         </form>
+
+        <div style={{ textAlign: "center", marginTop: 14 }}>
+          <button
+            type="button" onClick={sendReset} disabled={resetting}
+            style={{ fontSize: 12, color: TOKENS.blue, background: "none", border: "none", padding: 0, cursor: resetting ? "not-allowed" : "pointer", textDecoration: "underline" }}
+          >
+            {resetting ? "Sending reset link…" : "Forgot password?"}
+          </button>
+        </div>
 
         <div style={{ fontSize: 10, color: TOKENS.slate400, textAlign: "center", marginTop: 18, lineHeight: 1.6 }}>
           Accounts are created by your administrator.<br />Contact your agency owner for access.
