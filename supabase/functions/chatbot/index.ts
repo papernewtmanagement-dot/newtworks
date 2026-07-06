@@ -348,7 +348,7 @@ function buildSystemPrompt(speaker: Speaker, chatType: string, chatTitle: string
   const speakerName = speaker.first_name || "Teammate";
   const inGroup = chatType !== "private";
 
-  let sp = `You are Paper Newt — a Pocket CFO/COO for Story Insurance Agency. Same role as the intelligence layer that runs Peter Story's Business Command Center (BCC). Supabase project: vulhdujhbwvibbojiimi. Agency id: 126794dd-25ff-47d2-a436-724499733365.
+  let sp = `You are Paper Newt — a Pocket CFO/COO for Story Insurance Agency. Same role as the intelligence layer that runs Peter Story's Newtworks (Newtworks). Supabase project: vulhdujhbwvibbojiimi. Agency id: 126794dd-25ff-47d2-a436-724499733365.
 
 ## Chat context
 
@@ -380,7 +380,7 @@ Match his style precisely:
 - Bring deep domain expertise. End on an actual recommendation, not a list of factors.
 - Pull live data when relevant. Never speculate when the database can answer.
 
-You have full visibility into the BCC. All tables, all data, all principles, all persistent memory.
+You have full visibility into the Newtworks. All tables, all data, all principles, all persistent memory.
 
 `;
   } else {
@@ -408,7 +408,7 @@ Even though internal, the State Farm Agent's Agreement governs:
 
 You have two tools. Call them when the answer needs live data or specific stored knowledge — do not guess.
 
-- read_sql(sql): SELECT or WITH-prefixed CTE against the BCC Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, journal_entries, payroll_runs, persistent_memory, core_principles, handbook, processes, automation_recipes, automation_run_log, settings, and ~70 others.
+- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, journal_entries, payroll_runs, persistent_memory, core_principles, handbook, processes, automation_recipes, automation_run_log, settings, and ~70 others.
 - search_knowledge(query, max_per_table): keyword search across persistent_memory, core_principles, handbook, and processes simultaneously.
 
 IMPORTANT: When you call a tool, use the structured tool_calls format the API expects. Do not write tool calls inline as text or in custom syntax — emit them through the standard function-calling channel.
@@ -438,7 +438,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "read_sql",
-      description: "Execute a read-only SELECT (or WITH-CTE) query against the BCC Postgres. Multi-statement and write queries are blocked. Capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Returns JSON array of row objects.",
+      description: "Execute a read-only SELECT (or WITH-CTE) query against the Newtworks Postgres. Multi-statement and write queries are blocked. Capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Returns JSON array of row objects.",
       parameters: {
         type: "object",
         properties: {
@@ -647,7 +647,7 @@ async function callGroq(
   if (first.error && first.error.includes("tool_use_failed")) {
     console.warn("Tool use failed, retrying without tools");
     const fallback = await callGroqOnce(
-      systemPrompt + "\n\n[NOTE: Tool use is currently disabled for this turn. Answer from your context and the fresh data above, without trying to call read_sql or search_knowledge. If the answer requires data you don't have, say so and suggest the user check the BCC directly.]",
+      systemPrompt + "\n\n[NOTE: Tool use is currently disabled for this turn. Answer from your context and the fresh data above, without trying to call read_sql or search_knowledge. If the answer requires data you don't have, say so and suggest the user check the Newtworks directly.]",
       formattedHistory,
       newUserMessage,
       false,
@@ -685,7 +685,7 @@ async function handleCommand(
       const isPeter = speaker.is_principal;
       const senderName = speaker.first_name || "there";
       let text = `Hey ${senderName} — Paper Newt here.\n\n`;
-      if (isPeter) text += `I'm your Pocket CFO/COO. Same intelligence layer that runs the BCC, available wherever you are.\n\n`;
+      if (isPeter) text += `I'm your Pocket CFO/COO. Same intelligence layer that runs the Newtworks, available wherever you are.\n\n`;
       else text += `I'm the agency's intelligence-layer assistant. Ask me about the agency, the handbook, processes, your production — whatever's in scope for your role.\n\n`;
       if (inGroup) text += `In groups: @ me (@${BOT_USERNAME}), reply to my messages, or use slash commands. I won't see normal group chatter.\n\n`;
       text += `Commands:\n/start, /help — this message\n/whoami — show what I know about you\n/reset — clear my memory of our conversation\n\nOtherwise, just talk to me.`;
@@ -698,7 +698,7 @@ async function handleCommand(
       lines.push(`Telegram: ${speaker.username ? "@" + speaker.username : "(no username)"} (${speaker.first_name ?? "?"}${speaker.last_name ? " " + speaker.last_name : ""})`);
       if (speaker.team_id) {
         lines.push(`Mapped to: ${speaker.first_name} (${speaker.role ?? "?"})`);
-        lines.push(`Principal: ${speaker.is_principal ? "Yes — partner voice + full BCC visibility" : "No — scoped access"}`);
+        lines.push(`Principal: ${speaker.is_principal ? "Yes — partner voice + full Newtworks visibility" : "No — scoped access"}`);
       } else {
         lines.push(`Mapped to: (not mapped to a team member)`);
         lines.push(`Access: limited`);

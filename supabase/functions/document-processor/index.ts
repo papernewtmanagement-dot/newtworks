@@ -321,7 +321,7 @@ async function uploadToDrive(
   if (!ctx.driveAccountId) return null;
   const folder = DRIVE_FOLDER_BY_DOCTYPE[docType];
   const yearMonth = txnDate.slice(0, 7);
-  const path = `BCC/Documents/${yearMonth}/${folder}/${att.fileName}`;
+  const path = `Newtworks/Documents/${yearMonth}/${folder}/${att.fileName}`;
 
   const res = await callComposio({
     apiKey: ctx.composioApiKey,

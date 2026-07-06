@@ -1,10 +1,10 @@
 // =========================================================================
-// email-archiver  (BCC dedicated Edge Function)
+// email-archiver  (Newtworks dedicated Edge Function)
 // =========================================================================
 // PURPOSE: Daily inbox hygiene.
 //   1. Fetch Gmail messages older than N days that still carry INBOX label.
 //   2. For each message with attachments: download via Composio, upload to
-//      Google Drive at BCC/Documents/YYYY-MM/<category>/<filename>, and log
+//      Google Drive at Newtworks/Documents/YYYY-MM/<category>/<filename>, and log
 //      the row into public.documents.
 //   3. Batch-remove INBOX label from those messages (chunks of 1000).
 //   4. Honor preserve_starred: skip messages with STARRED label.
@@ -31,7 +31,7 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 const DEFAULT_ARCHIVE_OLDER_THAN_DAYS = 30;
-const DRIVE_FOLDER_BASE = "BCC/Documents";
+const DRIVE_FOLDER_BASE = "Newtworks/Documents";
 const BATCH_SIZE = 1000;
 
 function jsonResponse(body: any, status = 200): Response {
@@ -112,7 +112,7 @@ async function ensureDriveFolder(opts: {
 }): Promise<string | null> {
   const segments = [DRIVE_FOLDER_BASE, yyyymm(opts.emailDate), opts.category];
   // Walk the path, creating folders as needed. Each segment is created under
-  // its parent. Root folder ("BCC") is created under My Drive root if absent.
+  // its parent. Root folder ("Newtworks") is created under My Drive root if absent.
   let parentId: string | null = null; // null = My Drive root
   for (const segment of segments) {
     // Look up existing folder with this name under parentId
