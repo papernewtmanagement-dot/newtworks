@@ -114,6 +114,13 @@ export default function AgencyIdentityRibbon() {
     return () => { active = false; };
   }, []);
 
+  const navigateToPage = (moduleId, pageId) => {
+    if (typeof window === "undefined") return;
+    const path = pageId ? `/${moduleId}/${pageId}` : `/${moduleId}`;
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   const toggle = () => {
     setExpanded(v => {
       const nv = !v;
@@ -242,6 +249,23 @@ export default function AgencyIdentityRibbon() {
       marginRight: 6,
     },
     dot: { color: T.slate300, margin: "0 8px" },
+    linkRow: {
+      display: "flex",
+      justifyContent: "flex-end",
+      marginTop: 4,
+    },
+    link: {
+      fontSize: 11,
+      color: T.blue,
+      textDecoration: "none",
+      cursor: "pointer",
+      fontWeight: 500,
+      letterSpacing: "0.02em",
+      background: "none",
+      border: "none",
+      padding: 0,
+      fontFamily: "inherit",
+    },
   };
 
   const chevron = (
@@ -328,6 +352,16 @@ export default function AgencyIdentityRibbon() {
                   {office.jackson_id && <><span style={css.officeLabel}>Jackson ID</span><span>{office.jackson_id}</span></>}
                 </div>
               )}
+              <div style={css.linkRow}>
+                <button
+                  type="button"
+                  style={css.link}
+                  onClick={() => navigateToPage("handbook", "bcc-rules-of-road")}
+                  aria-label="Go to Rules of the Road in the Handbook"
+                >
+                  See: Rules of the Road →
+                </button>
+              </div>
             </div>
           )}
         </div>
