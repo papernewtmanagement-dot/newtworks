@@ -86,7 +86,7 @@ export function useSupabaseQuery(queryFn, deps = []) {
 }
 
 /**
- * useViewport — responsive breakpoint hook used by BCCApp shell + modules.
+ * useViewport — responsive breakpoint hook used by NewtworksApp shell + modules.
  * Pixel 8 Pro ~412px wide portrait; iPad 10 ~820px portrait; 15" laptop ~1440px+.
  * Phone: <640. Tablet: 640-1023. Desktop: >=1024.
  *

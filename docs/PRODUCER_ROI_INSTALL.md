@@ -165,7 +165,7 @@ VALUES (
 
 Once the schema, agency rates, and at least one row of producer_production are in place:
 
-1. Open the deployed BCC app
+1. Open the deployed Newtworks app
 2. Navigate to **HR & People → Performance**
 3. You should see:
    - Book Lapse Rate card at top with computed lapse rate

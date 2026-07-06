@@ -14,7 +14,7 @@ the Edge Function is queued for this drainer to pick up.
 
 ## When to run
 
-- **Manually from any BCC Claude session.** Just say "drain the queue"
+- **Manually from any Newtworks Claude session.** Just say "drain the queue"
   or call `drain_llm_queue()` in the workbench.
 - **At the start of any session** where new bank-statement intake has
   happened since the last drain — to avoid backlog.

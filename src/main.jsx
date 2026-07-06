@@ -1,9 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import BCCApp from '../BCCApp.jsx'
+import NewtworksApp from '../NewtworksApp.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <BCCApp />
+    <NewtworksApp />
   </React.StrictMode>,
 )

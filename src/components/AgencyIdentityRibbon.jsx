@@ -74,7 +74,7 @@ const RULES_OF_ROAD = [
   },
 ];
 
-// ---- When You Get Stuck (mirrors processes.bcc-when-stuck) ----
+// ---- When You Get Stuck (mirrors processes.newtworks-when-stuck) ----
 const WHEN_STUCK = [
   {
     heading: "Coverage or policy question",

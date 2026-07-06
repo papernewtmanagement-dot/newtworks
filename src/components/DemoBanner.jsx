@@ -30,7 +30,7 @@ export default function DemoBanner() {
       }}
     >
       🌟 DEMO DATA — This is "Sunshine State Insurance," a fictional agency.
-      Your real BCC will be populated with your actual agency data.
+      Your real Newtworks will be populated with your actual agency data.
       Demo resets nightly. Built by{' '}
       <a
         href="https://imaginary-farms.com"

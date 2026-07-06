@@ -68,7 +68,7 @@ export default class ErrorBoundary extends React.Component {
               Something went wrong loading {moduleName}
             </div>
             <div style={{ fontSize:12, color:T.slate700, marginTop:2 }}>
-              The rest of the BCC is still working — try another module while this is fixed.
+              The rest of the Newtworks is still working — try another module while this is fixed.
             </div>
           </div>
         </div>

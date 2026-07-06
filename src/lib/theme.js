@@ -3,7 +3,7 @@
 // ------------------------------------------------------------
 // Version 1.0 — June 2026
 //
-// Every module under src/modules/ and BCCApp.jsx imports from
+// Every module under src/modules/ and NewtworksApp.jsx imports from
 // this file. Do not declare local color-token objects in modules.
 // If a brand value needs to change, change it HERE and only here.
 //
@@ -12,7 +12,7 @@
 //
 // Two exports:
 //   - T       — used by modules (matches their legacy local name)
-//   - TOKENS  — alias for BCCApp.jsx (matches its legacy local name)
+//   - TOKENS  — alias for NewtworksApp.jsx (matches its legacy local name)
 //
 // Key NAMES preserved across the legacy palette + 4 supporting
 // accent families (gold, pink, purple, teal) so every existing
@@ -69,6 +69,6 @@ export const T = {
   tealLt:   "#D5E2DF",
 };
 
-// Alias for BCCApp.jsx which historically imports the object as TOKENS.
+// Alias for NewtworksApp.jsx which historically imports the object as TOKENS.
 // Same object reference — change T, both update.
 export const TOKENS = T;
