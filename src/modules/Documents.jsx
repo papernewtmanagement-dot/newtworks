@@ -4,8 +4,8 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// BCC DOCUMENTS MODULE v1.0
-// Paper Newt Management LLC · Business Command Center
+// Newtworks DOCUMENTS MODULE v1.0
+// Paper Newt Management LLC · Newtworks
 //
 // SECTIONS:
 //   1. Overview     — Recent activity, storage summary, quick stats
@@ -631,7 +631,7 @@ const UploadSection = () => {
         <div style={{ background:T.greenLt, border:`1px solid #BBF7D0`, borderLeft:`4px solid ${T.green}`, borderRadius:10, padding:"12px 16px" }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#065F46", marginBottom:4 }}>📧 Easier option: just email it</div>
           <div style={{ fontSize:11, color:"#065F46", lineHeight:1.6 }}>
-            The fastest way to get a document into your BCC is to email it to your agency Gmail. The Document Importer checks hourly and processes it automatically — no manual upload needed. COMP_RECAP, payroll exports, bank statements, resumes — just forward the email.
+            The fastest way to get a document into your Newtworks is to email it to your agency Gmail. The Document Importer checks hourly and processes it automatically — no manual upload needed. COMP_RECAP, payroll exports, bank statements, resumes — just forward the email.
           </div>
         </div>
       )}

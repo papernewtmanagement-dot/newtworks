@@ -4,8 +4,8 @@ import { useViewport } from "../lib/hooks.js";
 import ComplianceCenter from "./ComplianceCenter.jsx";
 
 // ============================================================
-// BCC CORE PRINCIPLES MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks CORE PRINCIPLES MODULE v1.0
+// Newtworks — State Farm Agent Edition
 //
 // PURPOSE:
 // The agency's governing principles — the authority layer that
@@ -353,7 +353,7 @@ function PrincipleDetail({ principle }) {
   const m = metaFor(principle?.domain);
   const books = Array.isArray(principle?.books_referenced) ? principle.books_referenced : [];
   const askContext = useMemo(() => {
-    return `I'm looking at this core principle on my BCC:
+    return `I'm looking at this core principle on my Newtworks:
 
 DOMAIN: ${principle?.domain}
 TITLE: ${principle?.title}
