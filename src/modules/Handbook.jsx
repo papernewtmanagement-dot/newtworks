@@ -180,7 +180,7 @@ function TeamRoster() {
     if (m.role_category === "Retention") return "Retention";
     return "Other";
   };
-  const groupOrder = ["Ownership", "Sales", "Retention", "Other"];
+  const groupOrder = ["Sales", "Retention", "Other", "Ownership"];
   const groups = {};
   for (const m of rows) {
     const g = groupOf(m);
@@ -190,14 +190,6 @@ function TeamRoster() {
   const displayName = (m) => {
     const nn = m.nickname ? ` "${m.nickname}"` : "";
     return `${m.first_name}${nn} ${m.last_name}`;
-  };
-
-  const roleLine = (m) => {
-    const parts = [];
-    if (m.role) parts.push(m.role);
-    if (m.account_alpha) parts.push(`Accounts ${m.account_alpha}`);
-    if (m.work_location === "remote") parts.push("Remote");
-    return parts.join(" · ");
   };
 
   return (
@@ -211,11 +203,9 @@ function TeamRoster() {
           {groups[g].map((m) => (
             <div key={`${m.first_name}-${m.last_name}-${m.sf_alias || ""}`} style={{ marginBottom: 18 }}>
               <h4 style={{ margin: "0 0 2px 0" }}>{displayName(m)}</h4>
-              {roleLine(m) && (
-                <p style={{ margin: "0 0 6px 0", fontSize: 13, color: T.slate600 }}>{roleLine(m)}</p>
-              )}
               <ul style={{ margin: "4px 0 0 0" }}>
                 {m.sf_alias && <li>Alias: {String(m.sf_alias).toUpperCase()}</li>}
+                {m.account_alpha && <li>Accounts: {m.account_alpha}</li>}
                 {m.phone_extension && <li>Ext: {m.phone_extension}</li>}
                 {m.phone_personal && <li>Cell: {m.phone_personal}</li>}
                 {m.email_personal && (
