@@ -592,17 +592,24 @@ export default function AgencyIdentityRibbon() {
               </ul>
             </div>
 
-            {/* Column 2: When You Get Stuck */}
+            {/* Column: Coverage or policy question (no parent label) */}
             <div style={css.refCol}>
-              <div style={css.sectionLabel}>When You Get Stuck</div>
-              {WHEN_STUCK.map((s) => (
-                <div key={s.heading}>
-                  <div style={css.subheading}>{s.heading}</div>
-                  <ol style={css.list}>
-                    {s.items.map((it, i) => <li key={i}>{it}</li>)}
-                  </ol>
-                </div>
-              ))}
+              <div style={css.subheading}>Coverage or policy question</div>
+              <ol style={css.list}>
+                {(WHEN_STUCK.find(s => s.heading === "Coverage or policy question")?.items || []).map((it, i) => (
+                  <li key={i}>{it}</li>
+                ))}
+              </ol>
+            </div>
+
+            {/* Column: Tech problem (no parent label) */}
+            <div style={css.refCol}>
+              <div style={css.subheading}>Tech problem</div>
+              <ol style={css.list}>
+                {(WHEN_STUCK.find(s => s.heading === "Tech problem")?.items || []).map((it, i) => (
+                  <li key={i}>{it}</li>
+                ))}
+              </ol>
             </div>
 
             {/* Column 3: NATO Phonetic Alphabet — stacked, no label, bold first letter */}
