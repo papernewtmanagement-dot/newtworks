@@ -530,17 +530,19 @@ const SetPasswordScreen = ({ email, onDone }) => {
     try {
       const { error: updErr } = await supabase.auth.updateUser({ password: pw });
       if (updErr) { setError(updErr.message || "Could not set password."); setBusy(false); return; }
-      // Mark the profile active now that they've completed setup.
-      try {
-        const { data: who } = await supabase.auth.getUser();
-        if (who?.user?.id) {
-          await supabase.from("users")
-            .update({ invite_status: "active", last_login: new Date().toISOString() })
-            .eq("auth_user_id", who.user.id);
-        }
-      } catch (_) { /* non-fatal */ }
-      // Clear the hash tokens from the URL and enter the app.
+      // Password is set — enter the app immediately. Do NOT await the profile stamp:
+      // a stalled PostgREST update was leaving users stranded on "Saving..." forever
+      // because a never-resolving await never triggers the enclosing try/catch.
       try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
+      // Fire-and-forget profile stamp. Failures here are cosmetic (last_login field only)
+      // — they must never block entry to the app.
+      supabase.auth.getUser().then(({ data: who }) => {
+        if (!who?.user?.id) return;
+        supabase.from("users")
+          .update({ invite_status: "active", last_login: new Date().toISOString() })
+          .eq("auth_user_id", who.user.id)
+          .then(() => {}, () => {});
+      }).catch(() => {});
       if (onDone) onDone();
     } catch (err) {
       setError(err?.message || "Unexpected error.");
