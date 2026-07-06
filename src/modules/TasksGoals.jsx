@@ -16,7 +16,7 @@ import EmptyState from "../components/EmptyState.jsx";
 //
 // KEY FEATURES:
 //   • Six fixed task categories (web app, admin, marketing,
-//     training, handbook, playbook) backed by DB CHECK constraint
+//     training, handbook, processes) backed by DB CHECK constraint
 //   • Star toggle pushes a task to This Week's to-dos
 //   • Priority system: critical / high / medium / low
 //   • Tasks created by agent, Claude, or automations

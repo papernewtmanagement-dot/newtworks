@@ -608,15 +608,6 @@ function parseUrl(pathname) {
   const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);
   if (cprMatch) return { module: "cpr", cprWeekDate: cprMatch[1] };
   if (p === "/" || p === "/dashboard") return { module: "dashboard", cprWeekDate: null };
-  // Back-compat: /playbook* was renamed to /processes* on 2026-07-05. Rewrite
-  // in place so old bookmarks and cross-links keep resolving to the new module.
-  if (p === "/playbook" || p.startsWith("/playbook/")) {
-    const rewritten = "/processes" + p.slice("/playbook".length);
-    if (typeof window !== "undefined" && window.history?.replaceState) {
-      window.history.replaceState({}, "", rewritten);
-    }
-    return parseUrl(rewritten);
-  }
   // Accept /<module> AND /<module>/<sub-path>. Modules like handbook, processes,
   // and admin own their own sub-route (e.g. /handbook/<page-id>) — BCCApp only
   // resolves the top-level module here and leaves the sub-path to the module.

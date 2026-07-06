@@ -577,7 +577,7 @@ const StaffDirectory = ({ staff }) => {
     try {
       // Delegate the whole termination to the terminate-team-member edge fn.
       // It orchestrates: team archive + linked user deactivation,
-      // team_telegram_map exclusion, Team List playbook strip, the
+      // team_telegram_map exclusion, Team List processes strip, the
       // termination-notice email to Peter's SF address, and the Telegram
       // group kick. Email + Telegram are best-effort and surface as
       // warnings; the DB state is always consistent on the function's return.

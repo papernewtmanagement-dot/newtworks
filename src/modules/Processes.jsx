@@ -261,7 +261,7 @@ export default function Processes() {
   }, []);
 
   // Auto-default selection: once rows are loaded and selectedId is still
-  // null (i.e. URL was bare /playbook), pick the root page and
+  // null (i.e. URL was bare /processes), pick the root page and
   // replaceState so the address bar reflects what is being shown without
   // adding a spurious history entry.
   useEffect(() => {

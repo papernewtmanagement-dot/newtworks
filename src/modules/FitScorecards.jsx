@@ -2,7 +2,7 @@
 // FitScorecards.jsx
 // =========================================================================
 // Simple Conversation FIT Scorecards — team self-assessment on customer
-// conversations, per handbook 04 Win the Week + playbook 04 Daily Checklist.
+// conversations, per handbook 04 Win the Week + processes 04 Daily Checklist.
 //   - Every active agency team member can create/edit their own entries
 //   - Whole-team read (open training loop)
 //   - Tenure-tier is stamped at entry time via public.fit_scorecard_tenure_tier()
