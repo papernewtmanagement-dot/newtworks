@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC CASH REGISTER MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks CASH REGISTER MODULE v1.0
+// Newtworks — State Farm Agent Edition
 //
 // SECTIONS:
 //   1. Live Balance Board  — Projected balances for all accounts

@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC COMPLIANCE CENTER MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks COMPLIANCE CENTER MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:

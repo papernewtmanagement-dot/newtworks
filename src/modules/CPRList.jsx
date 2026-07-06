@@ -67,7 +67,7 @@ const Td = ({ children, align = "left", style = {} }) => (
 );
 
 // ── Navigation helper ──────────────────────────────────────────────────────────
-// Pushes /cpr/{date} into history and dispatches popstate so the BCC shell's
+// Pushes /cpr/{date} into history and dispatches popstate so the Newtworks shell's
 // detectCPRWeekDate logic picks it up without a full page reload.
 function openCPR(weekDate) {
   if (typeof window === "undefined") return;
