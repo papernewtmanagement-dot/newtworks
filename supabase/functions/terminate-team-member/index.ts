@@ -8,7 +8,7 @@
 //   3. Updates team: archived_at, end_date, is_active=false, termination_reason,
 //      final_paycheck_date.
 //   4. Deactivates the linked users row if present.
-//   5. Sets team_telegram_map.is_excluded=true with excluded_reason='terminated'.
+//   5. Sets both team_telegram_map.is_excluded_pjsagencybot=true AND is_excluded_paper_newt_bot=true (excluded_reason='terminated').
 //   6. Strips the person's block from the "Team List" processes page.
 //   7. Sends the email to Peter's State Farm address via Composio Gmail.
 //   8. Kicks the user from the team Telegram group (ban + unban → no permanent
@@ -239,7 +239,7 @@ ${checklistMdToHtml(checklistMd)}
 <li>Archived in Newtworks database (<code>team.archived_at</code>)</li>
 <li>Linked user login deactivated (if any)</li>
 <li>Stripped from the Team List page in Processes</li>
-<li>Excluded from Telegram check-ins (<code>team_telegram_map.is_excluded=true</code>)</li>
+<li>Excluded from both Telegram bots (<code>team_telegram_map.is_excluded_pjsagencybot=true, is_excluded_paper_newt_bot=true</code>)</li>
 <li>Kicked from the team Telegram group</li>
 </ul>
 
@@ -280,13 +280,13 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
 
     // 6) Telegram map: mark excluded
     const { error: tgmErr, data: tgm } = await sb.from("team_telegram_map")
-      .update({ is_excluded: true, excluded_reason: "terminated", updated_at: nowIso })
+      .update({ is_excluded_pjsagencybot: true, is_excluded_paper_newt_bot: true, excluded_reason: "terminated", updated_at: nowIso })
       .eq("team_id", body.team_id)
       .eq("agency_id", AGENCY_ID)
       .select("telegram_user_id")
       .maybeSingle();
     if (tgmErr) warnings.push(`telegram map: ${tgmErr.message}`);
-    else if (tgm) auditLog.push("team_telegram_map.is_excluded=true");
+    else if (tgm) auditLog.push("team_telegram_map.is_excluded_pjsagencybot=true, is_excluded_paper_newt_bot=true");
     const telegramUserId: number | null = tgm?.telegram_user_id ?? null;
 
     // 7) Strip from "Team List" processes page (best-effort)

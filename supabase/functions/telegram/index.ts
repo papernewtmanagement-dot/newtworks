@@ -1,4 +1,7 @@
-// telegram edge function (v15)
+// telegram edge function (v16)
+// v16 (2026-07-06):
+//   - is_excluded → is_excluded_pjsagencybot rename (per-bot exclusion split)
+//
 // v15 changes vs v14:
 //   - RECOVERY FILTER: handleRecoverCheckins now ONLY considers messages
 //     starting with /checkin (work) or /health (health). The bare-N/M
@@ -377,7 +380,7 @@ async function handleRecoverCheckins(body: any): Promise<Response> {
 
 async function ensureUserMapped(fromUser: any): Promise<{ team_id: string | null; first_name: string | null; excluded: boolean }> {
   const { data: existing } = await sb.from("team_telegram_map")
-    .select("team_id, telegram_first_name, is_excluded")
+    .select("team_id, telegram_first_name, is_excluded_pjsagencybot")
     .eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id).maybeSingle();
   if (existing) {
     await sb.from("team_telegram_map").update({
@@ -387,7 +390,7 @@ async function ensureUserMapped(fromUser: any): Promise<{ team_id: string | null
       telegram_last_name: fromUser.last_name ?? null,
       updated_at: new Date().toISOString(),
     }).eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id);
-    return { team_id: existing.team_id, first_name: existing.telegram_first_name, excluded: existing.is_excluded };
+    return { team_id: existing.team_id, first_name: existing.telegram_first_name, excluded: existing.is_excluded_pjsagencybot };
   }
   const firstName: string | null = fromUser.first_name ?? null;
   let matchedTeamId: string | null = null;
@@ -408,7 +411,7 @@ async function ensureUserMapped(fromUser: any): Promise<{ team_id: string | null
     agency_id: AGENCY_ID, team_id: matchedTeamId,
     telegram_user_id: fromUser.id, telegram_username: fromUser.username ?? null,
     telegram_first_name: firstName, telegram_last_name: fromUser.last_name ?? null,
-    is_excluded: false, mapping_method: mappingMethod,
+    is_excluded_pjsagencybot: false, mapping_method: mappingMethod,
   });
   return { team_id: matchedTeamId, first_name: firstName, excluded: false };
 }

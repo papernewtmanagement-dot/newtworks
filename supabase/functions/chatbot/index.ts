@@ -1,7 +1,10 @@
-// chatbot edge function (v4)
+// chatbot edge function (v5)
 // Paper Newt — Pocket CFO/COO
 // Now supports both DMs and groups. Privacy mode ON means in groups the bot only
 // sees commands, @mentions, and replies — which is the intended UX.
+//
+// v5 (2026-07-06):
+//   - is_excluded → is_excluded_pjsagencybot rename (auto-map insert)
 //
 // v4 (2026-07-06):
 //   - Per-bot exclusion: reads team_telegram_map.is_excluded_paper_newt_bot
@@ -195,7 +198,7 @@ async function identifySpeaker(fromUser: any): Promise<Speaker> {
       agency_id: AGENCY_ID, team_id: teamId,
       telegram_user_id: fromUser.id, telegram_username: fromUser.username ?? null,
       telegram_first_name: firstName, telegram_last_name: fromUser.last_name ?? null,
-      is_excluded: false, is_excluded_paper_newt_bot: false, mapping_method: mappingMethod,
+      is_excluded_pjsagencybot: false, is_excluded_paper_newt_bot: false, mapping_method: mappingMethod,
     });
   } else {
     await sb.from("team_telegram_map").update({
