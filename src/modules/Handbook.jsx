@@ -202,9 +202,6 @@ function TeamRoster() {
 
   return (
     <div>
-      <p style={{ margin: "0 0 22px 0", fontSize: 12.5, color: T.slate500, fontStyle: "italic" }}>
-        Generated live from the team roster. To add, edit, or remove someone, use the Team panel in the BCC — this page updates on next load.
-      </p>
       {groupOrder.filter((g) => groups[g]?.length).map((g) => (
         <section key={g} style={{ marginBottom: 8 }}>
           <h2>{g}</h2>
@@ -835,13 +832,6 @@ What I'd like to discuss:
           </div>
         )}
       </div>
-
-      {/* Footer note (team roster only — regenerates live from public.team) */}
-      {DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "team_roster" && (
-        <div style={{ marginTop: 22, fontSize: 11, color: T.slate400, lineHeight: 1.6 }}>
-          Source of truth: team roster (public.team). This page regenerates live on each visit — no manual sync needed.
-        </div>
-      )}
     </div>
   );
 }
