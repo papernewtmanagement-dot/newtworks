@@ -299,7 +299,7 @@ const EDIT_FIELDS = {
   ],
 };
 
-// Roles allowed to edit a CPR. Mirrors the BCC role taxonomy.
+// Roles allowed to edit a CPR. Mirrors the Newtworks role taxonomy.
 const EDIT_ROLES = new Set(["owner", "manager"]);
 
 // ── Checklist constants ─────────────────────────────────────
