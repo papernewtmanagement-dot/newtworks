@@ -308,7 +308,7 @@ export default function AgencyIdentityRibbon() {
     },
     bar: {
       display: "flex",
-      alignItems: "flex-start",
+      alignItems: expanded ? "flex-start" : "center",
       padding: vp.isPhone ? "10px 8px" : "12px 20px",
       gap: 8,
     },
