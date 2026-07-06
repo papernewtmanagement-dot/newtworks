@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC SOCIAL MEDIA MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks SOCIAL MEDIA MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
@@ -541,7 +541,7 @@ const PlatformGuide = () => (
             </div>
             {key === "instagram" && (
               <div style={{ fontSize:11, color:"#5B21B6", background:T.purpleLt, padding:"8px 12px", borderRadius:8, lineHeight:1.6 }}>
-                📸 <strong>Instagram requires manual daily posting.</strong> No reliable API scheduling exists. Batch-prepare your content in advance, but post each day manually. Your BCC sends a reminder alert each morning for scheduled Instagram posts.
+                📸 <strong>Instagram requires manual daily posting.</strong> No reliable API scheduling exists. Batch-prepare your content in advance, but post each day manually. Your Newtworks sends a reminder alert each morning for scheduled Instagram posts.
               </div>
             )}
             {key === "facebook" && (
