@@ -137,6 +137,95 @@ function parseIdentity(rawContent) {
   return out;
 }
 
+// ---- Who Handles What (live from public.book_alpha_split) ----
+// Fetches on mount inside expanded ribbon only — parent conditionally renders
+// this component, so useEffect fires only when the user actually opens the
+// ribbon, keeping collapsed-state renders zero-query.
+function AlphaSplitLive() {
+  const [rows, setRows] = useState([]);
+  const [snapshotDate, setSnapshotDate] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: latest, error: e1 } = await supabase
+          .from("book_alpha_split")
+          .select("snapshot_date")
+          .eq("agency_id", AGENCY_ID)
+          .not("snapshot_date", "is", null)
+          .order("snapshot_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (cancelled) return;
+        if (e1) { setError(e1.message); setLoading(false); return; }
+        const d = latest?.snapshot_date;
+        if (!d) { setLoading(false); return; }
+        setSnapshotDate(d);
+
+        const { data, error: e2 } = await supabase
+          .from("book_alpha_split")
+          .select("letter_bucket, account_count, team_member_id, team:team_member_id(first_name, last_name, nickname, role, role_category)")
+          .eq("agency_id", AGENCY_ID)
+          .eq("snapshot_date", d)
+          .order("letter_bucket", { ascending: true });
+        if (cancelled) return;
+        if (e2) { setError(e2.message); setLoading(false); return; }
+        setRows(data || []);
+        setLoading(false);
+      } catch (err) {
+        if (!cancelled) { setError(err?.message || String(err)); setLoading(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <p style={{ fontSize: 12.5, color: T.slate500, fontStyle: "italic", margin: 0 }}>Loading alpha split…</p>;
+  if (error)   return <p style={{ fontSize: 12.5, color: "#b91c1c", margin: 0 }}>Couldn't load alpha split: {error}</p>;
+  if (!rows.length) return <p style={{ fontSize: 12.5, color: T.slate500, fontStyle: "italic", margin: 0 }}>No alpha split snapshot found.</p>;
+
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.team_member_id || "unassigned";
+    if (!groups.has(key)) {
+      const t = r.team || null;
+      const name = t
+        ? `${t.first_name || ""}${t.nickname ? ` "${t.nickname}"` : ""} ${t.last_name || ""}`.trim()
+        : "Unassigned";
+      const roleLabel = t?.role || t?.role_category || "";
+      groups.set(key, { name, role: roleLabel, buckets: [], total: 0 });
+    }
+    const g = groups.get(key);
+    g.buckets.push(r.letter_bucket);
+    g.total += Number(r.account_count) || 0;
+  }
+  const groupList = Array.from(groups.values()).sort((a, b) => (a.buckets[0] || "").localeCompare(b.buckets[0] || ""));
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", rowGap: 10 }}>
+        {groupList.map((g, idx) => (
+          <div key={`${g.name}-${idx}`} style={{ fontSize: 13, lineHeight: 1.5, color: T.slate900 }}>
+            <div style={{ fontWeight: 600 }}>
+              {g.name}{g.role ? <span style={{ color: T.slate500, fontWeight: 400 }}> — {g.role}</span> : null}
+            </div>
+            <div style={{ fontSize: 12.5, color: T.slate700 }}>
+              <span style={{ color: T.slate500 }}>Letters:</span> {g.buckets.join(", ")}
+              <span style={{ color: T.slate300, margin: "0 6px" }}>·</span>
+              <span style={{ color: T.slate500 }}>Accounts:</span> {g.total.toLocaleString()}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 10, fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+        Live from <code>public.book_alpha_split</code>. Snapshot as of <strong>{snapshotDate}</strong>.
+      </div>
+    </div>
+  );
+}
+
 export default function AgencyIdentityRibbon() {
   const vp = useViewport();
   const [expanded, setExpanded] = useState(() => {
@@ -494,6 +583,12 @@ export default function AgencyIdentityRibbon() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Who Handles What */}
+          <div style={css.section}>
+            <div style={css.sectionLabel}>Who Handles What</div>
+            <AlphaSplitLive />
           </div>
 
           {/* Office block */}
