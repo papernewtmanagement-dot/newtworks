@@ -6,35 +6,117 @@ import { useViewport } from "../lib/hooks.js";
 // ============================================================
 // AGENCY IDENTITY RIBBON
 // Persistent band directly under the app header, on every route.
-// Collapsed: four value labels + one-word essence per value.
-// Expanded: four-column grid of full statements + office block.
+//
+// Collapsed:
+//   Four value labels + one-word essence per value.
+//
+// Expanded:
+//   - Same pill row, but essence hidden (full statements below make it redundant).
+//   - Four-column grid of full value statements (no repeated titles — the
+//     pills above serve as the column headers).
+//   - Rules of the Road (inline; no longer a handbook page).
+//   - When You Get Stuck (mirror of the processes page; ribbon has to be
+//     reachable from anywhere in the app).
+//   - NATO Phonetic Alphabet (same — always-available reference).
+//   - Office block.
 //
 // Data:
 //   core_principles domain=agency_identity  ->  4 rule bodies + essences
 //   agency row                              ->  office details + codes
 //
-// Rule format expected in core_principles.content:
-//   <rule id="vision">**VISION - Trusted**\nBody...</rule>
-//   The word between the em-dash and the closing ** is the essence.
+//   Rules of the Road, When You Get Stuck, and NATO Alphabet are hard-coded
+//   below so the ribbon is self-contained (no extra queries on every mount,
+//   and the Rules of the Road content moved out of the handbook table entirely).
 //
 // State persistence: localStorage key "bcc.identityRibbon.expanded"
 // ============================================================
 
-// Fallback content used when the DB read is delayed or fails.
-// Keep in sync with core_principles.agency_identity.
 const FALLBACK = {
   VISION:  { essence: "Trusted",    body: "We are the trusted resource for anyone who wants to protect and grow their assets and wealth." },
-  MISSION: { essence: "Understand", body: "We understand people, and we help them understand what they have, what they don’t have, and why it’s important." },
-  CULTURE: { essence: "Dignity",    body: "We like people. We’re positive, diligent, and patient problem-solvers. We tell each other the truth with respect, communicate clearly, and treat every person — customer, teammate, neighbor — with dignity." },
-  DUTY:    { essence: "Deliver",    body: "We do what we say we will do. We trust our processes, hit our deadlines, and pursue our goals with focused energy — finding new customers, earning their business honestly, and keeping their trust for the long haul." },
+  MISSION: { essence: "Understand", body: "We understand people, and we help them understand what they have, what they don\u2019t have, and why it\u2019s important." },
+  CULTURE: { essence: "Dignity",    body: "We like people. We\u2019re positive, diligent, and patient problem-solvers. We tell each other the truth with respect, communicate clearly, and treat every person \u2014 customer, teammate, neighbor \u2014 with dignity." },
+  DUTY:    { essence: "Deliver",    body: "We do what we say we will do. We trust our processes, hit our deadlines, and pursue our goals with focused energy \u2014 finding new customers, earning their business honestly, and keeping their trust for the long haul." },
 };
 
 const LS_KEY = "bcc.identityRibbon.expanded";
 const ORDER = ["VISION", "MISSION", "CULTURE", "DUTY"];
 
+// ---- Rules of the Road (moved out of the handbook 2026-07-05) ----
+const RULES_OF_ROAD = [
+  {
+    heading: "Customer information",
+    items: [
+      { emphasis: "NEVER", rest: "contact anyone who isn't a customer or State Farm except to prospect for new business." },
+      { emphasis: "ALWAYS", rest: "make sure at least one named insured is in the conversation when discussing ANY of their information." },
+      { emphasis: "NEVER", rest: "give information about existing policies to anyone who isn't listed on that policy or part of State Farm." },
+      { emphasis: "NEVER", rest: "allow changes to existing policies from anyone who isn't the named insured or authorized by them.", sub: [
+        "Commercial policy: the business owner can authorize a representative.",
+        "Quote using someone else's information: they have to give consent, unless it's a family member of the person quoting AND part of THEIR insurance household.",
+      ] },
+    ],
+  },
+  {
+    heading: "Recordkeeping",
+    items: [
+      { emphasis: "ALWAYS", rest: "keep the Microsoft Notepad on your desktop named \"To-Dos\" open.", sub: [
+        "Use it for conversation notes during calls.",
+        "Copy those notes into a log/task in ECRM after the call.",
+      ] },
+      { emphasis: "ALWAYS", rest: "record interactions related to prospects and customers in ECRM." },
+    ],
+  },
+  {
+    heading: "How we treat each other and everyone else",
+    items: [
+      { rest: "Thank each other, customers, and prospects: \u201cThank you for trusting us to look after you.\u201d" },
+      { rest: "Always answer each other \u2014 and for each other \u2014 on Teams and video calls." },
+    ],
+  },
+];
+
+// ---- When You Get Stuck (mirrors processes.bcc-when-stuck) ----
+const WHEN_STUCK = [
+  {
+    heading: "Coverage or policy question",
+    items: [
+      "Navi search \u2014 do not chat yet.",
+      "Answers (Auto, Fire, Life, Modernized).",
+      "ABS Sections and Searching.",
+      "Ask the office.",
+      "Chat with the back office.",
+      "Call the back office with permission.",
+    ],
+  },
+  {
+    heading: "Tech problem",
+    items: [
+      "Breathe.",
+      "Believe that it's working fine.",
+      "Double-check that it's not a user error.",
+      "Verify the source of the problem (switch plugs, docks, etc.).",
+      "Do a software reset.",
+      "Navi search \u2014 do not chat yet.",
+      "If a non-internal system, Google it.",
+      "Ask the office.",
+      "Do a hard reset.",
+      "Chat with the back office.",
+      "Call the back office with permission.",
+    ],
+  },
+];
+
+// ---- NATO Phonetic Alphabet ----
+const NATO = [
+  ["A Alpha",   "B Bravo",   "C Charlie", "D Delta",    "E Echo"],
+  ["F Foxtrot", "G Golf",    "H Hotel",   "I India",    "J Juliet"],
+  ["K Kilo",    "L Lima",    "M Mike",    "N November", "O Oscar"],
+  ["P Papa",    "Q Quebec",  "R Romeo",   "S Sierra",   "T Tango"],
+  ["U Uniform", "V Victor",  "W Whiskey", "X X-Ray",    "Y Yankee"],
+  ["Z Zulu",    "",          "",          "",           ""],
+];
+
 // Parse each <rule id="..."> from the agency_identity principle.
 // Expected header line: **LABEL - Essence** (em-dash or hyphen accepted).
-// Everything after that line is the body.
 function parseIdentity(rawContent) {
   const out = {};
   if (!rawContent) return out;
@@ -44,7 +126,7 @@ function parseIdentity(rawContent) {
     const m = rawContent.match(re);
     if (!m) continue;
     const inner = (m[1] || "").trim();
-    const parts = inner.match(/^\*\*([A-Z]+)\s*[—\-]\s*([^*]+?)\*\*\s*([\s\S]+)$/);
+    const parts = inner.match(/^\*\*([A-Z]+)\s*[\u2014\-]\s*([^*]+?)\*\*\s*([\s\S]+)$/);
     if (parts) {
       out[parts[1].toUpperCase()] = {
         essence: parts[2].trim(),
@@ -95,8 +177,6 @@ export default function AgencyIdentityRibbon() {
           .eq("id", AGENCY_ID)
           .maybeSingle();
         if (active && ag) {
-          // The agency.name field holds the parent LLC name. For the ribbon,
-          // present the agency identity as "<Owner> State Farm".
           const displayName = ag.owner_name ? `${ag.owner_name} State Farm` : (ag.name || "");
           setOffice({
             name: displayName,
@@ -113,13 +193,6 @@ export default function AgencyIdentityRibbon() {
     })();
     return () => { active = false; };
   }, []);
-
-  const navigateToPage = (moduleId, pageId) => {
-    if (typeof window === "undefined") return;
-    const path = pageId ? `/${moduleId}/${pageId}` : `/${moduleId}`;
-    window.history.pushState({}, "", path);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  };
 
   const toggle = () => {
     setExpanded(v => {
@@ -205,22 +278,75 @@ export default function AgencyIdentityRibbon() {
       borderBottom: vp.isPhone && idx < 3 ? `1px solid ${T.slate200}` : "none",
       paddingBottom: vp.isPhone && idx < 3 ? 16 : (vp.isPhone ? 8 : 4),
     }),
-    cardLabel: {
-      fontSize: 11,
-      fontWeight: 700,
-      textTransform: "uppercase",
-      letterSpacing: "0.16em",
-      color: T.blue,
-      marginBottom: 8,
-    },
     cardBody: {
       fontSize: vp.isPhone ? 13 : 14,
       lineHeight: 1.55,
       color: T.slate900,
       letterSpacing: "-0.005em",
     },
+    section: {
+      marginTop: 22,
+      paddingTop: 14,
+      borderTop: `1px solid ${T.slate200}`,
+    },
+    sectionLabel: {
+      fontSize: 11,
+      fontWeight: 700,
+      textTransform: "uppercase",
+      letterSpacing: "0.16em",
+      color: T.blue,
+      marginBottom: 10,
+    },
+    subheading: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: T.slate700,
+      marginTop: 10,
+      marginBottom: 6,
+    },
+    threeCol: {
+      display: "grid",
+      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(3, 1fr)",
+      columnGap: 24,
+      rowGap: 8,
+    },
+    stuckTwoCol: {
+      display: "grid",
+      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(2, 1fr)",
+      columnGap: 24,
+      rowGap: 8,
+    },
+    list: {
+      margin: 0,
+      paddingLeft: 18,
+      fontSize: 13,
+      lineHeight: 1.55,
+      color: T.slate900,
+    },
+    subList: {
+      margin: "4px 0 0 0",
+      paddingLeft: 18,
+      fontSize: 12,
+      lineHeight: 1.5,
+      color: T.slate700,
+    },
+    natoTable: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: vp.isPhone ? 12 : 13,
+    },
+    natoCell: {
+      padding: vp.isPhone ? "4px 6px" : "6px 10px",
+      borderBottom: `1px solid ${T.slate200}`,
+      color: T.slate900,
+    },
+    natoLetter: {
+      fontWeight: 700,
+      color: T.blue,
+      marginRight: 4,
+    },
     office: {
-      marginTop: 20,
+      marginTop: 22,
       paddingTop: 14,
       borderTop: `1px solid ${T.slate200}`,
       display: "flex",
@@ -249,23 +375,6 @@ export default function AgencyIdentityRibbon() {
       marginRight: 6,
     },
     dot: { color: T.slate300, margin: "0 8px" },
-    linkRow: {
-      display: "flex",
-      justifyContent: "flex-end",
-      marginTop: 4,
-    },
-    link: {
-      fontSize: 11,
-      color: T.blue,
-      textDecoration: "none",
-      cursor: "pointer",
-      fontWeight: 500,
-      letterSpacing: "0.02em",
-      background: "none",
-      border: "none",
-      padding: 0,
-      fontFamily: "inherit",
-    },
   };
 
   const chevron = (
@@ -277,14 +386,13 @@ export default function AgencyIdentityRibbon() {
     </svg>
   );
 
-  // Build the office lines (only show what's populated).
   const hasContact = office.phone || office.customer_email;
   const hasCodes   = office.sf_agent_code || office.txdi || office.npn || office.jackson_id;
   const hasAnyOffice = office.name || office.address || hasContact || hasCodes;
 
   return (
     <div style={css.wrap} aria-label="Agency identity">
-      {/* Collapsed row */}
+      {/* Pill row: label always shows; essence hides when the ribbon is expanded */}
       <div style={css.bar}>
         <div style={css.values}>
           {ORDER.map((k, idx) => (
@@ -295,10 +403,10 @@ export default function AgencyIdentityRibbon() {
               role="button"
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
-              aria-label={`${k} — ${identity[k].essence}`}
+              aria-label={`${k} \u2014 ${identity[k].essence}`}
             >
               <span style={css.pillLabel}>{k}</span>
-              <span style={css.pillEssence}>{identity[k].essence}</span>
+              {!expanded && <span style={css.pillEssence}>{identity[k].essence}</span>}
             </div>
           ))}
         </div>
@@ -316,52 +424,106 @@ export default function AgencyIdentityRibbon() {
       {/* Expanded panel */}
       {expanded && (
         <div style={css.panel}>
+          {/* Value statements \u2014 no repeated titles; the pills above serve as headers */}
           <div style={css.grid}>
             {ORDER.map((k, idx) => (
               <div key={k} style={css.card(idx)}>
-                <div style={css.cardLabel}>{k.charAt(0) + k.slice(1).toLowerCase()}</div>
                 <div style={css.cardBody}>{identity[k].body}</div>
               </div>
             ))}
           </div>
 
+          {/* Rules of the Road */}
+          <div style={css.section}>
+            <div style={css.sectionLabel}>Rules of the Road</div>
+            <div style={css.threeCol}>
+              {RULES_OF_ROAD.map((s) => (
+                <div key={s.heading}>
+                  <div style={css.subheading}>{s.heading}</div>
+                  <ul style={css.list}>
+                    {s.items.map((it, i) => (
+                      <li key={i}>
+                        {it.emphasis && <strong>{it.emphasis}</strong>}{it.emphasis ? " " : ""}{it.rest}
+                        {it.sub && (
+                          <ul style={css.subList}>
+                            {it.sub.map((s2, j) => <li key={j}>{s2}</li>)}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* When You Get Stuck */}
+          <div style={css.section}>
+            <div style={css.sectionLabel}>When You Get Stuck</div>
+            <div style={css.stuckTwoCol}>
+              {WHEN_STUCK.map((s) => (
+                <div key={s.heading}>
+                  <div style={css.subheading}>{s.heading}</div>
+                  <ol style={css.list}>
+                    {s.items.map((it, i) => <li key={i}>{it}</li>)}
+                  </ol>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* NATO Phonetic Alphabet */}
+          <div style={css.section}>
+            <div style={css.sectionLabel}>NATO Phonetic Alphabet</div>
+            <table style={css.natoTable}>
+              <tbody>
+                {NATO.map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((cell, ci) => {
+                      if (!cell) return <td key={ci} style={css.natoCell} />;
+                      const sp = cell.indexOf(" ");
+                      const letter = cell.slice(0, sp);
+                      const word = cell.slice(sp + 1);
+                      return (
+                        <td key={ci} style={css.natoCell}>
+                          <span style={css.natoLetter}>{letter}</span>{word}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Office block */}
           {hasAnyOffice && (
             <div style={css.office}>
               {(office.name || office.address) && (
                 <div style={css.officeRow}>
                   {office.name && <span style={css.officeName}>{office.name}</span>}
-                  {office.name && office.address && <span style={css.dot}>·</span>}
+                  {office.name && office.address && <span style={css.dot}>{"\u00b7"}</span>}
                   <span>{office.address}</span>
                 </div>
               )}
               {hasContact && (
                 <div style={css.officeRow}>
                   {office.phone && <><span style={css.officeLabel}>Phone</span><span>{office.phone}</span></>}
-                  {office.phone && office.customer_email && <span style={css.dot}>·</span>}
+                  {office.phone && office.customer_email && <span style={css.dot}>{"\u00b7"}</span>}
                   {office.customer_email && <><span style={css.officeLabel}>Customer Email</span><span>{office.customer_email}</span></>}
                 </div>
               )}
               {hasCodes && (
                 <div style={css.officeRow}>
                   {office.sf_agent_code && <><span style={css.officeLabel}>SF Agent</span><span>{office.sf_agent_code}</span></>}
-                  {office.sf_agent_code && office.txdi && <span style={css.dot}>·</span>}
+                  {office.sf_agent_code && office.txdi && <span style={css.dot}>{"\u00b7"}</span>}
                   {office.txdi && <><span style={css.officeLabel}>TXDI</span><span>{office.txdi}</span></>}
-                  {(office.sf_agent_code || office.txdi) && office.npn && <span style={css.dot}>·</span>}
+                  {(office.sf_agent_code || office.txdi) && office.npn && <span style={css.dot}>{"\u00b7"}</span>}
                   {office.npn && <><span style={css.officeLabel}>NPN</span><span>{office.npn}</span></>}
-                  {(office.sf_agent_code || office.txdi || office.npn) && office.jackson_id && <span style={css.dot}>·</span>}
+                  {(office.sf_agent_code || office.txdi || office.npn) && office.jackson_id && <span style={css.dot}>{"\u00b7"}</span>}
                   {office.jackson_id && <><span style={css.officeLabel}>Jackson ID</span><span>{office.jackson_id}</span></>}
                 </div>
               )}
-              <div style={css.linkRow}>
-                <button
-                  type="button"
-                  style={css.link}
-                  onClick={() => navigateToPage("handbook", "bcc-rules-of-road")}
-                  aria-label="Go to Rules of the Road in the Handbook"
-                >
-                  See: Rules of the Road →
-                </button>
-              </div>
             </div>
           )}
         </div>
