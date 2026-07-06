@@ -231,11 +231,6 @@ function AlphaSplitLive() {
           </div>
         ))}
       </div>
-      {snapshotDate ? (
-        <div style={{ marginTop: 10, fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
-          Live from <code>public.book_alpha_split</code>. Snapshot as of <strong>{snapshotDate}</strong>.
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -439,22 +434,18 @@ export default function AgencyIdentityRibbon() {
       marginBottom: 4,
     },
     natoFlow: {
-      marginTop: 12,
       fontSize: 12,
-      lineHeight: 1.7,
+      lineHeight: 1.5,
       color: T.slate700,
       letterSpacing: "0.005em",
-    },
-    natoWord: {
-      whiteSpace: "nowrap",
+      display: "flex",
+      flexDirection: "column",
+      gap: 2,
     },
     natoLetterInline: {
       fontWeight: 700,
       color: T.blue,
-    },
-    natoSep: {
-      color: T.slate300,
-      margin: "0 6px",
+      marginRight: 2,
     },
 
     list: {
@@ -597,55 +588,42 @@ export default function AgencyIdentityRibbon() {
               ))}
             </div>
 
-            {/* Column 3: NATO Phonetic Alphabet (no label, inline flow with bold first letter) */}
+            {/* Column 3: NATO Phonetic Alphabet — stacked, no label, bold first letter */}
             <div style={css.refCol}>
               <div style={css.natoFlow}>
-                {NATO.map((word, i) => (
-                  <span key={word} style={css.natoWord}>
+                {NATO.map((word) => (
+                  <div key={word}>
                     <span style={css.natoLetterInline}>{word.charAt(0)}</span>{word.slice(1)}
-                    {i < NATO.length - 1 && <span style={css.natoSep}>{"\u00b7"}</span>}
-                  </span>
+                  </div>
                 ))}
               </div>
             </div>
 
-            {/* Column 4: Who Handles What + Agency Info */}
+            {/* Column 4: Alpha split team rows (no label, no caption) + Agency Info stacked */}
             <div style={css.refCol}>
-              <div style={css.sectionLabel}>Who Handles What</div>
               <AlphaSplitLive />
 
-              {hasAnyOffice && (
-                <div style={css.refColBlock}>
-                  <div style={css.sectionLabel}>Agency Info</div>
-                  <div style={css.officeInline}>
-                    {(office.name || office.address) && (
-                      <div>
-                        {office.name && <span style={css.officeName}>{office.name}</span>}
-                        {office.name && office.address && <span style={css.dot}>{"\u00b7"}</span>}
-                        {office.address && <span>{office.address}</span>}
-                      </div>
-                    )}
-                    {hasContact && (
-                      <div>
-                        {office.phone && <><span style={css.officeLabel}>Phone</span><span>{office.phone}</span></>}
-                        {office.phone && office.customer_email && <span style={css.dot}>{"\u00b7"}</span>}
-                        {office.customer_email && <><span style={css.officeLabel}>Customer Email</span><span>{office.customer_email}</span></>}
-                      </div>
-                    )}
-                    {hasCodes && (
-                      <div>
-                        {office.sf_agent_code && <><span style={css.officeLabel}>SF Agent</span><span>{office.sf_agent_code}</span></>}
-                        {office.sf_agent_code && office.txdi && <span style={css.dot}>{"\u00b7"}</span>}
-                        {office.txdi && <><span style={css.officeLabel}>TXDI</span><span>{office.txdi}</span></>}
-                        {(office.sf_agent_code || office.txdi) && office.npn && <span style={css.dot}>{"\u00b7"}</span>}
-                        {office.npn && <><span style={css.officeLabel}>NPN</span><span>{office.npn}</span></>}
-                        {(office.sf_agent_code || office.txdi || office.npn) && office.jackson_id && <span style={css.dot}>{"\u00b7"}</span>}
-                        {office.jackson_id && <><span style={css.officeLabel}>Jackson ID</span><span>{office.jackson_id}</span></>}
-                      </div>
-                    )}
+              {hasAnyOffice && (() => {
+                const addr = (office.address || "").trim();
+                const lc = addr.lastIndexOf(",");
+                const addrLine1 = lc > 0 ? addr.slice(0, lc).trim() : addr;
+                const addrLine2 = lc > 0 ? addr.slice(lc + 1).trim() : "";
+                return (
+                  <div style={css.refColBlock}>
+                    <div style={css.officeInline}>
+                      {office.name && <div style={css.officeName}>{office.name}</div>}
+                      {addrLine1 && <div>{addrLine1}</div>}
+                      {addrLine2 && <div>{addrLine2}</div>}
+                      {office.phone && <div>{office.phone}</div>}
+                      {office.customer_email && <div>{office.customer_email}</div>}
+                      {office.sf_agent_code && <div>State Farm Agent {office.sf_agent_code}</div>}
+                      {office.txdi && <div>TXDI {office.txdi}</div>}
+                      {office.npn && <div>NPN {office.npn}</div>}
+                      {office.jackson_id && <div>Jackson ID {office.jackson_id}</div>}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
           </div>
