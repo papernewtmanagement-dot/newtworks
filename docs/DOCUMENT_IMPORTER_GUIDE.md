@@ -142,7 +142,7 @@ UPDATE automation_recipes SET input_config = input_config || jsonb_build_object(
 WHERE agency_id = '[AGENCY_ID]' AND input_config ? '_steady_state_query';
 ```
 
-The recipes deduplicate via their `unique_on` configs, so re-running on the same emails doesn't create duplicates. After this backfill, the database has comp_recap, journal_entries, journal_lines, payroll_runs, payroll_detail, credit_transactions, producer_production all populated from the agent's actual historical emails — and the BCC web app modules render real numbers from Day One.
+The recipes deduplicate via their `unique_on` configs, so re-running on the same emails doesn't create duplicates. After this backfill, the database has comp_recap, journal_entries, journal_lines, payroll_runs, payroll_detail, credit_transactions, producer_production all populated from the agent's actual historical emails — and the Newtworks web app modules render real numbers from Day One.
 
 **For documents predating the agent's Gmail history** (rare; agents typically have 5+ years in Gmail): manual SQL INSERT from CSV export of the agent's prior accounting system. The recipes' `unique_on` configs prevent duplicates if a later email-feed run lands on the same period.
 

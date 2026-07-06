@@ -1,4 +1,4 @@
-# BCC Project Claude Handoff Prompts
+# Newtworks Project Claude Handoff Prompts
 ## Canonical templates for client install handoffs
 
 There are exactly two install paths. Pick the one that matches the client's Supabase state.
@@ -7,7 +7,7 @@ There are exactly two install paths. Pick the one that matches the client's Supa
 
 | Path | When to use | Time estimate |
 |---|---|---|
-| **Option A — Existing Database** | Client already has a Supabase built out and populated (built before the BCC web app schema existed) | 1-3 hours with the toolkit |
+| **Option A — Existing Database** | Client already has a Supabase built out and populated (built before the Newtworks web app schema existed) | 1-3 hours with the toolkit |
 | **Option B — Clean Install** | Client's Supabase is brand new and empty, no legacy data | 1-2 hours |
 
 **Decision rule:** If the client has ANY tables in their Supabase beyond the Supabase defaults, use Option A. Otherwise Option B.
@@ -29,11 +29,11 @@ There are exactly two install paths. Pick the one that matches the client's Supa
 
 ### PROMPT BEGINS
 
-Your BCC web app starter repo has just been pushed to your GitHub.
+Your Newtworks web app starter repo has just been pushed to your GitHub.
 
 **Repo:** `[GITHUB-OWNER]/[GITHUB-REPO]` (branch: `main`)
 **Initial commit:** `[COMMIT-SHA]`
-**Source:** Imaginary Farms BCC master template
+**Source:** Imaginary Farms Newtworks master template
 
 **This is a CLEAN INSTALL.** [CLIENT-FIRST-NAME]'s Supabase is brand new and empty. There's no legacy schema. There's no audit. There's no bridging. You install the schema first, then we add data after. **Do NOT use `SCHEMA_NORMALIZATION_RUNBOOK.md` — that's for existing-database installs only. Ignore it.**
 
@@ -153,11 +153,11 @@ Once the web app is live and showing empty states, Rebecca will progressively lo
 
 ### PROMPT BEGINS
 
-Your BCC web app starter repo has just been pushed to your GitHub.
+Your Newtworks web app starter repo has just been pushed to your GitHub.
 
 **Repo:** `[GITHUB-OWNER]/[GITHUB-REPO]` (branch: `main`)
 **Initial commit:** `[COMMIT-SHA]`
-**Source:** Imaginary Farms BCC master template (with schema normalization toolkit)
+**Source:** Imaginary Farms Newtworks master template (with schema normalization toolkit)
 
 **This is an EXISTING-DATABASE INSTALL.** [CLIENT-FIRST-NAME]'s Supabase is already built out and populated. The web app expects 37 specific tables with specific columns; [CLIENT-FIRST-NAME]'s database has those concepts under different names. **Do NOT edit the React modules to match the legacy schema.** Instead, the database conforms to the web app via VIEWS. Real tables and data stay untouched.
 

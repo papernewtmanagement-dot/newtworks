@@ -1,4 +1,4 @@
-# Business Command Center — Master Template
+# Newtworks — Master Template
 
 Built by **Imaginary Farms LLC** · The Claude Whisperer · [imaginary-farms.com](https://imaginary-farms.com)
 
@@ -6,7 +6,7 @@ Built by **Imaginary Farms LLC** · The Claude Whisperer · [imaginary-farms.com
 
 ## What This Is
 
-The BCC (Business Command Center) is a full-stack React web application built exclusively for State Farm agents. It connects to Supabase (database), Composio (automations), Claude.ai (intelligence layer), GitHub (code), and Vercel (hosting) to give agents a complete AI-powered operating system for their business.
+The Newtworks (Newtworks) is a full-stack React web application built exclusively for State Farm agents. It connects to Supabase (database), Composio (automations), Claude.ai (intelligence layer), GitHub (code), and Vercel (hosting) to give agents a complete AI-powered operating system for their business.
 
 This repository is the **master template**. Each client install creates a fork of this repo. **The fork is the client's app from that point forward** — the master never pushes updates back to client forks. New clients always start from the latest master at fork time.
 
@@ -21,8 +21,8 @@ This repository is the **master template**. Each client install creates a fork o
 ## Repository Structure
 
 ```
-bcc-master-template/
-├── BCCApp.jsx                    # App shell, nav, dashboard, routing
+newtworks-master-template/
+├── NewtworksApp.jsx                    # App shell, nav, dashboard, routing
 ├── src/
 │   ├── main.jsx                  # React entry point
 │   ├── components/

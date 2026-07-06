@@ -1,6 +1,6 @@
 # Module Data Wiring Guide
 
-> Per-module reference: which Supabase tables each BCC web app module reads, in what order, what columns, and how to debug when something doesn't render.
+> Per-module reference: which Supabase tables each Newtworks web app module reads, in what order, what columns, and how to debug when something doesn't render.
 >
 > **Read this before debugging any module.** If a module shows blank, wrong numbers, or "EmptyState awaiting data," this doc tells you exactly which table to check first.
 >
@@ -10,7 +10,7 @@
 
 ## How to use this doc
 
-The BCC web app has 11 modules. Each one reads from specific tables in the client's Supabase. When the agent says "the dashboard is showing zero" or "my financials look wrong," the answer is always: **check the table this module reads from, in this order.**
+The Newtworks web app has 11 modules. Each one reads from specific tables in the client's Supabase. When the agent says "the dashboard is showing zero" or "my financials look wrong," the answer is always: **check the table this module reads from, in this order.**
 
 The pattern is consistent:
 1. Module loads, queries Supabase via `useSupabaseTable` hook or direct `supabase.from()` calls
@@ -265,7 +265,7 @@ The agent's Claude should INSERT to `persistent_memory` whenever it learns somet
 
 **Reads:**
 - **Profile tab:** `agency`
-- **Team tab:** `users` (separate from `staff` — these are people who log into the BCC)
+- **Team tab:** `users` (separate from `staff` — these are people who log into the Newtworks)
 - **About tab:** Static — the self-heal "Keep It Connected" guide is rendered from the JSX, not from data
 - **Connectors tab:** `settings` table for credential row presence (does NOT show secret values, only confirms they exist)
 

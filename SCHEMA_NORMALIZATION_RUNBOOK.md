@@ -1,10 +1,10 @@
-# BCC Schema Normalization Runbook
+# Newtworks Schema Normalization Runbook
 ## For existing-client installs (Process A)
 
 This is the playbook that turns a 20-hour custom schema-bridging slog into a 30-minute audit-and-bridge cycle.
 
 ## When to use
-Any client whose Supabase was built BEFORE the BCC web app schema. That's all installs except brand-new ones.
+Any client whose Supabase was built BEFORE the Newtworks web app schema. That's all installs except brand-new ones.
 
 ## What it does
 The web app expects 37 specific tables with specific column names (defined in `001_bcc_master_schema.sql`). Existing clients have those concepts under different table/column names. Instead of editing 11 React modules to match each client, we create database VIEWS that present each legacy table under the master name. The web app sees what it expects. Real data stays untouched.

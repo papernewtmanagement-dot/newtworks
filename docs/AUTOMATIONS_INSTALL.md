@@ -1,6 +1,6 @@
 # Automations Install Playbook
 
-> How to wire up the canonical automation recipes for a new client BCC.
+> How to wire up the canonical automation recipes for a new client Newtworks.
 > Read by Project Claude during install (Path A and Path B both).
 
 ---
@@ -18,7 +18,7 @@
 
 ## **THE RECIPES ARE THE DOCUMENT IMPORTER (read this BEFORE anything else)**
 
-The 12 canonical recipes you seed in this doc ARE the document importer for the BCC. Together they read the agent's Gmail every day, parse comp recaps, deduction statements, payroll notifications, bank statements, credit card statements, and producer production reports via Groq, and write structured rows into the right Supabase tables — which then render in every BCC web app module.
+The 12 canonical recipes you seed in this doc ARE the document importer for the Newtworks. Together they read the agent's Gmail every day, parse comp recaps, deduction statements, payroll notifications, bank statements, credit card statements, and producer production reports via Groq, and write structured rows into the right Supabase tables — which then render in every Newtworks web app module.
 
 **Do NOT build a parallel importer.** Do not write a custom script to read the agent's Gmail and write to their database. The recipes do that.
 
@@ -46,9 +46,9 @@ Composio is the **execution layer**, not the storage layer.
 
 ---
 
-## The canonical 12 recipes — every BCC install starts with these
+## The canonical 12 recipes — every Newtworks install starts with these
 
-These are the real, working recipes from Keith Thompson's production BCC, adopted as the canonical install set. The Performance tab feature added two new recipes (Producer Underperformance Watcher and Producer Production Report Processor); the rest match what's running in live client systems today.
+These are the real, working recipes from Keith Thompson's production Newtworks, adopted as the canonical install set. The Performance tab feature added two new recipes (Producer Underperformance Watcher and Producer Production Report Processor); the rest match what's running in live client systems today.
 
 | # | Recipe | Schedule | Composio Action | Category | Purpose |
 |---|---|---|---|---|---|
@@ -295,7 +295,7 @@ BEGIN
   INSERT INTO public.settings (agency_id, setting_key, setting_value, setting_type, description, updated_by)
   VALUES
     -- Required for the runner itself
-    (v_agency, 'supabase_url',                     'https://YOUR-PROJECT-REF.supabase.co', 'string', 'BCC Supabase URL', 'install'),
+    (v_agency, 'supabase_url',                     'https://YOUR-PROJECT-REF.supabase.co', 'string', 'Newtworks Supabase URL', 'install'),
     (v_agency, 'automation_runner_cron_secret',    encode(gen_random_bytes(32), 'hex'),   'string', 'shared secret: Postgres -> Edge Function', 'install'),
     -- Required for any recipe to call Composio
     (v_agency, 'composio_api_key',                 'ak_xxxxxxxxxxxxx',                    'string', 'Composio API key', 'install'),
@@ -378,7 +378,7 @@ FROM public.automation_recipes WHERE id = 'RECIPE_UUID';
 | Financials → P&L tab still shows $0 even though comp_recap has rows | GL Entry Writer recipe never fired or is failing | Check automation_run_log for `recipe_name='GL Entry Writer'`. If never run: confirm it's active and pg_cron tick is scheduled. If failing: read error_message in the run log |
 
 ### Step 7 — Walk the agent through the Automations module
-In the BCC web app, open **Automations**. The agent should see all 12 recipes with status, schedule, last run. The Run Log tab surfaces every execution. They can enable/disable, edit schedule, or trigger manually.
+In the Newtworks web app, open **Automations**. The agent should see all 12 recipes with status, schedule, last run. The Run Log tab surfaces every execution. They can enable/disable, edit schedule, or trigger manually.
 
 When something breaks: agent screenshots the error, pastes to their Claude, gets fixed.
 
