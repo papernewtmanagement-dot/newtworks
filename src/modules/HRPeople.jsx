@@ -5,8 +5,8 @@ import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 // Returns true if a staff member holds any one of the three license types.
 const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_ips));
 // ============================================================
-// BCC HR & PEOPLE MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks HR & PEOPLE MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
@@ -802,7 +802,7 @@ const StaffDirectory = ({ staff }) => {
     }
   };
 
-  // ── Add-member flow state (creates team row + invites a BCC user) ──
+  // ── Add-member flow state (creates team row + invites a Newtworks user) ──
   // Insert into public.team, then call invite-team-member edge function
   // which sends a Supabase Auth invite email and creates the public.users
   // row. Then link users.team_member_id = team.id so the sync_team_user_link
@@ -1133,7 +1133,7 @@ const StaffDirectory = ({ staff }) => {
         <Card style={{ border:`2px solid ${T.slate900}`, background:T.white, marginBottom:4 }}>
           <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:6 }}>Add new team member</div>
           <div style={{ fontSize:11, color:T.slate600, marginBottom:14, lineHeight:1.55 }}>
-            Creates a team row, sends a Supabase Auth invite to the personal email, and links the new BCC user back to this team row once they sign in. Role defaults to <code>staff</code> (team tier — sees Dashboard, CPR, Hours, Handbook, Processes). To grant admin access, change role to <code>owner</code> or <code>manager</code> after they accept.
+            Creates a team row, sends a Supabase Auth invite to the personal email, and links the new Newtworks user back to this team row once they sign in. Role defaults to <code>staff</code> (team tier — sees Dashboard, CPR, Hours, Handbook, Processes). To grant admin access, change role to <code>owner</code> or <code>manager</code> after they accept.
           </div>
 
           {/* Row 1: name + email */}
