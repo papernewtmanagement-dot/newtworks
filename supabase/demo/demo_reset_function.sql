@@ -428,7 +428,7 @@ BEGIN
   (demo_agency_id, 'low_balance_alert',         '50000',  'string',  'Alert if operating account drops below this',            'Sam Jordan');
 
   -- ============================================================
-  -- 15. USERS (BCC app users with access)
+  -- 15. USERS (Newtworks app users with access)
   -- ============================================================
   INSERT INTO users (agency_id, email, full_name, role, is_active, last_login) VALUES
   (demo_agency_id, 'sam@demo.com',     'Sam Jordan',       'owner',      TRUE, NOW() - INTERVAL '2 hours'),
