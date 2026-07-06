@@ -396,16 +396,18 @@ export default function AgencyIdentityRibbon() {
       marginTop: 12,
       paddingTop: 10,
       borderTop: `1px solid ${T.slate200}`,
-      display: "grid",
-      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(4, 1fr)",
-      columnGap: vp.isPhone ? 0 : 20,
-      rowGap: vp.isPhone ? 14 : 0,
-      alignItems: "start",
+      display: "flex",
+      flexDirection: vp.isPhone ? "column" : "row",
+      flexWrap: "wrap",
+      alignItems: "flex-start",
+      gap: vp.isPhone ? 14 : 24,
     },
     refCol: {
+      flex: "0 0 auto",
       display: "flex",
       flexDirection: "column",
-      gap: 8,
+      gap: 6,
+      maxWidth: vp.isPhone ? "100%" : 260,
     },
     refColBlock: {
       // Used to space Who Handles What + Agency Info within the same column
@@ -438,9 +440,11 @@ export default function AgencyIdentityRibbon() {
       lineHeight: 1.5,
       color: T.slate700,
       letterSpacing: "0.005em",
-      display: "flex",
-      flexDirection: "column",
-      gap: 2,
+      display: "grid",
+      gridTemplateRows: "repeat(13, auto)",
+      gridAutoFlow: "column",
+      columnGap: 14,
+      rowGap: 2,
     },
     natoLetterInline: {
       fontWeight: 700,
@@ -553,26 +557,39 @@ export default function AgencyIdentityRibbon() {
           {/* Reference sections — 4 columns on desktop, stacked on phone */}
           <div style={css.refGrid}>
 
-            {/* Column 1: Rules of the Road */}
+            {/* Column 1: Customer information (no label) */}
             <div style={css.refCol}>
-              <div style={css.sectionLabel}>Rules of the Road</div>
-              {RULES_OF_ROAD.map((s) => (
-                <div key={s.heading}>
-                  <div style={css.subheading}>{s.heading}</div>
-                  <ul style={css.list}>
-                    {s.items.map((it, i) => (
-                      <li key={i}>
-                        {it.emphasis && <strong>{it.emphasis}</strong>}{it.emphasis ? " " : ""}{it.rest}
-                        {it.sub && (
-                          <ul style={css.subList}>
-                            {it.sub.map((s2, j) => <li key={j}>{s2}</li>)}
-                          </ul>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+              <ul style={css.list}>
+                {(RULES_OF_ROAD.find(s => s.heading === "Customer information")?.items || []).map((it, i) => (
+                  <li key={i}>
+                    {it.emphasis && <strong>{it.emphasis}</strong>}{it.emphasis ? " " : ""}{it.rest}
+                    {it.sub && (
+                      <ul style={css.subList}>
+                        {it.sub.map((s2, j) => <li key={j}>{s2}</li>)}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Column 2: Recordkeeping + How we treat each other (no labels, merged list) */}
+            <div style={css.refCol}>
+              <ul style={css.list}>
+                {[
+                  ...(RULES_OF_ROAD.find(s => s.heading === "Recordkeeping")?.items || []),
+                  ...(RULES_OF_ROAD.find(s => s.heading === "How we treat each other and everyone else")?.items || []),
+                ].map((it, i) => (
+                  <li key={i}>
+                    {it.emphasis && <strong>{it.emphasis}</strong>}{it.emphasis ? " " : ""}{it.rest}
+                    {it.sub && (
+                      <ul style={css.subList}>
+                        {it.sub.map((s2, j) => <li key={j}>{s2}</li>)}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </div>
 
             {/* Column 2: When You Get Stuck */}
