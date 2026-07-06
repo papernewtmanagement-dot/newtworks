@@ -334,6 +334,13 @@ export default function AgencyIdentityRibbon() {
       textAlign: "left",
       transition: "background-color 0.15s ease",
     }),
+    cellHeader: {
+      display: "flex",
+      flexDirection: "row",
+      alignItems: "baseline",
+      gap: 6,
+      flexWrap: "nowrap",
+    },
     cellTitle: {
       fontSize: 11,
       fontWeight: 700,
@@ -341,12 +348,28 @@ export default function AgencyIdentityRibbon() {
       letterSpacing: "0.14em",
       color: T.blue,
       lineHeight: 1.2,
+      flexShrink: 0,
     },
-    cellContent: {
+    cellSep: {
+      fontSize: 11,
+      color: T.slate300,
+      lineHeight: 1.2,
+      flexShrink: 0,
+    },
+    cellEssence: {
       fontSize: 11,
       fontWeight: 400,
       color: T.slate900,
       letterSpacing: "-0.005em",
+      lineHeight: 1.2,
+    },
+    cellStatement: {
+      fontSize: 11,
+      fontWeight: 400,
+      color: T.slate900,
+      letterSpacing: "-0.005em",
+      lineHeight: 1.5,
+      marginTop: 4,
     },
     toggle: {
       background: "none",
@@ -513,10 +536,12 @@ export default function AgencyIdentityRibbon() {
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
               aria-label={`${k} \u2014 ${identity[k].essence}`}
             >
-              <div style={css.cellTitle}>{k}</div>
-              <div style={{ ...css.cellContent, lineHeight: expanded ? 1.5 : 1.2 }}>
-                {expanded ? identity[k].body : identity[k].essence}
+              <div style={css.cellHeader}>
+                <span style={css.cellTitle}>{k}</span>
+                {!expanded && <span style={css.cellSep}>{"\u2014"}</span>}
+                {!expanded && <span style={css.cellEssence}>{identity[k].essence}</span>}
               </div>
+              {expanded && <div style={css.cellStatement}>{identity[k].body}</div>}
             </div>
           ))}
         </div>
