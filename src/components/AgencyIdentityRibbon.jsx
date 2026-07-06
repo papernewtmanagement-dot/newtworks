@@ -310,7 +310,7 @@ export default function AgencyIdentityRibbon() {
       display: "flex",
       alignItems: "center",
       padding: vp.isPhone ? "0 8px" : "0 20px",
-      height: vp.isPhone ? 52 : 60,
+      height: vp.isPhone ? 38 : 44,
       gap: 8,
     },
     values: {
@@ -323,9 +323,10 @@ export default function AgencyIdentityRibbon() {
     },
     pill: (isLast) => ({
       display: "flex",
-      flexDirection: "column",
-      justifyContent: "center",
-      gap: 3,
+      flexDirection: "row",
+      alignItems: "baseline",
+      justifyContent: "flex-start",
+      gap: 8,
       padding: vp.isPhone ? "0 12px" : "0 24px",
       flex: vp.isPhone ? "0 0 auto" : 1,
       borderRight: isLast ? "none" : `1px solid ${T.slate200}`,
@@ -335,20 +336,30 @@ export default function AgencyIdentityRibbon() {
       minWidth: vp.isPhone ? 110 : 0,
     }),
     pillLabel: {
-      fontSize: 10,
+      fontSize: 11,
       fontWeight: 700,
       textTransform: "uppercase",
-      letterSpacing: "0.16em",
+      letterSpacing: "0.14em",
       color: T.blue,
-      lineHeight: 1,
+      lineHeight: 1.2,
+      flexShrink: 0,
+    },
+    pillSep: {
+      fontSize: 11,
+      color: T.slate300,
+      lineHeight: 1.2,
+      flexShrink: 0,
     },
     pillEssence: {
-      fontSize: vp.isPhone ? 14 : 16,
+      fontSize: 11,
       fontWeight: 400,
       color: T.slate900,
-      letterSpacing: "-0.01em",
+      letterSpacing: "-0.005em",
       lineHeight: 1.2,
       whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      minWidth: 0,
     },
     toggle: {
       background: "none",
@@ -531,6 +542,7 @@ export default function AgencyIdentityRibbon() {
               aria-label={`${k} \u2014 ${identity[k].essence}`}
             >
               <span style={css.pillLabel}>{k}</span>
+              {!expanded && <span style={css.pillSep}>{"\u2014"}</span>}
               {!expanded && <span style={css.pillEssence}>{identity[k].essence}</span>}
             </div>
           ))}
