@@ -40,7 +40,7 @@ const TOP_LEVEL_ICONS = {
   "Daily Kickoff":          "🌅",
   "Training":               "🎓",
   "FIT Conversations":      "💬",
-  "Reception":              "🚪",
+  "Reception":              "🛎️",
   "Retention Tasks":        "📋",
   "Retention Appointments": "📅",
   "Daily Wrap-up":          "🌙",
@@ -573,117 +573,6 @@ export default function Processes() {
 }
 
 // ─── Page detail view ─────────────────────────────────────────
-// ─── Dynamic (live) processes pages ────────────────────────────
-// Pages whose body is generated at render time from another table rather
-// than from the stored processes.content. Keyed by confluence_page_id.
-const DYNAMIC_PROCESS_PAGES = {
-  "bcc-who-handles-what": "alpha_split",
-};
-
-// Live alpha-split component for the "Who Handles What" page.
-// Pulls latest snapshot from public.book_alpha_split, joins team members,
-// groups by team member.
-function AlphaSplitLive() {
-  const [rows, setRows] = useState([]);
-  const [snapshotDate, setSnapshotDate] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // Find latest snapshot_date for this agency
-        const { data: latest, error: e1 } = await supabase
-          .from("book_alpha_split")
-          .select("snapshot_date")
-          .eq("agency_id", AGENCY_ID)
-          .not("snapshot_date", "is", null)
-          .order("snapshot_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (cancelled) return;
-        if (e1) { setError(e1.message); setLoading(false); return; }
-        const d = latest?.snapshot_date;
-        if (!d) { setLoading(false); return; }
-        setSnapshotDate(d);
-
-        // Fetch that snapshot's rows joined to team
-        const { data, error: e2 } = await supabase
-          .from("book_alpha_split")
-          .select("letter_bucket, account_count, team_member_id, team:team_member_id(first_name, last_name, nickname, role, role_category)")
-          .eq("agency_id", AGENCY_ID)
-          .eq("snapshot_date", d)
-          .order("letter_bucket", { ascending: true });
-        if (cancelled) return;
-        if (e2) { setError(e2.message); setLoading(false); return; }
-        setRows(data || []);
-        setLoading(false);
-      } catch (err) {
-        if (!cancelled) { setError(err?.message || String(err)); setLoading(false); }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  if (loading) {
-    return <p style={{ color: T.slate500, fontStyle: "italic" }}>Loading alpha split…</p>;
-  }
-  if (error) {
-    return <p style={{ color: "#b91c1c" }}>Couldn't load alpha split: {error}</p>;
-  }
-  if (!(rows || []).length) {
-    return <p style={{ color: T.slate500, fontStyle: "italic" }}>No alpha split snapshot found.</p>;
-  }
-
-  // Group rows by team member (keyed by team_member_id, unassigned bucket if null)
-  const groups = new Map();
-  for (const r of (rows || [])) {
-    const key = r.team_member_id || "unassigned";
-    if (!groups.has(key)) {
-      const t = r.team || null;
-      const name = t
-        ? `${t.first_name || ""}${t.nickname ? ` "${t.nickname}"` : ""} ${t.last_name || ""}`.trim()
-        : "Unassigned";
-      const roleLabel = t?.role || t?.role_category || "";
-      groups.set(key, { name, role: roleLabel, buckets: [], total: 0 });
-    }
-    const g = groups.get(key);
-    g.buckets.push(r.letter_bucket);
-    g.total += Number(r.account_count) || 0;
-  }
-
-  const groupList = Array.from(groups.values()).sort((a, b) => {
-    const ab = a.buckets[0] || "";
-    const bb = b.buckets[0] || "";
-    return ab.localeCompare(bb);
-  });
-
-  return (
-    <div>
-      <p style={{ margin: "0 0 6px 0", fontSize: 12.5, color: T.slate500, fontStyle: "italic" }}>
-        Book alpha-split — which team member handles a customer by last-name letter.
-      </p>
-      <p style={{ margin: "0 0 22px 0", fontSize: 12.5, color: T.slate500, fontStyle: "italic" }}>
-        Live from <code>public.book_alpha_split</code>. Snapshot as of <strong>{snapshotDate}</strong>. To change the split, insert a new dated snapshot for this agency.
-      </p>
-      {groupList.map((g, idx) => (
-        <div key={`${g.name}-${idx}`} style={{ marginBottom: 22 }}>
-          <h3 style={{ margin: "0 0 4px 0" }}>
-            {g.name}{g.role ? ` — ${g.role}` : ""}
-          </h3>
-          <p style={{ margin: "4px 0 0 0" }}>
-            <strong>Letters:</strong> {g.buckets.join(", ")}
-          </p>
-          <p style={{ margin: "4px 0 0 0" }}>
-            <strong>Total accounts:</strong> {g.total.toLocaleString()}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ProcessesPage({ page, allRows }) {
   const resolveInclude = useMemo(
     () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
@@ -839,11 +728,7 @@ What I'd like to discuss:
         border: `1px solid ${T.slate200}`,
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
-        {DYNAMIC_PROCESS_PAGES[page?.confluence_page_id] === "alpha_split" ? (
-          <div className="bcc-handbook-body">
-            <AlphaSplitLive />
-          </div>
-        ) : (page?.content || "").trim() ? (
+        {(page?.content || "").trim() ? (
           <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
