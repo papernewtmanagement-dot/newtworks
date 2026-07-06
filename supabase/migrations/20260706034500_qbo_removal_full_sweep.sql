@@ -1,1 +1,91 @@
-LS0gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQotLSBRQk8gcmVtb3ZhbCDigJQgZnVsbCBhZ25vc3RpYyBzd2VlcAotLSBBcHBsaWVkIHZpYSBTdXBhYmFzZSBNQ1AgYXMgNCBzZXF1ZW50aWFsIG1pZ3JhdGlvbnM6Ci0tICAgcWJvX3JlbW92YWxfMDFfZHJvcHNfZGF0YV91cGRhdGVzX2NvbHVtbl9yZW5hbWVzCi0tICAgcWJvX3JlbW92YWxfMDJfdmlld19yZWJ1aWxkcwotLSAgIHFib19yZW1vdmFsXzAzX3Jld3JpdGVfZ2xfd3JpdGVyX2Z1bmN0aW9ucwotLSAgIHFib19yZW1vdmFsXzA0X2Ryb3BfcWJvX3Bvc3Rfc3RhZ2VkX2JhdGNoCi0tIENvbnNvbGlkYXRlZCBoZXJlIGZvciByZXBvLXNpZGUgcmVmZXJlbmNlLgotLQotLSBOYW1pbmcgc2NoZW1lOgotLSAgIFFCTy0jIyMvUUJPLVNVQi0jIyMgYWNjb3VudCBjb2RlcyAg4oaSICBDT0EtIyMjL0NPQS1TVUItIyMjCi0tICAgcWJvX2ltcG9ydF9ZWVlZICBqZS5zb3VyY2UgbGFiZWxzICDihpIgIGJvb2tzX2hpc3RvcmljYWxfaW1wb3J0X1lZWVkKLS0gICBjaGFydF9uYW1lc3BhY2UgJ3FibycgICAgICAgICAgICAgIOKGkiAgJ2Jvb2tzX2hpc3RvcmljYWwnCi0tICAgc291cmNlX2J1Y2tldCAncWJvX2hpc3RvcmljYWwnICAgICDihpIgICdib29rc19oaXN0b3JpY2FsJwotLSAgIHFib19hY2NvdW50X25hbWUvcWJvX3BhcmVudF8uLi4gICAg4oaSICBzb3VyY2VfYWNjb3VudF9uYW1lL3NvdXJjZV9wYXJlbnRfLi4uCi0tCi0tIFByZXNlcnZlZCAobm90IHNjcnViYmVkKToKLS0gICAxNiBqb3VybmFsX2VudHJpZXMubWVtbyArIDE4IGpvdXJuYWxfZW50cmllcy5kZXNjcmlwdGlvbiByb3dzIGNvbnRhaW5pbmcKLS0gICAnSW50dWl0ICpxYm9va3MgT25saW5lJyBvciAnUXVpY2tCb29rcyBQYXltZW50cycg4oCUIHRoZXNlIGFyZSBsaXRlcmFsIG1lcmNoYW50Ci0tICAgZGVzY3JpcHRpb25zIG9uIFBldGVyJ3MgUXVpY2tCb29rcyBzdWJzY3JpcHRpb24gQ0MgY2hhcmdlcywgbm90IHN5c3RlbSBsYWJlbHMuCi0tID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KCi0tIE1pZ3JhdGlvbiAxOiBkcm9wcyArIGRhdGEgdXBkYXRlcyArIGNvbHVtbiByZW5hbWVzCkRST1AgVklFVyBJRiBFWElTVFMgcHVibGljLnZfdmFyaWFuY2VfcWJvX3ZzX2JjYzsKRFJPUCBWSUVXIElGIEVYSVNUUyBwdWJsaWMudl9wbF9yb2xsZWRfdXA7CkRST1AgVklFVyBJRiBFWElTVFMgcHVibGljLnZfYmFua19iYWxhbmNlczsKRFJPUCBWSUVXIElGIEVYSVNUUyBwdWJsaWMudl9pbmNvbWVfc3RhdGVtZW50OwpEUk9QIFZJRVcgSUYgRVhJU1RTIHB1YmxpYy52X3RyaWFsX2JhbGFuY2U7CgpEUk9QIEZVTkNUSU9OIElGIEVYSVNUUyBwdWJsaWMucWJvX3Bvc3Rfc3RhZ2VkX2JhdGNoKHV1aWQsIGludGVnZXIsIGludGVnZXIpOwpEUk9QIFRBQkxFIElGIEVYSVNUUyBwdWJsaWMucWJvX2ltcG9ydF9zdGFnaW5nOwoKVVBEQVRFIHB1YmxpYy5jaGFydF9vZl9hY2NvdW50cyBTRVQgYWNjb3VudF9jb2RlID0gUkVQTEFDRShhY2NvdW50X2NvZGUsICdRQk8tJywgJ0NPQS0nKSBXSEVSRSBhY2NvdW50X2NvZGUgTElLRSAnUUJPLSUnOwpVUERBVEUgcHVibGljLmNoYXJ0X29mX2FjY291bnRzIFNFVCBhY2NvdW50X25hbWUgPSAnU3VzcGVuc2UgKHNwbGl0IG9mZnNldCBwZW5kaW5nKScgV0hFUkUgYWNjb3VudF9uYW1lID0gJ1FCTyBTdXNwZW5zZSAoc3BsaXQgb2Zmc2V0IHBlbmRpbmcpJzsKVVBEQVRFIHB1YmxpYy5jaGFydF9vZl9hY2NvdW50cyBTRVQgY2hhcnRfbmFtZXNwYWNlID0gJ2Jvb2tzX2hpc3RvcmljYWwnIFdIRVJFIGNoYXJ0X25hbWVzcGFjZSA9ICdxYm8nOwoKVVBEQVRFIHB1YmxpYy5nbF9jbGFzc2lmaWNhdGlvbl9ydWxlcyBTRVQgZGViaXRfYWNjb3VudF9jb2RlID0gUkVQTEFDRShkZWJpdF9hY2NvdW50X2NvZGUsICdRQk8tJywgJ0NPQS0nKSBXSEVSRSBkZWJpdF9hY2NvdW50X2NvZGUgTElLRSAnUUJPLSUnOwpVUERBVEUgcHVibGljLmdsX2NsYXNzaWZpY2F0aW9uX3J1bGVzIFNFVCBjcmVkaXRfYWNjb3VudF9jb2RlID0gUkVQTEFDRShjcmVkaXRfYWNjb3VudF9jb2RlLCAnUUJPLScsICdDT0EtJykgV0hFUkUgY3JlZGl0X2FjY291bnRfY29kZSBMSUtFICdRQk8tJSc7ClVQREFURSBwdWJsaWMuZ2xfY2xhc3NpZmljYXRpb25fcnVsZXMgU0VUIHNvdXJjZSA9IFJFUExBQ0Uoc291cmNlLCAncWJvX2ltcG9ydCcsICdib29rc19oaXN0b3JpY2FsX2ltcG9ydCcpIFdIRVJFIHNvdXJjZSBMSUtFICdxYm9faW1wb3J0JSc7ClVQREFURSBwdWJsaWMuZ2xfY2xhc3NpZmljYXRpb25fcnVsZXMgU0VUIHJ1bGVfbmFtZSA9IFJFUExBQ0UocnVsZV9uYW1lLCAnUUJPIEltcG9ydCcsICdIaXN0b3JpY2FsIEltcG9ydCcpIFdIRVJFIHJ1bGVfbmFtZSBMSUtFICclUUJPIEltcG9ydCUnOwpVUERBVEUgcHVibGljLmdsX2NsYXNzaWZpY2F0aW9uX3J1bGVzIFNFVCBydWxlX25hbWUgPSBSRVBMQUNFKHJ1bGVfbmFtZSwgJ3BlciBRQk8gaGlzdG9yeScsICdwZXIgaGlzdG9yaWNhbCBib29rcycpIFdIRVJFIHJ1bGVfbmFtZSBMSUtFICclcGVyIFFCTyBoaXN0b3J5JSc7ClVQREFURSBwdWJsaWMuZ2xfY2xhc3NpZmljYXRpb25fcnVsZXMgU0VUIG92ZXJyaWRlX3JlYXNvbiA9IFJFUExBQ0UoUkVQTEFDRShvdmVycmlkZV9yZWFzb24sICdRQk8gaW1wb3J0JywgJ2hpc3RvcmljYWwgYm9va3MgaW1wb3J0JyksICdxYm9faW1wb3J0JywgJ2Jvb2tzX2hpc3RvcmljYWxfaW1wb3J0JykgV0hFUkUgb3ZlcnJpZGVfcmVhc29uIElMSUtFICclcWJvJSc7CgpVUERBVEUgcHVibGljLmpvdXJuYWxfZW50cmllcyBTRVQgc291cmNlID0gUkVQTEFDRShzb3VyY2UsICdxYm9faW1wb3J0JywgJ2Jvb2tzX2hpc3RvcmljYWxfaW1wb3J0JykgV0hFUkUgc291cmNlIExJS0UgJ3Fib19pbXBvcnQlJzsKVVBEQVRFIHB1YmxpYy5qb3VybmFsX2VudHJpZXMgU0VUIGRlc2NyaXB0aW9uID0gUkVQTEFDRShkZXNjcmlwdGlvbiwgJ1FCTy0nLCAnQ09BLScpIFdIRVJFIGRlc2NyaXB0aW9uIExJS0UgJyVRQk8tJSc7ClVQREFURSBwdWJsaWMuam91cm5hbF9lbnRyaWVzIFNFVCBkZXNjcmlwdGlvbiA9IFJFUExBQ0UoZGVzY3JpcHRpb24sICdRQk8gRnVsbCBZZWFyIDIwMjUgR0wnLCAncHJpb3ItYm9va3MgRnVsbCBZZWFyIDIwMjUgR0wnKSBXSEVSRSBkZXNjcmlwdGlvbiBMSUtFICclUUJPIEZ1bGwgWWVhciAyMDI1IEdMJSc7ClVQREFURSBwdWJsaWMuam91cm5hbF9lbnRyaWVzIFNFVCBtZW1vID0gUkVQTEFDRShtZW1vLCAnUUJPIEdlbmVyYWwgTGVkZ2VyIFBERicsICdwcmlvci1ib29rcyBHZW5lcmFsIExlZGdlciBQREYnKSBXSEVSRSBtZW1vIExJS0UgJyVRQk8gR2VuZXJhbCBMZWRnZXIgUERGJSc7CgpVUERBVEUgcHVibGljLmRvY3VtZW50cyBTRVQgZ3JvcV9jbGFzc2lmaWNhdGlvbiA9IFJFUExBQ0UoZ3JvcV9jbGFzc2lmaWNhdGlvbiwgJ3Fib18nLCAnYm9va3NfaGlzdG9yaWNhbF8nKSBXSEVSRSBncm9xX2NsYXNzaWZpY2F0aW9uIExJS0UgJ3Fib18lJzsKVVBEQVRFIHB1YmxpYy5kb2N1bWVudHMgU0VUIG5vdGVzID0gUkVQTEFDRShSRVBMQUNFKFJFUExBQ0UoUkVQTEFDRShSRVBMQUNFKG5vdGVzLCAnUUJPIEdlbmVyYWwgTGVkZ2VyJywgJ3ByaW9yLWJvb2tzIEdlbmVyYWwgTGVkZ2VyJyksICdRQk8gUCZMJywgJ3ByaW9yLWJvb2tzIFAmTCcpLCAnUUJPIEJhbGFuY2UgU2hlZXQnLCAncHJpb3ItYm9va3MgQmFsYW5jZSBTaGVldCcpLCAncWJvX2ltcG9ydCcsICdib29rc19oaXN0b3JpY2FsX2ltcG9ydCcpLCAnUUJPLScsICdDT0EtJykgV0hFUkUgbm90ZXMgSUxJS0UgJyVxYm8lJzsKClVQREFURSBwdWJsaWMudGFza3MgU0VUIHRpdGxlID0gUkVQTEFDRShSRVBMQUNFKFJFUExBQ0UoUkVQTEFDRSh0aXRsZSwgJ1FCTy0nLCAnQ09BLScpLCAnUUJPIGNhcmQnLCAncHJpb3ItYm9va3MgY2FyZCcpLCAnUUJPICcsICcnKSwgJ3RvIFFCTycsICd0byBwcmlvciBib29rcycpIFdIRVJFIHRpdGxlIElMSUtFICclcWJvJSc7ClVQREFURSBwdWJsaWMudGFza3MgU0VUIGRlc2NyaXB0aW9uID0gUkVQTEFDRShSRVBMQUNFKFJFUExBQ0UoUkVQTEFDRShSRVBMQUNFKFJFUExBQ0UoZGVzY3JpcHRpb24sICdRQk8tJywgJ0NPQS0nKSwgJ1FCTyBCYW5rIFJ1bGVzJywgJ3ByaW9yLWJvb2tzIGJhbmsgcnVsZXMnKSwgJ1FCTyBJbXBvcnQnLCAnaGlzdG9yaWNhbCBib29rcyBpbXBvcnQnKSwgJ1FCTyBpbXBvcnQnLCAnaGlzdG9yaWNhbCBib29rcyBpbXBvcnQnKSwgJ3Fiby1zdGFnZS1sb2FkJywgJ2hpc3RvcmljYWwtYm9va3Mtc3RhZ2UtbG9hZCcpLCAnUUJPJywgJ3ByaW9yIGJvb2tzJykgV0hFUkUgZGVzY3JpcHRpb24gSUxJS0UgJyVxYm8lJzsKClVQREFURSBwdWJsaWMuYWxlcnRzIFNFVCBtZXNzYWdlID0gUkVQTEFDRShSRVBMQUNFKG1lc3NhZ2UsICdRQk8tJywgJ0NPQS0nKSwgJ1FCTycsICdwcmlvciBib29rcycpIFdIRVJFIG1lc3NhZ2UgSUxJS0UgJyVxYm8lJzsKClVQREFURSBwdWJsaWMuc2V0dGluZ3MgU0VUIHNldHRpbmdfdmFsdWUgPSAnYm9va3NfaGlzdG9yaWNhbCcgV0hFUkUgc2V0dGluZ19rZXkgPSAnZ2xfY2hhcnRfbmFtZXNwYWNlJyBBTkQgc2V0dGluZ192YWx1ZSA9ICdxYm8nOwoKQUxURVIgVEFCTEUgcHVibGljLmNvbXBfY2F0ZWdvcnlfbWFwIFJFTkFNRSBDT0xVTU4gcWJvX2FjY291bnRfbmFtZSBUTyBzb3VyY2VfYWNjb3VudF9uYW1lOwpBTFRFUiBUQUJMRSBwdWJsaWMuY29tcF9jYXRlZ29yeV9tYXAgUkVOQU1FIENPTFVNTiBxYm9fcGFyZW50X2FjY291bnRfbmFtZSBUTyBzb3VyY2VfcGFyZW50X2FjY291bnRfbmFtZTsKQUxURVIgVEFCTEUgcHVibGljLmNvbXBfZGVkdWN0aW9uX21hcCBSRU5BTUUgQ09MVU1OIHFib19hY2NvdW50X25hbWUgVE8gc291cmNlX2FjY291bnRfbmFtZTsKQUxURVIgVEFCTEUgcHVibGljLmNvbXBfZGVkdWN0aW9uX21hcCBSRU5BTUUgQ09MVU1OIHFib19wYXJlbnRfYWNjb3VudF9uYW1lIFRPIHNvdXJjZV9wYXJlbnRfYWNjb3VudF9uYW1lOwoKLS0gTWlncmF0aW9uIDI6IHZpZXcgcmVidWlsZHMKLS0gKHZfdHJpYWxfYmFsYW5jZSwgdl9iYW5rX2JhbGFuY2VzLCB2X2luY29tZV9zdGF0ZW1lbnQsIHZfcGxfcm9sbGVkX3VwLAotLSAgdl92YXJpYW5jZV9ib29rc19oaXN0b3JpY2FsX3ZzX2JjYyDigJQgc2VlIG1pZ3JhdGlvbiAyIGluIFN1cGFiYXNlIGZvciBmdWxsIGRlZnMpCgotLSBNaWdyYXRpb24gMzogZHluYW1pYyByZXdyaXRlIG9mIDUgR0wgd3JpdGVyIGZ1bmN0aW9uIGJvZGllcwpETyAkbWlncmF0aW9uJApERUNMQVJFIGZuX3JvdyByZWNvcmQ7IG5ld19kZWYgdGV4dDsKQkVHSU4KICBGT1IgZm5fcm93IElOCiAgICBTRUxFQ1QgcHJvbmFtZSwgb2lkLCBwZ19nZXRfZnVuY3Rpb25kZWYob2lkKSBBUyBkZWYKICAgIEZST00gcGdfcHJvYwogICAgV0hFUkUgcHJvbmFtZXNwYWNlID0gJ3B1YmxpYyc6OnJlZ25hbWVzcGFjZQogICAgICBBTkQgcHJvbmFtZSBJTiAoJ2JhbmtfZ2xfd3JpdGVyJywnY2NfZ2xfd3JpdGVyJywnY2xhc3NpZnlfamVfdmlhX2NoYXQnLCdnbF9lbnRyeV93cml0ZXInLCdwYXlyb2xsX2dsX3dyaXRlcicpCiAgICAgIEFORCBwZ19nZXRfZnVuY3Rpb25kZWYob2lkKSBJTElLRSAnJXFibyUnCiAgTE9PUAogICAgbmV3X2RlZiA6PSBmbl9yb3cuZGVmOwogICAgbmV3X2RlZiA6PSByZXBsYWNlKG5ld19kZWYsICd2X2NoYXJ0X25hbWVzcGFjZSA6PSAnJ3FibycnJywgJ3ZfY2hhcnRfbmFtZXNwYWNlIDo9ICcnYm9va3NfaGlzdG9yaWNhbCcnJyk7CiAgICBuZXdfZGVmIDo9IHJlcGxhY2UobmV3X2RlZiwgJ2FjY291bnRfY29kZSA9ICcnUUJPLVNVU1AnJycsICdhY2NvdW50X2NvZGUgPSAnJ0NPQS1TVVNQJycnKTsKICAgIG5ld19kZWYgOj0gcmVwbGFjZShuZXdfZGVmLCAnJydzZWFyY2hlZF9mb3InJywgJydRQk8tU1VTUCcnJywgJycnc2VhcmNoZWRfZm9yJycsICcnQ09BLVNVU1AnJycpOwogICAgbmV3X2RlZiA6PSByZXBsYWNlKG5ld19kZWYsICd2X3NvdXJjZV9hY2N0IDo9ICcnUUJPLTAwNycnJywgJ3Zfc291cmNlX2FjY3QgOj0gJydDT0EtMDA3JycnKTsKICAgIG5ld19kZWYgOj0gcmVwbGFjZShuZXdfZGVmLCAnJydRQk8gU3VzcGVuc2UgKHNwbGl0IG9mZnNldCBwZW5kaW5nKScnJywgJycnU3VzcGVuc2UgKHNwbGl0IG9mZnNldCBwZW5kaW5nKScnJyk7CiAgICBuZXdfZGVmIDo9IHJlcGxhY2UobmV3X2RlZiwgJ20ucWJvX2FjY291bnRfbmFtZScsICdtLnNvdXJjZV9hY2NvdW50X25hbWUnKTsKICAgIG5ld19kZWYgOj0gcmVwbGFjZShuZXdfZGVmLCAnbS5xYm9fcGFyZW50X2FjY291bnRfbmFtZScsICdtLnNvdXJjZV9wYXJlbnRfYWNjb3VudF9uYW1lJyk7CiAgICBJRiBuZXdfZGVmIElTIERJU1RJTkNUIEZST00gZm5fcm93LmRlZiBUSEVOCiAgICAgIEVYRUNVVEUgbmV3X2RlZjsKICAgIEVORCBJRjsKICBFTkQgTE9PUDsKRU5EICRtaWdyYXRpb24kOwo=
+-- ============================================================================
+-- QBO removal — full agnostic sweep
+-- Applied via Supabase MCP as 4 sequential migrations:
+--   qbo_removal_01_drops_data_updates_column_renames
+--   qbo_removal_02_view_rebuilds
+--   qbo_removal_03_rewrite_gl_writer_functions
+--   qbo_removal_04_drop_qbo_post_staged_batch
+-- Consolidated here for repo-side reference.
+--
+-- Naming scheme:
+--   QBO-###/QBO-SUB-### account codes  →  COA-###/COA-SUB-###
+--   qbo_import_YYYY  je.source labels  →  books_historical_import_YYYY
+--   chart_namespace 'qbo'              →  'books_historical'
+--   source_bucket 'qbo_historical'     →  'books_historical'
+--   qbo_account_name/qbo_parent_...    →  source_account_name/source_parent_...
+--
+-- Preserved (not scrubbed):
+--   16 journal_entries.memo + 18 journal_entries.description rows containing
+--   'Intuit *qbooks Online' or 'QuickBooks Payments' — these are literal merchant
+--   descriptions on Peter's QuickBooks subscription CC charges, not system labels.
+-- ============================================================================
+
+-- Migration 1: drops + data updates + column renames
+DROP VIEW IF EXISTS public.v_variance_qbo_vs_bcc;
+DROP VIEW IF EXISTS public.v_pl_rolled_up;
+DROP VIEW IF EXISTS public.v_bank_balances;
+DROP VIEW IF EXISTS public.v_income_statement;
+DROP VIEW IF EXISTS public.v_trial_balance;
+
+DROP FUNCTION IF EXISTS public.qbo_post_staged_batch(uuid, integer, integer);
+DROP TABLE IF EXISTS public.qbo_import_staging;
+
+UPDATE public.chart_of_accounts SET account_code = REPLACE(account_code, 'QBO-', 'COA-') WHERE account_code LIKE 'QBO-%';
+UPDATE public.chart_of_accounts SET account_name = 'Suspense (split offset pending)' WHERE account_name = 'QBO Suspense (split offset pending)';
+UPDATE public.chart_of_accounts SET chart_namespace = 'books_historical' WHERE chart_namespace = 'qbo';
+
+UPDATE public.gl_classification_rules SET debit_account_code = REPLACE(debit_account_code, 'QBO-', 'COA-') WHERE debit_account_code LIKE 'QBO-%';
+UPDATE public.gl_classification_rules SET credit_account_code = REPLACE(credit_account_code, 'QBO-', 'COA-') WHERE credit_account_code LIKE 'QBO-%';
+UPDATE public.gl_classification_rules SET source = REPLACE(source, 'qbo_import', 'books_historical_import') WHERE source LIKE 'qbo_import%';
+UPDATE public.gl_classification_rules SET rule_name = REPLACE(rule_name, 'QBO Import', 'Historical Import') WHERE rule_name LIKE '%QBO Import%';
+UPDATE public.gl_classification_rules SET rule_name = REPLACE(rule_name, 'per QBO history', 'per historical books') WHERE rule_name LIKE '%per QBO history%';
+UPDATE public.gl_classification_rules SET override_reason = REPLACE(REPLACE(override_reason, 'QBO import', 'historical books import'), 'qbo_import', 'books_historical_import') WHERE override_reason ILIKE '%qbo%';
+
+UPDATE public.journal_entries SET source = REPLACE(source, 'qbo_import', 'books_historical_import') WHERE source LIKE 'qbo_import%';
+UPDATE public.journal_entries SET description = REPLACE(description, 'QBO-', 'COA-') WHERE description LIKE '%QBO-%';
+UPDATE public.journal_entries SET description = REPLACE(description, 'QBO Full Year 2025 GL', 'prior-books Full Year 2025 GL') WHERE description LIKE '%QBO Full Year 2025 GL%';
+UPDATE public.journal_entries SET memo = REPLACE(memo, 'QBO General Ledger PDF', 'prior-books General Ledger PDF') WHERE memo LIKE '%QBO General Ledger PDF%';
+
+UPDATE public.documents SET groq_classification = REPLACE(groq_classification, 'qbo_', 'books_historical_') WHERE groq_classification LIKE 'qbo_%';
+UPDATE public.documents SET notes = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(notes, 'QBO General Ledger', 'prior-books General Ledger'), 'QBO P&L', 'prior-books P&L'), 'QBO Balance Sheet', 'prior-books Balance Sheet'), 'qbo_import', 'books_historical_import'), 'QBO-', 'COA-') WHERE notes ILIKE '%qbo%';
+
+UPDATE public.tasks SET title = REPLACE(REPLACE(REPLACE(REPLACE(title, 'QBO-', 'COA-'), 'QBO card', 'prior-books card'), 'QBO ', ''), 'to QBO', 'to prior books') WHERE title ILIKE '%qbo%';
+UPDATE public.tasks SET description = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(description, 'QBO-', 'COA-'), 'QBO Bank Rules', 'prior-books bank rules'), 'QBO Import', 'historical books import'), 'QBO import', 'historical books import'), 'qbo-stage-load', 'historical-books-stage-load'), 'QBO', 'prior books') WHERE description ILIKE '%qbo%';
+
+UPDATE public.alerts SET message = REPLACE(REPLACE(message, 'QBO-', 'COA-'), 'QBO', 'prior books') WHERE message ILIKE '%qbo%';
+
+UPDATE public.settings SET setting_value = 'books_historical' WHERE setting_key = 'gl_chart_namespace' AND setting_value = 'qbo';
+
+ALTER TABLE public.comp_category_map RENAME COLUMN qbo_account_name TO source_account_name;
+ALTER TABLE public.comp_category_map RENAME COLUMN qbo_parent_account_name TO source_parent_account_name;
+ALTER TABLE public.comp_deduction_map RENAME COLUMN qbo_account_name TO source_account_name;
+ALTER TABLE public.comp_deduction_map RENAME COLUMN qbo_parent_account_name TO source_parent_account_name;
+
+-- Migration 2: view rebuilds
+-- (v_trial_balance, v_bank_balances, v_income_statement, v_pl_rolled_up,
+--  v_variance_books_historical_vs_bcc — see migration 2 in Supabase for full defs)
+
+-- Migration 3: dynamic rewrite of 5 GL writer function bodies
+DO $migration$
+DECLARE fn_row record; new_def text;
+BEGIN
+  FOR fn_row IN
+    SELECT proname, oid, pg_get_functiondef(oid) AS def
+    FROM pg_proc
+    WHERE pronamespace = 'public'::regnamespace
+      AND proname IN ('bank_gl_writer','cc_gl_writer','classify_je_via_chat','gl_entry_writer','payroll_gl_writer')
+      AND pg_get_functiondef(oid) ILIKE '%qbo%'
+  LOOP
+    new_def := fn_row.def;
+    new_def := replace(new_def, 'v_chart_namespace := ''qbo''', 'v_chart_namespace := ''books_historical''');
+    new_def := replace(new_def, 'account_code = ''QBO-SUSP''', 'account_code = ''COA-SUSP''');
+    new_def := replace(new_def, '''searched_for'', ''QBO-SUSP''', '''searched_for'', ''COA-SUSP''');
+    new_def := replace(new_def, 'v_source_acct := ''QBO-007''', 'v_source_acct := ''COA-007''');
+    new_def := replace(new_def, '''QBO Suspense (split offset pending)''', '''Suspense (split offset pending)''');
+    new_def := replace(new_def, 'm.qbo_account_name', 'm.source_account_name');
+    new_def := replace(new_def, 'm.qbo_parent_account_name', 'm.source_parent_account_name');
+    IF new_def IS DISTINCT FROM fn_row.def THEN
+      EXECUTE new_def;
+    END IF;
+  END LOOP;
+END $migration$;

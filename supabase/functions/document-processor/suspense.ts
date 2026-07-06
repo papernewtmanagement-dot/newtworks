@@ -1,1 +1,135 @@
-Ly8gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQovLyBzdXNwZW5zZS50cwovLyA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09Ci8vIEZvciBlYWNoIEpFIHRoYXQgbGFuZGVkIGluIENPQS1TVVNQLCBjcmVhdGUgYSB0YXNrIGluIHRoZSB0YXNrcyB0YWJsZSBzbwovLyB0aGUgYWdlbnQgY2FuIGNsYXNzaWZ5IGl0LiBUYXNrIGluY2x1ZGVzIHVwIHRvIDMgTExNLXJhbmtlZCBiZXN0IGd1ZXNzZXMuCi8vCi8vIFByaW9yaXR5IGJ5IGFtb3VudDogID4kNTAwPWhpZ2gsICQxMDAtNTAwPW1lZGl1bSwgPCQxMDA9bG93Ci8vID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KCmltcG9ydCB7IHNiIH0gZnJvbSAiLi9saWIvc3VwYWJhc2UudHMiOwppbXBvcnQgdHlwZSB7IEJhbmtUeG4gfSBmcm9tICIuL2NsYXNzaWZpZXIudHMiOwppbXBvcnQgeyBwYXJzZVdpdGhMTE0gfSBmcm9tICIuL2xpYi9sbG0udHMiOwoKZXhwb3J0IGludGVyZmFjZSBTdXNwZW5zZVRhc2tJbnB1dCB7CiAgYWdlbmN5SWQ6IHN0cmluZzsKICBjb21wb3Npb0FwaUtleTogc3RyaW5nOwogIGNvbXBvc2lvVXNlcklkOiBzdHJpbmc7CiAgam91cm5hbEVudHJ5SWQ6IHN0cmluZzsKICB0eG46IEJhbmtUeG47CiAgdHhuRGF0ZTogc3RyaW5nOwp9CgpmdW5jdGlvbiBwcmlvcml0eUZvckFtb3VudChhbW91bnQ6IG51bWJlcik6ICJoaWdoIiB8ICJtZWRpdW0iIHwgImxvdyIgewogIGlmIChhbW91bnQgPiA1MDApIHJldHVybiAiaGlnaCI7CiAgaWYgKGFtb3VudCA+PSAxMDApIHJldHVybiAibWVkaXVtIjsKICByZXR1cm4gImxvdyI7Cn0KCmFzeW5jIGZ1bmN0aW9uIGxvYWRSdWxlU3VtbWFyaWVzKGFnZW5jeUlkOiBzdHJpbmcpIHsKICBjb25zdCB7IGRhdGEgfSA9IGF3YWl0IHNiCiAgICAuZnJvbSgiZ2xfY2xhc3NpZmljYXRpb25fcnVsZXMiKQogICAgLnNlbGVjdCgiaWQsIHJ1bGVfbmFtZSwgZGViaXRfYWNjb3VudF9jb2RlLCBjcmVkaXRfYWNjb3VudF9jb2RlLCBzdWJfY2F0ZWdvcnlfbGFiZWwsIGNvbmZpZGVuY2UiKQogICAgLmVxKCJhZ2VuY3lfaWQiLCBhZ2VuY3lJZCkKICAgIC5lcSgiaXNfYWN0aXZlIiwgdHJ1ZSkKICAgIC5uZXEoImNvbmZpZGVuY2UiLCAic3VzcGVuc2UiKQogICAgLm9yZGVyKCJtYXRjaF9wcmlvcml0eSIsIHsgYXNjZW5kaW5nOiB0cnVlIH0pOwogIHJldHVybiAoZGF0YSA/PyBbXSkubWFwKChyOiBhbnkpID0+ICh7CiAgICBpZDogci5pZCwgbmFtZTogci5ydWxlX25hbWUsIGRlYml0OiByLmRlYml0X2FjY291bnRfY29kZSwKICAgIGNyZWRpdDogci5jcmVkaXRfYWNjb3VudF9jb2RlLCBzdWI6IHIuc3ViX2NhdGVnb3J5X2xhYmVsLAogIH0pKTsKfQoKYXN5bmMgZnVuY3Rpb24gZ2VuZXJhdGVCZXN0R3Vlc3NlcyhpbnB1dDogU3VzcGVuc2VUYXNrSW5wdXQpOiBQcm9taXNlPHN0cmluZz4gewogIGNvbnN0IHJ1bGVzID0gYXdhaXQgbG9hZFJ1bGVTdW1tYXJpZXMoaW5wdXQuYWdlbmN5SWQpOwogIGlmIChydWxlcy5sZW5ndGggPT09IDApIHJldHVybiAiKG5vIGV4aXN0aW5nIHJ1bGVzIHRvIGNvbXBhcmUgYWdhaW5zdCkiOwoKICBjb25zdCBzeXN0ZW1Qcm9tcHQgPQogICAgIllvdSBhcmUgYW4gYWNjb3VudGluZyBhc3Npc3RhbnQgZm9yIGEgU3RhdGUgRmFybSBpbnN1cmFuY2UgYWdlbmN5LiAiICsKICAgICJZb3UgYXJlIHNob3duIGEgYmFuayB0cmFuc2FjdGlvbiBhbmQgYSBsaXN0IG9mIGV4aXN0aW5nIGNsYXNzaWZpY2F0aW9uIHJ1bGVzLiAiICsKICAgICJQaWNrIHRoZSBUSFJFRSBtb3N0IGxpa2VseSBjb3JyZWN0IHJ1bGVzIHRvIGFwcGx5LCByYW5rZWQgYmVzdCBmaXJzdC4gIiArCiAgICAiUmVwbHkgd2l0aCByYXcgSlNPTiBvbmx5IChubyBmZW5jZXMsIG5vIHByb3NlKSBpbiB0aGlzIGV4YWN0IHNoYXBlOiAiICsKICAgIGB7Imd1ZXNzZXMiOlt7InJ1bGVfaWQiOiI8dXVpZD4iLCJyZWFzb24iOiI8YnJpZWY+In0seyJydWxlX2lkIjoiPHV1aWQ+IiwicmVhc29uIjoiPGJyaWVmPiJ9LHsicnVsZV9pZCI6Ijx1dWlkPiIsInJlYXNvbiI6IjxicmllZj4ifV19YDsKCiAgY29uc3QgdXNlckNvbnRlbnQgPQogICAgYFRyYW5zYWN0aW9uOlxuYCArCiAgICBgICBEYXRlOiAke2lucHV0LnR4bkRhdGV9XG5gICsKICAgIGAgIFBheWVlOiAke2lucHV0LnR4bi5wYXllZX1cbmAgKwogICAgYCAgTWVtbzogJHtpbnB1dC50eG4ubWVtb31cbmAgKwogICAgYCAgQW1vdW50OiAke2lucHV0LnR4bi5zaWduZWRBbW91bnQudG9GaXhlZCgyKX0gKCR7aW5wdXQudHhuLnNpZ25lZEFtb3VudCA+IDAgPyAiaW4iIDogIm91dCJ9KVxuYCArCiAgICBgICBTb3VyY2UgYWNjb3VudDogJHtpbnB1dC50eG4uc291cmNlQWNjb3VudENvZGV9XG5cbmAgKwogICAgYEV4aXN0aW5nIHJ1bGVzIChpZCDigJQgbmFtZSDigJQgZGViaXQvY3JlZGl0IOKAlCBzdWIpOlxuYCArCiAgICBydWxlcy5tYXAoKHIpID0+IGAgICR7ci5pZH0g4oCUICR7ci5uYW1lfSDigJQgJHtyLmRlYml0fS8ke3IuY3JlZGl0fSDigJQgJHtyLnN1YiA/PyAiIn1gKS5qb2luKCJcbiIpOwoKICBjb25zdCByZXN1bHQgPSBhd2FpdCBwYXJzZVdpdGhMTE0oewogICAgYWdlbmN5SWQ6IGlucHV0LmFnZW5jeUlkLAogICAgY29tcG9zaW9BcGlLZXk6IGlucHV0LmNvbXBvc2lvQXBpS2V5LAogICAgY29tcG9zaW9Vc2VySWQ6IGlucHV0LmNvbXBvc2lvVXNlcklkLAogICAgc3lzdGVtUHJvbXB0LCB1c2VyQ29udGVudCwKICAgIGRvY3VtZW50SWQ6IG51bGwsCiAgICBwdXJwb3NlOiAic3VzcGVuc2VfZ3Vlc3NlcyIsCiAgICBtYXhUb2tlbnM6IDgwMCwKICB9KTsKCiAgaWYgKHJlc3VsdC5vaykgewogICAgY29uc3QgZ3Vlc3NlcyA9IChyZXN1bHQuanNvbj8uZ3Vlc3NlcyA/PyBbXSkuc2xpY2UoMCwgMyk7CiAgICBjb25zdCBieUlkID0gbmV3IE1hcChydWxlcy5tYXAoKHIpID0+IFtyLmlkLCByXSkpOwogICAgcmV0dXJuIGd1ZXNzZXMubWFwKChnOiBhbnksIGk6IG51bWJlcikgPT4gewogICAgICBjb25zdCByID0gYnlJZC5nZXQoZy5ydWxlX2lkKTsKICAgICAgaWYgKCFyKSByZXR1cm4gYCAgJHtpICsgMX0uIChydWxlIG5vdCBmb3VuZClgOwogICAgICByZXR1cm4gYCAgJHtpICsgMX0uICR7ci5uYW1lfSDihpIgZGViaXQgJHtyLmRlYml0fSwgY3JlZGl0ICR7ci5jcmVkaXR9XG4gICAgICBSZWFzb246ICR7Zy5yZWFzb24gPz8gIiJ9YDsKICAgIH0pLmpvaW4oIlxuIik7CiAgfQoKICAvLyBGYWxsYmFjazogbGV4aWNhbCBtYXRjaAogIGNvbnN0IHBheWVlTG93ZXIgPSBpbnB1dC50eG4ucGF5ZWUudG9Mb3dlckNhc2UoKTsKICBjb25zdCBtZW1vTG93ZXIgPSBpbnB1dC50eG4ubWVtby50b0xvd2VyQ2FzZSgpOwogIGNvbnN0IHNjb3JlZCA9IHJ1bGVzLm1hcCgocikgPT4gewogICAgbGV0IHNjb3JlID0gMDsKICAgIGZvciAoY29uc3Qgd29yZCBvZiByLm5hbWUudG9Mb3dlckNhc2UoKS5zcGxpdCgvXFcrLykuZmlsdGVyKEJvb2xlYW4pKSB7CiAgICAgIGlmIChwYXllZUxvd2VyLmluY2x1ZGVzKHdvcmQpKSBzY29yZSArPSAyOwogICAgICBpZiAobWVtb0xvd2VyLmluY2x1ZGVzKHdvcmQpKSBzY29yZSArPSAxOwogICAgfQogICAgcmV0dXJuIHsgciwgc2NvcmUgfTsKICB9KS5zb3J0KChhLCBiKSA9PiBiLnNjb3JlIC0gYS5zY29yZSkuc2xpY2UoMCwgMyk7CgogIGlmIChzY29yZWRbMF0/LnNjb3JlID09PSAwKSByZXR1cm4gIihubyBsZXhpY2FsIG1hdGNoZXMg4oCUIHBsZWFzZSBjbGFzc2lmeSBtYW51YWxseSkiOwogIHJldHVybiBzY29yZWQubWFwKChzLCBpKSA9PgogICAgYCAgJHtpICsgMX0uICR7cy5yLm5hbWV9IOKGkiBkZWJpdCAke3Muci5kZWJpdH0sIGNyZWRpdCAke3Muci5jcmVkaXR9YAogICkuam9pbigiXG4iKTsKfQoKZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGNyZWF0ZVN1c3BlbnNlVGFzayhpbnB1dDogU3VzcGVuc2VUYXNrSW5wdXQpOiBQcm9taXNlPHsgdGFza0lkOiBzdHJpbmcgfT4gewogIGNvbnN0IGFtb3VudCA9IE1hdGguYWJzKGlucHV0LnR4bi5zaWduZWRBbW91bnQpOwogIGNvbnN0IGRpcmVjdGlvbiA9IGlucHV0LnR4bi5zaWduZWRBbW91bnQgPiAwID8gImluIiA6ICJvdXQiOwogIGNvbnN0IGd1ZXNzZXMgPSBhd2FpdCBnZW5lcmF0ZUJlc3RHdWVzc2VzKGlucHV0KTsKCiAgY29uc3QgdGl0bGUgPSBgQ2xhc3NpZnk6ICQke2Ftb3VudC50b0ZpeGVkKDIpfSAke2RpcmVjdGlvbn0g4oCUICR7aW5wdXQudHhuLnBheWVlLnNsaWNlKDAsIDUwKX1gOwogIGNvbnN0IGRlc2NyaXB0aW9uID0KICAgIGBTdXNwZW5zZSBxdWV1ZSBpdGVtIOKAlCBuZWVkcyBjbGFzc2lmaWNhdGlvbi5cblxuYCArCiAgICBgRGF0ZTogJHtpbnB1dC50eG5EYXRlfVxuYCArCiAgICBgUGF5ZWU6ICR7aW5wdXQudHhuLnBheWVlfVxuYCArCiAgICBgTWVtbzogJHtpbnB1dC50eG4ubWVtb31cbmAgKwogICAgYEFtb3VudDogJCR7YW1vdW50LnRvRml4ZWQoMil9ICgke2RpcmVjdGlvbn0pXG5gICsKICAgIGBTb3VyY2U6ICR7aW5wdXQudHhuLnNvdXJjZUFjY291bnRDb2RlfVxuYCArCiAgICBgSkU6ICR7aW5wdXQuam91cm5hbEVudHJ5SWR9XG5cbmAgKwogICAgYEJlc3QgZ3Vlc3NlczpcbiR7Z3Vlc3Nlc31cblxuYCArCiAgICBgUmVwbHkgaW4gY2hhdCB3aXRoIHRoZSBudW1iZXIsIHRoZSBydWxlIG5hbWUsIG9yIHlvdXIgb3duIGNsYXNzaWZpY2F0aW9uLiBgICsKICAgIGBJJ2xsIHVwZGF0ZSB0aGUgSkUgYW5kIGFkZCBhIG5ldyBydWxlIHNvIHRoaXMgbmV2ZXIgaGl0cyBzdXNwZW5zZSBhZ2Fpbi5gOwoKICBjb25zdCB7IGRhdGEsIGVycm9yIH0gPSBhd2FpdCBzYgogICAgLmZyb20oInRhc2tzIikKICAgIC5pbnNlcnQoewogICAgICBhZ2VuY3lfaWQ6IGlucHV0LmFnZW5jeUlkLAogICAgICB0aXRsZSwgZGVzY3JpcHRpb24sCiAgICAgIGNyZWF0ZWRfYnk6ICJkb2N1bWVudF9wcm9jZXNzb3IiLAogICAgICBwcmlvcml0eTogcHJpb3JpdHlGb3JBbW91bnQoYW1vdW50KSwKICAgICAgc3RhdHVzOiAib3BlbiIsCiAgICAgIG1vZHVsZV9yZWZlcmVuY2U6ICJmaW5hbmNpYWxzL3N1c3BlbnNlIiwKICAgICAgcmVsYXRlZF9pZDogaW5wdXQuam91cm5hbEVudHJ5SWQsCiAgICB9KQogICAgLnNlbGVjdCgiaWQiKQogICAgLnNpbmdsZSgpOwogIGlmIChlcnJvciB8fCAhZGF0YSkgdGhyb3cgbmV3IEVycm9yKGBzdXNwZW5zZSB0YXNrIGluc2VydCBmYWlsZWQ6ICR7ZXJyb3I/Lm1lc3NhZ2UgPz8gInVua25vd24ifWApOwogIHJldHVybiB7IHRhc2tJZDogZGF0YS5pZCB9Owp9Cg==
+// =========================================================================
+// suspense.ts
+// =========================================================================
+// For each JE that landed in COA-SUSP, create a task in the tasks table so
+// the agent can classify it. Task includes up to 3 LLM-ranked best guesses.
+//
+// Priority by amount:  >$500=high, $100-500=medium, <$100=low
+// =========================================================================
+
+import { sb } from "./lib/supabase.ts";
+import type { BankTxn } from "./classifier.ts";
+import { parseWithLLM } from "./lib/llm.ts";
+
+export interface SuspenseTaskInput {
+  agencyId: string;
+  composioApiKey: string;
+  composioUserId: string;
+  journalEntryId: string;
+  txn: BankTxn;
+  txnDate: string;
+}
+
+function priorityForAmount(amount: number): "high" | "medium" | "low" {
+  if (amount > 500) return "high";
+  if (amount >= 100) return "medium";
+  return "low";
+}
+
+async function loadRuleSummaries(agencyId: string) {
+  const { data } = await sb
+    .from("gl_classification_rules")
+    .select("id, rule_name, debit_account_code, credit_account_code, sub_category_label, confidence")
+    .eq("agency_id", agencyId)
+    .eq("is_active", true)
+    .neq("confidence", "suspense")
+    .order("match_priority", { ascending: true });
+  return (data ?? []).map((r: any) => ({
+    id: r.id, name: r.rule_name, debit: r.debit_account_code,
+    credit: r.credit_account_code, sub: r.sub_category_label,
+  }));
+}
+
+async function generateBestGuesses(input: SuspenseTaskInput): Promise<string> {
+  const rules = await loadRuleSummaries(input.agencyId);
+  if (rules.length === 0) return "(no existing rules to compare against)";
+
+  const systemPrompt =
+    "You are an accounting assistant for a State Farm insurance agency. " +
+    "You are shown a bank transaction and a list of existing classification rules. " +
+    "Pick the THREE most likely correct rules to apply, ranked best first. " +
+    "Reply with raw JSON only (no fences, no prose) in this exact shape: " +
+    `{"guesses":[{"rule_id":"<uuid>","reason":"<brief>"},{"rule_id":"<uuid>","reason":"<brief>"},{"rule_id":"<uuid>","reason":"<brief>"}]}`;
+
+  const userContent =
+    `Transaction:\n` +
+    `  Date: ${input.txnDate}\n` +
+    `  Payee: ${input.txn.payee}\n` +
+    `  Memo: ${input.txn.memo}\n` +
+    `  Amount: ${input.txn.signedAmount.toFixed(2)} (${input.txn.signedAmount > 0 ? "in" : "out"})\n` +
+    `  Source account: ${input.txn.sourceAccountCode}\n\n` +
+    `Existing rules (id — name — debit/credit — sub):\n` +
+    rules.map((r) => `  ${r.id} — ${r.name} — ${r.debit}/${r.credit} — ${r.sub ?? ""}`).join("\n");
+
+  const result = await parseWithLLM({
+    agencyId: input.agencyId,
+    composioApiKey: input.composioApiKey,
+    composioUserId: input.composioUserId,
+    systemPrompt, userContent,
+    documentId: null,
+    purpose: "suspense_guesses",
+    maxTokens: 800,
+  });
+
+  if (result.ok) {
+    const guesses = (result.json?.guesses ?? []).slice(0, 3);
+    const byId = new Map(rules.map((r) => [r.id, r]));
+    return guesses.map((g: any, i: number) => {
+      const r = byId.get(g.rule_id);
+      if (!r) return `  ${i + 1}. (rule not found)`;
+      return `  ${i + 1}. ${r.name} → debit ${r.debit}, credit ${r.credit}\n      Reason: ${g.reason ?? ""}`;
+    }).join("\n");
+  }
+
+  // Fallback: lexical match
+  const payeeLower = input.txn.payee.toLowerCase();
+  const memoLower = input.txn.memo.toLowerCase();
+  const scored = rules.map((r) => {
+    let score = 0;
+    for (const word of r.name.toLowerCase().split(/\W+/).filter(Boolean)) {
+      if (payeeLower.includes(word)) score += 2;
+      if (memoLower.includes(word)) score += 1;
+    }
+    return { r, score };
+  }).sort((a, b) => b.score - a.score).slice(0, 3);
+
+  if (scored[0]?.score === 0) return "(no lexical matches — please classify manually)";
+  return scored.map((s, i) =>
+    `  ${i + 1}. ${s.r.name} → debit ${s.r.debit}, credit ${s.r.credit}`
+  ).join("\n");
+}
+
+export async function createSuspenseTask(input: SuspenseTaskInput): Promise<{ taskId: string }> {
+  const amount = Math.abs(input.txn.signedAmount);
+  const direction = input.txn.signedAmount > 0 ? "in" : "out";
+  const guesses = await generateBestGuesses(input);
+
+  const title = `Classify: $${amount.toFixed(2)} ${direction} — ${input.txn.payee.slice(0, 50)}`;
+  const description =
+    `Suspense queue item — needs classification.\n\n` +
+    `Date: ${input.txnDate}\n` +
+    `Payee: ${input.txn.payee}\n` +
+    `Memo: ${input.txn.memo}\n` +
+    `Amount: $${amount.toFixed(2)} (${direction})\n` +
+    `Source: ${input.txn.sourceAccountCode}\n` +
+    `JE: ${input.journalEntryId}\n\n` +
+    `Best guesses:\n${guesses}\n\n` +
+    `Reply in chat with the number, the rule name, or your own classification. ` +
+    `I'll update the JE and add a new rule so this never hits suspense again.`;
+
+  const { data, error } = await sb
+    .from("tasks")
+    .insert({
+      agency_id: input.agencyId,
+      title, description,
+      created_by: "document_processor",
+      priority: priorityForAmount(amount),
+      status: "open",
+      module_reference: "financials/suspense",
+      related_id: input.journalEntryId,
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(`suspense task insert failed: ${error?.message ?? "unknown"}`);
+  return { taskId: data.id };
+}
