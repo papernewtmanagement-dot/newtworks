@@ -1,4 +1,4 @@
-# CLAUDE.md — BCC Master Template
+# CLAUDE.md — Newtworks Master Template
 ## Read This First. Every Time.
 
 This file is your briefing. Before touching any file in this repo, read this completely.
@@ -22,17 +22,17 @@ This file is your briefing. Before touching any file in this repo, read this com
 
 ## What This Repo Is
 
-This is the **BCC Web App** — a React/Vite application that gives Imaginary Farms LLC clients 
+This is the **Newtworks Web App** — a React/Vite application that gives Imaginary Farms LLC clients 
 a visual command center for their State Farm agency. It reads from their existing Supabase 
 database and displays real agency data across 10 modules.
 
 **Live at:** Each client gets their own Vercel deployment  
-**Master repo:** github.com/cindarellabots-droid/bcc-master-template  
+**Master repo:** github.com/cindarellabots-droid/newtworks-master-template  
 **Owner:** Rebecca Coelho / Imaginary Farms LLC (The Claude Whisperer)
 
 ---
 
-## The Full BCC System (5 Layers)
+## The Full Newtworks System (5 Layers)
 
 Every client has ALL of these — the web app is Layer 5, added on top:
 
@@ -172,9 +172,9 @@ The May 2026 Producer ROI session burned hours debugging:
 When refactoring a variable name across a file, **always confirm the new name is in scope at every replacement site.** Search for the new name in the diff. If it appears in a function where it isn't declared, that's a bug.
 
 **12. ERROR BOUNDARY IS THE SAFETY NET**  
-`src/components/ErrorBoundary.jsx` wraps every module in `BCCApp.jsx`. When ANY child component throws, the boundary catches it, logs the full stack to console, and renders an inline diagnostic card instead of blanking the module. This was added because every prior class of bug (schema drift, undefined fields, null derefs) produced the same symptom: blank module. The boundary turns "blank screen" into "here's exactly what failed."
+`src/components/ErrorBoundary.jsx` wraps every module in `NewtworksApp.jsx`. When ANY child component throws, the boundary catches it, logs the full stack to console, and renders an inline diagnostic card instead of blanking the module. This was added because every prior class of bug (schema drift, undefined fields, null derefs) produced the same symptom: blank module. The boundary turns "blank screen" into "here's exactly what failed."
 
-**Always preserve the ErrorBoundary wrap.** If you ever need to add a new module to the router in BCCApp, wrap it: `<ErrorBoundary name="ModuleName"><Module /></ErrorBoundary>`.
+**Always preserve the ErrorBoundary wrap.** If you ever need to add a new module to the router in NewtworksApp, wrap it: `<ErrorBoundary name="ModuleName"><Module /></ErrorBoundary>`.
 
 **13. DEFENSIVE GUARDS IN EVERY SECTION**  
 Every section that consumes data MUST guard against undefined/null on initial render:
@@ -255,7 +255,7 @@ export default function ModuleName() {
 
 This is the design choice that matters most for installs: **every new client install must seed the standard recipes into THEIR Supabase.** The recipes are not pre-configured anywhere outside the database. Project Claude builds them during onboarding using the templates in `docs/AUTOMATIONS_INSTALL.md`.
 
-**Standard recipe count: 12** (the canonical install set). Sourced from Keith Thompson's working production BCC, plus two new recipes added with the Producer ROI feature in May 2026: **Producer Production Report Processor** (monthly) and **Producer Underperformance Watcher** (daily). Earlier docs that say "10" or "14" are stale — 12 is correct.
+**Standard recipe count: 12** (the canonical install set). Sourced from Keith Thompson's working production Newtworks, plus two new recipes added with the Producer ROI feature in May 2026: **Producer Production Report Processor** (monthly) and **Producer Underperformance Watcher** (daily). Earlier docs that say "10" or "14" are stale — 12 is correct.
 
 ### The runner — two pieces, one engine
 
@@ -318,7 +318,7 @@ Three pieces feed this tab:
 2. **`agency.lapse_rate_annual`** — optional override. NULL = compute from `comp_recap` (prior-year vs current-year P&C YTD ratio).
 3. **`producer_production`** — monthly issued premium per producer per line of business. Fed by either:
    - Manual entry during onboarding (Project Claude pastes from agent's reports)
-   - Email-attachment Composio recipe (when monthly producer reports arrive at the BCC inbox) — separate ship, recipe lives outside this repo
+   - Email-attachment Composio recipe (when monthly producer reports arrive at the Newtworks inbox) — separate ship, recipe lives outside this repo
 
 See `docs/PRODUCER_ROI_INSTALL.md` for the install playbook.
 
@@ -397,7 +397,7 @@ Alyssa and Kellie are also IF's founding clients (#1 and #2) and active State Fa
 A client Claude or repo owner should run this single query against the client's Supabase project AFTER migrations 001–006 and BEFORE the first Vercel deploy. It verifies every table and view this app reads from is present.
 
 ```sql
--- BCC Pre-flight Schema Audit
+-- Newtworks Pre-flight Schema Audit
 -- Run as Supabase project owner; pass agency_id of the active agency.
 WITH expected_tables(name) AS (VALUES
   ('agency'),('alerts'),('aipp_tracking'),('applicants'),
@@ -455,7 +455,7 @@ WHERE grantee = 'anon' AND table_schema = 'public';
 - Rebecca Coelho is the operator/co-founder
 - Matthew Cooper is the owner of record (non-compete + estate planning)
 - Primary market: State Farm insurance agents
-- Product: BCC (Business Command Center) — setup fee $2,995 + $1,497.50 additional
+- Product: Newtworks (Newtworks) — setup fee $2,995 + $1,497.50 additional
 - Alyssa Holloway is Ambassador Partner — always receives 20% of ALL IF setup fees paid, regardless of referral source. NON-NEGOTIABLE and PRIVATE.
 - Commission structure is PRIVATE — never appears in external docs
 
@@ -466,7 +466,7 @@ WHERE grantee = 'anon' AND table_schema = 'public';
 
 ## Known Schema Variant — chart_of_accounts (discovered Kellie Byers install, April 29 2026)
 
-Some existing BCC clients have a legacy `chart_of_accounts` table with:
+Some existing Newtworks clients have a legacy `chart_of_accounts` table with:
 - Integer PK (not UUID)
 - Column names: `account_number`, `sub_type`, `normal_balance`
 - Missing: `account_code`, `account_subtype`, `agency_id`

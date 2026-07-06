@@ -32,8 +32,8 @@ import { TOKENS } from "./src/lib/theme.js";
 
 
 // ============================================================
-// BCC APP SHELL v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks APP SHELL v1.0
+// Newtworks — State Farm Agent Edition
 //
 // ARCHITECTURE:
 // ┌─────────────────────────────────────────────────────┐
@@ -86,7 +86,7 @@ const AGENCY_DEFAULTS = {
 // Standing rule (Peter 2026-06-22): webapp defaults to admin-only. Any NEW
 // module added below MUST default to roles: ADMIN_ROLES unless Peter explicitly
 // authorizes team visibility. See persistent_memory operational_rule
-// "BCC webapp default visibility — owner-only unless Peter authorizes team access".
+// "Newtworks webapp default visibility — owner-only unless Peter authorizes team access".
 const ADMIN_ROLES = ["owner", "manager"];
 const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
 const NAV_ITEMS = [
@@ -505,7 +505,7 @@ const SetPasswordScreen = ({ email, onDone }) => {
       <div style={{ width: "100%", maxWidth: 380, background: TOKENS.white, borderRadius: 16, padding: "32px 30px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
           <img src="/newt-icon-transparent.png" alt="paper newt" width="144" height="144" style={{ display: "block", marginBottom: 14 }} />
-          <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Welcome to your BCC</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900, letterSpacing: "-0.02em" }}>Welcome to your Newtworks</div>
           <div style={{ fontSize: 12, color: TOKENS.slate500, marginTop: 4, textAlign: "center" }}>
             {email ? <>Set a password for <strong>{email}</strong></> : "Set a password to finish setting up your account"}
           </div>
@@ -540,7 +540,7 @@ const ComingSoon = ({ module }) => (
     </div>
     <div style={{ fontSize: 18, fontWeight: 700, color: TOKENS.slate900 }}>{module}</div>
     <div style={{ fontSize: 13, color: TOKENS.slate500, maxWidth: 300, lineHeight: 1.6 }}>
-      This module is being built. Check back as we complete each section of your BCC.
+      This module is being built. Check back as we complete each section of your Newtworks.
     </div>
   </div>
 );
@@ -570,7 +570,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
-  // the same role check used by filteredNav in BCCApp(). Per-user module
+  // the same role check used by filteredNav in NewtworksApp(). Per-user module
   // overrides were dropped (migration 032 / 2026-06-22) — role-only now.
   const navItem = NAV_ITEMS.find(n => n.id === active);
   if (navItem) {
@@ -609,7 +609,7 @@ function parseUrl(pathname) {
   if (cprMatch) return { module: "cpr", cprWeekDate: cprMatch[1] };
   if (p === "/" || p === "/dashboard") return { module: "dashboard", cprWeekDate: null };
   // Accept /<module> AND /<module>/<sub-path>. Modules like handbook, processes,
-  // and admin own their own sub-route (e.g. /handbook/<page-id>) — BCCApp only
+  // and admin own their own sub-route (e.g. /handbook/<page-id>) — NewtworksApp only
   // resolves the top-level module here and leaves the sub-path to the module.
   const slugMatch = /^\/([a-z][a-z0-9-]*)(?:\/.*)?$/.exec(p);
   if (slugMatch && KNOWN_MODULE_IDS.includes(slugMatch[1])) {
@@ -624,7 +624,7 @@ function urlForState(moduleId, cprWeekDate) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-export default function BCCApp() {
+export default function NewtworksApp() {
   // ── Auth gate state (Path 1) ──────────────────────────────────────────────
   // authState: "checking" | "out" | "in"
   const [authState, setAuthState] = useState("checking");
@@ -782,7 +782,7 @@ export default function BCCApp() {
     };
   }, []);
 
-  // Load real agency + the logged-in user's BCC profile once past the auth gate.
+  // Load real agency + the logged-in user's Newtworks profile once past the auth gate.
   useEffect(() => {
     if (authState !== "in") return;
     if (!supabase || !AGENCY_ID) return;
@@ -828,7 +828,7 @@ export default function BCCApp() {
       });
     }
 
-    loadProfile().catch(e => console.error("[BCCApp] profile load error:", e));
+    loadProfile().catch(e => console.error("[NewtworksApp] profile load error:", e));
   }, [authState, sessionEmail]);
 
   const handleSignOut = async () => {
