@@ -197,8 +197,7 @@ function TeamRoster() {
   }
 
   const displayName = (m) => {
-    const nn = m.nickname ? ` "${m.nickname}"` : "";
-    return `${m.first_name}${nn} ${m.last_name}`;
+    return `${m.first_name} ${m.last_name}`;
   };
 
   return (
