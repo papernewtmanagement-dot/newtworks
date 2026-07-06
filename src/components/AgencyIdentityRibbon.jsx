@@ -373,7 +373,7 @@ export default function AgencyIdentityRibbon() {
       padding: 0,
     },
     panel: {
-      padding: vp.isPhone ? "8px 8px 14px 8px" : "8px 20px 16px 20px",
+      padding: vp.isPhone ? "2px 8px 14px 8px" : "2px 20px 16px 20px",
       maxHeight: vp.isPhone ? "calc(100vh - 200px)" : "calc(100vh - 220px)",
       overflowY: "auto",
       WebkitOverflowScrolling: "touch",
@@ -386,10 +386,10 @@ export default function AgencyIdentityRibbon() {
       marginRight: vp.isPhone ? 0 : 36,
     },
     card: (idx) => ({
-      padding: vp.isPhone ? "10px 12px" : "4px 24px",
+      padding: vp.isPhone ? "8px 12px" : "2px 24px",
       borderRight: (vp.isPhone || idx === 3) ? "none" : `1px solid ${T.slate200}`,
       borderBottom: vp.isPhone && idx < 3 ? `1px solid ${T.slate200}` : "none",
-      paddingBottom: vp.isPhone && idx < 3 ? 12 : (vp.isPhone ? 10 : 4),
+      paddingBottom: vp.isPhone && idx < 3 ? 10 : (vp.isPhone ? 8 : 2),
     }),
     cardTitle: {
       fontSize: 11,
@@ -397,7 +397,7 @@ export default function AgencyIdentityRibbon() {
       textTransform: "uppercase",
       letterSpacing: "0.14em",
       color: T.blue,
-      marginBottom: 4,
+      marginBottom: 2,
       lineHeight: 1.2,
     },
     cardBody: {
