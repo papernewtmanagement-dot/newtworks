@@ -107,12 +107,10 @@ const WHEN_STUCK = [
 
 // ---- NATO Phonetic Alphabet ----
 const NATO = [
-  ["A Alpha",   "B Bravo",   "C Charlie", "D Delta",    "E Echo"],
-  ["F Foxtrot", "G Golf",    "H Hotel",   "I India",    "J Juliet"],
-  ["K Kilo",    "L Lima",    "M Mike",    "N November", "O Oscar"],
-  ["P Papa",    "Q Quebec",  "R Romeo",   "S Sierra",   "T Tango"],
-  ["U Uniform", "V Victor",  "W Whiskey", "X X-Ray",    "Y Yankee"],
-  ["Z Zulu",    "",          "",          "",           ""],
+  "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+  "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa",
+  "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey",
+  "X-Ray", "Yankee", "Zulu",
 ];
 
 // Parse each <rule id="..."> from the agency_identity principle.
@@ -370,7 +368,12 @@ export default function AgencyIdentityRibbon() {
       flexShrink: 0,
       padding: 0,
     },
-    panel: { padding: vp.isPhone ? "10px 12px 16px 12px" : "10px 24px 20px 24px" },
+    panel: {
+      padding: vp.isPhone ? "8px 12px 14px 12px" : "8px 24px 16px 24px",
+      maxHeight: vp.isPhone ? "calc(100vh - 200px)" : "calc(100vh - 220px)",
+      overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
+    },
     grid: {
       display: "grid",
       gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(4, 1fr)",
@@ -390,8 +393,8 @@ export default function AgencyIdentityRibbon() {
       letterSpacing: "-0.005em",
     },
     section: {
-      marginTop: 22,
-      paddingTop: 14,
+      marginTop: 12,
+      paddingTop: 10,
       borderTop: `1px solid ${T.slate200}`,
     },
     sectionLabel: {
@@ -409,18 +412,30 @@ export default function AgencyIdentityRibbon() {
       marginTop: 6,
       marginBottom: 4,
     },
-    threeCol: {
-      display: "grid",
-      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(3, 1fr)",
-      columnGap: 24,
-      rowGap: 8,
+    stackCol: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
     },
-    stuckTwoCol: {
-      display: "grid",
-      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(2, 1fr)",
-      columnGap: 24,
-      rowGap: 8,
+    natoFlow: {
+      marginTop: 12,
+      fontSize: 12,
+      lineHeight: 1.7,
+      color: T.slate700,
+      letterSpacing: "0.005em",
     },
+    natoWord: {
+      whiteSpace: "nowrap",
+    },
+    natoLetterInline: {
+      fontWeight: 700,
+      color: T.blue,
+    },
+    natoSep: {
+      color: T.slate300,
+      margin: "0 6px",
+    },
+
     list: {
       margin: 0,
       paddingLeft: 16,
@@ -434,21 +449,6 @@ export default function AgencyIdentityRibbon() {
       fontSize: 11,
       lineHeight: 1.35,
       color: T.slate700,
-    },
-    natoTable: {
-      width: "100%",
-      borderCollapse: "collapse",
-      fontSize: vp.isPhone ? 11 : 12,
-    },
-    natoCell: {
-      padding: vp.isPhone ? "3px 6px" : "4px 10px",
-      borderBottom: `1px solid ${T.slate200}`,
-      color: T.slate900,
-    },
-    natoLetter: {
-      fontWeight: 700,
-      color: T.blue,
-      marginRight: 4,
     },
     office: {
       marginTop: 14,
@@ -541,7 +541,7 @@ export default function AgencyIdentityRibbon() {
           {/* Rules of the Road */}
           <div style={css.section}>
             <div style={css.sectionLabel}>Rules of the Road</div>
-            <div style={css.threeCol}>
+            <div style={css.stackCol}>
               {RULES_OF_ROAD.map((s) => (
                 <div key={s.heading}>
                   <div style={css.subheading}>{s.heading}</div>
@@ -565,7 +565,7 @@ export default function AgencyIdentityRibbon() {
           {/* When You Get Stuck */}
           <div style={css.section}>
             <div style={css.sectionLabel}>When You Get Stuck</div>
-            <div style={css.stuckTwoCol}>
+            <div style={css.stackCol}>
               {WHEN_STUCK.map((s) => (
                 <div key={s.heading}>
                   <div style={css.subheading}>{s.heading}</div>
@@ -577,28 +577,16 @@ export default function AgencyIdentityRibbon() {
             </div>
           </div>
 
-          {/* NATO Phonetic Alphabet */}
+          {/* NATO Phonetic Alphabet — no header, inline flow with bold first letter */}
           <div style={css.section}>
-            <div style={css.sectionLabel}>NATO Phonetic Alphabet</div>
-            <table style={css.natoTable}>
-              <tbody>
-                {NATO.map((row, ri) => (
-                  <tr key={ri}>
-                    {row.map((cell, ci) => {
-                      if (!cell) return <td key={ci} style={css.natoCell} />;
-                      const sp = cell.indexOf(" ");
-                      const letter = cell.slice(0, sp);
-                      const word = cell.slice(sp + 1);
-                      return (
-                        <td key={ci} style={css.natoCell}>
-                          <span style={css.natoLetter}>{letter}</span>{word}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={css.natoFlow}>
+              {NATO.map((word, i) => (
+                <span key={word} style={css.natoWord}>
+                  <span style={css.natoLetterInline}>{word.charAt(0)}</span>{word.slice(1)}
+                  {i < NATO.length - 1 && <span style={css.natoSep}>{"\u00b7"}</span>}
+                </span>
+              ))}
+            </div>
           </div>
 
           {/* Who Handles What */}
