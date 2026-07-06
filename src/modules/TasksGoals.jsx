@@ -4,8 +4,8 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// BCC TASKS & GOALS MODULE v1.2
-// Business Command Center — State Farm Agent Edition
+// Newtworks TASKS & GOALS MODULE v1.2
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
@@ -40,7 +40,7 @@ const PRIORITY = {
 };
 
 // ─── Task Category Config ─────────────────────────────────────
-// Six fixed categories on every task — distinct from module_reference (related BCC area).
+// Six fixed categories on every task — distinct from module_reference (related Newtworks area).
 // DB column: task_category, vocabulary locked by CHECK constraint (migration 040).
 const TASK_CATEGORIES = {
   web_app:           { label:"Web App",          icon:"💻", color:T.teal     },
@@ -87,7 +87,7 @@ const MOCK_TASKS = [
   { id:"t4",  title:"Manually post Instagram content — Monday April 27",          priority:"high",     status:"open",        module:"social",      due_date:"Apr 27, 2026", assigned_to:"Jane Smith",  created_by:"automations", description:"Behind the scenes at the agency this Monday morning. Coffee, team huddle, and a full week ahead. ☕ — scheduled for 11AM", created_at:"Today" },
   { id:"t5",  title:"Review Q1 bank reconciliation",                               priority:"medium",   status:"open",        module:"financials",  due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"automation",      description:"Q1 bank reconciliation is ready to review. Verify all GL entries match bank statements for January, February, and March.", created_at:"Apr 26" },
   { id:"t6",  title:"Send Kimberly Yow reseller agreement for signature",          priority:"medium",   status:"in_progress", module:"general",     due_date:"May 5, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Channel partner reseller agreement ready. Send via DocuSign and follow up within 3 business days.", created_at:"Apr 24" },
-  { id:"t7",  title:"Schedule discovery call with new prospect — Mike Anderson",   priority:"medium",   status:"open",        module:"general",     due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Referred by Alyssa. Auto agency owner. Interested in BCC setup.", created_at:"Apr 23" },
+  { id:"t7",  title:"Schedule discovery call with new prospect — Mike Anderson",   priority:"medium",   status:"open",        module:"general",     due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Referred by Alyssa. Auto agency owner. Interested in Newtworks setup.", created_at:"Apr 23" },
   { id:"t8",  title:"Post resume — April interview focus review with Marcus",      priority:"medium",   status:"open",        module:"hr",          due_date:"Apr 29, 2026", assigned_to:"Marcus T.",   created_by:"automations", description:"New applicant received — Jamie Chen. AI score: 8/10. Review One Page Interview Focus together before scheduling interview.", created_at:"Apr 26" },
   { id:"t9",  title:"Begin E&O insurance renewal process",                         priority:"low",      status:"open",        module:"compliance",  due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"system",      description:"E&O insurance renews August 2026. Begin renewal process 90 days in advance. Contact Hartford for renewal quote.", created_at:"Apr 27" },
   { id:"t10", title:"Update staff performance metrics for March",                  priority:"low",      status:"open",        module:"hr",          due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"system",      description:"Log March KPIs for Marcus Thompson and Priya Patel in the staff performance table.", created_at:"Apr 1" },
@@ -1128,7 +1128,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       in_weekly_focus:  !!taskFromModal.in_weekly_focus,
       due_date:         dueIso,
       assigned_to:      taskFromModal.assigned_to || userId || null,
-      created_by:       "BCC user",
+      created_by:       "Newtworks user",
     };
     if (supabase && !useMockData) {
       const { data, error } = await supabase.from("tasks").insert(payload).select().maybeSingle();
