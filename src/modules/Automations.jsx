@@ -4,8 +4,8 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// BCC AUTOMATIONS MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks AUTOMATIONS MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
@@ -134,7 +134,7 @@ const MOCK_RUN_LOG = [
   { id:"l6",  recipe_name:"Facebook Post Scheduler",  run_at:"Yesterday 9:00 AM",    status:"success", records_processed:1,  duration_seconds:6,  output_summary:"1 post published successfully. post_url saved to content_calendar." },
   { id:"l7",  recipe_name:"LinkedIn Post Scheduler",  run_at:"Yesterday 12:00 PM",   status:"success", records_processed:1,  duration_seconds:5,  output_summary:"1 post published successfully. post_url saved to content_calendar." },
   { id:"l8",  recipe_name:"Document Importer",        run_at:"Yesterday 2:30 PM",    status:"partial", records_processed:1,  duration_seconds:22, output_summary:"1 document detected (payroll export). Groq classification: payroll_export. 2 tables updated. 1 file could not be parsed — saved to Drive for manual review." },
-  { id:"l9",  recipe_name:"Drive Filer",              run_at:"Yesterday 11:00 PM",   status:"success", records_processed:3,  duration_seconds:4,  output_summary:"3 documents filed to correct Drive folders. BCC/2026/April/ structure verified." },
+  { id:"l9",  recipe_name:"Drive Filer",              run_at:"Yesterday 11:00 PM",   status:"success", records_processed:3,  duration_seconds:4,  output_summary:"3 documents filed to correct Drive folders. Newtworks/2026/April/ structure verified." },
   { id:"l10", recipe_name:"Gmail Organizer",          run_at:"Yesterday 6:14 PM",    status:"success", records_processed:7,  duration_seconds:3,  output_summary:"7 emails labeled and filed." },
   { id:"l11", recipe_name:"Gmail Organizer",          run_at:"Yesterday 5:14 PM",    status:"success", records_processed:2,  duration_seconds:2,  output_summary:"2 emails labeled and filed." },
   { id:"l12", recipe_name:"Daily Briefing Email",     run_at:"Yesterday 6:01 AM",    status:"success", records_processed:1,  duration_seconds:11, output_summary:"Briefing email sent to jane@smithagency.com. Subject: Your Agency Snapshot — Sunday April 26." },
@@ -739,8 +739,8 @@ export default function Automations() {
       { id:"gmail",         platform:"Gmail",          icon:"📧", key:"composio_gmail_account_id",       account:"Google Workspace (Composio)", note:"Used by document importer and email archiver" },
       { id:"drive",         platform:"Google Drive",   icon:"📁", key:"composio_googledrive_account_id", account:"Google Workspace (Composio)", note:"Where processed documents are filed" },
       { id:"calendar",      platform:"Google Calendar",icon:"📅", key:"composio_googlecalendar_account_id", account:"Google Workspace (Composio)", note:"Used for scheduling reminders" },
-      { id:"github",        platform:"GitHub",         icon:"🐙", key:"composio_github_account_id",     account:"papernewtmanagement-dot",     note:"Code repo for the BCC web app — reads/writes app code" },
-      { id:"supabase",      platform:"Supabase",       icon:"🗄️", key:"composio_supabase_account_id",   account:"BCC project database",        note:"The agency database — all BCC data lives here" },
+      { id:"github",        platform:"GitHub",         icon:"🐙", key:"composio_github_account_id",     account:"papernewtmanagement-dot",     note:"Code repo for the Newtworks web app — reads/writes app code" },
+      { id:"supabase",      platform:"Supabase",       icon:"🗄️", key:"composio_supabase_account_id",   account:"Newtworks project database",        note:"The agency database — all Newtworks data lives here" },
       { id:"facebook",      platform:"Facebook Pages", icon:"📘", key:"composio_facebook_account_id",    account:"Facebook Business",           note:"Auto-posts approved Facebook content", setupLater:true },
       { id:"linkedin",      platform:"LinkedIn",       icon:"💼", key:"composio_linkedin_account_id",    account:"LinkedIn Profile",            note:"Auto-posts approved LinkedIn content", setupLater:true },
       { id:"instagram",     platform:"Instagram",      icon:"📷", key:"composio_instagram_account_id",   account:"Instagram (manual posting)",  note:"API only allows reminders — agent posts manually", manual:true },

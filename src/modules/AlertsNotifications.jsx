@@ -4,8 +4,8 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// BCC ALERTS & NOTIFICATIONS MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks ALERTS & NOTIFICATIONS MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
@@ -20,7 +20,7 @@ import EmptyState from "../components/EmptyState.jsx";
 //   hr            — New applicant, onboarding item, performance due
 //   document      — Import complete, import failed, manual review needed
 //   social_media  — Manual post needed, failed post, engagement milestone
-//   system        — BCC updates, setup items, general notices
+//   system        — Newtworks updates, setup items, general notices
 //
 // DATA: Reads alerts table in Supabase
 // Alerts are created by:
@@ -172,8 +172,8 @@ const MOCK_ALERTS = [
   },
   {
     id:"a11", alert_type:"system", severity:"info",
-    title:"Welcome to Your Business Command Center",
-    message:"Your BCC is live and loaded with your agency data. Daily briefings will arrive each morning at 6AM. Your document importer is active — send financial documents to your Gmail and they will be processed automatically. Welcome to Smith Insurance Agency BCC powered by Imaginary Farms LLC.",
+    title:"Welcome to Your Newtworks",
+    message:"Your Newtworks is live and loaded with your agency data. Daily briefings will arrive each morning at 6AM. Your document importer is active — send financial documents to your Gmail and they will be processed automatically. Welcome to Smith Insurance Agency Newtworks powered by Imaginary Farms LLC.",
     module_reference:"dashboard",
     is_read:true, is_resolved:false,
     due_date:null,
@@ -379,7 +379,7 @@ const AlertsOverview = ({ alerts, onRead, onResolve, onNavigate }) => {
         <div style={{ textAlign:"center", padding:"60px 20px" }}>
           <div style={{ fontSize:40, marginBottom:12 }}>✅</div>
           <div style={{ fontSize:16, fontWeight:700, color:T.slate800, marginBottom:6 }}>All clear</div>
-          <div style={{ fontSize:13, color:T.slate400 }}>No active alerts. Your BCC is running smoothly.</div>
+          <div style={{ fontSize:13, color:T.slate400 }}>No active alerts. Your Newtworks is running smoothly.</div>
         </div>
       )}
     </div>
