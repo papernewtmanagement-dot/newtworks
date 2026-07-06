@@ -308,57 +308,45 @@ export default function AgencyIdentityRibbon() {
     },
     bar: {
       display: "flex",
-      alignItems: "center",
-      padding: vp.isPhone ? "6px 8px" : "0 20px",
-      minHeight: vp.isPhone ? 38 : 44,
+      alignItems: "flex-start",
+      padding: vp.isPhone ? "10px 8px" : "12px 20px",
       gap: 8,
     },
     values: {
       display: "flex",
-      alignItems: vp.isPhone ? "flex-start" : "flex-end",
-      alignSelf: vp.isPhone ? "auto" : "flex-end",
+      alignItems: "flex-start",
       flex: 1,
       flexWrap: vp.isPhone ? "wrap" : "nowrap",
-      justifyContent: vp.isPhone ? "flex-start" : "space-between",
-      rowGap: vp.isPhone ? 4 : 0,
+      justifyContent: "flex-start",
+      rowGap: vp.isPhone ? 8 : 0,
       overflowX: "visible",
     },
-    pill: (isLast) => ({
+    valueCell: (isLast) => ({
       display: "flex",
-      flexDirection: "row",
-      alignItems: "baseline",
+      flexDirection: "column",
       justifyContent: "flex-start",
-      gap: vp.isPhone ? 6 : 8,
-      padding: vp.isPhone ? "4px 10px" : "0 24px",
-      flex: vp.isPhone ? "0 0 auto" : 1,
+      gap: 3,
+      padding: vp.isPhone ? "0 12px" : "0 24px",
+      flex: vp.isPhone ? "1 1 45%" : 1,
+      minWidth: vp.isPhone ? 0 : 0,
       borderRight: (isLast || vp.isPhone) ? "none" : `1px solid ${T.slate200}`,
       cursor: "pointer",
       textAlign: "left",
       transition: "background-color 0.15s ease",
-      minWidth: 0,
-      whiteSpace: "nowrap",
     }),
-    pillLabel: {
+    cellTitle: {
       fontSize: 11,
       fontWeight: 700,
       textTransform: "uppercase",
       letterSpacing: "0.14em",
       color: T.blue,
       lineHeight: 1.2,
-      flexShrink: 0,
     },
-    pillSep: {
-      fontSize: 11,
-      color: T.slate300,
-      lineHeight: 1.2,
-      flexShrink: 0,
-    },
-    pillEssence: {
+    cellContent: {
       fontSize: 11,
       fontWeight: 400,
       color: T.slate900,
       letterSpacing: "-0.005em",
-      lineHeight: 1.2,
     },
     toggle: {
       background: "none",
@@ -379,34 +367,7 @@ export default function AgencyIdentityRibbon() {
       overflowY: "auto",
       WebkitOverflowScrolling: "touch",
     },
-    grid: {
-      display: "grid",
-      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(4, 1fr)",
-      rowGap: vp.isPhone ? 18 : 0,
-      columnGap: 0,
-      marginRight: vp.isPhone ? 0 : 36,
-    },
-    card: (idx) => ({
-      padding: vp.isPhone ? "8px 12px" : "0 24px",
-      borderRight: (vp.isPhone || idx === 3) ? "none" : `1px solid ${T.slate200}`,
-      borderBottom: vp.isPhone && idx < 3 ? `1px solid ${T.slate200}` : "none",
-      paddingBottom: vp.isPhone && idx < 3 ? 10 : (vp.isPhone ? 8 : 4),
-    }),
-    cardTitle: {
-      fontSize: 11,
-      fontWeight: 700,
-      textTransform: "uppercase",
-      letterSpacing: "0.14em",
-      color: T.blue,
-      marginBottom: 2,
-      lineHeight: 1.2,
-    },
-    cardBody: {
-      fontSize: 11,
-      lineHeight: 1.5,
-      color: T.slate900,
-      letterSpacing: "-0.005em",
-    },
+
     section: {
       marginTop: 12,
       paddingTop: 10,
@@ -538,30 +499,30 @@ export default function AgencyIdentityRibbon() {
     <div style={css.wrap} aria-label="Agency identity">
       {/* Pill row: label always shows; essence hides when the ribbon is expanded */}
       <div style={css.bar}>
-        {/* On phone: hide pills when expanded (titles move inline into cards).
-            On desktop: pills always show (labels + essence when collapsed; labels only when expanded). */}
-        {!(vp.isPhone && expanded) && (
-          <div style={css.values}>
-            {ORDER.map((k, idx) => (
-              <div
-                key={k}
-                style={css.pill(idx === ORDER.length - 1)}
-                onClick={toggle}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
-                aria-label={`${k} \u2014 ${identity[k].essence}`}
-              >
-                <span style={css.pillLabel}>{k}</span>
-                {!expanded && <span style={css.pillSep}>{"\u2014"}</span>}
-                {!expanded && <span style={css.pillEssence}>{identity[k].essence}</span>}
+        {/* One cell per value. Title always visible on top; below it, essence when
+            collapsed, full statement when expanded. Same DOM in both states — content
+            just swaps. Clicking any cell toggles the ribbon. */}
+        <div style={css.values}>
+          {ORDER.map((k, idx) => (
+            <div
+              key={k}
+              style={css.valueCell(idx === ORDER.length - 1)}
+              onClick={toggle}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+              aria-label={`${k} \u2014 ${identity[k].essence}`}
+            >
+              <div style={css.cellTitle}>{k}</div>
+              <div style={{ ...css.cellContent, lineHeight: expanded ? 1.5 : 1.2 }}>
+                {expanded ? identity[k].body : identity[k].essence}
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
         <button
           type="button"
-          style={{ ...css.toggle, marginLeft: (vp.isPhone && expanded) ? "auto" : undefined }}
+          style={css.toggle}
           onClick={toggle}
           aria-label={expanded ? "Collapse identity" : "Expand identity"}
           aria-expanded={expanded}
@@ -573,17 +534,6 @@ export default function AgencyIdentityRibbon() {
       {/* Expanded panel */}
       {expanded && (
         <div style={css.panel}>
-          {/* Value statements. On desktop, pills above serve as headers.
-              On phone, pills are hidden when expanded, so each card renders its own title. */}
-          <div style={css.grid}>
-            {ORDER.map((k, idx) => (
-              <div key={k} style={css.card(idx)}>
-                {vp.isPhone && <div style={css.cardTitle}>{k}</div>}
-                <div style={css.cardBody}>{identity[k].body}</div>
-              </div>
-            ))}
-          </div>
-
           {/* Reference sections — 4 columns on desktop, stacked on phone */}
           <div style={css.refGrid}>
 
