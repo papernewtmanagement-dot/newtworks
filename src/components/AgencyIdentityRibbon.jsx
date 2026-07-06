@@ -309,31 +309,33 @@ export default function AgencyIdentityRibbon() {
     bar: {
       display: "flex",
       alignItems: "center",
-      padding: vp.isPhone ? "0 8px" : "0 20px",
-      height: vp.isPhone ? 38 : 44,
+      padding: vp.isPhone ? "6px 8px" : "0 20px",
+      minHeight: vp.isPhone ? 38 : 44,
       gap: 8,
     },
     values: {
       display: "flex",
-      alignItems: "stretch",
+      alignItems: vp.isPhone ? "flex-start" : "stretch",
       flex: 1,
-      justifyContent: "space-between",
-      overflowX: vp.isPhone ? "auto" : "visible",
-      WebkitOverflowScrolling: "touch",
+      flexWrap: vp.isPhone ? "wrap" : "nowrap",
+      justifyContent: vp.isPhone ? "flex-start" : "space-between",
+      rowGap: vp.isPhone ? 4 : 0,
+      overflowX: "visible",
     },
     pill: (isLast) => ({
       display: "flex",
       flexDirection: "row",
       alignItems: "baseline",
       justifyContent: "flex-start",
-      gap: 8,
-      padding: vp.isPhone ? "0 12px" : "0 24px",
+      gap: vp.isPhone ? 6 : 8,
+      padding: vp.isPhone ? "4px 10px" : "0 24px",
       flex: vp.isPhone ? "0 0 auto" : 1,
-      borderRight: isLast ? "none" : `1px solid ${T.slate200}`,
+      borderRight: (isLast || vp.isPhone) ? "none" : `1px solid ${T.slate200}`,
       cursor: "pointer",
       textAlign: "left",
       transition: "background-color 0.15s ease",
-      minWidth: vp.isPhone ? 110 : 0,
+      minWidth: 0,
+      whiteSpace: "nowrap",
     }),
     pillLabel: {
       fontSize: 11,
@@ -356,10 +358,6 @@ export default function AgencyIdentityRibbon() {
       color: T.slate900,
       letterSpacing: "-0.005em",
       lineHeight: 1.2,
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      minWidth: 0,
     },
     toggle: {
       background: "none",
@@ -388,11 +386,20 @@ export default function AgencyIdentityRibbon() {
       marginRight: vp.isPhone ? 0 : 36,
     },
     card: (idx) => ({
-      padding: vp.isPhone ? "8px 12px" : "4px 24px",
+      padding: vp.isPhone ? "10px 12px" : "4px 24px",
       borderRight: (vp.isPhone || idx === 3) ? "none" : `1px solid ${T.slate200}`,
       borderBottom: vp.isPhone && idx < 3 ? `1px solid ${T.slate200}` : "none",
-      paddingBottom: vp.isPhone && idx < 3 ? 16 : (vp.isPhone ? 8 : 4),
+      paddingBottom: vp.isPhone && idx < 3 ? 12 : (vp.isPhone ? 10 : 4),
     }),
+    cardTitle: {
+      fontSize: 11,
+      fontWeight: 700,
+      textTransform: "uppercase",
+      letterSpacing: "0.14em",
+      color: T.blue,
+      marginBottom: 4,
+      lineHeight: 1.2,
+    },
     cardBody: {
       fontSize: 11,
       lineHeight: 1.5,
@@ -530,26 +537,30 @@ export default function AgencyIdentityRibbon() {
     <div style={css.wrap} aria-label="Agency identity">
       {/* Pill row: label always shows; essence hides when the ribbon is expanded */}
       <div style={css.bar}>
-        <div style={css.values}>
-          {ORDER.map((k, idx) => (
-            <div
-              key={k}
-              style={css.pill(idx === ORDER.length - 1)}
-              onClick={toggle}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
-              aria-label={`${k} \u2014 ${identity[k].essence}`}
-            >
-              <span style={css.pillLabel}>{k}</span>
-              {!expanded && <span style={css.pillSep}>{"\u2014"}</span>}
-              {!expanded && <span style={css.pillEssence}>{identity[k].essence}</span>}
-            </div>
-          ))}
-        </div>
+        {/* On phone: hide pills when expanded (titles move inline into cards).
+            On desktop: pills always show (labels + essence when collapsed; labels only when expanded). */}
+        {!(vp.isPhone && expanded) && (
+          <div style={css.values}>
+            {ORDER.map((k, idx) => (
+              <div
+                key={k}
+                style={css.pill(idx === ORDER.length - 1)}
+                onClick={toggle}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+                aria-label={`${k} \u2014 ${identity[k].essence}`}
+              >
+                <span style={css.pillLabel}>{k}</span>
+                {!expanded && <span style={css.pillSep}>{"\u2014"}</span>}
+                {!expanded && <span style={css.pillEssence}>{identity[k].essence}</span>}
+              </div>
+            ))}
+          </div>
+        )}
         <button
           type="button"
-          style={css.toggle}
+          style={{ ...css.toggle, marginLeft: (vp.isPhone && expanded) ? "auto" : undefined }}
           onClick={toggle}
           aria-label={expanded ? "Collapse identity" : "Expand identity"}
           aria-expanded={expanded}
@@ -561,10 +572,12 @@ export default function AgencyIdentityRibbon() {
       {/* Expanded panel */}
       {expanded && (
         <div style={css.panel}>
-          {/* Value statements \u2014 no repeated titles; the pills above serve as headers */}
+          {/* Value statements. On desktop, pills above serve as headers.
+              On phone, pills are hidden when expanded, so each card renders its own title. */}
           <div style={css.grid}>
             {ORDER.map((k, idx) => (
               <div key={k} style={css.card(idx)}>
+                {vp.isPhone && <div style={css.cardTitle}>{k}</div>}
                 <div style={css.cardBody}>{identity[k].body}</div>
               </div>
             ))}
