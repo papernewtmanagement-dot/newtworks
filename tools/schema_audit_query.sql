@@ -1,5 +1,5 @@
 -- ============================================================
--- BCC Schema Audit Query (diagnostic, NOT a DDL migration)
+-- Newtworks Schema Audit Query (diagnostic, NOT a DDL migration)
 -- ============================================================
 -- (Moved from supabase/migrations/007_schema_audit.sql in May 2026
 --  to clarify that this is a diagnostic SELECT query, not a DDL
@@ -24,7 +24,7 @@
 -- ============================================================
 
 -- ============================================================
--- BCC SCHEMA NORMALIZATION AUDIT
+-- Newtworks SCHEMA NORMALIZATION AUDIT
 -- Run this ONCE in client Supabase Studio.
 -- Returns 37 rows, one per master table, telling you exactly
 -- what to do for each: nothing (ok), bridge a legacy name,

@@ -1,4 +1,4 @@
-# BCC Schema Audit
+# Newtworks Schema Audit
 
 Verifies every `supabase.from(...).select(...).eq(...).order(...)` call in `src/`
 references columns that actually exist in the database. Catches the silent

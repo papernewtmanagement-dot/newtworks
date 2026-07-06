@@ -73,7 +73,7 @@ for (const f of files) {
 // ── Step 2a: Fetch OpenAPI spec FIRST with proper headers ──
 // PostgREST exposes column metadata for every table anon has GRANT on, even
 // when RLS blocks anon from reading rows. This is the only reliable way to
-// see column lists for RLS-protected tables (which is most of the BCC schema).
+// see column lists for RLS-protected tables (which is most of the Newtworks schema).
 // The previous `apikey=${key}` query-string approach silently returned 401 on
 // modern Supabase and the catch swallowed it — that's why this audit reported
 // every RLS-locked table as TABLE_UNKNOWN.
@@ -224,7 +224,7 @@ for (const call of allCalls) {
 
 // ── Step 5: Report ──
 const RESET = "\x1b[0m", BOLD = "\x1b[1m", RED = "\x1b[31m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m";
-console.log(`\n${BOLD}═══ BCC Schema Audit ═══${RESET}`);
+console.log(`\n${BOLD}═══ Newtworks Schema Audit ═══${RESET}`);
 console.log(`Files scanned:    ${files.length}`);
 console.log(`Queries scanned:  ${allCalls.length}`);
 console.log(`Tables referenced: ${tablesRef.size}`);

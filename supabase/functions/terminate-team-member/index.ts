@@ -234,9 +234,9 @@ ${body.reason_category ? `<tr><td style="color:#666;">Reason Category</td><td>${
 ${checklistMdToHtml(checklistMd)}
 </div>
 
-<h3 style="border-bottom:2px solid #a00;padding-bottom:4px;font-size:14px;margin-top:24px;">BCC Automated Actions</h3>
+<h3 style="border-bottom:2px solid #a00;padding-bottom:4px;font-size:14px;margin-top:24px;">Newtworks Automated Actions</h3>
 <ul style="line-height:1.7;font-size:13px;margin:8px 0 0 0;padding-left:20px;">
-<li>Archived in BCC database (<code>team.archived_at</code>)</li>
+<li>Archived in Newtworks database (<code>team.archived_at</code>)</li>
 <li>Linked user login deactivated (if any)</li>
 <li>Stripped from the Team List page in Processes</li>
 <li>Excluded from Telegram check-ins (<code>team_telegram_map.is_excluded=true</code>)</li>
@@ -244,7 +244,7 @@ ${checklistMdToHtml(checklistMd)}
 </ul>
 
 <p style="color:#999;margin-top:32px;font-size:11px;border-top:1px solid #ddd;padding-top:14px;">
-Sent by the Business Command Center on ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "full", timeStyle: "short" })} CT.
+Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "full", timeStyle: "short" })} CT.
 </p>
 
 </div>

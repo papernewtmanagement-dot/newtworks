@@ -1,14 +1,14 @@
 // =========================================================================
-// invite-team-member  (BCC)
+// invite-team-member  (Newtworks)
 // =========================================================================
-// PURPOSE: Invite a teammate to the BCC web app.
+// PURPOSE: Invite a teammate to the Newtworks web app.
 //   1. Verifies the caller is the agency owner (via their JWT)
 //   2. Sends a Supabase Auth invite email (magic link -> set password)
 //   3. Upserts a public.users row with role (admin tier = owner/manager;
 //      everyone else is team tier — sees dashboard, cpr, hours, handbook, processes)
 //
 // AUTH:
-//   verify_jwt = true  — the caller must be a logged-in BCC user. We further
+//   verify_jwt = true  — the caller must be a logged-in Newtworks user. We further
 //   require the caller's public.users row to have role 'owner' or 'manager'
 //   for the same agency_id before allowing the invite.
 //
@@ -61,14 +61,14 @@ Deno.serve(async (req) => {
     const { data: who, error: whoErr } = await caller.auth.getUser();
     if (whoErr || !who?.user) return json({ error: "Invalid or expired session" }, 401);
 
-    // Caller's BCC profile — must be owner/manager of the target agency
+    // Caller's Newtworks profile — must be owner/manager of the target agency
     const { data: callerRow, error: callerRowErr } = await admin
       .from("users")
       .select("id, agency_id, role")
       .eq("auth_user_id", who.user.id)
       .maybeSingle();
     if (callerRowErr) return json({ error: "Could not verify caller", detail: callerRowErr.message }, 500);
-    if (!callerRow) return json({ error: "Caller has no BCC profile" }, 403);
+    if (!callerRow) return json({ error: "Caller has no Newtworks profile" }, 403);
     if (!["owner", "manager"].includes(callerRow.role)) {
       return json({ error: "Only an owner or manager can invite team members" }, 403);
     }
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     if (!fullName) return json({ error: "Full name is required" }, 400);
 
     const agencyId = callerRow.agency_id;
-    const redirectTo = body.redirect_to || "https://storybccdashboard.vercel.app/welcome";
+    const redirectTo = body.redirect_to || "https://newtworks.vercel.app/welcome";
 
     // ── 3. Send the Supabase Auth invite email ─────────────────────────
     // inviteUserByEmail creates an auth user (if new) and emails a magic link.

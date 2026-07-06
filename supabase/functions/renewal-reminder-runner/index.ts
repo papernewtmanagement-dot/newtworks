@@ -215,12 +215,12 @@ function buildEmailBody(input: {
   ${linkLine}
 
   <p style="margin:24px 0 8px;font-size:13px;color:#666">
-    Once you finish this renewal, mark it complete in the BCC and the next cycle
+    Once you finish this renewal, mark it complete in the Newtworks and the next cycle
     will be scheduled automatically.
   </p>
 
   <p style="margin:8px 0 0;font-size:12px;color:#999">
-    Peter Story State Farm — Business Command Center
+    Peter Story State Farm — Newtworks
   </p>
 </body></html>`;
 
