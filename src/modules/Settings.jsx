@@ -505,6 +505,106 @@ const BCCConfiguration = ({ config }) => {
   );
 };
 
+// ─── Section: Security ────────────────────────────────────────
+const Security = () => {
+  const [current, setCurrent]   = useState("");
+  const [next, setNext]         = useState("");
+  const [confirm, setConfirm]   = useState("");
+  const [busy, setBusy]         = useState(false);
+  const [error, setError]       = useState("");
+  const [success, setSuccess]   = useState("");
+  const [showReqs, setShowReqs] = useState(true);
+
+  const reqs = [
+    { label: "At least 8 characters",           ok: next.length >= 8 },
+    { label: "Different from current password", ok: next.length > 0 && next !== current },
+    { label: "New-password fields match",       ok: next.length > 0 && next === confirm },
+  ];
+  const canSubmit = reqs.every(r => r.ok) && current.length > 0 && !busy;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setError(""); setSuccess("");
+    if (!supabase) { setError("Auth is not configured."); return; }
+    setBusy(true);
+    try {
+      const { data: who } = await supabase.auth.getUser();
+      const email = who?.user?.email;
+      if (!email) { setError("Session not found. Sign out and back in, then try again."); setBusy(false); return; }
+      // Verify current password by re-signing in with it. Wrong current → updateUser is not attempted.
+      const { error: verifyErr } = await supabase.auth.signInWithPassword({ email, password: current });
+      if (verifyErr) { setError("Current password is incorrect."); setBusy(false); return; }
+      const { error: updErr } = await supabase.auth.updateUser({ password: next });
+      if (updErr) { setError(updErr.message || "Could not update password."); setBusy(false); return; }
+      setSuccess("Password updated. Your new password takes effect immediately.");
+      setCurrent(""); setNext(""); setConfirm("");
+    } catch (err) {
+      setError(err?.message || "Unexpected error.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 11px", fontSize:13, color:T.slate900, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", background:T.white };
+  const labelStyle = { display:"block", fontSize:11, fontWeight:600, color:T.slate700, marginBottom:4 };
+
+  return (
+    <Card>
+      <SectionHeader title="Change Password" sub="Update your Newtworks sign-in password. You'll need your current password to change it." />
+      <div style={{ maxWidth:420, display:"flex", flexDirection:"column", gap:12 }}>
+        <div>
+          <label style={labelStyle}>Current password</label>
+          <input type="password" value={current} onChange={e => setCurrent(e.target.value)} autoComplete="current-password" placeholder="••••••••" style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>New password</label>
+          <input type="password" value={next} onChange={e => setNext(e.target.value)} autoComplete="new-password" placeholder="At least 8 characters" style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Confirm new password</label>
+          <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" placeholder="••••••••" style={inputStyle} />
+        </div>
+
+        <div>
+          <button type="button" onClick={() => setShowReqs(v => !v)}
+            style={{ fontSize:11, color:T.slate600, background:"none", border:"none", padding:0, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:4, fontWeight:500 }}>
+            <span style={{ fontSize:9, display:"inline-block", transform: showReqs?"rotate(90deg)":"rotate(0deg)", transition:"transform 0.15s" }}>▸</span>
+            Password requirements
+          </button>
+          {showReqs && (
+            <ul style={{ margin:"6px 0 0 0", padding:"8px 12px", fontSize:11, background:T.slate50, border:`1px solid ${T.slate200}`, borderRadius:6, listStyle:"none", lineHeight:1.8 }}>
+              {reqs.map(r => (
+                <li key={r.label} style={{ color: r.ok ? "#065F46" : T.slate600, fontWeight: r.ok ? 600 : 400 }}>
+                  <span style={{ display:"inline-block", width:14 }}>{r.ok ? "✓" : "•"}</span>
+                  {r.label}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {error && (
+          <div style={{ fontSize:12, color:"#991B1B", background:T.redLt, border:"1px solid #FECACA", borderRadius:8, padding:"8px 10px", lineHeight:1.5 }}>
+            {error}
+          </div>
+        )}
+        {success && (
+          <div style={{ fontSize:12, color:"#065F46", background:"#D1FAE5", border:"1px solid #A7F3D0", borderRadius:8, padding:"8px 10px", lineHeight:1.5 }}>
+            {success}
+          </div>
+        )}
+
+        <div>
+          <button type="button" onClick={submit} disabled={!canSubmit}
+            style={{ padding:"10px 18px", fontSize:13, fontWeight:700, color:T.white, background: !canSubmit ? T.slate400 : T.blue, border:"none", borderRadius:8, cursor: !canSubmit ? "not-allowed" : "pointer", transition:"background 0.15s" }}>
+            {busy ? "Updating…" : "Update Password"}
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
 // ─── Section: About ───────────────────────────────────────────
 const About = ({ agency: agencyProp }) => {
   const agency = agencyProp || {};
@@ -723,6 +823,7 @@ export default function Settings() {
     { id:"team",        label:"Team Access"        },
     { id:"connections", label:"Connections"        },
     { id:"config",      label:"Configuration"      },
+    { id:"security",    label:"Security"           },
     { id:"about",       label:"About"              },
   ];
 
@@ -853,6 +954,7 @@ export default function Settings() {
       {section === "team"        && <TeamAccess         users={liveUsers}       />}
       {section === "connections" && <ConnectedAccounts  connections={liveConns} />}
       {section === "config"      && <BCCConfiguration   config={liveConfig}     />}
+      {section === "security"    && <Security                                    />}
       {section === "about"       && <About              agency={liveAgency}     />}
     </div>
   );
