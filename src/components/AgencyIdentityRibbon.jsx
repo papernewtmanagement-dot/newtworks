@@ -397,6 +397,32 @@ export default function AgencyIdentityRibbon() {
       paddingTop: 10,
       borderTop: `1px solid ${T.slate200}`,
     },
+    refGrid: {
+      marginTop: 12,
+      paddingTop: 10,
+      borderTop: `1px solid ${T.slate200}`,
+      display: "grid",
+      gridTemplateColumns: vp.isPhone ? "1fr" : "repeat(4, 1fr)",
+      columnGap: vp.isPhone ? 0 : 20,
+      rowGap: vp.isPhone ? 14 : 0,
+      alignItems: "start",
+    },
+    refCol: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 8,
+    },
+    refColBlock: {
+      // Used to space Who Handles What + Agency Info within the same column
+      marginTop: 12,
+    },
+    officeInline: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 6,
+      fontSize: 11,
+      color: T.slate500,
+    },
     sectionLabel: {
       fontSize: 10,
       fontWeight: 700,
@@ -411,11 +437,6 @@ export default function AgencyIdentityRibbon() {
       color: T.slate700,
       marginTop: 6,
       marginBottom: 4,
-    },
-    stackCol: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 10,
     },
     natoFlow: {
       marginTop: 12,
@@ -538,10 +559,12 @@ export default function AgencyIdentityRibbon() {
             ))}
           </div>
 
-          {/* Rules of the Road */}
-          <div style={css.section}>
-            <div style={css.sectionLabel}>Rules of the Road</div>
-            <div style={css.stackCol}>
+          {/* Reference sections — 4 columns on desktop, stacked on phone */}
+          <div style={css.refGrid}>
+
+            {/* Column 1: Rules of the Road */}
+            <div style={css.refCol}>
+              <div style={css.sectionLabel}>Rules of the Road</div>
               {RULES_OF_ROAD.map((s) => (
                 <div key={s.heading}>
                   <div style={css.subheading}>{s.heading}</div>
@@ -560,12 +583,10 @@ export default function AgencyIdentityRibbon() {
                 </div>
               ))}
             </div>
-          </div>
 
-          {/* When You Get Stuck */}
-          <div style={css.section}>
-            <div style={css.sectionLabel}>When You Get Stuck</div>
-            <div style={css.stackCol}>
+            {/* Column 2: When You Get Stuck */}
+            <div style={css.refCol}>
+              <div style={css.sectionLabel}>When You Get Stuck</div>
               {WHEN_STUCK.map((s) => (
                 <div key={s.heading}>
                   <div style={css.subheading}>{s.heading}</div>
@@ -575,56 +596,59 @@ export default function AgencyIdentityRibbon() {
                 </div>
               ))}
             </div>
-          </div>
 
-          {/* NATO Phonetic Alphabet — no header, inline flow with bold first letter */}
-          <div style={css.section}>
-            <div style={css.natoFlow}>
-              {NATO.map((word, i) => (
-                <span key={word} style={css.natoWord}>
-                  <span style={css.natoLetterInline}>{word.charAt(0)}</span>{word.slice(1)}
-                  {i < NATO.length - 1 && <span style={css.natoSep}>{"\u00b7"}</span>}
-                </span>
-              ))}
+            {/* Column 3: NATO Phonetic Alphabet (no label, inline flow with bold first letter) */}
+            <div style={css.refCol}>
+              <div style={css.natoFlow}>
+                {NATO.map((word, i) => (
+                  <span key={word} style={css.natoWord}>
+                    <span style={css.natoLetterInline}>{word.charAt(0)}</span>{word.slice(1)}
+                    {i < NATO.length - 1 && <span style={css.natoSep}>{"\u00b7"}</span>}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* Who Handles What */}
-          <div style={css.section}>
-            <div style={css.sectionLabel}>Who Handles What</div>
-            <AlphaSplitLive />
-          </div>
+            {/* Column 4: Who Handles What + Agency Info */}
+            <div style={css.refCol}>
+              <div style={css.sectionLabel}>Who Handles What</div>
+              <AlphaSplitLive />
 
-          {/* Office block */}
-          {hasAnyOffice && (
-            <div style={css.office}>
-              {(office.name || office.address) && (
-                <div style={css.officeRow}>
-                  {office.name && <span style={css.officeName}>{office.name}</span>}
-                  {office.name && office.address && <span style={css.dot}>{"\u00b7"}</span>}
-                  <span>{office.address}</span>
-                </div>
-              )}
-              {hasContact && (
-                <div style={css.officeRow}>
-                  {office.phone && <><span style={css.officeLabel}>Phone</span><span>{office.phone}</span></>}
-                  {office.phone && office.customer_email && <span style={css.dot}>{"\u00b7"}</span>}
-                  {office.customer_email && <><span style={css.officeLabel}>Customer Email</span><span>{office.customer_email}</span></>}
-                </div>
-              )}
-              {hasCodes && (
-                <div style={css.officeRow}>
-                  {office.sf_agent_code && <><span style={css.officeLabel}>SF Agent</span><span>{office.sf_agent_code}</span></>}
-                  {office.sf_agent_code && office.txdi && <span style={css.dot}>{"\u00b7"}</span>}
-                  {office.txdi && <><span style={css.officeLabel}>TXDI</span><span>{office.txdi}</span></>}
-                  {(office.sf_agent_code || office.txdi) && office.npn && <span style={css.dot}>{"\u00b7"}</span>}
-                  {office.npn && <><span style={css.officeLabel}>NPN</span><span>{office.npn}</span></>}
-                  {(office.sf_agent_code || office.txdi || office.npn) && office.jackson_id && <span style={css.dot}>{"\u00b7"}</span>}
-                  {office.jackson_id && <><span style={css.officeLabel}>Jackson ID</span><span>{office.jackson_id}</span></>}
+              {hasAnyOffice && (
+                <div style={css.refColBlock}>
+                  <div style={css.sectionLabel}>Agency Info</div>
+                  <div style={css.officeInline}>
+                    {(office.name || office.address) && (
+                      <div>
+                        {office.name && <span style={css.officeName}>{office.name}</span>}
+                        {office.name && office.address && <span style={css.dot}>{"\u00b7"}</span>}
+                        {office.address && <span>{office.address}</span>}
+                      </div>
+                    )}
+                    {hasContact && (
+                      <div>
+                        {office.phone && <><span style={css.officeLabel}>Phone</span><span>{office.phone}</span></>}
+                        {office.phone && office.customer_email && <span style={css.dot}>{"\u00b7"}</span>}
+                        {office.customer_email && <><span style={css.officeLabel}>Customer Email</span><span>{office.customer_email}</span></>}
+                      </div>
+                    )}
+                    {hasCodes && (
+                      <div>
+                        {office.sf_agent_code && <><span style={css.officeLabel}>SF Agent</span><span>{office.sf_agent_code}</span></>}
+                        {office.sf_agent_code && office.txdi && <span style={css.dot}>{"\u00b7"}</span>}
+                        {office.txdi && <><span style={css.officeLabel}>TXDI</span><span>{office.txdi}</span></>}
+                        {(office.sf_agent_code || office.txdi) && office.npn && <span style={css.dot}>{"\u00b7"}</span>}
+                        {office.npn && <><span style={css.officeLabel}>NPN</span><span>{office.npn}</span></>}
+                        {(office.sf_agent_code || office.txdi || office.npn) && office.jackson_id && <span style={css.dot}>{"\u00b7"}</span>}
+                        {office.jackson_id && <><span style={css.officeLabel}>Jackson ID</span><span>{office.jackson_id}</span></>}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          )}
+
+          </div>
         </div>
       )}
     </div>
