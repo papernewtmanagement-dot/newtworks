@@ -378,6 +378,32 @@ const LoginScreen = ({ onSignedIn }) => {
   const [error, setError]       = useState("");
   const [resetting, setResetting] = useState(false);
   const [resetMsg, setResetMsg]   = useState("");
+  const [magicSending, setMagicSending] = useState(false);
+
+  const sendMagicLink = async () => {
+    if (magicSending) return;
+    setError("");
+    setResetMsg("");
+    const em = email.trim();
+    if (!em) { setError("Enter your email above, then click Send me a login link."); return; }
+    if (!supabase) { setError("Auth is not configured. Check Supabase connection."); return; }
+    setMagicSending(true);
+    try {
+      const { error: otpErr } = await supabase.auth.signInWithOtp({
+        email: em,
+        options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
+      });
+      if (otpErr) {
+        setError(otpErr.message || "Could not send login link.");
+      } else {
+        setResetMsg(`Login link sent to ${em}. Click it from any device to sign in — no password needed.`);
+      }
+    } catch (err) {
+      setError(err?.message || "Unexpected error sending login link.");
+    } finally {
+      setMagicSending(false);
+    }
+  };
 
   const sendReset = async () => {
     if (resetting) return;
@@ -485,12 +511,18 @@ const LoginScreen = ({ onSignedIn }) => {
           </button>
         </form>
 
-        <div style={{ textAlign: "center", marginTop: 14 }}>
+        <div style={{ textAlign: "center", marginTop: 14, display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
           <button
             type="button" onClick={sendReset} disabled={resetting}
             style={{ fontSize: 12, color: TOKENS.blue, background: "none", border: "none", padding: 0, cursor: resetting ? "not-allowed" : "pointer", textDecoration: "underline" }}
           >
             {resetting ? "Sending reset link…" : "Forgot password?"}
+          </button>
+          <button
+            type="button" onClick={sendMagicLink} disabled={magicSending}
+            style={{ fontSize: 12, color: TOKENS.blue, background: "none", border: "none", padding: 0, cursor: magicSending ? "not-allowed" : "pointer", textDecoration: "underline" }}
+          >
+            {magicSending ? "Sending login link…" : "Send me a login link (no password)"}
           </button>
         </div>
 
