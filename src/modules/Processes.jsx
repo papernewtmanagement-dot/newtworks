@@ -3,12 +3,12 @@ import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC PROCESSES MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks PROCESSES MODULE v1.0
+// Newtworks — State Farm Agent Edition
 //
 // PURPOSE:
 // Read-only viewer for the operational processes reference. Source of
-// truth lives in Confluence (pjsagency.atlassian.net); BCC
+// truth lives in Confluence (pjsagency.atlassian.net); Newtworks
 // mirrors it into public.processes for offline reference and
 // quick in-app lookup.
 //
@@ -577,7 +577,7 @@ export default function Processes() {
 // Pages whose body is generated at render time from another table rather
 // than from the stored processes.content. Keyed by confluence_page_id.
 const DYNAMIC_PROCESS_PAGES = {
-  "bcc-who-handles-what": "alpha_split",
+  "newtworks-who-handles-what": "alpha_split",
 };
 
 // Live alpha-split component for the "Who Handles What" page.
@@ -719,23 +719,23 @@ What I'd like to discuss:
       {/* Inline style block for HTML-rendered handbook content.
           Scoped via a wrapper class so it can't bleed into other modules. */}
       <style>{`
-        .bcc-handbook-body { font-size: 14px; line-height: 1.75; color: ${T.slate700}; }
-        .bcc-handbook-body h1 { font-size: 24px; font-weight: 800; color: ${T.slate900}; margin: 28px 0 12px 0; letter-spacing: -0.02em; }
-        .bcc-handbook-body h2 { font-size: 19px; font-weight: 700; color: ${T.slate900}; margin: 26px 0 10px 0; letter-spacing: -0.015em; border-left: 3px solid ${T.blue}; padding-left: 10px; }
-        .bcc-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 22px 0 8px 0; }
-        .bcc-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 18px 0 6px 0; }
-        .bcc-handbook-body p { margin: 0 0 14px 0; }
-        .bcc-handbook-body ul, .bcc-handbook-body ol { margin: 8px 0 16px 0; padding-left: 24px; }
-        .bcc-handbook-body li { margin-bottom: 6px; }
-        .bcc-handbook-body strong { font-weight: 700; color: ${T.slate900}; }
-        .bcc-handbook-body em { font-style: italic; }
-        .bcc-handbook-body code { background: ${T.slate100}; padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; color: ${T.slate800}; }
-        .bcc-handbook-body pre { background: ${T.slate100}; padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 14px 0; }
-        .bcc-handbook-body pre code { background: transparent; padding: 0; }
-        .bcc-handbook-body a { color: ${T.blue}; text-decoration: underline; text-decoration-color: ${T.blue}66; }
-        .bcc-handbook-body a:hover { text-decoration-color: ${T.blue}; }
-        .bcc-handbook-body hr { border: 0; border-top: 1px solid ${T.slate200}; margin: 24px 0; }
-        .bcc-handbook-body blockquote {
+        .newtworks-handbook-body { font-size: 14px; line-height: 1.75; color: ${T.slate700}; }
+        .newtworks-handbook-body h1 { font-size: 24px; font-weight: 800; color: ${T.slate900}; margin: 28px 0 12px 0; letter-spacing: -0.02em; }
+        .newtworks-handbook-body h2 { font-size: 19px; font-weight: 700; color: ${T.slate900}; margin: 26px 0 10px 0; letter-spacing: -0.015em; border-left: 3px solid ${T.blue}; padding-left: 10px; }
+        .newtworks-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 22px 0 8px 0; }
+        .newtworks-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 18px 0 6px 0; }
+        .newtworks-handbook-body p { margin: 0 0 14px 0; }
+        .newtworks-handbook-body ul, .newtworks-handbook-body ol { margin: 8px 0 16px 0; padding-left: 24px; }
+        .newtworks-handbook-body li { margin-bottom: 6px; }
+        .newtworks-handbook-body strong { font-weight: 700; color: ${T.slate900}; }
+        .newtworks-handbook-body em { font-style: italic; }
+        .newtworks-handbook-body code { background: ${T.slate100}; padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; color: ${T.slate800}; }
+        .newtworks-handbook-body pre { background: ${T.slate100}; padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 14px 0; }
+        .newtworks-handbook-body pre code { background: transparent; padding: 0; }
+        .newtworks-handbook-body a { color: ${T.blue}; text-decoration: underline; text-decoration-color: ${T.blue}66; }
+        .newtworks-handbook-body a:hover { text-decoration-color: ${T.blue}; }
+        .newtworks-handbook-body hr { border: 0; border-top: 1px solid ${T.slate200}; margin: 24px 0; }
+        .newtworks-handbook-body blockquote {
           background: ${T.blueLt};
           border-left: 4px solid ${T.blue};
           padding: 12px 16px;
@@ -743,30 +743,30 @@ What I'd like to discuss:
           border-radius: 6px;
           color: ${T.slate700};
         }
-        .bcc-handbook-body blockquote p { margin: 0 0 6px 0; }
-        .bcc-handbook-body blockquote p:last-child { margin-bottom: 0; }
-        .bcc-handbook-body table {
+        .newtworks-handbook-body blockquote p { margin: 0 0 6px 0; }
+        .newtworks-handbook-body blockquote p:last-child { margin-bottom: 0; }
+        .newtworks-handbook-body table {
           border-collapse: collapse;
           margin: 16px 0;
           width: 100%;
           font-size: 13px;
         }
-        .bcc-handbook-body th, .bcc-handbook-body td {
+        .newtworks-handbook-body th, .newtworks-handbook-body td {
           border: 1px solid ${T.slate200};
           padding: 8px 12px;
           text-align: left;
           vertical-align: top;
         }
-        .bcc-handbook-body th { background: ${T.slate50}; font-weight: 700; color: ${T.slate900}; }
-        .bcc-handbook-body details {
+        .newtworks-handbook-body th { background: ${T.slate50}; font-weight: 700; color: ${T.slate900}; }
+        .newtworks-handbook-body details {
           background: ${T.slate50};
           border: 1px solid ${T.slate200};
           border-radius: 8px;
           padding: 10px 14px;
           margin: 12px 0;
         }
-        .bcc-handbook-body details[open] { background: ${T.white}; }
-        .bcc-handbook-body summary {
+        .newtworks-handbook-body details[open] { background: ${T.white}; }
+        .newtworks-handbook-body summary {
           cursor: pointer;
           font-weight: 600;
           color: ${T.slate900};
@@ -775,8 +775,8 @@ What I'd like to discuss:
           list-style: none;
           position: relative;
         }
-        .bcc-handbook-body summary::-webkit-details-marker { display: none; }
-        .bcc-handbook-body summary::before {
+        .newtworks-handbook-body summary::-webkit-details-marker { display: none; }
+        .newtworks-handbook-body summary::before {
           content: "▸";
           position: absolute;
           left: 0;
@@ -786,9 +786,9 @@ What I'd like to discuss:
           font-weight: 700;
           display: inline-block;
         }
-        .bcc-handbook-body details[open] > summary::before { content: "▾"; }
-        .bcc-handbook-body details > *:not(summary) { margin-top: 10px; }
-        .bcc-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
+        .newtworks-handbook-body details[open] > summary::before { content: "▾"; }
+        .newtworks-handbook-body details > *:not(summary) { margin-top: 10px; }
+        .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
       `}</style>
 
       {/* Title block */}
@@ -840,11 +840,11 @@ What I'd like to discuss:
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
         {DYNAMIC_PROCESS_PAGES[page?.confluence_page_id] === "alpha_split" ? (
-          <div className="bcc-handbook-body">
+          <div className="newtworks-handbook-body">
             <AlphaSplitLive />
           </div>
         ) : (page?.content || "").trim() ? (
-          <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
+          <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
             This page has no text content.{page?.notes ? ` (${page.notes})` : ""}

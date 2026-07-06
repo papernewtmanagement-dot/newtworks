@@ -4,15 +4,15 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // import { useState } from "react";
 
 // ============================================================
-// BCC SETTINGS MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks SETTINGS MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // SECTIONS:
 //   1. Agency Profile   — Entity details, contact info, agent code
 //   2. Team Access      — User management, roles, invite flow
 //   3. Connected Accounts — Composio connections status
-//   4. BCC Configuration — Timezone, fiscal year, display prefs
+//   4. Newtworks Configuration — Timezone, fiscal year, display prefs
 //   5. About            — Version info, built by, support
 //
 // ROLE LEVELS:
@@ -120,7 +120,7 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
 // ─── Invite Modal ─────────────────────────────────────────────
 // Per-user module overrides were dropped (migration 032 / 2026-06-22).
 // Access is now purely role-based — owner/manager get full nav, all other
-// roles see the team-tier modules defined in BCCApp.jsx TEAM_VISIBLE_ROLES.
+// roles see the team-tier modules defined in NewtworksApp.jsx TEAM_VISIBLE_ROLES.
 const InviteModal = ({ onSave, onCancel, sending }) => {
   const [form, setForm] = useState({ email:"", name:"", role:"staff" });
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
@@ -189,7 +189,7 @@ const AgencyProfile = ({ agency }) => (
     <FieldRow label="Phone"             value={agency.phone}                                          editable />
     <FieldRow label="Address"           value={agency.address}                                        editable />
     <FieldRow label="Google Account"    value={agency.google_account} hint="Ties Vercel, Supabase, Composio" />
-    <FieldRow label="BCC URL"           value={agency.vercel_url}    hint="Your permanent BCC address" />
+    <FieldRow label="Newtworks URL"           value={agency.vercel_url}    hint="Your permanent Newtworks address" />
     <FieldRow label="Setup Date"        value={agency.setup_date}    />
   </Card>
 );
@@ -274,7 +274,7 @@ const TeamAccess = ({ users }) => {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
         <div>
           <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>Team Access</div>
-          <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>Manage who has access to your BCC and what they can see</div>
+          <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>Manage who has access to your Newtworks and what they can see</div>
         </div>
         <button onClick={() => setShowInvite(true)}
           style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer" }}>
@@ -361,7 +361,7 @@ const ConnectedAccounts = ({ connections }) => (
     <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderLeft:`4px solid ${T.blue}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
       <div style={{ fontSize:12, fontWeight:600, color:T.slate900, marginBottom:3 }}>How connections work</div>
       <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
-        Your BCC automations use Composio to interact with Gmail, Google Drive, Facebook, LinkedIn, and Instagram on your behalf. Connections are authenticated via your Google account and each platform's OAuth. If a connection expires, automations that depend on it will fail until reconnected. All connections are managed in your Composio dashboard.
+        Your Newtworks automations use Composio to interact with Gmail, Google Drive, Facebook, LinkedIn, and Instagram on your behalf. Connections are authenticated via your Google account and each platform's OAuth. If a connection expires, automations that depend on it will fail until reconnected. All connections are managed in your Composio dashboard.
       </div>
     </div>
 
@@ -410,7 +410,7 @@ const ConnectedAccounts = ({ connections }) => (
   </div>
 );
 
-// ─── Section: BCC Configuration ──────────────────────────────
+// ─── Section: Newtworks Configuration ──────────────────────────────
 const BCCConfiguration = ({ config }) => {
   const [cfg, setCfg] = useState(config);
   useEffect(() => { setCfg(config); }, [config]);
@@ -481,7 +481,7 @@ const BCCConfiguration = ({ config }) => {
             <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>AIPP TARGET ($)</label>
             <input defaultValue={cfg.aipp_target} type="number"
               style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
-            <div style={{ fontSize:10, color:T.slate400, marginTop:3 }}>Used for progress calculations across the BCC</div>
+            <div style={{ fontSize:10, color:T.slate400, marginTop:3 }}>Used for progress calculations across the Newtworks</div>
           </div>
         </div>
       </Card>
@@ -514,7 +514,7 @@ const About = ({ agency: agencyProp }) => {
     {
       key: "supabase", name: "Supabase", role: "Database & Memory",
       accent: "#3ECF8E", letter: "S",
-      description: "Every number, document, staff record, automation log, and memory lives here. This is the brain of the BCC — all modules read and write from Supabase.",
+      description: "Every number, document, staff record, automation log, and memory lives here. This is the brain of the Newtworks — all modules read and write from Supabase.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://supabase.com/dashboard",
     },
@@ -542,7 +542,7 @@ const About = ({ agency: agencyProp }) => {
     {
       key: "github", name: "GitHub", role: "Code Repository",
       accent: "#181717", letter: "G",
-      description: "Your BCC's source code lives here. Every change to the app is committed here first, then auto-deployed to Vercel.",
+      description: "Your Newtworks's source code lives here. Every change to the app is committed here first, then auto-deployed to Vercel.",
       login: agency.google_account_email || agency.primary_email || "your Google account",
       url: "https://github.com",
     },
@@ -568,10 +568,10 @@ const About = ({ agency: agencyProp }) => {
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:14 }}>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
             <div style={{ width:60, height:60, borderRadius:14, background:"rgba(255,255,255,0.08)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:800, color:T.white, letterSpacing:"-0.02em" }}>
-              BCC
+              Newtworks
             </div>
             <div>
-              <div style={{ fontSize:17, fontWeight:700, color:T.white }}>Business Command Center</div>
+              <div style={{ fontSize:17, fontWeight:700, color:T.white }}>Newtworks</div>
               <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>State Farm Agent Edition · v1.0 · Built by Imaginary Farms LLC</div>
               <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", marginTop:2 }}>imaginary-farms.com</div>
             </div>
@@ -642,7 +642,7 @@ const About = ({ agency: agencyProp }) => {
 
       {tab === "how" && (
         <Card>
-          <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:14 }}>How the BCC works</div>
+          <div style={{ fontSize:14, fontWeight:700, color:T.slate900, marginBottom:14 }}>How the Newtworks works</div>
           <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
             {[
               { step:"1", title:"Documents arrive in Gmail",
@@ -655,7 +655,7 @@ const About = ({ agency: agencyProp }) => {
                 detail:"Extracted rows write to the right tables — journal_entries, comp_recap, payroll_detail, etc." },
               { step:"5", title:"Original document files to Drive",
                 detail:"After processing, the original PDF/CSV moves to your Google Drive in the right folder." },
-              { step:"6", title:"This BCC web app reads from Supabase",
+              { step:"6", title:"This Newtworks web app reads from Supabase",
                 detail:"Every module you see — Financials, Compliance, HR, Tasks — pulls live from Supabase." },
             ].map(s => (
               <div key={s.step} style={{ display:"flex", gap:14, alignItems:"flex-start" }}>
@@ -679,7 +679,7 @@ const About = ({ agency: agencyProp }) => {
           imaginary-farms.com
         </a>
         <div style={{ marginTop:10, fontSize:11, color:T.slate500, lineHeight:1.5 }}>
-          You own everything. Your BCC is not a subscription. Your Vercel hosts the app · your GitHub holds the code · your Supabase stores your data · your Composio connects your accounts.
+          You own everything. Your Newtworks is not a subscription. Your Vercel hosts the app · your GitHub holds the code · your Supabase stores your data · your Composio connects your accounts.
         </div>
       </Card>
     </div>
@@ -785,8 +785,8 @@ export default function Settings() {
     { key:"composio_gmail_account_id",          icon:"📧", platform:"Gmail",           account:liveAgency.google_account || "Google Workspace", note:"Email intake + archiver" },
     { key:"composio_googledrive_account_id",    icon:"📁", platform:"Google Drive",    account:liveAgency.google_account || "Google Workspace", note:"Where documents are filed" },
     { key:"composio_googlecalendar_account_id", icon:"📅", platform:"Google Calendar", account:liveAgency.google_account || "Google Workspace", note:"Scheduling + reminders" },
-    { key:"composio_github_account_id",         icon:"🐙", platform:"GitHub",          account:"papernewtmanagement-dot",   note:"BCC app code repository" },
-    { key:"composio_supabase_account_id",       icon:"🗄️", platform:"Supabase",        account:liveAgency.name || "BCC database", note:"The agency database" },
+    { key:"composio_github_account_id",         icon:"🐙", platform:"GitHub",          account:"papernewtmanagement-dot",   note:"Newtworks app code repository" },
+    { key:"composio_supabase_account_id",       icon:"🗄️", platform:"Supabase",        account:liveAgency.name || "Newtworks database", note:"The agency database" },
     { key:"composio_facebook_account_id",       icon:"📘", platform:"Facebook Pages",  account:"Facebook Business",         note:"Auto-posts approved content", setupLater:true },
     { key:"composio_linkedin_account_id",       icon:"💼", platform:"LinkedIn",        account:"LinkedIn Profile",          note:"Auto-posts approved content", setupLater:true },
     { key:"composio_instagram_account_id",      icon:"📷", platform:"Instagram",       account:"Instagram (manual)",        note:"API allows reminders only", manual:true },
@@ -835,7 +835,7 @@ export default function Settings() {
       <div style={{ marginBottom:16 }}>
         <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Settings</div>
         <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-          Agency profile · Team access · Connected accounts · BCC configuration
+          Agency profile · Team access · Connected accounts · Newtworks configuration
         </div>
       </div>
 
