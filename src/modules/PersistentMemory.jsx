@@ -3,8 +3,8 @@ import { useViewport } from "../lib/hooks.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC PERSISTENT MEMORY MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks PERSISTENT MEMORY MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // PURPOSE:

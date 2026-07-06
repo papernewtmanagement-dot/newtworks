@@ -4,8 +4,8 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// BCC MONTHLY CLOSE MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// Newtworks MONTHLY CLOSE MODULE v1.0
+// Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
 // PURPOSE:
