@@ -5,8 +5,8 @@ import Documents from "./Documents.jsx";
 import MonthlyClose from "./MonthlyClose.jsx";
 
 // ============================================================
-// BCC FINANCIALS MODULE v1.1
-// Business Command Center — State Farm Agent Edition
+// Newtworks FINANCIALS MODULE v1.1
+// Newtworks — State Farm Agent Edition
 //
 // SECTIONS:
 //   1. Overview        — Summary cards + revenue trend chart
@@ -22,7 +22,7 @@ import MonthlyClose from "./MonthlyClose.jsx";
 // ============================================================
 
 
-// ─── Design Tokens (matches BCCApp shell) ────────────────────
+// ─── Design Tokens (matches NewtworksApp shell) ────────────────────
 
 import { T } from "../lib/theme.js";
 
@@ -1093,14 +1093,14 @@ const GLSection = ({ data }) => (
 // ─── CPA-Style Print Package ──────────────────────────────────
 // Browser-native print: hidden on screen, shown only when printing.
 const PRINT_CSS = `
-@media screen { .bcc-print-package { display: none !important; } }
+@media screen { .newtworks-print-package { display: none !important; } }
 @media print {
   body * { visibility: hidden !important; }
-  .bcc-print-package, .bcc-print-package * { visibility: visible !important; }
-  .bcc-print-package { position: absolute; left: 0; top: 0; width: 100%; display: block !important; padding: 0; }
-  .bcc-print-page { page-break-after: always; padding: 32px 36px; }
-  .bcc-print-page:last-child { page-break-after: auto; }
-  .bcc-no-print { display: none !important; }
+  .newtworks-print-package, .newtworks-print-package * { visibility: visible !important; }
+  .newtworks-print-package { position: absolute; left: 0; top: 0; width: 100%; display: block !important; padding: 0; }
+  .newtworks-print-page { page-break-after: always; padding: 32px 36px; }
+  .newtworks-print-page:last-child { page-break-after: auto; }
+  .newtworks-no-print { display: none !important; }
   @page { size: letter portrait; margin: 0.5in; }
 }
 `;
@@ -1651,17 +1651,17 @@ const PrintPackage = ({ data, periodLabel }) => {
   creditRows.push({ cells: ["Total Debt Exposure", (d.creditAccounts||[]).reduce((x,a)=>x+(a.balance||0),0)], bold: true });
 
   return (
-    <div className="bcc-print-package">
+    <div className="newtworks-print-package">
       <style>{PRINT_CSS}</style>
 
       {/* Cover Page */}
-      <div className="bcc-print-page" style={{ textAlign: "center", paddingTop: 180 }}>
+      <div className="newtworks-print-page" style={{ textAlign: "center", paddingTop: 180 }}>
         <div style={{ fontSize: 28, fontWeight: 700, color: "#1B2B4B", marginBottom: 8 }}>Paper Newt Management LLC</div>
         <div style={{ fontSize: 18, color: "#334155", marginBottom: 40 }}>Financial Statements Package</div>
         <div style={{ fontSize: 15, color: "#475569", marginBottom: 4 }}>Period: {periodName}</div>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 60 }}>Cash basis · Calendar year · All figures in USD</div>
         <div style={{ fontSize: 11, color: "#94A3B8" }}>Prepared {today}</div>
-        <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>Business Command Center</div>
+        <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>Newtworks</div>
         <div style={{ marginTop: 80, fontSize: 10, color: "#94A3B8", maxWidth: 420, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 }}>
           This package contains the Profit &amp; Loss Statement, Balance Sheet, Bank Account balances,
           and Credit &amp; Debt balances. Balance Sheet is anchored to the 4/30/2026 QuickBooks close
@@ -1670,7 +1670,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       </div>
 
       {/* P&L Page */}
-      <div className="bcc-print-page">
+      <div className="newtworks-print-page">
         <PrintTable
           title="Profit & Loss Statement"
           sub={`Cash basis · ${d.currentYear || ""}`}
@@ -1680,7 +1680,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       </div>
 
       {/* Balance Sheet Page */}
-      <div className="bcc-print-page">
+      <div className="newtworks-print-page">
         <PrintTable
           title="Balance Sheet"
           sub={`As of ${bs.asOfLabel || periodName} · anchored to 4/30/2026 close + GL activity`}
@@ -1690,7 +1690,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       </div>
 
       {/* Bank + Credit Page */}
-      <div className="bcc-print-page">
+      <div className="newtworks-print-page">
         <PrintTable title="Bank Accounts" sub="Ledger-derived balances" cols={["Account","Balance"]} rows={bankRows} />
         <PrintTable title="Credit & Debt" sub="Outstanding balances" cols={["Account","Balance"]} rows={creditRows} />
       </div>
@@ -1734,7 +1734,7 @@ export default function Financials() {
             Cash basis · Calendar year · All figures in USD
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }} className="bcc-no-print">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }} className="newtworks-no-print">
           <button
             onClick={() => window.print()}
             style={{
