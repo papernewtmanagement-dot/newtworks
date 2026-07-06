@@ -511,6 +511,13 @@ const SetPasswordScreen = ({ email, onDone }) => {
   const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showReqs, setShowReqs] = useState(false);
+
+  // Live requirements checklist — flips to green checkmarks as the user meets each.
+  const reqs = [
+    { label: "At least 8 characters", ok: pw.length >= 8 },
+    { label: "Both password fields match", ok: pw.length > 0 && pw === pw2 },
+  ];
 
   const submit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -552,6 +559,25 @@ const SetPasswordScreen = ({ email, onDone }) => {
           </div>
         </div>
         <form onSubmit={submit}>
+          <div style={{ marginBottom: 10 }}>
+            <button
+              type="button" onClick={() => setShowReqs(v => !v)}
+              style={{ fontSize: 11, color: TOKENS.slate600, background: "none", border: "none", padding: 0, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 500 }}
+            >
+              <span style={{ fontSize: 9, display: "inline-block", transform: showReqs ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>▸</span>
+              Password requirements
+            </button>
+            {showReqs && (
+              <ul style={{ margin: "6px 0 0 0", padding: "8px 12px", fontSize: 11, background: TOKENS.slate50, border: `1px solid ${TOKENS.slate200}`, borderRadius: 6, listStyle: "none", lineHeight: 1.8 }}>
+                {reqs.map(r => (
+                  <li key={r.label} style={{ color: r.ok ? "#065F46" : TOKENS.slate600, fontWeight: r.ok ? 600 : 400 }}>
+                    <span style={{ display: "inline-block", width: 14 }}>{r.ok ? "✓" : "•"}</span>
+                    {r.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: TOKENS.slate700, marginBottom: 5 }}>New Password</label>
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" placeholder="At least 8 characters"
             style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", fontSize: 13, color: TOKENS.slate900, border: `1px solid ${TOKENS.slate200}`, borderRadius: 8, outline: "none", marginBottom: 14, background: TOKENS.white }} />
