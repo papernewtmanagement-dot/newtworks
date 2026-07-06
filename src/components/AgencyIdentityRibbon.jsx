@@ -220,9 +220,9 @@ function AlphaSplitLive() {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", rowGap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", rowGap: 3 }}>
         {groupList.map((g, idx) => (
-          <div key={`${g.name}-${idx}`} style={{ fontSize: 13, lineHeight: 1.5, color: T.slate900 }}>
+          <div key={`${g.name}-${idx}`} style={{ fontSize: 11, lineHeight: 1.4, color: T.slate900 }}>
             <span style={{ fontWeight: 600 }}>{g.name}</span>
             <span style={{ color: T.slate500 }}> — </span>
             <span>{rangeOf(g.buckets)}</span>
@@ -403,11 +403,14 @@ export default function AgencyIdentityRibbon() {
       gap: vp.isPhone ? 14 : 24,
     },
     refCol: {
-      flex: "0 0 auto",
+      // flex:1 → columns share leftover row width so the row spans full width.
+      // basis:auto → starting size is natural content; grow from there.
+      flex: "1 1 auto",
       display: "flex",
       flexDirection: "column",
       gap: 6,
-      maxWidth: vp.isPhone ? "100%" : 260,
+      minWidth: vp.isPhone ? "100%" : 140,
+      maxWidth: vp.isPhone ? "100%" : 340,
     },
     refColBlock: {
       // Used to space Who Handles What + Agency Info within the same column
