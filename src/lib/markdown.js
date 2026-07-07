@@ -539,29 +539,48 @@ export function makeIncludeResolver(lookup) {
 }
 
 // ─── Glossary lookup helpers ──────────────────────────────────
-// Builds a case-insensitive tag map + a stable sorted list, used by makeGlossaryResolver.
+// Glossary entries live in the handbook table as children of the Glossary page.
+// buildGlossaryLookup accepts handbook rows (title, content, confluence_page_id,
+// sort_order) and derives a tag from the confluence_page_id after stripping the
+// 'newtworks-native-glossary-' prefix (e.g. 'newtworks-native-glossary-quote' → 'quote').
+export const GLOSSARY_CPID_PREFIX = "newtworks-native-glossary-";
+
+function tagFromCpid(cpid) {
+  const s = String(cpid || "").trim();
+  if (s.toLowerCase().startsWith(GLOSSARY_CPID_PREFIX)) {
+    return s.slice(GLOSSARY_CPID_PREFIX.length).toLowerCase();
+  }
+  // Fallback: slugify title-style row identifiers.
+  return s.toLowerCase();
+}
+
 export function buildGlossaryLookup(rows) {
-  const active = (rows || []).filter((r) => r && r.is_active !== false && r.tag);
+  const active = (rows || []).filter((r) => r && r.is_active !== false && (r.confluence_page_id || r.tag));
   const ordered = active.slice().sort((a, b) => {
     const ao = a.sort_order == null ? 999999 : a.sort_order;
     const bo = b.sort_order == null ? 999999 : b.sort_order;
     if (ao !== bo) return ao - bo;
-    return String(a.term || "").localeCompare(String(b.term || ""));
+    return String(a.title || a.term || "").localeCompare(String(b.title || b.term || ""));
   });
   const map = new Map();
   for (const r of ordered) {
-    map.set(String(r.tag).trim().toLowerCase(), {
-      tag: r.tag,
-      term: r.term == null ? String(r.tag) : String(r.term),
-      definition: r.definition == null ? "" : String(r.definition),
+    const tag = r.tag != null ? String(r.tag).trim().toLowerCase() : tagFromCpid(r.confluence_page_id);
+    if (!tag) continue;
+    map.set(tag, {
+      tag,
+      term: (r.title != null ? String(r.title) : (r.term != null ? String(r.term) : tag)),
+      definition: (r.content != null ? String(r.content) : (r.definition != null ? String(r.definition) : "")),
       sort_order: r.sort_order,
     });
   }
-  return { map, ordered: ordered.map((r) => ({
-    tag: r.tag,
-    term: r.term == null ? String(r.tag) : String(r.term),
-    definition: r.definition == null ? "" : String(r.definition),
-  })) };
+  return { map, ordered: ordered.map((r) => {
+    const tag = r.tag != null ? String(r.tag).trim().toLowerCase() : tagFromCpid(r.confluence_page_id);
+    return {
+      tag,
+      term: (r.title != null ? String(r.title) : (r.term != null ? String(r.term) : tag)),
+      definition: (r.content != null ? String(r.content) : (r.definition != null ? String(r.definition) : "")),
+    };
+  }) };
 }
 
 // Convenience: pair with buildGlossaryLookup to make a resolver in one call.

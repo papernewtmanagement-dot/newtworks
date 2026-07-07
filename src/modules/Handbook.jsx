@@ -227,12 +227,13 @@ function GlossaryList() {
     (async () => {
       try {
         const { data, error: e } = await supabase
-          .from("glossary_terms")
-          .select("term, definition, sort_order")
+          .from("handbook")
+          .select("title, content, confluence_page_id, sort_order")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true)
+          .eq("parent_page_id", "newtworks-native-handbook-glossary")
           .order("sort_order", { ascending: true, nullsFirst: false })
-          .order("term", { ascending: true });
+          .order("title", { ascending: true });
         if (cancelled) return;
         if (e) { setError(e.message); setLoading(false); return; }
         setRows(data || []);
@@ -267,7 +268,7 @@ function GlossaryList() {
   };
   const groups = new Map();
   for (const r of rows) {
-    const g = firstChar(r.term);
+    const g = firstChar(r.title);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(r);
   }
@@ -284,11 +285,11 @@ function GlossaryList() {
         <section key={g} style={{ marginBottom: 8 }}>
           <h2>{g}</h2>
           {groups.get(g).map((r, i) => (
-            <div key={`${r.term}-${i}`} style={{ marginBottom: 18 }}>
-              <div style={{ fontWeight: 800, color: T.slate900, letterSpacing: "0.02em" }}>{r.term}</div>
+            <div key={`${r.confluence_page_id || r.title}-${i}`} style={{ marginBottom: 18 }}>
+              <div style={{ fontWeight: 800, color: T.slate900, letterSpacing: "0.02em" }}>{r.title}</div>
               <div
                 style={{ marginTop: 4 }}
-                dangerouslySetInnerHTML={{ __html: mdToHtml(r.definition || "") }}
+                dangerouslySetInnerHTML={{ __html: mdToHtml(r.content || "") }}
               />
             </div>
           ))}
@@ -564,6 +565,8 @@ export default function Handbook() {
             const depth = entry.depth;
             const isActive = node.confluence_page_id === selectedId;
             const hidden = visibleIds && !visibleIds.has(node.confluence_page_id);
+            // Hide glossary term children from the sidebar tree — they render inside the Glossary page via GlossaryList.
+            if (node.parent_page_id === "newtworks-native-handbook-glossary") return null;
             if (hidden) return null;
             // In search mode we synthesize hasChildren from tree; otherwise it's on entry.
             const hasChildren = "hasChildren" in entry
@@ -743,10 +746,11 @@ function HandbookPage({ page, allRows }) {
     (async () => {
       try {
         const { data, error: e } = await supabase
-          .from("glossary_terms")
-          .select("tag, term, definition, sort_order, is_active")
+          .from("handbook")
+          .select("title, content, confluence_page_id, sort_order, is_active")
           .eq("agency_id", AGENCY_ID)
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .eq("parent_page_id", "newtworks-native-handbook-glossary");
         if (cancelled) return;
         if (!e) setGlossaryRows(Array.isArray(data) ? data : []);
       } catch (_err) { /* silent — inline glossary is optional */ }
