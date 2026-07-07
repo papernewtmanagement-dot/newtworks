@@ -119,11 +119,12 @@ function flattenTree(roots) {
 }
 
 
-// ─── Dynamic (live) handbook pages ────────────────────────
+// ─── Dynamic (live) handbook pages ────────────────────────────
 // Pages whose body is generated at render time from another table rather than
 // from the stored handbook.content. Keyed by confluence_page_id.
 const DYNAMIC_HANDBOOK_PAGES = {
   "345407825": "team_roster", // Team List — renders live from public.team
+  "newtworks-native-handbook-glossary": "glossary_all", // Glossary — renders live from public.glossary_terms
 };
 
 // Live roster component for the Team List page.
@@ -211,7 +212,89 @@ function TeamRoster() {
 }
 
 
-// ─── Module ─────────────────────────────────────────────────
+// Live glossary component for the Glossary page. Renders active terms from
+// public.glossary_terms grouped alphabetically by first letter. Terms are
+// authored in-DB (no admin UI yet); an empty table renders a friendly stub.
+function GlossaryList() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: e } = await supabase
+          .from("glossary_terms")
+          .select("term, definition, sort_order")
+          .eq("agency_id", AGENCY_ID)
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true, nullsFirst: false })
+          .order("term", { ascending: true });
+        if (cancelled) return;
+        if (e) { setError(e.message); setLoading(false); return; }
+        setRows(data || []);
+        setLoading(false);
+      } catch (err) {
+        if (!cancelled) { setError(err?.message || String(err)); setLoading(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return <p style={{ color: T.slate500, fontStyle: "italic" }}>Loading glossary…</p>;
+  }
+  if (error) {
+    return <p style={{ color: "#b91c1c" }}>Couldn't load glossary: {error}</p>;
+  }
+  if (!rows.length) {
+    return (
+      <p style={{ color: T.slate500, fontStyle: "italic" }}>
+        No glossary terms yet. Add rows to <code>public.glossary_terms</code> and they'll appear here.
+      </p>
+    );
+  }
+
+  // Group by first character of the term (uppercased) for A/B/C headers.
+  const firstChar = (t) => {
+    const s = String(t || "").trim();
+    if (!s) return "";
+    const ch = s.charAt(0).toUpperCase();
+    return /[A-Z]/.test(ch) ? ch : "#";
+  };
+  const groups = new Map();
+  for (const r of rows) {
+    const g = firstChar(r.term);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(r);
+  }
+  const groupKeys = Array.from(groups.keys()).sort((a, b) => {
+    // "#" (non-letter) sorts last
+    if (a === "#" && b !== "#") return 1;
+    if (b === "#" && a !== "#") return -1;
+    return a.localeCompare(b);
+  });
+
+  return (
+    <div>
+      {groupKeys.map((g) => (
+        <section key={g} style={{ marginBottom: 8 }}>
+          <h2>{g}</h2>
+          {groups.get(g).map((r, i) => (
+            <div key={`${r.term}-${i}`} style={{ marginBottom: 14 }}>
+              <div style={{ fontWeight: 700, color: T.slate900 }}>{r.term}</div>
+              <div style={{ marginTop: 2 }}>{r.definition}</div>
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+
+// ─── Module ───────────────────────────────────────────────────
 export default function Handbook() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -595,7 +678,7 @@ export default function Handbook() {
         </div>
       </div>
 
-      {/* ─── Main pane ──────────────────────────────────────── */}
+      {/* ─── Main pane ─────────────────────────────────────── */}
       {/* Always rendered. On phone, a sticky top bar opens the section  */}
       {/* drawer so the user can pop to anywhere directly.               */}
       <div style={{ flex: 1, overflowY: "auto" }}>
@@ -809,6 +892,10 @@ What I'd like to discuss:
         {DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "team_roster" ? (
           <div className="bcc-handbook-body">
             <TeamRoster />
+          </div>
+        ) : DYNAMIC_HANDBOOK_PAGES[page?.confluence_page_id] === "glossary_all" ? (
+          <div className="bcc-handbook-body">
+            <GlossaryList />
           </div>
         ) : (page?.content || "").trim() ? (
           <div className="bcc-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
