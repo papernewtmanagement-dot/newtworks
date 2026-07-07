@@ -36,15 +36,16 @@ import { T } from "../lib/theme.js";
 // renders without an icon by design.
 const TOP_LEVEL_ICONS = {
   "Team List":                              "👥",
-  "Your Path Through the Agency":           "🧭",
-  "Hours, Location & Time Off":             "⏰",
-  "How You Get Paid":                       "💵",
-  "Winning, Learning & Getting Better":     "🏆",
+  "Your Path":                              "🧭",
+  "Hours & Time Off":                       "⏰",
+  "Getting Paid":                           "💵",
+  "Winning & Learning":                     "🏆",
   "Culture of Neighborly Professionalism":  "🤝",
   "Employment & Termination":               "📝",
   "Health, Safety, & Security":             "🚑",
   "Information Security":                   "🔒",
   "Property, Systems, & Information":       "💻",
+  "Glossary":                               "📖",
   "Signature Page":                         "📄",
 };
 
@@ -500,7 +501,7 @@ export default function Handbook() {
             const icon = depth === 0 ? iconForTitle(node.title) : "";
             return (
               <Fragment key={node.confluence_page_id}>
-              {!visibleIds && depth === 0 && node.title === "Team List" && (
+              {!visibleIds && depth === 0 && node.title === "Glossary" && (
                 <div style={{ height: 1, background: T.slate200, margin: "8px 16px" }} aria-hidden="true" />
               )}
               <div
