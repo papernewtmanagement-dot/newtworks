@@ -1,0 +1,13 @@
+-- ============================================================================
+-- Migration: cpr_composer_read_snapshot_only
+-- Applied: 2026-07-07 00:25:48 UTC (Supabase)
+-- ============================================================================
+-- Rewrites compose_weekly_cpr_html Section 10 (Agency Performance) to read
+-- agency_snapshot directly. Removes the COALESCE(v_report.<field>_manual,
+-- v_snap.<field>, 0) pattern; agency_snapshot is single source of truth.
+-- Snapshot lookup filter narrowed to cadence='weekly'. All other sections
+-- unchanged.
+--
+-- Full body (~500 lines including HTML assembly) preserved in
+-- supabase_migrations.schema_migrations.statements.
+-- SELECT pg_get_functiondef('public.compose_weekly_cpr_html(uuid,date)'::regprocedure);
