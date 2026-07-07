@@ -29,29 +29,13 @@ import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
 
 // ─── Section icon picker ──────────────────────────────────────
-// Explicit title → emoji map for TOP-LEVEL sections only.
-// Handbook is single-level so all rows are depth 0; icon still gated on
-// depth === 0 for consistency with Processes + Admin.
-// If a new top-level section is added, register it here — otherwise it
-// renders without an icon by design.
-const TOP_LEVEL_ICONS = {
-  "Team List":                              "👥",
-  "Your Path":                              "🧭",
-  "Hours & Time Off":                       "⏰",
-  "Getting Paid":                           "💵",
-  "Winning & Learning":                     "🏆",
-  "Culture of Neighborly Professionalism":  "🤝",
-  "Employment & Termination":               "📝",
-  "Health, Safety, & Security":             "🚑",
-  "Information Security":                   "🔒",
-  "Property, Systems, & Information":       "💻",
-  "Glossary":                               "📖",
-  "Signature Page":                         "📄",
-};
-
-function iconForTitle(title) {
-  return TOP_LEVEL_ICONS[String(title || "").trim()] || "";
+// Icons are stored on the row itself (public.handbook.icon column) so a title
+// rename or a new section doesn't require a code change. Only rendered at
+// depth 0 in the sidebar for consistency with Processes + Admin.
+function iconForNode(n) {
+  return String(n?.icon || "").trim();
 }
+
 
 // ─── Markdown → HTML + preview helpers ────────────────────────
 // Shared implementation lives in src/lib/markdown.js so all three
@@ -281,7 +265,7 @@ export default function Handbook() {
         }
         const { data, error: qErr } = await supabase
           .from("handbook")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
         if (cancelled) return;
@@ -498,7 +482,7 @@ export default function Handbook() {
               ? entry.hasChildren
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
-            const icon = depth === 0 ? iconForTitle(node.title) : "";
+            const icon = depth === 0 ? iconForNode(node) : "";
             return (
               <Fragment key={node.confluence_page_id}>
               {!visibleIds && depth === 0 && node.title === "Glossary" && (
@@ -611,7 +595,7 @@ export default function Handbook() {
         </div>
       </div>
 
-      {/* ─── Main pane ─────────────────────────────────────── */}
+      {/* ─── Main pane ──────────────────────────────────────── */}
       {/* Always rendered. On phone, a sticky top bar opens the section  */}
       {/* drawer so the user can pop to anywhere directly.               */}
       <div style={{ flex: 1, overflowY: "auto" }}>
@@ -691,7 +675,7 @@ What I'd like to discuss:
     ? updated.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
     : null;
 
-  const icon = iconForTitle(page?.title);
+  const icon = iconForNode(page);
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
