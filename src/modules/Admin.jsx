@@ -614,6 +614,10 @@ What I'd like to discuss:
         .bcc-handbook-body { font-size: 14px; line-height: 1.75; color: ${T.slate700}; }
         .bcc-handbook-body h1 { font-size: 24px; font-weight: 800; color: ${T.slate900}; margin: 28px 0 12px 0; letter-spacing: -0.02em; }
         .bcc-handbook-body h2 { font-size: 19px; font-weight: 700; color: ${T.slate900}; margin: 36px 0 14px 0; padding: 8px 12px; letter-spacing: -0.015em; background: linear-gradient(to right, ${T.blue}22, transparent 65%); border-left: 3px solid ${T.blue}; border-radius: 0 4px 4px 0; }
+        .bcc-handbook-body .bcc-info-btn { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; margin: 0 2px; border: 1px solid ${T.blue}55; background: ${T.blue}11; color: ${T.blue}; font-size: 12px; line-height: 1; font-family: inherit; vertical-align: baseline; cursor: pointer; border-radius: 50%; }
+        .bcc-handbook-body .bcc-info-btn:hover, .bcc-handbook-body .bcc-info-btn:focus-visible { background: ${T.blue}33; border-color: ${T.blue}; outline: none; }
+        .bcc-info-popover { padding: 12px 14px; max-width: min(360px, calc(100vw - 32px)); border: 1px solid ${T.blue}; border-radius: 6px; background: white; color: ${T.slate900}; font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+        .bcc-info-popover a { color: ${T.blue}; text-decoration: underline; }
         .bcc-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 22px 0 8px 0; }
         .bcc-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 18px 0 6px 0; }
         .bcc-handbook-body p { margin: 0 0 14px 0; }
