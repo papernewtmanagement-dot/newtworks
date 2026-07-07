@@ -422,6 +422,86 @@ const ComplianceWidget = ({ data, onNavigate }) => {
   );
 };
 
+// ── Widget: Growth Budget ──────────────────────────────────────
+const GrowthBudgetWidget = ({ data, onNavigate }) => {
+  const gb = data.growthBudget || { currentRoster: [], ytdTotal: 0, ceiling: 0 };
+  const ceiling = gb.ceiling || 0;
+  const ytd = gb.ytdTotal || 0;
+  const roster = gb.currentRoster || [];
+  const weeklyTotal = roster.reduce((s,r) => s + parseFloat(r.growth_budget_weekly||0), 0);
+  const rampingCount = roster.length;
+
+  // Prorated ceiling for status determination (year-to-date share of annual ceiling)
+  const yearStart = new Date(new Date().getFullYear(), 0, 1);
+  const daysElapsed = Math.max(1, Math.floor((new Date() - yearStart) / 86400000) + 1);
+  const proratedCeiling = ceiling * (daysElapsed / 365);
+  const status = ceiling <= 0 ? "info"
+    : ytd > ceiling ? "danger"
+    : ytd > proratedCeiling ? "warning"
+    : "success";
+  const statusColor = status==="danger" ? T.red : status==="warning" ? T.amber : status==="success" ? T.green : T.blue;
+
+  return (
+    <Card>
+      <SectionTitle icon="🌱" title="Growth Budget"
+        action={<button onClick={()=>onNavigate("hrpeople")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View HR →</button>}
+      />
+      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:12, marginBottom:14}}>
+        <div>
+          <div style={{fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4}}>YTD SPEND</div>
+          <div style={{fontSize:18, fontWeight:800, color:statusColor}}>{fmt(ytd)}</div>
+        </div>
+        <div>
+          <div style={{fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4}}>ANNUAL CEILING</div>
+          <div style={{fontSize:18, fontWeight:800, color:T.slate900}}>{ceiling>0?fmt(ceiling):"—"}</div>
+        </div>
+        <div>
+          <div style={{fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4}}>WEEKLY NOW</div>
+          <div style={{fontSize:18, fontWeight:800, color:T.slate900}}>{fmt(weeklyTotal)}</div>
+        </div>
+        <div>
+          <div style={{fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4}}>RAMPING</div>
+          <div style={{fontSize:18, fontWeight:800, color:T.slate900}}>{rampingCount}</div>
+        </div>
+      </div>
+      {ceiling>0 && (
+        <div style={{marginBottom:12}}>
+          <div style={{display:"flex", justifyContent:"space-between", fontSize:10, color:T.slate600, marginBottom:4}}>
+            <span>YTD vs annual ceiling</span>
+            <span style={{fontWeight:700, color:statusColor}}>{pct(ytd, ceiling)}%</span>
+          </div>
+          <ProgressBar value={ytd} max={ceiling} color={statusColor} height={8} />
+          <div style={{fontSize:10, color:T.slate500, marginTop:4}}>
+            Prorated pace at today: {fmt(proratedCeiling)}
+            {status==="danger" && " · Over annual ceiling"}
+            {status==="warning" && " · Above prorated pace"}
+            {status==="success" && ceiling>0 && " · Within pace"}
+          </div>
+        </div>
+      )}
+      {roster.length > 0 ? (
+        <div style={{borderTop:`1px solid ${T.slate100}`, paddingTop:10}}>
+          <div style={{fontSize:10, color:T.slate600, fontWeight:600, marginBottom:8}}>ACTIVE RAMPING TEAMMATES</div>
+          {roster.map(p => (
+            <div key={p.team_member_id} style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 0", fontSize:12}}>
+              <div>
+                <div style={{fontWeight:600, color:T.slate800}}>{p.full_name}</div>
+                <div style={{fontSize:10, color:T.slate500}}>Week {p.weeks_since_start} of 52 · {(parseFloat(p.tenure_multiplier)*100).toFixed(0)}% ramped</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontWeight:700, color:T.slate800}}>{fmt(p.growth_budget_weekly)}/wk</div>
+                <div style={{fontSize:10, color:T.slate500}}>{fmt(p.growth_budget_remaining_annualized)} remaining</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyRow message="No teammates currently in ramp." />
+      )}
+    </Card>
+  );
+};
+
 // ── Main Dashboard Component ───────────────────────────────────
 // ── Widget: Weekly CPR ─────────────────────────────────────────
 const WeeklyCPRWidget = ({ data, onOpen }) => {
@@ -488,7 +568,8 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
         // Parallel fetch all dashboard data
         const [
           agencyRes, summaryRes, aippRes, tasksRes,
-          alertsRes, memoryRes, complianceRes, closeRes, closeChecklistRes, cprRes
+          alertsRes, memoryRes, complianceRes, closeRes, closeChecklistRes, cprRes,
+          gbCurrentRes, gbYtdRes
         ] = await Promise.allSettled([
           supabase.from("agency").select("*").limit(1).maybeSingle(),
           Promise.resolve({ data: null }), // removed — no comp_recap_data  table
@@ -501,6 +582,8 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           supabase.from("documents").select("*").order("created_at",{ascending:false}).limit(20),
           supabase.from("monthly_close_checklist").select("*").order("period_year",{ascending:false}).order("period_month",{ascending:false}).limit(60),
           supabase.from("weekly_cpr_reports").select("*").eq("agency_id", AGENCY_ID).order("week_ending_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("v_growth_budget_current").select("*").eq("agency_id", AGENCY_ID),
+          supabase.from("v_growth_budget_ytd").select("growth_budget_ytd").eq("agency_id", AGENCY_ID),
         ]);
 
         const agency = agencyRes.status==="fulfilled" ? agencyRes.value.data : null;
@@ -649,6 +732,11 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           closeDocuments: closeRes.status==="fulfilled" ? (closeRes.value.data||[]) : [],
           closeChecklist: closeChecklistRes.status==="fulfilled" ? (closeChecklistRes.value.data||[]) : [],
           cprLatest: cprRes.status==="fulfilled" ? (cprRes.value.data || null) : null,
+          growthBudget: {
+            currentRoster: gbCurrentRes.status==="fulfilled" ? (gbCurrentRes.value.data||[]) : [],
+            ytdTotal: (gbYtdRes.status==="fulfilled" ? (gbYtdRes.value.data||[]) : []).reduce((s,r)=>s+parseFloat(r.growth_budget_ytd||0),0),
+            ceiling: parseFloat(agency?.growth_budget_ceiling_annual||0),
+          },
           goalsPace,
         });
       } catch (err) {
@@ -696,6 +784,11 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14}}>
             <MonthlyCloseWidget data={dashData} onNavigate={onNavigate} />
             <AlertsWidget data={dashData} onNavigate={onNavigate} />
+          </div>
+
+          {/* Growth Budget (full width) — visible when ceiling set or teammates ramping */}
+          <div style={{marginBottom:14}}>
+            <GrowthBudgetWidget data={dashData} onNavigate={onNavigate} />
           </div>
 
           {/* Third Row — Tasks + Compliance */}
