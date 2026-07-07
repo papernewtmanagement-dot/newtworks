@@ -81,6 +81,8 @@ const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "f
 // Escaped titles like `\*Extended Life Process` are unescaped before lookup.
 
 const INCLUDE_LINE_RE = /^[ \t]*\*?\[Included from:\s*([^\]\n]+?)\]\*?[ \t]*$/gm;
+const GLOSSARY_TAG_RE = /\{\{glossary:([a-z0-9_-]+)\}\}/gi;
+const GLOSSARY_ALL_RE = /\{\{glossary_all\}\}/gi;
 const MAX_INCLUDE_DEPTH = 6;
 
 const BANNER_STYLE_MISSING =
@@ -145,6 +147,65 @@ function expandIncludes(md, resolveInclude, visited, depth) {
   });
 }
 
+// ─── Glossary preprocessing ───────────────────────────────────
+// {{glossary:tag}}     → replaced with a callout block rendering the term + definition
+// {{glossary_all}}     → replaced with every active term rendered as callouts (in sort order)
+// Definitions are markdown; they are rendered to HTML at preprocessing time so the
+// main parser sees a self-contained HTML block and passes it through cleanly.
+// Note: the Glossary handbook page itself renders via a dedicated component
+// (DYNAMIC_HANDBOOK_PAGES dispatch in Handbook.jsx). These placeholders are
+// primarily for inline references on other pages.
+
+const GLOSSARY_CALLOUT_STYLE =
+  'margin:14px 0;padding:14px 18px;background:#f8fafc;border:1px solid #e2e8f0;' +
+  'border-left:4px solid #64748b;border-radius:6px;color:#0f172a;';
+const GLOSSARY_TERM_STYLE =
+  'font-size:13px;font-weight:700;letter-spacing:0.06em;color:#475569;' +
+  'text-transform:uppercase;margin-bottom:6px;';
+const GLOSSARY_MISSING_STYLE =
+  'margin:12px 0;padding:10px 14px;background:#fef3c7;border-left:4px solid #f59e0b;' +
+  'border-radius:4px;color:#78350f;font-size:14px;';
+
+function renderGlossaryEntry(entry) {
+  const defHtml = mdToHtml(entry.definition || "");
+  return [
+    `<div style="${GLOSSARY_CALLOUT_STYLE}">`,
+    `<div style="${GLOSSARY_TERM_STYLE}">${escapeHtml(entry.term)}</div>`,
+    `<div>`,
+    defHtml,
+    `</div>`,
+    `</div>`,
+  ].join("\n");
+}
+
+function bannerGlossaryMissing(tag) {
+  return (
+    `<div style="${GLOSSARY_MISSING_STYLE}">` +
+    `⚠️ <strong>Missing glossary term:</strong> "${escapeHtml(tag)}" was referenced here ` +
+    `but is not defined in the Glossary. Add the term or remove the placeholder.` +
+    `</div>`
+  );
+}
+
+function expandGlossary(md, resolveGlossary) {
+  if (!resolveGlossary) return md;
+  let out = md;
+  out = out.replace(GLOSSARY_ALL_RE, () => {
+    let all;
+    try { all = resolveGlossary(null); } catch (_e) { all = null; }
+    if (!Array.isArray(all) || all.length === 0) return "";
+    return all.map(renderGlossaryEntry).join("\n");
+  });
+  out = out.replace(GLOSSARY_TAG_RE, (_m, rawTag) => {
+    const tag = String(rawTag).trim();
+    let entry;
+    try { entry = resolveGlossary(tag); } catch (_e) { entry = null; }
+    if (!entry) return bannerGlossaryMissing(tag);
+    return renderGlossaryEntry(entry);
+  });
+  return out;
+}
+
 // ─── Strip markdown to a short preview for sidebar ────────────
 export function previewText(content, n = 90) {
   if (!content) return "";
@@ -163,6 +224,10 @@ export function mdToHtml(md, options = {}) {
 
   if (options && typeof options.resolveInclude === "function") {
     src = expandIncludes(src, options.resolveInclude, new Set(), 0);
+  }
+
+  if (options && typeof options.resolveGlossary === "function") {
+    src = expandGlossary(src, options.resolveGlossary);
   }
 
   if (!src.trim()) return "";
@@ -440,5 +505,41 @@ export function makeIncludeResolver(lookup) {
     if (!hit) return { status: "missing" };
     if (!hit.content || !hit.content.trim()) return { status: "empty" };
     return { status: "ok", md: hit.content };
+  };
+}
+
+// ─── Glossary lookup helpers ──────────────────────────────────
+// Builds a case-insensitive tag map + a stable sorted list, used by makeGlossaryResolver.
+export function buildGlossaryLookup(rows) {
+  const active = (rows || []).filter((r) => r && r.is_active !== false && r.tag);
+  const ordered = active.slice().sort((a, b) => {
+    const ao = a.sort_order == null ? 999999 : a.sort_order;
+    const bo = b.sort_order == null ? 999999 : b.sort_order;
+    if (ao !== bo) return ao - bo;
+    return String(a.term || "").localeCompare(String(b.term || ""));
+  });
+  const map = new Map();
+  for (const r of ordered) {
+    map.set(String(r.tag).trim().toLowerCase(), {
+      tag: r.tag,
+      term: r.term == null ? String(r.tag) : String(r.term),
+      definition: r.definition == null ? "" : String(r.definition),
+      sort_order: r.sort_order,
+    });
+  }
+  return { map, ordered: ordered.map((r) => ({
+    tag: r.tag,
+    term: r.term == null ? String(r.tag) : String(r.term),
+    definition: r.definition == null ? "" : String(r.definition),
+  })) };
+}
+
+// Convenience: pair with buildGlossaryLookup to make a resolver in one call.
+// Call with a tag string to get one entry, or with null/undefined to get all ordered entries.
+export function makeGlossaryResolver(lookup) {
+  return function resolveGlossary(tag) {
+    if (!lookup) return tag == null ? [] : null;
+    if (tag == null) return lookup.ordered.slice();
+    return lookup.map.get(String(tag).trim().toLowerCase()) || null;
   };
 }

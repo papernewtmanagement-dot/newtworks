@@ -46,6 +46,8 @@ import {
   previewText,
   buildIncludeLookup,
   makeIncludeResolver,
+  buildGlossaryLookup,
+  makeGlossaryResolver,
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
@@ -731,13 +733,35 @@ function HandbookPage({ page, allRows }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
 
+  // Load glossary terms so pages can reference them inline via {{glossary:tag}}.
+  const [glossaryRows, setGlossaryRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: e } = await supabase
+          .from("glossary_terms")
+          .select("tag, term, definition, sort_order, is_active")
+          .eq("agency_id", AGENCY_ID)
+          .eq("is_active", true);
+        if (cancelled) return;
+        if (!e) setGlossaryRows(Array.isArray(data) ? data : []);
+      } catch (_err) { /* silent — inline glossary is optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const resolveInclude = useMemo(
     () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
     [allRows]
   );
+  const resolveGlossary = useMemo(
+    () => makeGlossaryResolver(buildGlossaryLookup(glossaryRows || [])),
+    [glossaryRows]
+  );
   const html = useMemo(
-    () => mdToHtml(page?.content || "", { resolveInclude }),
-    [page?.content, resolveInclude]
+    () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary }),
+    [page?.content, resolveInclude, resolveGlossary]
   );
   const askContext = useMemo(() => {
     return `I'm looking at this page from our team handbook:
