@@ -35,39 +35,11 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
 // ─── Section icon picker ──────────────────────────────────────
-// Explicit title → emoji map for TOP-LEVEL sections only.
-// Subsections don't render an icon (see depth === 0 gate at render time).
-// If a new top-level section is added, register it here — otherwise it
-// renders without an icon by design.
-const TOP_LEVEL_ICONS = {
-  "~Admin":                                                                                              "🔑",
-  "Alvi - Bookkeeping Process":                                                                          "📗",
-  "Auto Billed Script — Life Pivot via DSS Savings":                                                     "🔀",
-  "Auto Callback Voicemail + NEPQ Life Insurance Script (verbatim)":                                     "📞",
-  "Auto Insurance Menu 2019 (Nancy Zacherl) + Celeste single-line-auto texts":                          "📜",
-  "Auto Quote Sheet Template (verbatim intake form)":                                                    "📋",
-  "Bookkeeping Process":                                                                                 "📚",
-  "Commercial":                                                                                          "🏢",
-  "Competitor Homeowners Mailers 2026-06 — competitive intelligence (Peter's household)":                "🔍",
-  "EverQuote LCS Details — 1-pager overview + Day 1/3/5 email templates":                                "📧",
-  "EverQuote LCS Operational Best Practices + Peter Story SF setup details":                             "🔧",
-  "Fire":                                                                                                "🔥",
-  "Growth Hierarchy — Management Duties (staged for later)":                                             "📈",
-  "Life":                                                                                                "🕯️",
-  "Life Cross-Sell Scripts — Single Line Auto + Vehicle with Lien":                                      "🎯",
-  "Liquor Store":                                                                                        "🥃",
-  "New P&C Setup - Training, Checklists old":                                                            "📦",
-  "Payroll Process - Peter To-Dos":                                                                      "💰",
-  "Roleplaying":                                                                                         "🎭",
-  "Script Ideas — 2026-07-02 Email Braindump":                                                           "🧠",
-  "Script Ideas — Compiled from Peter To-Dos":                                                           "📃",
-  "Tools - Peter To-Dos":                                                                                "🧰",
-  "Verbatim Nested Email Scripts (Sharon Colby, DI Training, J.C. Family Protection story)":            "📝",
-  "Young Guns":                                                                                          "🚀",
-};
-
-function iconForTitle(title) {
-  return TOP_LEVEL_ICONS[String(title || "").trim()] || "";
+// Icons are stored on the row itself (public.admin_pages.icon column) so a
+// title rename or a new section doesn't require a code change. Only rendered
+// at depth 0 in the sidebar; subsections don't render an icon.
+function iconForNode(n) {
+  return String(n?.icon || "").trim();
 }
 
 // ─── Markdown → HTML + preview helpers ────────────────────────
@@ -203,7 +175,7 @@ export default function Admin() {
         }
         const { data, error: qErr } = await supabase
           .from("admin_pages")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
         if (cancelled) return;
@@ -419,7 +391,7 @@ export default function Admin() {
               ? entry.hasChildren
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
-            const icon = depth === 0 ? iconForTitle(node.title) : "";
+            const icon = depth === 0 ? iconForNode(node) : "";
             return (
               <div
                 key={node.confluence_page_id}
@@ -604,7 +576,7 @@ What I'd like to discuss:
     ? updated.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
     : null;
 
-  const icon = iconForTitle(page?.title);
+  const icon = iconForNode(page);
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 40px 80px 40px" }}>
