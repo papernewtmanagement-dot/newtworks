@@ -32,25 +32,11 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
 // ─── Section icon picker ──────────────────────────────────────
-// Explicit title → emoji map for TOP-LEVEL sections only.
-// Subsections don't render an icon (see depth === 0 gate at render time).
-// If a new top-level section is added, register it here — otherwise it
-// renders without an icon by design.
-const TOP_LEVEL_ICONS = {
-  "Daily Kickoff":          "🌅",
-  "Training":               "🎓",
-  "FIT Conversations":      "💬",
-  "Reception":              "🛎️",
-  "Retention Tasks":        "📋",
-  "Retention Appointments": "📅",
-  "Daily Wrap-up":          "🌙",
-  "When You Get Stuck":     "🆘",
-  "Quick Reference":        "📖",
-  "Who Handles What":       "👥",
-};
-
-function iconForTitle(title) {
-  return TOP_LEVEL_ICONS[String(title || "").trim()] || "";
+// Icons are stored on the row itself (public.processes.icon column) so a title
+// rename or a new section doesn't require a code change. Only rendered at
+// depth 0 in the sidebar; subsections don't render an icon.
+function iconForNode(n) {
+  return String(n?.icon || "").trim();
 }
 
 // ─── Markdown → HTML + preview helpers ────────────────────────
@@ -133,7 +119,7 @@ function flattenTree(roots) {
 }
 
 
-// ─── Module ───────────────────────────────────────────────────
+// ─── Module ─────────────────────────────────────────────────
 export default function Processes() {
   // Processes renders everything in the processes table (tree_root in
   // {Checklists, Product Knowledge}). Tech Book was dismantled 2026-07-04.
@@ -195,7 +181,7 @@ export default function Processes() {
         }
         let q = supabase
           .from("processes")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, sort_order, version, is_active, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, tree_root, sort_order, version, is_active, icon, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true);
         const { data, error: qErr } = await q;
@@ -415,7 +401,7 @@ export default function Processes() {
               ? entry.hasChildren
               : (Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
-            const icon = depth === 0 ? iconForTitle(node.title) : "";
+            const icon = depth === 0 ? iconForNode(node) : "";
             return (
               <React.Fragment key={node.confluence_page_id}>
               <div
@@ -524,7 +510,7 @@ export default function Processes() {
         </div>
       </div>
 
-      {/* ─── Main pane ─────────────────────────────────────── */}
+      {/* ─── Main pane ──────────────────────────────────────── */}
       {/* Always rendered. On phone, a sticky top bar opens the section  */}
       {/* drawer so the user can pop to anywhere directly.               */}
       <div style={{ flex: 1, overflowY: "auto" }}>
@@ -601,7 +587,7 @@ What I'd like to discuss:
     ? updated.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
     : null;
 
-  const icon = iconForTitle(page?.title);
+  const icon = iconForNode(page);
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 40px 80px 40px" }}>
