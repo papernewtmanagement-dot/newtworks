@@ -1,0 +1,10 @@
+-- ============================================================================
+-- Migration: cpr_scorecard_bonus_read_snapshot_only_v2
+-- Applied: 2026-07-07 00:28:17 UTC (Supabase)
+-- ============================================================================
+-- Rewrites compute_scorecard_bonus to read agency_snapshot directly. Removes
+-- v_report/v_has_overrides machinery. Preserves DEFAULT CURRENT_DATE on
+-- p_as_of_date (first attempt failed with 42P13 for dropping the default; v2
+-- kept it intact). Snapshot filter narrowed to cadence='weekly'.
+--
+-- Full body: SELECT pg_get_functiondef('public.compute_scorecard_bonus(uuid,date)'::regprocedure);
