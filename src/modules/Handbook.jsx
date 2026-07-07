@@ -423,7 +423,12 @@ export default function Handbook() {
   const visibleFlat = useMemo(() => {
     const out = [];
     const walk = (n, d) => {
-      const kids = Array.isArray(n?.children) ? n.children : [];
+      // Glossary terms are hidden from the sidebar (they render inside the Glossary
+      // page via GlossaryList), so don't count them toward the parent's hasChildren —
+      // otherwise the Glossary node draws a caret that expands to nothing.
+      const kids = (n?.confluence_page_id === "newtworks-native-handbook-glossary")
+        ? []
+        : (Array.isArray(n?.children) ? n.children : []);
       out.push({ node: n, depth: d, hasChildren: kids.length > 0 });
       if (expandedIds.has(n?.confluence_page_id)) {
         for (const c of kids) walk(c, d + 1);
@@ -569,9 +574,12 @@ export default function Handbook() {
             if (node.parent_page_id === "newtworks-native-handbook-glossary") return null;
             if (hidden) return null;
             // In search mode we synthesize hasChildren from tree; otherwise it's on entry.
+            // Glossary terms are hidden from the sidebar, so the Glossary node itself
+            // must not report hasChildren even though its tree row has kids.
             const hasChildren = "hasChildren" in entry
               ? entry.hasChildren
-              : (Array.isArray(node.children) && node.children.length > 0);
+              : (node.confluence_page_id !== "newtworks-native-handbook-glossary"
+                  && Array.isArray(node.children) && node.children.length > 0);
             const isExpanded = expandedIds.has(node.confluence_page_id);
             const icon = depth === 0 ? iconForNode(node) : "";
             return (
