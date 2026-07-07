@@ -42,6 +42,16 @@ function inlineMd(s) {
   // Unescape \* \_ before inline parsing so escaped bold/italic still renders.
   out = out.replace(/\\([*_`\[\]])/g, "$1");
 
+  // Info popovers: [[info: content]] → native popover button + popover pair.
+  // Uses HTML popover attribute (Chrome 114+, Safari 17+, Firefox 125+).
+  // Content emitted verbatim into the popover span; subsequent inline passes
+  // in this same function process any bold/italic/link/code inside it.
+  // See persistent_memory operational_rule "Manuals Info style".
+  out = out.replace(/\[\[info:\s*([\s\S]+?)\s*\]\]/g, (m, content) => {
+    const id = "nfo-" + Math.random().toString(36).slice(2, 10);
+    return `<button type="button" class="bcc-info-btn" popovertarget="${id}" aria-label="More info">\u24d8</button><span popover="auto" id="${id}" class="bcc-info-popover" role="tooltip">${content}</span>`;
+  });
+
   // Links [text](url) — guard against javascript: scheme.
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
     const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : "#";
@@ -139,6 +149,7 @@ function expandIncludes(md, resolveInclude, visited, depth) {
 export function previewText(content, n = 90) {
   if (!content) return "";
   const stripped = String(content)
+    .replace(/\[\[info:\s*[\s\S]+?\s*\]\]/g, "")
     .replace(/<[^>]+>/g, " ")
     .replace(/[#>*_`\[\]\(\)\\]/g, "")
     .replace(/\s+/g, " ")
