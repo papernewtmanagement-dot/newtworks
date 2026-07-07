@@ -219,7 +219,28 @@ export function mdToHtml(md, options = {}) {
         i++;
         if (depth <= 0) break;
       }
-      out.push(buf.join("\n"));
+      // For <details>, recursively parse markdown inside so bullets/bold/etc render.
+      // Other passthrough tags stay as raw HTML.
+      if (tag === "details") {
+        const blockText = buf.join("\n");
+        const wrapMatch = blockText.match(/^([\s\S]*?<details\b[^>]*>)([\s\S]*)<\/details\s*>\s*$/i);
+        if (wrapMatch) {
+          const opener = wrapMatch[1].trim();
+          let inner = wrapMatch[2];
+          let summaryHtml = "";
+          const sumMatch = inner.match(/<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i);
+          if (sumMatch) {
+            summaryHtml = `<summary>${inlineMd(sumMatch[1].trim())}</summary>`;
+            inner = inner.replace(sumMatch[0], "");
+          }
+          const innerHtml = mdToHtml(inner);
+          out.push(`${opener}\n${summaryHtml}\n${innerHtml}\n</details>`);
+        } else {
+          out.push(buf.join("\n"));
+        }
+      } else {
+        out.push(buf.join("\n"));
+      }
       continue;
     }
 
