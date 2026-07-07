@@ -284,9 +284,12 @@ function GlossaryList() {
         <section key={g} style={{ marginBottom: 8 }}>
           <h2>{g}</h2>
           {groups.get(g).map((r, i) => (
-            <div key={`${r.term}-${i}`} style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, color: T.slate900 }}>{r.term}</div>
-              <div style={{ marginTop: 2 }}>{r.definition}</div>
+            <div key={`${r.term}-${i}`} style={{ marginBottom: 18 }}>
+              <div style={{ fontWeight: 800, color: T.slate900, letterSpacing: "0.02em" }}>{r.term}</div>
+              <div
+                style={{ marginTop: 4 }}
+                dangerouslySetInnerHTML={{ __html: mdToHtml(r.definition || "") }}
+              />
             </div>
           ))}
         </section>
