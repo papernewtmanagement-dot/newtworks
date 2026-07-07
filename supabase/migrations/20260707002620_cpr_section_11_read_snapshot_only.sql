@@ -1,0 +1,9 @@
+-- ============================================================================
+-- Migration: cpr_section_11_read_snapshot_only
+-- Applied: 2026-07-07 00:26:20 UTC (Supabase)
+-- ============================================================================
+-- Rewrites get_cpr_section_11 to read agency_snapshot directly. Removes _manual
+-- override lookup + v_has_overrides gate. Snapshot filter narrowed to cadence='weekly'.
+-- v_has_overrides removed from return jsonb.
+--
+-- Full body: SELECT pg_get_functiondef('public.get_cpr_section_11(uuid,date)'::regprocedure);
