@@ -275,14 +275,6 @@ const EDIT_FIELDS = {
     // Auto/Fire retention bonus
     "auto_ratio_pct", "auto_rank", "auto_bonus",
     "fire_ratio_pct", "fire_rank", "fire_bonus",
-    // Agency Performance manual overrides (NULL = use snapshot)
-    // Lapse rate is intentionally NOT here — it's always computed at runtime
-    // via compute_lapse_rate (operational rule "Lapse rate — never store, compute at runtime").
-    "auto_new_ytd_manual", "auto_lost_ytd_manual",
-    "fire_new_ytd_manual", "fire_lost_ytd_manual",
-    "life_new_ytd_manual", "life_lost_ytd_manual",
-    "life_paid_for_count_ytd_manual",
-    "life_paid_for_premium_ytd_manual",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
@@ -290,6 +282,17 @@ const EDIT_FIELDS = {
     "campaign_single_line_date", "campaign_af_renewals_date",
     // EUR notes (free-form, weekly)
     "eur",
+  ],
+  // Agency Performance YTD fields — live on agency_snapshot (single source of truth).
+  // Row keyed by (agency_id, snapshot_date=week_ending_date, cadence='weekly').
+  // Prefill trigger fills these from prior weekly row on INSERT.
+  // Lapse rate is intentionally NOT here — computed at runtime via compute_lapse_rate.
+  snapshot: [
+    "auto_new_ytd", "auto_lost_ytd",
+    "fire_new_ytd", "fire_lost_ytd",
+    "life_new_ytd", "life_lost_ytd",
+    "life_paid_for_count_ytd",
+    "life_paid_for_premium_ytd",
   ],
   detail: [
     "code_reds", "code_yellows",
@@ -337,19 +340,24 @@ const PERSONAL_CHECKLIST_KEYS = [
 // discards; Save returns the dirty diff for the caller to persist.
 function useEditForm() {
   const [active, setActive] = useState(false);
-  const [form, setForm] = useState({ report: {}, details: {} });
-  const [dirty, setDirty] = useState({ report: new Set(), details: {} });
+  const [form, setForm] = useState({ report: {}, snapshot: {}, details: {} });
+  const [dirty, setDirty] = useState({ report: new Set(), snapshot: new Set(), details: {} });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  // prefills (optional): { field_name: fallback_value } — used when DB value is null/undefined.
-  // Prefilled fields are visible in inputs but NOT marked dirty, so "accept the prefill" is a no-op save.
-  // Only fields the user actually edits get persisted.
-  const begin = (report, details, prefills = {}) => {
+  // begin(report, details, snapshot, prefills) — snapshot is the agency_snapshot row for
+  // the current week (prefill trigger guarantees it exists for weekly-cadence rows).
+  // prefills is an optional { field_name: fallback_value } dict for report-level fields.
+  const begin = (report, details, snapshot = {}, prefills = {}) => {
     const r = {};
     for (const k of EDIT_FIELDS.report) {
       const dbVal = report?.[k];
       r[k] = (dbVal !== null && dbVal !== undefined) ? dbVal : (prefills[k] ?? null);
+    }
+    const s = {};
+    for (const k of EDIT_FIELDS.snapshot) {
+      const dbVal = snapshot?.[k];
+      s[k] = (dbVal !== null && dbVal !== undefined) ? dbVal : null;
     }
     const d = {};
     for (const row of details || []) {
@@ -357,14 +365,14 @@ function useEditForm() {
       for (const k of EDIT_FIELDS.detail) v[k] = row?.[k] ?? null;
       d[row.id] = v;
     }
-    setForm({ report: r, details: d });
-    setDirty({ report: new Set(), details: {} });
+    setForm({ report: r, snapshot: s, details: d });
+    setDirty({ report: new Set(), snapshot: new Set(), details: {} });
     setSaveError(null);
     setActive(true);
   };
   const cancel = () => {
-    setForm({ report: {}, details: {} });
-    setDirty({ report: new Set(), details: {} });
+    setForm({ report: {}, snapshot: {}, details: {} });
+    setDirty({ report: new Set(), snapshot: new Set(), details: {} });
     setSaveError(null);
     setActive(false);
   };
@@ -373,6 +381,13 @@ function useEditForm() {
     setDirty(d => {
       const next = new Set(d.report); next.add(field);
       return { ...d, report: next };
+    });
+  };
+  const setSnapshotField = (field, value) => {
+    setForm(f => ({ ...f, snapshot: { ...f.snapshot, [field]: value } }));
+    setDirty(d => {
+      const next = new Set(d.snapshot); next.add(field);
+      return { ...d, snapshot: next };
     });
   };
   const setDetailField = (rowId, field, value) => {
@@ -387,18 +402,25 @@ function useEditForm() {
     });
   };
   const isReportDirty = (field) => dirty.report.has(field);
+  const isSnapshotDirty = (field) => dirty.snapshot.has(field);
   const isDetailDirty = (rowId, field) => !!dirty.details[rowId]?.has(field);
-  const totalDirty = dirty.report.size +
+  const totalDirty = dirty.report.size + dirty.snapshot.size +
     Object.values(dirty.details).reduce((s, set) => s + set.size, 0);
 
   return {
     active, form, dirty, saving, saveError,
     begin, cancel,
-    setReportField, setDetailField,
-    isReportDirty, isDetailDirty,
+    setReportField, setSnapshotField, setDetailField,
+    isReportDirty, isSnapshotDirty, isDetailDirty,
     totalDirty,
     setSaving, setSaveError,
-    finishSave: () => { setActive(false); setForm({ report: {}, details: {} }); setDirty({ report: new Set(), details: {} }); setSaveError(null); setSaving(false); },
+    finishSave: () => {
+      setActive(false);
+      setForm({ report: {}, snapshot: {}, details: {} });
+      setDirty({ report: new Set(), snapshot: new Set(), details: {} });
+      setSaveError(null);
+      setSaving(false);
+    },
   };
 }
 
@@ -1149,7 +1171,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, report, reportPrior, editMode, formReport, isReportDirty, onReportChange }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, report, reportPrior, editMode, formReport, isReportDirty, onReportChange, formSnapshot, isSnapshotDirty, onSnapshotChange }) {
   if (!snapshot) {
     return (
       <div>
@@ -1177,29 +1199,28 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   };
   const daysElapsed = daysElapsedIntoYear(weekDate);
 
-  // Resolved values: manual override (this week) wins over snapshot.
-  // src = in-progress edit form OR saved report row.
-  const src = editMode ? (formReport || {}) : (report || {});
-  const resolvedAutoNew   = src.auto_new_ytd_manual   ?? snapshot.auto_new_ytd;
-  const resolvedAutoLost  = src.auto_lost_ytd_manual  ?? snapshot.auto_lost_ytd;
-  const resolvedFireNew   = src.fire_new_ytd_manual   ?? snapshot.fire_new_ytd;
-  const resolvedFireLost  = src.fire_lost_ytd_manual  ?? snapshot.fire_lost_ytd;
-  const resolvedLifeNew   = src.life_new_ytd_manual   ?? snapshot.life_new_ytd;
-  const resolvedLifeLost  = src.life_lost_ytd_manual  ?? snapshot.life_lost_ytd;
-  const resolvedLifeCount   = src.life_paid_for_count_ytd_manual   ?? snapshot.life_paid_for_count_ytd;
-  const resolvedLifePremium = src.life_paid_for_premium_ytd_manual ?? snapshot.life_paid_for_premium_ytd;
+  // agency_snapshot is single source of truth for these 8 YTD fields.
+  // In edit mode: show in-progress form values (still typing). Else: show saved snapshot row.
+  const src = editMode ? (formSnapshot || {}) : (snapshot || {});
+  const resolvedAutoNew     = src.auto_new_ytd;
+  const resolvedAutoLost    = src.auto_lost_ytd;
+  const resolvedFireNew     = src.fire_new_ytd;
+  const resolvedFireLost    = src.fire_lost_ytd;
+  const resolvedLifeNew     = src.life_new_ytd;
+  const resolvedLifeLost    = src.life_lost_ytd;
+  const resolvedLifeCount   = src.life_paid_for_count_ytd;
+  const resolvedLifePremium = src.life_paid_for_premium_ytd;
 
-  // Prior week's resolved values — manual override on prior CPR report wins over prior snapshot.
-  // Weekly deltas are computed against THESE so they stay meaningful when overrides are in play.
-  const priorSrc = reportPrior || {};
-  const priorAutoNew  = priorSrc.auto_new_ytd_manual  ?? snapshotPrior?.auto_new_ytd;
-  const priorAutoLost = priorSrc.auto_lost_ytd_manual ?? snapshotPrior?.auto_lost_ytd;
-  const priorFireNew  = priorSrc.fire_new_ytd_manual  ?? snapshotPrior?.fire_new_ytd;
-  const priorFireLost = priorSrc.fire_lost_ytd_manual ?? snapshotPrior?.fire_lost_ytd;
-  const priorLifeNew   = priorSrc.life_new_ytd_manual  ?? snapshotPrior?.life_new_ytd;
-  const priorLifeLost  = priorSrc.life_lost_ytd_manual ?? snapshotPrior?.life_lost_ytd;
-  const priorLifeCount   = priorSrc.life_paid_for_count_ytd_manual   ?? snapshotPrior?.life_paid_for_count_ytd;
-  const priorLifePremium = priorSrc.life_paid_for_premium_ytd_manual ?? snapshotPrior?.life_paid_for_premium_ytd;
+  // Prior week's values — always from prior snapshot row (never editable).
+  // Weekly deltas are computed against THESE so they reflect week-over-week change.
+  const priorAutoNew     = snapshotPrior?.auto_new_ytd;
+  const priorAutoLost    = snapshotPrior?.auto_lost_ytd;
+  const priorFireNew     = snapshotPrior?.fire_new_ytd;
+  const priorFireLost    = snapshotPrior?.fire_lost_ytd;
+  const priorLifeNew     = snapshotPrior?.life_new_ytd;
+  const priorLifeLost    = snapshotPrior?.life_lost_ytd;
+  const priorLifeCount   = snapshotPrior?.life_paid_for_count_ytd;
+  const priorLifePremium = snapshotPrior?.life_paid_for_premium_ytd;
 
   // Pull metrics (numeric, resolved)
   const auto_new   = Number(resolvedAutoNew)  || 0;
@@ -1226,7 +1247,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const rows = [
     {
       label: "Auto", editable: true,
-      newKey: "auto_new_ytd_manual", lostKey: "auto_lost_ytd_manual",
+      newKey: "auto_new_ytd", lostKey: "auto_lost_ytd", target: "snapshot",
       newYtd:  auto_new,  newWkD:  wkDelta(resolvedAutoNew,  priorAutoNew),
       lostYtd: auto_lost, lostWkD: wkDelta(resolvedAutoLost, priorAutoLost),
       gainYtd: auto_new - auto_lost,
@@ -1236,7 +1257,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     },
     {
       label: "Fire", editable: true,
-      newKey: "fire_new_ytd_manual", lostKey: "fire_lost_ytd_manual",
+      newKey: "fire_new_ytd", lostKey: "fire_lost_ytd", target: "snapshot",
       newYtd:  fire_new,  newWkD:  wkDelta(resolvedFireNew,  priorFireNew),
       lostYtd: fire_lost, lostWkD: wkDelta(resolvedFireLost, priorFireLost),
       gainYtd: fire_new - fire_lost,
@@ -1246,7 +1267,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     },
     {
       label: "Life", editable: true,
-      newKey: "life_new_ytd_manual", lostKey: "life_lost_ytd_manual",
+      newKey: "life_new_ytd", lostKey: "life_lost_ytd", target: "snapshot",
       newYtd:  life_new,  newWkD:  wkDelta(resolvedLifeNew,  priorLifeNew),
       lostYtd: life_lost, lostWkD: wkDelta(resolvedLifeLost, priorLifeLost),
       gainYtd: life_new - life_lost,
@@ -1256,7 +1277,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     },
     {
       label: "Life #", editable: true,
-      ytdKey: "life_paid_for_count_ytd_manual",
+      ytdKey: "life_paid_for_count_ytd", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_count,
@@ -1266,7 +1287,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     },
     {
       label: "Life $", editable: true,
-      ytdKey: "life_paid_for_premium_ytd_manual",
+      ytdKey: "life_paid_for_premium_ytd", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem,
@@ -1347,14 +1368,20 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 };
 
                 const editableRow = editMode && r.editable;
+                // Dispatch input to the right bucket. Rows with target='snapshot' write to
+                // agency_snapshot; all others (none currently) write to weekly_cpr_reports.
+                const isSnap = r.target === "snapshot";
+                const bucketForm = isSnap ? formSnapshot : formReport;
+                const bucketChange = isSnap ? onSnapshotChange : onReportChange;
+                const bucketDirty = isSnap ? isSnapshotDirty : isReportDirty;
                 const renderEditOrVal = (key, ytd, wkD, bg) => {
                   if (editableRow && key) {
                     return (
                       <Td align="right" style={{ background: bg, padding: 4, whiteSpace: "nowrap" }}>
                         <NumberInput
-                          value={formReport?.[key]}
-                          onChange={v => onReportChange(key, v)}
-                          dirty={isReportDirty?.(key)}
+                          value={bucketForm?.[key]}
+                          onChange={v => bucketChange(key, v)}
+                          dirty={bucketDirty?.(key)}
                           min={0}
                           step={1}
                           style={{ width: 70 }}
@@ -1380,9 +1407,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                     {editableRow && r.ytdKey ? (
                       <Td align="right" style={{ padding: 4, whiteSpace: "nowrap" }}>
                         <NumberInput
-                          value={formReport?.[r.ytdKey]}
-                          onChange={v => onReportChange(r.ytdKey, v)}
-                          dirty={isReportDirty?.(r.ytdKey)}
+                          value={bucketForm?.[r.ytdKey]}
+                          onChange={v => bucketChange(r.ytdKey, v)}
+                          dirty={bucketDirty?.(r.ytdKey)}
                           min={0}
                           step={1}
                           style={{ width: 70 }}
@@ -2522,6 +2549,16 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
             .then(r => r.error ? Promise.reject(new Error("report: " + r.error.message)) : r)
         );
       }
+      // Agency-snapshot UPDATE (8 YTD fields; row keyed by agency_id + week_ending_date + weekly)
+      if (edit.dirty.snapshot.size > 0 && data.snapshot?.id) {
+        const patch = {};
+        for (const f of edit.dirty.snapshot) patch[f] = edit.form.snapshot[f];
+        ops.push(
+          supabase.from("agency_snapshot")
+            .update(patch).eq("id", data.snapshot.id)
+            .then(r => r.error ? Promise.reject(new Error("snapshot: " + r.error.message)) : r)
+        );
+      }
       // Per-detail-row UPDATEs
       for (const [rowId, fields] of Object.entries(edit.dirty.details)) {
         if (fields.size === 0) continue;
@@ -2550,21 +2587,10 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     edit.cancel();
   }
   function doStartEdit() {
-    // Prefill the 9 Agency-Performance manual-override fields with their fallback values
-    // (snapshot YTDs + computed lapse rates) so the inputs show the current numbers and
-    // Peter can tweak them in place instead of typing from scratch.
-    const snap = data.snapshot || {};
-    const prefills = {
-      auto_new_ytd_manual:            snap.auto_new_ytd,
-      auto_lost_ytd_manual:           snap.auto_lost_ytd,
-      fire_new_ytd_manual:            snap.fire_new_ytd,
-      fire_lost_ytd_manual:           snap.fire_lost_ytd,
-      life_new_ytd_manual:            snap.life_new_ytd,
-      life_lost_ytd_manual:           snap.life_lost_ytd,
-      life_paid_for_count_ytd_manual:   snap.life_paid_for_count_ytd,
-      life_paid_for_premium_ytd_manual: snap.life_paid_for_premium_ytd,
-    };
-    edit.begin(data.report, data.details, prefills);
+    // Agency Performance YTD fields live on agency_snapshot (single source of truth).
+    // The prefill trigger on agency_snapshot fills the current-week row with prior-week
+    // values on INSERT, so edit.begin pulls directly from data.snapshot.
+    edit.begin(data.report, data.details, data.snapshot || {});
   }
 
   // Validate route param
