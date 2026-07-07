@@ -36,10 +36,10 @@ import { T } from "../lib/theme.js";
 // renders without an icon by design.
 const TOP_LEVEL_ICONS = {
   "Team List":                              "👥",
-  "Your Path Through the Agency":           "🧭",
-  "Hours, Location & Time Off":             "⏰",
-  "How You Get Paid":                       "💵",
-  "Winning, Learning & Getting Better":     "🏆",
+  "Your Path":                              "🧭",
+  "Hours & Time Off":                       "⏰",
+  "Getting Paid":                           "💵",
+  "Winning & Learning":                     "🏆",
   "Culture of Neighborly Professionalism":  "🤝",
   "Employment & Termination":               "📝",
   "Health, Safety, & Security":             "🚑",
