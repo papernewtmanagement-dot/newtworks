@@ -74,6 +74,24 @@ function inlineMd(s) {
 
 const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
 
+// Slugify heading text for id attribute (used by mdToHtml heading render)
+function slugifyHeading(text) {
+  return String(text)
+    .replace(/<[^>]+>/g, "")                          // strip inline HTML
+    .replace(/`([^`\n]+)`/g, "$1")                   // inline code
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")         // bold **
+    .replace(/__([^_\n]+)__/g, "$1")                 // bold __
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")  // italic *
+    .replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1$2")    // italic _
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")     // [text](url) -> text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")                    // strip non-alphanumeric (keep space/hyphen)
+    .trim()
+    .replace(/\s+/g, "-")                            // spaces -> hyphens
+    .replace(/-+/g, "-")                              // collapse repeated hyphens
+    .replace(/^-|-$/g, "");                           // trim leading/trailing hyphens
+}
+
 // ─── Include-marker preprocessing ─────────────────────────────
 // A marker occupies its own line and looks like:
 //   *[Included from: Some Page Title]*      (italic-wrapped, ingestor default)
@@ -333,12 +351,24 @@ export function mdToHtml(md, options = {}) {
       i++; continue;
     }
 
-    // Heading
+    // Heading — emits id attribute for section anchor links.
+    // Manual inline anchor (`<a id="foo"></a>`) inside the heading wins over auto-slug;
+    // otherwise the id is auto-generated from slugified heading text.
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
     if (h) {
       flushPara(); flushList();
       const lvl = h[1].length;
-      out.push(`<h${lvl}>${inlineMd(h[2])}</h${lvl}>`);
+      const manualAnchor = h[2].match(/<a\s+id="([^"]+)"[^>]*>\s*<\/a>/i);
+      let idAttr = "";
+      let text = h[2];
+      if (manualAnchor) {
+        idAttr = ` id="${manualAnchor[1]}"`;
+        text = h[2].replace(/<a\s+id="[^"]+"[^>]*>\s*<\/a>/gi, "");
+      } else {
+        const slug = slugifyHeading(h[2]);
+        if (slug) idAttr = ` id="${slug}"`;
+      }
+      out.push(`<h${lvl}${idAttr}>${inlineMd(text)}</h${lvl}>`);
       i++; continue;
     }
 
