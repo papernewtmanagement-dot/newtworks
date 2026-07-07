@@ -500,7 +500,7 @@ export default function Handbook() {
             const icon = depth === 0 ? iconForTitle(node.title) : "";
             return (
               <Fragment key={node.confluence_page_id}>
-              {!visibleIds && depth === 0 && node.title === "Signature Page" && (
+              {!visibleIds && depth === 0 && node.title === "Team List" && (
                 <div style={{ height: 1, background: T.slate200, margin: "8px 16px" }} aria-hidden="true" />
               )}
               <div
@@ -597,9 +597,6 @@ export default function Handbook() {
                   </div>
                 </button>
               </div>
-              {!visibleIds && depth === 0 && node.title === "Team List" && (
-                <div style={{ height: 1, background: T.slate200, margin: "8px 16px" }} aria-hidden="true" />
-              )}
               </Fragment>
             );
           })}
