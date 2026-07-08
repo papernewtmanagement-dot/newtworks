@@ -1,1 +1,25 @@
-LS0gSGFuZGJvb2sgMDMgQm9udXNlcyAmIFBheSB2MzogcG9vbC1zcGxpdCBtYXRoIHdyYXBwZWQgaW4gPGRldGFpbHM+LCBNYW5hZ2VyIEJvbnVzIHNlY3Rpb24gcmVzdG9yZWQKLS0gQWxzbyBjb3JyZWN0cyBvcGVuX3F1ZXN0aW9ucyBlbnRyeSB0aGF0IGVycm9uZW91c2x5IHNhaWQgImN1cnJlbnRseSBzdHJpcHBlZCBpbiB2MiIKLS0gMjAyNi0wNy0wNAotLQotLSBDb250ZW50IHBheWxvYWQgZWxpZGVkIOKAlCBhcHBsaWVkIHZpYSBTdXBhYmFzZSBNQ1AgYXBwbHlfbWlncmF0aW9uIHNhbWUgc2Vzc2lvbi4KLS0gRGlmZiBmcm9tIHYyOgotLSAgICogIkhvdyBZb3VyIFNsaWNlIG9mIHRoZSBQb29sIEdldHMgRGV0ZXJtaW5lZCIg4oCUIG5hcnJhdGl2ZSB1cCB0b3A7IDUtZmFjdG9yIHdlaWdodGVkLWhvdXJzIHRhYmxlICsgbWF0aCB3cmFwcGVkIGluIDxkZXRhaWxzPjxzdW1tYXJ5PlNob3cgbWUgdGhlIG1hdGg8L3N1bW1hcnk+IGJsb2NrLgotLSAgICAgQ3VzdG9tIEhhbmRib29rIHJlbmRlcmVyIChIYW5kYm9vay5qc3ggUEFTU1RIUk9VR0hfVEFHUyArIC5iY2MtaGFuZGJvb2stYm9keSBkZXRhaWxzL3N1bW1hcnkgQ1NTKSBhbHJlYWR5IHN1cHBvcnRzIGNvbGxhcHNpYmxlcy4KLS0gICAqICJNYW5hZ2VyIEJvbnVzIiBzZWN0aW9uIHJlc3RvcmVkIChVTSAwLjElIC8gVE0gMC4yJSAvIE9NIDAuMyUgb2YgYWdlbmN5IG9uLXRpbWUgU2NvcmVjYXJkKSDigJQgcGxhY2VkIGFmdGVyICJUaGUgQm90dG9tIExpbmUiLCBiZWZvcmUgRW1wbG95bWVudCBSZWZlcnJhbCBCb251cy4KLS0KLS0gQWxzbyBjb3JyZWN0cyB0aGUgb3Blbl9xdWVzdGlvbnMgZW50cnkgZm9yIE1hbmFnZXIgQm9udXMgdG8gcmVmbGVjdCB0aGUgcmVzdG9yYXRpb24uCgpVUERBVEUgcHVibGljLmhhbmRib29rClNFVCBjb250ZW50ID0gJzx2MyByZXNpZHVhbC1wb29sIGNvbnRlbnQg4oCUIHNlZSBoYW5kYm9vayB0YWJsZT4nLAogICAgdXBkYXRlZF9hdCA9IE5PVygpCldIRVJFIGlkID0gJzUyNjlhYjVhLWU1NzUtNDI4Ny05ZWEyLWQ1MjliMTljOTBhNic7CgpVUERBVEUgcHVibGljLnBlcnNpc3RlbnRfbWVtb3J5ClNFVCBjb250ZW50ID0gUkVQTEFDRSgKICAgICAgY29udGVudCwKICAgICAgJygzKSBpZiBrZXB0LCBuZWVkIHNlY3Rpb24gaW4gMDMgQm9udXNlcyAmIFBheSBkZXNjcmliaW5nIGl0IChjdXJyZW50bHkgc3RyaXBwZWQgaW4gdjIpJywKICAgICAgJygzKSByZXN0b3JlZCBpbiB2MyBoYW5kYm9vayB3aXRoIG9yaWdpbmFsIHBlcmNlbnRhZ2VzIOKAlCBldmFsdWF0ZSB3aGV0aGVyIHRvIGtlZXAgYXMtaXMgb3Igc2NhbGUgdW5kZXIgcmVzaWR1YWwgcG9vbCcKICAgICksCiAgICB1cGRhdGVkX2F0ID0gTk9XKCkKV0hFUkUgaWQgPSAnMTU4MWFjOTUtOTdlMy00MGQ4LThhMjQtZDE0NzFiYzhhZmM0JzsK
+-- Handbook 03 Bonuses & Pay v3: pool-split math wrapped in <details>, Manager Bonus section restored
+-- Also corrects open_questions entry that erroneously said "currently stripped in v2"
+-- 2026-07-04
+--
+-- Content payload elided — applied via Supabase MCP apply_migration same session.
+-- Diff from v2:
+--   * "How Your Slice of the Pool Gets Determined" — narrative up top; 5-factor weighted-hours table + math wrapped in <details><summary>Show me the math</summary> block.
+--     Custom Handbook renderer (Handbook.jsx PASSTHROUGH_TAGS + .bcc-handbook-body details/summary CSS) already supports collapsibles.
+--   * "Manager Bonus" section restored (UM 0.1% / TM 0.2% / OM 0.3% of agency on-time Scorecard) — placed after "The Bottom Line", before Employment Referral Bonus.
+--
+-- Also corrects the open_questions entry for Manager Bonus to reflect the restoration.
+
+UPDATE public.handbook
+SET content = '<v3 residual-pool content — see handbook table>',
+    updated_at = NOW()
+WHERE id = '5269ab5a-e575-4287-9ea2-d529b19c90a6';
+
+UPDATE public.persistent_memory
+SET content = REPLACE(
+      content,
+      '(3) if kept, need section in 03 Bonuses & Pay describing it (currently stripped in v2)',
+      '(3) restored in v3 handbook with original percentages — evaluate whether to keep as-is or scale under residual pool'
+    ),
+    updated_at = NOW()
+WHERE id = '1581ac95-97e3-40d8-8a24-d1471bc8afc4';
