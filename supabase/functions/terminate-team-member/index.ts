@@ -162,13 +162,14 @@ Deno.serve(async (req: Request) => {
     auditLog.push(`Loaded ${fullName}`);
 
     // 2) Load termination checklist
-    const { data: termPage } = await sb.from("admin_pages")
+    const { data: termPage } = await sb.from("manuals")
       .select("content")
       .eq("agency_id", AGENCY_ID)
+      .eq("manual_type", "admin")
       .eq("title", "Termination")
       .eq("is_active", true)
       .maybeSingle();
-    let checklistMd = termPage?.content || "(Termination checklist not found in admin_pages.)";
+    let checklistMd = termPage?.content || "(Termination checklist not found in the admin manual.)";
     // Pre-fill the AAO request-details placeholders with the actual values.
     const aliasFill = member.sf_alias || "(no alias on file)";
     const extFill = member.phone_extension || "(no extension on file)";
@@ -291,12 +292,13 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
 
     // 7) Strip from "Team List" processes page (best-effort)
     try {
-      const { data: pages, error: pbErr } = await sb.from("processes")
+      const { data: pages, error: pbErr } = await sb.from("manuals")
         .select("id, content")
         .eq("agency_id", AGENCY_ID)
+        .eq("manual_type", "processes")
         .eq("title", "Team List")
         .limit(1);
-      if (pbErr) warnings.push(`processes lookup: ${pbErr.message}`);
+      if (pbErr) warnings.push(`Team List lookup: ${pbErr.message}`);
       else if (pages && pages.length > 0) {
         const page = pages[0];
         const original: string = page.content || "";
@@ -307,12 +309,12 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
         let next = original.replace(nameRe, (_match, lead) => lead || "");
         next = next.replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "") + "\n";
         if (next !== original) {
-          const { error: upErr } = await sb.from("processes").update({
+          const { error: upErr } = await sb.from("manuals").update({
             content: next,
             updated_at: nowIso,
           }).eq("id", page.id);
-          if (upErr) warnings.push(`processes update: ${upErr.message}`);
-          else auditLog.push("Stripped from Team List processes page");
+          if (upErr) warnings.push(`Team List update: ${upErr.message}`);
+          else auditLog.push("Stripped from Team List page");
         } else {
           warnings.push(`Could not locate ${fullName}'s block in Team List page`);
         }
