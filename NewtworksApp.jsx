@@ -14,9 +14,7 @@ import Settings from "./src/modules/Settings.jsx";
 import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
-import Handbook from "./src/modules/Handbook.jsx";
-import Processes from "./src/modules/Processes.jsx";
-import Admin from "./src/modules/Admin.jsx";
+import Manual from "./src/modules/Manual.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
@@ -655,9 +653,9 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
-    handbook:    <ErrorBoundary name="Handbook"><Handbook /></ErrorBoundary>,
-    processes:   <ErrorBoundary name="Processes"><Processes /></ErrorBoundary>,
-    admin:       <ErrorBoundary name="Admin"><Admin /></ErrorBoundary>,
+    handbook:    <ErrorBoundary name="Handbook"><Manual manualType="handbook" /></ErrorBoundary>,
+    processes:   <ErrorBoundary name="Processes"><Manual manualType="processes" /></ErrorBoundary>,
+    admin:       <ErrorBoundary name="Admin"><Manual manualType="admin" /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,

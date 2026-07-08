@@ -1189,9 +1189,10 @@ export default function TimeOffRequests() {
     async function loadPolicy() {
       try {
         if (!supabase) return;
-        const { data } = await supabase.from("handbook")
+        const { data } = await supabase.from("manuals")
           .select("title, content, updated_at")
           .eq("agency_id", AGENCY_ID)
+          .eq("manual_type", "handbook")
           .eq("title", "02 Hours & Time Off")
           .eq("is_active", true)
           .maybeSingle();
