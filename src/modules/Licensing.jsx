@@ -143,12 +143,15 @@ export default function Licensing({ userRole, userId }) {
 
   const [editingRow, setEditingRow]       = useState(null);
   const [completingRow, setCompletingRow] = useState(null);
+  const [referenceRow, setReferenceRow]   = useState(null);
+
+  const [references, setReferences]       = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [teamRes, licensesRes] = await Promise.all([
+      const [teamRes, licensesRes, refRes] = await Promise.all([
         supabase
           .from("team")
           .select("id, first_name, last_name, is_active, user_id, email_personal, email_sf")
@@ -160,13 +163,19 @@ export default function Licensing({ userRole, userId }) {
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .order("due_date", { ascending: true }),
+        supabase
+          .from("license_type_reference")
+          .select("*")
+          .eq("agency_id", AGENCY_ID),
       ]);
 
       if (teamRes.error) throw teamRes.error;
       if (licensesRes.error) throw licensesRes.error;
+      if (refRes.error) throw refRes.error;
 
       setTeamRows(teamRes.data || []);
       setLicenses(licensesRes.data || []);
+      setReferences(refRes.data || []);
 
       if (userId) {
         const mine = (teamRes.data || []).find(t => t.user_id === userId);
@@ -199,6 +208,8 @@ export default function Licensing({ userRole, userId }) {
     for (const t of teamRows) m.set(t.id, t);
     return m;
   }, [teamRows]);
+
+  const refByType = useMemo(() => new Map(references.map(r => [r.license_type, r])), [references]);
 
   async function handleMarkComplete(rowId, completedOn) {
     setError("");
@@ -325,6 +336,7 @@ export default function Licensing({ userRole, userId }) {
               onMarkComplete={() => setCompletingRow(r)}
               onEdit={() => setEditingRow(r)}
               onDelete={() => handleDelete(r.id)}
+              onShowReference={refByType.get(r.license_type) ? () => setReferenceRow(r) : null}
             />
           ))}
         </div>
@@ -348,11 +360,17 @@ export default function Licensing({ userRole, userId }) {
           onConfirm={(dateStr) => handleMarkComplete(completingRow.id, dateStr)}
         />
       )}
+      {referenceRow && refByType.get(referenceRow.license_type) && (
+        <LicenseReferenceModal
+          reference={refByType.get(referenceRow.license_type)}
+          onClose={() => setReferenceRow(null)}
+        />
+      )}
     </div>
   );
 }
 
-function LicenseCard({ row, member, isAdmin, showPersonName, onMarkComplete, onEdit, onDelete }) {
+function LicenseCard({ row, member, isAdmin, showPersonName, onMarkComplete, onEdit, onDelete, onShowReference }) {
   const isCeRow = CE_ROW_TYPES.has(row.license_type);
   const statesStr = (row.states && row.states.length > 0) ? row.states.join(", ") : null;
   const isOneTime = row.cycle_months === null || row.cycle_months === undefined;
@@ -371,8 +389,28 @@ function LicenseCard({ row, member, isAdmin, showPersonName, onMarkComplete, onE
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", marginBottom: 6 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, letterSpacing: "-0.01em" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 6 }}>
             {typeLabel(row.license_type)}
+            {onShowReference && (
+              <button
+                type="button"
+                onClick={onShowReference}
+                title="View reference info for this license type"
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${T.slate300}`,
+                  color: T.slate600,
+                  borderRadius: 999,
+                  width: 20,
+                  height: 20,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  padding: 0,
+                  lineHeight: "18px",
+                }}
+              >i</button>
+            )}
           </div>
           {statesStr && (
             <span style={{ fontSize: 12, color: T.slate500 }}>
@@ -867,3 +905,180 @@ const twoCol = {
   gridTemplateColumns: "1fr 1fr",
   gap: "12px 14px",
 };
+
+
+// =========================================================================
+// LicenseReferenceModal
+// =========================================================================
+// Read-only info popover showing per-license-type reference data:
+// windows, submission process, discount codes, external contacts, links,
+// and general notes. Data lives in public.license_type_reference.
+// =========================================================================
+
+function LicenseReferenceModal({ reference, onClose }) {
+  const r = reference || {};
+  const hasDiscounts = Array.isArray(r.discount_codes) && r.discount_codes.length > 0;
+  const hasContacts  = Array.isArray(r.external_contacts) && r.external_contacts.length > 0;
+  const hasUrls      = Array.isArray(r.reference_urls) && r.reference_urls.length > 0;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15, 23, 42, 0.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 200,
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: T.white,
+          borderRadius: 14,
+          maxWidth: 640,
+          width: "100%",
+          maxHeight: "85vh",
+          overflow: "auto",
+          boxShadow: "0 20px 60px rgba(15, 23, 42, 0.25)",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: "18px 22px",
+          borderBottom: `1px solid ${T.slate200}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              License Reference
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900, marginTop: 2 }}>
+              {r.display_name || r.license_type}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              fontSize: 24,
+              lineHeight: 1,
+              color: T.slate500,
+              cursor: "pointer",
+              padding: 4,
+            }}
+          >&times;</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16, fontSize: 14, color: T.slate800 }}>
+          {r.window_notes && (
+            <RefSection label="Window / Cadence">{r.window_notes}</RefSection>
+          )}
+
+          {(r.submission_url || r.submission_notes) && (
+            <RefSection label="Submission">
+              {r.submission_url && (
+                <div style={{ marginBottom: r.submission_notes ? 6 : 0 }}>
+                  <a href={r.submission_url} target="_blank" rel="noreferrer" style={{ color: T.blue600, wordBreak: "break-all" }}>
+                    {r.submission_url}
+                  </a>
+                </div>
+              )}
+              {r.submission_notes && <div>{r.submission_notes}</div>}
+            </RefSection>
+          )}
+
+          {hasDiscounts && (
+            <RefSection label="Discount Codes">
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {r.discount_codes.map((d, i) => (
+                  <div key={i} style={{ fontSize: 13 }}>
+                    <strong>{d.provider}</strong>
+                    {d.code && <span style={{ marginLeft: 6, fontFamily: "monospace", background: T.slate100, padding: "1px 6px", borderRadius: 4 }}>{d.code}</span>}
+                    {d.url && (
+                      <div><a href={d.url} target="_blank" rel="noreferrer" style={{ color: T.blue600, fontSize: 12, wordBreak: "break-all" }}>{d.url}</a></div>
+                    )}
+                    {d.notes && <div style={{ color: T.slate600, fontSize: 12 }}>{d.notes}</div>}
+                  </div>
+                ))}
+              </div>
+            </RefSection>
+          )}
+
+          {hasContacts && (
+            <RefSection label="Contacts">
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {r.external_contacts.map((c, i) => (
+                  <div key={i} style={{ fontSize: 13 }}>
+                    <strong>{c.label}:</strong> <span style={{ fontFamily: c.value?.includes("@") || /\d/.test(c.value || "") ? "monospace" : "inherit" }}>{c.value}</span>
+                  </div>
+                ))}
+              </div>
+            </RefSection>
+          )}
+
+          {hasUrls && (
+            <RefSection label="Reference Links">
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {r.reference_urls.map((u, i) => (
+                  <a key={i} href={u.url} target="_blank" rel="noreferrer" style={{ color: T.blue600, fontSize: 13 }}>
+                    {u.label}
+                  </a>
+                ))}
+              </div>
+            </RefSection>
+          )}
+
+          {r.general_notes && (
+            <RefSection label="Notes">{r.general_notes}</RefSection>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: "12px 22px",
+          borderTop: `1px solid ${T.slate200}`,
+          display: "flex",
+          justifyContent: "flex-end",
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: T.slate100,
+              border: `1px solid ${T.slate300}`,
+              color: T.slate800,
+              padding: "8px 16px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RefSection({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 14, color: T.slate800, lineHeight: 1.5 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
