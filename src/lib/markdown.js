@@ -58,6 +58,16 @@ function inlineMd(s) {
     return `<a href="${safe}" target="_blank" rel="noreferrer noopener">${txt}</a>`;
   });
 
+  // CommonMark autolinks: <https://…> and <mailto:…>. Must run BEFORE the
+  // bold/italic passes so `_` inside URLs isn't consumed as emphasis, and
+  // BEFORE any HTML escape so the browser doesn't see an unknown tag.
+  out = out.replace(/<(https?:\/\/[^\s<>]+)>/g, (m, url) =>
+    `<a href="${url}" target="_blank" rel="noreferrer noopener">${url}</a>`
+  );
+  out = out.replace(/<(mailto:[^\s<>]+)>/g, (m, url) =>
+    `<a href="${url}">${url.replace(/^mailto:/, "")}</a>`
+  );
+
   // Bold (** or __)
   out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
