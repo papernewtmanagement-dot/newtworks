@@ -637,22 +637,28 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
         const scBands   = allBands.filter(r => r.program === "scorecard").reduce((acc,r) => { acc[r.bucket_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0}; return acc; }, {});
         const smvcBands = allBands.filter(r => r.program === "smvc").reduce((acc,r) => { acc[r.bucket_name] = {min:parseFloat(r.min_target)||0, max:parseFloat(r.max_target)||0, pct:parseFloat(r.percent_available)||0}; return acc; }, {});
 
-        // Days through year (for annualization)
-        const yearStart = new Date(curYear, 0, 1);
-        const daysElapsed = Math.max(1, Math.floor((now - yearStart) / 86400000) + 1);
-        const annualize = (ytd) => (parseFloat(ytd)||0) * (365 / daysElapsed);
-        const yearProgress = daysElapsed / 365;
-
         // ─── Goal 1: P&C Premium Growth (25%/yr) ───
         // Tracks Auto + Fire in-force premium dollars: year-start snapshot vs latest snapshot.
         // (Clarified 2026-06-19 — was previously PIF count; goal is premium $.)
+        //
+        // Annualization anchor: the WINDOW BETWEEN the two snapshot dates, not
+        // (today - Jan 1). Stretching N-day-old snapshot data across M>N calendar
+        // days understates pace. Same anchor discipline the SF compute paths
+        // follow via compute_scorecard_bonus + get_cpr_section_11. Op-rule
+        // "Runtime compute annualization anchor" (2026-06-29, generalized 2026-07-08).
         let pc = null;
         if (book && bookYs) {
           const ysPCPrem  = (parseFloat(bookYs.auto_premium)||0) + (parseFloat(bookYs.fire_premium)||0);
           const curPCPrem = (parseFloat(book.auto_premium)||0)   + (parseFloat(book.fire_premium)||0);
           const netYTD    = curPCPrem - ysPCPrem;
           const tgtGain   = ysPCPrem * 0.25;                 // 25% of year-start P&C premium
-          const annualGain= annualize(netYTD);
+          // Window = (year-start snapshot date) → (latest snapshot date, capped at today).
+          // Both dates come from agency_snapshot rows already filtered to non-NULL premiums.
+          const ysDate    = new Date(bookYs.snapshot_date + "T00:00:00Z");
+          const bookDate  = new Date(book.snapshot_date   + "T00:00:00Z");
+          const effEnd    = bookDate < now ? bookDate : now;
+          const daysInWindow = Math.max(1, Math.floor((effEnd - ysDate) / 86400000));
+          const annualGain= netYTD * (365 / daysInWindow);
           const growthPctYTD     = ysPCPrem > 0 ? (netYTD / ysPCPrem) * 100 : 0;
           const growthPctOnTime  = ysPCPrem > 0 ? (annualGain / ysPCPrem) * 100 : 0;
           const pace_pct  = growthPctOnTime > 0 ? (growthPctOnTime / 25) * 100 : 0;
