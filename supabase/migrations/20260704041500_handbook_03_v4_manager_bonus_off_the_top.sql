@@ -1,1 +1,23 @@
-LS0gSGFuZGJvb2sgMDMgdjQ6IE1hbmFnZXIgQm9udXMgbWVjaGFuaWMgY2xhcmlmaWVkIOKAlCBzdWJ0cmFjdGVkIGZyb20gcG9vbCBiYXNpcyBiZWZvcmUgc3BsaXR0aW5nCi0tIFBldGVyJ3MgZGVzaWduIGxvY2sgMjAyNi0wNy0wNDogbWFuYWdlciBnZXRzIE1hbmFnZXIgQm9udXMgb2ZmIHRoZSB0b3AsIHRoZW4gYWxzbyBwYXJ0aWNpcGF0ZXMgaW4gcG9vbCBzaGFyZSBvbiByZW1haW5kZXIuCi0tIEFsc28gdXBkYXRlcyBvcGVuX3F1ZXN0aW9ucyB0byByZWZsZWN0IHRoZSByZXNvbHZlZCAoYSkrKGIpIGRlY2lzaW9ucyBhbmQgc3VyZmFjZSB0aGUgU1FMIHdpcmUgZ2FwLgotLSAyMDI2LTA3LTA0CgotLSBSRVBMQUNFIHRoZSBNYW5hZ2VyIEJvbnVzIHNlY3Rpb24gaW4tcGxhY2Ugd2l0aCBjbGFyaWZpZWQgd29yZGluZyAob2ZmLXRoZS10b3AgbWVjaGFuaWMpLgpVUERBVEUgcHVibGljLmhhbmRib29rClNFVCBjb250ZW50ID0gUkVQTEFDRSgKICAgICAgY29udGVudCwKICAgICAgJzx2MyBNYW5hZ2VyIEJvbnVzIHNlY3Rpb24g4oCUIHNlZSBoYW5kYm9vayB0YWJsZT4nLAogICAgICAnPHY0IE1hbmFnZXIgQm9udXMgc2VjdGlvbiDigJQgc3VidHJhY3RlZCBmcm9tIHBvb2wgYmFzaXMgYmVmb3JlIHNwbGl0dGluZzsgbWFuYWdlciBhbHNvIGdldHMgcG9vbCBzaGFyZSBvbiByZW1haW5kZXI+JwogICAgKSwKICAgIHVwZGF0ZWRfYXQgPSBOT1coKQpXSEVSRSBpZCA9ICc1MjY5YWI1YS1lNTc1LTQyODctOWVhMi1kNTI5YjE5YzkwYTYnOwoKLS0gVXBkYXRlIHRoZSBvcGVuX3F1ZXN0aW9ucyBlbnRyeTogKGEpIG1lY2hhbmljIExPQ0tFRCAoc3VidHJhY3QgZnJvbSBwb29sIGJhc2lzKSwgKGIpIHBlcmNlbnRhZ2VzIHJlc3RvcmVkIGF0IG9yaWdpbmFsOwotLSBuZXcgb3BlbiBpdGVtczogKDEpIG1hZ25pdHVkZSB0d2VhayAoYXJlIDAuMS8wLjIvMC4zJSBzdGlsbCBzaXplZCBjb3JyZWN0bHkgdW5kZXIgcmVzaWR1YWwgcG9vbCksICgyKSBTUUwgd2lyZSBnYXAKLS0gKGNvbXB1dGVfcG9vbF9iYXNpc19hbmRfZW52ZWxvcGUgKyBjb21wdXRlX3dlZWtseV9jb21wX3Jlc2lkdWFsX3Bvb2wgbmVlZCBNYW5hZ2VyIEJvbnVzIHN1YnRyYWN0aW9uIGFkZGVkIGJlZm9yZQotLSBmaXJzdCBtYW5hZ2VyIHByb21vdGlvbiksICgzKSBPd25lciArIGFkbWluLWJhY2tvZmZpY2UgZXhjbHVzaW9ucyB1bmNoYW5nZWQuClVQREFURSBwdWJsaWMucGVyc2lzdGVudF9tZW1vcnkKU0VUIGNvbnRlbnQgPSBSRVBMQUNFKGNvbnRlbnQsICc8djMgTWFuYWdlciBCb251cyBvcGVuIGl0ZW0+JywgJzx2NCBNYW5hZ2VyIEJvbnVzIG9wZW4gaXRlbSDigJQgTE9DS0VEIG1lY2hhbmljICsgbWFnbml0dWRlK1NRTCB3aXJlIHBlbmRpbmc+JyksCiAgICB1cGRhdGVkX2F0ID0gTk9XKCkKV0hFUkUgaWQgPSAnMTU4MWFjOTUtOTdlMy00MGQ4LThhMjQtZDE0NzFiYzhhZmM0JzsK
+-- Handbook 03 v4: Manager Bonus mechanic clarified — subtracted from pool basis before splitting
+-- Peter's design lock 2026-07-04: manager gets Manager Bonus off the top, then also participates in pool share on remainder.
+-- Also updates open_questions to reflect the resolved (a)+(b) decisions and surface the SQL wire gap.
+-- 2026-07-04
+
+-- REPLACE the Manager Bonus section in-place with clarified wording (off-the-top mechanic).
+UPDATE public.handbook
+SET content = REPLACE(
+      content,
+      '<v3 Manager Bonus section — see handbook table>',
+      '<v4 Manager Bonus section — subtracted from pool basis before splitting; manager also gets pool share on remainder>'
+    ),
+    updated_at = NOW()
+WHERE id = '5269ab5a-e575-4287-9ea2-d529b19c90a6';
+
+-- Update the open_questions entry: (a) mechanic LOCKED (subtract from pool basis), (b) percentages restored at original;
+-- new open items: (1) magnitude tweak (are 0.1/0.2/0.3% still sized correctly under residual pool), (2) SQL wire gap
+-- (compute_pool_basis_and_envelope + compute_weekly_comp_residual_pool need Manager Bonus subtraction added before
+-- first manager promotion), (3) Owner + admin-backoffice exclusions unchanged.
+UPDATE public.persistent_memory
+SET content = REPLACE(content, '<v3 Manager Bonus open item>', '<v4 Manager Bonus open item — LOCKED mechanic + magnitude+SQL wire pending>'),
+    updated_at = NOW()
+WHERE id = '1581ac95-97e3-40d8-8a24-d1471bc8afc4';
