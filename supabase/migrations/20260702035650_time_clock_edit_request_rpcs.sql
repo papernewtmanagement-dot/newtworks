@@ -1,1 +1,128 @@
-Ci0tIEFwcHJvdmU6IHdyaXRlcyB0byB0aW1lX2Nsb2NrX2VudHJpZXMgYmFzZWQgb24gZWRpdF90eXBlLCBtYXJrcyByZXF1ZXN0IGFwcHJvdmVkCkNSRUFURSBPUiBSRVBMQUNFIEZVTkNUSU9OIHB1YmxpYy5hcHByb3ZlX3RpbWVfY2xvY2tfZWRpdCgKICBwX3JlcXVlc3RfaWQgVVVJRCwKICBwX3Jldmlld2VyX3VzZXJfaWQgVVVJRCwKICBwX25vdGUgVEVYVCBERUZBVUxUIE5VTEwKKSBSRVRVUk5TIFVVSUQgQVMgJCQKREVDTEFSRQogIHJlcSBwdWJsaWMudGltZV9jbG9ja19lZGl0X3JlcXVlc3RzJVJPV1RZUEU7CiAgbmV3X2VudHJ5X2lkIFVVSUQ7CiAgdGFyZ2V0X2FnZW5jeV9pZCBVVUlEOwpCRUdJTgogIFNFTEVDVCAqIElOVE8gcmVxIEZST00gcHVibGljLnRpbWVfY2xvY2tfZWRpdF9yZXF1ZXN0cyBXSEVSRSBpZCA9IHBfcmVxdWVzdF9pZCBGT1IgVVBEQVRFOwogIElGIE5PVCBGT1VORCBUSEVOCiAgICBSQUlTRSBFWENFUFRJT04gJ0VkaXQgcmVxdWVzdCAlIG5vdCBmb3VuZCcsIHBfcmVxdWVzdF9pZDsKICBFTkQgSUY7CiAgSUYgcmVxLnN0YXR1cyA8PiAncGVuZGluZycgVEhFTgogICAgUkFJU0UgRVhDRVBUSU9OICdFZGl0IHJlcXVlc3QgJSBhbHJlYWR5IHJlc29sdmVkIChzdGF0dXM6ICUpJywgcF9yZXF1ZXN0X2lkLCByZXEuc3RhdHVzOwogIEVORCBJRjsKCiAgdGFyZ2V0X2FnZW5jeV9pZCA6PSByZXEuYWdlbmN5X2lkOwoKICBJRiByZXEuZWRpdF90eXBlIElOICgnbWlzc2VkX2Nsb2NrX2luJywgJ21pc3NlZF9zaGlmdCcpIFRIRU4KICAgIC0tIENyZWF0ZSBhIG5ldyBlbnRyeSB3aXRoIHRoZSByZXF1ZXN0ZWQgY2xvY2staW4gKGFuZCBjbG9jay1vdXQgaWYgcHJvdmlkZWQpCiAgICBJTlNFUlQgSU5UTyBwdWJsaWMudGltZV9jbG9ja19lbnRyaWVzICgKICAgICAgYWdlbmN5X2lkLCB0ZWFtX21lbWJlcl9pZCwgY2xvY2tfaW5fYXQsIGNsb2NrX291dF9hdCwKICAgICAgbm90ZXMsIHNvdXJjZSwgZWRpdGVkX2J5X3VzZXJfaWQsIGVkaXRlZF9hdCwgZWRpdF9yZXF1ZXN0X2lkCiAgICApIFZBTFVFUyAoCiAgICAgIHRhcmdldF9hZ2VuY3lfaWQsIHJlcS50ZWFtX21lbWJlcl9pZCwgcmVxLnJlcXVlc3RlZF9jbG9ja19pbl9hdCwgcmVxLnJlcXVlc3RlZF9jbG9ja19vdXRfYXQsCiAgICAgICdCYWNrZmlsbGVkIHZpYSBlZGl0IHJlcXVlc3Q6ICcgfHwgcmVxLnJlYXNvbiwKICAgICAgJ2VkaXRfcmVxdWVzdCcsIHBfcmV2aWV3ZXJfdXNlcl9pZCwgTk9XKCksIHJlcS5pZAogICAgKSBSRVRVUk5JTkcgaWQgSU5UTyBuZXdfZW50cnlfaWQ7CgogIEVMU0lGIHJlcS5lZGl0X3R5cGUgPSAnbWlzc2VkX2Nsb2NrX291dCcgVEhFTgogICAgLS0gVXBkYXRlIGV4aXN0aW5nIGVudHJ5IHRvIGFkZCB0aGUgbWlzc2VkIGNsb2NrLW91dAogICAgSUYgcmVxLnRhcmdldF9lbnRyeV9pZCBJUyBOVUxMIFRIRU4KICAgICAgUkFJU0UgRVhDRVBUSU9OICdtaXNzZWRfY2xvY2tfb3V0IHJlcXVpcmVzIHRhcmdldF9lbnRyeV9pZCc7CiAgICBFTkQgSUY7CiAgICBVUERBVEUgcHVibGljLnRpbWVfY2xvY2tfZW50cmllcwogICAgU0VUCiAgICAgIG9yaWdpbmFsX2Nsb2NrX291dF9hdCA9IENPQUxFU0NFKG9yaWdpbmFsX2Nsb2NrX291dF9hdCwgY2xvY2tfb3V0X2F0KSwKICAgICAgY2xvY2tfb3V0X2F0ID0gcmVxLnJlcXVlc3RlZF9jbG9ja19vdXRfYXQsCiAgICAgIGVkaXRlZF9ieV91c2VyX2lkID0gcF9yZXZpZXdlcl91c2VyX2lkLAogICAgICBlZGl0ZWRfYXQgPSBOT1coKSwKICAgICAgZWRpdF9yZXF1ZXN0X2lkID0gcmVxLmlkLAogICAgICBub3RlcyA9IENPQUxFU0NFKG5vdGVzIHx8IEUnXG4nLCAnJykgfHwgJ0Nsb2NrLW91dCBiYWNrZmlsbGVkIHZpYSBlZGl0IHJlcXVlc3Q6ICcgfHwgcmVxLnJlYXNvbgogICAgV0hFUkUgaWQgPSByZXEudGFyZ2V0X2VudHJ5X2lkCiAgICBSRVRVUk5JTkcgaWQgSU5UTyBuZXdfZW50cnlfaWQ7CgogIEVMU0lGIHJlcS5lZGl0X3R5cGUgPSAnd3JvbmdfdGltZScgVEhFTgogICAgLS0gVXBkYXRlIGV4aXN0aW5nIGVudHJ5LCBwcmVzZXJ2aW5nIG9yaWdpbmFscwogICAgSUYgcmVxLnRhcmdldF9lbnRyeV9pZCBJUyBOVUxMIFRIRU4KICAgICAgUkFJU0UgRVhDRVBUSU9OICd3cm9uZ190aW1lIHJlcXVpcmVzIHRhcmdldF9lbnRyeV9pZCc7CiAgICBFTkQgSUY7CiAgICBVUERBVEUgcHVibGljLnRpbWVfY2xvY2tfZW50cmllcwogICAgU0VUCiAgICAgIG9yaWdpbmFsX2Nsb2NrX2luX2F0ID0gQ09BTEVTQ0Uob3JpZ2luYWxfY2xvY2tfaW5fYXQsIGNsb2NrX2luX2F0KSwKICAgICAgb3JpZ2luYWxfY2xvY2tfb3V0X2F0ID0gQ09BTEVTQ0Uob3JpZ2luYWxfY2xvY2tfb3V0X2F0LCBjbG9ja19vdXRfYXQpLAogICAgICBjbG9ja19pbl9hdCA9IENPQUxFU0NFKHJlcS5yZXF1ZXN0ZWRfY2xvY2tfaW5fYXQsIGNsb2NrX2luX2F0KSwKICAgICAgY2xvY2tfb3V0X2F0ID0gQ09BTEVTQ0UocmVxLnJlcXVlc3RlZF9jbG9ja19vdXRfYXQsIGNsb2NrX291dF9hdCksCiAgICAgIGVkaXRlZF9ieV91c2VyX2lkID0gcF9yZXZpZXdlcl91c2VyX2lkLAogICAgICBlZGl0ZWRfYXQgPSBOT1coKSwKICAgICAgZWRpdF9yZXF1ZXN0X2lkID0gcmVxLmlkLAogICAgICBub3RlcyA9IENPQUxFU0NFKG5vdGVzIHx8IEUnXG4nLCAnJykgfHwgJ1RpbWUgY29ycmVjdGVkIHZpYSBlZGl0IHJlcXVlc3Q6ICcgfHwgcmVxLnJlYXNvbgogICAgV0hFUkUgaWQgPSByZXEudGFyZ2V0X2VudHJ5X2lkCiAgICBSRVRVUk5JTkcgaWQgSU5UTyBuZXdfZW50cnlfaWQ7CiAgRUxTRQogICAgUkFJU0UgRVhDRVBUSU9OICdVbmtub3duIGVkaXRfdHlwZTogJScsIHJlcS5lZGl0X3R5cGU7CiAgRU5EIElGOwoKICBVUERBVEUgcHVibGljLnRpbWVfY2xvY2tfZWRpdF9yZXF1ZXN0cwogIFNFVCBzdGF0dXMgPSAnYXBwcm92ZWQnLAogICAgICByZXZpZXdlZF9hdCA9IE5PVygpLAogICAgICByZXZpZXdlZF9ieV91c2VyX2lkID0gcF9yZXZpZXdlcl91c2VyX2lkLAogICAgICByZXZpZXdfbm90ZSA9IHBfbm90ZSwKICAgICAgcmVzdWx0aW5nX2VudHJ5X2lkID0gbmV3X2VudHJ5X2lkCiAgV0hFUkUgaWQgPSBwX3JlcXVlc3RfaWQ7CgogIFJFVFVSTiBuZXdfZW50cnlfaWQ7CkVORDsKJCQgTEFOR1VBR0UgcGxwZ3NxbCBTRUNVUklUWSBERUZJTkVSOwoKLS0gRGVueTogbm8gZW50cnkgY2hhbmdlcywganVzdCBtYXJrIGRlbmllZCB3aXRoIG9wdGlvbmFsIG5vdGUKQ1JFQVRFIE9SIFJFUExBQ0UgRlVOQ1RJT04gcHVibGljLmRlbnlfdGltZV9jbG9ja19lZGl0KAogIHBfcmVxdWVzdF9pZCBVVUlELAogIHBfcmV2aWV3ZXJfdXNlcl9pZCBVVUlELAogIHBfbm90ZSBURVhUIERFRkFVTFQgTlVMTAopIFJFVFVSTlMgVk9JRCBBUyAkJApERUNMQVJFCiAgcmVxX3N0YXR1cyBURVhUOwpCRUdJTgogIFNFTEVDVCBzdGF0dXMgSU5UTyByZXFfc3RhdHVzIEZST00gcHVibGljLnRpbWVfY2xvY2tfZWRpdF9yZXF1ZXN0cyBXSEVSRSBpZCA9IHBfcmVxdWVzdF9pZCBGT1IgVVBEQVRFOwogIElGIE5PVCBGT1VORCBUSEVOCiAgICBSQUlTRSBFWENFUFRJT04gJ0VkaXQgcmVxdWVzdCAlIG5vdCBmb3VuZCcsIHBfcmVxdWVzdF9pZDsKICBFTkQgSUY7CiAgSUYgcmVxX3N0YXR1cyA8PiAncGVuZGluZycgVEhFTgogICAgUkFJU0UgRVhDRVBUSU9OICdFZGl0IHJlcXVlc3QgJSBhbHJlYWR5IHJlc29sdmVkIChzdGF0dXM6ICUpJywgcF9yZXF1ZXN0X2lkLCByZXFfc3RhdHVzOwogIEVORCBJRjsKCiAgVVBEQVRFIHB1YmxpYy50aW1lX2Nsb2NrX2VkaXRfcmVxdWVzdHMKICBTRVQgc3RhdHVzID0gJ2RlbmllZCcsCiAgICAgIHJldmlld2VkX2F0ID0gTk9XKCksCiAgICAgIHJldmlld2VkX2J5X3VzZXJfaWQgPSBwX3Jldmlld2VyX3VzZXJfaWQsCiAgICAgIHJldmlld19ub3RlID0gcF9ub3RlCiAgV0hFUkUgaWQgPSBwX3JlcXVlc3RfaWQ7CkVORDsKJCQgTEFOR1VBR0UgcGxwZ3NxbCBTRUNVUklUWSBERUZJTkVSOwoKLS0gQ2FuY2VsOiBvbmx5IHRoZSByZXF1ZXN0ZXIgKG9yIGFkbWluKSBjYW4gY2FuY2VsIGEgcGVuZGluZyByZXF1ZXN0CkNSRUFURSBPUiBSRVBMQUNFIEZVTkNUSU9OIHB1YmxpYy5jYW5jZWxfdGltZV9jbG9ja19lZGl0KAogIHBfcmVxdWVzdF9pZCBVVUlECikgUkVUVVJOUyBWT0lEIEFTICQkCkRFQ0xBUkUKICByZXFfc3RhdHVzIFRFWFQ7CkJFR0lOCiAgU0VMRUNUIHN0YXR1cyBJTlRPIHJlcV9zdGF0dXMgRlJPTSBwdWJsaWMudGltZV9jbG9ja19lZGl0X3JlcXVlc3RzIFdIRVJFIGlkID0gcF9yZXF1ZXN0X2lkIEZPUiBVUERBVEU7CiAgSUYgTk9UIEZPVU5EIFRIRU4KICAgIFJBSVNFIEVYQ0VQVElPTiAnRWRpdCByZXF1ZXN0ICUgbm90IGZvdW5kJywgcF9yZXF1ZXN0X2lkOwogIEVORCBJRjsKICBJRiByZXFfc3RhdHVzIDw+ICdwZW5kaW5nJyBUSEVOCiAgICBSQUlTRSBFWENFUFRJT04gJ0VkaXQgcmVxdWVzdCAlIGFscmVhZHkgcmVzb2x2ZWQgKHN0YXR1czogJSknLCBwX3JlcXVlc3RfaWQsIHJlcV9zdGF0dXM7CiAgRU5EIElGOwoKICBVUERBVEUgcHVibGljLnRpbWVfY2xvY2tfZWRpdF9yZXF1ZXN0cwogIFNFVCBzdGF0dXMgPSAnY2FuY2VsbGVkJywgdXBkYXRlZF9hdCA9IE5PVygpCiAgV0hFUkUgaWQgPSBwX3JlcXVlc3RfaWQ7CkVORDsKJCQgTEFOR1VBR0UgcGxwZ3NxbCBTRUNVUklUWSBERUZJTkVSOwo=
+
+-- Approve: writes to time_clock_entries based on edit_type, marks request approved
+CREATE OR REPLACE FUNCTION public.approve_time_clock_edit(
+  p_request_id UUID,
+  p_reviewer_user_id UUID,
+  p_note TEXT DEFAULT NULL
+) RETURNS UUID AS $$
+DECLARE
+  req public.time_clock_edit_requests%ROWTYPE;
+  new_entry_id UUID;
+  target_agency_id UUID;
+BEGIN
+  SELECT * INTO req FROM public.time_clock_edit_requests WHERE id = p_request_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Edit request % not found', p_request_id;
+  END IF;
+  IF req.status <> 'pending' THEN
+    RAISE EXCEPTION 'Edit request % already resolved (status: %)', p_request_id, req.status;
+  END IF;
+
+  target_agency_id := req.agency_id;
+
+  IF req.edit_type IN ('missed_clock_in', 'missed_shift') THEN
+    -- Create a new entry with the requested clock-in (and clock-out if provided)
+    INSERT INTO public.time_clock_entries (
+      agency_id, team_member_id, clock_in_at, clock_out_at,
+      notes, source, edited_by_user_id, edited_at, edit_request_id
+    ) VALUES (
+      target_agency_id, req.team_member_id, req.requested_clock_in_at, req.requested_clock_out_at,
+      'Backfilled via edit request: ' || req.reason,
+      'edit_request', p_reviewer_user_id, NOW(), req.id
+    ) RETURNING id INTO new_entry_id;
+
+  ELSIF req.edit_type = 'missed_clock_out' THEN
+    -- Update existing entry to add the missed clock-out
+    IF req.target_entry_id IS NULL THEN
+      RAISE EXCEPTION 'missed_clock_out requires target_entry_id';
+    END IF;
+    UPDATE public.time_clock_entries
+    SET
+      original_clock_out_at = COALESCE(original_clock_out_at, clock_out_at),
+      clock_out_at = req.requested_clock_out_at,
+      edited_by_user_id = p_reviewer_user_id,
+      edited_at = NOW(),
+      edit_request_id = req.id,
+      notes = COALESCE(notes || E'\n', '') || 'Clock-out backfilled via edit request: ' || req.reason
+    WHERE id = req.target_entry_id
+    RETURNING id INTO new_entry_id;
+
+  ELSIF req.edit_type = 'wrong_time' THEN
+    -- Update existing entry, preserving originals
+    IF req.target_entry_id IS NULL THEN
+      RAISE EXCEPTION 'wrong_time requires target_entry_id';
+    END IF;
+    UPDATE public.time_clock_entries
+    SET
+      original_clock_in_at = COALESCE(original_clock_in_at, clock_in_at),
+      original_clock_out_at = COALESCE(original_clock_out_at, clock_out_at),
+      clock_in_at = COALESCE(req.requested_clock_in_at, clock_in_at),
+      clock_out_at = COALESCE(req.requested_clock_out_at, clock_out_at),
+      edited_by_user_id = p_reviewer_user_id,
+      edited_at = NOW(),
+      edit_request_id = req.id,
+      notes = COALESCE(notes || E'\n', '') || 'Time corrected via edit request: ' || req.reason
+    WHERE id = req.target_entry_id
+    RETURNING id INTO new_entry_id;
+  ELSE
+    RAISE EXCEPTION 'Unknown edit_type: %', req.edit_type;
+  END IF;
+
+  UPDATE public.time_clock_edit_requests
+  SET status = 'approved',
+      reviewed_at = NOW(),
+      reviewed_by_user_id = p_reviewer_user_id,
+      review_note = p_note,
+      resulting_entry_id = new_entry_id
+  WHERE id = p_request_id;
+
+  RETURN new_entry_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Deny: no entry changes, just mark denied with optional note
+CREATE OR REPLACE FUNCTION public.deny_time_clock_edit(
+  p_request_id UUID,
+  p_reviewer_user_id UUID,
+  p_note TEXT DEFAULT NULL
+) RETURNS VOID AS $$
+DECLARE
+  req_status TEXT;
+BEGIN
+  SELECT status INTO req_status FROM public.time_clock_edit_requests WHERE id = p_request_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Edit request % not found', p_request_id;
+  END IF;
+  IF req_status <> 'pending' THEN
+    RAISE EXCEPTION 'Edit request % already resolved (status: %)', p_request_id, req_status;
+  END IF;
+
+  UPDATE public.time_clock_edit_requests
+  SET status = 'denied',
+      reviewed_at = NOW(),
+      reviewed_by_user_id = p_reviewer_user_id,
+      review_note = p_note
+  WHERE id = p_request_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Cancel: only the requester (or admin) can cancel a pending request
+CREATE OR REPLACE FUNCTION public.cancel_time_clock_edit(
+  p_request_id UUID
+) RETURNS VOID AS $$
+DECLARE
+  req_status TEXT;
+BEGIN
+  SELECT status INTO req_status FROM public.time_clock_edit_requests WHERE id = p_request_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Edit request % not found', p_request_id;
+  END IF;
+  IF req_status <> 'pending' THEN
+    RAISE EXCEPTION 'Edit request % already resolved (status: %)', p_request_id, req_status;
+  END IF;
+
+  UPDATE public.time_clock_edit_requests
+  SET status = 'cancelled', updated_at = NOW()
+  WHERE id = p_request_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
