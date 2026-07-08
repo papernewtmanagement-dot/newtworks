@@ -2,7 +2,8 @@
 -- Applied: 2026-07-08
 --
 -- Dispatcher SQL fn + automation recipe for call-log-parser edge fn.
--- Fires hourly at :17 (offset from doc-processor which is at :07,:37).
+-- Fires once nightly at 12:30 AM CT (DST-safe via 5:30/6:30 UTC pair;
+-- parser is idempotent so the wrong-DST-hour fire is a no-op).
 
 CREATE OR REPLACE FUNCTION public.dispatch_call_log_parser(p_agency_id uuid, p_recipe_id uuid)
  RETURNS jsonb
@@ -55,9 +56,9 @@ INSERT INTO public.automation_recipes (
 SELECT
   '126794dd-25ff-47d2-a436-724499733365'::uuid,
   'Call Log Parser (eGain daily intake)',
-  'Parses eGain "Extension Activity.htm" attachments from statefarm.com Daily Call Log emails; upserts per-team-member daily metrics into daily_call_activity. Fires hourly to catch report as soon as it arrives; morning check-in reads yesterday''s block via render_daily_calls_block().',
+  'Parses eGain "Extension Activity.htm" attachments from statefarm.com Daily Call Log emails; upserts per-team-member daily metrics into daily_call_activity. Fires once nightly at 12:30 AM CT (DST-safe via 5:30/6:30 UTC pair; parser is idempotent so the wrong-DST-hour fire is a no-op). Morning check-in reads yesterday''s block via render_daily_calls_block().',
   'cron',
-  '17 * * * *',
+  '30 5,6 * * *',
   'dispatch_call_log_parser',
   true
 WHERE NOT EXISTS (
