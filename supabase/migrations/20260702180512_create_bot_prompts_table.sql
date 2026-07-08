@@ -1,1 +1,60 @@
-LS0gYm90X3Byb21wdHM6IHN0YW5kYWxvbmUgQUkgc3lzdGVtIHByb21wdHMgLyBhc3Npc3RhbnQgcGVyc29uYXMgYXV0aG9yZWQgZm9yIGFnZW5jeSB1c2UKLS0gRGlzdGluY3QgZnJvbSBjaGF0Ym90XyogKGluLWFwcCBCQ0MgY2hhdGJvdCkgYW5kIHNvcHMgKGh1bWFuLXByb2Nlc3MgU09QcykuCkNSRUFURSBUQUJMRSBJRiBOT1QgRVhJU1RTIHB1YmxpYy5ib3RfcHJvbXB0cyAoCiAgaWQgVVVJRCBQUklNQVJZIEtFWSBERUZBVUxUIGdlbl9yYW5kb21fdXVpZCgpLAogIGFnZW5jeV9pZCBVVUlEIE5PVCBOVUxMLAogIG5hbWUgVEVYVCBOT1QgTlVMTCwKICBwdXJwb3NlIFRFWFQsCiAgc3lzdGVtX3Byb21wdCBURVhUIE5PVCBOVUxMLAogIHN0YXR1cyBURVhUIE5PVCBOVUxMIERFRkFVTFQgJ2RyYWZ0JwogICAgQ0hFQ0sgKHN0YXR1cyBJTiAoJ2RyYWZ0JywgJ2FjdGl2ZScsICdhcmNoaXZlZCcsICdkZXByZWNhdGVkJykpLAogIHNvdXJjZSBURVhULAogIHRhcmdldF9tb2RlbCBURVhULAogIGRlcGxveW1lbnRfbm90ZXMgVEVYVCwKICBub3RlcyBURVhULAogIGNoYXJfY291bnQgSU5UIEdFTkVSQVRFRCBBTFdBWVMgQVMgKGxlbmd0aChzeXN0ZW1fcHJvbXB0KSkgU1RPUkVELAogIGNyZWF0ZWRfYXQgVElNRVNUQU1QVFogTk9UIE5VTEwgREVGQVVMVCBOT1coKSwKICB1cGRhdGVkX2F0IFRJTUVTVEFNUFRaIE5PVCBOVUxMIERFRkFVTFQgTk9XKCkKKTsKCkNSRUFURSBJTkRFWCBJRiBOT1QgRVhJU1RTIGlkeF9ib3RfcHJvbXB0c19hZ2VuY3lfc3RhdHVzCiAgT04gcHVibGljLmJvdF9wcm9tcHRzKGFnZW5jeV9pZCwgc3RhdHVzKTsKCi0tIHVwZGF0ZWRfYXQgYXV0by10b3VjaApDUkVBVEUgT1IgUkVQTEFDRSBGVU5DVElPTiBwdWJsaWMuYm90X3Byb21wdHNfdG91Y2hfdXBkYXRlZF9hdCgpClJFVFVSTlMgVFJJR0dFUiBMQU5HVUFHRSBwbHBnc3FsIEFTICQkCkJFR0lOCiAgTkVXLnVwZGF0ZWRfYXQgPSBOT1coKTsKICBSRVRVUk4gTkVXOwpFTkQ7ICQkOwoKRFJPUCBUUklHR0VSIElGIEVYSVNUUyB0cmdfYm90X3Byb21wdHNfdG91Y2ggT04gcHVibGljLmJvdF9wcm9tcHRzOwpDUkVBVEUgVFJJR0dFUiB0cmdfYm90X3Byb21wdHNfdG91Y2gKICBCRUZPUkUgVVBEQVRFIE9OIHB1YmxpYy5ib3RfcHJvbXB0cwogIEZPUiBFQUNIIFJPVyBFWEVDVVRFIEZVTkNUSU9OIHB1YmxpYy5ib3RfcHJvbXB0c190b3VjaF91cGRhdGVkX2F0KCk7CgotLSBSTFM6IGFkbWluLXRpZXIgKG93bmVyICsgbWFuYWdlcikgb25seSwgbWF0Y2hpbmcgQkNDIGRlZmF1bHQgdmlzaWJpbGl0eQpBTFRFUiBUQUJMRSBwdWJsaWMuYm90X3Byb21wdHMgRU5BQkxFIFJPVyBMRVZFTCBTRUNVUklUWTsKCkRST1AgUE9MSUNZIElGIEVYSVNUUyAiYm90X3Byb21wdHNfYWRtaW5fYWxsIiBPTiBwdWJsaWMuYm90X3Byb21wdHM7CkNSRUFURSBQT0xJQ1kgImJvdF9wcm9tcHRzX2FkbWluX2FsbCIKICBPTiBwdWJsaWMuYm90X3Byb21wdHMKICBGT1IgQUxMCiAgVE8gYXV0aGVudGljYXRlZAogIFVTSU5HICgKICAgIEVYSVNUUyAoCiAgICAgIFNFTEVDVCAxIEZST00gcHVibGljLnVzZXJzIHUKICAgICAgV0hFUkUgdS5pZCA9IGF1dGgudWlkKCkKICAgICAgICBBTkQgdS5yb2xlIElOICgnb3duZXInLCAnbWFuYWdlcicpCiAgICApCiAgKQogIFdJVEggQ0hFQ0sgKAogICAgRVhJU1RTICgKICAgICAgU0VMRUNUIDEgRlJPTSBwdWJsaWMudXNlcnMgdQogICAgICBXSEVSRSB1LmlkID0gYXV0aC51aWQoKQogICAgICAgIEFORCB1LnJvbGUgSU4gKCdvd25lcicsICdtYW5hZ2VyJykKICAgICkKICApOwoKQ09NTUVOVCBPTiBUQUJMRSBwdWJsaWMuYm90X3Byb21wdHMgSVMKICAnU3RhbmRhbG9uZSBBSSBzeXN0ZW0gcHJvbXB0cyAvIGFzc2lzdGFudCBwZXJzb25hcyBhdXRob3JlZCBmb3IgYWdlbmN5IHVzZSAoQ29hY2ggUGhpbCwgZnV0dXJlIHRyYWluaW5nIGJvdHMsIGxlYWRlcnNoaXAgYm90LCBldGMuKS4gRGlzdGluY3QgZnJvbSBjaGF0Ym90XyogKEJDQyBpbi1hcHAgY2hhdGJvdCkgYW5kIHNvcHMgKGh1bWFuLXByb2Nlc3MgU09QcykuJzs=
+-- bot_prompts: standalone AI system prompts / assistant personas authored for agency use
+-- Distinct from chatbot_* (in-app BCC chatbot) and sops (human-process SOPs).
+CREATE TABLE IF NOT EXISTS public.bot_prompts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  purpose TEXT,
+  system_prompt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'active', 'archived', 'deprecated')),
+  source TEXT,
+  target_model TEXT,
+  deployment_notes TEXT,
+  notes TEXT,
+  char_count INT GENERATED ALWAYS AS (length(system_prompt)) STORED,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_prompts_agency_status
+  ON public.bot_prompts(agency_id, status);
+
+-- updated_at auto-touch
+CREATE OR REPLACE FUNCTION public.bot_prompts_touch_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_bot_prompts_touch ON public.bot_prompts;
+CREATE TRIGGER trg_bot_prompts_touch
+  BEFORE UPDATE ON public.bot_prompts
+  FOR EACH ROW EXECUTE FUNCTION public.bot_prompts_touch_updated_at();
+
+-- RLS: admin-tier (owner + manager) only, matching BCC default visibility
+ALTER TABLE public.bot_prompts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "bot_prompts_admin_all" ON public.bot_prompts;
+CREATE POLICY "bot_prompts_admin_all"
+  ON public.bot_prompts
+  FOR ALL
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.users u
+      WHERE u.id = auth.uid()
+        AND u.role IN ('owner', 'manager')
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.users u
+      WHERE u.id = auth.uid()
+        AND u.role IN ('owner', 'manager')
+    )
+  );
+
+COMMENT ON TABLE public.bot_prompts IS
+  'Standalone AI system prompts / assistant personas authored for agency use (Coach Phil, future training bots, leadership bot, etc.). Distinct from chatbot_* (BCC in-app chatbot) and sops (human-process SOPs).';
