@@ -99,6 +99,7 @@ function slugifyHeading(text) {
 // Escaped titles like `\*Extended Life Process` are unescaped before lookup.
 
 const INCLUDE_LINE_RE = /^[ \t]*\*?\[Included from:\s*([^\]\n]+?)\]\*?[ \t]*$/gm;
+const EXCERPT_LINE_RE = /^[ \t]*\*?\[Embedded excerpt from:\s*([^\]\n]+?)\]\*?[ \t]*$/gm;
 const GLOSSARY_TAG_RE = /\{\{glossary:([a-z0-9_-]+)\}\}/gi;
 const GLOSSARY_ALL_RE = /\{\{glossary_all\}\}/gi;
 const MAX_INCLUDE_DEPTH = 6;
@@ -113,27 +114,30 @@ const BANNER_STYLE_CYCLE =
   'margin:12px 0;padding:10px 14px;background:#fee2e2;border-left:4px solid #dc2626;' +
   'border-radius:4px;color:#7f1d1d;font-size:14px;';
 
-function bannerMissing(target) {
+function bannerMissing(target, kind) {
+  const k = kind || "include";
   return (
     `<div style="${BANNER_STYLE_MISSING}">` +
-    `⚠️ <strong>Missing include:</strong> "${escapeHtml(target)}" was referenced here ` +
-    `but was not migrated. Author the page or remove the include marker.` +
+    `⚠️ <strong>Missing ${k}:</strong> "${escapeHtml(target)}" was referenced here ` +
+    `but was not migrated. Author the page or remove the ${k} marker.` +
     `</div>`
   );
 }
 
-function bannerEmpty(target) {
+function bannerEmpty(target, kind) {
+  const k = kind || "include";
   return (
     `<div style="${BANNER_STYLE_EMPTY}">` +
-    `⚠️ <strong>Empty include:</strong> "${escapeHtml(target)}" exists but has no content yet.` +
+    `⚠️ <strong>Empty ${k}:</strong> "${escapeHtml(target)}" exists but has no content yet.` +
     `</div>`
   );
 }
 
-function bannerCycle(target) {
+function bannerCycle(target, kind) {
+  const k = kind || "include";
   return (
     `<div style="${BANNER_STYLE_CYCLE}">` +
-    `🔁 <strong>Include cycle detected:</strong> "${escapeHtml(target)}" would loop back on itself.` +
+    `🔁 <strong>${k[0].toUpperCase() + k.slice(1)} cycle detected:</strong> "${escapeHtml(target)}" would loop back on itself.` +
     `</div>`
   );
 }
@@ -162,6 +166,40 @@ function expandIncludes(md, resolveInclude, visited, depth) {
     const nextVisited = new Set(visited);
     nextVisited.add(key);
     return expandIncludes(resolved.md, resolveInclude, nextVisited, depth + 1);
+  });
+}
+
+// ─── Excerpt preprocessing ────────────────────────────────────
+// [Embedded excerpt from: X] markers are Confluence's named-excerpt-include
+// macro. Semantically identical to [Included from: X] (title lookup + inline
+// substitution), but the source table is different: excerpts live in a
+// dedicated `manual_type='excerpt'` scope, loaded via a separate query in
+// the consumer (see Manual.jsx). Cycle guard + banner reuse the include
+// machinery with a "excerpt" kind label.
+
+function expandExcerpts(md, resolveExcerpt, visited, depth) {
+  if (!resolveExcerpt) return md;
+  if (depth > MAX_INCLUDE_DEPTH) return md;
+  return md.replace(EXCERPT_LINE_RE, (_match, rawTarget) => {
+    const target = String(rawTarget).replace(/\\\*/g, "*").trim();
+    const key = target.toLowerCase();
+
+    if (visited.has(key)) return bannerCycle(target, "excerpt");
+
+    let resolved;
+    try {
+      resolved = resolveExcerpt(target);
+    } catch (_e) {
+      resolved = null;
+    }
+
+    if (!resolved || resolved.status === "missing") return bannerMissing(target, "excerpt");
+    if (resolved.status === "empty") return bannerEmpty(target, "excerpt");
+    if (resolved.status !== "ok" || typeof resolved.md !== "string") return bannerMissing(target, "excerpt");
+
+    const nextVisited = new Set(visited);
+    nextVisited.add(key);
+    return expandExcerpts(resolved.md, resolveExcerpt, nextVisited, depth + 1);
   });
 }
 
@@ -242,6 +280,10 @@ export function mdToHtml(md, options = {}) {
 
   if (options && typeof options.resolveInclude === "function") {
     src = expandIncludes(src, options.resolveInclude, new Set(), 0);
+  }
+
+  if (options && typeof options.resolveExcerpt === "function") {
+    src = expandExcerpts(src, options.resolveExcerpt, new Set(), 0);
   }
 
   if (options && typeof options.resolveGlossary === "function") {
@@ -591,4 +633,18 @@ export function makeGlossaryResolver(lookup) {
     if (tag == null) return lookup.ordered.slice();
     return lookup.map.get(String(tag).trim().toLowerCase()) || null;
   };
+}
+
+// ─── Excerpt lookup helpers ───────────────────────────────────
+// Identical shape to buildIncludeLookup / makeIncludeResolver — kept as
+// distinct exports so consumers can pass a separately-queried row set
+// (typically manual_type='excerpt') without collision with the current
+// manual's rows.
+
+export function buildExcerptLookup(rows) {
+  return buildIncludeLookup(rows);
+}
+
+export function makeExcerptResolver(lookup) {
+  return makeIncludeResolver(lookup);
 }

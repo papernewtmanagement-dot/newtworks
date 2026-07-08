@@ -96,6 +96,8 @@ import {
   makeIncludeResolver,
   buildGlossaryLookup,
   makeGlossaryResolver,
+  buildExcerptLookup,
+  makeExcerptResolver,
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
@@ -824,6 +826,27 @@ function ManualPage({ page, allRows, cfg, manualType }) {
     return () => { cancelled = true; };
   }, [cfg.hasGlossary, cfg.glossaryParentId, manualType]);
 
+  // Load excerpt sources (manual_type='excerpt') — these are named-fragment
+  // rows referenced by [Embedded excerpt from: X] markers. Recovered from
+  // Confluence's original excerpt macro; hidden from tree UI.
+  const [excerptRows, setExcerptRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: e } = await supabase
+          .from("manuals")
+          .select("title, content, is_active")
+          .eq("agency_id", AGENCY_ID)
+          .eq("manual_type", "excerpt")
+          .eq("is_active", true);
+        if (cancelled) return;
+        if (!e) setExcerptRows(Array.isArray(data) ? data : []);
+      } catch (_err) { /* silent — inline excerpts are optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const resolveInclude = useMemo(
     () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
     [allRows]
@@ -832,9 +855,13 @@ function ManualPage({ page, allRows, cfg, manualType }) {
     () => makeGlossaryResolver(buildGlossaryLookup(glossaryRows || [])),
     [glossaryRows]
   );
+  const resolveExcerpt = useMemo(
+    () => makeExcerptResolver(buildExcerptLookup(excerptRows || [])),
+    [excerptRows]
+  );
   const html = useMemo(
-    () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary }),
-    [page?.content, resolveInclude, resolveGlossary]
+    () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary, resolveExcerpt }),
+    [page?.content, resolveInclude, resolveGlossary, resolveExcerpt]
   );
   const askContext = useMemo(() => {
     return `I\'m looking at this page from ${cfg.askContextLabel}:
