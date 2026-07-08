@@ -1,1 +1,33 @@
-LS0gSGFuZGJvb2sgcmVzdHJ1Y3R1cmUg4oCUIHNpZ25hdHVyZStmbGF0dGVuK3BheS1pbnRlZ3JhdGlvbgotLSAyMDI2LTA3LTA0CgotLSAoYSkgUmVwbGFjZSBvbGQgIjAzIEJvbnVzZXMgJiBQYXkiIGNvbnRlbnQgd2l0aCBtZXJnZWQgcmVzaWR1YWwtcG9vbCBkZXNpZ24gKyByZXRhaW5lZCBlbGVtZW50cy4KLS0gQ29udGVudCBwYXlsb2FkIGVsaWRlZCBoZXJlIGZvciByZWFkYWJpbGl0eTsgYXBwbGllZCB2aWEgU3VwYWJhc2UgTUNQIGFwcGx5X21pZ3JhdGlvbiBpbiBzYW1lIHNlc3Npb24uCi0tIFJldGFpbmVkOiByZWZlcnJhbCBib251cywgYXBwYXJlbCwgQ2hhbXBpb25zIENpcmNsZSwgYXBwbGljYXRpb24vcHJlbWl1bSBnbG9zc2FyeSwgRUNSTSB0cmFja2luZyBydWxlLgotLSBEcm9wcGVkOiBvYnNvbGV0ZSB3ZWVrbHktcGF5IG1lY2hhbmljcywgY2hhcmdlYmFja3MgcGFzc3Rocm91Z2gsICQxMCBidW1wcywgYmFzZSBhZHZhbmNlIGFkanVzdG1lbnRzLCBtYW5hZ2VyIGJvbnVzICUsIHNoYWRvdy1wb2ludCBVTSBtYXRoLgoKLS0gKGIpIERlbGV0ZSBzdGFuZGFsb25lIHJlc2lkdWFsLXBvb2wgcGFnZSAocGVyIFBldGVyIGRpcmVjdGl2ZSAyMDI2LTA3LTA0KQpERUxFVEUgRlJPTSBwdWJsaWMuaGFuZGJvb2sKV0hFUkUgaWQgPSAnNmMwOGY4M2ItODk4Yi00MjI1LTliODEtMjA2MzYyNDA2ZTFjJzsKCi0tIChjKSBGbGF0dGVuOiBhbGwgc2VjdGlvbnMgdW5kZXIgSGFuZGJvb2sgd3JhcHBlciAoY29uZmx1ZW5jZV9wYWdlX2lkPTI5Njk0MzY0NSkgYmVjb21lIHRvcC1sZXZlbApVUERBVEUgcHVibGljLmhhbmRib29rClNFVCBwYXJlbnRfcGFnZV9pZCA9IE5VTEwsCiAgICB1cGRhdGVkX2F0ID0gTk9XKCkKV0hFUkUgYWdlbmN5X2lkID0gJzEyNjc5NGRkLTI1ZmYtNDdkMi1hNDM2LTcyNDQ5OTczMzM2NScKICBBTkQgcGFyZW50X3BhZ2VfaWQgPSAnMjk2OTQzNjQ1JzsKCi0tIChkKSBSZW5hbWUgd3JhcHBlciDihpIgY2xlYXIgc2lnbmF0dXJlLW9ubHkgcm9sZQpVUERBVEUgcHVibGljLmhhbmRib29rClNFVCB0aXRsZSA9ICdTaWduYXR1cmUgUGFnZScsCiAgICB1cGRhdGVkX2F0ID0gTk9XKCkKV0hFUkUgaWQgPSAnYTNhYTYxYzctM2M4MS00MDRjLTgwZGUtOGY4NTk0NGYxOGIxJzsKCi0tIChlKSBBZGQgc29ydF9vcmRlciBjb2x1bW4gc28gc2lnbmF0dXJlIGNhbiBiZSBmb3JjZWQgdG8gdGhlIGJvdHRvbSByZWdhcmRsZXNzIG9mIGFscGhhYmV0aWNzCkFMVEVSIFRBQkxFIHB1YmxpYy5oYW5kYm9vawogIEFERCBDT0xVTU4gSUYgTk9UIEVYSVNUUyBzb3J0X29yZGVyIElOVEVHRVI7CgotLSAoZikgU2lnbmF0dXJlIHRvIHRoZSB2ZXJ5IGJvdHRvbQpVUERBVEUgcHVibGljLmhhbmRib29rClNFVCBzb3J0X29yZGVyID0gOTk5OQpXSEVSRSBpZCA9ICdhM2FhNjFjNy0zYzgxLTQwNGMtODBkZS04Zjg1OTQ0ZjE4YjEnOwo=
+-- Handbook restructure — signature+flatten+pay-integration
+-- 2026-07-04
+
+-- (a) Replace old "03 Bonuses & Pay" content with merged residual-pool design + retained elements.
+-- Content payload elided here for readability; applied via Supabase MCP apply_migration in same session.
+-- Retained: referral bonus, apparel, Champions Circle, application/premium glossary, ECRM tracking rule.
+-- Dropped: obsolete weekly-pay mechanics, chargebacks passthrough, $10 bumps, base advance adjustments, manager bonus %, shadow-point UM math.
+
+-- (b) Delete standalone residual-pool page (per Peter directive 2026-07-04)
+DELETE FROM public.handbook
+WHERE id = '6c08f83b-898b-4225-9b81-206362406e1c';
+
+-- (c) Flatten: all sections under Handbook wrapper (confluence_page_id=296943645) become top-level
+UPDATE public.handbook
+SET parent_page_id = NULL,
+    updated_at = NOW()
+WHERE agency_id = '126794dd-25ff-47d2-a436-724499733365'
+  AND parent_page_id = '296943645';
+
+-- (d) Rename wrapper → clear signature-only role
+UPDATE public.handbook
+SET title = 'Signature Page',
+    updated_at = NOW()
+WHERE id = 'a3aa61c7-3c81-404c-80de-8f85944f18b1';
+
+-- (e) Add sort_order column so signature can be forced to the bottom regardless of alphabetics
+ALTER TABLE public.handbook
+  ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+
+-- (f) Signature to the very bottom
+UPDATE public.handbook
+SET sort_order = 9999
+WHERE id = 'a3aa61c7-3c81-404c-80de-8f85944f18b1';
