@@ -1,1 +1,70 @@
-LS0gQnVtcCBzeW5jIGh0dHAgZXh0ZW5zaW9uIHRpbWVvdXRzIG9uIHRlbGVncmFtX3NlbmRfbWVzc2FnZSBhbmQgdGVsZWdyYW1fcmVjb3Zlcl9jaGVja2lucy4KLS0gUm9vdCBjYXVzZTogZXh0ZW5zaW9ucy5odHRwX3Bvc3QgaGFzIGEgNXMgZGVmYXVsdDsgZ3JvdXAtY2hhdCBzZW5kIGdvZXMgdGhyb3VnaCB0aGUKLS0gL2Z1bmN0aW9ucy92MS90ZWxlZ3JhbSBlZGdlIGZuIHdoaWNoIGNvbGQtc3RhcnRzIG9jY2FzaW9uYWxseS4gTWF0Y2hlcyB0aGUgcGF0dGVybgotLSBhbHJlYWR5IGluIHBhcGVyX25ld3Rfc2VuZF9tZXNzYWdlLiBCb2R5IG90aGVyd2lzZSB1bmNoYW5nZWQuCgpDUkVBVEUgT1IgUkVQTEFDRSBGVU5DVElPTiBwdWJsaWMudGVsZWdyYW1fc2VuZF9tZXNzYWdlKAogIHBfY2hhdF9pZCBiaWdpbnQsCiAgcF90ZXh0IHRleHQsCiAgcF9wYXJzZV9tb2RlIHRleHQgREVGQVVMVCBOVUxMOjp0ZXh0LAogIHBfcmVwbHlfdG9fbWVzc2FnZV9pZCBiaWdpbnQgREVGQVVMVCBOVUxMOjpiaWdpbnQKKSBSRVRVUk5TIGpzb25iCkxBTkdVQUdFIHBscGdzcWwKQVMgJGZ1bmMkCkRFQ0xBUkUKICB2X3BheWxvYWQganNvbmI7CiAgdl9yZXNwb25zZSBqc29uYjsKQkVHSU4KICB2X3BheWxvYWQgOj0ganNvbmJfYnVpbGRfb2JqZWN0KAogICAgJ2FjdGlvbicsICdzZW5kTWVzc2FnZScsCiAgICAnY2hhdF9pZCcsIHBfY2hhdF9pZCwKICAgICd0ZXh0JywgcF90ZXh0CiAgKTsKICBJRiBwX3BhcnNlX21vZGUgSVMgTk9UIE5VTEwgVEhFTgogICAgdl9wYXlsb2FkIDo9IHZfcGF5bG9hZCB8fCBqc29uYl9idWlsZF9vYmplY3QoJ3BhcnNlX21vZGUnLCBwX3BhcnNlX21vZGUpOwogIEVORCBJRjsKICBJRiBwX3JlcGx5X3RvX21lc3NhZ2VfaWQgSVMgTk9UIE5VTEwgVEhFTgogICAgdl9wYXlsb2FkIDo9IHZfcGF5bG9hZCB8fCBqc29uYl9idWlsZF9vYmplY3QoJ3JlcGx5X3RvX21lc3NhZ2VfaWQnLCBwX3JlcGx5X3RvX21lc3NhZ2VfaWQpOwogIEVORCBJRjsKCiAgLS0gU3Vydml2ZSBUZWxlZ3JhbSBlZGdlLWZuIGNvbGQgc3RhcnRzIChzeW5jIGh0dHAgZXh0ZW5zaW9uIGRlZmF1bHRzIHRvIDVzKS4KICBQRVJGT1JNIGV4dGVuc2lvbnMuaHR0cF9zZXRfY3VybG9wdCgnQ1VSTE9QVF9DT05ORUNUVElNRU9VVF9NUycsICc1MDAwJyk7CiAgUEVSRk9STSBleHRlbnNpb25zLmh0dHBfc2V0X2N1cmxvcHQoJ0NVUkxPUFRfVElNRU9VVF9NUycsICcyMDAwMCcpOwoKICBTRUxFQ1QgKGV4dGVuc2lvbnMuaHR0cF9wb3N0KAogICAgJ2h0dHBzOi8vdnVsaGR1amhid3ZpYmJvamlpbWkuc3VwYWJhc2UuY28vZnVuY3Rpb25zL3YxL3RlbGVncmFtJywKICAgIHZfcGF5bG9hZDo6dGV4dCwKICAgICdhcHBsaWNhdGlvbi9qc29uJwogICkpLmNvbnRlbnQ6Ompzb25iIElOVE8gdl9yZXNwb25zZTsKCiAgUkVUVVJOIHZfcmVzcG9uc2U7CkVORDsKJGZ1bmMkOwoKQ1JFQVRFIE9SIFJFUExBQ0UgRlVOQ1RJT04gcHVibGljLnRlbGVncmFtX3JlY292ZXJfY2hlY2tpbnMoCiAgcF9jaGVja2luX2RhdGUgZGF0ZSwKICBwX2NoZWNraW5fdHlwZSB0ZXh0CikgUkVUVVJOUyBqc29uYgpMQU5HVUFHRSBwbHBnc3FsCkFTICRmdW5jJApERUNMQVJFCiAgdl9yZXNwb25zZSBqc29uYjsKQkVHSU4KICAtLSBTYW1lIGRlZmVuc2l2ZSB0aW1lb3V0IGJ1bXAg4oCUIHJlY292ZXJ5IGlzIGJlc3QtZWZmb3J0IGJ1dCBzaG91bGQgbm90IGJsb3cgdXAgb24gNXMgY29sZCBzdGFydC4KICBQRVJGT1JNIGV4dGVuc2lvbnMuaHR0cF9zZXRfY3VybG9wdCgnQ1VSTE9QVF9DT05ORUNUVElNRU9VVF9NUycsICc1MDAwJyk7CiAgUEVSRk9STSBleHRlbnNpb25zLmh0dHBfc2V0X2N1cmxvcHQoJ0NVUkxPUFRfVElNRU9VVF9NUycsICcyMDAwMCcpOwoKICB2X3Jlc3BvbnNlIDo9IChleHRlbnNpb25zLmh0dHBfcG9zdCgKICAgICdodHRwczovL3Z1bGhkdWpoYnd2aWJib2ppaW1pLnN1cGFiYXNlLmNvL2Z1bmN0aW9ucy92MS90ZWxlZ3JhbScsCiAgICBqc29uX2J1aWxkX29iamVjdCgKICAgICAgJ2FjdGlvbicsICdyZWNvdmVyQ2hlY2tpbnMnLAogICAgICAnY2hlY2tpbl9kYXRlJywgcF9jaGVja2luX2RhdGU6OnRleHQsCiAgICAgICdjaGVja2luX3R5cGUnLCBwX2NoZWNraW5fdHlwZQogICAgKTo6dGV4dCwKICAgICdhcHBsaWNhdGlvbi9qc29uJwogICkpLmNvbnRlbnQ6Ompzb25iOwogIFJFVFVSTiB2X3Jlc3BvbnNlOwpFWENFUFRJT04gV0hFTiBPVEhFUlMgVEhFTgogIFJFVFVSTiBqc29uYl9idWlsZF9vYmplY3QoJ29rJywgZmFsc2UsICdlcnJvcicsIFNRTEVSUk0pOwpFTkQ7CiRmdW5jJDs=
+-- Bump sync http extension timeouts on telegram_send_message and telegram_recover_checkins.
+-- Root cause: extensions.http_post has a 5s default; group-chat send goes through the
+-- /functions/v1/telegram edge fn which cold-starts occasionally. Matches the pattern
+-- already in paper_newt_send_message. Body otherwise unchanged.
+
+CREATE OR REPLACE FUNCTION public.telegram_send_message(
+  p_chat_id bigint,
+  p_text text,
+  p_parse_mode text DEFAULT NULL::text,
+  p_reply_to_message_id bigint DEFAULT NULL::bigint
+) RETURNS jsonb
+LANGUAGE plpgsql
+AS $func$
+DECLARE
+  v_payload jsonb;
+  v_response jsonb;
+BEGIN
+  v_payload := jsonb_build_object(
+    'action', 'sendMessage',
+    'chat_id', p_chat_id,
+    'text', p_text
+  );
+  IF p_parse_mode IS NOT NULL THEN
+    v_payload := v_payload || jsonb_build_object('parse_mode', p_parse_mode);
+  END IF;
+  IF p_reply_to_message_id IS NOT NULL THEN
+    v_payload := v_payload || jsonb_build_object('reply_to_message_id', p_reply_to_message_id);
+  END IF;
+
+  -- Survive Telegram edge-fn cold starts (sync http extension defaults to 5s).
+  PERFORM extensions.http_set_curlopt('CURLOPT_CONNECTTIMEOUT_MS', '5000');
+  PERFORM extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
+
+  SELECT (extensions.http_post(
+    'https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/telegram',
+    v_payload::text,
+    'application/json'
+  )).content::jsonb INTO v_response;
+
+  RETURN v_response;
+END;
+$func$;
+
+CREATE OR REPLACE FUNCTION public.telegram_recover_checkins(
+  p_checkin_date date,
+  p_checkin_type text
+) RETURNS jsonb
+LANGUAGE plpgsql
+AS $func$
+DECLARE
+  v_response jsonb;
+BEGIN
+  -- Same defensive timeout bump — recovery is best-effort but should not blow up on 5s cold start.
+  PERFORM extensions.http_set_curlopt('CURLOPT_CONNECTTIMEOUT_MS', '5000');
+  PERFORM extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
+
+  v_response := (extensions.http_post(
+    'https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/telegram',
+    json_build_object(
+      'action', 'recoverCheckins',
+      'checkin_date', p_checkin_date::text,
+      'checkin_type', p_checkin_type
+    )::text,
+    'application/json'
+  )).content::jsonb;
+  RETURN v_response;
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$func$;
