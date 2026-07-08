@@ -126,7 +126,7 @@ function flattenTree(roots) {
 // from the stored handbook.content. Keyed by confluence_page_id.
 const DYNAMIC_HANDBOOK_PAGES = {
   "345407825": "team_roster", // Team List — renders live from public.team
-  "newtworks-native-handbook-glossary": "glossary_all", // Glossary — renders live from public.glossary_terms
+  "newtworks-native-handbook-glossary": "glossary_all", // Glossary — renders live from child handbook rows
 };
 
 // Live roster component for the Team List page.
@@ -214,9 +214,10 @@ function TeamRoster() {
 }
 
 
-// Live glossary component for the Glossary page. Renders active terms from
-// public.glossary_terms grouped alphabetically by first letter. Terms are
-// authored in-DB (no admin UI yet); an empty table renders a friendly stub.
+// Live glossary component for the Glossary page. Renders active terms
+// (handbook rows parented to the Glossary page) grouped alphabetically by
+// first letter. Terms authored as child pages of the Glossary handbook row;
+// empty state renders a friendly stub.
 function GlossaryList() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -254,7 +255,7 @@ function GlossaryList() {
   if (!rows.length) {
     return (
       <p style={{ color: T.slate500, fontStyle: "italic" }}>
-        No glossary terms yet. Add rows to <code>public.glossary_terms</code> and they'll appear here.
+        No glossary terms yet. Add child pages under the Glossary handbook row (parent_page_id=<code>newtworks-native-handbook-glossary</code>) and they'll appear here.
       </p>
     );
   }
