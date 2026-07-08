@@ -1,1 +1,104 @@
-Q1JFQVRFIE9SIFJFUExBQ0UgRlVOQ1RJT04gcHVibGljLmh1ZGRsZV9jYWxlbmRhcl9zeW5jKHBfYWdlbmN5X2lkIHV1aWQgREVGQVVMVCAnMTI2Nzk0ZGQtMjVmZi00N2QyLWE0MzYtNzI0NDk5NzMzMzY1Jzo6dXVpZCkKIFJFVFVSTlMganNvbmIKIExBTkdVQUdFIHBscGdzcWwKQVMgJGZ1bmN0aW9uJApERUNMQVJFCiAgdiBwdWJsaWMuYWdlbmN5X2h1ZGRsZV9jb25maWclUk9XVFlQRTsKICB2X2FwaV9rZXkgdGV4dDsKICB2X3VzZXJfaWQgdGV4dDsKICB2X2Nvbm5lY3RlZF9hY2NvdW50X2lkIHRleHQ7CiAgdl9wZ19uZXRfaWQgYmlnaW50OwogIHZfYXR0ZW5kZWVzIGpzb25iOwogIHZfc3RhcnRfdHMgdGV4dDsKICB2X2FjdGlvbiB0ZXh0OwogIHZfYXJndW1lbnRzIGpzb25iOwpCRUdJTgogIFNFTEVDVCAqIElOVE8gdiBGUk9NIHB1YmxpYy5hZ2VuY3lfaHVkZGxlX2NvbmZpZwogIFdIRVJFIGFnZW5jeV9pZCA9IHBfYWdlbmN5X2lkCiAgICBBTkQgY2FsZW5kYXJfbmVlZHNfc3luYyA9IHRydWUKICAgIEFORCBjYWxlbmRhcl9pZCBJUyBOT1QgTlVMTDsKICBJRiBOT1QgRk9VTkQgVEhFTgogICAgUkVUVVJOIGpzb25iX2J1aWxkX29iamVjdCgnc3RhdHVzJywnbm9vcCcsJ3JlYXNvbicsJ25vIHJvd3MgZmxhZ2dlZCcpOwogIEVORCBJRjsKCiAgU0VMRUNUIHNldHRpbmdfdmFsdWUgSU5UTyB2X2FwaV9rZXkgRlJPTSBwdWJsaWMuc2V0dGluZ3MKICAgIFdIRVJFIGFnZW5jeV9pZCA9IHBfYWdlbmN5X2lkIEFORCBzZXR0aW5nX2tleSA9ICdjb21wb3Npb19hcGlfa2V5JzsKICBTRUxFQ1Qgc2V0dGluZ192YWx1ZSBJTlRPIHZfdXNlcl9pZCBGUk9NIHB1YmxpYy5zZXR0aW5ncwogICAgV0hFUkUgYWdlbmN5X2lkID0gcF9hZ2VuY3lfaWQgQU5EIHNldHRpbmdfa2V5ID0gJ2NvbXBvc2lvX3VzZXJfaWQnOwogIFNFTEVDVCBzZXR0aW5nX3ZhbHVlIElOVE8gdl9jb25uZWN0ZWRfYWNjb3VudF9pZCBGUk9NIHB1YmxpYy5zZXR0aW5ncwogICAgV0hFUkUgYWdlbmN5X2lkID0gcF9hZ2VuY3lfaWQgQU5EIHNldHRpbmdfa2V5ID0gJ2NvbXBvc2lvX2dvb2dsZWNhbGVuZGFyX2FjY291bnRfaWQnOwogIElGIHZfYXBpX2tleSBJUyBOVUxMIE9SIHZfdXNlcl9pZCBJUyBOVUxMIE9SIHZfY29ubmVjdGVkX2FjY291bnRfaWQgSVMgTlVMTCBUSEVOCiAgICBSQUlTRSBFWENFUFRJT04gJ0NvbXBvc2lvIEdvb2dsZSBDYWxlbmRhciBjb25maWcgbWlzc2luZyBpbiBzZXR0aW5ncyc7CiAgRU5EIElGOwoKICAtLSBBdHRlbmRlZXMgdmlhIGNhbm9uaWNhbCAoYWdlbmN5X2FjdGl2ZV9hbGwsIE93bmVyIElOQ0xVREVEKQogIFNFTEVDVCBqc29uYl9hZ2coZW1haWwpIElOVE8gdl9hdHRlbmRlZXMgRlJPTSAoCiAgICBTRUxFQ1QgZXQuZW1haWxfc2YgQVMgZW1haWwKICAgIEZST00gcHVibGljLmdldF9leHBlY3RlZF90ZWFtbWF0ZXMocF9hZ2VuY3lfaWQsICdhZ2VuY3lfYWN0aXZlX2FsbCcsIE5VTEwpIGV0CiAgICBXSEVSRSBldC5lbWFpbF9zZiBJUyBOT1QgTlVMTCBBTkQgZXQuZW1haWxfc2YgPD4gJycKICAgIFVOSU9OIEFMTAogICAgU0VMRUNUIGV0LmVtYWlsX3BlcnNvbmFsCiAgICBGUk9NIHB1YmxpYy5nZXRfZXhwZWN0ZWRfdGVhbW1hdGVzKHBfYWdlbmN5X2lkLCAnYWdlbmN5X2FjdGl2ZV9hbGwnLCBOVUxMKSBldAogICAgV0hFUkUgZXQuZW1haWxfcGVyc29uYWwgSVMgTk9UIE5VTEwgQU5EIGV0LmVtYWlsX3BlcnNvbmFsIDw+ICcnCiAgKSBlOwoKICB2X3N0YXJ0X3RzIDo9IENPQUxFU0NFKHYuZXZlbnRfZmlyc3RfZGF0ZSwgQ1VSUkVOVF9EQVRFKTo6dGV4dAogICAgICAgICAgICAgICAgfHwgJ1QnIHx8IFRPX0NIQVIodi5zdGFydF90aW1lX2xvY2FsLCAnSEgyNDpNSTpTUycpOwoKICBJRiB2LmNhbGVuZGFyX2V2ZW50X2lkIElTIE5VTEwgVEhFTgogICAgdl9hY3Rpb24gOj0gJ0dPT0dMRUNBTEVOREFSX0NSRUFURV9FVkVOVCc7CiAgICB2X2FyZ3VtZW50cyA6PSBqc29uYl9idWlsZF9vYmplY3QoCiAgICAgICdjYWxlbmRhcl9pZCcsICAgICAgICAgICAgdi5jYWxlbmRhcl9pZCwKICAgICAgJ3N1bW1hcnknLCAgICAgICAgICAgICAgICB2LmV2ZW50X3RpdGxlLAogICAgICAnZGVzY3JpcHRpb24nLCAgICAgICAgICAgICdTdG9yeSBBZ2VuY3kgdGVhbSBodWRkbGUuIE1hbmFnZWQgYnkgTmV3dHdvcmtzIGFnZW5jeV9odWRkbGVfY29uZmlnLiBSaHl0aG0gKyB0aGlzIHdlZWsnJ3MgbGVhZGVyIGluIE5ld3R3b3JrcyDihpIgUGxheWJvb2sg4oaSIFRlYW0gSHVkZGxlIOKGkiBEYWlseSBSaHl0aG0uJywKICAgICAgJ3N0YXJ0X2RhdGV0aW1lJywgICAgICAgICB2X3N0YXJ0X3RzLAogICAgICAndGltZXpvbmUnLCAgICAgICAgICAgICAgICdBbWVyaWNhL0NoaWNhZ28nLAogICAgICAnZXZlbnRfZHVyYXRpb25faG91cicsICAgIDAsCiAgICAgICdldmVudF9kdXJhdGlvbl9taW51dGVzJywgdi5kdXJhdGlvbl9yZWd1bGFyX21pbiwKICAgICAgJ3JlY3VycmVuY2UnLCAgICAgICAgICAgICBqc29uYl9idWlsZF9hcnJheSgnUlJVTEU6RlJFUT1XRUVLTFk7QllEQVk9JyB8fCBhcnJheV90b19zdHJpbmcodi5kYXlzX29mX3dlZWssICcsJykpLAogICAgICAnYXR0ZW5kZWVzJywgICAgICAgICAgICAgIENPQUxFU0NFKHZfYXR0ZW5kZWVzLCAnW10nOjpqc29uYiksCiAgICAgICdjcmVhdGVfbWVldGluZ19yb29tJywgICAgdHJ1ZSwKICAgICAgJ2V4Y2x1ZGVfb3JnYW5pemVyJywgICAgICB0cnVlLAogICAgICAnc2VuZF91cGRhdGVzJywgICAgICAgICAgICdhbGwnLAogICAgICAnZ3Vlc3RzQ2FuSW52aXRlT3RoZXJzJywgIGZhbHNlLAogICAgICAnZ3Vlc3RzQ2FuU2VlT3RoZXJHdWVzdHMnLCB0cnVlCiAgICApOwogIEVMU0UKICAgIHZfYWN0aW9uIDo9ICdHT09HTEVDQUxFTkRBUl9VUERBVEVfRVZFTlQnOwogICAgdl9hcmd1bWVudHMgOj0ganNvbmJfYnVpbGRfb2JqZWN0KAogICAgICAnY2FsZW5kYXJfaWQnLCAgICAgICAgICAgIHYuY2FsZW5kYXJfaWQsCiAgICAgICdldmVudF9pZCcsICAgICAgICAgICAgICAgdi5jYWxlbmRhcl9ldmVudF9pZCwKICAgICAgJ3N1bW1hcnknLCAgICAgICAgICAgICAgICB2LmV2ZW50X3RpdGxlLAogICAgICAnc3RhcnRfZGF0ZXRpbWUnLCAgICAgICAgIHZfc3RhcnRfdHMsCiAgICAgICd0aW1lem9uZScsICAgICAgICAgICAgICAgJ0FtZXJpY2EvQ2hpY2FnbycsCiAgICAgICdldmVudF9kdXJhdGlvbl9ob3VyJywgICAgMCwKICAgICAgJ2V2ZW50X2R1cmF0aW9uX21pbnV0ZXMnLCB2LmR1cmF0aW9uX3JlZ3VsYXJfbWluLAogICAgICAncmVjdXJyZW5jZScsICAgICAgICAgICAgIGpzb25iX2J1aWxkX2FycmF5KCdSUlVMRTpGUkVRPVdFRUtMWTtCWURBWT0nIHx8IGFycmF5X3RvX3N0cmluZyh2LmRheXNfb2Zfd2VlaywgJywnKSksCiAgICAgICdhdHRlbmRlZXMnLCAgICAgICAgICAgICAgQ09BTEVTQ0Uodl9hdHRlbmRlZXMsICdbXSc6Ompzb25iKSwKICAgICAgJ3NlbmRfdXBkYXRlcycsICAgICAgICAgICAnYWxsJwogICAgKTsKICBFTkQgSUY7CgogIFNFTEVDVCBuZXQuaHR0cF9wb3N0KAogICAgdXJsICAgICA6PSAnaHR0cHM6Ly9iYWNrZW5kLmNvbXBvc2lvLmRldi9hcGkvdjMvdG9vbHMvZXhlY3V0ZS8nIHx8IHZfYWN0aW9uLAogICAgaGVhZGVycyA6PSBqc29uYl9idWlsZF9vYmplY3QoJ3gtYXBpLWtleScsIHZfYXBpX2tleSwgJ0NvbnRlbnQtVHlwZScsICdhcHBsaWNhdGlvbi9qc29uJyksCiAgICBib2R5ICAgIDo9IGpzb25iX2J1aWxkX29iamVjdCgKICAgICAgJ3VzZXJfaWQnLCAgICAgICAgICAgICAgdl91c2VyX2lkLAogICAgICAnY29ubmVjdGVkX2FjY291bnRfaWQnLCB2X2Nvbm5lY3RlZF9hY2NvdW50X2lkLAogICAgICAnYXJndW1lbnRzJywgICAgICAgICAgICB2X2FyZ3VtZW50cwogICAgKQogICkgSU5UTyB2X3BnX25ldF9pZDsKCiAgVVBEQVRFIHB1YmxpYy5hZ2VuY3lfaHVkZGxlX2NvbmZpZwogIFNFVCBjYWxlbmRhcl9uZWVkc19zeW5jID0gZmFsc2UsCiAgICAgIGNhbGVuZGFyX2xhc3Rfc3luY2VkX2F0ID0gTk9XKCkKICBXSEVSRSBhZ2VuY3lfaWQgPSBwX2FnZW5jeV9pZDsKCiAgUkVUVVJOIGpzb25iX2J1aWxkX29iamVjdCgKICAgICdzdGF0dXMnLCdkaXNwYXRjaGVkJywKICAgICdhY3Rpb24nLCB2X2FjdGlvbiwKICAgICdwZ19uZXRfaWQnLCB2X3BnX25ldF9pZCwKICAgICdzdGFydF9kYXRldGltZScsIHZfc3RhcnRfdHMKICApOwpFTkQ7CiRmdW5jdGlvbiQK
+CREATE OR REPLACE FUNCTION public.huddle_calendar_sync(p_agency_id uuid DEFAULT '126794dd-25ff-47d2-a436-724499733365'::uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v public.agency_huddle_config%ROWTYPE;
+  v_api_key text;
+  v_user_id text;
+  v_connected_account_id text;
+  v_pg_net_id bigint;
+  v_attendees jsonb;
+  v_start_ts text;
+  v_action text;
+  v_arguments jsonb;
+BEGIN
+  SELECT * INTO v FROM public.agency_huddle_config
+  WHERE agency_id = p_agency_id
+    AND calendar_needs_sync = true
+    AND calendar_id IS NOT NULL;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status','noop','reason','no rows flagged');
+  END IF;
+
+  SELECT setting_value INTO v_api_key FROM public.settings
+    WHERE agency_id = p_agency_id AND setting_key = 'composio_api_key';
+  SELECT setting_value INTO v_user_id FROM public.settings
+    WHERE agency_id = p_agency_id AND setting_key = 'composio_user_id';
+  SELECT setting_value INTO v_connected_account_id FROM public.settings
+    WHERE agency_id = p_agency_id AND setting_key = 'composio_googlecalendar_account_id';
+  IF v_api_key IS NULL OR v_user_id IS NULL OR v_connected_account_id IS NULL THEN
+    RAISE EXCEPTION 'Composio Google Calendar config missing in settings';
+  END IF;
+
+  -- Attendees via canonical (agency_active_all, Owner INCLUDED)
+  SELECT jsonb_agg(email) INTO v_attendees FROM (
+    SELECT et.email_sf AS email
+    FROM public.get_expected_teammates(p_agency_id, 'agency_active_all', NULL) et
+    WHERE et.email_sf IS NOT NULL AND et.email_sf <> ''
+    UNION ALL
+    SELECT et.email_personal
+    FROM public.get_expected_teammates(p_agency_id, 'agency_active_all', NULL) et
+    WHERE et.email_personal IS NOT NULL AND et.email_personal <> ''
+  ) e;
+
+  v_start_ts := COALESCE(v.event_first_date, CURRENT_DATE)::text
+                || 'T' || TO_CHAR(v.start_time_local, 'HH24:MI:SS');
+
+  IF v.calendar_event_id IS NULL THEN
+    v_action := 'GOOGLECALENDAR_CREATE_EVENT';
+    v_arguments := jsonb_build_object(
+      'calendar_id',            v.calendar_id,
+      'summary',                v.event_title,
+      'description',            'Story Agency team huddle. Managed by Newtworks agency_huddle_config. Rhythm + this week''s leader in Newtworks → Playbook → Team Huddle → Daily Rhythm.',
+      'start_datetime',         v_start_ts,
+      'timezone',               'America/Chicago',
+      'event_duration_hour',    0,
+      'event_duration_minutes', v.duration_regular_min,
+      'recurrence',             jsonb_build_array('RRULE:FREQ=WEEKLY;BYDAY=' || array_to_string(v.days_of_week, ',')),
+      'attendees',              COALESCE(v_attendees, '[]'::jsonb),
+      'create_meeting_room',    true,
+      'exclude_organizer',      true,
+      'send_updates',           'all',
+      'guestsCanInviteOthers',  false,
+      'guestsCanSeeOtherGuests', true
+    );
+  ELSE
+    v_action := 'GOOGLECALENDAR_UPDATE_EVENT';
+    v_arguments := jsonb_build_object(
+      'calendar_id',            v.calendar_id,
+      'event_id',               v.calendar_event_id,
+      'summary',                v.event_title,
+      'start_datetime',         v_start_ts,
+      'timezone',               'America/Chicago',
+      'event_duration_hour',    0,
+      'event_duration_minutes', v.duration_regular_min,
+      'recurrence',             jsonb_build_array('RRULE:FREQ=WEEKLY;BYDAY=' || array_to_string(v.days_of_week, ',')),
+      'attendees',              COALESCE(v_attendees, '[]'::jsonb),
+      'send_updates',           'all'
+    );
+  END IF;
+
+  SELECT net.http_post(
+    url     := 'https://backend.composio.dev/api/v3/tools/execute/' || v_action,
+    headers := jsonb_build_object('x-api-key', v_api_key, 'Content-Type', 'application/json'),
+    body    := jsonb_build_object(
+      'user_id',              v_user_id,
+      'connected_account_id', v_connected_account_id,
+      'arguments',            v_arguments
+    )
+  ) INTO v_pg_net_id;
+
+  UPDATE public.agency_huddle_config
+  SET calendar_needs_sync = false,
+      calendar_last_synced_at = NOW()
+  WHERE agency_id = p_agency_id;
+
+  RETURN jsonb_build_object(
+    'status','dispatched',
+    'action', v_action,
+    'pg_net_id', v_pg_net_id,
+    'start_datetime', v_start_ts
+  );
+END;
+$function$
