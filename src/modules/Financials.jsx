@@ -44,6 +44,7 @@ function useFinancialsData() {
           isRows, priorIsRows, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
           aippRow, scorecardRows, balanceSheetRows,
+          growthBudgetRes, growthCeilingRes,
         ] = await Promise.all([
           // Income statement view (current year)
           supabase.from("v_income_statement")
@@ -105,6 +106,14 @@ function useFinancialsData() {
           // Balance Sheet — anchored to prior-books 4/30/2026 opening balances + post-4/30 GL activity
           supabase.from("v_balance_sheet_anchored")
             .select("account_code, account_name, account_type, anchor_0430, activity_since_0430, balance_current"),
+
+          // Growth budget YTD (salary ramp + licensing 6715)
+          supabase.from("v_growth_budget_full_ytd")
+            .select("salary_ramp_ytd_dollars, licensing_ytd_dollars, total_growth_budget_ytd_dollars, active_new_hires_ramping, total_weeks_ramping_ytd, licensing_entries_ytd")
+            .eq("agency_id", AGENCY_ID).maybeSingle(),
+
+          // Growth budget annual ceiling (10% of on-time annual gross ex-scorecard)
+          supabase.rpc("get_growth_budget_ceiling", { p_agency_id: AGENCY_ID }),
         ]);
 
         const isData = isRows.data || [];
@@ -321,6 +330,24 @@ function useFinancialsData() {
           })),
           payroll,
           balanceSheet,
+          growthBudget: (() => {
+            const gb = growthBudgetRes?.data || {};
+            const ceiling = growthCeilingRes?.data || {};
+            const ytd = parseFloat(gb.total_growth_budget_ytd_dollars || 0);
+            const ceil = parseFloat(ceiling.ceiling_annual || 0);
+            return {
+              salary_ramp_ytd:   parseFloat(gb.salary_ramp_ytd_dollars || 0),
+              licensing_ytd:     parseFloat(gb.licensing_ytd_dollars || 0),
+              total_ytd:         ytd,
+              ceiling_annual:    ceil,
+              utilization_pct:   ceil > 0 ? (ytd / ceil) * 100 : 0,
+              new_hires_ramping: parseInt(gb.active_new_hires_ramping || 0, 10),
+              weeks_ramping_ytd: parseFloat(gb.total_weeks_ramping_ytd || 0),
+              licensing_entries: parseInt(gb.licensing_entries_ytd || 0, 10),
+              anchor_date:       ceiling.comp_anchor_date,
+              annualization:     parseFloat(ceiling.annualization_factor || 0),
+            };
+          })(),
         });
       } catch(e) {
         console.error("Financials load error:", e);
@@ -611,6 +638,51 @@ const OverviewSection = ({ period, setPeriod, data }) => {
             <div style={{ fontSize: 11, color: T.slate400, padding: "8px 0" }}>No income recorded yet for {curMonthLabel}.</div>
           )}
         </Card>
+
+        {/* Growth Budget Utilization — new-hire salary ramp + licensing 6715 vs 10% ceiling of on-time annual gross ex-Scorecard */}
+        {data?.growthBudget && (
+          <Card>
+            <CardHeader
+              title="Growth Budget — YTD"
+              sub={`Ramp cost + licensing vs ceiling (10% of on-time annual gross ex-Scorecard)`}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Spent YTD</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmt(data.growthBudget.total_ytd)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Annual Ceiling</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmt(data.growthBudget.ceiling_annual)}</div>
+              </div>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
+                <span style={{ color: T.slate600 }}>Utilization</span>
+                <span style={{ fontWeight: 600, color: data.growthBudget.utilization_pct > 100 ? T.red : data.growthBudget.utilization_pct > 80 ? T.amber : T.green }}>
+                  {data.growthBudget.utilization_pct.toFixed(1)}%
+                </span>
+              </div>
+              <ProgressBar
+                value={data.growthBudget.total_ytd}
+                max={data.growthBudget.ceiling_annual || 1}
+                color={data.growthBudget.utilization_pct > 100 ? T.red : data.growthBudget.utilization_pct > 80 ? T.amber : T.green}
+              />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11, color: T.slate600 }}>
+              <div>
+                <div style={{ color: T.slate500, marginBottom: 2 }}>Salary Ramp</div>
+                <div style={{ fontWeight: 600, color: T.slate900 }}>{fmt(data.growthBudget.salary_ramp_ytd)}</div>
+                <div style={{ fontSize: 10, color: T.slate400 }}>{data.growthBudget.new_hires_ramping} ramping · {data.growthBudget.weeks_ramping_ytd} weeks</div>
+              </div>
+              <div>
+                <div style={{ color: T.slate500, marginBottom: 2 }}>Licensing (6715)</div>
+                <div style={{ fontWeight: 600, color: T.slate900 }}>{fmt(data.growthBudget.licensing_ytd)}</div>
+                <div style={{ fontSize: 10, color: T.slate400 }}>{data.growthBudget.licensing_entries} entries</div>
+              </div>
+            </div>
+          </Card>
+        )}
       </div>
     </div>
   );
