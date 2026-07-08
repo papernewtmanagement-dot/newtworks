@@ -619,8 +619,12 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
         // ─── Standing Goals pace computation ─────────────────────
         // Pull goal feeds in parallel
         const [bookRes, bookYsRes, bpgRes, sfRes, bandsRes] = await Promise.allSettled([
-          supabase.from("agency_snapshot").select("snapshot_date, auto_pif, fire_pif, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
-          supabase.from("agency_snapshot").select("snapshot_date, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).gte("snapshot_date", `${curYear}-01-01`).order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
+          // Latest snapshot with premiums populated. Weekly CPR flow seeds
+          // future-dated rows with count fields only; premiums land later.
+          // Selecting a NULL-premium row silently coerces to $0 and produces
+          // a wildly negative P&C growth pace (surfaced 2026-07-08).
+          supabase.from("agency_snapshot").select("snapshot_date, auto_pif, fire_pif, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).not("auto_premium","is",null).not("fire_premium","is",null).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("agency_snapshot").select("snapshot_date, auto_premium, fire_premium").eq("agency_id", AGENCY_ID).gte("snapshot_date", `${curYear}-01-01`).not("auto_premium","is",null).not("fire_premium","is",null).order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
           supabase.from("book_performance_goals").select("lob, metric, target_value").eq("agency_id", AGENCY_ID).eq("year", curYear),
           supabase.from("agency_snapshot").select("*").eq("agency_id", AGENCY_ID).not("auto_new_ytd","is",null).order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
           supabase.from("sf_program_targets").select("program, bucket_name, min_target, max_target, percent_available").eq("agency_id", AGENCY_ID).eq("program_year", curYear).in("program", ["scorecard","smvc"]),
