@@ -477,6 +477,11 @@ const GrowthBudgetWidget = ({ data, onNavigate }) => {
             {status==="warning" && " · Above prorated pace"}
             {status==="success" && ceiling>0 && " · Within pace"}
           </div>
+          {gb.ceilingInfo?.pct_of_ttm_gross && (
+            <div style={{fontSize:10, color:T.slate400, marginTop:2}}>
+              Basis: {(parseFloat(gb.ceilingInfo.pct_of_ttm_gross)*100).toFixed(0)}% of TTM gross revenue ({fmt(gb.ceilingInfo.ttm_gross)})
+            </div>
+          )}
         </div>
       )}
       {roster.length > 0 ? (
@@ -569,7 +574,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
         const [
           agencyRes, summaryRes, aippRes, tasksRes,
           alertsRes, memoryRes, complianceRes, closeRes, closeChecklistRes, cprRes,
-          gbCurrentRes, gbYtdRes
+          gbCurrentRes, gbYtdRes, gbCeilingRes
         ] = await Promise.allSettled([
           supabase.from("agency").select("*").limit(1).maybeSingle(),
           Promise.resolve({ data: null }), // removed — no comp_recap_data  table
@@ -584,6 +589,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           supabase.from("weekly_cpr_reports").select("*").eq("agency_id", AGENCY_ID).order("week_ending_date",{ascending:false}).limit(1).maybeSingle(),
           supabase.from("v_growth_budget_current").select("*").eq("agency_id", AGENCY_ID),
           supabase.from("v_growth_budget_ytd").select("growth_budget_ytd").eq("agency_id", AGENCY_ID),
+          supabase.rpc("get_growth_budget_ceiling", { p_agency_id: AGENCY_ID }),
         ]);
 
         const agency = agencyRes.status==="fulfilled" ? agencyRes.value.data : null;
@@ -735,7 +741,8 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
           growthBudget: {
             currentRoster: gbCurrentRes.status==="fulfilled" ? (gbCurrentRes.value.data||[]) : [],
             ytdTotal: (gbYtdRes.status==="fulfilled" ? (gbYtdRes.value.data||[]) : []).reduce((s,r)=>s+parseFloat(r.growth_budget_ytd||0),0),
-            ceiling: parseFloat(agency?.growth_budget_ceiling_annual||0),
+            ceiling: parseFloat((gbCeilingRes.status==="fulfilled" ? (gbCeilingRes.value.data||{}).ceiling_annual : 0) || 0),
+            ceilingInfo: gbCeilingRes.status==="fulfilled" ? (gbCeilingRes.value.data||{}) : {},
           },
           goalsPace,
         });
