@@ -1,15 +1,15 @@
 // =========================================================================
-// renewal-reminder-runner
+// license-reminder-runner (path still renewal-reminder-runner for now)
 // =========================================================================
 // Daily job that:
-//   1) Reads active rows from public.team_renewals
-//   2) Upserts an alerts row per renewal (severity scales with days_until_due)
+//   1) Reads active rows from public.team_licenses
+//   2) Upserts an alerts row per license (severity scales with days_until_due)
 //   3) On cadence days (90/60/30/14/7/1/0 or negative for past-due) sends a
 //      reminder email to the team member's email_personal AND email_sf, cc
 //      Peter for high/critical. Skips CE reminders where ce_required=false.
-//   4) Logs each send to renewal_notification_log so we don't double-send.
+//   4) Logs each send to license_notification_log so we don't double-send.
 //
-// Invoked by pg_cron via dispatch_renewal_reminders() (see companion SQL).
+// Invoked by pg_cron via dispatch_license_reminders() (see companion SQL).
 // =========================================================================
 
 // deno-lint-ignore-file no-explicit-any
@@ -22,7 +22,7 @@ const TZ = "America/Chicago";
 
 const CADENCE_DAYS_BEFORE = [90, 60, 30, 14, 7, 1, 0];
 
-const RENEWAL_LABELS: Record<string, string> = {
+const LICENSE_LABELS: Record<string, string> = {
   insurance_ce: "Insurance CE",
   annuities_ce: "Annuities CE",
   medicare_ce: "Medicare CE",
@@ -43,7 +43,7 @@ const RENEWAL_LABELS: Record<string, string> = {
 };
 
 function labelFor(t: string): string {
-  return RENEWAL_LABELS[t] ?? t;
+  return LICENSE_LABELS[t] ?? t;
 }
 
 function severityForDays(daysOut: number): string {
@@ -133,7 +133,7 @@ async function callComposioGmailSend(
 
 function buildEmailBody(input: {
   firstName: string;
-  renewalLabel: string;
+  licenseLabel: string;
   authority: string | null;
   states: string[];
   dueDateISO: string;
@@ -146,7 +146,7 @@ function buildEmailBody(input: {
 }): { subject: string; html: string } {
   const {
     firstName,
-    renewalLabel,
+    licenseLabel,
     authority,
     states,
     dueDateISO,
@@ -173,7 +173,7 @@ function buildEmailBody(input: {
     : daysOut <= 7
     ? "[URGENT]"
     : "[Reminder]";
-  const subject = `${subjectTag} ${renewalLabel}${stateStr} — due ${dueHuman}`;
+  const subject = `${subjectTag} ${licenseLabel}${stateStr} — due ${dueHuman}`;
 
   const hoursLine = hoursRequired
     ? `<p style="margin:6px 0"><strong>Hours required:</strong> ${hoursRequired}</p>`
@@ -201,7 +201,7 @@ function buildEmailBody(input: {
   <div style="border-bottom:2px solid ${
     isPastDue || daysOut === 0 ? "#dc2626" : daysOut <= 14 ? "#ea580c" : "#4a86e8"
   };padding-bottom:12px;margin-bottom:20px">
-    <h2 style="margin:0;font-size:20px;font-weight:700">${renewalLabel}${stateStr}${auth}</h2>
+    <h2 style="margin:0;font-size:20px;font-weight:700">${licenseLabel}${stateStr}${auth}</h2>
     <p style="margin:6px 0 0;font-size:14px;color:#666">Hi ${firstName},</p>
   </div>
 
@@ -290,10 +290,10 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const { data: renewals, error: renewalErr } = await sb
-    .from("team_renewals")
+  const { data: licenses, error: licenseErr } = await sb
+    .from("team_licenses")
     .select(`
-      id, team_member_id, renewal_type, authority, states, due_date,
+      id, team_member_id, license_type, authority, states, due_date,
       cycle_months, initial_issue_date, last_completed_at, status,
       ce_required, hours_required, ce_breakdown, notes, source_url,
       team:team_member_id (
@@ -303,9 +303,9 @@ Deno.serve(async (req: Request) => {
     .eq("agency_id", agencyId)
     .eq("status", "active");
 
-  if (renewalErr) {
+  if (licenseErr) {
     return new Response(
-      JSON.stringify({ ok: false, error: renewalErr.message }),
+      JSON.stringify({ ok: false, error: licenseErr.message }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -322,7 +322,7 @@ Deno.serve(async (req: Request) => {
     errors: [] as string[],
   };
 
-  for (const r of (renewals ?? [])) {
+  for (const r of (licenses ?? [])) {
     results.processed++;
 
     const teamMember = (r as any).team;
@@ -331,9 +331,9 @@ Deno.serve(async (req: Request) => {
       continue;
     }
 
-    const isCeRow = r.renewal_type.endsWith("_ce") ||
-      r.renewal_type === "series_6_annual_compliance" ||
-      r.renewal_type === "series_6_regulatory_element";
+    const isCeRow = r.license_type.endsWith("_ce") ||
+      r.license_type === "series_6_annual_compliance" ||
+      r.license_type === "series_6_regulatory_element";
     if (isCeRow && r.ce_required === false) {
       results.skipped_ce_not_required++;
       continue;
@@ -342,18 +342,18 @@ Deno.serve(async (req: Request) => {
     const daysOut = daysBetween(today, r.due_date);
     const isPastDue = daysOut < 0;
     const severity = severityForDays(daysOut);
-    const renewalLabel = labelFor(r.renewal_type);
+    const licenseLabel = labelFor(r.license_type);
 
     const { data: existingAlert } = await sb
       .from("alerts")
       .select("id, severity")
-      .eq("module_reference", "team_renewals")
+      .eq("module_reference", "team_licenses")
       .eq("related_id", r.id)
       .eq("is_resolved", false)
       .maybeSingle();
 
     const alertTitle =
-      `${teamMember.first_name} ${teamMember.last_name} — ${renewalLabel}`;
+      `${teamMember.first_name} ${teamMember.last_name} — ${licenseLabel}`;
     const alertMessage = isPastDue
       ? `PAST DUE by ${Math.abs(daysOut)} day${Math.abs(daysOut) === 1 ? "" : "s"}. Due ${r.due_date}.`
       : daysOut === 0
@@ -379,7 +379,7 @@ Deno.serve(async (req: Request) => {
           severity,
           title: alertTitle,
           message: alertMessage,
-          module_reference: "team_renewals",
+          module_reference: "team_licenses",
           related_id: r.id,
           is_read: false,
           is_resolved: false,
@@ -400,7 +400,7 @@ Deno.serve(async (req: Request) => {
 
     const { subject, html } = buildEmailBody({
       firstName: teamMember.first_name,
-      renewalLabel,
+      licenseLabel,
       authority: r.authority,
       states: r.states || [],
       dueDateISO: r.due_date,
@@ -432,9 +432,9 @@ Deno.serve(async (req: Request) => {
 
     for (const rc of recipients) {
       const { data: logHit } = await sb
-        .from("renewal_notification_log")
+        .from("license_notification_log")
         .select("id")
-        .eq("team_renewal_id", r.id)
+        .eq("team_license_id", r.id)
         .eq("cadence_day", cadenceDay)
         .eq("channel", rc.channel)
         .maybeSingle();
@@ -455,10 +455,10 @@ Deno.serve(async (req: Request) => {
       });
 
       const { error: logErr } = await sb
-        .from("renewal_notification_log")
+        .from("license_notification_log")
         .insert({
           agency_id: agencyId,
-          team_renewal_id: r.id,
+          team_license_id: r.id,
           cadence_day: cadenceDay,
           channel: rc.channel,
           recipient: rc.email,

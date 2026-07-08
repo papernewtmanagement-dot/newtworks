@@ -20,7 +20,7 @@ import Admin from "./src/modules/Admin.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
-import Renewals from "./src/modules/Renewals.jsx";
+import Licensing from "./src/modules/Licensing.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -96,7 +96,7 @@ const NAV_ITEMS = [
   { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
-  { id: "renewals",    label: "Renewals",    icon: "shield",        roles: TEAM_VISIBLE_ROLES },
+  { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
@@ -666,7 +666,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
-    renewals:    <ErrorBoundary name="Renewals"><Renewals userRole={userRole} userId={userId} /></ErrorBoundary>,
+    licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
