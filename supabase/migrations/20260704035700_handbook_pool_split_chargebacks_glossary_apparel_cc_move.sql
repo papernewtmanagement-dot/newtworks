@@ -1,1 +1,26 @@
-LS0gSGFuZGJvb2s6IHBvb2wtc3BsaXQgbWF0aCArIGNoYXJnZWJhY2tzIHJlc3RvcmVkICsgZ2xvc3NhcnkgcmVzdG9yZWQgKHBheSByZWZzIHN0cmlwcGVkKSArIGFwcGFyZWwvQ0MgbW92ZWQgdG8gMDEgQmVuZWZpdHMKLS0gQWxzbzogYXBwZW5kICQxMCBCdW1wcyBhbmQgTWFuYWdlciBCb251cyAlIGFzIG9wZW4gcXVlc3Rpb25zCi0tIDIwMjYtMDctMDQKLS0KLS0gQ29udGVudCBwYXlsb2FkcyBlbGlkZWQgZm9yIHJlYWRhYmlsaXR5OyBhcHBsaWVkIHZpYSBTdXBhYmFzZSBNQ1AgYXBwbHlfbWlncmF0aW9uIGluIHNhbWUgc2Vzc2lvbi4KLS0gMDMgQm9udXNlcyAmIFBheSB2MiAoNTI2OWFiNWEpOiBwb29sLXNwbGl0IG1hdGggYWRkZWQgKDY1LzM1IFNQK1JIIHdpdGggNS1mYWN0b3Igd2VpZ2h0ZWQgaG91cnMpLAotLSAgIGNoYXJnZWJhY2tzIHJlc3RvcmVkIChubyBwYXkgY2xhd2JhY2ssIGhvbm9yLXN5c3RlbSBXaGl0ZWJvYXJkIHRyYWNraW5nKSwKLS0gICBnbG9zc2FyeSByZXN0b3JlZCBmdWxsIChBUFBMSUNBVElPTi9BUFBPSU5UTUVOVC9QUkVNSVVNL1JFRkVSUkFML1JFVklFVykgd2l0aCBwYXkgcmVmcyBzdHJpcHBlZCwKLS0gICBBcHBhcmVsICsgQ2hhbXBpb25zIENpcmNsZSByZW1vdmVkIChtb3ZlZCB0byAwMSBCZW5lZml0cykuCi0tIDAxIEJlbmVmaXRzICg2NGE3OGNkMik6IEFwcGFyZWwgKyBDaGFtcGlvbnMgQ2lyY2xlIHNlY3Rpb25zIGFkZGVkIGJlZm9yZSBUYWJsZSBvZiBCZW5lZml0cy4KLS0gcGVyc2lzdGVudF9tZW1vcnkgb3Blbl9xdWVzdGlvbnMgcm93IGFwcGVuZGVkOiAkMTAgQnVtcHMgZnV0dXJlIGZvcm11bGEsIE1hbmFnZXIgQm9udXMgJSBmdXR1cmUgZGVzaWduLgoKVVBEQVRFIHB1YmxpYy5oYW5kYm9vawpTRVQgY29udGVudCA9ICc8djIgcmVzaWR1YWwtcG9vbCBjb250ZW50IOKAlCBzZWUgaGFuZGJvb2sgdGFibGU+JywKICAgIHVwZGF0ZWRfYXQgPSBOT1coKQpXSEVSRSBpZCA9ICc1MjY5YWI1YS1lNTc1LTQyODctOWVhMi1kNTI5YjE5YzkwYTYnOwoKVVBEQVRFIHB1YmxpYy5oYW5kYm9vawpTRVQgY29udGVudCA9ICc8QXBwYXJlbCArIENoYW1waW9ucyBDaXJjbGUgYWRkZWQg4oCUIHNlZSBoYW5kYm9vayB0YWJsZT4nLAogICAgdXBkYXRlZF9hdCA9IE5PVygpCldIRVJFIGlkID0gJzY0YTc4Y2QyLTNiODUtNGJmYi1hNTE0LTVkMjhiZjY3ZjE3Yyc7CgpVUERBVEUgcHVibGljLnBlcnNpc3RlbnRfbWVtb3J5ClNFVCBjb250ZW50ID0gY29udGVudCB8fCAnPHR3byBuZXcgW09QRU4gMjAyNi0wNy0wNF0gaXRlbXMgYXBwZW5kZWQgZm9yICQxMCBCdW1wcyArIE1hbmFnZXIgQm9udXMgJT4nLAogICAgdXBkYXRlZF9hdCA9IE5PVygpCldIRVJFIGlkID0gJzE1ODFhYzk1LTk3ZTMtNDBkOC04YTI0LWQxNDcxYmM4YWZjNCc7Cg==
+-- Handbook: pool-split math + chargebacks restored + glossary restored (pay refs stripped) + apparel/CC moved to 01 Benefits
+-- Also: append $10 Bumps and Manager Bonus % as open questions
+-- 2026-07-04
+--
+-- Content payloads elided for readability; applied via Supabase MCP apply_migration in same session.
+-- 03 Bonuses & Pay v2 (5269ab5a): pool-split math added (65/35 SP+RH with 5-factor weighted hours),
+--   chargebacks restored (no pay clawback, honor-system Whiteboard tracking),
+--   glossary restored full (APPLICATION/APPOINTMENT/PREMIUM/REFERRAL/REVIEW) with pay refs stripped,
+--   Apparel + Champions Circle removed (moved to 01 Benefits).
+-- 01 Benefits (64a78cd2): Apparel + Champions Circle sections added before Table of Benefits.
+-- persistent_memory open_questions row appended: $10 Bumps future formula, Manager Bonus % future design.
+
+UPDATE public.handbook
+SET content = '<v2 residual-pool content — see handbook table>',
+    updated_at = NOW()
+WHERE id = '5269ab5a-e575-4287-9ea2-d529b19c90a6';
+
+UPDATE public.handbook
+SET content = '<Apparel + Champions Circle added — see handbook table>',
+    updated_at = NOW()
+WHERE id = '64a78cd2-3b85-4bfb-a514-5d28bf67f17c';
+
+UPDATE public.persistent_memory
+SET content = content || '<two new [OPEN 2026-07-04] items appended for $10 Bumps + Manager Bonus %>',
+    updated_at = NOW()
+WHERE id = '1581ac95-97e3-40d8-8a24-d1471bc8afc4';
