@@ -2,9 +2,12 @@
 // MarketingPoints.jsx — Admin surface for weekly marketing point entry
 //
 // Purpose:
-//   Peter enters weekly per-member marketing points (reviews, referrals
-//   quoted, referrals sold). Data feeds public.marketing_points, which
-//   feeds compute_weekly_marketing_bonus → weekly_cpr_team_detail.
+//   Peter enters weekly per-member marketing points. Points = the DOLLAR
+//   value of cash marketing spiffs paid to each person that week
+//   (e.g. Cassie earned $22.35 in review spiffs → 22.35 points).
+//   Retroactive kickers naturally roll in via the dollar total.
+//   Data feeds public.marketing_points, which feeds
+//   compute_weekly_marketing_bonus → weekly_cpr_team_detail.
 //
 // Backend:
 //   Table:    public.marketing_points (UNIQUE agency+member+week)
@@ -12,11 +15,11 @@
 //   Rule:     Marketing Bonus Pool — 10% envelope, 50% underspend to team
 //             (locked 2026-07-07)
 //
-// Point rules (1 point per event):
-//   - 1 pt per review posted (Google/FB/Yelp)
-//   - 1 pt per referral quoted
-//   - 1 pt per referral sold
-//   - Full-cycle referral (quoted + sold) = 2 points
+// Point rule:
+//   points = $ value of cash marketing spiff for that person that week
+//   - Review: $15 base + $0.15 retro per prior review (up to 99×)
+//   - Referral quoted: $30 flat
+//   - Referral sold: $30 base + $0.30 retro per prior sold (up to 99×)
 // ============================================================
 import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
@@ -24,16 +27,14 @@ import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
 import { fmt, safeNum } from "../lib/utils.js";
 
-// Return the next Saturday (or today if today is Sat) in YYYY-MM-DD
 function nextSaturdayISO(from = new Date()) {
   const d = new Date(from);
-  const dow = d.getDay(); // 0=Sun ... 6=Sat
+  const dow = d.getDay();
   const add = (6 - dow + 7) % 7;
   d.setDate(d.getDate() + add);
   return d.toISOString().slice(0, 10);
 }
 
-// Given a YYYY-MM-DD Saturday, return prior/next Saturday YYYY-MM-DD
 function shiftSaturday(iso, weeks) {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + weeks * 7);
@@ -44,7 +45,6 @@ export default function MarketingPoints() {
   const vp = useViewport();
   const [weekEnd, setWeekEnd] = useState(nextSaturdayISO());
   const [team, setTeam] = useState([]);
-  const [existing, setExisting] = useState({});
   const [inputs, setInputs] = useState({});
   const [pool, setPool] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -85,20 +85,15 @@ export default function MarketingPoints() {
           .eq("week_end_date", weekEnd);
         if (existErr) throw existErr;
 
-        const existMap = {};
         const inputInit = {};
         for (const t of eligible) {
           const row = (existRows || []).find(r => r.team_member_id === t.id);
-          existMap[t.id] = row || null;
           inputInit[t.id] = {
-            reviews: row ? String(row.points_reviews ?? 0) : "0",
-            quoted:  row ? String(row.points_referrals_quoted ?? 0) : "0",
-            sold:    row ? String(row.points_referrals_sold ?? 0) : "0",
-            notes:   row ? (row.notes ?? "") : "",
+            points: row ? String(row.points ?? 0) : "0",
+            notes:  row ? (row.notes ?? "") : "",
           };
         }
         if (cancelled) return;
-        setExisting(existMap);
         setInputs(inputInit);
 
         const { data: poolData, error: poolErr } = await supabase.rpc(
@@ -125,11 +120,8 @@ export default function MarketingPoints() {
     setSavedMsg("");
   };
 
-  const rowPointsTotal = m =>
-    safeNum(inputs[m.id]?.reviews) + safeNum(inputs[m.id]?.quoted) + safeNum(inputs[m.id]?.sold);
-
   const weekTotalPoints = useMemo(
-    () => team.reduce((sum, m) => sum + rowPointsTotal(m), 0),
+    () => team.reduce((sum, m) => sum + safeNum(inputs[m.id]?.points), 0),
     [team, inputs]
   );
 
@@ -141,17 +133,11 @@ export default function MarketingPoints() {
     try {
       const rows = team.map(m => {
         const i = inputs[m.id] || {};
-        const reviews = safeNum(i.reviews);
-        const quoted  = safeNum(i.quoted);
-        const sold    = safeNum(i.sold);
         return {
           agency_id: AGENCY_ID,
           team_member_id: m.id,
           week_end_date: weekEnd,
-          points: reviews + quoted + sold,
-          points_reviews: reviews,
-          points_referrals_quoted: quoted,
-          points_referrals_sold: sold,
+          points: safeNum(i.points),
           notes: (i.notes || "").trim() || null,
           source: "peter_weekly_input",
           updated_at: new Date().toISOString(),
@@ -195,14 +181,15 @@ export default function MarketingPoints() {
     metric: { background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: 10 },
     metricLabel: { fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 },
     metricValue: { fontSize: 18, fontWeight: 800, color: T.slate900, marginTop: 2 },
-    memberRow: { display: "grid", gridTemplateColumns: vp.isPhone ? "1fr" : "160px repeat(3, 1fr) 80px", gap: 8, padding: "10px 0", borderBottom: `1px solid ${T.slate100}`, alignItems: vp.isPhone ? "stretch" : "center" },
-    memberName: { fontWeight: 700, fontSize: 14, color: T.slate900, display: "flex", alignItems: "center", justifyContent: "space-between" },
+    memberRow: { display: "grid", gridTemplateColumns: vp.isPhone ? "1fr" : "1fr 140px 120px", gap: 12, padding: "10px 0", borderBottom: `1px solid ${T.slate100}`, alignItems: vp.isPhone ? "stretch" : "center" },
+    memberName: { fontWeight: 700, fontSize: 14, color: T.slate900 },
     input: { border: `1px solid ${T.slate300}`, borderRadius: 6, padding: "8px 10px", fontSize: 14, color: T.slate900, background: T.white, width: "100%", boxSizing: "border-box" },
     inputLabel: { fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, marginBottom: 4 },
-    ptsPill: { display: "inline-block", padding: "2px 8px", borderRadius: 999, background: T.blueLt, color: T.blue, fontSize: 11, fontWeight: 700 },
     saveBtn: { background: T.blue, color: T.white, border: "none", borderRadius: 8, padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: vp.isPhone ? "100%" : "auto", opacity: saving ? 0.6 : 1 },
     err: { color: T.red, fontSize: 12, marginTop: 8, padding: 8, background: T.redLt, borderRadius: 6 },
     ok: { color: T.green, fontSize: 12, fontWeight: 700, marginTop: 8 },
+    ytdBadge: { fontSize: 13, fontWeight: 700, color: T.slate900, textAlign: vp.isPhone ? "left" : "right" },
+    ytdSub: { fontSize: 10, fontWeight: 400, color: T.slate500 },
   };
 
   const envAnnual = pool?.envelope?.annual;
@@ -215,8 +202,9 @@ export default function MarketingPoints() {
     <div style={css.page}>
       <div style={css.h1}>Marketing Points</div>
       <div style={css.sub}>
-        Weekly per-member marketing activity. Feeds the Marketing Bonus Pool (10% envelope, 50% underspend to team).
-        1 point = 1 review, 1 referral quoted, or 1 referral sold. A full-cycle referral (quoted + sold) earns 2 points.
+        Weekly per-member marketing points. <strong>1 point = $1 of marketing spiff paid.</strong> Retroactive
+        kickers ($0.15/review, $0.30/sold referral) roll in automatically via the dollar total.
+        Feeds the Marketing Bonus Pool (10% envelope, 50% underspend to team).
       </div>
 
       <div style={css.card}>
@@ -258,7 +246,7 @@ export default function MarketingPoints() {
         <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 8 }}>
           Points this week &nbsp;
           <span style={{ fontWeight: 400, color: T.slate500 }}>
-            (team total: <span style={css.ptsPill}>{weekTotalPoints} pts</span>)
+            (team total: <strong>{fmt(weekTotalPoints)}</strong>)
           </span>
         </div>
 
@@ -270,39 +258,25 @@ export default function MarketingPoints() {
 
         {!loading && team.map(m => {
           const name = m.nickname || m.first_name;
-          const total = rowPointsTotal(m);
           const person = (pool?.people || []).find(p => p.team_member_id === m.id);
           return (
             <div key={m.id} style={css.memberRow}>
-              <div style={css.memberName}>
-                <span>{name}</span>
-                <span style={css.ptsPill}>{total} pts</span>
-              </div>
+              <div style={css.memberName}>{name}</div>
               <div>
-                <div style={css.inputLabel}>Reviews</div>
-                <input style={css.input} type="number" min="0" step="1"
-                  value={inputs[m.id]?.reviews ?? "0"}
-                  onChange={e => updateInput(m.id, "reviews", e.target.value)}/>
+                <div style={css.inputLabel}>Points this week ($)</div>
+                <input
+                  style={css.input}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={inputs[m.id]?.points ?? "0"}
+                  onChange={e => updateInput(m.id, "points", e.target.value)}
+                />
               </div>
-              <div>
-                <div style={css.inputLabel}>Referrals Quoted</div>
-                <input style={css.input} type="number" min="0" step="1"
-                  value={inputs[m.id]?.quoted ?? "0"}
-                  onChange={e => updateInput(m.id, "quoted", e.target.value)}/>
-              </div>
-              <div>
-                <div style={css.inputLabel}>Referrals Sold</div>
-                <input style={css.input} type="number" min="0" step="1"
-                  value={inputs[m.id]?.sold ?? "0"}
-                  onChange={e => updateInput(m.id, "sold", e.target.value)}/>
-              </div>
-              <div>
-                <div style={css.inputLabel}>YTD earned</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, padding: "8px 0" }}>
-                  {fmt(person?.earned_ytd ?? 0)}
-                  <div style={{ fontSize: 10, fontWeight: 400, color: T.slate500 }}>
-                    {safeNum(person?.points_ytd)} pts ({safeNum(person?.share_pct).toFixed(1)}%)
-                  </div>
+              <div style={css.ytdBadge}>
+                {fmt(person?.earned_ytd ?? 0)}
+                <div style={css.ytdSub}>
+                  {safeNum(person?.points_ytd).toFixed(2)} pts YTD ({safeNum(person?.share_pct).toFixed(1)}%)
                 </div>
               </div>
             </div>
@@ -323,7 +297,7 @@ export default function MarketingPoints() {
                     type="text"
                     value={inputs[m.id]?.notes ?? ""}
                     onChange={e => updateInput(m.id, "notes", e.target.value)}
-                    placeholder="Which review / who referred / anything to remember"
+                    placeholder="Breakdown (reviews, quoted, sold) or anything to remember"
                   />
                 </div>
               ))}
@@ -346,7 +320,7 @@ export default function MarketingPoints() {
           <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 8 }}>
             YTD leaderboard &nbsp;
             <span style={{ fontWeight: 400, color: T.slate500 }}>
-              ({safeNum(totalPts).toLocaleString()} pts total)
+              ({safeNum(totalPts).toFixed(2)} pts total)
             </span>
           </div>
           {pool.people.map(p => {
@@ -363,7 +337,7 @@ export default function MarketingPoints() {
               }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: T.slate900 }}>{name}</div>
                 <div style={{ fontSize: 12, color: T.slate500 }}>
-                  {safeNum(p.points_ytd)} pts &middot; {share.toFixed(1)}%
+                  {safeNum(p.points_ytd).toFixed(2)} pts &middot; {share.toFixed(1)}%
                 </div>
                 <div style={{ fontWeight: 700, fontSize: 14, color: T.slate900 }}>{fmt(p.earned_ytd)}</div>
               </div>
