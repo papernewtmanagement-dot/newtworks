@@ -2924,7 +2924,7 @@ const RetentionBudgetSection = () => {
   );
 };
 
-export default // ─── Growth Budget Section ───────────────────────────────────
+// ─── Growth Budget Section ───────────────────────────────────
 // Per-ramping-teammate breakdown + agency summary + forecasting UI.
 // Reads: v_growth_budget_current, v_growth_budget_ytd,
 //        get_growth_budget_ceiling RPC, get_growth_budget_forecast RPC.
@@ -3211,7 +3211,7 @@ const GrowthBudgetSection = () => {
   );
 };
 
-function HRPeople() {
+export default function HRPeople() {
   const { data: roi } = useProducerROI();
   const [section,     setSection]     = useState("overview");
   const [applicants,  setApplicants]  = useState([]);
