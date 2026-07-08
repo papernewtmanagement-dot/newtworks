@@ -1,1 +1,191 @@
-Ci0tIEZpeDogc3RhZmYgcmVzb2x1dGlvbiBETXMgZ28gdGhyb3VnaCBAcGpzYWdlbmN5Ym90IChhZ2VuY3ktZmFjaW5nIHRlYW0gYm90KSwKLS0gbm90IEBwYXBlcl9uZXd0X2JvdCAoUGV0ZXIncyBwZXJzb25hbCBETSBjaGFubmVsKS4KLS0gUGV0ZXIncyBvd24gbm90aWZpY2F0aW9ucyBjb250aW51ZSB2aWEgQHBhcGVyX25ld3RfYm90IOKAlCB0aGF0J3MgSElTIGNoYW5uZWwuCkNSRUFURSBPUiBSRVBMQUNFIEZVTkNUSU9OIHB1YmxpYy5kaXNwYXRjaF90aW1lX2Nsb2NrX2VkaXRfbm90aWZpY2F0aW9ucygpClJFVFVSTlMganNvbmIKTEFOR1VBR0UgcGxwZ3NxbApTRUNVUklUWSBERUZJTkVSClNFVCBzZWFyY2hfcGF0aCBUTyAncHVibGljJywgJ2V4dGVuc2lvbnMnCkFTICRmbiQKREVDTEFSRQogIHZfYWdlbmN5X2lkICAgICB1dWlkIDo9ICcxMjY3OTRkZC0yNWZmLTQ3ZDItYTQzNi03MjQ0OTk3MzMzNjUnOwogIHZfcmVjaXBlX2lkICAgICB1dWlkOwogIHZfcnVuX3N0YXJ0ZWQgICB0aW1lc3RhbXB0eiA6PSBub3coKTsKICB2X3BldGVyX2NoYXRfaWQgYmlnaW50OwogIHZfcGVuZGluZ19zZW50ICBpbnQgOj0gMDsKICB2X3BlbmRpbmdfZmFpbCAgaW50IDo9IDA7CiAgdl9yZXNvbHZlZF9zZW50IGludCA6PSAwOwogIHZfcmVzb2x2ZWRfZmFpbCBpbnQgOj0gMDsKICB2X3Jlc29sdmVkX3NraXAgaW50IDo9IDA7CiAgcl9ncm91cCAgICAgICAgIHJlY29yZDsKICByX3JlcyAgICAgICAgICAgcmVjb3JkOwogIHZfbXNnICAgICAgICAgICB0ZXh0OwogIHZfcmVzcCAgICAgICAgICBqc29uYjsKICB2X3R5cGVfbGFiZWwgICAgdGV4dDsKQkVHSU4KICBTRUxFQ1QgaWQgSU5UTyB2X3JlY2lwZV9pZCBGUk9NIHB1YmxpYy5hdXRvbWF0aW9uX3JlY2lwZXMKICAgV0hFUkUgYWdlbmN5X2lkID0gdl9hZ2VuY3lfaWQgQU5EIHJlY2lwZV9uYW1lID0gJ3RpbWVfY2xvY2tfZWRpdF9ub3RpZmllcicgTElNSVQgMTsKCiAgLS0gUGV0ZXIncyBjaGF0X2lkIGZvciBAcGFwZXJfbmV3dF9ib3QgRE1zIChoaXMgcGVyc29uYWwgY2hhbm5lbCkKICBTRUxFQ1QgdHRtLnRlbGVncmFtX3VzZXJfaWQgSU5UTyB2X3BldGVyX2NoYXRfaWQKICAgIEZST00gcHVibGljLnRlYW1fdGVsZWdyYW1fbWFwIHR0bQogICAgSk9JTiBwdWJsaWMudGVhbSB0IE9OIHQuaWQgPSB0dG0udGVhbV9pZAogICBXSEVSRSB0LmFnZW5jeV9pZCA9IHZfYWdlbmN5X2lkCiAgICAgQU5EIHQucm9sZV9sZXZlbCA9ICdPd25lcicKICAgICBBTkQgY29hbGVzY2UodHRtLmlzX2V4Y2x1ZGVkLCBmYWxzZSkgPSBmYWxzZQogICBMSU1JVCAxOwoKICAtLSA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CiAgLS0gUGFzcyAxOiBub3RpZnkgUGV0ZXIgKHZpYSBAcGFwZXJfbmV3dF9ib3Qg4oCUIEhJUyBETSBjaGFubmVsKQogIC0tID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KICBJRiB2X3BldGVyX2NoYXRfaWQgSVMgTk9UIE5VTEwgVEhFTgogICAgRk9SIHJfZ3JvdXAgSU4KICAgICAgU0VMRUNUCiAgICAgICAgdGNlci50ZWFtX21lbWJlcl9pZCwKICAgICAgICB0LmZpcnN0X25hbWUsCiAgICAgICAgdC5sYXN0X25hbWUsCiAgICAgICAgYXJyYXlfYWdnKHRjZXIuaWQgT1JERVIgQlkgdGNlci5zdWJtaXR0ZWRfYXQpIEFTIHJlcXVlc3RfaWRzLAogICAgICAgIGFycmF5X2FnZyh0Y2VyLmVkaXRfdHlwZSBPUkRFUiBCWSB0Y2VyLnN1Ym1pdHRlZF9hdCkgQVMgZWRpdF90eXBlcywKICAgICAgICBhcnJheV9hZ2codGNlci5wdW5jaF9kYXRlIE9SREVSIEJZIHRjZXIuc3VibWl0dGVkX2F0KSBBUyBwdW5jaF9kYXRlcywKICAgICAgICBhcnJheV9hZ2codGNlci5yZWFzb24gT1JERVIgQlkgdGNlci5zdWJtaXR0ZWRfYXQpIEFTIHJlYXNvbnMKICAgICAgRlJPTSBwdWJsaWMudGltZV9jbG9ja19lZGl0X3JlcXVlc3RzIHRjZXIKICAgICAgSk9JTiBwdWJsaWMudGVhbSB0IE9OIHQuaWQgPSB0Y2VyLnRlYW1fbWVtYmVyX2lkCiAgICAgIFdIRVJFIHRjZXIuYWdlbmN5X2lkID0gdl9hZ2VuY3lfaWQKICAgICAgICBBTkQgdGNlci5zdGF0dXMgPSAncGVuZGluZycKICAgICAgICBBTkQgdGNlci50ZWxlZ3JhbV9ub3RpZmllZF9hdCBJUyBOVUxMCiAgICAgIEdST1VQIEJZIHRjZXIudGVhbV9tZW1iZXJfaWQsIHQuZmlyc3RfbmFtZSwgdC5sYXN0X25hbWUKICAgIExPT1AKICAgICAgdl9tc2cgOj0gRSfij7AgVGltZSBjbG9jayBlZGl0IHJlcXVlc3QnCiAgICAgICAgICAgIHx8IENBU0UgV0hFTiBhcnJheV9sZW5ndGgocl9ncm91cC5yZXF1ZXN0X2lkcywgMSkgPiAxCiAgICAgICAgICAgICAgICAgICAgVEhFTiAncyAoJyB8fCBhcnJheV9sZW5ndGgocl9ncm91cC5yZXF1ZXN0X2lkcywgMSkgfHwgJyknCiAgICAgICAgICAgICAgICAgICAgRUxTRSAnJyBFTkQKICAgICAgICAgICAgfHwgRScgZnJvbSAnIHx8IHJfZ3JvdXAuZmlyc3RfbmFtZSB8fCAnICcgfHwgcl9ncm91cC5sYXN0X25hbWUgfHwgRSdcbic7CgogICAgICBGT1IgaSBJTiAxLi5hcnJheV9sZW5ndGgocl9ncm91cC5yZXF1ZXN0X2lkcywgMSkgTE9PUAogICAgICAgIHZfdHlwZV9sYWJlbCA6PSBDQVNFIHJfZ3JvdXAuZWRpdF90eXBlc1tpXQogICAgICAgICAgV0hFTiAnbWlzc2VkX3NoaWZ0JyAgICAgVEhFTiAnTWlzc2VkIHNoaWZ0JwogICAgICAgICAgV0hFTiAnbWlzc2VkX2Nsb2NrX2luJyAgVEhFTiAnTWlzc2VkIGNsb2NrLWluJwogICAgICAgICAgV0hFTiAnbWlzc2VkX2Nsb2NrX291dCcgVEhFTiAnTWlzc2VkIGNsb2NrLW91dCcKICAgICAgICAgIFdIRU4gJ3dyb25nX3RpbWUnICAgICAgIFRIRU4gJ1dyb25nIHRpbWUnCiAgICAgICAgICBFTFNFIHJfZ3JvdXAuZWRpdF90eXBlc1tpXQogICAgICAgIEVORDsKICAgICAgICB2X21zZyA6PSB2X21zZyB8fCBFJ1xu4oCiICcKICAgICAgICAgICAgICB8fCB0b19jaGFyKHJfZ3JvdXAucHVuY2hfZGF0ZXNbaV0sICdEeSBNb24gREQnKQogICAgICAgICAgICAgIHx8ICcg4oCUICcgfHwgdl90eXBlX2xhYmVsCiAgICAgICAgICAgICAgfHwgRSdcbiAgIicgfHwgbGVmdChyX2dyb3VwLnJlYXNvbnNbaV0sIDE0MCkgfHwgJyInOwogICAgICBFTkQgTE9PUDsKCiAgICAgIHZfbXNnIDo9IHZfbXNnIHx8IEUnXG5cblJldmlldyBpbiBUaW1lIENsb2NrIOKGkiBBZG1pbi4nOwoKICAgICAgdl9yZXNwIDo9IHB1YmxpYy5wYXBlcl9uZXd0X3NlbmRfbWVzc2FnZSh2X3BldGVyX2NoYXRfaWQsIHZfbXNnKTsKCiAgICAgIElGIHZfcmVzcCBJUyBOT1QgTlVMTCBBTkQgKHZfcmVzcC0+PidvaycpOjpib29sZWFuIElTIFRSVUUgVEhFTgogICAgICAgIFVQREFURSBwdWJsaWMudGltZV9jbG9ja19lZGl0X3JlcXVlc3RzCiAgICAgICAgICAgU0VUIHRlbGVncmFtX25vdGlmaWVkX2F0ID0gbm93KCkKICAgICAgICAgV0hFUkUgaWQgPSBBTlkocl9ncm91cC5yZXF1ZXN0X2lkcyk7CiAgICAgICAgdl9wZW5kaW5nX3NlbnQgOj0gdl9wZW5kaW5nX3NlbnQgKyBhcnJheV9sZW5ndGgocl9ncm91cC5yZXF1ZXN0X2lkcywgMSk7CiAgICAgIEVMU0UKICAgICAgICB2X3BlbmRpbmdfZmFpbCA6PSB2X3BlbmRpbmdfZmFpbCArIGFycmF5X2xlbmd0aChyX2dyb3VwLnJlcXVlc3RfaWRzLCAxKTsKICAgICAgRU5EIElGOwogICAgRU5EIExPT1A7CiAgRU5EIElGOwoKICAtLSA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CiAgLS0gUGFzcyAyOiBub3RpZnkgcmVxdWVzdGVycyB2aWEgQHBqc2FnZW5jeWJvdCAodGVhbS1mYWNpbmcgYWdlbmN5IGJvdCkKICAtLSBSZXF1aXJlcyB0aGUgc3RhZmYgbWVtYmVyIHRvIGhhdmUgL3N0YXJ0LWVkIEBwanNhZ2VuY3lib3QgaW4gRE0uCiAgLS0gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQogIEZPUiByX3JlcyBJTgogICAgU0VMRUNUCiAgICAgIHRjZXIuaWQsCiAgICAgIHRjZXIudGVhbV9tZW1iZXJfaWQsCiAgICAgIHRjZXIuc3RhdHVzLAogICAgICB0Y2VyLmVkaXRfdHlwZSwKICAgICAgdGNlci5wdW5jaF9kYXRlLAogICAgICB0Y2VyLnJldmlld19ub3RlLAogICAgICB0LmZpcnN0X25hbWUsCiAgICAgIHR0bS50ZWxlZ3JhbV91c2VyX2lkCiAgICBGUk9NIHB1YmxpYy50aW1lX2Nsb2NrX2VkaXRfcmVxdWVzdHMgdGNlcgogICAgSk9JTiBwdWJsaWMudGVhbSB0IE9OIHQuaWQgPSB0Y2VyLnRlYW1fbWVtYmVyX2lkCiAgICBMRUZUIEpPSU4gcHVibGljLnRlYW1fdGVsZWdyYW1fbWFwIHR0bSBPTiB0dG0udGVhbV9pZCA9IHRjZXIudGVhbV9tZW1iZXJfaWQKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgQU5EIGNvYWxlc2NlKHR0bS5pc19leGNsdWRlZCwgZmFsc2UpID0gZmFsc2UKICAgIFdIRVJFIHRjZXIuYWdlbmN5X2lkID0gdl9hZ2VuY3lfaWQKICAgICAgQU5EIHRjZXIuc3RhdHVzIElOICgnYXBwcm92ZWQnLCAnZGVuaWVkJywgJ2NhbmNlbGxlZCcpCiAgICAgIEFORCB0Y2VyLnJlcXVlc3Rlcl9ub3RpZmllZF9hdCBJUyBOVUxMCiAgICBPUkRFUiBCWSB0Y2VyLnJldmlld2VkX2F0IE5VTExTIExBU1QKICAgIExJTUlUIDIwCiAgTE9PUAogICAgSUYgcl9yZXMuc3RhdHVzID0gJ2NhbmNlbGxlZCcgVEhFTgogICAgICBVUERBVEUgcHVibGljLnRpbWVfY2xvY2tfZWRpdF9yZXF1ZXN0cyBTRVQgcmVxdWVzdGVyX25vdGlmaWVkX2F0ID0gbm93KCkgV0hFUkUgaWQgPSByX3Jlcy5pZDsKICAgICAgdl9yZXNvbHZlZF9za2lwIDo9IHZfcmVzb2x2ZWRfc2tpcCArIDE7CiAgICAgIENPTlRJTlVFOwogICAgRU5EIElGOwoKICAgIElGIHJfcmVzLnRlbGVncmFtX3VzZXJfaWQgSVMgTlVMTCBUSEVOCiAgICAgIFVQREFURSBwdWJsaWMudGltZV9jbG9ja19lZGl0X3JlcXVlc3RzIFNFVCByZXF1ZXN0ZXJfbm90aWZpZWRfYXQgPSBub3coKSBXSEVSRSBpZCA9IHJfcmVzLmlkOwogICAgICB2X3Jlc29sdmVkX3NraXAgOj0gdl9yZXNvbHZlZF9za2lwICsgMTsKICAgICAgQ09OVElOVUU7CiAgICBFTkQgSUY7CgogICAgdl90eXBlX2xhYmVsIDo9IENBU0Ugcl9yZXMuZWRpdF90eXBlCiAgICAgIFdIRU4gJ21pc3NlZF9zaGlmdCcgICAgIFRIRU4gJ21pc3NlZCBzaGlmdCcKICAgICAgV0hFTiAnbWlzc2VkX2Nsb2NrX2luJyAgVEhFTiAnbWlzc2VkIGNsb2NrLWluJwogICAgICBXSEVOICdtaXNzZWRfY2xvY2tfb3V0JyBUSEVOICdtaXNzZWQgY2xvY2stb3V0JwogICAgICBXSEVOICd3cm9uZ190aW1lJyAgICAgICBUSEVOICd3cm9uZyB0aW1lJwogICAgICBFTFNFIHJfcmVzLmVkaXRfdHlwZQogICAgRU5EOwoKICAgIElGIHJfcmVzLnN0YXR1cyA9ICdhcHByb3ZlZCcgVEhFTgogICAgICB2X21zZyA6PSBmb3JtYXQoRSfinIUgJXMsIHlvdXIgdGltZSBjbG9jayBlZGl0IHJlcXVlc3Qgd2FzIGFwcHJvdmVkLlxuXG4lcyDCtyAlcycsCiAgICAgICAgICAgICAgICAgICAgICByX3Jlcy5maXJzdF9uYW1lLAogICAgICAgICAgICAgICAgICAgICAgdG9fY2hhcihyX3Jlcy5wdW5jaF9kYXRlLCAnRHkgTW9uIEREJyksCiAgICAgICAgICAgICAgICAgICAgICB2X3R5cGVfbGFiZWwpOwogICAgRUxTRSAgLS0gZGVuaWVkCiAgICAgIHZfbXNnIDo9IGZvcm1hdChFJ+KdjCAlcywgeW91ciB0aW1lIGNsb2NrIGVkaXQgcmVxdWVzdCB3YXMgZGVuaWVkLlxuXG4lcyDCtyAlcycsCiAgICAgICAgICAgICAgICAgICAgICByX3Jlcy5maXJzdF9uYW1lLAogICAgICAgICAgICAgICAgICAgICAgdG9fY2hhcihyX3Jlcy5wdW5jaF9kYXRlLCAnRHkgTW9uIEREJyksCiAgICAgICAgICAgICAgICAgICAgICB2X3R5cGVfbGFiZWwpOwogICAgRU5EIElGOwoKICAgIElGIHJfcmVzLnJldmlld19ub3RlIElTIE5PVCBOVUxMIEFORCBsZW5ndGgoYnRyaW0ocl9yZXMucmV2aWV3X25vdGUpKSA+IDAgVEhFTgogICAgICB2X21zZyA6PSB2X21zZyB8fCBFJ1xuXG5QZXRlcjogIicgfHwgcl9yZXMucmV2aWV3X25vdGUgfHwgJyInOwogICAgRU5EIElGOwoKICAgIC0tIFJvdXRlIHRocm91Z2ggQHBqc2FnZW5jeWJvdCDigJQgYWdlbmN5LWZhY2luZyBib3QsIG5vdCBwYXBlcl9uZXd0X2JvdAogICAgdl9yZXNwIDo9IHB1YmxpYy50ZWxlZ3JhbV9zZW5kX21lc3NhZ2Uocl9yZXMudGVsZWdyYW1fdXNlcl9pZCwgdl9tc2cpOwoKICAgIFVQREFURSBwdWJsaWMudGltZV9jbG9ja19lZGl0X3JlcXVlc3RzIFNFVCByZXF1ZXN0ZXJfbm90aWZpZWRfYXQgPSBub3coKSBXSEVSRSBpZCA9IHJfcmVzLmlkOwoKICAgIElGIHZfcmVzcCBJUyBOT1QgTlVMTCBBTkQgKHZfcmVzcC0+PidvaycpOjpib29sZWFuIElTIFRSVUUgVEhFTgogICAgICB2X3Jlc29sdmVkX3NlbnQgOj0gdl9yZXNvbHZlZF9zZW50ICsgMTsKICAgIEVMU0UKICAgICAgdl9yZXNvbHZlZF9mYWlsIDo9IHZfcmVzb2x2ZWRfZmFpbCArIDE7CiAgICBFTkQgSUY7CiAgRU5EIExPT1A7CgogIElOU0VSVCBJTlRPIHB1YmxpYy5hdXRvbWF0aW9uX3J1bl9sb2cKICAgIChhZ2VuY3lfaWQsIHJlY2lwZV9pZCwgcnVuX2F0LCBzdGF0dXMsIHJlY29yZHNfcHJvY2Vzc2VkLCBvdXRwdXRfc3VtbWFyeSwgZHVyYXRpb25fc2Vjb25kcykKICBWQUxVRVMgKAogICAgdl9hZ2VuY3lfaWQsIHZfcmVjaXBlX2lkLCB2X3J1bl9zdGFydGVkLAogICAgQ0FTRSBXSEVOIHZfcGVuZGluZ19mYWlsICsgdl9yZXNvbHZlZF9mYWlsID4gMCBUSEVOICdwYXJ0aWFsJyBFTFNFICdzdWNjZXNzJyBFTkQsCiAgICB2X3BlbmRpbmdfc2VudCArIHZfcmVzb2x2ZWRfc2VudCArIHZfcmVzb2x2ZWRfc2tpcCwKICAgIGZvcm1hdCgncGVuZGluZ+KGknBhcGVyX25ld3Q6ICVzIHNlbnQgLyAlcyBmYWlsZWQgwrcgcmVzb2x2ZWTihpJwanNhZ2VuY3lib3Q6ICVzIHNlbnQgLyAlcyBmYWlsZWQgLyAlcyBza2lwcGVkJywKICAgICAgICAgICB2X3BlbmRpbmdfc2VudCwgdl9wZW5kaW5nX2ZhaWwsIHZfcmVzb2x2ZWRfc2VudCwgdl9yZXNvbHZlZF9mYWlsLCB2X3Jlc29sdmVkX3NraXApLAogICAgRVhUUkFDVChFUE9DSCBGUk9NIChub3coKSAtIHZfcnVuX3N0YXJ0ZWQpKTo6aW50CiAgKTsKCiAgUkVUVVJOIGpzb25iX2J1aWxkX29iamVjdCgKICAgICdwZW5kaW5nX3NlbnQnLCAgIHZfcGVuZGluZ19zZW50LAogICAgJ3BlbmRpbmdfZmFpbGVkJywgdl9wZW5kaW5nX2ZhaWwsCiAgICAncmVzb2x2ZWRfc2VudCcsICB2X3Jlc29sdmVkX3NlbnQsCiAgICAncmVzb2x2ZWRfZmFpbGVkJyx2X3Jlc29sdmVkX2ZhaWwsCiAgICAncmVzb2x2ZWRfc2tpcHBlZCcsIHZfcmVzb2x2ZWRfc2tpcAogICk7CkVYQ0VQVElPTiBXSEVOIE9USEVSUyBUSEVOCiAgSU5TRVJUIElOVE8gcHVibGljLmF1dG9tYXRpb25fcnVuX2xvZwogICAgKGFnZW5jeV9pZCwgcmVjaXBlX2lkLCBydW5fYXQsIHN0YXR1cywgZXJyb3JfbWVzc2FnZSwgZHVyYXRpb25fc2Vjb25kcykKICBWQUxVRVMgKHZfYWdlbmN5X2lkLCB2X3JlY2lwZV9pZCwgdl9ydW5fc3RhcnRlZCwgJ2ZhaWxlZCcsIFNRTEVSUk0sCiAgICAgICAgICBFWFRSQUNUKEVQT0NIIEZST00gKG5vdygpIC0gdl9ydW5fc3RhcnRlZCkpOjppbnQpOwogIFJBSVNFOwpFTkQ7CiRmbiQ7Cg==
+
+-- Fix: staff resolution DMs go through @pjsagencybot (agency-facing team bot),
+-- not @paper_newt_bot (Peter's personal DM channel).
+-- Peter's own notifications continue via @paper_newt_bot — that's HIS channel.
+CREATE OR REPLACE FUNCTION public.dispatch_time_clock_edit_notifications()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $fn$
+DECLARE
+  v_agency_id     uuid := '126794dd-25ff-47d2-a436-724499733365';
+  v_recipe_id     uuid;
+  v_run_started   timestamptz := now();
+  v_peter_chat_id bigint;
+  v_pending_sent  int := 0;
+  v_pending_fail  int := 0;
+  v_resolved_sent int := 0;
+  v_resolved_fail int := 0;
+  v_resolved_skip int := 0;
+  r_group         record;
+  r_res           record;
+  v_msg           text;
+  v_resp          jsonb;
+  v_type_label    text;
+BEGIN
+  SELECT id INTO v_recipe_id FROM public.automation_recipes
+   WHERE agency_id = v_agency_id AND recipe_name = 'time_clock_edit_notifier' LIMIT 1;
+
+  -- Peter's chat_id for @paper_newt_bot DMs (his personal channel)
+  SELECT ttm.telegram_user_id INTO v_peter_chat_id
+    FROM public.team_telegram_map ttm
+    JOIN public.team t ON t.id = ttm.team_id
+   WHERE t.agency_id = v_agency_id
+     AND t.role_level = 'Owner'
+     AND coalesce(ttm.is_excluded, false) = false
+   LIMIT 1;
+
+  -- ===================================================================
+  -- Pass 1: notify Peter (via @paper_newt_bot — HIS DM channel)
+  -- ===================================================================
+  IF v_peter_chat_id IS NOT NULL THEN
+    FOR r_group IN
+      SELECT
+        tcer.team_member_id,
+        t.first_name,
+        t.last_name,
+        array_agg(tcer.id ORDER BY tcer.submitted_at) AS request_ids,
+        array_agg(tcer.edit_type ORDER BY tcer.submitted_at) AS edit_types,
+        array_agg(tcer.punch_date ORDER BY tcer.submitted_at) AS punch_dates,
+        array_agg(tcer.reason ORDER BY tcer.submitted_at) AS reasons
+      FROM public.time_clock_edit_requests tcer
+      JOIN public.team t ON t.id = tcer.team_member_id
+      WHERE tcer.agency_id = v_agency_id
+        AND tcer.status = 'pending'
+        AND tcer.telegram_notified_at IS NULL
+      GROUP BY tcer.team_member_id, t.first_name, t.last_name
+    LOOP
+      v_msg := E'⏰ Time clock edit request'
+            || CASE WHEN array_length(r_group.request_ids, 1) > 1
+                    THEN 's (' || array_length(r_group.request_ids, 1) || ')'
+                    ELSE '' END
+            || E' from ' || r_group.first_name || ' ' || r_group.last_name || E'\n';
+
+      FOR i IN 1..array_length(r_group.request_ids, 1) LOOP
+        v_type_label := CASE r_group.edit_types[i]
+          WHEN 'missed_shift'     THEN 'Missed shift'
+          WHEN 'missed_clock_in'  THEN 'Missed clock-in'
+          WHEN 'missed_clock_out' THEN 'Missed clock-out'
+          WHEN 'wrong_time'       THEN 'Wrong time'
+          ELSE r_group.edit_types[i]
+        END;
+        v_msg := v_msg || E'\n• '
+              || to_char(r_group.punch_dates[i], 'Dy Mon DD')
+              || ' — ' || v_type_label
+              || E'\n  "' || left(r_group.reasons[i], 140) || '"';
+      END LOOP;
+
+      v_msg := v_msg || E'\n\nReview in Time Clock → Admin.';
+
+      v_resp := public.paper_newt_send_message(v_peter_chat_id, v_msg);
+
+      IF v_resp IS NOT NULL AND (v_resp->>'ok')::boolean IS TRUE THEN
+        UPDATE public.time_clock_edit_requests
+           SET telegram_notified_at = now()
+         WHERE id = ANY(r_group.request_ids);
+        v_pending_sent := v_pending_sent + array_length(r_group.request_ids, 1);
+      ELSE
+        v_pending_fail := v_pending_fail + array_length(r_group.request_ids, 1);
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- ===================================================================
+  -- Pass 2: notify requesters via @pjsagencybot (team-facing agency bot)
+  -- Requires the staff member to have /start-ed @pjsagencybot in DM.
+  -- ===================================================================
+  FOR r_res IN
+    SELECT
+      tcer.id,
+      tcer.team_member_id,
+      tcer.status,
+      tcer.edit_type,
+      tcer.punch_date,
+      tcer.review_note,
+      t.first_name,
+      ttm.telegram_user_id
+    FROM public.time_clock_edit_requests tcer
+    JOIN public.team t ON t.id = tcer.team_member_id
+    LEFT JOIN public.team_telegram_map ttm ON ttm.team_id = tcer.team_member_id
+                                          AND coalesce(ttm.is_excluded, false) = false
+    WHERE tcer.agency_id = v_agency_id
+      AND tcer.status IN ('approved', 'denied', 'cancelled')
+      AND tcer.requester_notified_at IS NULL
+    ORDER BY tcer.reviewed_at NULLS LAST
+    LIMIT 20
+  LOOP
+    IF r_res.status = 'cancelled' THEN
+      UPDATE public.time_clock_edit_requests SET requester_notified_at = now() WHERE id = r_res.id;
+      v_resolved_skip := v_resolved_skip + 1;
+      CONTINUE;
+    END IF;
+
+    IF r_res.telegram_user_id IS NULL THEN
+      UPDATE public.time_clock_edit_requests SET requester_notified_at = now() WHERE id = r_res.id;
+      v_resolved_skip := v_resolved_skip + 1;
+      CONTINUE;
+    END IF;
+
+    v_type_label := CASE r_res.edit_type
+      WHEN 'missed_shift'     THEN 'missed shift'
+      WHEN 'missed_clock_in'  THEN 'missed clock-in'
+      WHEN 'missed_clock_out' THEN 'missed clock-out'
+      WHEN 'wrong_time'       THEN 'wrong time'
+      ELSE r_res.edit_type
+    END;
+
+    IF r_res.status = 'approved' THEN
+      v_msg := format(E'✅ %s, your time clock edit request was approved.\n\n%s · %s',
+                      r_res.first_name,
+                      to_char(r_res.punch_date, 'Dy Mon DD'),
+                      v_type_label);
+    ELSE  -- denied
+      v_msg := format(E'❌ %s, your time clock edit request was denied.\n\n%s · %s',
+                      r_res.first_name,
+                      to_char(r_res.punch_date, 'Dy Mon DD'),
+                      v_type_label);
+    END IF;
+
+    IF r_res.review_note IS NOT NULL AND length(btrim(r_res.review_note)) > 0 THEN
+      v_msg := v_msg || E'\n\nPeter: "' || r_res.review_note || '"';
+    END IF;
+
+    -- Route through @pjsagencybot — agency-facing bot, not paper_newt_bot
+    v_resp := public.telegram_send_message(r_res.telegram_user_id, v_msg);
+
+    UPDATE public.time_clock_edit_requests SET requester_notified_at = now() WHERE id = r_res.id;
+
+    IF v_resp IS NOT NULL AND (v_resp->>'ok')::boolean IS TRUE THEN
+      v_resolved_sent := v_resolved_sent + 1;
+    ELSE
+      v_resolved_fail := v_resolved_fail + 1;
+    END IF;
+  END LOOP;
+
+  INSERT INTO public.automation_run_log
+    (agency_id, recipe_id, run_at, status, records_processed, output_summary, duration_seconds)
+  VALUES (
+    v_agency_id, v_recipe_id, v_run_started,
+    CASE WHEN v_pending_fail + v_resolved_fail > 0 THEN 'partial' ELSE 'success' END,
+    v_pending_sent + v_resolved_sent + v_resolved_skip,
+    format('pending→paper_newt: %s sent / %s failed · resolved→pjsagencybot: %s sent / %s failed / %s skipped',
+           v_pending_sent, v_pending_fail, v_resolved_sent, v_resolved_fail, v_resolved_skip),
+    EXTRACT(EPOCH FROM (now() - v_run_started))::int
+  );
+
+  RETURN jsonb_build_object(
+    'pending_sent',   v_pending_sent,
+    'pending_failed', v_pending_fail,
+    'resolved_sent',  v_resolved_sent,
+    'resolved_failed',v_resolved_fail,
+    'resolved_skipped', v_resolved_skip
+  );
+EXCEPTION WHEN OTHERS THEN
+  INSERT INTO public.automation_run_log
+    (agency_id, recipe_id, run_at, status, error_message, duration_seconds)
+  VALUES (v_agency_id, v_recipe_id, v_run_started, 'failed', SQLERRM,
+          EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+  RAISE;
+END;
+$fn$;
