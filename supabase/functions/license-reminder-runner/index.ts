@@ -1,5 +1,5 @@
 // =========================================================================
-// license-reminder-runner (path still renewal-reminder-runner for now)
+// license-reminder-runner
 // =========================================================================
 // Daily job that:
 //   1) Reads active rows from public.team_licenses
