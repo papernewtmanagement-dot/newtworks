@@ -1,1 +1,100 @@
-IyBOZXd0d29ya3Mg4oCUIE1hc3RlciBUZW1wbGF0ZQoKQnVpbHQgYnkgKipJbWFnaW5hcnkgRmFybXMgTExDKiogwrcgVGhlIENsYXVkZSBXaGlzcGVyZXIgwrcgW2ltYWdpbmFyeS1mYXJtcy5jb21dKGh0dHBzOi8vaW1hZ2luYXJ5LWZhcm1zLmNvbSkKCi0tLQoKIyMgV2hhdCBUaGlzIElzCgpUaGUgTmV3dHdvcmtzIChOZXd0d29ya3MpIGlzIGEgZnVsbC1zdGFjayBSZWFjdCB3ZWIgYXBwbGljYXRpb24gYnVpbHQgZXhjbHVzaXZlbHkgZm9yIFN0YXRlIEZhcm0gYWdlbnRzLiBJdCBjb25uZWN0cyB0byBTdXBhYmFzZSAoZGF0YWJhc2UpLCBDb21wb3NpbyAoYXV0b21hdGlvbnMpLCBDbGF1ZGUuYWkgKGludGVsbGlnZW5jZSBsYXllciksIEdpdEh1YiAoY29kZSksIGFuZCBWZXJjZWwgKGhvc3RpbmcpIHRvIGdpdmUgYWdlbnRzIGEgY29tcGxldGUgQUktcG93ZXJlZCBvcGVyYXRpbmcgc3lzdGVtIGZvciB0aGVpciBidXNpbmVzcy4KClRoaXMgcmVwb3NpdG9yeSBpcyB0aGUgKiptYXN0ZXIgdGVtcGxhdGUqKi4gRWFjaCBjbGllbnQgaW5zdGFsbCBjcmVhdGVzIGEgZm9yayBvZiB0aGlzIHJlcG8uICoqVGhlIGZvcmsgaXMgdGhlIGNsaWVudCdzIGFwcCBmcm9tIHRoYXQgcG9pbnQgZm9yd2FyZCoqIOKAlCB0aGUgbWFzdGVyIG5ldmVyIHB1c2hlcyB1cGRhdGVzIGJhY2sgdG8gY2xpZW50IGZvcmtzLiBOZXcgY2xpZW50cyBhbHdheXMgc3RhcnQgZnJvbSB0aGUgbGF0ZXN0IG1hc3RlciBhdCBmb3JrIHRpbWUuCgojIyBTdGFjawoKLSAqKkZyb250ZW5kOioqIFJlYWN0ICsgVml0ZQotICoqSG9zdGluZzoqKiBWZXJjZWwgKGNsaWVudCdzIG93biBhY2NvdW50KQotICoqRGF0YWJhc2U6KiogU3VwYWJhc2UgKGNsaWVudCdzIG93biBwcm9qZWN0KQotICoqQXV0b21hdGlvbnM6KiogQ29tcG9zaW8gKGNsaWVudCdzIG93biBhY2NvdW50KQotICoqSW50ZWxsaWdlbmNlOioqIENsYXVkZS5haSAoY2xpZW50J3Mgb3duIHN1YnNjcmlwdGlvbikKCiMjIFJlcG9zaXRvcnkgU3RydWN0dXJlCgpgYGAKbmV3dHdvcmtzLW1hc3Rlci10ZW1wbGF0ZS8K4pSc4pSA4pSAIE5ld3R3b3Jrc0FwcC5qc3ggICAgICAgICAgICAgICAgICAgICMgQXBwIHNoZWxsLCBuYXYsIGRhc2hib2FyZCwgcm91dGluZwrilJzilIDilIAgc3JjLwrilIIgICDilJzilIDilIAgbWFpbi5qc3ggICAgICAgICAgICAgICAgICAjIFJlYWN0IGVudHJ5IHBvaW50CuKUgiAgIOKUnOKUgOKUgCBjb21wb25lbnRzLwrilIIgICDilIIgICDilJTilIDilIAgRXJyb3JCb3VuZGFyeS5qc3ggICAgICMgUGVyLW1vZHVsZSBlcnJvciBib3VuZGFyeSAoY2F0Y2hlcyBydW50aW1lIGVycm9ycyBncmFjZWZ1bGx5KQrilIIgICDilJzilIDilIAgbGliLwrilIIgICDilIIgICDilJzilIDilIAgc3VwYWJhc2UuanMK4pSCICAg4pSCICAg4pSc4pSA4pSAIGhvb2tzLmpzICAgICAgICAgICAgICAjIHVzZVN1cGFiYXNlVGFibGUsIGV0Yy4K4pSCICAg4pSCICAg4pSU4pSA4pSAIHV0aWxzLmpzICAgICAgICAgICAgICAjIGZtdCwgcGN0LCBmbXREYXRlLCBzYWZlQXJyLCBzYWZlTnVtCuKUgiAgIOKUlOKUgOKUgCBtb2R1bGVzLwrilIIgICAgICAg4pSc4pSA4pSAIERhc2hib2FyZC5qc3ggICAgICAgICAjIDcgd2lkZ2V0cywgQUlQUCwgbW9udGhseSBjbG9zZSwgS1BJcwrilIIgICAgICAg4pSc4pSA4pSAIEZpbmFuY2lhbHMuanN4ICAgICAgICAjIFAmTCwgQ29tcCBSZWNhcCwgQUlQUCwgUGF5cm9sbCwgQmFuaywgQ3JlZGl0LCBHTArilIIgICAgICAg4pSc4pSA4pSAIFBlcnNpc3RlbnRNZW1vcnkuanN4CuKUgiAgICAgICDilJzilIDilIAgQ29tcGxpYW5jZUNlbnRlci5qc3gK4pSCICAgICAgIOKUnOKUgOKUgCBBdXRvbWF0aW9ucy5qc3gK4pSCICAgICAgIOKUnOKUgOKUgCBTb2NpYWxNZWRpYS5qc3gK4pSCICAgICAgIOKUnOKUgOKUgCBUYXNrc0dvYWxzLmpzeArilIIgICAgICAg4pSc4pSA4pSAIEFsZXJ0c05vdGlmaWNhdGlvbnMuanN4CuKUgiAgICAgICDilJzilIDilIAgRG9jdW1lbnRzLmpzeArilIIgICAgICAg4pSc4pSA4pSAIEhSUGVvcGxlLmpzeCAgICAgICAgICAjIEluY2x1ZGVzIFByb2R1Y2VyIFJPSSBwcm9qZWN0aW9uIChQZXJmb3JtYW5jZSB0YWIpCuKUgiAgICAgICDilJTilIDilIAgU2V0dGluZ3MuanN4ICAgICAgICAgICMgSW5jbHVkZXMgc2VsZi1oZWFsIEtlZXAgSXQgQ29ubmVjdGVkIGd1aWRlIChBYm91dCB0YWIpCuKUnOKUgOKUgCBzdXBhYmFzZS8K4pSCICAg4pSc4pSA4pSAIG1pZ3JhdGlvbnMvCuKUgiAgIOKUgiAgIOKUnOKUgOKUgCAwMDFfYmNjX21hc3Rlcl9zY2hlbWEuc3FsICAgICAgICAgICAjIDM3IGNvcmUgdGFibGVzCuKUgiAgIOKUgiAgIOKUnOKUgOKUgCAwMDJfc2VlZF9jb21wbGlhbmNlX3J1bGVzLnNxbCAgICAgICAjIDU3IFNGIGNvbXBsaWFuY2UgcnVsZXMK4pSCICAg4pSCICAg4pSc4pSA4pSAIDAwM19zZWVkX2NoYXJ0X29mX2FjY291bnRzLnNxbCAgICAgICMgU3RhbmRhcmQgQ09BCuKUgiAgIOKUgiAgIOKUnOKUgOKUgCAwMDRfc2VlZF9hZ2VuY3lfcmVjb3JkLnNxbCAgICAgICAgICAjIEFnZW5jeSBwbGFjZWhvbGRlcgrilIIgICDilIIgICDilJzilIDilIAgMDA1X2Fub25fcmVhZF9wb2xpY2llcy5zcWwgICAgICAgICAgIyBBbm9uIFJMUyDigJQgUkVRVUlSRUQK4pSCICAg4pSCICAg4pSc4pSA4pSAIDAwNl9kZXJpdmVkX2ZpbmFuY2lhbF92aWV3cy5zcWwgICAgICMgdl9pbmNvbWVfc3RhdGVtZW50LCB2X2JhbGFuY2Vfc2hlZXQK4pSCICAg4pSCICAg4pSc4pSA4pSAIDAwN19tb250aGx5X2Nsb3NlX2NoZWNrbGlzdC5zcWwgICAgICMgTW9udGhseSBjbG9zZSBpbmZyYXN0cnVjdHVyZQrilIIgICDilIIgICDilJzilIDilIAgMDA4X2JyaWRnZV9nZW5lcmF0b3Iuc3FsICAgICAgICAgICAgIyBQYXRoIEEgb25seSDigJQgbmV3dHdvcmtzX2dlbmVyYXRlX2JyaWRnZXMoKQrilIIgICDilIIgICDilJTilIDilIAgMDEwX3Byb2R1Y2VyX3JvaV9pbmZyYXN0cnVjdHVyZS5zcWwgIyBQcm9kdWNlciBST0kgZmVhdHVyZSDigJQgYm90aCBwYXRocwrilIIgICDilJTilIDilIAgZGVtby8K4pSCICAgICAgIOKUlOKUgOKUgCBkZW1vX3Jlc2V0X2Z1bmN0aW9uLnNxbCAgICAgICAgICAgICAjIFN1bnNoaW5lIFN0YXRlIGRlbW8gZGF0YSByZWZyZXNoCuKUnOKUgOKUgCB0b29scy8K4pSCICAg4pSc4pSA4pSAIFJFQURNRS5tZArilIIgICDilJzilIDilIAgc2NoZW1hLWF1ZGl0LmpzICAgICAgICAgICAgICAgICAgICAgICAgICMgUHJlLWJ1aWxkIHNjaGVtYSBhdWRpdCAocnVucyBvbiBWZXJjZWwpCuKUgiAgIOKUlOKUgOKUgCBzY2hlbWFfYXVkaXRfcXVlcnkuc3FsICAgICAgICAgICAgICAgICAgIyBQYXRoIEEgZGlhZ25vc3RpYyBxdWVyeSAod2FzIDAwN19zY2hlbWFfYXVkaXQuc3FsKQrilJzilIDilIAgZG9jcy8K4pSCICAg4pSc4pSA4pSAIFBST0RVQ0VSX1JPSV9JTlNUQUxMLm1kICAgICAgICAgICAgICAgICAjIFBlcmZvcm1hbmNlIHRhYiBvbmJvYXJkaW5nIHBsYXlib29rCuKUgiAgIOKUlOKUgOKUgCBTRUxGX0hFQUxfR1VJREUubWQgICAgICAgICAgICAgICAgICAgICAgIyBUaGUgImFzayB5b3VyIENsYXVkZSBmaXJzdCIgbW9kZWwK4pSc4pSA4pSAIENMQVVERS5tZCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIyBSZWFkLXRoaXMtZmlyc3QgYnJpZWZpbmcK4pSc4pSA4pSAIEhBTkRPRkZfUFJPTVBUUy5tZCAgICAgICAgICAgICAgICAgICAgICAgICAgIyBQcm9qZWN0IENsYXVkZSBpbnN0YWxsIHByb21wdHMgKFBhdGggQSBhbmQgQikK4pSc4pSA4pSAIFNDSEVNQV9OT1JNQUxJWkFUSU9OX1JVTkJPT0subWQgICAgICAgICAgICAgIyBQYXRoIEEgYnJpZGdlIHZpZXcgcnVuYm9vawrilJzilIDilIAgaW5kZXguaHRtbArilJzilIDilIAgcGFja2FnZS5qc29uCuKUlOKUgOKUgCB2aXRlLmNvbmZpZy5qcwpgYGAKCiMjIFR3byBJbnN0YWxsIFBhdGhzCgp8IFBhdGggfCBXaGVuIHwgVGltZSB8CnwtLS18LS0tfC0tLXwKfCAqKkEg4oCUIEV4aXN0aW5nIERhdGFiYXNlKiogfCBDbGllbnQgYWxyZWFkeSBoYXMgYSBTdXBhYmFzZSBwb3B1bGF0ZWQgd2l0aCBkYXRhIHwgMS0zIGhvdXJzIHwKfCAqKkIg4oCUIENsZWFuIEluc3RhbGwqKiB8IENsaWVudCdzIFN1cGFiYXNlIGlzIGJyYW5kIG5ldyBhbmQgZW1wdHkgfCAxLTIgaG91cnMgfAoKU2VlIGBIQU5ET0ZGX1BST01QVFMubWRgIGZvciB0aGUgY2Fub25pY2FsIGhhbmRvZmYgcHJvbXB0cyBlYWNoIFByb2plY3QgQ2xhdWRlIHJlY2VpdmVzLgoKIyMgRmVhdHVyZWQgTW9kdWxlcwoKLSAqKkRhc2hib2FyZCoqIOKAlCA3IHdpZGdldHMgc3Bhbm5pbmcgQUlQUCBwcm9ncmVzcywgbW9udGhseSBjbG9zZSwgZmluYW5jaWFscywgY29tcGxpYW5jZSwgYWxlcnRzCi0gKipGaW5hbmNpYWxzKiog4oCUIGZ1bGwgYm9va2tlZXBpbmcgdmlldzogUCZMLCBDb21wIFJlY2FwIChTRiBkZXRhaWwpLCBBSVBQL1Njb3JlY2FyZCwgUGF5cm9sbCwgQmFuaywgQ3JlZGl0LCBHZW5lcmFsIExlZGdlcgotICoqSFIgJiBQZW9wbGUg4oaSIFBlcmZvcm1hbmNlKiog4oCUICoqUHJvZHVjZXIgUk9JIHByb2plY3Rpb24uKiogUGVyLXByb2R1Y2VyIDI0LW1vbnRoIGNvbW1pc3Npb24gdHJhamVjdG9yeSBjaGFydCB3aXRoIGNvaG9ydC1iYXNlZCByZW5ld2FsIHByb2plY3Rpb24sIGxhcHNlIHJhdGUgY2FsY3VsYXRvciBmcm9tIGNvbXBfcmVjYXAsIGJyZWFrZXZlbiBtb250aCBkZXRlY3Rpb24uIEJ1aWx0IHNwZWNpZmljYWxseSBmb3IgdGhlIFN0YXRlIEZhcm0gYWdlbnQgZGVjaXNpb246ICJXaGVuIGRvZXMgdGhpcyBwcm9kdWNlciBzdGFydCBjb3ZlcmluZyB0aGVpciBmdWxseS1sb2FkZWQgcGF5cm9sbCBjb3N0PyIKLSAqKlNldHRpbmdzIOKGkiBBYm91dCDihpIgS2VlcCBJdCBDb25uZWN0ZWQqKiDigJQgU2VsZi1oZWFsIGd1aWRlIHRoYXQgdGVhY2hlcyB0aGUgYWdlbnQgdG8gd29yayAqd2l0aCogdGhlaXIgQ2xhdWRlIChzY3JlZW5zaG90IHRoZSBlcnJvciwgcGFzdGUgaXQsIGdldCBmaXhlZCkgcmF0aGVyIHRoYW4gbmF2aWdhdGluZyBkYXNoYm9hcmRzIGRpcmVjdGx5LgoKIyMgRGVwbG95bWVudAoKU2VlIGBIQU5ET0ZGX1BST01QVFMubWRgIGZvciB0aGUgY29tcGxldGUgaW5zdGFsbCBwbGF5Ym9vay4gRWFjaCBpbnN0YWxsIHByb2R1Y2VzIGEgVmVyY2VsIGRlcGxveW1lbnQgY29ubmVjdGVkIHRvIHRoZSBjbGllbnQncyBvd24gU3VwYWJhc2UsIENvbXBvc2lvLCBhbmQgQ2xhdWRlLmFpIGFjY291bnRzLgoKIyMgSGFyZCBydWxlcwoKLSAqKlRoZSBtYXN0ZXIgbmV2ZXIgcHVzaGVzIHVwZGF0ZXMgdG8gY2xpZW50IGZvcmtzLioqIE9uY2UgZm9ya2VkLCBhIGNsaWVudCdzIHJlcG8gaXMgdGhlaXJzIHRvIGV2b2x2ZSB3aXRoIHRoZWlyIENsYXVkZS4KLSAqKlRoZSBzY2hlbWEgaXMgdGhlIGNvbnRyYWN0LioqIFRoZSB3ZWIgYXBwIGNvZGUgc3RheXMgY2Fub25pY2FsOyBjbGllbnQgZGF0YWJhc2VzIGNvbmZvcm0gdmlhIGJyaWRnZSB2aWV3cyAoUGF0aCBBKSBvciBmcmVzaCBtaWdyYXRpb25zIChQYXRoIEIpLgotICoqSW1wb3J0cyBtdXN0IGJlIGxpbmUgMSoqIG9mIGV2ZXJ5IGAuanN4YCBmaWxlIChWaXRlIGRyb3BzIG1vZHVsZXMgc2lsZW50bHkgaWYgYW55IGNvbW1lbnQgcHJlY2VkZXMgaW1wb3J0cykuCi0gKipgVklURV9VU0VfTU9DS19EQVRBPWZhbHNlYCBpbiBwcm9kdWN0aW9uLioqIE1vY2sgZGF0YSBpcyBmb3IgZGVtb3Mgb25seS4gTGl2ZSBkZXBsb3ltZW50cyBzaG93IHJlYWwgZGF0YSBvciBgRW1wdHlTdGF0ZWAgY29tcG9uZW50cy4KLSAqKk9uZSBjb21taXQgYXQgYSB0aW1lIGR1cmluZyBpbnN0YWxsLioqIFB1c2gsIGNvbmZpcm0gVmVyY2VsIFJFQURZLCB0aGVuIHB1c2ggbmV4dC4K
+# Newtworks — Master Template
+
+Built by **Imaginary Farms LLC** · The Claude Whisperer · [imaginary-farms.com](https://imaginary-farms.com)
+
+---
+
+## What This Is
+
+The Newtworks (Newtworks) is a full-stack React web application built exclusively for State Farm agents. It connects to Supabase (database), Composio (automations), Claude.ai (intelligence layer), GitHub (code), and Vercel (hosting) to give agents a complete AI-powered operating system for their business.
+
+This repository is the **master template**. Each client install creates a fork of this repo. **The fork is the client's app from that point forward** — the master never pushes updates back to client forks. New clients always start from the latest master at fork time.
+
+## Stack
+
+- **Frontend:** React + Vite
+- **Hosting:** Vercel (client's own account)
+- **Database:** Supabase (client's own project)
+- **Automations:** Composio (client's own account)
+- **Intelligence:** Claude.ai (client's own subscription)
+
+## Repository Structure
+
+```
+newtworks-master-template/
+├── NewtworksApp.jsx                    # App shell, nav, dashboard, routing
+├── src/
+│   ├── main.jsx                  # React entry point
+│   ├── components/
+│   │   └── ErrorBoundary.jsx     # Per-module error boundary (catches runtime errors gracefully)
+│   ├── lib/
+│   │   ├── supabase.js
+│   │   ├── hooks.js              # useSupabaseTable, etc.
+│   │   └── utils.js              # fmt, pct, fmtDate, safeArr, safeNum
+│   └── modules/
+│       ├── Dashboard.jsx         # 7 widgets, AIPP, monthly close, KPIs
+│       ├── Financials.jsx        # P&L, Comp Recap, AIPP, Payroll, Bank, Credit, GL
+│       ├── PersistentMemory.jsx
+│       ├── ComplianceCenter.jsx
+│       ├── Automations.jsx
+│       ├── SocialMedia.jsx
+│       ├── TasksGoals.jsx
+│       ├── AlertsNotifications.jsx
+│       ├── Documents.jsx
+│       ├── HRPeople.jsx          # Includes Producer ROI projection (Performance tab)
+│       └── Settings.jsx          # Includes self-heal Keep It Connected guide (About tab)
+├── supabase/
+│   ├── migrations/
+│   │   ├── 001_bcc_master_schema.sql           # 37 core tables
+│   │   ├── 002_seed_compliance_rules.sql       # 57 SF compliance rules
+│   │   ├── 003_seed_chart_of_accounts.sql      # Standard COA
+│   │   ├── 004_seed_agency_record.sql          # Agency placeholder
+│   │   ├── 005_anon_read_policies.sql          # Anon RLS — REQUIRED
+│   │   ├── 006_derived_financial_views.sql     # v_income_statement, v_balance_sheet
+│   │   ├── 007_monthly_close_checklist.sql     # Monthly close infrastructure
+│   │   ├── 008_bridge_generator.sql            # Path A only — newtworks_generate_bridges()
+│   │   └── 010_producer_roi_infrastructure.sql # Producer ROI feature — both paths
+│   └── demo/
+│       └── demo_reset_function.sql             # Sunshine State demo data refresh
+├── tools/
+│   ├── README.md
+│   ├── schema-audit.js                         # Pre-build schema audit (runs on Vercel)
+│   └── schema_audit_query.sql                  # Path A diagnostic query (was 007_schema_audit.sql)
+├── docs/
+│   ├── PRODUCER_ROI_INSTALL.md                 # Performance tab onboarding playbook
+│   └── SELF_HEAL_GUIDE.md                      # The "ask your Claude first" model
+├── CLAUDE.md                                   # Read-this-first briefing
+├── HANDOFF_PROMPTS.md                          # Project Claude install prompts (Path A and B)
+├── SCHEMA_NORMALIZATION_RUNBOOK.md             # Path A bridge view runbook
+├── index.html
+├── package.json
+└── vite.config.js
+```
+
+## Two Install Paths
+
+| Path | When | Time |
+|---|---|---|
+| **A — Existing Database** | Client already has a Supabase populated with data | 1-3 hours |
+| **B — Clean Install** | Client's Supabase is brand new and empty | 1-2 hours |
+
+See `HANDOFF_PROMPTS.md` for the canonical handoff prompts each Project Claude receives.
+
+## Featured Modules
+
+- **Dashboard** — 7 widgets spanning AIPP progress, monthly close, financials, compliance, alerts
+- **Financials** — full bookkeeping view: P&L, Comp Recap (SF detail), AIPP/Scorecard, Payroll, Bank, Credit, General Ledger
+- **HR & People → Performance** — **Producer ROI projection.** Per-producer 24-month commission trajectory chart with cohort-based renewal projection, lapse rate calculator from comp_recap, breakeven month detection. Built specifically for the State Farm agent decision: "When does this producer start covering their fully-loaded payroll cost?"
+- **Settings → About → Keep It Connected** — Self-heal guide that teaches the agent to work *with* their Claude (screenshot the error, paste it, get fixed) rather than navigating dashboards directly.
+
+## Deployment
+
+See `HANDOFF_PROMPTS.md` for the complete install playbook. Each install produces a Vercel deployment connected to the client's own Supabase, Composio, and Claude.ai accounts.
+
+## Hard rules
+
+- **The master never pushes updates to client forks.** Once forked, a client's repo is theirs to evolve with their Claude.
+- **The schema is the contract.** The web app code stays canonical; client databases conform via bridge views (Path A) or fresh migrations (Path B).
+- **Imports must be line 1** of every `.jsx` file (Vite drops modules silently if any comment precedes imports).
+- **`VITE_USE_MOCK_DATA=false` in production.** Mock data is for demos only. Live deployments show real data or `EmptyState` components.
+- **One commit at a time during install.** Push, confirm Vercel READY, then push next.
