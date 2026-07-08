@@ -21,6 +21,7 @@ import CPRList from "./src/modules/CPRList.jsx";
 import Licensing from "./src/modules/Licensing.jsx";
 import MarketingPoints from "./src/modules/MarketingPoints.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
+import ContentEditor from "./src/modules/ContentEditor.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -109,6 +110,7 @@ const NAV_ITEMS = [
   { id: "memory",      label: "Memory",      icon: "brain",         roles: ADMIN_ROLES },
   { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
   { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
+  { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
 ];
 
@@ -138,6 +140,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     bookOpen:   <svg style={s} viewBox="0 0 24 24" {...p}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
     clock:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
     logout:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+    pencil:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
     menu:       <svg style={s} viewBox="0 0 24 24" {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     x:          <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
     lightning:  <svg style={s} viewBox="0 0 24 24" fill={color} stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
@@ -667,6 +670,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing Points"><MarketingPoints /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
+    editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
