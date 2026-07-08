@@ -1,1 +1,20 @@
-Ci0tIEZpeDogdXNlIENUIChhZ2VuY3kgdGltZXpvbmUpIGZvciBjdXJyZW50LXdlZWsgZGVyaXZhdGlvbiwgbm90IFVUQy4KLS0gT3RoZXJ3aXNlIFNhdHVyZGF5IDExcG0gQ1Qgc3VibWlzc2lvbnMgZ2V0IHJlamVjdGVkIGJlY2F1c2UgVVRDIGhhcyB0aWNrZWQgdG8gU3VuZGF5LgpDUkVBVEUgT1IgUkVQTEFDRSBGVU5DVElPTiBwdWJsaWMudGNlcl9lbmZvcmNlX2N1cnJlbnRfd2VlaygpIFJFVFVSTlMgVFJJR0dFUiBBUyAkJApERUNMQVJFCiAgdG9kYXlfY3QgREFURTsKICB3ZWVrX3N0YXJ0IERBVEU7CiAgd2Vla19lbmQgREFURTsKQkVHSU4KICBJRiBUR19PUCA9ICdJTlNFUlQnIEFORCBORVcuc3RhdHVzID0gJ3BlbmRpbmcnIFRIRU4KICAgIHRvZGF5X2N0IDo9IChOT1coKSBBVCBUSU1FIFpPTkUgJ0FtZXJpY2EvQ2hpY2FnbycpOjpkYXRlOwogICAgd2Vla19zdGFydCA6PSB0b2RheV9jdCAtIEVYVFJBQ1QoRE9XIEZST00gdG9kYXlfY3QpOjpJTlQ7CiAgICB3ZWVrX2VuZCA6PSB3ZWVrX3N0YXJ0ICsgNjsKICAgIElGIE5FVy5wdW5jaF9kYXRlIDwgd2Vla19zdGFydCBPUiBORVcucHVuY2hfZGF0ZSA+IHdlZWtfZW5kIFRIRU4KICAgICAgUkFJU0UgRVhDRVBUSU9OICdFZGl0IHJlcXVlc3RzIG11c3QgYmUgZm9yIHRoZSBjdXJyZW50IGFnZW5jeSB3ZWVrICglIHRocm91Z2ggJSkuIFJlcXVlc3RlZCBkYXRlOiAlJywgd2Vla19zdGFydCwgd2Vla19lbmQsIE5FVy5wdW5jaF9kYXRlOwogICAgRU5EIElGOwogIEVORCBJRjsKICBSRVRVUk4gTkVXOwpFTkQ7CiQkIExBTkdVQUdFIHBscGdzcWw7Cg==
+
+-- Fix: use CT (agency timezone) for current-week derivation, not UTC.
+-- Otherwise Saturday 11pm CT submissions get rejected because UTC has ticked to Sunday.
+CREATE OR REPLACE FUNCTION public.tcer_enforce_current_week() RETURNS TRIGGER AS $$
+DECLARE
+  today_ct DATE;
+  week_start DATE;
+  week_end DATE;
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.status = 'pending' THEN
+    today_ct := (NOW() AT TIME ZONE 'America/Chicago')::date;
+    week_start := today_ct - EXTRACT(DOW FROM today_ct)::INT;
+    week_end := week_start + 6;
+    IF NEW.punch_date < week_start OR NEW.punch_date > week_end THEN
+      RAISE EXCEPTION 'Edit requests must be for the current agency week (% through %). Requested date: %', week_start, week_end, NEW.punch_date;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
