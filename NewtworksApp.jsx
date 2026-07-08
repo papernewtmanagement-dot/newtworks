@@ -19,6 +19,7 @@ import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Licensing from "./src/modules/Licensing.jsx";
+import MarketingPoints from "./src/modules/MarketingPoints.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -101,6 +102,7 @@ const NAV_ITEMS = [
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
   { id: "financials",  label: "Financials",  icon: "dollar",        roles: ADMIN_ROLES },
   { id: "hr",          label: "Team",        icon: "users",         roles: ADMIN_ROLES },
+  { id: "marketing",   label: "Marketing",   icon: "megaphone",     roles: ADMIN_ROLES },
   { id: "social",      label: "Social",      icon: "share",         roles: ADMIN_ROLES },
   { type: "divider",   id: "_div_admin_bot" },
   { id: "automations", label: "Automations", icon: "zap",           roles: ADMIN_ROLES },
@@ -120,6 +122,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     brain:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-1.07-4.13A3 3 0 0 1 4 12a3 3 0 0 1 2-2.83 2.5 2.5 0 0 1 1.5-4.17z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 1.07-4.13A3 3 0 0 0 20 12a3 3 0 0 0-2-2.83 2.5 2.5 0 0 0-1.5-4.17z"/></svg>,
     shield:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>,
     zap:        <svg style={s} viewBox="0 0 24 24" {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+    megaphone:  <svg style={s} viewBox="0 0 24 24" {...p}><path d="M3 11l14-6v14L3 13z"/><path d="M17 8v8"/><path d="M11 15v3a2 2 0 0 0 4 0v-2"/></svg>,
     share:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>,
     check:      <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
     bell:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
@@ -662,6 +665,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals userRole={userRole} userId={userId} /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
+    marketing:   <ErrorBoundary name="Marketing Points"><MarketingPoints /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
