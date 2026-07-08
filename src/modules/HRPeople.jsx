@@ -2933,6 +2933,7 @@ const GrowthBudgetSection = () => {
   const [roster, setRoster]           = useState([]);
   const [ytd, setYtd]                 = useState(0);
   const [ceilingInfo, setCeilingInfo] = useState(null);
+  const [warningRoster, setWarningRoster] = useState([]);
   const [loading, setLoading]         = useState(true);
 
   // Forecast form state
@@ -2946,16 +2947,24 @@ const GrowthBudgetSection = () => {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const [curRes, ytdRes, ceilingRes] = await Promise.allSettled([
+      // Compute upcoming Saturday for warning trigger week-end
+      const today = new Date();
+      const daysUntilSat = (6 - today.getDay() + 7) % 7;
+      const upcomingSat = new Date(today.getTime() + daysUntilSat * 86400000);
+      const satIso = upcomingSat.toISOString().split("T")[0];
+
+      const [curRes, ytdRes, ceilingRes, wtRes] = await Promise.allSettled([
         supabase.from("v_growth_budget_current").select("*").eq("agency_id", AGENCY_ID),
         supabase.from("v_growth_budget_ytd").select("growth_budget_ytd").eq("agency_id", AGENCY_ID),
         supabase.rpc("get_growth_budget_ceiling", { p_agency_id: AGENCY_ID }),
+        supabase.rpc("compute_warning_trigger", { p_agency_id: AGENCY_ID, p_week_end_date: satIso }),
       ]);
       if (cancelled) return;
       setRoster(curRes.status === "fulfilled" ? (curRes.value.data || []) : []);
       const ytdRows = ytdRes.status === "fulfilled" ? (ytdRes.value.data || []) : [];
       setYtd(ytdRows.reduce((s, r) => s + parseFloat(r.growth_budget_ytd || 0), 0));
       setCeilingInfo(ceilingRes.status === "fulfilled" ? (ceilingRes.value.data || null) : null);
+      setWarningRoster(wtRes.status === "fulfilled" ? (wtRes.value.data || []) : []);
       setLoading(false);
     }
     load();
@@ -3106,6 +3115,87 @@ const GrowthBudgetSection = () => {
                 </div>
               );
             })}
+          </div>
+        )}
+      </Card>
+
+      {/* Production Health — per-person warning trigger status (all active team) */}
+      <Card>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>Production Health</div>
+            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Per-person actual production vs role-adjusted fully-loaded cost. Retention roles: bar × 0.25.</div>
+          </div>
+        </div>
+        {warningRoster.length === 0 ? (
+          <div style={{ padding:"20px 0", textAlign:"center", color:T.slate400, fontSize:12 }}>
+            No team data yet for the upcoming Saturday week-end.
+          </div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            {warningRoster.map(p => {
+              const pct = p.warning_pct !== null && p.warning_pct !== undefined ? parseFloat(p.warning_pct) : 0;
+              const status = p.warning_status || "na";
+              const statusColor = status === "green" ? T.green : status === "yellow" ? T.amber : status === "red" ? T.red : T.slate400;
+              const statusBg    = status === "green" ? T.greenLt : status === "yellow" ? T.amberLt : status === "red" ? T.redLt : T.slate100;
+              const statusLabel = status === "green" ? "🟢 On track" : status === "yellow" ? "🟡 Coaching" : status === "red" ? "🔴 PIP" : "—";
+              const roleAdj     = parseFloat(p.role_production_weight || 1);
+              const barFull     = parseFloat(p.warning_bar_full || 0);
+              const barAdj      = parseFloat(p.warning_bar || 0);
+              const actual      = parseFloat(p.warning_actual_annual || 0);
+              return (
+                <div key={p.team_member_id} style={{ padding:"12px 0", borderTop:`1px solid ${T.slate100}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8, flexWrap:"wrap", gap:6 }}>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{p.full_name}</div>
+                      <div style={{ fontSize:11, color:T.slate500 }}>
+                        {p.role} · {p.role_category}
+                        {roleAdj < 1.0 && <span style={{ color:T.slate400 }}> · Role weight: {(roleAdj*100).toFixed(0)}%</span>}
+                      </div>
+                    </div>
+                    <span style={{ fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:20, background:statusBg, color:statusColor }}>
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:T.slate600, marginBottom:4 }}>
+                    <span>Actual vs bar</span>
+                    <span style={{ fontWeight:700, color:statusColor }}>{isNaN(pct) ? "—" : pct.toFixed(1) + "%"}</span>
+                  </div>
+                  <ProgressBar value={actual} max={barAdj > 0 ? barAdj : 1} color={statusColor} height={6} />
+
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(110px, 1fr))", gap:10, marginTop:10 }}>
+                    <div>
+                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Bar (adjusted)</div>
+                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(barAdj)}</div>
+                    </div>
+                    {roleAdj < 1.0 && (
+                      <div>
+                        <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Bar (full)</div>
+                        <div style={{ fontSize:13, fontWeight:500, color:T.slate500 }}>{$(barFull)}</div>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Actual annualized</div>
+                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(actual)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Trailing Q{p.trailing_q_num || "—"} P&C prem</div>
+                      <div style={{ fontSize:13, fontWeight:500, color:T.slate600 }}>{$(p.trailing_q_pc_premium)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Trailing L&H prem</div>
+                      <div style={{ fontSize:13, fontWeight:500, color:T.slate600 }}>{$(p.trailing_q_lh_premium)}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ fontSize:10, color:T.slate400, paddingTop:8, borderTop:`1px solid ${T.slate100}` }}>
+              Bar = (annual_base × tenure_multiplier) × 1.08 × role_production_weight ·
+              Actual = trailing complete quarter agency commissions × 4 (P&C prem × 8% + L&H prem × blended rate) ·
+              🟢 ≥ 100% of bar · 🟡 80–99% · 🔴 &lt; 80%
+            </div>
           </div>
         )}
       </Card>
