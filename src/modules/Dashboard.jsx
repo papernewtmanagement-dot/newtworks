@@ -477,9 +477,9 @@ const GrowthBudgetWidget = ({ data, onNavigate }) => {
             {status==="warning" && " · Above prorated pace"}
             {status==="success" && ceiling>0 && " · Within pace"}
           </div>
-          {gb.ceilingInfo?.pct_of_ttm_gross && (
+          {gb.ceilingInfo?.pct_of_on_time_annual_gross && (
             <div style={{fontSize:10, color:T.slate400, marginTop:2}}>
-              Basis: {(parseFloat(gb.ceilingInfo.pct_of_ttm_gross)*100).toFixed(0)}% of TTM gross revenue ({fmt(gb.ceilingInfo.ttm_gross)})
+              Basis: {(parseFloat(gb.ceilingInfo.pct_of_on_time_annual_gross)*100).toFixed(0)}% of on-time annual gross rev ex-Scorecard ({fmt(gb.ceilingInfo.on_time_annual_gross)})
             </div>
           )}
         </div>
