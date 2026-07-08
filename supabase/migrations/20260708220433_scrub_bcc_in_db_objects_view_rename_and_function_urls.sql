@@ -1,1 +1,91 @@
-LS0gVGllciAzOiBEQiBvYmplY3RzIHNjcnViCi0tIChhKSBSZW5hbWUgc291cmNlX2J1Y2tldCB2YWx1ZSAnYmNjX29yaWdpbmF0aW5nJyDihpIgJ25ld3R3b3Jrc19vcmlnaW5hdGluZycgaW4gdl90cmlhbF9iYWxhbmNlCi0tIChiKSBEcm9wICsgcmVjcmVhdGUgdl92YXJpYW5jZV9ib29rc19oaXN0b3JpY2FsX3ZzX2JjYyBhcyB2X3ZhcmlhbmNlX2Jvb2tzX2hpc3RvcmljYWxfdnNfbmV3dHdvcmtzCi0tICAgICB3aXRoIGNvbHVtbiBiY2NfYmFsYW5jZSDihpIgbmV3dHdvcmtzX2JhbGFuY2UgYW5kIENURSBiY2NfZGF0YSDihpIgbmV3dHdvcmtzX2RhdGEKLS0gTk9URTogY2hhcnRfbmFtZXNwYWNlID0gJ2JjY19zZicgZGF0YSArIGNvbHVtbiBkZWZhdWx0IExFRlQgQVMtSVMgcGVuZGluZyBQZXRlcidzIGRlY2lzaW9uLgoKLS0gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQotLSAoYSkgdl90cmlhbF9iYWxhbmNlOiBjaGFuZ2UgJ2JjY19vcmlnaW5hdGluZycg4oaSICduZXd0d29ya3Nfb3JpZ2luYXRpbmcnCi0tID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KQ1JFQVRFIE9SIFJFUExBQ0UgVklFVyBwdWJsaWMudl90cmlhbF9iYWxhbmNlIEFTCiBTRUxFQ1QgamUuYWdlbmN5X2lkLAogICAgY29hLmlkIEFTIGFjY291bnRfaWQsCiAgICBjb2EuYWNjb3VudF9jb2RlLAogICAgY29hLmFjY291bnRfbmFtZSwKICAgIGNvYS5hY2NvdW50X3R5cGUsCiAgICBjb2EucGFyZW50X2FjY291bnRfaWQsCiAgICBwYXJlbnQuYWNjb3VudF9uYW1lIEFTIHBhcmVudF9hY2NvdW50X25hbWUsCiAgICAgICAgQ0FTRQogICAgICAgICAgICBXSEVOIGplLnNvdXJjZSB+fiAnYm9va3NfaGlzdG9yaWNhbF9pbXBvcnQlJzo6dGV4dCBUSEVOICdib29rc19oaXN0b3JpY2FsJzo6dGV4dAogICAgICAgICAgICBXSEVOIGplLnNvdXJjZSA9IEFOWSAoQVJSQVlbJ2dsX2VudHJ5X3dyaXRlcic6OnRleHQsICdwYXlyb2xsX2dsX3dyaXRlcic6OnRleHQsICdiYW5rX2dsX3dyaXRlcic6OnRleHQsICdjY19nbF93cml0ZXInOjp0ZXh0LCAnZG9jdW1lbnRfcHJvY2Vzc29yJzo6dGV4dCwgJ2RvY3VtZW50X3Byb2Nlc3Nvcl9kcmFpbmVyJzo6dGV4dCwgJ2NsYXVkZV9hZGp1c3RtZW50Jzo6dGV4dF0pIFRIRU4gJ25ld3R3b3Jrc19vcmlnaW5hdGluZyc6OnRleHQKICAgICAgICAgICAgRUxTRSAnb3RoZXInOjp0ZXh0CiAgICAgICAgRU5EIEFTIHNvdXJjZV9idWNrZXQsCiAgICBkYXRlX3RydW5jKCdtb250aCc6OnRleHQsIGplLmVudHJ5X2RhdGU6OnRpbWVzdGFtcCB3aXRoIHRpbWUgem9uZSk6OmRhdGUgQVMgbW9udGhfc3RhcnQsCiAgICBqZS5lbnRyeV9kYXRlLAogICAgc3VtKGpsLmRlYml0KSBBUyB0b3RhbF9kZWJpdCwKICAgIHN1bShqbC5jcmVkaXQpIEFTIHRvdGFsX2NyZWRpdCwKICAgICAgICBDQVNFCiAgICAgICAgICAgIFdIRU4gY29hLmFjY291bnRfdHlwZSA9ICdpbmNvbWUnOjp0ZXh0IEFORCBqZS5zb3VyY2Ugfn4gJ2Jvb2tzX2hpc3RvcmljYWxfaW1wb3J0JSc6OnRleHQgVEhFTiBzdW0oamwuZGViaXQpIC0gc3VtKGpsLmNyZWRpdCkKICAgICAgICAgICAgV0hFTiBjb2EuYWNjb3VudF90eXBlID0gQU5ZIChBUlJBWVsnYXNzZXQnOjp0ZXh0LCAnZXhwZW5zZSc6OnRleHRdKSBUSEVOIHN1bShqbC5kZWJpdCkgLSBzdW0oamwuY3JlZGl0KQogICAgICAgICAgICBFTFNFIHN1bShqbC5jcmVkaXQpIC0gc3VtKGpsLmRlYml0KQogICAgICAgIEVORCBBUyBuZXRfYmFsYW5jZSwKICAgIGNvdW50KERJU1RJTkNUIGplLmlkKSBBUyBlbnRyeV9jb3VudAogICBGUk9NIGpvdXJuYWxfZW50cmllcyBqZQogICAgIEpPSU4gam91cm5hbF9saW5lcyBqbCBPTiBqbC5qb3VybmFsX2VudHJ5X2lkID0gamUuaWQKICAgICBKT0lOIGNoYXJ0X29mX2FjY291bnRzIGNvYSBPTiBjb2EuaWQgPSBqbC5hY2NvdW50X2lkCiAgICAgTEVGVCBKT0lOIGNoYXJ0X29mX2FjY291bnRzIHBhcmVudCBPTiBwYXJlbnQuaWQgPSBjb2EucGFyZW50X2FjY291bnRfaWQKICBHUk9VUCBCWSBqZS5hZ2VuY3lfaWQsIGNvYS5pZCwgY29hLmFjY291bnRfY29kZSwgY29hLmFjY291bnRfbmFtZSwgY29hLmFjY291bnRfdHlwZSwgY29hLnBhcmVudF9hY2NvdW50X2lkLCBwYXJlbnQuYWNjb3VudF9uYW1lLCBqZS5zb3VyY2UsIChkYXRlX3RydW5jKCdtb250aCc6OnRleHQsIGplLmVudHJ5X2RhdGU6OnRpbWVzdGFtcCB3aXRoIHRpbWUgem9uZSkpLCBqZS5lbnRyeV9kYXRlOwoKLS0gPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQotLSAoYikgRHJvcCBvbGQgdmFyaWFuY2UgdmlldywgY3JlYXRlIG5ldyB3aXRoIHJlbmFtZWQgY29sdW1uICsgQ1RFCi0tID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KRFJPUCBWSUVXIElGIEVYSVNUUyBwdWJsaWMudl92YXJpYW5jZV9ib29rc19oaXN0b3JpY2FsX3ZzX2JjYzsKCkNSRUFURSBWSUVXIHB1YmxpYy52X3ZhcmlhbmNlX2Jvb2tzX2hpc3RvcmljYWxfdnNfbmV3dHdvcmtzIEFTCiBXSVRIIGJvb2tzX2hpc3RvcmljYWxfZGF0YSBBUyAoCiAgICAgICAgIFNFTEVDVCB2X3RyaWFsX2JhbGFuY2UuYWdlbmN5X2lkLAogICAgICAgICAgICB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF9pZCwKICAgICAgICAgICAgdl90cmlhbF9iYWxhbmNlLmFjY291bnRfY29kZSwKICAgICAgICAgICAgdl90cmlhbF9iYWxhbmNlLmFjY291bnRfbmFtZSwKICAgICAgICAgICAgdl90cmlhbF9iYWxhbmNlLmFjY291bnRfdHlwZSwKICAgICAgICAgICAgdl90cmlhbF9iYWxhbmNlLnBhcmVudF9hY2NvdW50X25hbWUsCiAgICAgICAgICAgIHZfdHJpYWxfYmFsYW5jZS5tb250aF9zdGFydCwKICAgICAgICAgICAgc3VtKHZfdHJpYWxfYmFsYW5jZS5uZXRfYmFsYW5jZSkgQVMgYm9va3NfaGlzdG9yaWNhbF9iYWxhbmNlLAogICAgICAgICAgICBzdW0odl90cmlhbF9iYWxhbmNlLnRvdGFsX2RlYml0KSBBUyBib29rc19oaXN0b3JpY2FsX2RlYml0LAogICAgICAgICAgICBzdW0odl90cmlhbF9iYWxhbmNlLnRvdGFsX2NyZWRpdCkgQVMgYm9va3NfaGlzdG9yaWNhbF9jcmVkaXQKICAgICAgICAgICBGUk9NIHZfdHJpYWxfYmFsYW5jZQogICAgICAgICAgV0hFUkUgdl90cmlhbF9iYWxhbmNlLnNvdXJjZV9idWNrZXQgPSAnYm9va3NfaGlzdG9yaWNhbCc6OnRleHQKICAgICAgICAgIEdST1VQIEJZIHZfdHJpYWxfYmFsYW5jZS5hZ2VuY3lfaWQsIHZfdHJpYWxfYmFsYW5jZS5hY2NvdW50X2lkLCB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF9jb2RlLCB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF9uYW1lLCB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF90eXBlLCB2X3RyaWFsX2JhbGFuY2UucGFyZW50X2FjY291bnRfbmFtZSwgdl90cmlhbF9iYWxhbmNlLm1vbnRoX3N0YXJ0CiAgICAgICAgKSwgbmV3dHdvcmtzX2RhdGEgQVMgKAogICAgICAgICBTRUxFQ1Qgdl90cmlhbF9iYWxhbmNlLmFnZW5jeV9pZCwKICAgICAgICAgICAgdl90cmlhbF9iYWxhbmNlLmFjY291bnRfaWQsCiAgICAgICAgICAgIHZfdHJpYWxfYmFsYW5jZS5hY2NvdW50X2NvZGUsCiAgICAgICAgICAgIHZfdHJpYWxfYmFsYW5jZS5hY2NvdW50X25hbWUsCiAgICAgICAgICAgIHZfdHJpYWxfYmFsYW5jZS5hY2NvdW50X3R5cGUsCiAgICAgICAgICAgIHZfdHJpYWxfYmFsYW5jZS5wYXJlbnRfYWNjb3VudF9uYW1lLAogICAgICAgICAgICB2X3RyaWFsX2JhbGFuY2UubW9udGhfc3RhcnQsCiAgICAgICAgICAgIHN1bSh2X3RyaWFsX2JhbGFuY2UubmV0X2JhbGFuY2UpIEFTIG5ld3R3b3Jrc19iYWxhbmNlLAogICAgICAgICAgICBzdW0odl90cmlhbF9iYWxhbmNlLnRvdGFsX2RlYml0KSBBUyBuZXd0d29ya3NfZGViaXQsCiAgICAgICAgICAgIHN1bSh2X3RyaWFsX2JhbGFuY2UudG90YWxfY3JlZGl0KSBBUyBuZXd0d29ya3NfY3JlZGl0CiAgICAgICAgICAgRlJPTSB2X3RyaWFsX2JhbGFuY2UKICAgICAgICAgIFdIRVJFIHZfdHJpYWxfYmFsYW5jZS5zb3VyY2VfYnVja2V0ID0gJ25ld3R3b3Jrc19vcmlnaW5hdGluZyc6OnRleHQKICAgICAgICAgIEdST1VQIEJZIHZfdHJpYWxfYmFsYW5jZS5hZ2VuY3lfaWQsIHZfdHJpYWxfYmFsYW5jZS5hY2NvdW50X2lkLCB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF9jb2RlLCB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF9uYW1lLCB2X3RyaWFsX2JhbGFuY2UuYWNjb3VudF90eXBlLCB2X3RyaWFsX2JhbGFuY2UucGFyZW50X2FjY291bnRfbmFtZSwgdl90cmlhbF9iYWxhbmNlLm1vbnRoX3N0YXJ0CiAgICAgICAgKQogU0VMRUNUIENPQUxFU0NFKGguYWdlbmN5X2lkLCBiLmFnZW5jeV9pZCkgQVMgYWdlbmN5X2lkLAogICAgQ09BTEVTQ0UoaC5hY2NvdW50X2lkLCBiLmFjY291bnRfaWQpIEFTIGFjY291bnRfaWQsCiAgICBDT0FMRVNDRShoLmFjY291bnRfY29kZSwgYi5hY2NvdW50X2NvZGUpIEFTIGFjY291bnRfY29kZSwKICAgIENPQUxFU0NFKGguYWNjb3VudF9uYW1lLCBiLmFjY291bnRfbmFtZSkgQVMgYWNjb3VudF9uYW1lLAogICAgQ09BTEVTQ0UoaC5hY2NvdW50X3R5cGUsIGIuYWNjb3VudF90eXBlKSBBUyBhY2NvdW50X3R5cGUsCiAgICBDT0FMRVNDRShoLnBhcmVudF9hY2NvdW50X25hbWUsIGIucGFyZW50X2FjY291bnRfbmFtZSkgQVMgcGFyZW50X2FjY291bnRfbmFtZSwKICAgIENPQUxFU0NFKGgubW9udGhfc3RhcnQsIGIubW9udGhfc3RhcnQpIEFTIG1vbnRoX3N0YXJ0LAogICAgdG9fY2hhcihDT0FMRVNDRShoLm1vbnRoX3N0YXJ0LCBiLm1vbnRoX3N0YXJ0KTo6dGltZXN0YW1wIHdpdGggdGltZSB6b25lLCAnWVlZWS1NTSc6OnRleHQpIEFTIG1vbnRoX2xhYmVsLAogICAgQ09BTEVTQ0UoaC5ib29rc19oaXN0b3JpY2FsX2JhbGFuY2UsIDA6Om51bWVyaWMpIEFTIGJvb2tzX2hpc3RvcmljYWxfYmFsYW5jZSwKICAgIENPQUxFU0NFKGIubmV3dHdvcmtzX2JhbGFuY2UsIDA6Om51bWVyaWMpIEFTIG5ld3R3b3Jrc19iYWxhbmNlLAogICAgQ09BTEVTQ0UoYi5uZXd0d29ya3NfYmFsYW5jZSwgMDo6bnVtZXJpYykgLSBDT0FMRVNDRShoLmJvb2tzX2hpc3RvcmljYWxfYmFsYW5jZSwgMDo6bnVtZXJpYykgQVMgdmFyaWFuY2UsCiAgICAgICAgQ0FTRQogICAgICAgICAgICBXSEVOIENPQUxFU0NFKGguYm9va3NfaGlzdG9yaWNhbF9iYWxhbmNlLCAwOjpudW1lcmljKSA9IDA6Om51bWVyaWMgQU5EIENPQUxFU0NFKGIubmV3dHdvcmtzX2JhbGFuY2UsIDA6Om51bWVyaWMpID0gMDo6bnVtZXJpYyBUSEVOIDA6Om51bWVyaWMKICAgICAgICAgICAgV0hFTiBDT0FMRVNDRShoLmJvb2tzX2hpc3RvcmljYWxfYmFsYW5jZSwgMDo6bnVtZXJpYykgPSAwOjpudW1lcmljIFRIRU4gTlVMTDo6bnVtZXJpYwogICAgICAgICAgICBFTFNFIHJvdW5kKChDT0FMRVNDRShiLm5ld3R3b3Jrc19iYWxhbmNlLCAwOjpudW1lcmljKSAtIENPQUxFU0NFKGguYm9va3NfaGlzdG9yaWNhbF9iYWxhbmNlLCAwOjpudW1lcmljKSkgLyBhYnMoaC5ib29rc19oaXN0b3JpY2FsX2JhbGFuY2UpICogMTAwOjpudW1lcmljLCAxKQogICAgICAgIEVORCBBUyB2YXJpYW5jZV9wY3QKICAgRlJPTSBib29rc19oaXN0b3JpY2FsX2RhdGEgaAogICAgIEZVTEwgSk9JTiBuZXd0d29ya3NfZGF0YSBiIE9OIGguYWdlbmN5X2lkID0gYi5hZ2VuY3lfaWQgQU5EIGguYWNjb3VudF9pZCA9IGIuYWNjb3VudF9pZCBBTkQgaC5tb250aF9zdGFydCA9IGIubW9udGhfc3RhcnQ7Cg==
+-- Tier 3: DB objects scrub
+-- (a) Rename source_bucket value 'bcc_originating' → 'newtworks_originating' in v_trial_balance
+-- (b) Drop + recreate v_variance_books_historical_vs_bcc as v_variance_books_historical_vs_newtworks
+--     with column bcc_balance → newtworks_balance and CTE bcc_data → newtworks_data
+-- NOTE: chart_namespace = 'bcc_sf' data + column default LEFT AS-IS pending Peter's decision.
+
+-- =========================================================================
+-- (a) v_trial_balance: change 'bcc_originating' → 'newtworks_originating'
+-- =========================================================================
+CREATE OR REPLACE VIEW public.v_trial_balance AS
+ SELECT je.agency_id,
+    coa.id AS account_id,
+    coa.account_code,
+    coa.account_name,
+    coa.account_type,
+    coa.parent_account_id,
+    parent.account_name AS parent_account_name,
+        CASE
+            WHEN je.source ~~ 'books_historical_import%'::text THEN 'books_historical'::text
+            WHEN je.source = ANY (ARRAY['gl_entry_writer'::text, 'payroll_gl_writer'::text, 'bank_gl_writer'::text, 'cc_gl_writer'::text, 'document_processor'::text, 'document_processor_drainer'::text, 'claude_adjustment'::text]) THEN 'newtworks_originating'::text
+            ELSE 'other'::text
+        END AS source_bucket,
+    date_trunc('month'::text, je.entry_date::timestamp with time zone)::date AS month_start,
+    je.entry_date,
+    sum(jl.debit) AS total_debit,
+    sum(jl.credit) AS total_credit,
+        CASE
+            WHEN coa.account_type = 'income'::text AND je.source ~~ 'books_historical_import%'::text THEN sum(jl.debit) - sum(jl.credit)
+            WHEN coa.account_type = ANY (ARRAY['asset'::text, 'expense'::text]) THEN sum(jl.debit) - sum(jl.credit)
+            ELSE sum(jl.credit) - sum(jl.debit)
+        END AS net_balance,
+    count(DISTINCT je.id) AS entry_count
+   FROM journal_entries je
+     JOIN journal_lines jl ON jl.journal_entry_id = je.id
+     JOIN chart_of_accounts coa ON coa.id = jl.account_id
+     LEFT JOIN chart_of_accounts parent ON parent.id = coa.parent_account_id
+  GROUP BY je.agency_id, coa.id, coa.account_code, coa.account_name, coa.account_type, coa.parent_account_id, parent.account_name, je.source, (date_trunc('month'::text, je.entry_date::timestamp with time zone)), je.entry_date;
+
+-- =========================================================================
+-- (b) Drop old variance view, create new with renamed column + CTE
+-- =========================================================================
+DROP VIEW IF EXISTS public.v_variance_books_historical_vs_bcc;
+
+CREATE VIEW public.v_variance_books_historical_vs_newtworks AS
+ WITH books_historical_data AS (
+         SELECT v_trial_balance.agency_id,
+            v_trial_balance.account_id,
+            v_trial_balance.account_code,
+            v_trial_balance.account_name,
+            v_trial_balance.account_type,
+            v_trial_balance.parent_account_name,
+            v_trial_balance.month_start,
+            sum(v_trial_balance.net_balance) AS books_historical_balance,
+            sum(v_trial_balance.total_debit) AS books_historical_debit,
+            sum(v_trial_balance.total_credit) AS books_historical_credit
+           FROM v_trial_balance
+          WHERE v_trial_balance.source_bucket = 'books_historical'::text
+          GROUP BY v_trial_balance.agency_id, v_trial_balance.account_id, v_trial_balance.account_code, v_trial_balance.account_name, v_trial_balance.account_type, v_trial_balance.parent_account_name, v_trial_balance.month_start
+        ), newtworks_data AS (
+         SELECT v_trial_balance.agency_id,
+            v_trial_balance.account_id,
+            v_trial_balance.account_code,
+            v_trial_balance.account_name,
+            v_trial_balance.account_type,
+            v_trial_balance.parent_account_name,
+            v_trial_balance.month_start,
+            sum(v_trial_balance.net_balance) AS newtworks_balance,
+            sum(v_trial_balance.total_debit) AS newtworks_debit,
+            sum(v_trial_balance.total_credit) AS newtworks_credit
+           FROM v_trial_balance
+          WHERE v_trial_balance.source_bucket = 'newtworks_originating'::text
+          GROUP BY v_trial_balance.agency_id, v_trial_balance.account_id, v_trial_balance.account_code, v_trial_balance.account_name, v_trial_balance.account_type, v_trial_balance.parent_account_name, v_trial_balance.month_start
+        )
+ SELECT COALESCE(h.agency_id, b.agency_id) AS agency_id,
+    COALESCE(h.account_id, b.account_id) AS account_id,
+    COALESCE(h.account_code, b.account_code) AS account_code,
+    COALESCE(h.account_name, b.account_name) AS account_name,
+    COALESCE(h.account_type, b.account_type) AS account_type,
+    COALESCE(h.parent_account_name, b.parent_account_name) AS parent_account_name,
+    COALESCE(h.month_start, b.month_start) AS month_start,
+    to_char(COALESCE(h.month_start, b.month_start)::timestamp with time zone, 'YYYY-MM'::text) AS month_label,
+    COALESCE(h.books_historical_balance, 0::numeric) AS books_historical_balance,
+    COALESCE(b.newtworks_balance, 0::numeric) AS newtworks_balance,
+    COALESCE(b.newtworks_balance, 0::numeric) - COALESCE(h.books_historical_balance, 0::numeric) AS variance,
+        CASE
+            WHEN COALESCE(h.books_historical_balance, 0::numeric) = 0::numeric AND COALESCE(b.newtworks_balance, 0::numeric) = 0::numeric THEN 0::numeric
+            WHEN COALESCE(h.books_historical_balance, 0::numeric) = 0::numeric THEN NULL::numeric
+            ELSE round((COALESCE(b.newtworks_balance, 0::numeric) - COALESCE(h.books_historical_balance, 0::numeric)) / abs(h.books_historical_balance) * 100::numeric, 1)
+        END AS variance_pct
+   FROM books_historical_data h
+     FULL JOIN newtworks_data b ON h.agency_id = b.agency_id AND h.account_id = b.account_id AND h.month_start = b.month_start;
