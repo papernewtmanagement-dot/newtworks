@@ -16,7 +16,11 @@ const Card = ({ children, style={} }) => (
 export default function SeatProfitabilitySection() {
   const [rows, setRows] = useState([]);
   const [projections, setProjections] = useState([]);
+  const [scenarioRows, setScenarioRows] = useState([]);
+  const [scenarioProjections, setScenarioProjections] = useState([]);
+  const [scenarioActive, setScenarioActive] = useState(false);
   const [loading, setLoading] = useState(true);
+  const SCENARIO_LAPSE = 0.12;
   const [weekEnd, setWeekEnd] = useState(() => {
     // Default: nearest upcoming Saturday (or today if Saturday)
     const today = new Date();
@@ -32,7 +36,7 @@ export default function SeatProfitabilitySection() {
     async function load() {
       setLoading(true);
       try {
-        const [wtRes, projRes] = await Promise.all([
+        const [wtRes, projRes, wtScenRes, projScenRes] = await Promise.all([
           supabase.rpc('compute_warning_trigger', {
             p_agency_id: AGENCY_ID,
             p_week_end_date: weekEnd,
@@ -42,14 +46,27 @@ export default function SeatProfitabilitySection() {
             p_baseline_date: weekEnd,
             p_max_months: 60,
           }),
+          supabase.rpc('compute_warning_trigger', {
+            p_agency_id: AGENCY_ID,
+            p_week_end_date: weekEnd,
+            p_override_lapse: SCENARIO_LAPSE,
+          }),
+          supabase.rpc('compute_seat_projections_for_agency', {
+            p_agency_id: AGENCY_ID,
+            p_baseline_date: weekEnd,
+            p_max_months: 60,
+            p_override_lapse: SCENARIO_LAPSE,
+          }),
         ]);
         if (cancelled) return;
         if (wtRes.error) throw wtRes.error;
         setRows(wtRes.data || []);
         if (!projRes.error) setProjections(projRes.data || []);
+        if (!wtScenRes.error) setScenarioRows(wtScenRes.data || []);
+        if (!projScenRes.error) setScenarioProjections(projScenRes.data || []);
       } catch (e) {
         console.error('Seat profitability load error:', e);
-        if (!cancelled) { setRows([]); setProjections([]); }
+        if (!cancelled) { setRows([]); setProjections([]); setScenarioRows([]); setScenarioProjections([]); }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -68,7 +85,10 @@ export default function SeatProfitabilitySection() {
     );
   }
 
-  const first = rows[0];
+  // Effective data set (actual vs. scenario)
+  const effectiveRows = scenarioActive ? scenarioRows : rows;
+  const effectiveProjections = scenarioActive ? scenarioProjections : projections;
+  const first = effectiveRows[0];
   const diag = first?.diag || {};
   const agencyRenewalTTM = parseFloat(diag.agency_renewal_ttm || 0);
   const lapseRate = parseFloat(first?.lapse_rate_used || 0);
@@ -279,7 +299,7 @@ export default function SeatProfitabilitySection() {
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Team — this week's assessment</div>
         </div>
-        {rows.length === 0 ? (
+        {effectiveRows.length === 0 ? (
           <div style={{ padding: 20, textAlign: "center", fontSize: 13, color: T.slate500 }}>No team members found for this week.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -296,7 +316,7 @@ export default function SeatProfitabilitySection() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(r => (
+                {effectiveRows.map(r => (
                   <tr key={r.team_member_id} style={{ borderBottom: `1px solid ${T.slate100}` }}>
                     <td style={{ padding: "12px", fontWeight: 600, color: T.slate900 }}>{r.full_name}</td>
                     <td style={{ padding: "12px", color: T.slate700 }}>
@@ -320,7 +340,7 @@ export default function SeatProfitabilitySection() {
       <Card>
         <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Attribution breakdown</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {rows.map(r => (
+          {effectiveRows.map(r => (
             <div key={r.team_member_id} style={{ padding: "10px 12px", background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 6 }}>{r.full_name}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11, color: T.slate700 }}>
@@ -343,7 +363,7 @@ export default function SeatProfitabilitySection() {
           Under current conditions (new-business pace, lapse rate, retention pool held constant). 5-year horizon.
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {projections.map(p => {
+          {effectiveProjections.map(p => {
             const fmtDate = (d) => {
               if (!d) return null;
               const dt = new Date(d + 'T00:00:00');
@@ -392,7 +412,7 @@ export default function SeatProfitabilitySection() {
                   </div>
                 </div>
                 {(() => {
-                  const row = rows.find(r => r.team_member_id === p.team_member_id);
+                  const row = effectiveRows.find(r => r.team_member_id === p.team_member_id);
                   if (!row) return null;
                   const insights = generateInsights(row, p);
                   if (insights.length === 0) return null;
