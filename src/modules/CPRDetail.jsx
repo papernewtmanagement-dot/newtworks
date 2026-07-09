@@ -1997,10 +1997,12 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
   );
 }
 
-// 19 — Payroll (per-person columns, pay component rows)
+// 19 — Payroll v2 (per-person columns, residual-pool components as rows)
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
 // paid year-to-date through SurePayroll, through end of last pay period).
-// True Pay Bonus is computed off that value on save via write_weekly_pay RPC.
+// Recompute on save calls write_weekly_comp_v2 which populates base_salary,
+// commission, bonus, marketing_pool_earned_weekly, and manager_bonus from
+// the residual pool + carveouts wire.
 function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   const [editMode, setEditMode] = useState(false);
