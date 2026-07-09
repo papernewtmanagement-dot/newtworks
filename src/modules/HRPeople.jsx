@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
-import SeatProfitabilitySection from "../components/SeatProfitabilitySection.jsx";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -226,6 +225,100 @@ const scoreColor = (s) => s >= 8 ? T.green : s >= 6 ? T.amber : T.red;
 const scoreBg    = (s) => s >= 8 ? T.greenLt : s >= 6 ? T.amberLt : T.redLt;
 const pct = (a, t) => t ? Math.min(100, Math.round((a/t)*100)) : 0;
 const fmt = (n, unit) => unit === "dollars" ? "$"+n.toLocaleString() : unit === "percentage" ? n+"%" : n.toString();
+
+// ─── Seat Profitability helpers (folded in from SeatProfitabilitySection 2026-07-09) ──
+const fmt$ = (n) => "$" + Math.round(parseFloat(n) || 0).toLocaleString();
+const profStatusColor = (s) => {
+  if (s === 'green')  return { bg: T.greenLt, fg: '#065F46' };
+  if (s === 'yellow') return { bg: T.amberLt, fg: '#92400E' };
+  if (s === 'red')    return { bg: T.redLt,   fg: '#991B1B' };
+  return { bg: T.slate100, fg: T.slate500 };
+};
+const ProfBadge = ({ status, pctValue, label }) => {
+  const c = profStatusColor(status);
+  const num = pctValue != null ? Math.round(parseFloat(pctValue)) : null;
+  const body = num != null ? num + "%" : (status || 'na').toUpperCase();
+  return (
+    <span title={label ? label + " " + body : body} style={{ display:"inline-flex", alignItems:"center", gap:4, fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:20, background:c.bg, color:c.fg, minWidth:50, justifyContent:"center" }}>
+      {label && <span style={{ opacity:0.75, fontWeight:600 }}>{label}</span>}
+      {body}
+    </span>
+  );
+};
+const fmtSeatDate = (d) => {
+  if (!d) return null;
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('en-US', { month:'short', year:'numeric' });
+};
+const seatMonthsLabel = (m) => {
+  if (m == null) return '';
+  if (m === 0) return 'now';
+  if (m < 12) return `${m} mo`;
+  const y = Math.floor(m / 12);
+  const r = m - y * 12;
+  return r === 0 ? `${y} yr` : `${y} yr ${r} mo`;
+};
+const sevColor = (s) => {
+  if (s === 'positive') return { border: T.green,   bg: T.greenLt,  fg: '#065F46' };
+  if (s === 'concern')  return { border: T.amber,   bg: T.amberLt,  fg: '#92400E' };
+  if (s === 'critical') return { border: T.red,     bg: T.redLt,    fg: '#991B1B' };
+  if (s === 'action')   return { border: T.blue,    bg: T.blueLt,   fg: '#1E40AF' };
+  return { border: T.slate200, bg: T.slate50, fg: T.slate700 };
+};
+const generateSeatInsights = (row, projection) => {
+  if (!row || !projection) return [];
+  const cat = row.role_category;
+  const covPct = parseFloat(row.coverage_pct) || 0;
+  const covMonths = projection.coverage_green_est_months;
+  const profMonths = projection.profitability_green_est_months;
+  const rqm = parseFloat(row.retention_quality_multiplier) || 0;
+  const fully = parseFloat(row.fully_loaded_annual) || 0;
+  const attr = parseFloat(row.attributed_revenue_annual) || 0;
+  const stackCredited = parseFloat(row.own_renewal_stack_credited) || 0;
+  const ownNew = parseFloat(row.own_new_business_annualized) || 0;
+  const retPool = parseFloat(row.retention_pool_share_annual) || 0;
+  const gap = fully - attr;
+  const money = (n) => '$' + Math.round(n).toLocaleString();
+  const out = [];
+  if (covPct >= 100) {
+    out.push({ severity:'positive', title:'Covering seat', detail:`Attributed ${money(attr)} exceeds fully-loaded ${money(fully)}. This seat pays for itself.` });
+  } else if (covPct >= 80) {
+    out.push({ severity:'concern', title:'Nearly covering', detail:`Attributed ${money(attr)} vs ${money(fully)} fully-loaded. Gap of ${money(gap)}/yr — close, but the seat is still costing the agency money.` });
+  } else {
+    out.push({ severity:'critical', title:'Not covering seat', detail:`Attributed ${money(attr)} vs ${money(fully)} fully-loaded. Losing ${money(gap)}/yr on this seat.` });
+  }
+  if (cat === 'Sales') {
+    if (covMonths == null) {
+      out.push({ severity:'critical', title:'Book decaying faster than replaced', detail:`Under current new-business pace (${money(ownNew)}/yr commission), existing stack is decaying faster than new production replenishes it. Check trailing quarter vs prior quarters — if pace has dropped, that's the driver.` });
+      out.push({ severity:'action', title:'Next action', detail:`Diagnose the pace drop. Compare this quarter's issued premium to previous 4 quarters. Have an activity conversation: prospecting, quoting, closing — where's the bottleneck?` });
+    } else if (covMonths <= 12) {
+      out.push({ severity:'positive', title:'On trajectory', detail:`Coverage projected in ${covMonths} month${covMonths === 1 ? '' : 's'}. Book is compounding — year-1 cohorts are aging into renewal territory.` });
+      out.push({ severity:'action', title:'Next action', detail:`Keep doing what they're doing. Confirm the trajectory in ${Math.min(covMonths, 3)} months.` });
+    } else if (covMonths <= 36) {
+      out.push({ severity:'concern', title:'Long path to coverage', detail:`${covMonths} months out. Book is compounding but slowly at current pace. Growing new-business production would compress this timeline significantly.` });
+      out.push({ severity:'action', title:'Next action', detail:`Set a stretch goal on quarterly new-business premium. Even modest growth (+20%) meaningfully accelerates the timeline.` });
+    } else {
+      out.push({ severity:'concern', title:'Very long path', detail:`${covMonths} months. At current pace the numbers eventually work but the seat runs at a loss for years.` });
+      out.push({ severity:'action', title:'Next action', detail:`Set a stretch goal on quarterly new-business premium. Even modest growth (+20%) meaningfully accelerates the timeline.` });
+    }
+    if (profMonths == null) {
+      out.push({ severity:'info', title:'Profitability (2.5×) not within 5-year horizon', detail:`Getting to 2.5× fully-loaded requires book compounding AND growing new business. Long-term goal, not a short-term signal.` });
+    }
+  } else {
+    if (covMonths == null) {
+      const potentialRetPool = rqm > 0.01 ? retPool * (1.0 / rqm) : retPool;
+      const potentialAttr = ownNew + stackCredited + potentialRetPool;
+      const potentialCovPct = fully > 0 ? (potentialAttr / fully) * 100 : 0;
+      out.push({ severity:'critical', title:'Attributed revenue is static', detail:`Retention seats don't grow their own book — they share the agency's renewal pool. At current lapse, RQM is ${rqm.toFixed(2)}, discounting the pool by ${Math.round((1-rqm)*100)}%.` });
+      out.push({ severity:'info', title:'Lever: lower agency lapse', detail:`If lapse hit benchmark 12%, RQM would jump to 1.0. This seat's attributed would reach ${money(potentialAttr)}/yr — that's ${potentialCovPct.toFixed(0)}% Coverage. Lapse investigation is the single biggest lever for this role.` });
+    } else {
+      out.push({ severity:'concern', title:'Coverage reachable', detail:`Projected in ${covMonths} months. Own small book gradually adds to attributed revenue over years.` });
+      out.push({ severity:'info', title:'Faster path: reduce agency lapse', detail:`Any improvement in agency lapse rate scales retention pool share directly. At benchmark 12%, RQM = 1.0 doubles this seat's attribution overnight.` });
+    }
+    out.push({ severity:'action', title:'Next action', detail:`Prioritize a lapse investigation — segment the book by cohort age and LOB, identify the churn drivers, then target intervention. This seat's future depends on it.` });
+  }
+  return out;
+};
 
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
@@ -524,6 +617,48 @@ const StaffDirectory = ({ staff }) => {
   const [saveError, setSaveError] = useState("");
   // Local overlay of edits so saved changes show immediately without a full reload
   const [overrides, setOverrides] = useState({});
+
+  // ── Seat profitability (folded into roster 2026-07-09) ──
+  // Fetches compute_warning_trigger + compute_seat_projections_for_agency for the current
+  // week, keyed by team_member_id. Scenario toggle re-fetches with p_override_lapse=0.12.
+  const SEAT_SCENARIO_LAPSE = 0.12;
+  const [seatWeekEnd] = useState(() => {
+    const t = new Date();
+    const daysUntilSat = t.getDay() === 6 ? 0 : (6 - t.getDay());
+    const sat = new Date(t); sat.setDate(t.getDate() + daysUntilSat);
+    return sat.toISOString().slice(0, 10);
+  });
+  const [seatRows, setSeatRows] = useState([]);
+  const [seatProjections, setSeatProjections] = useState([]);
+  const [seatScenRows, setSeatScenRows] = useState([]);
+  const [seatScenProjections, setSeatScenProjections] = useState([]);
+  const [seatScenarioActive, setSeatScenarioActive] = useState(false);
+  const [seatLoading, setSeatLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSeatLoading(true);
+      try {
+        const [wt, pr, wtS, prS] = await Promise.all([
+          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd }),
+          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60 }),
+          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd, p_override_lapse: SEAT_SCENARIO_LAPSE }),
+          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60, p_override_lapse: SEAT_SCENARIO_LAPSE }),
+        ]);
+        if (cancelled) return;
+        if (!wt.error) setSeatRows(wt.data || []);
+        if (!pr.error) setSeatProjections(pr.data || []);
+        if (!wtS.error) setSeatScenRows(wtS.data || []);
+        if (!prS.error) setSeatScenProjections(prS.data || []);
+      } catch (e) {
+        console.error('Seat profitability load error:', e);
+        if (!cancelled) { setSeatRows([]); setSeatProjections([]); setSeatScenRows([]); setSeatScenProjections([]); }
+      } finally {
+        if (!cancelled) setSeatLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [seatWeekEnd]);
 
   // ── Termination flow state (principle 500: document the decision before making it) ──
   const [terminatingId, setTerminatingId] = useState(null);
@@ -1363,12 +1498,82 @@ const StaffDirectory = ({ staff }) => {
         );
       })}
 
+      {/* ============== AGENCY-WIDE SEAT AGGREGATE + SCENARIO TOGGLE ============== */}
+      {view === "active" && (() => {
+        const rows = seatScenarioActive ? seatScenRows : seatRows;
+        if (seatLoading) {
+          return (
+            <Card style={{ padding:"10px 14px" }}>
+              <div style={{ fontSize:11, color:T.slate500 }}>Loading seat profitability…</div>
+            </Card>
+          );
+        }
+        if (!rows || rows.length === 0) return null;
+        const totalAttr  = rows.reduce((s,r) => s + (parseFloat(r.attributed_revenue_annual) || 0), 0);
+        const totalFully = rows.reduce((s,r) => s + (parseFloat(r.fully_loaded_annual) || 0), 0);
+        const totalProfBar = rows.reduce((s,r) => s + (parseFloat(r.profitability_bar) || 0), 0);
+        const covPctAgency  = totalFully   > 0 ? (totalAttr / totalFully)   * 100 : 0;
+        const profPctAgency = totalProfBar > 0 ? (totalAttr / totalProfBar) * 100 : 0;
+        const gap = totalFully - totalAttr;
+        const covC  = covPctAgency  >= 100 ? { bg:T.greenLt, fg:'#065F46' } : covPctAgency  >= 80 ? { bg:T.amberLt, fg:'#92400E' } : { bg:T.redLt, fg:'#991B1B' };
+        const profC = profPctAgency >= 100 ? { bg:T.greenLt, fg:'#065F46' } : profPctAgency >= 80 ? { bg:T.amberLt, fg:'#92400E' } : { bg:T.redLt, fg:'#991B1B' };
+        const first = rows[0] || {};
+        const lapseRate = parseFloat(first.lapse_rate_used) || 0;
+        const lapseStatus = first.lapse_status || 'na';
+        const agencyRenewalTTM = parseFloat(first.diag?.agency_renewal_ttm) || 0;
+        return (
+          <Card style={{ borderLeft:`4px solid ${seatScenarioActive ? T.purple : T.slate900}`, padding:"12px 16px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap", marginBottom:10 }}>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:T.slate900 }}>Seat profitability — agency-wide</div>
+                <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>
+                  {seatScenarioActive ? "Scenario: if lapse hit benchmark 12%" : "Actual: current conditions"} · week ending {seatWeekEnd}
+                </div>
+              </div>
+              <button
+                onClick={() => setSeatScenarioActive(v => !v)}
+                style={{ padding:"6px 12px", fontSize:11, fontWeight:700, color:seatScenarioActive ? T.white : T.slate700, background:seatScenarioActive ? T.purple : T.white, border:`1px solid ${seatScenarioActive ? T.purple : T.slate200}`, borderRadius:8, cursor:"pointer" }}
+              >
+                {seatScenarioActive ? "✓ Scenario ON" : "What if lapse = 12%?"}
+              </button>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:8 }}>
+              <div style={{ background:T.slate50, padding:"8px 10px", borderRadius:8 }}>
+                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>Attributed / Loaded</div>
+                <div style={{ fontSize:12, fontWeight:700, color:T.slate900 }}>{fmt$(totalAttr)} / {fmt$(totalFully)}</div>
+                <div style={{ fontSize:9, color: gap > 0 ? '#991B1B' : '#065F46', marginTop:3 }}>
+                  {gap > 0 ? `losing ${fmt$(gap)}/yr` : `surplus ${fmt$(-gap)}/yr`}
+                </div>
+              </div>
+              <div style={{ background:covC.bg, padding:"8px 10px", borderRadius:8 }}>
+                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>Coverage</div>
+                <div style={{ fontSize:18, fontWeight:800, color:covC.fg }}>{covPctAgency.toFixed(0)}%</div>
+              </div>
+              <div style={{ background:profC.bg, padding:"8px 10px", borderRadius:8 }}>
+                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>Profitability</div>
+                <div style={{ fontSize:18, fontWeight:800, color:profC.fg }}>{profPctAgency.toFixed(0)}%</div>
+              </div>
+              <div style={{ background:T.slate50, padding:"8px 10px", borderRadius:8 }}>
+                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>Lapse · Renewal TTM</div>
+                <div style={{ fontSize:11, fontWeight:600, color:profStatusColor(lapseStatus).fg }}>{(lapseRate * 100).toFixed(1)}%</div>
+                <div style={{ fontSize:10, color:T.slate600, marginTop:2 }}>{fmt$(agencyRenewalTTM)}</div>
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
+
       {/* ============== ACTIVE VIEW (existing card list) ============== */}
       {view === "active" && mergedActive.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
         // Merge any saved override on top of the loaded row.
         const member = overrides[raw.id] ? { ...raw, ...overrides[raw.id] } : raw;
         const isExpanded = expanded === member.id;
         const isEditing = editingId === member.id;
+        // Seat profitability lookup for this member (respects scenario toggle).
+        const seatSrcRows = seatScenarioActive ? seatScenRows : seatRows;
+        const seatSrcProj = seatScenarioActive ? seatScenProjections : seatProjections;
+        const seat = seatSrcRows.find(r => r.team_member_id === member.id) || null;
+        const seatProj = seat ? (seatSrcProj.find(p => p.team_member_id === member.id) || null) : null;
         return (
           <Card key={member.id} style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
@@ -1378,7 +1583,7 @@ const StaffDirectory = ({ staff }) => {
               </div>
 
               <div style={{ flex:1 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
                   <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{member.first_name} {member.last_name}</span>
                   {hasAnyLicense(member) ? (
                     <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
@@ -1392,9 +1597,18 @@ const StaffDirectory = ({ staff }) => {
                   {member.compliance_flag && (
                     <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
                   )}
+                  {seat && (
+                    <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginLeft:"auto" }}>
+                      <ProfBadge label="Cov" status={seat.coverage_status} pctValue={seat.coverage_pct} />
+                      <ProfBadge label="Prof" status={seat.profitability_status} pctValue={seat.profitability_pct} />
+                    </div>
+                  )}
                 </div>
                 <div style={{ fontSize:12, color:T.slate500 }}>
                   {member.role || "-"}{member.role_level ? ` · ${member.role_level}` : ""} · {member.employment_type === "w2" ? "W-2 Employee" : member.employment_type === "family" ? "Family Employee (W-2)" : member.employment_type === "1099" ? "1099 Contractor" : (member.employment_type || "Employee")} · Since {member.start_date || "-"}
+                  {seat && (
+                    <span style={{ marginLeft:8, color:T.slate600 }}>· Attributed <strong style={{ color:T.slate900 }}>{fmt$(seat.attributed_revenue_annual)}</strong>/yr</span>
+                  )}
                 </div>
               </div>
 
@@ -1433,6 +1647,44 @@ const StaffDirectory = ({ staff }) => {
                 {member.compliance_flag && (
                   <div style={{ fontSize:11, color:"#92400E", background:T.amberLt, padding:"8px 10px", borderRadius:8, marginBottom:10 }}>
                     ⚠ {member.compliance_flag}
+                  </div>
+                )}
+                {seat && (
+                  <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Seat profitability</div>
+                    <div style={{ marginBottom:3 }}>
+                      Loaded <strong style={{ color:T.slate900 }}>{fmt$(seat.fully_loaded_annual)}</strong>
+                      {" · "}Prof bar <strong style={{ color:T.slate900 }}>{fmt$(seat.profitability_bar)}</strong>
+                      {" · "}Tenure <strong style={{ color:T.slate900 }}>{(parseFloat(seat.tenure_multiplier) || 0).toFixed(2)}×</strong>
+                    </div>
+                    <div style={{ marginBottom:3 }}>
+                      Attribution:{" "}
+                      <strong style={{ color:T.slate900 }}>{fmt$(seat.own_new_business_annualized)}</strong> new×4
+                      {" + "}<strong style={{ color:T.slate900 }}>{fmt$(seat.own_renewal_stack_credited)}</strong> stack×0.65
+                      {seat.role_category === 'Retention' && (
+                        <span>{" + "}<strong style={{ color:T.slate900 }}>{fmt$(seat.retention_pool_share_annual)}</strong> pool×RQM {(parseFloat(seat.retention_quality_multiplier) || 0).toFixed(2)}</span>
+                      )}
+                      {" = "}<strong style={{ color:T.slate900 }}>{fmt$(seat.attributed_revenue_annual)}</strong>
+                    </div>
+                    {seatProj && (
+                      <div style={{ marginBottom:8 }}>
+                        Green: Cov =<span> </span>
+                        {seatProj.coverage_green_est_date ? <strong style={{ color:T.slate900 }}>{fmtSeatDate(seatProj.coverage_green_est_date)} ({seatMonthsLabel(seatProj.coverage_green_est_months)})</strong> : <strong style={{ color:'#991B1B' }}>no path</strong>}
+                        {" · "}Prof =<span> </span>
+                        {seatProj.profitability_green_est_date ? <strong style={{ color:T.slate900 }}>{fmtSeatDate(seatProj.profitability_green_est_date)} ({seatMonthsLabel(seatProj.profitability_green_est_months)})</strong> : <strong style={{ color:'#991B1B' }}>{'>'}5yr</strong>}
+                      </div>
+                    )}
+                    {(() => {
+                      const insights = generateSeatInsights(seat, seatProj);
+                      const primary = insights.find(i => i.severity === 'action') || insights.find(i => i.severity === 'critical') || insights[0];
+                      if (!primary) return null;
+                      const c = sevColor(primary.severity);
+                      return (
+                        <div style={{ padding:"7px 10px", background:c.bg, borderLeft:`3px solid ${c.border}`, borderRadius:4, fontSize:11, color:T.slate700, lineHeight:1.5 }}>
+                          <strong style={{ color:c.fg }}>{primary.title}:</strong> {primary.detail}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
@@ -2033,10 +2285,7 @@ export default function HRPeople() {
       {section === "overview" && <HROverview applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
       {section === "growth"   && <GrowthTab  applicants={applicants} onUpdate={updateApplicantStage} />}
       {section === "members"  && (
-        <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-          <StaffDirectory staff={roi?.allActiveStaff || []} />
-          <SeatProfitabilitySection />
-        </div>
+        <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
     </div>
   );
