@@ -696,6 +696,7 @@ function ReconciliationsTab({ pfaAccountId }) {
   const [detailsById, setDetailsById] = useState({});
   const [recomputingId, setRecomputingId] = useState(null);
   const [recomputeMsg, setRecomputeMsg] = useState("");
+  const [sendingId, setSendingId] = useState(null);
 
   const loadRows = useCallback(() => {
     if (!pfaAccountId) return;
@@ -760,6 +761,54 @@ function ReconciliationsTab({ pfaAccountId }) {
     }
   };
 
+  const handleSend = async (recon) => {
+    setRecomputeMsg("");
+    const diff = Number(recon.difference_to_reconcile ?? 0);
+    const isClean = Math.abs(diff) < 0.005;
+    const monthLabel = fmtDate(recon.statement_ending_date);
+    let force = false;
+    let proceed;
+    if (isClean) {
+      proceed = window.confirm(
+        `Send the ${monthLabel} PFA reconciliation to State Farm?\n\n` +
+        `Recipient: peter.story.yrru@statefarm.com\n` +
+        `Difference: $0.00 (clean)\n\n` +
+        `This generates the PDF and emails it.`
+      );
+    } else {
+      force = true;
+      proceed = window.confirm(
+        `⚠️ This reconciliation has a DISCREPANCY of $${fmtMoney(Math.abs(diff))}.\n\n` +
+        `Sending anyway will still email SF. Are you sure you've reviewed and want to send?\n\n` +
+        `Type OK only if the discrepancy has an explanation SF will accept.`
+      );
+    }
+    if (!proceed) return;
+    setSendingId(recon.id);
+    try {
+      const { data, error: rpcErr } = await supabase.rpc("pfa_send_reconciliation", {
+        p_reconciliation_id: recon.id, p_force: force,
+      });
+      if (rpcErr) { setRecomputeMsg(rpcErr.message || "Send failed."); return; }
+      const status = data?.status || "unknown";
+      const okSent = data?.ok === true && status === "sent";
+      if (okSent) {
+        setRecomputeMsg(`Sent to SF. Message ID: ${data?.message_id || "unknown"}.`);
+      } else if (status === "already_sent") {
+        setRecomputeMsg(`Already sent (${fmtDate(data?.emailed_at)}).`);
+      } else if (status === "skipped_discrepancy") {
+        setRecomputeMsg(`Skipped: reconciliation has a discrepancy of $${fmtMoney(Math.abs(data?.difference ?? 0))}. Recompute or override with force.`);
+      } else {
+        setRecomputeMsg(`Send did not complete: ${data?.error || status}`);
+      }
+      await loadRows();
+    } catch (e) {
+      setRecomputeMsg(String(e?.message || e));
+    } finally {
+      setSendingId(null);
+    }
+  };
+
   const waterfallRow = (label, amount, opts = {}) => (
     <div style={{
       display: "flex", justifyContent: "space-between", padding: "6px 0",
@@ -817,13 +866,27 @@ function ReconciliationsTab({ pfaAccountId }) {
                     </td>
                     <td style={tableTd}>{r.emailed_to_agent_at ? `✓ ${fmtDate(r.emailed_to_agent_at)}` : "—"}</td>
                     <td style={tableTd} onClick={(e) => e.stopPropagation()}>
-                      <button type="button" onClick={() => handleRecompute(r.id)} disabled={recomputingId === r.id}
-                        style={{
-                          padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`,
-                          background: T.white, color: T.slate700, fontSize: 12, cursor: "pointer",
-                        }}>
-                        {recomputingId === r.id ? "…" : "Recompute"}
-                      </button>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <button type="button" onClick={() => handleRecompute(r.id)} disabled={recomputingId === r.id}
+                          style={{
+                            padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`,
+                            background: T.white, color: T.slate700, fontSize: 12, cursor: "pointer",
+                          }}>
+                          {recomputingId === r.id ? "…" : "Recompute"}
+                        </button>
+                        {!r.emailed_to_agent_at && (
+                          <button type="button" onClick={() => handleSend(r)} disabled={sendingId === r.id}
+                            style={{
+                              padding: "4px 10px", borderRadius: 6,
+                              border: `1px solid ${isClean ? T.blue : "#B03A2E"}`,
+                              background: isClean ? T.blue : "#B03A2E",
+                              color: T.white, fontSize: 12, fontWeight: 600,
+                              cursor: "pointer",
+                            }}>
+                            {sendingId === r.id ? "…" : (isClean ? "Send to SF" : "Send anyway")}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                   {isOpen && (
@@ -928,7 +991,7 @@ function ReconciliationsTab({ pfaAccountId }) {
         </table>
       </div>
       <div style={{ fontSize: 11, color: T.slate500, marginTop: 8 }}>
-        Recompute re-runs the reconciliation math against the current ledger. To actually send the PDF + email SF, ask Peter's assistant (Claude) — the send step lives in Claude/workbench.
+        Clean reconciliations auto-send when the daily 12 PM CT recipe runs. Recompute updates the math against the current ledger. Send to SF fires the PDF + email manually (requires confirmation; discrepancies require a stronger confirmation).
       </div>
     </div>
   );
