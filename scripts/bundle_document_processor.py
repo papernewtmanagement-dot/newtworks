@@ -54,6 +54,8 @@ ORDER = [
     "parsers/deduction.ts",
     "parsers/payroll.ts",
     "parsers/production.ts",
+    "parsers/surepayroll.ts",
+    "parsers/sf_daily_call_log.ts",
     "index.ts",
 ]
 

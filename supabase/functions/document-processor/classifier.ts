@@ -125,6 +125,7 @@ export type DocType =
   | "comp_recap_daily"
   | "deduction_statement"
   | "adp_payroll"
+  | "surepayroll_payroll"
   | "commission_report"
   | "team_production"
   | "archive_bundle"
@@ -137,6 +138,23 @@ export interface DocClassifyInput {
 }
 
 const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean }> = [
+  // ----- SUREPAYROLL (v37, 2026-07-07) — SF-forwarded SurePayroll summary.
+  //       Deterministic regex parser. Must be first so it wins over the
+  //       generic filename-fallback "payroll" rule that would otherwise
+  //       route to adp_payroll. Requires .pdf extension to avoid matching
+  //       inline images (image001.gif etc.) that come with the email. -----
+  { docType: "surepayroll_payroll",
+    test: (i) => /statefarm/i.test(i.fromEmail)
+              && /payroll/i.test(i.subject + " " + i.fileName)
+              && /\.pdf$/i.test(i.fileName) },
+
+  // ----- SUREPAYROLL non-PDF attachments (inline images) — SKIP silently.
+  //       Same sender + subject match but non-PDF file: don't try to parse. -----
+  { docType: "skip",
+    test: (i) => /statefarm/i.test(i.fromEmail)
+              && /payroll/i.test(i.subject)
+              && !/\.pdf$/i.test(i.fileName) },
+
   // ----- ARCHIVE — any .zip is unpacked, contents reclassified individually -----
   { docType: "archive_bundle",
     test: (i) => /\.zip$/i.test(i.fileName) },
