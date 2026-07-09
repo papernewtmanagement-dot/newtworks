@@ -83,6 +83,152 @@ export default function SeatProfitabilitySection() {
     return { bg: T.slate100, fg: T.slate500 };
   };
 
+  // Generate diagnostic insights per person based on their data.
+  // Each insight: { severity: 'positive'|'concern'|'critical'|'info', title, detail }
+  const generateInsights = (row, projection) => {
+    if (!row || !projection) return [];
+    const cat = row.role_category;
+    const covPct = parseFloat(row.coverage_pct) || 0;
+    const profPct = parseFloat(row.profitability_pct) || 0;
+    const covMonths = projection.coverage_green_est_months;
+    const profMonths = projection.profitability_green_est_months;
+    const rqm = parseFloat(row.retention_quality_multiplier) || 0;
+    const fully = parseFloat(row.fully_loaded_annual) || 0;
+    const attr = parseFloat(row.attributed_revenue_annual) || 0;
+    const stackCredited = parseFloat(row.own_renewal_stack_credited) || 0;
+    const ownNew = parseFloat(row.own_new_business_annualized) || 0;
+    const retPool = parseFloat(row.retention_pool_share_annual) || 0;
+    const gap = fully - attr;
+    const money = (n) => '$' + Math.round(n).toLocaleString();
+    const insights = [];
+
+    // 1) Where they stand right now
+    if (covPct >= 100) {
+      insights.push({
+        severity: 'positive',
+        title: 'Covering seat',
+        detail: `Attributed ${money(attr)} exceeds fully-loaded ${money(fully)}. This seat pays for itself.`,
+      });
+    } else if (covPct >= 80) {
+      insights.push({
+        severity: 'concern',
+        title: 'Nearly covering',
+        detail: `Attributed ${money(attr)} vs ${money(fully)} fully-loaded. Gap of ${money(gap)}/yr \u2014 close, but the seat is still costing the agency money.`,
+      });
+    } else {
+      insights.push({
+        severity: 'critical',
+        title: 'Not covering seat',
+        detail: `Attributed ${money(attr)} vs ${money(fully)} fully-loaded. Losing ${money(gap)}/yr on this seat.`,
+      });
+    }
+
+    // 2) Root cause + lever, branched by role
+    if (cat === 'Sales') {
+      if (covMonths === null || covMonths === undefined) {
+        insights.push({
+          severity: 'critical',
+          title: 'Book decaying faster than replaced',
+          detail: `Under current new-business pace (${money(ownNew)}/yr commission), existing stack is decaying faster than new production replenishes it. Check trailing quarter vs prior quarters \u2014 if pace has dropped, that's the driver.`,
+        });
+        insights.push({
+          severity: 'info',
+          title: 'What moves this',
+          detail: `Increase new-business pace. Every $10K additional annualized premium \u2248 $800 immediate commission + ${'~'}$500 future stack credit at maturity. Returning to prior-quarter pace would materially reshape this projection.`,
+        });
+      } else if (covMonths <= 12) {
+        insights.push({
+          severity: 'positive',
+          title: 'On trajectory',
+          detail: `Coverage projected in ${covMonths} month${covMonths === 1 ? '' : 's'}. Book is compounding \u2014 year-1 cohorts are aging into renewal territory.`,
+        });
+        insights.push({
+          severity: 'info',
+          title: 'What moves this',
+          detail: `Time + maintained pace. Stack grows automatically as monthly cohorts cross the 12-month mark. No coaching needed on activity.`,
+        });
+      } else if (covMonths <= 36) {
+        insights.push({
+          severity: 'concern',
+          title: 'Long path to coverage',
+          detail: `${covMonths} months out. Book is compounding but slowly at current pace. Growing new-business production would compress this timeline significantly.`,
+        });
+      } else {
+        insights.push({
+          severity: 'concern',
+          title: 'Very long path',
+          detail: `${covMonths} months. At current pace the numbers eventually work but the seat runs at a loss for years.`,
+        });
+      }
+      if (profMonths === null || profMonths === undefined) {
+        insights.push({
+          severity: 'info',
+          title: 'Profitability (2.5\u00d7) not within 5-year horizon',
+          detail: `Getting to 2.5\u00d7 fully-loaded requires book compounding AND growing new business. Long-term goal, not a short-term signal.`,
+        });
+      }
+    } else {
+      // Retention role
+      if (covMonths === null || covMonths === undefined) {
+        const potentialRetPool = rqm > 0.01 ? retPool * (1.0 / rqm) : retPool;
+        const potentialAttr = ownNew + stackCredited + potentialRetPool;
+        const potentialCovPct = fully > 0 ? (potentialAttr / fully) * 100 : 0;
+        insights.push({
+          severity: 'critical',
+          title: 'Attributed revenue is static',
+          detail: `Retention seats don't grow their own book \u2014 they share the agency's renewal pool. At current 27% lapse, RQM is ${rqm.toFixed(2)}, discounting the pool by ${Math.round((1-rqm)*100)}%.`,
+        });
+        insights.push({
+          severity: 'info',
+          title: 'Lever: lower agency lapse',
+          detail: `If lapse hit benchmark 12%, RQM would jump to 1.0. This seat's attributed would reach ${money(potentialAttr)}/yr \u2014 that's ${potentialCovPct.toFixed(0)}% Coverage. Lapse investigation is the single biggest lever for this role.`,
+        });
+      } else {
+        insights.push({
+          severity: 'concern',
+          title: 'Coverage reachable',
+          detail: `Projected in ${covMonths} months. Own small book gradually adds to attributed revenue over years.`,
+        });
+        insights.push({
+          severity: 'info',
+          title: 'Faster path: reduce agency lapse',
+          detail: `Any improvement in agency lapse rate scales retention pool share directly. At benchmark 12%, RQM = 1.0 doubles this seat's attribution overnight.`,
+        });
+      }
+    }
+
+    // 3) Actionable next step
+    if (cat === 'Sales') {
+      if (covMonths === null) {
+        insights.push({
+          severity: 'action',
+          title: 'Next action',
+          detail: `Diagnose the pace drop. Compare this quarter's issued premium to previous 4 quarters. Have an activity conversation: prospecting, quoting, closing \u2014 where's the bottleneck?`,
+        });
+      } else if (covMonths > 12) {
+        insights.push({
+          severity: 'action',
+          title: 'Next action',
+          detail: `Set a stretch goal on quarterly new-business premium. Even modest growth (+20%) meaningfully accelerates the timeline.`,
+        });
+      } else {
+        insights.push({
+          severity: 'action',
+          title: 'Next action',
+          detail: `Keep doing what they're doing. Confirm the trajectory in ${Math.min(covMonths, 3)} months.`,
+        });
+      }
+    } else {
+      insights.push({
+        severity: 'action',
+        title: 'Next action',
+        detail: `Prioritize a lapse investigation \u2014 segment the book by cohort age and LOB, identify the churn drivers, then target intervention. This seat's future depends on it.`,
+      });
+    }
+
+    return insights;
+  };
+
   const Badge = ({ status, pctValue, showPct = true }) => {
     const c = statusColor(status);
     const num = pctValue != null ? Math.round(parseFloat(pctValue)) : null;
@@ -245,6 +391,40 @@ export default function SeatProfitabilitySection() {
                     )}
                   </div>
                 </div>
+                {(() => {
+                  const row = rows.find(r => r.team_member_id === p.team_member_id);
+                  if (!row) return null;
+                  const insights = generateInsights(row, p);
+                  if (insights.length === 0) return null;
+                  const sevColor = (s) => {
+                    if (s === 'positive') return { border: T.green, bg: T.greenLt, fg: '#065F46', tag: 'Good' };
+                    if (s === 'concern')  return { border: T.amber, bg: T.amberLt, fg: '#92400E', tag: 'Watch' };
+                    if (s === 'critical') return { border: T.red, bg: T.redLt, fg: '#991B1B', tag: 'Fix' };
+                    if (s === 'action')   return { border: T.blue, bg: T.blueLt, fg: '#1E40AF', tag: 'Do' };
+                    return { border: T.slate200, bg: T.slate50, fg: T.slate700, tag: 'Info' };
+                  };
+                  return (
+                    <details style={{ marginTop: 10 }}>
+                      <summary style={{ fontSize: 11, fontWeight: 600, color: T.blue, cursor: "pointer", userSelect: "none", padding: "4px 0" }}>
+                        What this means & what to do →
+                      </summary>
+                      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                        {insights.map((ins, i) => {
+                          const c = sevColor(ins.severity);
+                          return (
+                            <div key={i} style={{ padding: "8px 10px", background: c.bg, borderLeft: `3px solid ${c.border}`, borderRadius: 4 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 3 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: c.fg }}>{ins.title}</div>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: c.fg, background: T.white, padding: "1px 6px", borderRadius: 10, letterSpacing: "0.05em", textTransform: "uppercase" }}>{c.tag}</div>
+                              </div>
+                              <div style={{ fontSize: 11, color: T.slate700, lineHeight: 1.5 }}>{ins.detail}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  );
+                })()}
               </div>
             );
           })}
