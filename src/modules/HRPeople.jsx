@@ -2938,7 +2938,6 @@ const GrowthBudgetHeader = () => {
   const [ytd, setYtd]                 = useState(0);
   const [ceilingInfo, setCeilingInfo] = useState(null);
   const [loading, setLoading]         = useState(true);
-  const [rampingOpen, setRampingOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -2991,25 +2990,17 @@ const GrowthBudgetHeader = () => {
         <div style={{ fontSize:12, fontWeight:700, color:statusColor, minWidth:38, textAlign:"right" }}>
           {ceiling > 0 ? `${pct(ytd, ceiling)}%` : "—"}
         </div>
-        <button
-          onClick={() => setRampingOpen(v => !v)}
-          style={{
-            fontSize:11, fontWeight:600, color:T.slate700,
-            background:T.slate100, border:"none",
-            borderRadius:6, padding:"4px 10px", cursor:"pointer", whiteSpace:"nowrap",
-          }}
-        >
-          {rampingOpen ? "▴" : "▾"} Ramping ({roster.length})
-        </button>
       </div>
 
-      {/* Expandable ramping list — one compact line per teammate */}
-      {rampingOpen && (
-        <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.slate100}`, display:"flex", flexDirection:"column", gap:6 }}>
-          {roster.length === 0 ? (
-            <div style={{ fontSize:11, color:T.slate400 }}>No teammates currently in ramp.</div>
-          ) : (
-            roster.map(p => {
+      {/* Ramping list — one compact line per teammate, always visible */}
+      <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.slate100}`, display:"flex", flexDirection:"column", gap:6 }}>
+        <div style={{ fontSize:10, fontWeight:600, color:T.slate500, letterSpacing:"0.03em", textTransform:"uppercase" }}>
+          Ramping ({roster.length})
+        </div>
+        {roster.length === 0 ? (
+          <div style={{ fontSize:11, color:T.slate400 }}>No teammates currently in ramp.</div>
+        ) : (
+          roster.map(p => {
               const tenurePct = parseFloat(p.tenure_multiplier || 0) * 100;
               const weeksIn   = parseInt(p.weeks_since_start || 0);
               return (
@@ -3022,9 +3013,8 @@ const GrowthBudgetHeader = () => {
                 </div>
               );
             })
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </Card>
   );
 };
