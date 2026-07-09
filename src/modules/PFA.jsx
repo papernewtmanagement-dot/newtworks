@@ -694,11 +694,13 @@ function ReconciliationsTab({ pfaAccountId }) {
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [detailsById, setDetailsById] = useState({});
+  const [recomputingId, setRecomputingId] = useState(null);
+  const [recomputeMsg, setRecomputeMsg] = useState("");
 
-  useEffect(() => {
+  const loadRows = useCallback(() => {
     if (!pfaAccountId) return;
     setLoading(true); setError("");
-    supabase.from("pfa_reconciliations")
+    return supabase.from("pfa_reconciliations")
       .select(`id, statement_id, statement_ending_date, statement_ending_balance,
                outstanding_checks_total, outstanding_sf_eft_total, outstanding_deposits_total,
                returned_checks_unreimbursed, adjusted_statement_balance,
@@ -714,13 +716,13 @@ function ReconciliationsTab({ pfaAccountId }) {
       });
   }, [pfaAccountId]);
 
+  useEffect(() => { loadRows(); }, [loadRows]);
+
   const toggleExpand = async (row) => {
     if (expandedId === row.id) { setExpandedId(null); return; }
     setExpandedId(row.id);
     if (detailsById[row.id]) return;
     setDetailsById(prev => ({ ...prev, [row.id]: { loading: true } }));
-    // Outstanding items as of statement_ending_date — current DB state
-    // (best-effort; not a historical snapshot).
     const { data, error } = await supabase
       .from("pfa_transactions")
       .select("id, transaction_date, transaction_type, customer_name, policy_type, debit_amount, credit_amount, transaction_number, cleared, cleared_date")
@@ -736,6 +738,26 @@ function ReconciliationsTab({ pfaAccountId }) {
       );
     }
     setDetailsById(prev => ({ ...prev, [row.id]: { loading: false, rows: outstanding, error: error?.message } }));
+  };
+
+  const handleRecompute = async (reconId) => {
+    setRecomputeMsg("");
+    setRecomputingId(reconId);
+    try {
+      const { data, error: rpcErr } = await supabase.rpc("pfa_recompute_reconciliation", { p_reconciliation_id: reconId });
+      if (rpcErr) { setRecomputeMsg(rpcErr.message || "Recompute failed."); return; }
+      if (!data?.ok) { setRecomputeMsg((data && data.error) || "Recompute failed."); return; }
+      const diff = Number(data?.difference_to_reconcile ?? 0);
+      const clean = Math.abs(diff) < 0.005;
+      setRecomputeMsg(`Recomputed. Difference: $${diff.toFixed(2)}${clean ? " — clean" : " — has discrepancy"}.`);
+      await loadRows();
+      // Force detail re-fetch on next expand
+      setDetailsById(prev => { const c = { ...prev }; delete c[reconId]; return c; });
+    } catch (e) {
+      setRecomputeMsg(String(e?.message || e));
+    } finally {
+      setRecomputingId(null);
+    }
   };
 
   const waterfallRow = (label, amount, opts = {}) => (
@@ -754,6 +776,11 @@ function ReconciliationsTab({ pfaAccountId }) {
 
   return (
     <div>
+      {recomputeMsg && (
+        <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: T.slate50, border: `1px solid ${T.slate200}`, fontSize: 13, color: T.slate800 }}>
+          {recomputeMsg}
+        </div>
+      )}
       <div style={{ ...cardStyle, padding: 0, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
@@ -790,19 +817,18 @@ function ReconciliationsTab({ pfaAccountId }) {
                     </td>
                     <td style={tableTd}>{r.emailed_to_agent_at ? `✓ ${fmtDate(r.emailed_to_agent_at)}` : "—"}</td>
                     <td style={tableTd} onClick={(e) => e.stopPropagation()}>
-                      <button type="button" onClick={() => window.alert("Regenerate + send is coming with the pfa_monthly_reconciliation automation.")}
+                      <button type="button" onClick={() => handleRecompute(r.id)} disabled={recomputingId === r.id}
                         style={{
                           padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`,
-                          background: T.white, color: T.slate500, fontSize: 12, cursor: "pointer",
+                          background: T.white, color: T.slate700, fontSize: 12, cursor: "pointer",
                         }}>
-                        Regenerate + send
+                        {recomputingId === r.id ? "…" : "Recompute"}
                       </button>
                     </td>
                   </tr>
                   {isOpen && (
                     <tr>
                       <td colSpan={7} style={{ padding: "12px 20px 18px", background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
-                        {/* Waterfall */}
                         <div style={{
                           display: "grid",
                           gridTemplateColumns: "minmax(260px, 400px) 1fr",
@@ -848,7 +874,6 @@ function ReconciliationsTab({ pfaAccountId }) {
                           </div>
                         </div>
 
-                        {/* Outstanding items */}
                         <div style={{ marginTop: 16 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
                             Outstanding items as of {fmtDate(r.statement_ending_date)}
@@ -903,7 +928,7 @@ function ReconciliationsTab({ pfaAccountId }) {
         </table>
       </div>
       <div style={{ fontSize: 11, color: T.slate500, marginTop: 8 }}>
-        Click a row to expand the reconciliation waterfall + outstanding items. Regenerate + send wires up once the pfa_monthly_reconciliation recipe ships.
+        Recompute re-runs the reconciliation math against the current ledger. To actually send the PDF + email SF, ask Peter's assistant (Claude) — the send step lives in Claude/workbench.
       </div>
     </div>
   );
