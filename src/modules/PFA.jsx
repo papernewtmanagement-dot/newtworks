@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
@@ -555,12 +555,14 @@ function LedgerTab({ pfaAccountId, teamRoster, onReloadAccount }) {
 }
 
 // =====================================================================
-// StatementsTab
+// StatementsTab — expand to see the cleared items on each statement
 // =====================================================================
 function StatementsTab({ pfaAccountId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+  const [detailsById, setDetailsById] = useState({});
 
   useEffect(() => {
     if (!pfaAccountId) return;
@@ -576,11 +578,30 @@ function StatementsTab({ pfaAccountId }) {
       });
   }, [pfaAccountId]);
 
+  const toggleExpand = async (row) => {
+    if (expandedId === row.id) { setExpandedId(null); return; }
+    setExpandedId(row.id);
+    if (detailsById[row.id]) return;
+    setDetailsById(prev => ({ ...prev, [row.id]: { loading: true } }));
+    const { data, error } = await supabase
+      .from("pfa_transactions")
+      .select("id, transaction_date, transaction_type, customer_name, policy_type, debit_amount, credit_amount, transaction_number, cleared_date")
+      .eq("pfa_account_id", pfaAccountId)
+      .eq("cleared", true)
+      .gte("cleared_date", row.statement_period_start)
+      .lte("cleared_date", row.statement_period_end)
+      .is("voided_at", null)
+      .order("transaction_date", { ascending: true })
+      .order("created_at", { ascending: true });
+    setDetailsById(prev => ({ ...prev, [row.id]: { loading: false, rows: data || [], error: error?.message } }));
+  };
+
   return (
     <div style={{ ...cardStyle, padding: 0, overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
           <tr>
+            <th style={{ ...tableTh, width: 24 }}></th>
             <th style={tableTh}>Period</th>
             <th style={{ ...tableTh, textAlign: "right" }}>Opening</th>
             <th style={{ ...tableTh, textAlign: "right" }}>Deposits</th>
@@ -590,21 +611,74 @@ function StatementsTab({ pfaAccountId }) {
           </tr>
         </thead>
         <tbody>
-          {loading && <tr><td colSpan={6} style={{ ...tableTd, textAlign: "center", color: T.slate500 }}>Loading…</td></tr>}
-          {!loading && error && <tr><td colSpan={6} style={{ ...tableTd, color: "#7B241C" }}>{error}</td></tr>}
+          {loading && <tr><td colSpan={7} style={{ ...tableTd, textAlign: "center", color: T.slate500 }}>Loading…</td></tr>}
+          {!loading && error && <tr><td colSpan={7} style={{ ...tableTd, color: "#7B241C" }}>{error}</td></tr>}
           {!loading && !error && rows.length === 0 && (
-            <tr><td colSpan={6} style={{ ...tableTd, textAlign: "center", color: T.slate500, fontStyle: "italic" }}>No statements yet.</td></tr>
+            <tr><td colSpan={7} style={{ ...tableTd, textAlign: "center", color: T.slate500, fontStyle: "italic" }}>No statements yet.</td></tr>
           )}
-          {!loading && rows.map(r => (
-            <tr key={r.id}>
-              <td style={tableTd}>{fmtDate(r.statement_period_start)} — {fmtDate(r.statement_period_end)}</td>
-              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.opening_balance)}</td>
-              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.deposit_total)}</td>
-              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.withdrawal_total)}</td>
-              <td style={{ ...tableTd, textAlign: "right", fontWeight: 700 }}>${fmtMoney(r.closing_balance)}</td>
-              <td style={tableTd}>{fmtDate(r.created_at)}</td>
-            </tr>
-          ))}
+          {!loading && rows.map(r => {
+            const isOpen = expandedId === r.id;
+            const details = detailsById[r.id];
+            return (
+              <React.Fragment key={r.id}>
+                <tr onClick={() => toggleExpand(r)} style={{ cursor: "pointer" }}>
+                  <td style={{ ...tableTd, textAlign: "center", color: T.slate500 }}>{isOpen ? "▾" : "▸"}</td>
+                  <td style={tableTd}>{fmtDate(r.statement_period_start)} — {fmtDate(r.statement_period_end)}</td>
+                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.opening_balance)}</td>
+                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.deposit_total)} <span style={{ color: T.slate500, fontSize: 11 }}>({r.deposit_count})</span></td>
+                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.withdrawal_total)} <span style={{ color: T.slate500, fontSize: 11 }}>({r.withdrawal_count})</span></td>
+                  <td style={{ ...tableTd, textAlign: "right", fontWeight: 700 }}>${fmtMoney(r.closing_balance)}</td>
+                  <td style={tableTd}>{fmtDate(r.created_at)}</td>
+                </tr>
+                {isOpen && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: "12px 20px 18px", background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+                      {details?.loading && <div style={{ fontSize: 13, color: T.slate500 }}>Loading cleared items…</div>}
+                      {details?.error && <div style={{ fontSize: 13, color: "#7B241C" }}>{details.error}</div>}
+                      {details && !details.loading && !details.error && (details.rows || []).length === 0 && (
+                        <div style={{ fontSize: 13, color: T.slate500, fontStyle: "italic" }}>No cleared items linked to this period.</div>
+                      )}
+                      {details && !details.loading && (details.rows || []).length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
+                            Cleared items ({details.rows.length})
+                          </div>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: T.white, borderRadius: 8, overflow: "hidden", border: `1px solid ${T.slate200}` }}>
+                            <thead>
+                              <tr>
+                                <th style={{ ...tableTh, fontSize: 10 }}>Date</th>
+                                <th style={{ ...tableTh, fontSize: 10 }}>Type</th>
+                                <th style={{ ...tableTh, fontSize: 10 }}>Customer</th>
+                                <th style={{ ...tableTh, fontSize: 10 }}>Policy</th>
+                                <th style={{ ...tableTh, fontSize: 10, textAlign: "right" }}>Debit</th>
+                                <th style={{ ...tableTh, fontSize: 10, textAlign: "right" }}>Credit</th>
+                                <th style={{ ...tableTh, fontSize: 10 }}>Check#</th>
+                                <th style={{ ...tableTh, fontSize: 10 }}>Cleared</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {details.rows.map(t => (
+                                <tr key={t.id}>
+                                  <td style={{ ...tableTd, fontSize: 12 }}>{fmtDate(t.transaction_date)}</td>
+                                  <td style={{ ...tableTd, fontSize: 12 }}>{t.transaction_type}</td>
+                                  <td style={{ ...tableTd, fontSize: 12 }}>{t.customer_name || "—"}</td>
+                                  <td style={{ ...tableTd, fontSize: 12 }}>{t.policy_type || "—"}</td>
+                                  <td style={{ ...tableTd, fontSize: 12, textAlign: "right" }}>{t.debit_amount ? `$${fmtMoney(t.debit_amount)}` : ""}</td>
+                                  <td style={{ ...tableTd, fontSize: 12, textAlign: "right" }}>{t.credit_amount ? `$${fmtMoney(t.credit_amount)}` : ""}</td>
+                                  <td style={{ ...tableTd, fontSize: 12 }}>{t.transaction_number || ""}</td>
+                                  <td style={{ ...tableTd, fontSize: 12 }}>{fmtDate(t.cleared_date)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -612,18 +686,25 @@ function StatementsTab({ pfaAccountId }) {
 }
 
 // =====================================================================
-// ReconciliationsTab
+// ReconciliationsTab — expand to see the waterfall + outstanding items
 // =====================================================================
 function ReconciliationsTab({ pfaAccountId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+  const [detailsById, setDetailsById] = useState({});
 
   useEffect(() => {
     if (!pfaAccountId) return;
     setLoading(true); setError("");
     supabase.from("pfa_reconciliations")
-      .select("id, statement_ending_date, adjusted_statement_balance, prior_personal_funds, difference_to_reconcile, explanation, emailed_to_agent_at, emailed_to_agent_message_id, created_at")
+      .select(`id, statement_id, statement_ending_date, statement_ending_balance,
+               outstanding_checks_total, outstanding_sf_eft_total, outstanding_deposits_total,
+               returned_checks_unreimbursed, adjusted_statement_balance,
+               prior_personal_funds, current_bank_service_fees, difference_to_reconcile,
+               explanation, actions_taken, reconciled_at,
+               emailed_to_agent_at, emailed_to_agent_message_id, created_at`)
       .eq("pfa_account_id", pfaAccountId)
       .order("statement_ending_date", { ascending: false })
       .then(({ data, error }) => {
@@ -633,12 +714,51 @@ function ReconciliationsTab({ pfaAccountId }) {
       });
   }, [pfaAccountId]);
 
+  const toggleExpand = async (row) => {
+    if (expandedId === row.id) { setExpandedId(null); return; }
+    setExpandedId(row.id);
+    if (detailsById[row.id]) return;
+    setDetailsById(prev => ({ ...prev, [row.id]: { loading: true } }));
+    // Outstanding items as of statement_ending_date — current DB state
+    // (best-effort; not a historical snapshot).
+    const { data, error } = await supabase
+      .from("pfa_transactions")
+      .select("id, transaction_date, transaction_type, customer_name, policy_type, debit_amount, credit_amount, transaction_number, cleared, cleared_date")
+      .eq("pfa_account_id", pfaAccountId)
+      .lte("transaction_date", row.statement_ending_date)
+      .is("voided_at", null)
+      .order("transaction_date", { ascending: true });
+    let outstanding = [];
+    if (data && !error) {
+      outstanding = data.filter(t =>
+        t.cleared === false ||
+        (t.cleared_date && t.cleared_date > row.statement_ending_date)
+      );
+    }
+    setDetailsById(prev => ({ ...prev, [row.id]: { loading: false, rows: outstanding, error: error?.message } }));
+  };
+
+  const waterfallRow = (label, amount, opts = {}) => (
+    <div style={{
+      display: "flex", justifyContent: "space-between", padding: "6px 0",
+      borderBottom: opts.emphasize ? `1px solid ${T.slate300}` : `1px solid ${T.slate100}`,
+      fontSize: 13, fontWeight: opts.emphasize ? 700 : 400,
+      color: opts.negative ? "#7B241C" : T.slate800,
+    }}>
+      <span>{label}</span>
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>
+        {opts.sign === "minus" ? "− " : opts.sign === "plus" ? "+ " : ""}${fmtMoney(amount ?? 0)}
+      </span>
+    </div>
+  );
+
   return (
     <div>
       <div style={{ ...cardStyle, padding: 0, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr>
+              <th style={{ ...tableTh, width: 24 }}></th>
               <th style={tableTh}>Statement ending</th>
               <th style={{ ...tableTh, textAlign: "right" }}>Adj. balance</th>
               <th style={{ ...tableTh, textAlign: "right" }}>Personal funds</th>
@@ -648,40 +768,142 @@ function ReconciliationsTab({ pfaAccountId }) {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={6} style={{ ...tableTd, textAlign: "center", color: T.slate500 }}>Loading…</td></tr>}
-            {!loading && error && <tr><td colSpan={6} style={{ ...tableTd, color: "#7B241C" }}>{error}</td></tr>}
+            {loading && <tr><td colSpan={7} style={{ ...tableTd, textAlign: "center", color: T.slate500 }}>Loading…</td></tr>}
+            {!loading && error && <tr><td colSpan={7} style={{ ...tableTd, color: "#7B241C" }}>{error}</td></tr>}
             {!loading && !error && rows.length === 0 && (
-              <tr><td colSpan={6} style={{ ...tableTd, textAlign: "center", color: T.slate500, fontStyle: "italic" }}>No reconciliations yet.</td></tr>
+              <tr><td colSpan={7} style={{ ...tableTd, textAlign: "center", color: T.slate500, fontStyle: "italic" }}>No reconciliations yet.</td></tr>
             )}
             {!loading && rows.map(r => {
               const diff = Number(r.difference_to_reconcile ?? 0);
               const isClean = Math.abs(diff) < 0.005;
+              const isOpen = expandedId === r.id;
+              const details = detailsById[r.id];
               return (
-                <tr key={r.id}>
-                  <td style={tableTd}>{fmtDate(r.statement_ending_date)}</td>
-                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.adjusted_statement_balance)}</td>
-                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.prior_personal_funds)}</td>
-                  <td style={{ ...tableTd, textAlign: "right", fontWeight: 700, color: isClean ? T.slate800 : "#7B241C" }}>
-                    ${fmtMoney(diff)}
-                  </td>
-                  <td style={tableTd}>{r.emailed_to_agent_at ? `✓ ${fmtDate(r.emailed_to_agent_at)}` : "—"}</td>
-                  <td style={tableTd}>
-                    <button type="button" onClick={() => window.alert("Regenerate + resend is coming with the pfa_monthly_reconciliation automation. Ask Peter (or Claude) for now.")}
-                      style={{
-                        padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`,
-                        background: T.white, color: T.slate500, fontSize: 12, cursor: "pointer",
-                      }}>
-                      Regenerate + send
-                    </button>
-                  </td>
-                </tr>
+                <React.Fragment key={r.id}>
+                  <tr onClick={() => toggleExpand(r)} style={{ cursor: "pointer" }}>
+                    <td style={{ ...tableTd, textAlign: "center", color: T.slate500 }}>{isOpen ? "▾" : "▸"}</td>
+                    <td style={tableTd}>{fmtDate(r.statement_ending_date)}</td>
+                    <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.adjusted_statement_balance)}</td>
+                    <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.prior_personal_funds)}</td>
+                    <td style={{ ...tableTd, textAlign: "right", fontWeight: 700, color: isClean ? T.slate800 : "#7B241C" }}>
+                      ${fmtMoney(diff)}
+                    </td>
+                    <td style={tableTd}>{r.emailed_to_agent_at ? `✓ ${fmtDate(r.emailed_to_agent_at)}` : "—"}</td>
+                    <td style={tableTd} onClick={(e) => e.stopPropagation()}>
+                      <button type="button" onClick={() => window.alert("Regenerate + send is coming with the pfa_monthly_reconciliation automation.")}
+                        style={{
+                          padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`,
+                          background: T.white, color: T.slate500, fontSize: 12, cursor: "pointer",
+                        }}>
+                        Regenerate + send
+                      </button>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: "12px 20px 18px", background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+                        {/* Waterfall */}
+                        <div style={{
+                          display: "grid",
+                          gridTemplateColumns: "minmax(260px, 400px) 1fr",
+                          gap: 20,
+                        }}>
+                          <div style={{ background: T.white, padding: 14, borderRadius: 8, border: `1px solid ${T.slate200}` }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 10 }}>
+                              Reconciliation waterfall
+                            </div>
+                            {waterfallRow("Statement ending balance", r.statement_ending_balance)}
+                            {waterfallRow("− Outstanding checks", r.outstanding_checks_total, { sign: "minus" })}
+                            {waterfallRow("− Outstanding SF EFTs", r.outstanding_sf_eft_total, { sign: "minus" })}
+                            {waterfallRow("+ Outstanding deposits", r.outstanding_deposits_total, { sign: "plus" })}
+                            {waterfallRow("+ Returned checks (unreimbursed)", r.returned_checks_unreimbursed, { sign: "plus" })}
+                            {waterfallRow("= Adjusted statement balance", r.adjusted_statement_balance, { emphasize: true })}
+                            {waterfallRow("− Prior month personal funds", r.prior_personal_funds, { sign: "minus" })}
+                            {waterfallRow("+ Current bank service fees", r.current_bank_service_fees, { sign: "plus" })}
+                            {waterfallRow("Difference to reconcile", r.difference_to_reconcile, { emphasize: true, negative: !isClean })}
+                          </div>
+
+                          <div style={{ background: T.white, padding: 14, borderRadius: 8, border: `1px solid ${T.slate200}` }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
+                              Explanation
+                            </div>
+                            <div style={{ fontSize: 13, color: T.slate800, whiteSpace: "pre-wrap", lineHeight: 1.5, marginBottom: 12 }}>
+                              {r.explanation || <span style={{ color: T.slate500, fontStyle: "italic" }}>—</span>}
+                            </div>
+                            {r.actions_taken && (
+                              <>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
+                                  Actions taken
+                                </div>
+                                <div style={{ fontSize: 13, color: T.slate800, whiteSpace: "pre-wrap", lineHeight: 1.5, marginBottom: 12 }}>
+                                  {r.actions_taken}
+                                </div>
+                              </>
+                            )}
+                            <div style={{ fontSize: 11, color: T.slate500, borderTop: `1px solid ${T.slate100}`, paddingTop: 8 }}>
+                              Reconciled {r.reconciled_at ? fmtDate(r.reconciled_at) : "—"}
+                              {r.emailed_to_agent_at && ` · Emailed to SF ${fmtDate(r.emailed_to_agent_at)}`}
+                              {r.emailed_to_agent_message_id && ` · msg ${r.emailed_to_agent_message_id.slice(0, 8)}…`}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Outstanding items */}
+                        <div style={{ marginTop: 16 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
+                            Outstanding items as of {fmtDate(r.statement_ending_date)}
+                            {details && !details.loading && !details.error && details.rows && (
+                              <span style={{ color: T.slate500, fontWeight: 500 }}> ({details.rows.length})</span>
+                            )}
+                          </div>
+                          {details?.loading && <div style={{ fontSize: 13, color: T.slate500 }}>Loading…</div>}
+                          {details?.error && <div style={{ fontSize: 13, color: "#7B241C" }}>{details.error}</div>}
+                          {details && !details.loading && !details.error && (details.rows || []).length === 0 && (
+                            <div style={{ fontSize: 13, color: T.slate500, fontStyle: "italic" }}>No outstanding items — clean reconciliation.</div>
+                          )}
+                          {details && !details.loading && (details.rows || []).length > 0 && (
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: T.white, borderRadius: 8, overflow: "hidden", border: `1px solid ${T.slate200}` }}>
+                              <thead>
+                                <tr>
+                                  <th style={{ ...tableTh, fontSize: 10 }}>Date</th>
+                                  <th style={{ ...tableTh, fontSize: 10 }}>Type</th>
+                                  <th style={{ ...tableTh, fontSize: 10 }}>Customer</th>
+                                  <th style={{ ...tableTh, fontSize: 10 }}>Policy</th>
+                                  <th style={{ ...tableTh, fontSize: 10, textAlign: "right" }}>Debit</th>
+                                  <th style={{ ...tableTh, fontSize: 10, textAlign: "right" }}>Credit</th>
+                                  <th style={{ ...tableTh, fontSize: 10 }}>Check#</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {details.rows.map(t => (
+                                  <tr key={t.id}>
+                                    <td style={{ ...tableTd, fontSize: 12 }}>{fmtDate(t.transaction_date)}</td>
+                                    <td style={{ ...tableTd, fontSize: 12 }}>{t.transaction_type}</td>
+                                    <td style={{ ...tableTd, fontSize: 12 }}>{t.customer_name || "—"}</td>
+                                    <td style={{ ...tableTd, fontSize: 12 }}>{t.policy_type || "—"}</td>
+                                    <td style={{ ...tableTd, fontSize: 12, textAlign: "right" }}>{t.debit_amount ? `$${fmtMoney(t.debit_amount)}` : ""}</td>
+                                    <td style={{ ...tableTd, fontSize: 12, textAlign: "right" }}>{t.credit_amount ? `$${fmtMoney(t.credit_amount)}` : ""}</td>
+                                    <td style={{ ...tableTd, fontSize: 12 }}>{t.transaction_number || ""}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                          <div style={{ fontSize: 11, color: T.slate500, marginTop: 6, fontStyle: "italic" }}>
+                            Outstanding list is current DB state filtered to on/before the statement ending date — best-effort, not a historical snapshot.
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
         </table>
       </div>
       <div style={{ fontSize: 11, color: T.slate500, marginTop: 8 }}>
-        Regenerate + send wires up once the pfa_monthly_reconciliation recipe ships.
+        Click a row to expand the reconciliation waterfall + outstanding items. Regenerate + send wires up once the pfa_monthly_reconciliation recipe ships.
       </div>
     </div>
   );
