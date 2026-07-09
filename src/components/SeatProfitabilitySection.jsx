@@ -271,83 +271,37 @@ export default function SeatProfitabilitySection() {
                     </div>
                   </summary>
 
-                  <div style={{ padding: "0 16px 14px", display: "flex", flexDirection: "column", gap: 10, background: T.slate50 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, paddingTop: 10 }}>
-                      <div>
-                        <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Tenure</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900 }}>{(parseFloat(r.tenure_multiplier) || 0).toFixed(2)}×</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Fully-Loaded</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900 }}>{fmt$(r.fully_loaded_annual)}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Coverage bar</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900 }}>{fmt$(r.coverage_bar)}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Profit bar</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900 }}>{fmt$(r.profitability_bar)}</div>
-                      </div>
+                  <div style={{ padding: "10px 16px 14px", background: T.slate50, fontSize: 11, color: T.slate700, lineHeight: 1.6 }}>
+                    <div style={{ marginBottom: 3 }}>
+                      Loaded <strong style={{color:T.slate900}}>{fmt$(r.fully_loaded_annual)}</strong>
+                      {" · "}Prof bar <strong style={{color:T.slate900}}>{fmt$(r.profitability_bar)}</strong>
+                      {" · "}Tenure <strong style={{color:T.slate900}}>{(parseFloat(r.tenure_multiplier) || 0).toFixed(2)}×</strong>
                     </div>
-
-                    <div style={{ background: T.white, borderRadius: 8, padding: "10px 12px", border: `1px solid ${T.slate200}` }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: T.slate900, marginBottom: 8 }}>Attribution breakdown</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11, color: T.slate700 }}>
-                        <span>Own new × 4: <strong style={{ color: T.slate900 }}>{fmt$(r.own_new_business_annualized)}</strong></span>
-                        <span>Own stack × 0.65: <strong style={{ color: T.slate900 }}>{fmt$(r.own_renewal_stack_credited)}</strong></span>
-                        {r.role_category === 'Retention' && (
-                          <span>Retention pool × RQM {(parseFloat(r.retention_quality_multiplier) || 0).toFixed(2)}: <strong style={{ color: T.slate900 }}>{fmt$(r.retention_pool_share_annual)}</strong></span>
-                        )}
-                        <span style={{ marginLeft: "auto", color: T.slate500 }}>= <strong style={{ color: T.slate900 }}>{fmt$(r.attributed_revenue_annual)}</strong></span>
-                      </div>
+                    <div style={{ marginBottom: 3 }}>
+                      Attribution:{" "}
+                      <strong style={{color:T.slate900}}>{fmt$(r.own_new_business_annualized)}</strong> new×4
+                      {" + "}<strong style={{color:T.slate900}}>{fmt$(r.own_renewal_stack_credited)}</strong> stack×0.65
+                      {r.role_category === 'Retention' && (
+                        <span>{" + "}<strong style={{color:T.slate900}}>{fmt$(r.retention_pool_share_annual)}</strong> pool×RQM {(parseFloat(r.retention_quality_multiplier) || 0).toFixed(2)}</span>
+                      )}
+                      {" = "}<strong style={{color:T.slate900}}>{fmt$(r.attributed_revenue_annual)}</strong>
                     </div>
-
-                    <div style={{ background: T.white, borderRadius: 8, padding: "10px 12px", border: `1px solid ${T.slate200}` }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: T.slate900, marginBottom: 8 }}>Path to green</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <div>
-                          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Coverage green</div>
-                          {covDate ? (
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{covDate}</div>
-                              <div style={{ fontSize: 10, color: T.slate500 }}>{monthsLabel(covMonths)}</div>
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: 12, color: '#991B1B', fontWeight: 600 }}>no path</div>
-                          )}
+                    <div style={{ marginBottom: 10 }}>
+                      Green: Cov ={" "}
+                      {covDate ? <strong style={{color:T.slate900}}>{covDate} ({monthsLabel(covMonths)})</strong> : <strong style={{color:'#991B1B'}}>no path</strong>}
+                      {" · "}Prof ={" "}
+                      {profDate ? <strong style={{color:T.slate900}}>{profDate} ({monthsLabel(profMonths)})</strong> : <strong style={{color:'#991B1B'}}>{'>'}5yr</strong>}
+                    </div>
+                    {(() => {
+                      const primary = insights.find(i => i.severity === 'action') || insights.find(i => i.severity === 'critical') || insights[0];
+                      if (!primary) return null;
+                      const c = sevColor(primary.severity);
+                      return (
+                        <div style={{ padding: "7px 10px", background: c.bg, borderLeft: `3px solid ${c.border}`, borderRadius: 4, fontSize: 11, color: T.slate700, lineHeight: 1.5 }}>
+                          <strong style={{color: c.fg}}>{primary.title}:</strong> {primary.detail}
                         </div>
-                        <div>
-                          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Profitability green</div>
-                          {profDate ? (
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{profDate}</div>
-                              <div style={{ fontSize: 10, color: T.slate500 }}>{monthsLabel(profMonths)}</div>
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: 12, color: '#991B1B', fontWeight: 600 }}>not within 5 years</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {insights.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: T.slate900 }}>What this means & what to do</div>
-                        {insights.map((ins, i) => {
-                          const c = sevColor(ins.severity);
-                          return (
-                            <div key={i} style={{ padding: "8px 10px", background: c.bg, borderLeft: `3px solid ${c.border}`, borderRadius: 4 }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 3 }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: c.fg }}>{ins.title}</div>
-                                <div style={{ fontSize: 9, fontWeight: 700, color: c.fg, background: T.white, padding: "1px 6px", borderRadius: 10, letterSpacing: "0.05em", textTransform: "uppercase" }}>{c.tag}</div>
-                              </div>
-                              <div style={{ fontSize: 11, color: T.slate700, lineHeight: 1.5 }}>{ins.detail}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 </details>
               );
