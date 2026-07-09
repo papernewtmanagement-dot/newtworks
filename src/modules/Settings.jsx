@@ -411,7 +411,7 @@ const ConnectedAccounts = ({ connections }) => (
 );
 
 // ─── Section: Newtworks Configuration ──────────────────────────────
-const BCCConfiguration = ({ config }) => {
+const NewtworksConfiguration = ({ config }) => {
   const [cfg, setCfg] = useState(config);
   useEffect(() => { setCfg(config); }, [config]);
   const set = (k,v) => setCfg(c => ({...c,[k]:v}));
@@ -953,7 +953,7 @@ export default function Settings() {
       {section === "profile"     && <AgencyProfile      agency={liveAgency}     />}
       {section === "team"        && <TeamAccess         users={liveUsers}       />}
       {section === "connections" && <ConnectedAccounts  connections={liveConns} />}
-      {section === "config"      && <BCCConfiguration   config={liveConfig}     />}
+      {section === "config"      && <NewtworksConfiguration   config={liveConfig}     />}
       {section === "security"    && <Security                                    />}
       {section === "about"       && <About              agency={liveAgency}     />}
     </div>
