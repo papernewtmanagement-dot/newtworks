@@ -1366,7 +1366,7 @@ const BookAddForm = ({ onAdded }) => {
         ips_new_money_ytd:         numOrNull(form.ips_new_money_ytd),
         source: existingSource && existingSource.startsWith("sf_crm_analytics_email")
           ? "sf_crm_analytics_email_manual_review"
-          : "manual_entry_bcc",
+          : "manual_entry_newtworks",
         notes: form.notes || null,
       };
       const { error } = await supabase
