@@ -741,6 +741,7 @@ async function processOneAttachment(
           await markDocument(documentId, "processed", r.jeCount,
             ["journal_entries", "journal_lines"],
             `${r.jeCount} JEs posted, ${r.suspenseCount} in suspense`);
+          await maybeArchiveThread(ctx, att.threadId);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed",
@@ -845,6 +846,7 @@ async function processOneAttachment(
           const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}, ${r.alerts_resolved} alerts resolved${mergeNote}${unmatchedNote}`;
           await markDocument(documentId, "processed", r.employees_written ?? 0,
             ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail", "alerts"], note);
+          await maybeArchiveThread(ctx, att.threadId);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -879,6 +881,7 @@ async function processOneAttachment(
           await markDocument(documentId, "processed", r.detailCount + 1,
             ["payroll_runs", "payroll_detail"],
             `payroll run ${r.run.pay_date}: ${r.detailCount} detail rows`);
+          await maybeArchiveThread(ctx, att.threadId);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -924,6 +927,7 @@ async function processOneAttachment(
             ? `${r.written} rows; ${r.unmatchedStaff.length} unmatched: ${r.unmatchedStaff.slice(0,5).join(", ")}`
             : `${r.written} producer_production rows written`;
           await markDocument(documentId, "processed", r.written, ["producer_production"], note);
+          await maybeArchiveThread(ctx, att.threadId);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
