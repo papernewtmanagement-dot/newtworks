@@ -2002,6 +2002,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 // paid year-to-date through SurePayroll, through end of last pay period).
 // True Pay Bonus is computed off that value on save via write_weekly_pay RPC.
 function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh }) {
+  // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState(false);
@@ -2028,14 +2029,17 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     );
   }
   const sorted = sortByTenure(details, team);
+
+  // v2 pay components — every element that hits a check under the residual-pool structure.
+  // Base + Comm are payroll-cycle earnings. Team Pool is residual bonus share (YTD-net).
+  // Marketing is the separate marketing pool share. Mgr + Health are pre-pool carveouts.
   const ROWS = [
-    ["weekly_pay", "Weekly Pay"],
-    ["base_advance", "Base Advance"],
-    ["health_bonus", "Health Bonus"],
-    ["service_surge_share", "Retention"],
-    ["true_pay_bonus", "True Pay Bonus"],
-    ["manager_bonus", "Manager Bonus"],
-    ["agency_profit_share", "Agency Profit"],
+    ["base_salary",                   "Base"],
+    ["commission",                    "Comm"],
+    ["bonus",                         "Team Pool"],
+    ["marketing_pool_earned_weekly",  "Marketing"],
+    ["manager_bonus",                 "Mgr"],
+    ["health_bonus",                  "Health"],
   ];
 
   async function handleSave() {
@@ -2065,10 +2069,10 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
         if (updErr) throw updErr;
       }
 
-      // Recompute the 7 pay components for the week (refreshes True Pay Bonus)
-      const { error: rpcErr } = await supabase.rpc("write_weekly_pay", {
+      // Recompute the residual pool + carveouts + marketing pool for the week
+      const { error: rpcErr } = await supabase.rpc("write_weekly_comp_v2", {
         p_agency_id: AGENCY_ID,
-        p_week_ending_date: weekDate,
+        p_week_end_date: weekDate,
       });
       if (rpcErr) throw rpcErr;
 
@@ -2145,23 +2149,15 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
             <tbody>
               {ROWS.map(([key, label]) => (
                 <tr key={key}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>
-                    {label}
-                    {key === "service_surge_share" && retentionBudgetAnnual != null && (
-                      <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: T.slate500 }}>
-                        ({fmtMoney(retentionBudgetAnnual)})
-                      </span>
-                    )}
-                  </Td>
+                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
                   {sorted.map(d => (
                     <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
                   ))}
                 </tr>
               ))}
               {/* Benefits row — sourced from team.annual_benefits_value / 52.
-                  Mirrors the email composer (which renders the Benefits column from
-                  the team table, not weekly_cpr_team_detail). Excluded from On-Time
-                  annualization — flat-added below to avoid compounding. */}
+                  Imputed non-cash value (group health). Included in Week Total.
+                  Excluded from On-Time annualization (flat-added below to avoid compounding). */}
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate700 }}>Benefits</Td>
                 {sorted.map(d => {
@@ -2173,8 +2169,8 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                 })}
               </tr>
               {/* Edit-only row: payroll_ytd_paid (cumulative SurePayroll YTD paid through
-                  end of last pay period). Combined with the prior-quarter-end anchor
-                  to derive QTD paid, which gates True Pay Bonus. Hidden in normal view. */}
+                  end of last pay period). Combined with this-week components to derive
+                  the On-Time annualization. Hidden in normal view. */}
               {editMode && (
                 <tr style={{ background: T.amber50 || "#fef3c7" }}>
                   <Td style={{ paddingLeft: 14, color: T.slate900, fontStyle: "italic" }}>
@@ -2198,7 +2194,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
               )}
 
               <tr>
-                <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week total</Td>
+                <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week Total</Td>
                 {sorted.map(d => {
                   const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
                   const member = (team || []).find(t => t.id === d.team_member_id);
@@ -2212,13 +2208,18 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                 })}
               </tr>
               <tr>
-                <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>On-Time</Td>
+                <Td style={{ paddingLeft: 14, color: T.slate600 }}>YTD Paid</Td>
+                {sorted.map(d => (
+                  <Td key={d.team_member_id} align="right" style={{ color: T.slate600 }}>
+                    {d.payroll_ytd_paid == null ? "—" : fmtMoneyCents(d.payroll_ytd_paid)}
+                  </Td>
+                ))}
+              </tr>
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>OT Annual</Td>
                 {sorted.map(d => {
-                  // On-Time = (payroll_ytd_paid + this_week_total_pay) × 365 / days_employed_this_year.
-                  // payroll_ytd_paid is SurePayroll YTD through end of last pay period (entered manually).
-                  // this_week_total_pay is the sum of this week's 7 computed components.
-                  // Denominator uses days employed this year (start_date if mid-year hire, Jan 1 otherwise)
-                  // so mid-year hires get a fair annualization based on their actual earning window.
+                  // On-Time = (payroll_ytd_paid + this_week_component_total) × 365 / days_employed_this_year + annual_benefits.
+                  // Benefits flat-added (no compounding).
                   const ytdPaid = (d.payroll_ytd_paid === null || d.payroll_ytd_paid === undefined)
                     ? null : Number(d.payroll_ytd_paid);
                   const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
@@ -2228,7 +2229,6 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                     if (!weekDate) return 1;
                     const dt = new Date(weekDate + "T00:00:00Z");
                     const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-                    // Use team member's start_date if mid-year hire; otherwise Jan 1.
                     const startDateStr = member && (member.start_date || member.hire_date);
                     const startDt = startDateStr
                       ? new Date(startDateStr + "T00:00:00Z")
@@ -2236,8 +2236,6 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                     const effectiveStart = startDt > ys ? startDt : ys;
                     return Math.max(1, Math.floor((dt - effectiveStart) / 86400000) + 1);
                   })();
-                  // On-Time mirrors email composer: annualize the 7 detail-sourced
-                  // components, then flat-add full annual benefits (no compounding).
                   const annualBenefits = Number(member?.annual_benefits_value || 0);
                   const onTimeAnnual = ytdWithThisWeek === null ? null : ((ytdWithThisWeek * 365) / daysEmployedThisYear) + annualBenefits;
                   return (
@@ -2254,6 +2252,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     </div>
   );
 }
+
 
 // 20 — True Pay Bonus History (weekly per-person + 5 averages — page version shows BOTH)
 function TruePayHistorySection({ team, truePayHistory, weekDate }) {
