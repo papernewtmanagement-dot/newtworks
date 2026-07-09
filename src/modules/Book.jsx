@@ -23,6 +23,58 @@ const Card = ({ children, style={} }) => (
 
 const CANONICAL_BUCKETS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X-Z"];
 
+// ─── Book Assignments Section ────────────────────────────────
+// Snapshot-based alphabet split for service-book assignment.
+// One row per (snapshot_date, letter_bucket) in book_alpha_split.
+const producerLabel = (m) => {
+  if (!m) return "Unassigned";
+  const nick = m.nickname || m.first_name || "";
+  return (nick + " " + (m.last_name || "")).trim();
+};
+
+// Shared styles for editor + buttons (defined once near component)
+const bookInputStyle = { padding:"5px 8px", fontSize:12, border:`1px solid ${T.slate200}`, borderRadius:6, background:T.white, color:T.slate800 };
+const bookBtnPrimary = { padding:"7px 14px", fontSize:12, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" };
+const bookBtnSecondary = { padding:"7px 14px", fontSize:12, fontWeight:600, color:T.slate700, background:T.white, border:`1px solid ${T.slate200}`, borderRadius:7, cursor:"pointer" };
+const bookBtnDanger = { padding:"6px 12px", fontSize:11, fontWeight:600, color:T.red, background:T.white, border:`1px solid ${T.redLt}`, borderRadius:7, cursor:"pointer" };
+
+const BucketEditor = ({ buckets, draft, setDraft, teamList }) => {
+  const update = (bucket, field, value) => {
+    setDraft(prev => ({ ...prev, [bucket]: { ...(prev[bucket] || {}), [field]: value } }));
+  };
+  return (
+    <Card>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:8 }}>
+        {(buckets || []).map(b => {
+          const v = draft?.[b] || { team_member_id: null, account_count: 0 };
+          return (
+            <div key={b} style={{ border:`1px solid ${T.slate200}`, borderRadius:8, padding:"8px 10px" }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.slate900, marginBottom:6 }}>{b}</div>
+              <select
+                value={v.team_member_id || ""}
+                onChange={e => update(b, "team_member_id", e.target.value || null)}
+                style={{ ...bookInputStyle, width:"100%", marginBottom:6 }}
+              >
+                <option value="">— Unassigned —</option>
+                {(teamList || []).map(t => (
+                  <option key={t.id} value={t.id}>{producerLabel(t)}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="0"
+                value={v.account_count ?? 0}
+                onChange={e => update(b, "account_count", e.target.value)}
+                style={{ ...bookInputStyle, width:"100%" }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+};
+
 const BookAssignmentsSection = () => {
   const [allRows, setAllRows] = useState([]);
   const [teamList, setTeamList] = useState([]);
