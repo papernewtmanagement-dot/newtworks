@@ -2994,9 +2994,6 @@ const GrowthBudgetHeader = () => {
 
       {/* Ramping list — one compact line per teammate, always visible */}
       <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.slate100}`, display:"flex", flexDirection:"column", gap:6 }}>
-        <div style={{ fontSize:10, fontWeight:600, color:T.slate500, letterSpacing:"0.03em", textTransform:"uppercase" }}>
-          Ramping ({roster.length})
-        </div>
         {roster.length === 0 ? (
           <div style={{ fontSize:11, color:T.slate400 }}>No teammates currently in ramp.</div>
         ) : (
