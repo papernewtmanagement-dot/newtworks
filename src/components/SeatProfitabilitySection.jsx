@@ -94,7 +94,7 @@ export default function SeatProfitabilitySection() {
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Seat Profitability — week ending {weekEnd}</div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2, maxWidth: 620, lineHeight: 1.5 }}>
-              <strong>Coverage</strong> = does the seat cover its own fully-loaded cost. <strong>Profitability</strong> = does the seat generate 2.5× its cost (SF 40% payroll target). <strong>Lapse</strong> = agency-level book quality vs 12% benchmark.
+              <strong>Coverage</strong> = does the seat cover its own fully-loaded cost. <strong>Profitability</strong> = does the seat generate 2.5× its cost (SF 40% payroll target). Retention roles’ credit is scaled by book quality — high lapse shrinks their attributed revenue.
             </div>
           </div>
         </div>
@@ -138,7 +138,6 @@ export default function SeatProfitabilitySection() {
                   <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Attributed</th>
                   <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Coverage</th>
                   <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Profitability</th>
-                  <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Lapse</th>
                 </tr>
               </thead>
               <tbody>
@@ -154,7 +153,6 @@ export default function SeatProfitabilitySection() {
                     <td style={{ padding: "12px", textAlign: "right", color: T.slate900, fontWeight: 600 }}>{fmt$(r.attributed_revenue_annual)}</td>
                     <td style={{ padding: "12px", textAlign: "center" }}><Badge status={r.coverage_status}      pctValue={r.coverage_pct}      /></td>
                     <td style={{ padding: "12px", textAlign: "center" }}><Badge status={r.profitability_status} pctValue={r.profitability_pct} /></td>
-                    <td style={{ padding: "12px", textAlign: "center" }}><Badge status={r.lapse_status}         pctValue={parseFloat(r.lapse_rate_used) * 100} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -173,7 +171,9 @@ export default function SeatProfitabilitySection() {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11, color: T.slate700 }}>
                 <span>Own new × 4: <strong style={{ color: T.slate900 }}>{fmt$(r.own_new_business_annualized)}</strong></span>
                 <span>Own stack (× 0.65, Wk52+): <strong style={{ color: T.slate900 }}>{fmt$(r.own_renewal_stack_credited)}</strong></span>
-                <span>Retention pool share: <strong style={{ color: T.slate900 }}>{fmt$(r.retention_pool_share_annual)}</strong></span>
+                {r.role_category === 'Retention' && (
+                  <span>Retention pool share (× RQM {(parseFloat(r.retention_quality_multiplier) || 0).toFixed(2)}): <strong style={{ color: T.slate900 }}>{fmt$(r.retention_pool_share_annual)}</strong></span>
+                )}
                 <span style={{ marginLeft: "auto", color: T.slate500 }}>= <strong style={{ color: T.slate900 }}>{fmt$(r.attributed_revenue_annual)}</strong></span>
               </div>
             </div>
@@ -187,11 +187,11 @@ export default function SeatProfitabilitySection() {
         <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.7 }}>
           <div>• <strong>Fully-Loaded:</strong> annual base × tenure ramp × 1.08 (TX payroll burden multiplier)</div>
           <div>• <strong>Attributed Revenue:</strong> own new × 4 + own renewal stack × 0.65 (Week 52+ only) + retention pool share</div>
-          <div>• <strong>Retention pool share:</strong> agency renewal TTM × 0.35 × person&apos;s weighted-hours share within Retention team</div>
+          <div>• <strong>Retention pool share:</strong> agency renewal TTM × 0.35 × person&apos;s weighted-hours share × <strong>Retention Quality Multiplier (RQM)</strong></div>
+          <div>• <strong>RQM:</strong> LEAST(1.0, 12% / actual_lapse_rate). At benchmark (12%) RQM = 1.0. At 27% lapse RQM = 0.44. Retention only gets full credit when the book is being retained at benchmark.</div>
           <div>• <strong>Coverage bar:</strong> fully-loaded. Green ≥100%, Yellow ≥80%, Red &lt;80%.</div>
           <div>• <strong>Profitability bar:</strong> fully-loaded × 2.5 (SF 40% payroll target). Same thresholds.</div>
-          <div>• <strong>Lapse:</strong> agency-wide P&amp;C+Life blended annualized rate. Green ≤12%, Yellow ≤20%, Red &gt;20%.</div>
-          <div style={{ marginTop: 6, fontStyle: "italic" }}>65/35 split per core principle: renewal income requires both production and continuous retention. Sales get 100% of new business + 65% of their own stack; Retention gets 35% of agency-wide renewal book.</div>
+          <div style={{ marginTop: 6, fontStyle: "italic" }}>65/35 split per core principle: renewal income requires both production and continuous retention. Sales get 100% of new business + 65% of their own stack (stack already decays with actual lapse). Retention gets 35% of agency-wide renewal book, scaled by RQM — so retention pay is tied to how well the book is actually being retained.</div>
         </div>
       </Card>
     </div>
