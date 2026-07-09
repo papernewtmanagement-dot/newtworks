@@ -263,6 +263,83 @@ export default function SeatProfitabilitySection() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
+      {/* ─── TEAM AGGREGATE (top-line) ─────────────────── */}
+      {(() => {
+        const totalAttr = effectiveRows.reduce((s, r) => s + (parseFloat(r.attributed_revenue_annual) || 0), 0);
+        const totalFully = effectiveRows.reduce((s, r) => s + (parseFloat(r.fully_loaded_annual) || 0), 0);
+        const totalProfBar = effectiveRows.reduce((s, r) => s + (parseFloat(r.profitability_bar) || 0), 0);
+        const covPct = totalFully > 0 ? (totalAttr / totalFully) * 100 : 0;
+        const profPct = totalProfBar > 0 ? (totalAttr / totalProfBar) * 100 : 0;
+        const gap = totalFully - totalAttr;
+        const covColor = covPct >= 100 ? { bg: T.greenLt, fg: '#065F46' } : covPct >= 80 ? { bg: T.amberLt, fg: '#92400E' } : { bg: T.redLt, fg: '#991B1B' };
+        const profColor = profPct >= 100 ? { bg: T.greenLt, fg: '#065F46' } : profPct >= 80 ? { bg: T.amberLt, fg: '#92400E' } : { bg: T.redLt, fg: '#991B1B' };
+        const fmtDollar = (n) => "$" + Math.round(parseFloat(n) || 0).toLocaleString();
+        return (
+          <Card style={{ borderLeft: `4px solid ${scenarioActive ? T.purple : T.slate900}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Agency-wide (all seats)</div>
+                <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+                  {scenarioActive ? "Scenario: if lapse hit benchmark 12%" : "Actual: current conditions"}
+                </div>
+              </div>
+              {scenarioActive && (
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#5B21B6', background: T.purpleLt, padding: "4px 10px", borderRadius: 20 }}>
+                  SCENARIO MODE
+                </div>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+              <div style={{ background: T.slate50, padding: "10px 12px", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Attributed / Fully-Loaded</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{fmtDollar(totalAttr)} / {fmtDollar(totalFully)}</div>
+                <div style={{ fontSize: 10, color: gap > 0 ? '#991B1B' : '#065F46', marginTop: 4 }}>
+                  {gap > 0 ? `losing ${fmtDollar(gap)}/yr` : `surplus ${fmtDollar(-gap)}/yr`}
+                </div>
+              </div>
+              <div style={{ background: covColor.bg, padding: "10px 12px", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Agency Coverage</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: covColor.fg }}>{covPct.toFixed(0)}%</div>
+                <div style={{ fontSize: 10, color: T.slate500, marginTop: 4 }}>attributed ÷ fully-loaded</div>
+              </div>
+              <div style={{ background: profColor.bg, padding: "10px 12px", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Agency Profitability</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: profColor.fg }}>{profPct.toFixed(0)}%</div>
+                <div style={{ fontSize: 10, color: T.slate500, marginTop: 4 }}>attributed ÷ (2.5× loaded)</div>
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
+
+      {/* ─── SCENARIO TOGGLE ───────────────────────── */}
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 auto", minWidth: 200 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>What if lapse hit benchmark 12%?</div>
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2, lineHeight: 1.4 }}>
+              Flips RQM to 1.0 and slows stack decay from 27% to 12%. Everything below reprices.
+            </div>
+          </div>
+          <button
+            onClick={() => setScenarioActive(!scenarioActive)}
+            style={{
+              padding: "8px 14px",
+              fontSize: 12, fontWeight: 700,
+              color: scenarioActive ? T.white : T.slate700,
+              background: scenarioActive ? T.purple : T.white,
+              border: `1px solid ${scenarioActive ? T.purple : T.slate200}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              minWidth: 130,
+              transition: "all 0.15s",
+            }}
+          >
+            {scenarioActive ? "✓ Scenario ON" : "Show scenario"}
+          </button>
+        </div>
+      </Card>
+
       {/* ─── AGENCY-LEVEL HEADER ──────────────────────────────── */}
       <Card style={{ borderLeft: `4px solid ${T.blue}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
