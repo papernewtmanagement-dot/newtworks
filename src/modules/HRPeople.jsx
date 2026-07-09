@@ -3302,6 +3302,51 @@ const GrowthBudgetSection = () => {
   );
 };
 
+// ─── Growth Tab ───────────────────────────────────────────────
+// Consolidates budget/capacity, recruiting pipeline, and onboarding
+// ramp into one lifecycle view: decide -> hire -> ramp.
+const GrowthTab = ({ applicants, onUpdate }) => {
+  const [view, setView] = useState("budget");
+  const subs = [
+    { id:"budget",     label:"Budget & Capacity" },
+    { id:"recruiting", label:"Recruiting"        },
+    { id:"onboarding", label:"Onboarding"        },
+  ];
+  return (
+    <div>
+      {/* Sub-nav */}
+      <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:8, padding:3, marginBottom:16 }}>
+        {subs.map(s => (
+          <button
+            key={s.id}
+            onClick={() => setView(s.id)}
+            style={{
+              padding:"6px 12px",
+              fontSize:11,
+              fontWeight: view === s.id ? 600 : 400,
+              color: view === s.id ? T.slate900 : T.slate500,
+              background: view === s.id ? T.white : "transparent",
+              border:"none",
+              borderRadius:6,
+              cursor:"pointer",
+              transition:"all 0.12s",
+              boxShadow: view === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Sub-view content */}
+      {view === "budget"     && <GrowthBudgetSection />}
+      {view === "recruiting" && <RecruitingPipeline applicants={applicants} onUpdate={onUpdate} />}
+      {view === "onboarding" && <OnboardingSection  onboarding={[]} />}
+    </div>
+  );
+};
+
+
 export default function HRPeople() {
   const { data: roi } = useProducerROI();
   const [section,     setSection]     = useState("overview");
@@ -3338,10 +3383,8 @@ export default function HRPeople() {
 
   const sections = [
     { id:"overview",    label:"Overview"    },
-    { id:"recruiting",  label:"Recruiting"  },
-    { id:"members",     label:"Members"     },
-    { id:"onboarding",  label:"Onboarding"  },
     { id:"growth",      label:"Growth"      },
+    { id:"members",     label:"Members"     },
     { id:"performance", label:"Performance" },
     { id:"profitability", label:"Profitability" },
     { id:"retention",   label:"Retention"   },
@@ -3373,10 +3416,8 @@ export default function HRPeople() {
 
       {/* Section Content */}
       {section === "overview"    && <HROverview        applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
-      {section === "recruiting"  && <RecruitingPipeline applicants={applicants} onUpdate={updateApplicantStage} />}
+      {section === "growth"      && <GrowthTab          applicants={applicants} onUpdate={updateApplicantStage} />}
       {section === "members"     && <StaffDirectory     staff={roi?.allActiveStaff || []} />}
-      {section === "onboarding"  && <OnboardingSection  onboarding={[]} />}
-      {section === "growth"      && <GrowthBudgetSection />}
       {section === "performance" && <PerformanceSection  roi={roi} />}
       {section === "profitability" && <SeatProfitabilitySection />}
       {section === "retention"   && <RetentionBudgetSection />}
