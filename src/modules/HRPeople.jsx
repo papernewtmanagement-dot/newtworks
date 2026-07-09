@@ -2930,45 +2930,133 @@ const RetentionBudgetSection = () => {
 // Reads: v_growth_budget_current, v_growth_budget_ytd,
 //        get_growth_budget_ceiling RPC, get_growth_budget_forecast RPC.
 // See op-rule "New team integration + Growth budget" for canonical mechanics.
-const GrowthBudgetSection = () => {
+// ─── Growth Budget Header ─────────────────────────────────────
+// Compressed persistent strip: "Growth Budget · $YTD / $Ceiling · [bar] · % · [▾ Ramping (n)]"
+// Ramping expands inline (one line per teammate). Always visible in the Growth tab.
+const GrowthBudgetHeader = () => {
   const [roster, setRoster]           = useState([]);
   const [ytd, setYtd]                 = useState(0);
   const [ceilingInfo, setCeilingInfo] = useState(null);
-  const [warningRoster, setWarningRoster] = useState([]);
   const [loading, setLoading]         = useState(true);
-
-  // Forecast form state
-  const [fcAnnualBase, setFcAnnualBase] = useState("");
-  const [fcStartDate, setFcStartDate]   = useState(new Date().toISOString().split("T")[0]);
-  const [fcResult, setFcResult]         = useState(null);
-  const [fcLoading, setFcLoading]       = useState(false);
-  const [fcError, setFcError]           = useState(null);
+  const [rampingOpen, setRampingOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      // Compute upcoming Saturday for warning trigger week-end
-      const today = new Date();
-      const daysUntilSat = (6 - today.getDay() + 7) % 7;
-      const upcomingSat = new Date(today.getTime() + daysUntilSat * 86400000);
-      const satIso = upcomingSat.toISOString().split("T")[0];
-
-      const [curRes, ytdRes, ceilingRes, wtRes] = await Promise.allSettled([
+      const [curRes, ytdRes, ceilingRes] = await Promise.allSettled([
         supabase.from("v_growth_budget_current").select("*").eq("agency_id", AGENCY_ID),
         supabase.from("v_growth_budget_ytd").select("growth_budget_ytd").eq("agency_id", AGENCY_ID),
         supabase.rpc("get_growth_budget_ceiling", { p_agency_id: AGENCY_ID }),
-        supabase.rpc("compute_warning_trigger", { p_agency_id: AGENCY_ID, p_week_end_date: satIso }),
       ]);
       if (cancelled) return;
       setRoster(curRes.status === "fulfilled" ? (curRes.value.data || []) : []);
       const ytdRows = ytdRes.status === "fulfilled" ? (ytdRes.value.data || []) : [];
       setYtd(ytdRows.reduce((s, r) => s + parseFloat(r.growth_budget_ytd || 0), 0));
       setCeilingInfo(ceilingRes.status === "fulfilled" ? (ceilingRes.value.data || null) : null);
-      setWarningRoster(wtRes.status === "fulfilled" ? (wtRes.value.data || []) : []);
       setLoading(false);
     }
     load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const $ = (n) => "$" + Math.round(parseFloat(n)||0).toLocaleString();
+  const ceiling         = parseFloat(ceilingInfo?.ceiling_annual || 0);
+  const yearStart       = new Date(new Date().getFullYear(), 0, 1);
+  const daysElapsed     = Math.max(1, Math.floor((new Date() - yearStart) / 86400000) + 1);
+  const proratedCeiling = ceiling * (daysElapsed / 365);
+  const status = ceiling <= 0 ? "info"
+    : ytd > ceiling ? "danger"
+    : ytd > proratedCeiling ? "warning"
+    : "success";
+  const statusColor = status==="danger" ? T.red : status==="warning" ? T.amber : status==="success" ? T.green : T.blue;
+
+  if (loading) {
+    return <Card style={{ padding:"10px 16px", marginBottom:14 }}><div style={{ fontSize:12, color:T.slate500 }}>Growth Budget…</div></Card>;
+  }
+
+  return (
+    <Card style={{ padding:"10px 16px", marginBottom:14 }}>
+      {/* Compressed header line */}
+      <div style={{ display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Growth Budget</div>
+        <div style={{ fontSize:13, fontWeight:700 }}>
+          <span style={{ color:statusColor }}>{$(ytd)}</span>
+          <span style={{ color:T.slate400, fontWeight:400, margin:"0 4px" }}>/</span>
+          <span style={{ color:T.slate800 }}>{ceiling > 0 ? $(ceiling) : "—"}</span>
+        </div>
+        <div style={{ flex:"1 1 200px", minWidth:120, maxWidth:340 }}>
+          {ceiling > 0 && <ProgressBar value={ytd} max={ceiling} color={statusColor} height={6} />}
+        </div>
+        <div style={{ fontSize:12, fontWeight:700, color:statusColor, minWidth:38, textAlign:"right" }}>
+          {ceiling > 0 ? `${pct(ytd, ceiling)}%` : "—"}
+        </div>
+        <button
+          onClick={() => setRampingOpen(v => !v)}
+          style={{
+            fontSize:11, fontWeight:600, color:T.slate700,
+            background:T.slate100, border:"none",
+            borderRadius:6, padding:"4px 10px", cursor:"pointer", whiteSpace:"nowrap",
+          }}
+        >
+          {rampingOpen ? "▴" : "▾"} Ramping ({roster.length})
+        </button>
+      </div>
+
+      {/* Expandable ramping list — one compact line per teammate */}
+      {rampingOpen && (
+        <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.slate100}`, display:"flex", flexDirection:"column", gap:6 }}>
+          {roster.length === 0 ? (
+            <div style={{ fontSize:11, color:T.slate400 }}>No teammates currently in ramp.</div>
+          ) : (
+            roster.map(p => {
+              const tenurePct = parseFloat(p.tenure_multiplier || 0) * 100;
+              const weeksIn   = parseInt(p.weeks_since_start || 0);
+              return (
+                <div key={p.team_member_id} style={{ display:"flex", alignItems:"baseline", gap:12, fontSize:11, color:T.slate600, flexWrap:"wrap" }}>
+                  <span style={{ fontWeight:700, color:T.slate800, minWidth:110 }}>{p.full_name}</span>
+                  <span>Wk {weeksIn}/52</span>
+                  <span>{tenurePct.toFixed(0)}% ramp</span>
+                  <span>{$(p.growth_budget_weekly)}/wk shield</span>
+                  <span style={{ color:T.slate400 }}>{$(p.growth_budget_remaining_annualized)} left</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+
+// ─── Hypothetical Hire Forecast ───────────────────────────────
+// Rendered inside the Recruiting sub-view of the Growth tab. Runs
+// get_growth_budget_forecast against annual base + start date; shows Y1
+// growth budget, quarter breakdown, and ceiling impact vs current YTD.
+const HypotheticalHireForecast = () => {
+  const [fcAnnualBase, setFcAnnualBase] = useState("");
+  const [fcStartDate, setFcStartDate]   = useState(new Date().toISOString().split("T")[0]);
+  const [fcResult, setFcResult]         = useState(null);
+  const [fcLoading, setFcLoading]       = useState(false);
+  const [fcError, setFcError]           = useState(null);
+  const [ytd, setYtd]                   = useState(0);
+  const [ceiling, setCeiling]           = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadContext() {
+      const [ytdRes, ceilingRes] = await Promise.allSettled([
+        supabase.from("v_growth_budget_ytd").select("growth_budget_ytd").eq("agency_id", AGENCY_ID),
+        supabase.rpc("get_growth_budget_ceiling", { p_agency_id: AGENCY_ID }),
+      ]);
+      if (cancelled) return;
+      const ytdRows = ytdRes.status === "fulfilled" ? (ytdRes.value.data || []) : [];
+      setYtd(ytdRows.reduce((s, r) => s + parseFloat(r.growth_budget_ytd || 0), 0));
+      const ci = ceilingRes.status === "fulfilled" ? (ceilingRes.value.data || null) : null;
+      setCeiling(parseFloat(ci?.ceiling_annual || 0));
+    }
+    loadContext();
     return () => { cancelled = true; };
   }, []);
 
@@ -2992,328 +3080,121 @@ const GrowthBudgetSection = () => {
 
   const $ = (n) => "$" + (parseFloat(n)||0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const ceiling      = parseFloat(ceilingInfo?.ceiling_annual || 0);
-  const weeklyTotal  = roster.reduce((s, r) => s + parseFloat(r.growth_budget_weekly || 0), 0);
-  const rampingCount = roster.length;
-
-  const yearStart       = new Date(new Date().getFullYear(), 0, 1);
-  const daysElapsed     = Math.max(1, Math.floor((new Date() - yearStart) / 86400000) + 1);
-  const proratedCeiling = ceiling * (daysElapsed / 365);
-  const status = ceiling <= 0 ? "info"
-    : ytd > ceiling ? "danger"
-    : ytd > proratedCeiling ? "warning"
-    : "success";
-  const statusColor = status==="danger" ? T.red : status==="warning" ? T.amber : status==="success" ? T.green : T.blue;
-
-  if (loading) return <Card><div style={{ padding:12, color:T.slate500, fontSize:13 }}>Loading growth budget…</div></Card>;
-
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+    <Card>
+      <div style={{ marginBottom:12 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>Forecast a Hypothetical Hire</div>
+        <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>See growth budget by quarter for planning</div>
+      </div>
 
-      {/* Agency-level summary */}
-      <Card>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 }}>
-          <div>
-            <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>Growth Budget</div>
-            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Shielded portion of new-hire cost during 52-wk tenure ramp — real $ paid, not weighing on residual pool</div>
-          </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10, marginBottom:12 }}>
+        <div>
+          <label style={{ fontSize:10, color:T.slate600, fontWeight:600, display:"block", marginBottom:4 }}>ANNUAL BASE SALARY ($)</label>
+          <input
+            type="number"
+            value={fcAnnualBase}
+            onChange={e => setFcAnnualBase(e.target.value)}
+            placeholder="e.g. 40000"
+            style={{ width:"100%", padding:"8px 10px", fontSize:13, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white }}
+          />
         </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:12, marginBottom:14 }}>
-          <div>
-            <div style={{ fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4 }}>YTD SPEND</div>
-            <div style={{ fontSize:18, fontWeight:800, color:statusColor }}>{$(ytd)}</div>
-          </div>
-          <div>
-            <div style={{ fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4 }}>ANNUAL CEILING</div>
-            <div style={{ fontSize:18, fontWeight:800, color:T.slate900 }}>{ceiling>0 ? $(ceiling) : "—"}</div>
-          </div>
-          <div>
-            <div style={{ fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4 }}>WEEKLY NOW</div>
-            <div style={{ fontSize:18, fontWeight:800, color:T.slate900 }}>{$(weeklyTotal)}</div>
-          </div>
-          <div>
-            <div style={{ fontSize:10, color:T.slate600, fontWeight:600, marginBottom:4 }}>RAMPING</div>
-            <div style={{ fontSize:18, fontWeight:800, color:T.slate900 }}>{rampingCount}</div>
-          </div>
+        <div>
+          <label style={{ fontSize:10, color:T.slate600, fontWeight:600, display:"block", marginBottom:4 }}>PLANNED START DATE</label>
+          <input
+            type="date"
+            value={fcStartDate}
+            onChange={e => setFcStartDate(e.target.value)}
+            style={{ width:"100%", padding:"8px 10px", fontSize:13, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white }}
+          />
         </div>
+        <div style={{ display:"flex", alignItems:"flex-end" }}>
+          <button
+            onClick={runForecast}
+            disabled={fcLoading}
+            style={{ padding:"9px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:fcLoading?"wait":"pointer", width:"100%" }}
+          >
+            {fcLoading ? "Forecasting…" : "Forecast"}
+          </button>
+        </div>
+      </div>
 
-        {ceiling > 0 && (
-          <div style={{ marginBottom:6 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:T.slate600, marginBottom:4 }}>
-              <span>YTD vs annual ceiling</span>
-              <span style={{ fontWeight:700, color:statusColor }}>{pct(ytd, ceiling)}%</span>
+      {fcError && (
+        <div style={{ padding:10, background:T.redLt, color:T.red, borderRadius:8, fontSize:12, marginBottom:10 }}>
+          {fcError}
+        </div>
+      )}
+
+      {fcResult && (
+        <div style={{ borderTop:`1px solid ${T.slate100}`, paddingTop:12 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10, marginBottom:14 }}>
+            <div>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Fully loaded/yr</div>
+              <div style={{ fontSize:14, fontWeight:700, color:T.slate800 }}>{$(fcResult.summary?.fully_loaded_annual)}</div>
             </div>
-            <ProgressBar value={ytd} max={ceiling} color={statusColor} height={8} />
-            <div style={{ fontSize:10, color:T.slate500, marginTop:6 }}>
-              Prorated pace at today: {$(proratedCeiling)}
-              {status==="danger" && " · Over annual ceiling"}
-              {status==="warning" && " · Above prorated pace"}
-              {status==="success" && " · Within pace"}
+            <div>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Year-1 growth budget</div>
+              <div style={{ fontSize:14, fontWeight:700, color:T.green }}>{$(fcResult.summary?.year_1_growth_budget_total)}</div>
             </div>
-            {ceilingInfo?.pct_of_on_time_annual_gross && (
-              <div style={{ fontSize:10, color:T.slate400, marginTop:4 }}>
-                Basis: {(parseFloat(ceilingInfo.pct_of_on_time_annual_gross)*100).toFixed(0)}% of on-time annual gross ex-Scorecard ({$(ceilingInfo.on_time_annual_gross)}) · Scorecard excluded: {$(ceilingInfo.scorecard_ytd_excluded)} · Anchor: {ceilingInfo.comp_anchor_date}
-              </div>
-            )}
+            <div>
+              <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Ramp complete</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{fcResult.summary?.ramp_complete_date}</div>
+            </div>
           </div>
-        )}
-      </Card>
 
-      {/* Per-teammate breakdown */}
-      <Card>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-          <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>Active Ramping Teammates</div>
-          <div style={{ fontSize:10, color:T.slate500 }}>tenure &lt; 52 weeks</div>
-        </div>
-        {roster.length === 0 ? (
-          <div style={{ padding:"20px 0", textAlign:"center", color:T.slate400, fontSize:12 }}>
-            No teammates currently in ramp. Growth budget = $0.
-          </div>
-        ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            {roster.map(p => {
-              const tenurePct = parseFloat(p.tenure_multiplier || 0) * 100;
-              const weeksIn   = parseInt(p.weeks_since_start || 0);
-              const weeksLeft = parseInt(p.weeks_remaining_in_ramp || 0);
-              return (
-                <div key={p.team_member_id} style={{ padding:"12px 0", borderTop:`1px solid ${T.slate100}` }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8, flexWrap:"wrap", gap:6 }}>
-                    <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{p.full_name}</div>
-                    <div style={{ fontSize:11, color:T.slate500 }}>
-                      Started {p.start_date} · Week {weeksIn} of 52 · {weeksLeft} weeks left in ramp
-                    </div>
-                  </div>
-
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:T.slate600, marginBottom:4 }}>
-                    <span>Tenure ramp</span>
-                    <span style={{ fontWeight:700, color:T.slate800 }}>{tenurePct.toFixed(1)}%</span>
-                  </div>
-                  <ProgressBar value={tenurePct} max={100} color={T.blue} height={6} />
-
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(110px, 1fr))", gap:10, marginTop:10 }}>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Annual base</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(p.annual_base)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Fully loaded/wk</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(p.fully_loaded_weekly)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Pool weight/wk</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(p.pool_weight_weekly)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Growth budget/wk</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.green }}>{$(p.growth_budget_weekly)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Remaining</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(p.growth_budget_remaining_annualized)}</div>
-                    </div>
-                  </div>
+          <div style={{ fontSize:11, fontWeight:700, color:T.slate700, marginBottom:8 }}>By Quarter</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {(fcResult.quarters || []).map(q => (
+              <div key={q.quarter_num} style={{ display:"grid", gridTemplateColumns:"70px 1fr 1fr 1fr", gap:8, alignItems:"center", padding:"8px 10px", background:T.slate100, borderRadius:8 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.slate800 }}>Q{q.quarter_num}</div>
+                <div>
+                  <div style={{ fontSize:9, color:T.slate500 }}>Window</div>
+                  <div style={{ fontSize:11, color:T.slate700 }}>{q.quarter_start} → {q.quarter_end}</div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      {/* Production Health — per-person warning trigger status (all active team) */}
-      <Card>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 }}>
-          <div>
-            <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>Production Health</div>
-            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Per-person actual production vs role-adjusted fully-loaded cost. Retention roles: bar × 0.25.</div>
-          </div>
-        </div>
-        {warningRoster.length === 0 ? (
-          <div style={{ padding:"20px 0", textAlign:"center", color:T.slate400, fontSize:12 }}>
-            No team data yet for the upcoming Saturday week-end.
-          </div>
-        ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            {warningRoster.map(p => {
-              const pct = p.warning_pct !== null && p.warning_pct !== undefined ? parseFloat(p.warning_pct) : 0;
-              const status = p.warning_status || "na";
-              const statusColor = status === "green" ? T.green : status === "yellow" ? T.amber : status === "red" ? T.red : T.slate400;
-              const statusBg    = status === "green" ? T.greenLt : status === "yellow" ? T.amberLt : status === "red" ? T.redLt : T.slate100;
-              const statusLabel = status === "green" ? "🟢 On track" : status === "yellow" ? "🟡 Coaching" : status === "red" ? "🔴 PIP" : "—";
-              const roleAdj     = parseFloat(p.role_production_weight || 1);
-              const barFull     = parseFloat(p.warning_bar_full || 0);
-              const barAdj      = parseFloat(p.warning_bar || 0);
-              const actual      = parseFloat(p.warning_actual_annual || 0);
-              return (
-                <div key={p.team_member_id} style={{ padding:"12px 0", borderTop:`1px solid ${T.slate100}` }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8, flexWrap:"wrap", gap:6 }}>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{p.full_name}</div>
-                      <div style={{ fontSize:11, color:T.slate500 }}>
-                        {p.role} · {p.role_category}
-                        {roleAdj < 1.0 && <span style={{ color:T.slate400 }}> · Role weight: {(roleAdj*100).toFixed(0)}%</span>}
-                      </div>
-                    </div>
-                    <span style={{ fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:20, background:statusBg, color:statusColor }}>
-                      {statusLabel}
-                    </span>
-                  </div>
-
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:T.slate600, marginBottom:4 }}>
-                    <span>Actual vs bar</span>
-                    <span style={{ fontWeight:700, color:statusColor }}>{isNaN(pct) ? "—" : pct.toFixed(1) + "%"}</span>
-                  </div>
-                  <ProgressBar value={actual} max={barAdj > 0 ? barAdj : 1} color={statusColor} height={6} />
-
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(110px, 1fr))", gap:10, marginTop:10 }}>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Bar (adjusted)</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(barAdj)}</div>
-                    </div>
-                    {roleAdj < 1.0 && (
-                      <div>
-                        <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Bar (full)</div>
-                        <div style={{ fontSize:13, fontWeight:500, color:T.slate500 }}>{$(barFull)}</div>
-                      </div>
-                    )}
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Actual annualized</div>
-                      <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{$(actual)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Trailing Q{p.trailing_q_num || "—"} P&C prem</div>
-                      <div style={{ fontSize:13, fontWeight:500, color:T.slate600 }}>{$(p.trailing_q_pc_premium)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Trailing L&H prem</div>
-                      <div style={{ fontSize:13, fontWeight:500, color:T.slate600 }}>{$(p.trailing_q_lh_premium)}</div>
-                    </div>
-                  </div>
+                <div>
+                  <div style={{ fontSize:9, color:T.slate500 }}>Growth budget</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:T.green }}>{$(q.growth_budget)}</div>
                 </div>
-              );
-            })}
-            <div style={{ fontSize:10, color:T.slate400, paddingTop:8, borderTop:`1px solid ${T.slate100}` }}>
-              Bar = (annual_base × tenure_multiplier) × 1.08 × role_production_weight ·
-              Actual = trailing complete quarter agency commissions × 4 (P&C prem × 8% + L&H prem × blended rate) ·
-              🟢 ≥ 100% of bar · 🟡 80–99% · 🔴 &lt; 80%
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* Forecast: hypothetical hire */}
-      <Card>
-        <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>Forecast a Hypothetical Hire</div>
-          <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>See growth budget by quarter for planning</div>
-        </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10, marginBottom:12 }}>
-          <div>
-            <label style={{ fontSize:10, color:T.slate600, fontWeight:600, display:"block", marginBottom:4 }}>ANNUAL BASE SALARY ($)</label>
-            <input
-              type="number"
-              value={fcAnnualBase}
-              onChange={e => setFcAnnualBase(e.target.value)}
-              placeholder="e.g. 40000"
-              style={{ width:"100%", padding:"8px 10px", fontSize:13, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white }}
-            />
-          </div>
-          <div>
-            <label style={{ fontSize:10, color:T.slate600, fontWeight:600, display:"block", marginBottom:4 }}>PLANNED START DATE</label>
-            <input
-              type="date"
-              value={fcStartDate}
-              onChange={e => setFcStartDate(e.target.value)}
-              style={{ width:"100%", padding:"8px 10px", fontSize:13, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white }}
-            />
-          </div>
-          <div style={{ display:"flex", alignItems:"flex-end" }}>
-            <button
-              onClick={runForecast}
-              disabled={fcLoading}
-              style={{ padding:"9px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:fcLoading?"wait":"pointer", width:"100%" }}
-            >
-              {fcLoading ? "Forecasting…" : "Forecast"}
-            </button>
-          </div>
-        </div>
-
-        {fcError && (
-          <div style={{ padding:10, background:T.redLt, color:T.red, borderRadius:8, fontSize:12, marginBottom:10 }}>
-            {fcError}
-          </div>
-        )}
-
-        {fcResult && (
-          <div style={{ borderTop:`1px solid ${T.slate100}`, paddingTop:12 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10, marginBottom:14 }}>
-              <div>
-                <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Fully loaded/yr</div>
-                <div style={{ fontSize:14, fontWeight:700, color:T.slate800 }}>{$(fcResult.summary?.fully_loaded_annual)}</div>
-              </div>
-              <div>
-                <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Year-1 growth budget</div>
-                <div style={{ fontSize:14, fontWeight:700, color:T.green }}>{$(fcResult.summary?.year_1_growth_budget_total)}</div>
-              </div>
-              <div>
-                <div style={{ fontSize:10, color:T.slate500, marginBottom:2 }}>Ramp complete</div>
-                <div style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{fcResult.summary?.ramp_complete_date}</div>
-              </div>
-            </div>
-
-            <div style={{ fontSize:11, fontWeight:700, color:T.slate700, marginBottom:8 }}>By Quarter</div>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {(fcResult.quarters || []).map(q => (
-                <div key={q.quarter_num} style={{ display:"grid", gridTemplateColumns:"70px 1fr 1fr 1fr", gap:8, alignItems:"center", padding:"8px 10px", background:T.slate100, borderRadius:8 }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:T.slate800 }}>Q{q.quarter_num}</div>
-                  <div>
-                    <div style={{ fontSize:9, color:T.slate500 }}>Window</div>
-                    <div style={{ fontSize:11, color:T.slate700 }}>{q.quarter_start} → {q.quarter_end}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize:9, color:T.slate500 }}>Growth budget</div>
-                    <div style={{ fontSize:12, fontWeight:700, color:T.green }}>{$(q.growth_budget)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize:9, color:T.slate500 }}>Pool weight</div>
-                    <div style={{ fontSize:12, fontWeight:700, color:T.slate800 }}>{$(q.pool_weight)}</div>
-                  </div>
+                <div>
+                  <div style={{ fontSize:9, color:T.slate500 }}>Pool weight</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:T.slate800 }}>{$(q.pool_weight)}</div>
                 </div>
-              ))}
-            </div>
-
-            {ceiling > 0 && fcResult.summary && (
-              <div style={{ marginTop:12, padding:10, background:T.blueLt, borderRadius:8, fontSize:11, color:T.slate700 }}>
-                <strong style={{ color:T.slate900 }}>Ceiling impact:</strong>{" "}
-                Year-1 forecast of {$(fcResult.summary.year_1_growth_budget_total)} +
-                current YTD spend {$(ytd)} =
-                {" "}{$(parseFloat(fcResult.summary.year_1_growth_budget_total || 0) + ytd)} projected combined.
-                {(parseFloat(fcResult.summary.year_1_growth_budget_total || 0) + ytd) > ceiling
-                  ? <span style={{ color:T.red, fontWeight:700 }}> Would exceed ceiling ({$(ceiling)}).</span>
-                  : <span style={{ color:T.green, fontWeight:700 }}> Within ceiling ({$(ceiling)}).</span>}
               </div>
-            )}
+            ))}
           </div>
-        )}
-      </Card>
 
-    </div>
+          {ceiling > 0 && fcResult.summary && (
+            <div style={{ marginTop:12, padding:10, background:T.blueLt, borderRadius:8, fontSize:11, color:T.slate700 }}>
+              <strong style={{ color:T.slate900 }}>Ceiling impact:</strong>{" "}
+              Year-1 forecast of {$(fcResult.summary.year_1_growth_budget_total)} +
+              current YTD spend {$(ytd)} =
+              {" "}{$(parseFloat(fcResult.summary.year_1_growth_budget_total || 0) + ytd)} projected combined.
+              {(parseFloat(fcResult.summary.year_1_growth_budget_total || 0) + ytd) > ceiling
+                ? <span style={{ color:T.red, fontWeight:700 }}> Would exceed ceiling ({$(ceiling)}).</span>
+                : <span style={{ color:T.green, fontWeight:700 }}> Within ceiling ({$(ceiling)}).</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   );
 };
 
+
 // ─── Growth Tab ───────────────────────────────────────────────
-// Consolidates budget/capacity, recruiting pipeline, and onboarding
-// ramp into one lifecycle view: decide -> hire -> ramp.
+// Persistent Growth Budget header (with expandable ramping list) always
+// visible. Sub-nav toggles between Recruiting and Onboarding. Hypothetical
+// hire forecast lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, onUpdate }) => {
-  const [view, setView] = useState("budget");
+  const [view, setView] = useState("recruiting");
   const subs = [
-    { id:"budget",     label:"Budget & Capacity" },
-    { id:"recruiting", label:"Recruiting"        },
-    { id:"onboarding", label:"Onboarding"        },
+    { id:"recruiting", label:"Recruiting" },
+    { id:"onboarding", label:"Onboarding" },
   ];
   return (
     <div>
+      {/* Persistent budget header */}
+      <GrowthBudgetHeader />
+
       {/* Sub-nav */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:8, padding:3, marginBottom:16 }}>
         {subs.map(s => (
@@ -3339,9 +3220,13 @@ const GrowthTab = ({ applicants, onUpdate }) => {
       </div>
 
       {/* Sub-view content */}
-      {view === "budget"     && <GrowthBudgetSection />}
-      {view === "recruiting" && <RecruitingPipeline applicants={applicants} onUpdate={onUpdate} />}
-      {view === "onboarding" && <OnboardingSection  onboarding={[]} />}
+      {view === "recruiting" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          <RecruitingPipeline applicants={applicants} onUpdate={onUpdate} />
+          <HypotheticalHireForecast />
+        </div>
+      )}
+      {view === "onboarding" && <OnboardingSection onboarding={[]} />}
     </div>
   );
 };
