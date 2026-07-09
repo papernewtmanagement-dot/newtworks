@@ -94,7 +94,7 @@ export default function SeatProfitabilitySection() {
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Seat Profitability — week ending {weekEnd}</div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2, maxWidth: 620, lineHeight: 1.5 }}>
-              <strong>Coverage</strong> = does the seat cover its own fully-loaded cost. <strong>Profitability</strong> = does the seat generate 2.5× its cost (SF 40% payroll target). Retention roles’ credit is scaled by book quality — high lapse shrinks their attributed revenue.
+              <strong>Coverage</strong> = does the seat cover its own fully-loaded cost. <strong>Profitability</strong> = does the seat generate 2.5× its cost (SF 40% payroll target). No tenure ramp — measured against full paid salary. Retention credit scaled by book quality (RQM): high lapse shrinks their attributed revenue.
             </div>
           </div>
         </div>
@@ -133,7 +133,7 @@ export default function SeatProfitabilitySection() {
                 <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
                   <th style={{ padding: "10px 12px", textAlign: "left",  fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Name</th>
                   <th style={{ padding: "10px 12px", textAlign: "left",  fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Role</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Tenure</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }} title="Displayed for context only — no longer applied to Coverage/Profitability bar">Tenure</th>
                   <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Fully-Loaded</th>
                   <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Attributed</th>
                   <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: T.slate500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Coverage</th>
@@ -185,8 +185,8 @@ export default function SeatProfitabilitySection() {
       <Card style={{ background: T.slate50, border: `1px dashed ${T.slate200}` }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 8 }}>How this is calculated</div>
         <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.7 }}>
-          <div>• <strong>Fully-Loaded:</strong> annual base × tenure ramp × 1.08 (TX payroll burden multiplier)</div>
-          <div>• <strong>Attributed Revenue:</strong> own new × 4 + own renewal stack × 0.65 (Week 52+ only) + retention pool share</div>
+          <div>• <strong>Fully-Loaded:</strong> annual base × 1.08 (TX payroll burden). No tenure ramp — seats evaluated against what we actually pay them.</div>
+          <div>• <strong>Attributed Revenue:</strong> own new × 4 + own renewal stack × 0.65 + retention pool share</div>
           <div>• <strong>Retention pool share:</strong> agency renewal TTM × 0.35 × person&apos;s weighted-hours share × <strong>Retention Quality Multiplier (RQM)</strong></div>
           <div>• <strong>RQM:</strong> LEAST(1.0, 12% / actual_lapse_rate). At benchmark (12%) RQM = 1.0. At 27% lapse RQM = 0.44. Retention only gets full credit when the book is being retained at benchmark.</div>
           <div>• <strong>Coverage bar:</strong> fully-loaded. Green ≥100%, Yellow ≥80%, Red &lt;80%.</div>
