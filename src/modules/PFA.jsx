@@ -81,6 +81,12 @@ function daysAgo(n) {
   d.setDate(d.getDate() - n);
   return toIsoDate(d);
 }
+function firstOfPriorMonth() {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return toIsoDate(d);
+}
 
 // =====================================================================
 // TeamEntryAndToday — the team-facing view (entry form + Today panel).
@@ -343,7 +349,7 @@ function TeamEntryAndToday() {
 // LedgerTab — full pfa_transactions with filters + void action
 // =====================================================================
 function LedgerTab({ pfaAccountId, teamRoster, onReloadAccount }) {
-  const [dateFrom, setDateFrom] = useState(daysAgo(30));
+  const [dateFrom, setDateFrom] = useState(firstOfPriorMonth());
   const [dateTo, setDateTo]     = useState(toIsoDate(new Date()));
   const [teamFilter, setTeamFilter] = useState("");   // "" | team_id | "excel"
   const [typeFilter, setTypeFilter] = useState("");   // "" | Deposit | State Farm EFT | ...
@@ -560,9 +566,9 @@ function StatementsTab({ pfaAccountId }) {
     if (!pfaAccountId) return;
     setLoading(true); setError("");
     supabase.from("pfa_bank_statements")
-      .select("id, statement_period_start, statement_ending_date, opening_balance, closing_balance, total_deposits, total_withdrawals, notes, created_at")
+      .select("id, statement_period_start, statement_period_end, opening_balance, closing_balance, deposit_total, withdrawal_total, deposit_count, withdrawal_count, created_at")
       .eq("pfa_account_id", pfaAccountId)
-      .order("statement_ending_date", { ascending: false })
+      .order("statement_period_end", { ascending: false })
       .then(({ data, error }) => {
         if (error) setError(error.message);
         else setRows(data || []);
@@ -591,10 +597,10 @@ function StatementsTab({ pfaAccountId }) {
           )}
           {!loading && rows.map(r => (
             <tr key={r.id}>
-              <td style={tableTd}>{fmtDate(r.statement_period_start)} — {fmtDate(r.statement_ending_date)}</td>
+              <td style={tableTd}>{fmtDate(r.statement_period_start)} — {fmtDate(r.statement_period_end)}</td>
               <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.opening_balance)}</td>
-              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.total_deposits)}</td>
-              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.total_withdrawals)}</td>
+              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.deposit_total)}</td>
+              <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.withdrawal_total)}</td>
               <td style={{ ...tableTd, textAlign: "right", fontWeight: 700 }}>${fmtMoney(r.closing_balance)}</td>
               <td style={tableTd}>{fmtDate(r.created_at)}</td>
             </tr>
@@ -617,7 +623,7 @@ function ReconciliationsTab({ pfaAccountId }) {
     if (!pfaAccountId) return;
     setLoading(true); setError("");
     supabase.from("pfa_reconciliations")
-      .select("id, statement_ending_date, adjusted_statement_balance, agents_personal_funds_previous_month, difference_to_reconcile, explanation, emailed_to_agent_at, emailed_to_agent_message_id, created_at")
+      .select("id, statement_ending_date, adjusted_statement_balance, prior_personal_funds, difference_to_reconcile, explanation, emailed_to_agent_at, emailed_to_agent_message_id, created_at")
       .eq("pfa_account_id", pfaAccountId)
       .order("statement_ending_date", { ascending: false })
       .then(({ data, error }) => {
@@ -654,7 +660,7 @@ function ReconciliationsTab({ pfaAccountId }) {
                 <tr key={r.id}>
                   <td style={tableTd}>{fmtDate(r.statement_ending_date)}</td>
                   <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.adjusted_statement_balance)}</td>
-                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.agents_personal_funds_previous_month)}</td>
+                  <td style={{ ...tableTd, textAlign: "right" }}>${fmtMoney(r.prior_personal_funds)}</td>
                   <td style={{ ...tableTd, textAlign: "right", fontWeight: 700, color: isClean ? T.slate800 : "#7B241C" }}>
                     ${fmtMoney(diff)}
                   </td>
