@@ -675,7 +675,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
-    pfa:         <ErrorBoundary name="PFA"><PFA /></ErrorBoundary>,
+    pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
     scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
