@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
+import SeatProfitabilitySection from "../components/SeatProfitabilitySection.jsx";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -3342,6 +3343,7 @@ export default function HRPeople() {
     { id:"onboarding",  label:"Onboarding"  },
     { id:"growth",      label:"Growth"      },
     { id:"performance", label:"Performance" },
+    { id:"profitability", label:"Profitability" },
     { id:"retention",   label:"Retention"   },
     { id:"commissions", label:"Commissions" },
     { id:"book",        label:"Book"        },
@@ -3376,6 +3378,7 @@ export default function HRPeople() {
       {section === "onboarding"  && <OnboardingSection  onboarding={[]} />}
       {section === "growth"      && <GrowthBudgetSection />}
       {section === "performance" && <PerformanceSection  roi={roi} />}
+      {section === "profitability" && <SeatProfitabilitySection />}
       {section === "retention"   && <RetentionBudgetSection />}
       {section === "commissions" && <CommissionsSection  commissions={[]} />}
       {section === "book"        && <BookAssignmentsSection />}
