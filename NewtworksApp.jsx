@@ -10,6 +10,7 @@ import TasksGoals from "./src/modules/TasksGoals.jsx";
 import AlertsNotifications from "./src/modules/AlertsNotifications.jsx";
 import Documents from "./src/modules/Documents.jsx";
 import HRPeople from "./src/modules/HRPeople.jsx";
+import Book from "./src/modules/Book.jsx";
 import Settings from "./src/modules/Settings.jsx";
 import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
@@ -105,6 +106,7 @@ const NAV_ITEMS = [
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
   { id: "financials",  label: "Financials",  icon: "dollar",        roles: ADMIN_ROLES },
   { id: "hr",          label: "Team",        icon: "users",         roles: ADMIN_ROLES },
+  { id: "book",        label: "Book",        icon: "bookOpen",      roles: ADMIN_ROLES },
   { id: "marketing",   label: "Marketing",   icon: "megaphone",     roles: ADMIN_ROLES },
   { id: "social",      label: "Social",      icon: "share",         roles: ADMIN_ROLES },
   { type: "divider",   id: "_div_admin_bot" },
@@ -670,6 +672,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals userRole={userRole} userId={userId} /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
+    book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing Points"><MarketingPoints /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
