@@ -2536,394 +2536,6 @@ const BookAssignmentsSection = () => {
 };
 
 // ─── Section: Retention Budget ───────────────────────────────
-const RetentionBudgetSection = () => {
-  const money = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
-  const pct = (n, dec = 3) => ((Number(n) || 0) * 100).toFixed(dec) + "%";
-
-  const [state, setState] = useState({
-    loading: true,
-    error: null,
-    current: null,
-    upcoming: [],
-    agency: null,
-    snapshot: null,
-    receptionTeam: [],
-    scorecardActuals: null,
-    smvcResult: null,
-  });
-
-  useEffect(() => {
-    if (!supabase || !AGENCY_ID) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const today = new Date().toISOString().slice(0, 10);
-        const [currentRes, upcomingRes, agencyRes, snapshotRes, otSnapRes, teamRes] = await Promise.all([
-          supabase.from("v_retention_budget_current").select("*").maybeSingle(),
-          supabase.from("retention_budget_schedule")
-            .select("week_end_date, multiplier, phase")
-            .eq("agency_id", AGENCY_ID)
-            .gte("week_end_date", today)
-            .order("week_end_date", { ascending: true })
-            .limit(8),
-          supabase.from("agency")
-            .select("id, payroll_burden_multiplier")
-            .eq("id", AGENCY_ID)
-            .maybeSingle(),
-          supabase.from("agency_snapshot")
-            .select("snapshot_date, auto_premium, fire_premium, life_premium, auto_pif, fire_pif")
-            .eq("agency_id", AGENCY_ID)
-            .order("snapshot_date", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          // YTD on-time SMVC inputs — most recent agency_snapshot row WITH YTD data.
-          supabase.from("agency_snapshot")
-            .select("*")
-            .eq("agency_id", AGENCY_ID)
-            .not("auto_new_ytd", "is", null)
-            .order("snapshot_date", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          supabase.from("team")
-            .select("id, first_name, pay_type, pay_rate, pay_frequency")
-            .eq("agency_id", AGENCY_ID)
-            .eq("is_active", true)
-            .eq("role", "Reception"),
-        ]);
-        if (cancelled) return;
-        const team = Array.isArray(teamRes?.data) ? teamRes.data : [];
-        const teamIds = team.map(t => t?.id).filter(Boolean);
-
-        // Trailing ~13 weeks of payroll for the Reception team
-        let payrollByPerson = {};
-        if (teamIds.length > 0) {
-          const cutoff = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          const payrollRes = await supabase
-            .from("payroll_detail")
-            .select("team_member_id, gross_pay, payroll_runs!inner(pay_period_start, pay_period_end)")
-            .eq("business_entity_id", BUSINESS_ENTITY_ID)
-            .in("team_member_id", teamIds)
-            .gte("payroll_runs.pay_period_end", cutoff);
-          (Array.isArray(payrollRes?.data) ? payrollRes.data : []).forEach(row => {
-            const pid = row?.team_member_id;
-            if (!pid) return;
-            const start = row?.payroll_runs?.pay_period_start;
-            const end = row?.payroll_runs?.pay_period_end;
-            if (!start || !end) return;
-            const days = (new Date(end) - new Date(start)) / 86400000 + 1;
-            const bucket = payrollByPerson[pid] || { gross: 0, days: 0 };
-            bucket.gross += Number(row?.gross_pay) || 0;
-            bucket.days += Math.max(1, days);
-            payrollByPerson[pid] = bucket;
-          });
-        }
-
-        // SMVC inputs derive from agency_snapshot YTD raw values — never stored "current" values.
-        // Per the compensation_data_freshness principle, calculation happens at runtime from source data.
-        const programYear = new Date().getFullYear();
-        const otSnap = otSnapRes?.data;
-        const otAsOf = otSnap?.snapshot_date || null;
-        const autoPifGain = otSnap ? ((Number(otSnap.auto_new_ytd) || 0) - (Number(otSnap.auto_lost_ytd) || 0)) : null;
-        const firePifGain = otSnap ? ((Number(otSnap.fire_new_ytd) || 0) - (Number(otSnap.fire_lost_ytd) || 0)) : null;
-        const fsCredits   = otSnap ? (Number(otSnap.life_paid_for_premium_ytd) || 0) : null;
-        const ipsActivity = otSnap ? (Number(otSnap.ips_new_money_ytd) || 0) : null;
-
-        const snap = snapshotRes?.data;
-        const pcProductionActual = (Number(snap?.auto_pif) || 0) + (Number(snap?.fire_pif) || 0);
-
-        let smvcResult = null;
-        try {
-          const { data: rpcData, error: rpcErr } = await supabase.rpc("compute_on_time_smvc_with_better_of", {
-            p_agency_id: AGENCY_ID,
-            p_program_year: programYear,
-            p_pc_production_actual: pcProductionActual,
-            p_auto_pif_gain: autoPifGain,
-            p_fire_pif_gain: firePifGain,
-            p_fs_credits: fsCredits,
-            p_ips_activity: ipsActivity,
-          });
-          if (!rpcErr) smvcResult = rpcData;
-        } catch (rpcCatch) {
-          // Leave smvcResult null; UI will show "awaiting input" state
-        }
-
-        if (cancelled) return;
-        setState({
-          loading: false,
-          error: null,
-          current: currentRes?.data ?? null,
-          upcoming: Array.isArray(upcomingRes?.data) ? upcomingRes.data : [],
-          agency: agencyRes?.data ?? null,
-          snapshot: snapshotRes?.data ?? null,
-          receptionTeam: team,
-          payrollByPerson,
-          scorecardActuals: { auto_pif_gain: autoPifGain, fire_pif_gain: firePifGain, fs_credits: fsCredits, ips_activity: ipsActivity, as_of_date: otAsOf },
-          smvcResult,
-        });
-        return;
-      } catch (e) {
-        if (!cancelled) setState((s) => ({ ...s, loading: false, error: e?.message || String(e) }));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  if (state.loading) {
-    return <Card><div style={{ padding:12, color:T.slate500, fontSize:12 }}>Loading retention budget…</div></Card>;
-  }
-  if (state.error) {
-    return <Card><div style={{ padding:12, color:T.red, fontSize:12 }}>Retention budget error: {state.error}</div></Card>;
-  }
-
-  const scheduledFloor = Number(state.current?.multiplier) || 0;
-  // On-time SMVC computed at runtime — never stored as a "current" value (operational_rule).
-  const smvc           = Number(state.smvcResult?.applied_smvc_decimal) || 0;
-  const smvcBandsComplete = state.smvcResult?.bands_complete === true;
-  const smvcSource     = state.smvcResult?.better_of_source || null;
-  const burdenMult     = Number(state.agency?.payroll_burden_multiplier) || 1.15;
-
-  const smvcAdd        = 0.21 * smvc;
-  const effective      = scheduledFloor + smvcAdd;
-
-  const autoPrem       = Number(state.snapshot?.auto_premium) || 0;
-  const firePrem       = Number(state.snapshot?.fire_premium) || 0;
-  const lifePrem       = Number(state.snapshot?.life_premium) || 0;
-  const aflPremium     = autoPrem + firePrem + lifePrem;
-
-  const annualBudget   = effective * aflPremium;
-  const weeklyBudget   = annualBudget / 52;
-
-  // Reception team annual wages — trailing ~13 weeks of payroll annualized.
-  // Falls back to scheduled-rate × 40 × 52 if a member has no payroll history yet.
-  const teamForWages = (state.receptionTeam || []).filter(
-    (t) => (t?.first_name || "").toLowerCase() !== "test"
-  );
-  const wagesByPerson = teamForWages.map((t) => {
-    const bucket = (state.payrollByPerson || {})[t?.id];
-    if (bucket && bucket.days > 0) {
-      const annualized = (bucket.gross / bucket.days) * 365;
-      return { name: t?.first_name, annualized, source: "payroll", days: bucket.days };
-    }
-    // Fallback for members with no payroll history yet
-    const rate = Number(t?.pay_rate) || 0;
-    let annualized = 0;
-    if (t?.pay_type === "HOURLY") annualized = rate * 40 * 52;
-    else if (t?.pay_type === "SALARY") {
-      const freqMult = { weekly: 52, biweekly: 26, monthly: 12, annual: 1 }[t?.pay_frequency] || 52;
-      annualized = rate * freqMult;
-    }
-    return { name: t?.first_name, annualized, source: "scheduled", days: 0 };
-  });
-  const annualWageRaw    = wagesByPerson.reduce((s, w) => s + (Number(w?.annualized) || 0), 0);
-  const annualWageLoaded = annualWageRaw * burdenMult;
-
-  // Breach signal fires on RAW wages (payroll burden is paid from agency overhead,
-  // not from the retention budget — see persistent_memory operational_rule).
-  const marginRaw     = annualBudget - annualWageRaw;
-  const marginLoaded  = annualBudget - annualWageLoaded;
-  const breachRaw     = annualBudget < annualWageRaw;
-  const breachLoaded  = annualBudget < annualWageLoaded;
-
-  const trajectory = (state.upcoming || []).slice(0, 8);
-  const phaseLabel = state.current?.phase === "phase_1_aa05_stepdown" ? "Phase 1 (AA05 stepdown)" :
-                     state.current?.phase === "phase_2_aa28_stepdown" ? "Phase 2 (AA28 stepdown)" :
-                     state.current?.phase || "—";
-
-  const askCtx =
-    `My retention budget for the week ending ${state.current?.week_end_date} is ${money(annualBudget)}/yr ` +
-    `(${money(weeklyBudget)}/wk). Scheduled floor ${pct(scheduledFloor)} plus SMVC modifier ${pct(smvcAdd)} ` +
-    `= effective ${pct(effective)} on ${money(aflPremium)} A+F+L premium. ` +
-    `Reception team annualized wages from payroll: ${money(annualWageRaw)}. ` +
-    `Margin vs wages: ${money(marginRaw)}. Loaded cost (× ${burdenMult.toFixed(2)}): ${money(annualWageLoaded)}. ` +
-    `Phase: ${phaseLabel}. Is the budget healthy this week?`;
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-      <Card style={{ borderLeft: `4px solid ${T.purple}` }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-          <div>
-            <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>
-              Retention Budget — Week ending {state.current?.week_end_date || "—"}
-            </div>
-            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
-              {phaseLabel} · Schedule is a permanent ramp; current on-time SMVC adds to the floor each week.
-            </div>
-          </div>
-          
-        </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(170px, 1fr))", gap:10 }}>
-          <div style={{ background:T.purpleLt, padding:"10px 12px", borderRadius:8 }}>
-            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Annual Budget</div>
-            <div style={{ fontSize:18, fontWeight:700, color:T.slate900 }}>{money(annualBudget)}</div>
-            <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>{money(weeklyBudget)} / wk</div>
-          </div>
-          <div style={{ background:T.slate50, padding:"10px 12px", borderRadius:8 }}>
-            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Effective Multiplier</div>
-            <div style={{ fontSize:18, fontWeight:700, color:T.slate900 }}>{pct(effective)}</div>
-            <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>floor + 0.21 × SMVC</div>
-          </div>
-          <div style={{ background: breachRaw ? T.redLt : T.greenLt, padding:"10px 12px", borderRadius:8 }}>
-            <div style={{ fontSize:10, color:T.slate500, marginBottom:4 }}>Margin vs Wages</div>
-            <div style={{ fontSize:18, fontWeight:700, color: breachRaw ? "#991B1B" : "#065F46" }}>
-              {breachRaw ? "−" : ""}{money(Math.abs(marginRaw))}
-            </div>
-            <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>
-              {breachRaw ? "BUDGET BELOW WAGE COMMITMENT" : "above wage commitment"}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop:12, padding:12, background:T.slate50, borderRadius:8 }}>
-          <div style={{ fontSize:11, fontWeight:600, color:T.slate700, marginBottom:8 }}>Formula breakdown</div>
-          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width:"100%", fontSize:12, color:T.slate700 }}>
-            <tbody>
-              <tr>
-                <td style={{ padding:"3px 0" }}>Scheduled floor (zero-SMVC)</td>
-                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{pct(scheduledFloor)}</td>
-              </tr>
-              <tr>
-                <td style={{ padding:"3px 0" }}>+ 0.21 × on-time SMVC ({pct(smvc, 2)})</td>
-                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace" }}>+ {pct(smvcAdd)}</td>
-              </tr>
-              <tr style={{ borderTop:`1px solid ${T.slate200}` }}>
-                <td style={{ padding:"3px 0", fontWeight:600 }}>= Effective multiplier</td>
-                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace", fontWeight:600 }}>{pct(effective)}</td>
-              </tr>
-              <tr>
-                <td style={{ padding:"3px 0" }}>× Auto + Fire + Life premium</td>
-                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{money(aflPremium)}</td>
-              </tr>
-              <tr style={{ borderTop:`1px solid ${T.slate200}` }}>
-                <td style={{ padding:"3px 0", fontWeight:600 }}>= Annual retention budget</td>
-                <td style={{ textAlign:"right", fontFamily:"ui-monospace, monospace", fontWeight:600, color:T.purple }}>{money(annualBudget)}</td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-          <div style={{ fontSize:10, color:T.slate500, marginTop:8 }}>
-            Premium snapshot: {state.snapshot?.snapshot_date || "no snapshot on file"} — Auto {money(autoPrem)}, Fire {money(firePrem)}, Life {money(lifePrem)}. Health excluded by design.
-          </div>
-        </div>
-
-        <div style={{ marginTop:12, padding:12, background: breachRaw ? T.redLt : T.greenLt, borderRadius:8 }}>
-          <div style={{ fontSize:11, fontWeight:600, color: breachRaw ? "#991B1B" : "#065F46", marginBottom:6 }}>
-            {breachRaw ? "⚠ BUDGET BREACH — body cut signal" : "Wage commitment"}
-          </div>
-          <div style={{ fontSize:12, color:T.slate700, lineHeight:1.6, marginBottom:8 }}>
-            Reception team (active, non-test) annualized wages from trailing-13-week payroll:
-            {" "}<strong>{money(annualWageRaw)}</strong>.{" "}
-            {breachRaw
-              ? <>Budget is short of wages by <strong>{money(Math.abs(marginRaw))}</strong> — body cut or rate intervention needed.</>
-              : <>Budget is <strong>{money(marginRaw)}</strong> above wages — that is the room for service surge and bonus accruals.</>}
-          </div>
-          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width:"100%", fontSize:11, color:T.slate600 }}>
-            <thead>
-              <tr style={{ color:T.slate500, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>
-                <th style={{ textAlign:"left", padding:"4px 6px" }}>Person</th>
-                <th style={{ textAlign:"right", padding:"4px 6px" }}>Annualized gross</th>
-                <th style={{ textAlign:"left", padding:"4px 6px" }}>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {wagesByPerson.map((w, idx) => (
-                <tr key={(w?.name || "") + idx} style={{ borderTop:`1px solid ${T.slate100}` }}>
-                  <td style={{ padding:"4px 6px" }}>{w?.name || "—"}</td>
-                  <td style={{ padding:"4px 6px", textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{money(w?.annualized)}</td>
-                  <td style={{ padding:"4px 6px", color:T.slate500 }}>
-                    {w?.source === "payroll" ? `payroll (${w?.days}d covered)` : "scheduled rate × 40h"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-          <div style={{ fontSize:11, color:T.slate500, marginTop:8, lineHeight:1.5 }}>
-            Payroll burden (×{burdenMult.toFixed(2)}) adds <strong>{money(annualWageLoaded - annualWageRaw)}</strong> on top
-            ({money(annualWageLoaded)} fully loaded) — that's paid from agency overhead, not from this budget.
-          </div>
-        </div>
-      </Card>
-
-      <Card>
-        <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:6 }}>Upcoming weeks</div>
-        <div style={{ fontSize:11, color:T.slate500, marginBottom:10 }}>
-          Schedule shows the zero-SMVC floor. Effective + budget assume current SMVC of {pct(smvc, 2)} holds.
-        </div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <table style={{ width:"100%", fontSize:12 }}>
-          <thead>
-            <tr style={{ color:T.slate500, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>
-              <th style={{ textAlign:"left", padding:"6px 8px" }}>Week ending</th>
-              <th style={{ textAlign:"right", padding:"6px 8px" }}>Floor</th>
-              <th style={{ textAlign:"right", padding:"6px 8px" }}>Effective</th>
-              <th style={{ textAlign:"right", padding:"6px 8px" }}>Annual budget</th>
-              <th style={{ textAlign:"left", padding:"6px 8px" }}>Phase</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trajectory.map((row, idx) => {
-              const floor = Number(row?.multiplier) || 0;
-              const eff = floor + smvcAdd;
-              const budget = eff * aflPremium;
-              const isCurrent = row?.week_end_date === state.current?.week_end_date;
-              const phaseShort = row?.phase === "phase_1_aa05_stepdown" ? "AA05" :
-                                 row?.phase === "phase_2_aa28_stepdown" ? "AA28" :
-                                 row?.phase || "—";
-              return (
-                <tr key={row?.week_end_date || idx} style={{ background: isCurrent ? T.purpleLt : "transparent", borderTop:`1px solid ${T.slate100}` }}>
-                  <td style={{ padding:"6px 8px", fontWeight: isCurrent ? 600 : 400, color:T.slate900 }}>
-                    {row?.week_end_date}{isCurrent ? " (this week)" : ""}
-                  </td>
-                  <td style={{ padding:"6px 8px", textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{pct(floor)}</td>
-                  <td style={{ padding:"6px 8px", textAlign:"right", fontFamily:"ui-monospace, monospace" }}>{pct(eff)}</td>
-                  <td style={{ padding:"6px 8px", textAlign:"right", fontFamily:"ui-monospace, monospace", color:T.slate900 }}>{money(budget)}</td>
-                  <td style={{ padding:"6px 8px", color:T.slate500, fontSize:11 }}>{phaseShort}</td>
-                </tr>
-              );
-            })}
-            {trajectory.length === 0 && (
-              <tr><td colSpan={5} style={{ padding:"10px 8px", color:T.slate500, fontSize:12, textAlign:"center" }}>No upcoming weeks on file.</td></tr>
-            )}
-          </tbody>
-        </table>
-        </div>
-      </Card>
-
-      <Card style={{ background:T.slate50 }}>
-        <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
-          <div style={{ fontWeight:600, color:T.slate700, marginBottom:4 }}>Formula reference</div>
-          <code style={{ fontFamily:"ui-monospace, monospace", fontSize:11, color:T.slate800 }}>
-            budget = (scheduled_floor + 0.21 × on_time_SMVC) × (Auto + Fire + Life premium)
-          </code>
-          <div style={{ marginTop:6 }}>
-            Stored schedule is the zero-SMVC floor (Path B). The SMVC modifier (0.21 × on-time SMVC) is added on top each week.
-            Full doc: persistent_memory → operational_rule → "Retention budget formula — permanent".
-            On-time SMVC is computed at runtime via <code>compute_on_time_smvc_with_better_of()</code> from the latest
-            <code>agency_snapshot</code> YTD values and <code>sf_program_targets</code> SMVC bands — never stored as a "current" value.
-            Update weekly by writing a new <code>agency_snapshot</code> row.
-            {!smvcBandsComplete && (
-              <div style={{ marginTop:6, padding:8, background:T.amberLt, border:`1px solid ${T.amber}`, borderRadius:6, color:T.slate800, fontSize:11 }}>
-                ⚠️ SMVC bands not yet configured for {new Date().getFullYear()} in <code>sf_program_targets</code> (program=&apos;smvc&apos;).
-                Until Peter enters the Min/Max thresholds (and P&amp;C Production Minimum gate) from the corporate OT dashboard,
-                this calculator treats on-time SMVC as 0%.
-              </div>
-            )}
-            {smvcSource && (
-              <div style={{ marginTop:4, color:T.slate600, fontSize:11 }}>
-                Applied rate source: <strong>{smvcSource === "current_year" ? "current-year earned" : "rolling average (Better Of)"}</strong>
-              </div>
-            )}
-          </div>
-        </div>
-      </Card>
-
-    </div>
-  );
-};
 
 // ─── Growth Budget Section ───────────────────────────────────
 // Per-ramping-teammate breakdown + agency summary + forecasting UI.
@@ -3219,6 +2831,54 @@ const GrowthTab = ({ applicants, onUpdate }) => {
 };
 
 
+// ─── Members Tab ──────────────────────────────────────────────
+// Consolidates roster, performance, profitability, and commissions into
+// one team surface with sub-nav. Retention removed — RQM + lapse math
+// already surface inside the Profitability sub-view.
+const MembersTab = ({ roi }) => {
+  const [view, setView] = useState("roster");
+  const subs = [
+    { id:"roster",        label:"Roster"        },
+    { id:"performance",   label:"Performance"   },
+    { id:"profitability", label:"Profitability" },
+    { id:"commissions",   label:"Commissions"   },
+  ];
+  return (
+    <div>
+      {/* Sub-nav */}
+      <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:8, padding:3, marginBottom:16 }}>
+        {subs.map(s => (
+          <button
+            key={s.id}
+            onClick={() => setView(s.id)}
+            style={{
+              padding:"6px 12px",
+              fontSize:11,
+              fontWeight: view === s.id ? 600 : 400,
+              color: view === s.id ? T.slate900 : T.slate500,
+              background: view === s.id ? T.white : "transparent",
+              border:"none",
+              borderRadius:6,
+              cursor:"pointer",
+              transition:"all 0.12s",
+              boxShadow: view === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Sub-view content */}
+      {view === "roster"        && <StaffDirectory        staff={roi?.allActiveStaff || []} />}
+      {view === "performance"   && <PerformanceSection    roi={roi} />}
+      {view === "profitability" && <SeatProfitabilitySection />}
+      {view === "commissions"   && <CommissionsSection    commissions={[]} />}
+    </div>
+  );
+};
+
+
 export default function HRPeople() {
   const { data: roi } = useProducerROI();
   const [section,     setSection]     = useState("overview");
@@ -3254,14 +2914,10 @@ export default function HRPeople() {
   };
 
   const sections = [
-    { id:"overview",    label:"Overview"    },
-    { id:"growth",      label:"Growth"      },
-    { id:"members",     label:"Members"     },
-    { id:"performance", label:"Performance" },
-    { id:"profitability", label:"Profitability" },
-    { id:"retention",   label:"Retention"   },
-    { id:"commissions", label:"Commissions" },
-    { id:"book",        label:"Book"        },
+    { id:"overview", label:"Overview" },
+    { id:"growth",   label:"Growth"   },
+    { id:"members",  label:"Members"  },
+    { id:"book",     label:"Book"     },
   ];
 
   return (
@@ -3287,14 +2943,10 @@ export default function HRPeople() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"    && <HROverview        applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
-      {section === "growth"      && <GrowthTab          applicants={applicants} onUpdate={updateApplicantStage} />}
-      {section === "members"     && <StaffDirectory     staff={roi?.allActiveStaff || []} />}
-      {section === "performance" && <PerformanceSection  roi={roi} />}
-      {section === "profitability" && <SeatProfitabilitySection />}
-      {section === "retention"   && <RetentionBudgetSection />}
-      {section === "commissions" && <CommissionsSection  commissions={[]} />}
-      {section === "book"        && <BookAssignmentsSection />}
+      {section === "overview" && <HROverview applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
+      {section === "growth"   && <GrowthTab  applicants={applicants} onUpdate={updateApplicantStage} />}
+      {section === "members"  && <MembersTab roi={roi} />}
+      {section === "book"     && <BookAssignmentsSection />}
     </div>
   );
 }
