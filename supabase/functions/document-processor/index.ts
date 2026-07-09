@@ -51,6 +51,7 @@ import { parseDeductionStatement } from "./parsers/deduction.ts";
 import { parsePayrollRun } from "./parsers/payroll.ts";
 import { parseProductionReport } from "./parsers/production.ts";
 import { processSurePayrollPdf } from "./parsers/surepayroll.ts";
+import { processPfaStatement } from "./parsers/pfa_statement.ts";
 import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
 import { createSuspenseTask } from "./suspense.ts";
@@ -306,6 +307,7 @@ async function unzipBytes(bytesB64: string): Promise<UnzippedEntry[]> {
 const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   bank_statement_primary: "bank-statements",
   bank_statement_secondary: "bank-statements",
+  bank_statement_pfa: "pfa-statements",
   comp_recap_1h: "sf-comp-recap",
   comp_recap_daily: "sf-comp-recap",
   deduction_statement: "sf-deductions",
@@ -819,7 +821,57 @@ async function processOneAttachment(
         }
         break;
       }
-      case "surepayroll_payroll": {
+      case "bank_statement_pfa": {
+        // Frost PFA statement. LLM parse (uses SYSTEM_PROMPT_PFA_STATEMENT in bundle),
+        // insert pfa_bank_statements row, auto-match cleared items, insert unmatched
+        // rows so reconciliation can balance, and alert on any unmatched.
+        const ex = await extractText(ctx, att, bytesB64);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await processPfaStatement({
+          agencyId: ctx.agencyId,
+          documentId,
+          pdfText: ex.text,
+          composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId,
+        });
+        if (r.ok) {
+          const res = r.result;
+          const unm = res.unmatchedLines.length;
+          const note = `PFA statement: ${res.totalLines} lines · ${res.matched} matched · ${res.inserted} inserted` + (unm > 0 ? ` · ${unm} unmatched` : "");
+          await markDocument(documentId, "processed", res.totalLines,
+            (unm > 0 ? ["pfa_bank_statements", "pfa_transactions", "alerts"] : ["pfa_bank_statements", "pfa_transactions"]), note);
+          await maybeArchiveThread(ctx, att.threadId);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else if (r.queued) {
+          await markDocument(documentId, "queued_for_llm", 0, [], `LLM parse queued: ${r.queueId}`);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "queued", jeCount: 0, suspenseCount: 0,
+            queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+            case "surepayroll_payroll": {
         // preserveFormat=true — SurePayroll parser needs original whitespace
         const ex = await extractText(ctx, att, bytesB64, true);
         if (!ex.ok) {

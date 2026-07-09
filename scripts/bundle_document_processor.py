@@ -56,6 +56,7 @@ ORDER = [
     "parsers/production.ts",
     "parsers/surepayroll.ts",
     "parsers/sf_daily_call_log.ts",
+    "parsers/pfa_statement.ts",
     "index.ts",
 ]
 
@@ -64,6 +65,7 @@ SYSTEM_PROMPT_RENAMES = {
     "parsers/bank.ts":       "SYSTEM_PROMPT_BANK",
     "parsers/payroll.ts":    "SYSTEM_PROMPT_PAYROLL",
     "parsers/production.ts": "SYSTEM_PROMPT_PRODUCTION",
+    "parsers/pfa_statement.ts": "SYSTEM_PROMPT_PFA_STATEMENT",
 }
 
 BANNER = (
@@ -152,7 +154,7 @@ def validate(bundle: str) -> None:
     if dupes:
         raise ValueError(f"bare `const SYSTEM_PROMPT` still present ({len(dupes)}x) — rename incomplete")
     # All three parser variants must be present
-    for want in ("SYSTEM_PROMPT_BANK", "SYSTEM_PROMPT_PAYROLL", "SYSTEM_PROMPT_PRODUCTION"):
+    for want in ("SYSTEM_PROMPT_BANK", "SYSTEM_PROMPT_PAYROLL", "SYSTEM_PROMPT_PRODUCTION", "SYSTEM_PROMPT_PFA_STATEMENT"):
         if want not in bundle:
             raise ValueError(f"expected {want} not in bundle")
     # Exactly one entry point

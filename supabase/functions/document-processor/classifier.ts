@@ -121,6 +121,7 @@ export function invalidateRulesCache(): void { rulesCache = null; }
 export type DocType =
   | "bank_statement_primary"
   | "bank_statement_secondary"
+  | "bank_statement_pfa"
   | "comp_recap_1h"
   | "comp_recap_daily"
   | "deduction_statement"
@@ -158,6 +159,15 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   // ----- ARCHIVE — any .zip is unpacked, contents reclassified individually -----
   { docType: "archive_bundle",
     test: (i) => /\.zip$/i.test(i.fileName) },
+
+  // ----- FROST PFA STATEMENT (2026-07-09) — must come BEFORE the generic
+  //       bank statement rules. Sender = Frost Bank; subject/filename mentions
+  //       "PFA", "premium fund", or the PFA account number 020715816. -----
+  { docType: "bank_statement_pfa",
+    test: (i) => /frost/i.test(i.fromEmail + " " + i.subject) &&
+                 /(pfa|premium\s?fund|020715816)/i.test(i.subject + " " + i.fileName) },
+  { docType: "bank_statement_pfa",
+    test: (i) => /020715816/.test(i.subject + " " + i.fileName) },
 
   // ----- BANK / CC STATEMENTS — sender drives classification -----
   { docType: "bank_statement_primary",
