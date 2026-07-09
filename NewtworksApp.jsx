@@ -98,7 +98,7 @@ const NAV_ITEMS = [
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
-  { id: "pfa",         label: "PFA",         icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
+  { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
