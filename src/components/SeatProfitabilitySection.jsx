@@ -15,6 +15,7 @@ const Card = ({ children, style={} }) => (
 // Retention pool = agency_renewal_TTM × 0.35 × person's weighted hours share.
 export default function SeatProfitabilitySection() {
   const [rows, setRows] = useState([]);
+  const [projections, setProjections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [weekEnd, setWeekEnd] = useState(() => {
     // Default: nearest upcoming Saturday (or today if Saturday)
@@ -31,16 +32,24 @@ export default function SeatProfitabilitySection() {
     async function load() {
       setLoading(true);
       try {
-        const { data, error } = await supabase.rpc('compute_warning_trigger', {
-          p_agency_id: AGENCY_ID,
-          p_week_end_date: weekEnd,
-        });
+        const [wtRes, projRes] = await Promise.all([
+          supabase.rpc('compute_warning_trigger', {
+            p_agency_id: AGENCY_ID,
+            p_week_end_date: weekEnd,
+          }),
+          supabase.rpc('compute_seat_projections_for_agency', {
+            p_agency_id: AGENCY_ID,
+            p_baseline_date: weekEnd,
+            p_max_months: 60,
+          }),
+        ]);
         if (cancelled) return;
-        if (error) throw error;
-        setRows(data || []);
+        if (wtRes.error) throw wtRes.error;
+        setRows(wtRes.data || []);
+        if (!projRes.error) setProjections(projRes.data || []);
       } catch (e) {
         console.error('Seat profitability load error:', e);
-        if (!cancelled) setRows([]);
+        if (!cancelled) { setRows([]); setProjections([]); }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -181,7 +190,71 @@ export default function SeatProfitabilitySection() {
         </div>
       </Card>
 
-      {/* ─── METHODOLOGY FOOTER ─────────────────────────────────── */}
+      {/* ─── PROJECTION ─────────────────────────────────── */}
+      <Card>
+        <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Path to green</div>
+        <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.5 }}>
+          Under current conditions (new-business pace, lapse rate, retention pool held constant). 5-year horizon.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {projections.map(p => {
+            const fmtDate = (d) => {
+              if (!d) return null;
+              const dt = new Date(d + 'T00:00:00');
+              return dt.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+            };
+            const covDate = fmtDate(p.coverage_green_est_date);
+            const profDate = fmtDate(p.profitability_green_est_date);
+            const covMonths = p.coverage_green_est_months;
+            const profMonths = p.profitability_green_est_months;
+            const monthsLabel = (m) => {
+              if (m == null) return '';
+              if (m === 0) return 'now';
+              if (m < 12) return `${m} mo`;
+              const y = Math.floor(m / 12);
+              const r = m - y * 12;
+              return r === 0 ? `${y} yr` : `${y} yr ${r} mo`;
+            };
+            return (
+              <div key={p.team_member_id} style={{ padding: "10px 12px", background: T.slate50, borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900 }}>{p.full_name}</div>
+                  <div style={{ fontSize: 10, color: T.slate500 }}>{p.role_category} · {p.role}</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Coverage green</div>
+                    {covDate ? (
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{covDate}</div>
+                        <div style={{ fontSize: 10, color: T.slate500 }}>{monthsLabel(covMonths)}</div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: '#991B1B', fontWeight: 600 }}>no path under current conditions</div>
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Profitability green</div>
+                    {profDate ? (
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{profDate}</div>
+                        <div style={{ fontSize: 10, color: T.slate500 }}>{monthsLabel(profMonths)}</div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: '#991B1B', fontWeight: 600 }}>not within 5 years</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 10, padding: "8px 10px", background: T.blueLt, borderRadius: 6, fontSize: 10, color: T.slate700, lineHeight: 1.5 }}>
+          <strong>What moves these dates:</strong> Sales roles — grow new-business pace, cohorts age past 12mo. Retention roles — lower lapse (bigger RQM → bigger pool share). &quot;No path&quot; means the person's current pace + agency lapse combine such that attributed revenue never crosses their fully-loaded cost within 5 years.
+        </div>
+      </Card>
+
+            {/* ─── METHODOLOGY FOOTER ─────────────────────────────────── */}
       <Card style={{ background: T.slate50, border: `1px dashed ${T.slate200}` }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 8 }}>How this is calculated</div>
         <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.7 }}>
