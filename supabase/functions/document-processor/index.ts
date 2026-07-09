@@ -50,6 +50,8 @@ import { parseCompRecap } from "./parsers/comp_recap.ts";
 import { parseDeductionStatement } from "./parsers/deduction.ts";
 import { parsePayrollRun } from "./parsers/payroll.ts";
 import { parseProductionReport } from "./parsers/production.ts";
+import { processSurePayrollPdf } from "./parsers/surepayroll.ts";
+import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
 import { createSuspenseTask } from "./suspense.ts";
 
@@ -308,6 +310,7 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   comp_recap_daily: "sf-comp-recap",
   deduction_statement: "sf-deductions",
   adp_payroll: "payroll",
+  surepayroll_payroll: "payroll",
   commission_report: "commission-reports",
   team_production: "team-production",
   archive_bundle: "_archive-bundles",
@@ -391,7 +394,7 @@ async function markDocument(
 // ---- Text extraction -------------------------------------------------------
 
 async function extractText(
-  _ctx: RunCtx, att: AttachmentInput, bytesB64: string,
+  _ctx: RunCtx, att: AttachmentInput, bytesB64: string, preserveFormat: boolean = false,
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   if (att.mimeType.startsWith("text/") || att.fileName.endsWith(".txt") || att.fileName.endsWith(".csv")) {
     try { return { ok: true, text: atob(bytesB64) }; }
@@ -409,8 +412,10 @@ async function extractText(
     if (!merged.trim()) {
       return { ok: false, error: "unpdf returned empty text (likely image-based PDF)" };
     }
-    // SF PDFs collapse each logical row into " 1<caps>" — reinject newlines
-    merged = merged.replace(/ (?=1[A-Z ])/g, "\n");
+    if (!preserveFormat) {
+      // SF PDFs collapse each logical row into " 1<caps>" — reinject newlines
+      merged = merged.replace(/ (?=1[A-Z ])/g, "\n");
+    }
     return { ok: true, text: merged };
   } catch (e) {
     return { ok: false, error: `unpdf extraction failed: ${e instanceof Error ? e.message : String(e)}` };
@@ -478,10 +483,11 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
   // ---- US Bank sub-account routing (order matters — most specific first).
   // File naming convention (Marie's spec): "US Bank {Label} {YY-MM}.pdf" where
   // Label is one of Income (3977, COA-007), Expenses (4335, COA-006), CC (3447,
-  // COA-014). Account numbers also match if statement text is scanned in.
+  // COA-025 USBank GN Personal Card). Account numbers also match if statement
+  // text is scanned in.
   if (/us\s*bank\s*income|\b3977\b/.test(blob)) return "COA-007";
   if (/us\s*bank\s*expenses|\b4335\b/.test(blob)) return "COA-006";
-  if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "COA-014";
+  if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "COA-025";
   // Generic US Bank fallback — Income (conservative default, matches historic behavior)
   if (/usbank|us[\s_-]?bank/.test(blob)) return "COA-007";
 
@@ -812,6 +818,48 @@ async function processOneAttachment(
         }
         break;
       }
+      case "surepayroll_payroll": {
+        // preserveFormat=true — SurePayroll parser needs original whitespace
+        const ex = await extractText(ctx, att, bytesB64, true);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await processSurePayrollPdf({
+          agencyId: ctx.agencyId, documentId,
+          gmailMessageId: att.messageId, gmailThreadId: att.threadId,
+          pdfText: ex.text,
+          composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId,
+          gmailAccountId: ctx.gmailAccountId,
+        });
+        if (r.ok) {
+          const unmatchedNote = (r.unmatched_employees?.length ?? 0) > 0
+            ? `, unmatched: ${r.unmatched_employees!.join(",")}` : "";
+          const mergeNote = r.merged_existing ? " (merged existing row)" : "";
+          const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}, ${r.alerts_resolved} alerts resolved${mergeNote}${unmatchedNote}`;
+          await markDocument(documentId, "processed", r.employees_written ?? 0,
+            ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail", "alerts"], note);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else {
+          await markDocument(documentId, "error", 0, [], r.error ?? "unknown");
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
       case "adp_payroll": {
         const ex = await extractText(ctx, att, bytesB64);
         if (!ex.ok) {
@@ -943,6 +991,18 @@ async function run(req: Request): Promise<Response> {
       ok: false,
       error: "missing composio_api_key / composio_user_id / composio_gmail_account_id",
     }, 400);
+  }
+
+  // ---- Mode dispatch ----
+  // Absent or "attachments" (default): existing Gmail attachment intake.
+  // "call_log": eGain daily call log HTML parser (folded in from the retired
+  //   call-log-parser standalone edge fn, v39 2026-07-08).
+  const mode = typeof body?.mode === "string" ? body.mode : "attachments";
+  if (mode === "call_log") {
+    const callLogCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processCallLogMode(callLogCtx, body);
+    return jsonResponse({ ok: true, mode: "call_log", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
 
   const ctx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
