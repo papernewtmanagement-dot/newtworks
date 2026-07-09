@@ -19,6 +19,7 @@ import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Licensing from "./src/modules/Licensing.jsx";
+import PFA from "./src/modules/PFA.jsx";
 import MarketingPoints from "./src/modules/MarketingPoints.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
@@ -97,6 +98,7 @@ const NAV_ITEMS = [
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
+  { id: "pfa",         label: "PFA",         icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
@@ -673,6 +675,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
+    pfa:         <ErrorBoundary name="PFA"><PFA /></ErrorBoundary>,
     scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
