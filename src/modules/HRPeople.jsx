@@ -1704,7 +1704,9 @@ const StaffDirectory = ({ staff }) => {
         return (
           <Fragment key={member.id}>
           {_showDivider && (
-            <div style={{ borderTop:`2px solid ${T.slate300}`, margin:"4px 0 0" }} aria-hidden="true" />
+            <div style={{ marginTop:14, marginBottom:2, paddingBottom:6, borderBottom:`1px solid ${T.slate200}`, fontSize:11, fontWeight:700, color:T.slate500, textTransform:"uppercase", letterSpacing:"0.06em" }}>
+              Back Office
+            </div>
           )}
           <Card style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
