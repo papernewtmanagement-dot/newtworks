@@ -609,6 +609,358 @@ function SpendTab({ state }) {
   );
 }
 
+// ─── EverQuote Deep Dive Tab ──────────────────────────────────
+function useEverquoteData() {
+  const [state, setState] = useState({ loading: true, reviews: [], metrics: [], error: null });
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [rRes, mRes] = await Promise.all([
+          supabase.from("everquote_reviews")
+            .select("id, review_date, current_period_start, current_period_end, previous_period_start, previous_period_end, is_ytd, file_name")
+            .eq("agency_id", AGENCY_ID)
+            .order("review_date", { ascending: false })
+            .order("is_ytd", { ascending: true }),
+          supabase.from("everquote_review_metrics")
+            .select("*")
+            .order("sort_order", { ascending: true, nullsFirst: false }),
+        ]);
+        if (cancelled) return;
+        const reviews = Array.isArray(rRes?.data) ? rRes.data : [];
+        const metrics = Array.isArray(mRes?.data) ? mRes.data : [];
+        setState({ loading: false, reviews, metrics, error: null });
+      } catch (err) {
+        if (!cancelled) setState({ loading: false, reviews: [], metrics: [], error: err?.message || String(err) });
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+  return state;
+}
+
+// Sum leads + binds across a metrics slice. Also compute weighted CPB.
+function eqAggregate(rows) {
+  let leads = 0, binds = 0, costTotal = 0, quotes = 0;
+  (rows || []).forEach(r => {
+    const l = Number(r?.leads) || 0;
+    const b = Number(r?.binds) || 0;
+    leads += l;
+    binds += b;
+    if (Number(r?.cpb) > 0 && b > 0) costTotal += Number(r.cpb) * b;
+    if (Number(r?.quotes) > 0) quotes += Number(r.quotes);
+  });
+  const bindPct = leads > 0 ? binds / leads : null;
+  const cpb = binds > 0 && costTotal > 0 ? costTotal / binds : null;
+  return { leads, binds, bindPct, cpb, costTotal, quotes };
+}
+
+// Preferred dimension for headline totals — lead_type is complete + non-overlapping.
+function eqHeadline(metrics, scope) {
+  const scoped = (metrics || []).filter(m => m.period_scope === scope);
+  // Try lead_type first, then campaign, then age_bucket
+  for (const dim of ["lead_type", "campaign", "age_bucket"]) {
+    const rows = scoped.filter(m => m.dimension === dim);
+    if (rows.length > 0) {
+      const agg = eqAggregate(rows);
+      if (agg.leads > 0) return { ...agg, source_dim: dim };
+    }
+  }
+  return { leads: 0, binds: 0, bindPct: null, cpb: null, costTotal: 0, quotes: 0, source_dim: null };
+}
+
+// Dimension label + friendly title
+const EQ_DIMS = [
+  { id: "campaign",         label: "Campaign" },
+  { id: "previous_insurer", label: "Previous Insurer" },
+  { id: "county",           label: "County" },
+  { id: "age_bucket",       label: "Age Bucket" },
+  { id: "day_of_week",      label: "Day of Week" },
+  { id: "lead_type",        label: "Lead Type" },
+  { id: "state",            label: "State" },
+  { id: "monthly_trend",    label: "Monthly Trend" },
+];
+
+// Generate action recommendations from current metrics.
+function generateEqRecs(currentByDim, prevByDim, headline, prevHeadline) {
+  const recs = [];
+
+  // Trend vs previous
+  if (headline.bindPct != null && prevHeadline.bindPct != null) {
+    const delta = headline.bindPct - prevHeadline.bindPct;
+    if (Math.abs(delta) >= 0.005) {
+      recs.push({
+        tone: delta > 0 ? "good" : "warn",
+        text: `Bind % ${delta > 0 ? "improved" : "declined"} ${(Math.abs(delta) * 100).toFixed(2)} pts vs previous period (${(headline.bindPct * 100).toFixed(2)}% vs ${(prevHeadline.bindPct * 100).toFixed(2)}%).`,
+      });
+    }
+  }
+
+  // Zero-bind previous insurers with ≥5 leads
+  const pi = (currentByDim.previous_insurer || []).filter(r => (Number(r.leads) || 0) >= 5 && (Number(r.binds) || 0) === 0);
+  pi.forEach(r => recs.push({
+    tone: "bad",
+    text: `${r.dimension_value}: ${r.leads} leads / 0 binds this period. Deprioritize or exclude in targeting.`,
+  }));
+
+  // Best-performing previous insurer (bind_pct ≥ agency avg and ≥5 leads)
+  const piBest = (currentByDim.previous_insurer || [])
+    .filter(r => (Number(r.leads) || 0) >= 5 && Number(r.bind_pct) >= 7)
+    .sort((a, b) => Number(b.bind_pct) - Number(a.bind_pct))
+    .slice(0, 2);
+  piBest.forEach(r => recs.push({
+    tone: "good",
+    text: `${r.dimension_value} shoppers converting at ${Number(r.bind_pct).toFixed(1)}% (${r.binds}/${r.leads}). Push targeting.`,
+  }));
+
+  // Zero-bind day of week with ≥10 leads
+  const dow = (currentByDim.day_of_week || []).filter(r => (Number(r.leads) || 0) >= 10 && (Number(r.binds) || 0) === 0);
+  dow.forEach(r => recs.push({
+    tone: "bad",
+    text: `${r.dimension_value}: ${r.leads} leads / 0 binds. Reduce or pause daily cap.`,
+  }));
+
+  // County outperformance ratio (top vs bottom, both ≥5 leads)
+  const counties = (currentByDim.county || [])
+    .filter(r => (Number(r.leads) || 0) >= 5)
+    .sort((a, b) => Number(b.bind_pct) - Number(a.bind_pct));
+  if (counties.length >= 2) {
+    const top = counties[0];
+    const bot = counties[counties.length - 1];
+    if (Number(top.bind_pct) > 0 && Number(bot.bind_pct) === 0) {
+      recs.push({
+        tone: "good",
+        text: `${top.dimension_value} converting at ${Number(top.bind_pct).toFixed(1)}% while ${bot.dimension_value} has 0 binds on ${bot.leads} leads. Rebalance bid weights.`,
+      });
+    }
+  }
+
+  // Age bucket CPB spread
+  const ages = (currentByDim.age_bucket || []).filter(r => Number(r.cpb) > 0);
+  if (ages.length >= 2) {
+    const worst = [...ages].sort((a, b) => Number(b.cpb) - Number(a.cpb))[0];
+    const best = [...ages].sort((a, b) => Number(a.cpb) - Number(b.cpb))[0];
+    if (Number(worst.cpb) >= Number(best.cpb) * 2) {
+      recs.push({
+        tone: "warn",
+        text: `Age ${worst.dimension_value}: ${Number(worst.cpb).toFixed(0)}/HH CPB vs ${best.dimension_value}: ${Number(best.cpb).toFixed(0)}/HH. Rebalance toward the cheaper bucket.`,
+      });
+    }
+  }
+
+  // Best campaign
+  const campaigns = (currentByDim.campaign || []).filter(r => (Number(r.binds) || 0) > 0);
+  if (campaigns.length >= 1) {
+    const topCamp = [...campaigns].sort((a, b) => Number(b.bind_pct) - Number(a.bind_pct))[0];
+    recs.push({
+      tone: "good",
+      text: `Best campaign: ${topCamp.dimension_value} — ${topCamp.binds} binds on ${topCamp.leads} leads (${Number(topCamp.bind_pct).toFixed(2)}%, CPB ${Number(topCamp.cpb || 0).toFixed(0)}).`,
+    });
+  }
+
+  // Zero-bind campaigns with ≥5 leads
+  const zeroCamps = (currentByDim.campaign || []).filter(r => (Number(r.leads) || 0) >= 5 && (Number(r.binds) || 0) === 0);
+  zeroCamps.forEach(r => recs.push({
+    tone: "bad",
+    text: `Campaign "${r.dimension_value}" underperforming: ${r.leads} leads / 0 binds. Investigate or pause.`,
+  }));
+
+  return recs;
+}
+
+function DimBreakdown({ title, rows, prevRows, vp }) {
+  if (!rows || rows.length === 0) return null;
+
+  // Sort by leads desc
+  const sorted = [...rows].sort((a, b) => (Number(b.leads) || 0) - (Number(a.leads) || 0));
+  // Index previous by dimension_value for delta computation
+  const prevMap = {};
+  (prevRows || []).forEach(r => { prevMap[r.dimension_value] = r; });
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+        {title}
+      </div>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 460 }}>
+          <thead>
+            <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+              <th style={thStyle}>Value</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Leads</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Binds</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Bind %</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>CPB</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Δ vs prev</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(r => {
+              const leads = Number(r.leads) || 0;
+              const binds = Number(r.binds) || 0;
+              const bindPct = Number(r.bind_pct);
+              const cpb = Number(r.cpb);
+              const prev = prevMap[r.dimension_value];
+              const prevBindPct = prev ? Number(prev.bind_pct) : null;
+              const delta = (Number.isFinite(bindPct) && Number.isFinite(prevBindPct)) ? bindPct - prevBindPct : null;
+              const isZero = leads >= 5 && binds === 0;
+              return (
+                <tr key={`${r.dimension}-${r.dimension_value}`} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                  <td style={{ ...tdStyle, fontWeight: 500, color: isZero ? "#991B1B" : T.slate900 }}>
+                    {r.dimension_value}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{leads}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: binds > 0 ? 600 : 400 }}>{binds}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{Number.isFinite(bindPct) ? `${bindPct.toFixed(2)}%` : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{Number.isFinite(cpb) && cpb > 0 ? `$${Math.round(cpb)}` : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: delta == null ? T.slate400 : (delta >= 0 ? "#065F46" : "#991B1B") }}>
+                    {delta == null ? "—" : `${delta >= 0 ? "+" : ""}${delta.toFixed(2)} pts`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EverquoteTab() {
+  const vp = useViewport();
+  const { loading, reviews, metrics, error } = useEverquoteData();
+  const [selectedReviewId, setSelectedReviewId] = useState(null);
+
+  // Default selection = latest non-YTD review
+  useEffect(() => {
+    if (!selectedReviewId && reviews.length > 0) {
+      const nonYtd = reviews.find(r => !r.is_ytd);
+      setSelectedReviewId((nonYtd || reviews[0]).id);
+    }
+  }, [reviews, selectedReviewId]);
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: T.slate500, fontSize: 13 }}>Loading…</div>;
+  if (error) return <div style={{ padding: 20, color: "#991B1B", fontSize: 13 }}>Error: {error}</div>;
+  if (reviews.length === 0) {
+    return (
+      <div style={{ padding: 24, textAlign: "center", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, color: T.slate500, fontSize: 13 }}>
+        No EverQuote reviews ingested yet.
+      </div>
+    );
+  }
+
+  const selectedReview = reviews.find(r => r.id === selectedReviewId) || reviews[0];
+  const reviewMetrics = metrics.filter(m => m.review_id === selectedReview.id);
+  const headline = eqHeadline(reviewMetrics, "current");
+  const prevHeadline = eqHeadline(reviewMetrics, "previous");
+
+  // Group current + previous by dimension
+  const currentByDim = {};
+  const prevByDim = {};
+  reviewMetrics.forEach(m => {
+    const target = m.period_scope === "current" ? currentByDim : m.period_scope === "previous" ? prevByDim : null;
+    if (!target) return;
+    if (!target[m.dimension]) target[m.dimension] = [];
+    target[m.dimension].push(m);
+  });
+
+  const recs = generateEqRecs(currentByDim, prevByDim, headline, prevHeadline);
+  const kpiCols = vp.isPhone ? "repeat(auto-fit, minmax(140px, 1fr))" : "repeat(auto-fit, minmax(160px, 1fr))";
+
+  return (
+    <div>
+      {/* Review selector */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: T.slate500 }}>Review:</div>
+        <select
+          value={selectedReview.id}
+          onChange={e => setSelectedReviewId(e.target.value)}
+          style={{
+            padding: "6px 10px", fontSize: 12, fontWeight: 600, color: T.slate700,
+            background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer",
+          }}
+        >
+          {reviews.map(r => {
+            const label = r.is_ytd
+              ? `YTD ${r.current_period_start} → ${r.current_period_end}`
+              : `${r.current_period_start} → ${r.current_period_end}`;
+            return <option key={r.id} value={r.id}>{label}</option>;
+          })}
+        </select>
+        <div style={{ fontSize: 11, color: T.slate500 }}>
+          Ingested {selectedReview.review_date}
+        </div>
+      </div>
+
+      <SectionTitle>Current period totals</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: kpiCols, gap: 10 }}>
+        <KpiCard
+          label="Leads"
+          value={headline.leads > 0 ? fmtInt(headline.leads) : "—"}
+          sub={prevHeadline.leads > 0 ? `Prev: ${fmtInt(prevHeadline.leads)}` : ""}
+        />
+        <KpiCard
+          label="Binds"
+          value={headline.binds > 0 ? fmtInt(headline.binds) : "0"}
+          sub={prevHeadline.binds > 0 ? `Prev: ${fmtInt(prevHeadline.binds)}` : ""}
+        />
+        <KpiCard
+          label="Bind %"
+          value={headline.bindPct != null ? `${(headline.bindPct * 100).toFixed(2)}%` : "—"}
+          sub={prevHeadline.bindPct != null ? `Prev: ${(prevHeadline.bindPct * 100).toFixed(2)}%` : ""}
+          tone={
+            headline.bindPct != null && prevHeadline.bindPct != null
+              ? (headline.bindPct >= prevHeadline.bindPct ? "good" : "warn")
+              : "neutral"
+          }
+        />
+        <KpiCard
+          label="CPB"
+          value={headline.cpb != null ? `$${Math.round(headline.cpb)}` : "—"}
+          sub={prevHeadline.cpb != null ? `Prev: $${Math.round(prevHeadline.cpb)}` : ""}
+          tone={
+            headline.cpb != null && prevHeadline.cpb != null
+              ? (headline.cpb <= prevHeadline.cpb ? "good" : "warn")
+              : "neutral"
+          }
+        />
+      </div>
+      <div style={{ fontSize: 11, color: T.slate500, marginTop: 6 }}>
+        Totals rolled up from <strong>{headline.source_dim || "n/a"}</strong> dimension (deck's non-overlapping segmentation).
+      </div>
+
+      <SectionTitle>Recommendations</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {recs.length === 0 && (
+          <div style={{ fontSize: 12, color: T.slate500, padding: "8px 4px" }}>No actionable patterns detected in this period.</div>
+        )}
+        {recs.map((r, i) => (
+          <AlertPill key={i} tone={r.tone === "good" ? "info" : r.tone}>{r.text}</AlertPill>
+        ))}
+      </div>
+
+      <SectionTitle>Dimension breakdowns</SectionTitle>
+      <div>
+        {EQ_DIMS.map(d => (
+          <DimBreakdown
+            key={d.id}
+            title={d.label}
+            rows={currentByDim[d.id]}
+            prevRows={prevByDim[d.id]}
+            vp={vp}
+          />
+        ))}
+      </div>
+
+      <div style={{ marginTop: 18, fontSize: 11, color: T.slate500, lineHeight: 1.6 }}>
+        Source: monthly EverQuote BC Review decks, OCR-ingested to <code style={{ background: T.slate100, padding: "1px 4px", borderRadius: 3 }}>everquote_review_metrics</code>. Deltas shown against the deck's own previous-period columns (not YTD).
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Points Tab (nests existing MarketingPoints module) ───────
 function PointsTab() {
   return <MarketingPoints />;
@@ -616,10 +968,11 @@ function PointsTab() {
 
 // ─── Main Marketing Module ────────────────────────────────────
 const SECTIONS = [
-  { id: "overview", label: "Overview" },
-  { id: "sources", label: "Lead Sources" },
-  { id: "spend", label: "Spend" },
-  { id: "points", label: "Points" },
+  { id: "overview",  label: "Overview" },
+  { id: "sources",   label: "Lead Sources" },
+  { id: "everquote", label: "EverQuote" },
+  { id: "spend",     label: "Spend" },
+  { id: "points",    label: "Points" },
 ];
 
 export default function Marketing() {
@@ -698,6 +1051,7 @@ export default function Marketing() {
 
       {section === "overview" && <OverviewTab state={state} />}
       {section === "sources" && <SourcesTab state={state} />}
+      {section === "everquote" && <EverquoteTab />}
       {section === "spend" && <SpendTab state={state} />}
       {section === "points" && <PointsTab />}
     </div>
