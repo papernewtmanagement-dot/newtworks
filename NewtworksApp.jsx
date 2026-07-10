@@ -22,6 +22,7 @@ import CPRList from "./src/modules/CPRList.jsx";
 import Licensing from "./src/modules/Licensing.jsx";
 import PFA from "./src/modules/PFA.jsx";
 import MarketingPoints from "./src/modules/MarketingPoints.jsx";
+import Marketing from "./src/modules/Marketing.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
@@ -673,7 +674,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
     book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
-    marketing:   <ErrorBoundary name="Marketing Points"><MarketingPoints /></ErrorBoundary>,
+    marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
