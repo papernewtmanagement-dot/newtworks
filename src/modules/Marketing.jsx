@@ -961,6 +961,526 @@ function EverquoteTab() {
 }
 
 
+// ─── Referrals & Reviews Tab ──────────────────────────────────
+function useTeamRoster() {
+  const [team, setTeam] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const { data } = await supabase.from("team")
+        .select("id, first_name, last_name, is_admin_backoffice, is_active")
+        .eq("agency_id", AGENCY_ID)
+        .neq("is_admin_backoffice", true)
+        .eq("is_active", true)
+        .order("first_name");
+      if (!cancelled) setTeam(Array.isArray(data) ? data : []);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+  return team;
+}
+
+function useRefRevData() {
+  const [state, setState] = useState({ loading: true, referrals: [], reviews: [], error: null, reloadCount: 0 });
+  const reload = () => setState(s => ({ ...s, reloadCount: s.reloadCount + 1 }));
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        setState(s => ({ ...s, loading: true, error: null }));
+        const [refRes, revRes] = await Promise.all([
+          supabase.from("referrals").select("*").eq("agency_id", AGENCY_ID).order("referred_at", { ascending: false }),
+          supabase.from("gbp_reviews").select("*").eq("agency_id", AGENCY_ID).order("review_date", { ascending: false }),
+        ]);
+        if (cancelled) return;
+        setState(s => ({
+          ...s,
+          loading: false,
+          referrals: Array.isArray(refRes?.data) ? refRes.data : [],
+          reviews: Array.isArray(revRes?.data) ? revRes.data : [],
+        }));
+      } catch (err) {
+        if (!cancelled) setState(s => ({ ...s, loading: false, error: err?.message || String(err) }));
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [state.reloadCount]);
+  return { ...state, reload };
+}
+
+const REFERRAL_STATUSES = [
+  { id: "received",  label: "Received",  color: T.slate500 },
+  { id: "contacted", label: "Contacted", color: T.slate700 },
+  { id: "quoted",    label: "Quoted",    color: T.gold },
+  { id: "sold",      label: "Sold",      color: T.green },
+  { id: "dead",      label: "Dead",      color: T.red },
+];
+
+function nameFor(id, team) {
+  const t = team.find(x => x?.id === id);
+  return t ? `${t.first_name} ${t.last_name || ""}`.trim() : "—";
+}
+
+// ─── Referrals sub-view ───────────────────────────────────────
+function ReferralsView({ rows, team, onReload }) {
+  const vp = useViewport();
+  const [showAdd, setShowAdd] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const [form, setForm] = useState({
+    referred_by_name: "",
+    referred_household_name: "",
+    referral_source: "customer",
+    assigned_to: "",
+    referred_at: new Date().toISOString().slice(0, 10),
+    notes: "",
+  });
+
+  const kpiCols = vp.isPhone ? "repeat(auto-fit, minmax(120px, 1fr))" : "repeat(auto-fit, minmax(140px, 1fr))";
+
+  const filtered = rows.filter(r => statusFilter === "all" ? true : r.status === statusFilter);
+  const yr = String(new Date().getFullYear());
+  const ytdRows = rows.filter(r => r.referred_at?.slice(0, 4) === yr);
+  const totalYtd = ytdRows.length;
+  const quotedYtd = ytdRows.filter(r => r.quoted_at || r.status === "quoted" || r.status === "sold").length;
+  const soldYtd = ytdRows.filter(r => r.status === "sold").length;
+  const conversion = quotedYtd > 0 ? (soldYtd / quotedYtd) : null;
+  const totalPremium = ytdRows.reduce((sum, r) => sum + (Number(r.bind_premium) || 0), 0);
+  const avgPremium = soldYtd > 0 ? totalPremium / soldYtd : null;
+
+  const handleAdd = async () => {
+    if (!form.referred_by_name.trim() || !form.referred_household_name.trim()) {
+      setErr("Referred by + household name required.");
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      const payload = {
+        agency_id: AGENCY_ID,
+        referred_by_name: form.referred_by_name.trim(),
+        referred_household_name: form.referred_household_name.trim(),
+        referral_source: form.referral_source || null,
+        assigned_to: form.assigned_to || null,
+        referred_at: form.referred_at || null,
+        notes: form.notes || null,
+        status: "received",
+      };
+      const { error } = await supabase.from("referrals").insert(payload);
+      if (error) throw error;
+      setShowAdd(false);
+      setForm({
+        referred_by_name: "",
+        referred_household_name: "",
+        referral_source: "customer",
+        assigned_to: "",
+        referred_at: new Date().toISOString().slice(0, 10),
+        notes: "",
+      });
+      onReload();
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const advanceStatus = async (row) => {
+    const idx = REFERRAL_STATUSES.findIndex(s => s.id === row.status);
+    const next = REFERRAL_STATUSES[(idx + 1) % REFERRAL_STATUSES.length];
+    const patch = { status: next.id };
+    if (next.id === "quoted" && !row.quoted_at) patch.quoted_at = new Date().toISOString().slice(0, 10);
+    if (next.id === "sold" && !row.sold_at) patch.sold_at = new Date().toISOString().slice(0, 10);
+    await supabase.from("referrals").update(patch).eq("id", row.id);
+    onReload();
+  };
+
+  return (
+    <div>
+      <SectionTitle>Referrals YTD</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: kpiCols, gap: 10 }}>
+        <KpiCard label="Total Referrals" value={fmtInt(totalYtd)} sub={`YTD ${yr}`} />
+        <KpiCard label="Quoted" value={fmtInt(quotedYtd)} sub={totalYtd > 0 ? `${((quotedYtd / totalYtd) * 100).toFixed(0)}% of total` : ""} />
+        <KpiCard label="Sold" value={fmtInt(soldYtd)} tone={soldYtd > 0 ? "good" : "neutral"} sub={conversion != null ? `${(conversion * 100).toFixed(0)}% close` : ""} />
+        <KpiCard label="Premium Bound" value={fmtMoney(totalPremium)} sub={avgPremium ? `${fmtMoney(avgPremium)}/HH avg` : ""} />
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+          {[{ id: "all", label: "All" }, ...REFERRAL_STATUSES].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setStatusFilter(f.id)}
+              style={{
+                padding: "6px 12px", fontSize: 12, fontWeight: statusFilter === f.id ? 600 : 400,
+                color: statusFilter === f.id ? T.white : T.slate700,
+                background: statusFilter === f.id ? T.chromeBgDeep : T.white,
+                border: `1px solid ${statusFilter === f.id ? T.chromeBgDeep : T.slate200}`,
+                borderRadius: 7, cursor: "pointer", flexShrink: 0,
+              }}
+            >{f.label}</button>
+          ))}
+        </div>
+        <button
+          onClick={() => setShowAdd(v => !v)}
+          style={{
+            padding: "6px 14px", fontSize: 12, fontWeight: 600,
+            color: T.white, background: T.chromeBg, border: "none", borderRadius: 7, cursor: "pointer", flexShrink: 0,
+          }}
+        >{showAdd ? "Cancel" : "+ Add Referral"}</button>
+      </div>
+
+      {showAdd && (
+        <div style={{ marginTop: 12, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <InputRow label="Referred by (name)">
+              <input value={form.referred_by_name} onChange={e => setForm({ ...form, referred_by_name: e.target.value })} style={inputStyle} placeholder="e.g. Jane Smith" />
+            </InputRow>
+            <InputRow label="Referred household">
+              <input value={form.referred_household_name} onChange={e => setForm({ ...form, referred_household_name: e.target.value })} style={inputStyle} placeholder="Household or contact name" />
+            </InputRow>
+            <InputRow label="Source">
+              <select value={form.referral_source} onChange={e => setForm({ ...form, referral_source: e.target.value })} style={inputStyle}>
+                <option value="customer">Customer</option>
+                <option value="employee">Employee</option>
+                <option value="partner">Partner</option>
+                <option value="family">Family</option>
+                <option value="other">Other</option>
+              </select>
+            </InputRow>
+            <InputRow label="Assigned to">
+              <select value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })} style={inputStyle}>
+                <option value="">— Unassigned —</option>
+                {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
+              </select>
+            </InputRow>
+            <InputRow label="Referred date">
+              <input type="date" value={form.referred_at} onChange={e => setForm({ ...form, referred_at: e.target.value })} style={inputStyle} />
+            </InputRow>
+            <InputRow label="Notes">
+              <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} style={inputStyle} placeholder="Optional" />
+            </InputRow>
+          </div>
+          {err && <div style={{ color: "#991B1B", fontSize: 12, marginTop: 8 }}>{err}</div>}
+          <div style={{ marginTop: 12, textAlign: "right" }}>
+            <button
+              onClick={handleAdd}
+              disabled={saving}
+              style={{
+                padding: "8px 16px", fontSize: 12, fontWeight: 700,
+                color: T.white, background: saving ? T.slate400 : T.green, border: "none", borderRadius: 7,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >{saving ? "Saving…" : "Save Referral"}</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 720 }}>
+          <thead>
+            <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+              <th style={thStyle}>Referred By</th>
+              <th style={thStyle}>Household</th>
+              <th style={thStyle}>Date</th>
+              <th style={thStyle}>Assigned</th>
+              <th style={thStyle}>Source</th>
+              <th style={thStyle}>Status</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Premium</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Spiff</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: T.slate500 }}>
+                No referrals {statusFilter === "all" ? "yet" : `with status "${statusFilter}"`}. Click <strong>+ Add Referral</strong> to log one.
+              </td></tr>
+            )}
+            {filtered.map(r => {
+              const statusMeta = REFERRAL_STATUSES.find(s => s.id === r.status) || REFERRAL_STATUSES[0];
+              return (
+                <tr key={r.id} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.referred_by_name}</td>
+                  <td style={tdStyle}>{r.referred_household_name}</td>
+                  <td style={tdStyle}>{r.referred_at || "—"}</td>
+                  <td style={tdStyle}>{nameFor(r.assigned_to, team)}</td>
+                  <td style={{ ...tdStyle, color: T.slate500, fontSize: 11 }}>{r.referral_source || "—"}</td>
+                  <td style={tdStyle}>
+                    <button
+                      onClick={() => advanceStatus(r)}
+                      title="Click to advance status"
+                      style={{
+                        padding: "3px 10px", fontSize: 11, fontWeight: 600,
+                        color: T.white, background: statusMeta.color, border: "none", borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                    >{statusMeta.label}</button>
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.bind_premium ? fmtMoney(r.bind_premium) : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: r.spiff_paid_at ? T.green : T.slate500 }}>
+                    {r.spiff_amount ? fmtMoney(r.spiff_amount) : "—"}
+                    {r.spiff_paid_at && <span style={{ marginLeft: 4, fontSize: 10 }}>✓</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 11, color: T.slate500, lineHeight: 1.6 }}>
+        Click the status pill to advance: received → contacted → quoted → sold → dead → received. Quoted/sold dates auto-set. Weekly point aggregate (marketing_points) is entered separately via the <strong>Points</strong> tab; that stays canonical for the 7/11 pool rollout.
+      </div>
+    </div>
+  );
+}
+
+// ─── Reviews sub-view ─────────────────────────────────────────
+function ReviewsView({ rows, team, onReload }) {
+  const vp = useViewport();
+  const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const [form, setForm] = useState({
+    reviewer_name: "",
+    rating: 5,
+    review_text: "",
+    review_date: new Date().toISOString().slice(0, 10),
+    attributed_to: "",
+  });
+
+  const kpiCols = vp.isPhone ? "repeat(auto-fit, minmax(120px, 1fr))" : "repeat(auto-fit, minmax(140px, 1fr))";
+  const yr = String(new Date().getFullYear());
+  const ytdRows = rows.filter(r => r.review_date?.slice(0, 4) === yr);
+  const totalYtd = ytdRows.length;
+  const avgRating = totalYtd > 0 ? (ytdRows.reduce((s, r) => s + (Number(r.rating) || 0), 0) / totalYtd) : null;
+  const respondedCount = ytdRows.filter(r => !!r.responded_at).length;
+  const responseRate = totalYtd > 0 ? respondedCount / totalYtd : null;
+  const needsResponse = rows.filter(r => !r.responded_at).length;
+  const fiveStarCount = ytdRows.filter(r => Number(r.rating) === 5).length;
+  const avgTone = avgRating == null ? "neutral" : avgRating >= 4.5 ? "good" : avgRating >= 4 ? "neutral" : "warn";
+  const respTone = responseRate == null ? "neutral" : responseRate >= 0.9 ? "good" : responseRate >= 0.5 ? "neutral" : "warn";
+  const needsTone = needsResponse === 0 ? "good" : needsResponse >= 3 ? "warn" : "neutral";
+
+  const handleAdd = async () => {
+    if (!form.reviewer_name.trim()) { setErr("Reviewer name required."); return; }
+    const rt = Number(form.rating);
+    if (!(rt >= 1 && rt <= 5)) { setErr("Rating must be 1–5."); return; }
+    setSaving(true); setErr(null);
+    try {
+      const payload = {
+        agency_id: AGENCY_ID,
+        reviewer_name: form.reviewer_name.trim(),
+        rating: rt,
+        review_text: form.review_text || null,
+        review_date: form.review_date || null,
+        attributed_to: form.attributed_to || null,
+        icp_flag: rt === 5,
+      };
+      const { error } = await supabase.from("gbp_reviews").insert(payload);
+      if (error) throw error;
+      setShowAdd(false);
+      setForm({
+        reviewer_name: "",
+        rating: 5,
+        review_text: "",
+        review_date: new Date().toISOString().slice(0, 10),
+        attributed_to: "",
+      });
+      onReload();
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const markResponded = async (row) => {
+    await supabase.from("gbp_reviews").update({ responded_at: new Date().toISOString() }).eq("id", row.id);
+    onReload();
+  };
+  const unmarkResponded = async (row) => {
+    await supabase.from("gbp_reviews").update({ responded_at: null, responded_by: null }).eq("id", row.id);
+    onReload();
+  };
+
+  return (
+    <div>
+      <SectionTitle>Reviews YTD</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: kpiCols, gap: 10 }}>
+        <KpiCard label="Total Reviews" value={fmtInt(totalYtd)} sub={`YTD ${yr}`} />
+        <KpiCard label="Avg Rating" value={avgRating != null ? avgRating.toFixed(2) : "—"} sub={`${fiveStarCount} five-star`} tone={avgTone} />
+        <KpiCard label="Response Rate" value={responseRate != null ? `${(responseRate * 100).toFixed(0)}%` : "—"} sub={`${respondedCount}/${totalYtd} responded`} tone={respTone} />
+        <KpiCard label="Needs Response" value={fmtInt(needsResponse)} tone={needsTone} />
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+        <button
+          onClick={() => setShowAdd(v => !v)}
+          style={{
+            padding: "6px 14px", fontSize: 12, fontWeight: 600,
+            color: T.white, background: T.chromeBg, border: "none", borderRadius: 7, cursor: "pointer",
+          }}
+        >{showAdd ? "Cancel" : "+ Log Review"}</button>
+      </div>
+
+      {showAdd && (
+        <div style={{ marginTop: 12, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <InputRow label="Reviewer name">
+              <input value={form.reviewer_name} onChange={e => setForm({ ...form, reviewer_name: e.target.value })} style={inputStyle} />
+            </InputRow>
+            <InputRow label="Rating (1-5)">
+              <select value={form.rating} onChange={e => setForm({ ...form, rating: Number(e.target.value) })} style={inputStyle}>
+                {[5,4,3,2,1].map(n => <option key={n} value={n}>{"★".repeat(n)}{"☆".repeat(5-n)} — {n}</option>)}
+              </select>
+            </InputRow>
+            <InputRow label="Review date">
+              <input type="date" value={form.review_date} onChange={e => setForm({ ...form, review_date: e.target.value })} style={inputStyle} />
+            </InputRow>
+            <InputRow label="Attributed to">
+              <select value={form.attributed_to} onChange={e => setForm({ ...form, attributed_to: e.target.value })} style={inputStyle}>
+                <option value="">— Nobody —</option>
+                {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
+              </select>
+            </InputRow>
+            <InputRow label="Review text" span>
+              <textarea value={form.review_text} onChange={e => setForm({ ...form, review_text: e.target.value })} style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} />
+            </InputRow>
+          </div>
+          {err && <div style={{ color: "#991B1B", fontSize: 12, marginTop: 8 }}>{err}</div>}
+          <div style={{ marginTop: 12, textAlign: "right" }}>
+            <button
+              onClick={handleAdd}
+              disabled={saving}
+              style={{
+                padding: "8px 16px", fontSize: 12, fontWeight: 700,
+                color: T.white, background: saving ? T.slate400 : T.green, border: "none", borderRadius: 7,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >{saving ? "Saving…" : "Save Review"}</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 720 }}>
+          <thead>
+            <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+              <th style={thStyle}>Rating</th>
+              <th style={thStyle}>Reviewer</th>
+              <th style={thStyle}>Snippet</th>
+              <th style={thStyle}>Date</th>
+              <th style={thStyle}>Attributed</th>
+              <th style={thStyle}>Response</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: T.slate500 }}>
+                No reviews logged yet. Click <strong>+ Log Review</strong> to add one.
+              </td></tr>
+            )}
+            {rows.map(r => {
+              const ratingColor = r.rating >= 4 ? T.green : r.rating >= 3 ? T.gold : T.red;
+              const snippet = (r.review_text || "").slice(0, 80);
+              return (
+                <tr key={r.id} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                  <td style={{ ...tdStyle, color: ratingColor, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}
+                    {r.icp_flag && <span style={{ marginLeft: 6, fontSize: 10, background: T.goldLt, color: T.gold, padding: "1px 5px", borderRadius: 3 }}>ICP</span>}
+                  </td>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.reviewer_name}</td>
+                  <td style={{ ...tdStyle, color: T.slate500, maxWidth: 260 }}>
+                    {snippet}{(r.review_text || "").length > 80 ? "…" : ""}
+                  </td>
+                  <td style={tdStyle}>{r.review_date || "—"}</td>
+                  <td style={tdStyle}>{nameFor(r.attributed_to, team)}</td>
+                  <td style={tdStyle}>
+                    {r.responded_at ? (
+                      <button onClick={() => unmarkResponded(r)} style={{
+                        padding: "3px 8px", fontSize: 11, fontWeight: 600,
+                        color: T.green, background: T.greenLt, border: `1px solid #86EFAC`, borderRadius: 4, cursor: "pointer",
+                      }} title="Click to un-mark">✓ Responded</button>
+                    ) : (
+                      <button onClick={() => markResponded(r)} style={{
+                        padding: "3px 8px", fontSize: 11, fontWeight: 600,
+                        color: T.white, background: T.chromeBg, border: "none", borderRadius: 4, cursor: "pointer",
+                      }}>Mark responded</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 11, color: T.slate500, lineHeight: 1.6 }}>
+        5-star reviews auto-tag as <strong>ICP</strong> (Ideal Customer Profile research pool). Weekly review-count aggregate (marketing_points) is entered separately via the <strong>Points</strong> tab.
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: "100%", padding: "7px 9px", fontSize: 12,
+  border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900,
+  outline: "none", boxSizing: "border-box",
+};
+function InputRow({ label, span, children }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: span ? "1 / -1" : "auto" }}>
+      <span style={{ fontSize: 11, color: T.slate500, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function ReferralsReviewsTab() {
+  const vp = useViewport();
+  const [subTab, setSubTab] = useState("referrals");
+  const { loading, referrals, reviews, error, reload } = useRefRevData();
+  const team = useTeamRoster();
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: T.slate500, fontSize: 13 }}>Loading…</div>;
+  if (error) return <div style={{ padding: 20, color: "#991B1B", fontSize: 13 }}>Error: {error}</div>;
+
+  return (
+    <div>
+      <div style={{
+        display: "flex", gap: 4, background: T.slate100, borderRadius: 8,
+        padding: 3, marginBottom: 14, width: "fit-content", maxWidth: "100%",
+      }}>
+        {[
+          { id: "referrals", label: `Referrals (${referrals.length})` },
+          { id: "reviews",   label: `Reviews (${reviews.length})` },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            style={{
+              padding: "5px 12px", fontSize: 12,
+              fontWeight: subTab === t.id ? 600 : 400,
+              color: subTab === t.id ? T.slate900 : T.slate500,
+              background: subTab === t.id ? T.white : "transparent",
+              border: "none", borderRadius: 6, cursor: "pointer",
+              boxShadow: subTab === t.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+
+      {subTab === "referrals" && <ReferralsView rows={referrals} team={team} onReload={reload} />}
+      {subTab === "reviews" && <ReviewsView rows={reviews} team={team} onReload={reload} />}
+    </div>
+  );
+}
+
+
 // ─── Points Tab (nests existing MarketingPoints module) ───────
 function PointsTab() {
   return <MarketingPoints />;
@@ -971,6 +1491,7 @@ const SECTIONS = [
   { id: "overview",  label: "Overview" },
   { id: "sources",   label: "Lead Sources" },
   { id: "everquote", label: "EverQuote" },
+  { id: "refrev",    label: "Referrals & Reviews" },
   { id: "spend",     label: "Spend" },
   { id: "points",    label: "Points" },
 ];
@@ -1052,6 +1573,7 @@ export default function Marketing() {
       {section === "overview" && <OverviewTab state={state} />}
       {section === "sources" && <SourcesTab state={state} />}
       {section === "everquote" && <EverquoteTab />}
+      {section === "refrev" && <ReferralsReviewsTab />}
       {section === "spend" && <SpendTab state={state} />}
       {section === "points" && <PointsTab />}
     </div>
