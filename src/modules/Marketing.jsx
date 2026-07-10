@@ -1481,6 +1481,495 @@ function ReferralsReviewsTab() {
 }
 
 
+// ─── Ideas Backlog Tab ────────────────────────────────────────
+const IDEA_STATUSES = [
+  { id: "backlog",     label: "Backlog",     color: T.slate500 },
+  { id: "next_review", label: "Next Review", color: T.slate700 },
+  { id: "approved",    label: "Approved",    color: T.chromeBg },
+  { id: "in_flight",   label: "In Flight",   color: T.gold },
+  { id: "done",        label: "Done",        color: T.green },
+  { id: "rejected",    label: "Rejected",    color: T.red },
+];
+
+const IDEA_STATUS_ORDER = ["backlog","next_review","approved","in_flight","done","rejected"];
+
+function useIdeasData() {
+  const [state, setState] = useState({ loading: true, ideas: [], error: null, tick: 0 });
+  const reload = () => setState(s => ({ ...s, tick: s.tick + 1 }));
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        setState(s => ({ ...s, loading: true, error: null }));
+        const { data, error } = await supabase
+          .from("marketing_ideas")
+          .select("*")
+          .eq("agency_id", AGENCY_ID)
+          .order("created_at", { ascending: false });
+        if (cancelled) return;
+        if (error) throw error;
+        setState(s => ({ ...s, loading: false, ideas: Array.isArray(data) ? data : [] }));
+      } catch (err) {
+        if (!cancelled) setState(s => ({ ...s, loading: false, error: err?.message || String(err) }));
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [state.tick]);
+  return { ...state, reload };
+}
+
+function midCost(idea) {
+  const lo = Number(idea?.estimated_cost_low);
+  const hi = Number(idea?.estimated_cost_high);
+  const loOk = Number.isFinite(lo);
+  const hiOk = Number.isFinite(hi);
+  if (loOk && hiOk) return (lo + hi) / 2;
+  if (loOk) return lo;
+  if (hiOk) return hi;
+  return null;
+}
+
+function formatCostRange(idea) {
+  const lo = Number(idea?.estimated_cost_low);
+  const hi = Number(idea?.estimated_cost_high);
+  const loOk = Number.isFinite(lo);
+  const hiOk = Number.isFinite(hi);
+  if (loOk && hiOk) return lo === hi ? fmtMoney(lo) : `${fmtMoney(lo)}–${fmtMoney(hi)}`;
+  if (loOk) return `≥ ${fmtMoney(lo)}`;
+  if (hiOk) return `≤ ${fmtMoney(hi)}`;
+  return null;
+}
+
+function IdeaCard({ idea, onAdvance, onPromote, onEdit, promoting, editingId, editForm, setEditForm, saveEdit, cancelEdit }) {
+  const status = IDEA_STATUSES.find(s => s.id === idea.status) || IDEA_STATUSES[0];
+  const costLabel = formatCostRange(idea);
+  const isEditing = editingId === idea.id;
+  const promoted = !!idea.promoted_to_task_id;
+
+  return (
+    <div style={{
+      background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10,
+      padding: 14, display: "flex", flexDirection: "column", gap: 8, minHeight: 140,
+    }}>
+      {isEditing ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <InputRow label="Title">
+            <input value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value })} style={inputStyle} />
+          </InputRow>
+          <InputRow label="Category">
+            <input value={editForm.category || ""} onChange={e => setEditForm({ ...editForm, category: e.target.value })} style={inputStyle} placeholder="e.g. paid_leads, social_content" />
+          </InputRow>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <InputRow label="Cost Low $">
+              <input type="number" step="1" value={editForm.estimated_cost_low ?? ""} onChange={e => setEditForm({ ...editForm, estimated_cost_low: e.target.value === "" ? null : Number(e.target.value) })} style={inputStyle} />
+            </InputRow>
+            <InputRow label="Cost High $">
+              <input type="number" step="1" value={editForm.estimated_cost_high ?? ""} onChange={e => setEditForm({ ...editForm, estimated_cost_high: e.target.value === "" ? null : Number(e.target.value) })} style={inputStyle} />
+            </InputRow>
+          </div>
+          <InputRow label="Effort">
+            <select value={editForm.estimated_effort || ""} onChange={e => setEditForm({ ...editForm, estimated_effort: e.target.value || null })} style={inputStyle}>
+              <option value="">— unset —</option>
+              <option value="quick">Quick (≤ 2h)</option>
+              <option value="small">Small (½ day)</option>
+              <option value="medium">Medium (1–3 days)</option>
+              <option value="large">Large (1+ weeks)</option>
+            </select>
+          </InputRow>
+          <InputRow label="Expected return / notes" span>
+            <textarea value={editForm.expected_return_notes || ""} onChange={e => setEditForm({ ...editForm, expected_return_notes: e.target.value })} style={{ ...inputStyle, minHeight: 44, resize: "vertical" }} />
+          </InputRow>
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button onClick={cancelEdit} style={{ padding: "5px 10px", fontSize: 11, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 5, cursor: "pointer" }}>Cancel</button>
+            <button onClick={() => saveEdit(idea.id)} style={{ padding: "5px 10px", fontSize: 11, background: T.green, color: T.white, border: "none", borderRadius: 5, cursor: "pointer", fontWeight: 600 }}>Save</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, lineHeight: 1.35, flex: 1 }}>
+              {idea.title}
+            </div>
+            <button
+              onClick={() => onAdvance(idea)}
+              title="Click to advance status"
+              style={{
+                padding: "3px 8px", fontSize: 10, fontWeight: 700,
+                color: T.white, background: status.color, border: "none", borderRadius: 4,
+                cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.03em",
+              }}
+            >{status.label}</button>
+          </div>
+
+          {idea.category && (
+            <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>
+              {idea.category}
+            </div>
+          )}
+
+          {idea.description && (
+            <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5 }}>
+              {idea.description.length > 220 ? `${idea.description.slice(0, 220)}…` : idea.description}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: T.slate500 }}>
+            {costLabel && (
+              <div style={{ background: T.slate50, padding: "2px 7px", borderRadius: 4 }}>
+                💰 {costLabel}
+              </div>
+            )}
+            {idea.estimated_effort && (
+              <div style={{ background: T.slate50, padding: "2px 7px", borderRadius: 4 }}>
+                ⏱ {idea.estimated_effort}
+              </div>
+            )}
+            {idea.expected_return_notes && (
+              <div style={{ background: T.greenLt, color: "#065F46", padding: "2px 7px", borderRadius: 4, maxWidth: "100%" }} title={idea.expected_return_notes}>
+                📈 {idea.expected_return_notes.length > 30 ? `${idea.expected_return_notes.slice(0, 30)}…` : idea.expected_return_notes}
+              </div>
+            )}
+            {promoted && (
+              <div style={{ background: T.goldLt, color: T.gold, padding: "2px 7px", borderRadius: 4, fontWeight: 600 }}>
+                → Task created
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 6, marginTop: "auto", paddingTop: 6, flexWrap: "wrap" }}>
+            <button
+              onClick={() => onEdit(idea)}
+              style={{ padding: "4px 10px", fontSize: 11, background: T.white, color: T.slate700, border: `1px solid ${T.slate200}`, borderRadius: 5, cursor: "pointer" }}
+            >Edit</button>
+            {!promoted && (
+              <button
+                onClick={() => onPromote(idea)}
+                disabled={promoting === idea.id}
+                style={{
+                  padding: "4px 10px", fontSize: 11, fontWeight: 600,
+                  background: promoting === idea.id ? T.slate400 : T.chromeBg, color: T.white,
+                  border: "none", borderRadius: 5,
+                  cursor: promoting === idea.id ? "not-allowed" : "pointer",
+                }}
+              >{promoting === idea.id ? "Promoting…" : "→ Promote to task"}</button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function IdeasTab() {
+  const vp = useViewport();
+  const { loading, ideas, error, reload } = useIdeasData();
+  const [statusFilter, setStatusFilter] = useState("backlog");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("newest");
+  const [showAdd, setShowAdd] = useState(false);
+  const [promoting, setPromoting] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [addForm, setAddForm] = useState({
+    title: "", description: "", category: "", estimated_effort: "",
+    estimated_cost_low: null, estimated_cost_high: null,
+    expected_return_notes: "",
+  });
+  const [addErr, setAddErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: T.slate500, fontSize: 13 }}>Loading…</div>;
+  if (error) return <div style={{ padding: 20, color: "#991B1B", fontSize: 13 }}>Error: {error}</div>;
+
+  // Distinct categories from data + "all"
+  const categoriesInUse = Array.from(new Set(ideas.map(i => i.category).filter(Boolean))).sort();
+
+  // Status counts (all ideas, unfiltered)
+  const countByStatus = {};
+  IDEA_STATUS_ORDER.forEach(s => { countByStatus[s] = 0; });
+  ideas.forEach(i => {
+    if (countByStatus[i.status] != null) countByStatus[i.status] += 1;
+    else countByStatus[i.status] = 1;
+  });
+
+  // Cost estimation counts
+  const withCostCount = ideas.filter(i => midCost(i) != null).length;
+  const totalEstMid = ideas.reduce((sum, i) => sum + (midCost(i) || 0), 0);
+
+  // Filter + sort
+  let filtered = ideas.filter(i => {
+    if (statusFilter !== "all" && i.status !== statusFilter) return false;
+    if (categoryFilter !== "all" && i.category !== categoryFilter) return false;
+    return true;
+  });
+  filtered = [...filtered].sort((a, b) => {
+    if (sortBy === "newest") return (b.created_at || "").localeCompare(a.created_at || "");
+    if (sortBy === "oldest") return (a.created_at || "").localeCompare(b.created_at || "");
+    if (sortBy === "cost_low") return (midCost(a) ?? 1e15) - (midCost(b) ?? 1e15);
+    if (sortBy === "cost_high") return (midCost(b) ?? -1) - (midCost(a) ?? -1);
+    if (sortBy === "category") return (a.category || "~").localeCompare(b.category || "~");
+    if (sortBy === "alpha") return (a.title || "").localeCompare(b.title || "");
+    return 0;
+  });
+
+  const advanceStatus = async (idea) => {
+    const idx = IDEA_STATUS_ORDER.indexOf(idea.status);
+    const next = IDEA_STATUS_ORDER[(idx + 1) % IDEA_STATUS_ORDER.length];
+    const patch = { status: next };
+    if (next === "next_review" && !idea.next_review_at) patch.next_review_at = new Date().toISOString();
+    if (next === "approved" && !idea.decided_at) patch.decided_at = new Date().toISOString();
+    if (next === "done" && !idea.decided_at) patch.decided_at = new Date().toISOString();
+    if (next === "rejected" && !idea.decided_at) patch.decided_at = new Date().toISOString();
+    if ((next === "next_review" || next === "approved") && !idea.reviewed_at) patch.reviewed_at = new Date().toISOString();
+    const { error } = await supabase.from("marketing_ideas").update(patch).eq("id", idea.id);
+    if (error) { alert("Advance failed: " + error.message); return; }
+    reload();
+  };
+
+  const promoteToTask = async (idea) => {
+    setPromoting(idea.id);
+    try {
+      const taskPayload = {
+        agency_id: AGENCY_ID,
+        title: idea.title,
+        description: idea.description || `Promoted from marketing idea. Category: ${idea.category || "n/a"}. ${idea.expected_return_notes ? "Expected return: " + idea.expected_return_notes : ""}`,
+        priority: "medium",
+        status: "open",
+        task_category: "marketing",
+        task_type: "task",
+        in_weekly_focus: false,
+        assigned_to: null,
+        created_by: "Marketing module — promoted from idea",
+      };
+      const { data: task, error: taskErr } = await supabase.from("tasks").insert(taskPayload).select().maybeSingle();
+      if (taskErr) throw taskErr;
+      if (!task?.id) throw new Error("Task created but no id returned");
+      const { error: ideaErr } = await supabase
+        .from("marketing_ideas")
+        .update({ promoted_to_task_id: task.id, status: "in_flight", decided_at: new Date().toISOString() })
+        .eq("id", idea.id);
+      if (ideaErr) throw ideaErr;
+      reload();
+    } catch (e) {
+      alert("Promote failed: " + (e?.message || String(e)));
+    } finally {
+      setPromoting(null);
+    }
+  };
+
+  const openEdit = (idea) => {
+    setEditingId(idea.id);
+    setEditForm({
+      title: idea.title || "",
+      category: idea.category || "",
+      estimated_cost_low: idea.estimated_cost_low,
+      estimated_cost_high: idea.estimated_cost_high,
+      estimated_effort: idea.estimated_effort || "",
+      expected_return_notes: idea.expected_return_notes || "",
+    });
+  };
+  const cancelEdit = () => { setEditingId(null); setEditForm({}); };
+  const saveEdit = async (id) => {
+    const patch = {
+      title: editForm.title?.trim() || null,
+      category: editForm.category?.trim() || null,
+      estimated_cost_low: editForm.estimated_cost_low,
+      estimated_cost_high: editForm.estimated_cost_high,
+      estimated_effort: editForm.estimated_effort || null,
+      expected_return_notes: editForm.expected_return_notes?.trim() || null,
+    };
+    const { error } = await supabase.from("marketing_ideas").update(patch).eq("id", id);
+    if (error) { alert("Save failed: " + error.message); return; }
+    cancelEdit();
+    reload();
+  };
+
+  const handleAdd = async () => {
+    if (!addForm.title.trim()) { setAddErr("Title required."); return; }
+    setSaving(true); setAddErr(null);
+    try {
+      const payload = {
+        agency_id: AGENCY_ID,
+        title: addForm.title.trim(),
+        description: addForm.description || null,
+        category: addForm.category?.trim() || null,
+        estimated_effort: addForm.estimated_effort || null,
+        estimated_cost_low: addForm.estimated_cost_low,
+        estimated_cost_high: addForm.estimated_cost_high,
+        expected_return_notes: addForm.expected_return_notes || null,
+        status: "backlog",
+      };
+      const { error } = await supabase.from("marketing_ideas").insert(payload);
+      if (error) throw error;
+      setShowAdd(false);
+      setAddForm({ title: "", description: "", category: "", estimated_effort: "", estimated_cost_low: null, estimated_cost_high: null, expected_return_notes: "" });
+      reload();
+    } catch (e) {
+      setAddErr(e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cardCols = vp.isPhone ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))";
+  const kpiCols = vp.isPhone ? "repeat(auto-fit, minmax(100px, 1fr))" : "repeat(auto-fit, minmax(120px, 1fr))";
+
+  return (
+    <div>
+      <SectionTitle>Pipeline</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: kpiCols, gap: 8 }}>
+        {IDEA_STATUSES.map(s => (
+          <button
+            key={s.id}
+            onClick={() => setStatusFilter(s.id)}
+            style={{
+              background: statusFilter === s.id ? s.color : T.white,
+              color: statusFilter === s.id ? T.white : T.slate900,
+              border: `1px solid ${statusFilter === s.id ? s.color : T.slate200}`,
+              borderRadius: 10, padding: "10px 12px", cursor: "pointer",
+              textAlign: "left", display: "flex", flexDirection: "column", gap: 3, minHeight: 62,
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", opacity: statusFilter === s.id ? 0.85 : 0.6 }}>{s.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>{countByStatus[s.id] || 0}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ marginTop: 10, fontSize: 11, color: T.slate500 }}>
+        {ideas.length} total ideas · {withCostCount} with cost estimate · <strong>{fmtMoney(totalEstMid)}</strong> total estimated cost midpoint
+      </div>
+
+      {/* Filter + sort + add row */}
+      <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+          <button
+            onClick={() => setStatusFilter("all")}
+            style={{
+              padding: "6px 12px", fontSize: 12, fontWeight: statusFilter === "all" ? 600 : 400,
+              color: statusFilter === "all" ? T.white : T.slate700,
+              background: statusFilter === "all" ? T.chromeBgDeep : T.white,
+              border: `1px solid ${statusFilter === "all" ? T.chromeBgDeep : T.slate200}`,
+              borderRadius: 7, cursor: "pointer", flexShrink: 0,
+            }}
+          >All ({ideas.length})</button>
+
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={{
+            padding: "6px 10px", fontSize: 12, fontWeight: 600, color: T.slate700,
+            background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer", flexShrink: 0,
+          }}>
+            <option value="all">All categories</option>
+            {categoriesInUse.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
+            padding: "6px 10px", fontSize: 12, fontWeight: 600, color: T.slate700,
+            background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer", flexShrink: 0,
+          }}>
+            <option value="newest">Sort: Newest</option>
+            <option value="oldest">Sort: Oldest</option>
+            <option value="cost_low">Sort: Cost ↑</option>
+            <option value="cost_high">Sort: Cost ↓</option>
+            <option value="category">Sort: Category</option>
+            <option value="alpha">Sort: A→Z</option>
+          </select>
+        </div>
+        <button
+          onClick={() => setShowAdd(v => !v)}
+          style={{
+            padding: "6px 14px", fontSize: 12, fontWeight: 600,
+            color: T.white, background: T.chromeBg, border: "none", borderRadius: 7, cursor: "pointer", flexShrink: 0,
+          }}
+        >{showAdd ? "Cancel" : "+ Add Idea"}</button>
+      </div>
+
+      {showAdd && (
+        <div style={{ marginTop: 12, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <InputRow label="Title" span>
+              <input value={addForm.title} onChange={e => setAddForm({ ...addForm, title: e.target.value })} style={inputStyle} placeholder="e.g. Try local church sponsorship" />
+            </InputRow>
+            <InputRow label="Category">
+              <input value={addForm.category} onChange={e => setAddForm({ ...addForm, category: e.target.value })} style={inputStyle} placeholder="e.g. community_event" list="ideas-cat-suggest" />
+              <datalist id="ideas-cat-suggest">
+                {categoriesInUse.map(c => <option key={c} value={c} />)}
+              </datalist>
+            </InputRow>
+            <InputRow label="Effort">
+              <select value={addForm.estimated_effort} onChange={e => setAddForm({ ...addForm, estimated_effort: e.target.value })} style={inputStyle}>
+                <option value="">— unset —</option>
+                <option value="quick">Quick (≤ 2h)</option>
+                <option value="small">Small (½ day)</option>
+                <option value="medium">Medium (1–3 days)</option>
+                <option value="large">Large (1+ weeks)</option>
+              </select>
+            </InputRow>
+            <InputRow label="Cost Low $">
+              <input type="number" step="1" value={addForm.estimated_cost_low ?? ""} onChange={e => setAddForm({ ...addForm, estimated_cost_low: e.target.value === "" ? null : Number(e.target.value) })} style={inputStyle} />
+            </InputRow>
+            <InputRow label="Cost High $">
+              <input type="number" step="1" value={addForm.estimated_cost_high ?? ""} onChange={e => setAddForm({ ...addForm, estimated_cost_high: e.target.value === "" ? null : Number(e.target.value) })} style={inputStyle} />
+            </InputRow>
+            <InputRow label="Description" span>
+              <textarea value={addForm.description} onChange={e => setAddForm({ ...addForm, description: e.target.value })} style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} placeholder="What is it? Why?" />
+            </InputRow>
+            <InputRow label="Expected return / notes" span>
+              <textarea value={addForm.expected_return_notes} onChange={e => setAddForm({ ...addForm, expected_return_notes: e.target.value })} style={{ ...inputStyle, minHeight: 44, resize: "vertical" }} placeholder="Optional — what do we expect this to produce?" />
+            </InputRow>
+          </div>
+          {addErr && <div style={{ color: "#991B1B", fontSize: 12, marginTop: 8 }}>{addErr}</div>}
+          <div style={{ marginTop: 12, textAlign: "right" }}>
+            <button
+              onClick={handleAdd}
+              disabled={saving}
+              style={{
+                padding: "8px 16px", fontSize: 12, fontWeight: 700,
+                color: T.white, background: saving ? T.slate400 : T.green, border: "none", borderRadius: 7,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >{saving ? "Saving…" : "Save Idea"}</button>
+          </div>
+        </div>
+      )}
+
+      <SectionTitle>
+        {filtered.length} idea{filtered.length === 1 ? "" : "s"}
+        {statusFilter !== "all" && ` — ${IDEA_STATUSES.find(s => s.id === statusFilter)?.label || statusFilter}`}
+        {categoryFilter !== "all" && ` · ${categoryFilter}`}
+      </SectionTitle>
+
+      {filtered.length === 0 ? (
+        <div style={{ padding: 30, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, textAlign: "center", color: T.slate500, fontSize: 13 }}>
+          No ideas match this filter. {ideas.length > 0 && "Try clearing the filters above."}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: cardCols, gap: 10 }}>
+          {filtered.map(i => (
+            <IdeaCard
+              key={i.id}
+              idea={i}
+              onAdvance={advanceStatus}
+              onPromote={promoteToTask}
+              onEdit={openEdit}
+              promoting={promoting}
+              editingId={editingId}
+              editForm={editForm}
+              setEditForm={setEditForm}
+              saveEdit={saveEdit}
+              cancelEdit={cancelEdit}
+            />
+          ))}
+        </div>
+      )}
+
+      <div style={{ marginTop: 18, fontSize: 11, color: T.slate500, lineHeight: 1.6 }}>
+        Click a status pill on any card to advance it (backlog → next_review → approved → in_flight → done → rejected → back to backlog). Promoting creates a task in the Tasks module with category=marketing and moves the idea to <strong>In Flight</strong>.
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Points Tab (nests existing MarketingPoints module) ───────
 function PointsTab() {
   return <MarketingPoints />;
@@ -1492,6 +1981,7 @@ const SECTIONS = [
   { id: "sources",   label: "Lead Sources" },
   { id: "everquote", label: "EverQuote" },
   { id: "refrev",    label: "Referrals & Reviews" },
+  { id: "ideas",     label: "Ideas" },
   { id: "spend",     label: "Spend" },
   { id: "points",    label: "Points" },
 ];
@@ -1574,6 +2064,7 @@ export default function Marketing() {
       {section === "sources" && <SourcesTab state={state} />}
       {section === "everquote" && <EverquoteTab />}
       {section === "refrev" && <ReferralsReviewsTab />}
+      {section === "ideas" && <IdeasTab />}
       {section === "spend" && <SpendTab state={state} />}
       {section === "points" && <PointsTab />}
     </div>
