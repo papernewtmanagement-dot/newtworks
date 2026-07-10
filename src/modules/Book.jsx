@@ -542,34 +542,39 @@ const BookSizeSection = () => {
 
 
 // ============================================================
-// TAB 2 — Book Growth Goals (annual targets, no AIPP)
+// TAB 2 — Book Growth Goals (reads book_performance_goals)
 // ============================================================
-// Reads:  book_growth_targets (annual per-year targets)
-//         agency_snapshot (latest weekly row for current values)
-// Writes: book_growth_targets (single row per (agency, year))
-//
-// Pace math: elapsed_frac = (day_of_year / days_in_year).
-// For size metrics (premium/HH), pace_frac = current / target.
-// For flow metrics (YTD), pace_frac = ytd_value / target.
-// on_track when pace_frac >= elapsed_frac.
-// Projected YE for flows = ytd_value / elapsed_frac (linear extrapolation).
+// Read-only: goals are managed directly in book_performance_goals.
+// Rows are keyed by (agency_id, year, lob, metric). Current values pulled
+// from agency_snapshot (latest populated weekly). For PIF metrics, pace
+// is calculated from the year-start baseline (first populated snapshot
+// of the target year).
 
-const GOALS_METRICS = [
-  { key: "auto_premium",       label: "Auto Premium",    kind: "size", currentField: "auto_premium",       targetField: "auto_premium_target",       fmt: "money" },
-  { key: "fire_premium",       label: "Fire Premium",    kind: "size", currentField: "fire_premium",       targetField: "fire_premium_target",       fmt: "money" },
-  { key: "life_premium",       label: "Life Premium",    kind: "size", currentField: "life_premium",       targetField: "life_premium_target",       fmt: "money" },
-  { key: "household_count",    label: "Households",      kind: "size", currentField: "household_count",    targetField: "household_count_target",    fmt: "int"   },
-  { key: "auto_items_net",     label: "Auto items net",  kind: "flow", currentExpr: (s) => (Number(s?.auto_new_ytd) || 0) - (Number(s?.auto_lost_ytd) || 0), targetField: "auto_items_net_target",     fmt: "int"   },
-  { key: "fire_items_net",     label: "Fire items net",  kind: "flow", currentExpr: (s) => (Number(s?.fire_new_ytd) || 0) - (Number(s?.fire_lost_ytd) || 0), targetField: "fire_items_net_target",     fmt: "int"   },
-  { key: "life_items",         label: "Life items",      kind: "flow", currentField: "life_new_ytd",           targetField: "life_items_target",           fmt: "int"   },
-  { key: "life_paid_for",      label: "Life paid-for",   kind: "flow", currentField: "life_paid_for_count_ytd", targetField: "life_paid_for_count_target",  fmt: "int"   },
-  { key: "ips_new_money",      label: "IPS new money",   kind: "flow", currentField: "ips_new_money_ytd",       targetField: "ips_new_money_target",        fmt: "money" },
-];
+const LOB_LABELS = { auto: "Auto", fire: "Fire", life: "Life", health: "Health" };
+const LOB_COLORS = { auto: "#3B82F6", fire: "#F59E0B", life: "#8B5CF6", health: "#10B981" };
 
-const goalsFmt = (v, kind) => {
+// Maps (lob, metric) from book_performance_goals to:
+//  - label      : card title
+//  - fmt        : "money" | "int"
+//  - kind       : "delta" (PIF — pace measured from year-start baseline)
+//                 "ytd"   (YTD flow — pace measured from zero)
+//  - current    : function (snap) => current value from agency_snapshot
+//  - baseline   : function (snap0) => year-start value (only used for kind='delta')
+const METRIC_MAP = {
+  "auto:pif":           { label: "Auto PIF",      fmt: "int",   kind: "delta", current: s => s?.auto_pif, baseline: s => s?.auto_pif },
+  "fire:pif":           { label: "Fire PIF",      fmt: "int",   kind: "delta", current: s => s?.fire_pif, baseline: s => s?.fire_pif },
+  "life:pif":           { label: "Life PIF",      fmt: "int",   kind: "delta", current: s => s?.life_pif, baseline: s => s?.life_pif },
+  "auto:gain":          { label: "Auto Gain",     fmt: "int",   kind: "ytd",   current: s => (Number(s?.auto_new_ytd)||0) - (Number(s?.auto_lost_ytd)||0) },
+  "fire:gain":          { label: "Fire Gain",     fmt: "int",   kind: "ytd",   current: s => (Number(s?.fire_new_ytd)||0) - (Number(s?.fire_lost_ytd)||0) },
+  "life:gain":          { label: "Life Gain",     fmt: "int",   kind: "ytd",   current: s => (Number(s?.life_new_ytd)||0) - (Number(s?.life_lost_ytd)||0) },
+  "life:net_paid_for":  { label: "Life Paid #",   fmt: "int",   kind: "ytd",   current: s => s?.life_paid_for_count_ytd },
+  "life:premium":       { label: "Life Premium",  fmt: "money", kind: "ytd",   current: s => s?.life_paid_for_premium_ytd },
+};
+
+const goalsFmt = (v, fmt) => {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return "—";
   const n = Number(v);
-  if (kind === "money") return "$" + Math.round(n).toLocaleString("en-US");
+  if (fmt === "money") return "$" + Math.round(n).toLocaleString("en-US");
   return Math.round(n).toLocaleString("en-US");
 };
 
@@ -577,9 +582,8 @@ const elapsedFraction = (year) => {
   const now = new Date();
   const start = new Date(year, 0, 1);
   const end = new Date(year + 1, 0, 1);
-  const total = end - start;
-  const clamped = Math.max(0, Math.min(total, now - start));
-  return clamped / total;
+  const clamped = Math.max(0, Math.min(end - start, now - start));
+  return clamped / (end - start);
 };
 
 const paceColor = (paceFrac, elapsedFrac) => {
@@ -598,19 +602,21 @@ const paceLabel = (paceFrac, elapsedFrac) => {
   return "behind";
 };
 
-function useGoalsData(year) {
-  const [current, setCurrent] = useState(null);
-  const [target, setTarget] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
-
+function useBookGoalsData(year) {
+  const [state, setState] = useState({ goals: [], latest: null, yearStart: null, loading: true });
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       try {
-        // Current: latest weekly agency_snapshot with populated data
-        const { data: snapRows } = await supabase
+        // Goals for the year
+        const { data: goals } = await supabase
+          .from("book_performance_goals")
+          .select("lob, metric, target_value, notes")
+          .eq("agency_id", AGENCY_ID)
+          .eq("year", year);
+
+        // Latest populated weekly snapshot
+        const { data: snaps } = await supabase
           .from("agency_snapshot")
           .select("*")
           .eq("agency_id", AGENCY_ID)
@@ -622,166 +628,57 @@ function useGoalsData(year) {
           r.auto_pif != null || r.fire_pif != null || r.life_pif != null ||
           r.household_count != null
         );
-        const latest = (Array.isArray(snapRows) ? snapRows : []).find(isPopulated) || null;
+        const latest = (Array.isArray(snaps) ? snaps : []).find(isPopulated) || null;
 
-        // Target: book_growth_targets row for this year
-        const { data: targetRow } = await supabase
-          .from("book_growth_targets")
-          .select("*")
+        // Year-start baseline: earliest 2026 snapshot with populated PIFs
+        const { data: startRows } = await supabase
+          .from("agency_snapshot")
+          .select("snapshot_date, auto_pif, fire_pif, life_pif")
           .eq("agency_id", AGENCY_ID)
-          .eq("target_year", year)
-          .maybeSingle();
+          .gte("snapshot_date", `${year}-01-01`)
+          .lte("snapshot_date", `${year}-12-31`)
+          .order("snapshot_date", { ascending: true })
+          .limit(5);
+        const yearStart = (Array.isArray(startRows) ? startRows : [])
+          .find(r => r.auto_pif != null || r.fire_pif != null || r.life_pif != null) || null;
 
-        if (cancelled) return;
-        setCurrent(latest);
-        setTarget(targetRow || null);
+        if (!cancelled) setState({ goals: goals || [], latest, yearStart, loading: false });
       } catch (e) {
-        console.error("useGoalsData failed:", e);
-      } finally {
-        if (!cancelled) setLoading(false);
+        console.error("useBookGoalsData failed:", e);
+        if (!cancelled) setState(s => ({ ...s, loading: false }));
       }
     })();
     return () => { cancelled = true; };
-  }, [year, refreshKey]);
-
-  return { current, target, loading, refresh: () => setRefreshKey(k => k + 1) };
+  }, [year]);
+  return state;
 }
-
-const GoalsTargetEditor = ({ year, target, onSaved }) => {
-  const emptyForm = {
-    auto_premium_target: "", fire_premium_target: "", life_premium_target: "",
-    household_count_target: "",
-    auto_items_net_target: "", fire_items_net_target: "",
-    life_items_target: "", life_paid_for_count_target: "", ips_new_money_target: "",
-    notes: "",
-  };
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState(null);
-
-  useEffect(() => {
-    if (!target) { setForm(emptyForm); return; }
-    setForm({
-      auto_premium_target:      target.auto_premium_target ?? "",
-      fire_premium_target:      target.fire_premium_target ?? "",
-      life_premium_target:      target.life_premium_target ?? "",
-      household_count_target:   target.household_count_target ?? "",
-      auto_items_net_target:    target.auto_items_net_target ?? "",
-      fire_items_net_target:    target.fire_items_net_target ?? "",
-      life_items_target:        target.life_items_target ?? "",
-      life_paid_for_count_target: target.life_paid_for_count_target ?? "",
-      ips_new_money_target:     target.ips_new_money_target ?? "",
-      notes:                    target.notes ?? "",
-    });
-  }, [target]);
-
-  const numOrNull = (v) => {
-    if (v === "" || v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  const save = async () => {
-    setSaving(true); setErr(null);
-    try {
-      const row = {
-        agency_id: AGENCY_ID,
-        target_year: year,
-        auto_premium_target:        numOrNull(form.auto_premium_target),
-        fire_premium_target:        numOrNull(form.fire_premium_target),
-        life_premium_target:        numOrNull(form.life_premium_target),
-        household_count_target:     numOrNull(form.household_count_target),
-        auto_items_net_target:      numOrNull(form.auto_items_net_target),
-        fire_items_net_target:      numOrNull(form.fire_items_net_target),
-        life_items_target:          numOrNull(form.life_items_target),
-        life_paid_for_count_target: numOrNull(form.life_paid_for_count_target),
-        ips_new_money_target:       numOrNull(form.ips_new_money_target),
-        notes: form.notes || null,
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await supabase
-        .from("book_growth_targets")
-        .upsert(row, { onConflict: "agency_id,target_year" });
-      if (error) throw error;
-      onSaved?.();
-    } catch (e) {
-      setErr(e?.message || String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const inputStyle = { width: "100%", padding: "6px 8px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 };
-  const labelStyle = { fontSize: 10, color: T.slate500, fontWeight: 500, marginBottom: 3, display: "block" };
-  const groupHeaderStyle = { fontSize: 10, color: T.slate600, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 8, marginBottom: 6 };
-  const fld = (key, label) => (
-    <div key={key}>
-      <label style={labelStyle}>{label}</label>
-      <input type="number" value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} style={inputStyle} />
-    </div>
-  );
-
-  return (
-    <div>
-      <div style={groupHeaderStyle}>Year-end book size ({year})</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
-        {fld("auto_premium_target",    "Auto Premium ($)")}
-        {fld("fire_premium_target",    "Fire Premium ($)")}
-        {fld("life_premium_target",    "Life Premium ($)")}
-        {fld("household_count_target", "Households")}
-      </div>
-
-      <div style={groupHeaderStyle}>YTD flow ({year})</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 4 }}>
-        {fld("auto_items_net_target",       "Auto items net (new − lost)")}
-        {fld("fire_items_net_target",       "Fire items net")}
-        {fld("life_items_target",           "Life items")}
-        {fld("life_paid_for_count_target",  "Life paid-for count")}
-        {fld("ips_new_money_target",        "IPS new money ($)")}
-      </div>
-
-      <div style={{ marginTop: 10, marginBottom: 12 }}>
-        <label style={labelStyle}>Notes (optional)</label>
-        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2}
-          style={{ ...inputStyle, fontFamily: "inherit" }}
-          placeholder="Rationale, stretch vs. base, dependencies, etc." />
-      </div>
-
-      {err && <div style={{ fontSize: 11, color: T.red, marginBottom: 10 }}>Error: {err}</div>}
-      <button onClick={save} disabled={saving}
-        style={{ background: T.blue, color: T.white, border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}>
-        {saving ? "Saving…" : (target ? "Save changes" : "Set targets")}
-      </button>
-    </div>
-  );
-};
 
 const BookGoalsSection = () => {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
-  const { current, target, loading, refresh } = useGoalsData(year);
-  const [showEdit, setShowEdit] = useState(false);
+  const { goals, latest, yearStart, loading } = useBookGoalsData(year);
 
   const elapsed = elapsedFraction(year);
-  const weeksRemaining = Math.max(0, Math.round(((year + 1 - year) * 52) - (elapsed * 52)));
+  const totalWeeks = 52;
+  const weeksRemaining = Math.max(0, Math.round(totalWeeks - (elapsed * totalWeeks)));
 
-  if (loading) {
-    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading growth goals…</div></Card>;
+  if (loading) return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading growth goals…</div></Card>;
+
+  if (!goals || goals.length === 0) {
+    return (
+      <Card>
+        <div style={{ fontSize: 12, color: T.slate500 }}>
+          No goals set for {year} in <code style={{ fontSize: 11 }}>book_performance_goals</code>.
+        </div>
+      </Card>
+    );
   }
 
-  const hasAnyTarget = target && GOALS_METRICS.some(m => target[m.targetField] != null);
-
-  const rows = GOALS_METRICS.map(m => {
-    const t = target ? Number(target[m.targetField]) : null;
-    const targetVal = Number.isFinite(t) ? t : null;
-    const currentVal = m.currentExpr
-      ? (current ? m.currentExpr(current) : null)
-      : (current && current[m.currentField] != null ? Number(current[m.currentField]) : null);
-    const paceFrac = (targetVal && targetVal > 0 && currentVal != null) ? (currentVal / targetVal) : null;
-    const projectedYE = (m.kind === "flow" && currentVal != null && elapsed > 0)
-      ? currentVal / elapsed
-      : null;
-    return { m, targetVal, currentVal, paceFrac, projectedYE };
+  // Order goals deterministically
+  const ORDER = ["auto:pif","fire:pif","life:pif","auto:gain","fire:gain","life:gain","life:net_paid_for","life:premium"];
+  const sortedGoals = [...goals].sort((a, b) => {
+    const ai = ORDER.indexOf(`${a.lob}:${a.metric}`); const bi = ORDER.indexOf(`${b.lob}:${b.metric}`);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
   return (
@@ -789,80 +686,98 @@ const BookGoalsSection = () => {
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>
-              Growth Goals · {year}
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>Growth Goals · {year}</div>
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
               {(elapsed * 100).toFixed(1)}% through the year · ~{weeksRemaining} weeks remaining
-              {current?.snapshot_date ? ` · current as of ${current.snapshot_date}` : ""}
+              {latest?.snapshot_date ? ` · current as of ${latest.snapshot_date}` : ""}
+              {yearStart?.snapshot_date ? ` · baseline ${yearStart.snapshot_date}` : ""}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <select value={year} onChange={e => setYear(Number(e.target.value))}
-              style={{ padding: "6px 10px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }}>
-              {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y =>
-                <option key={y} value={y}>{y}</option>
-              )}
-            </select>
-            <button onClick={() => setShowEdit(v => !v)} style={{
-              padding: "6px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.white,
-              border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer",
-            }}>{showEdit ? "Close" : (hasAnyTarget ? "Edit targets" : "Set targets")}</button>
-          </div>
+          <select value={year} onChange={e => setYear(Number(e.target.value))}
+            style={{ padding: "6px 10px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }}>
+            {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y =>
+              <option key={y} value={y}>{y}</option>
+            )}
+          </select>
         </div>
       </Card>
 
-      {showEdit && (
-        <Card>
-          <GoalsTargetEditor year={year} target={target} onSaved={() => { setShowEdit(false); refresh(); }} />
-        </Card>
-      )}
-
-      {!hasAnyTarget && !showEdit && (
-        <Card>
-          <div style={{ fontSize: 12, color: T.slate500 }}>
-            No targets set for {year} yet. Click <b>Set targets</b> to define year-end and YTD flow goals.
-          </div>
-        </Card>
-      )}
-
-      {hasAnyTarget && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-          {rows.map(({ m, targetVal, currentVal, paceFrac, projectedYE }) => {
-            if (targetVal == null) return null;
-            const color = paceColor(paceFrac, elapsed);
-            const label = paceLabel(paceFrac, elapsed);
-            const pct = paceFrac != null ? Math.min(1.5, paceFrac) : 0;
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        {sortedGoals.map(g => {
+          const key = `${g.lob}:${g.metric}`;
+          const m = METRIC_MAP[key];
+          const targetVal = Number(g.target_value);
+          if (!m || !Number.isFinite(targetVal)) {
             return (
-              <Card key={m.key} style={{ padding: "14px 16px" }}>
-                <div style={{ fontSize: 11, color: T.slate500, fontWeight: 500, marginBottom: 6 }}>{m.label}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-                  {goalsFmt(currentVal, m.fmt)}
+              <Card key={key} style={{ padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, color: T.slate500, fontWeight: 500, marginBottom: 6 }}>
+                  {(LOB_LABELS[g.lob] || g.lob)} · {g.metric}
                 </div>
-                <div style={{ fontSize: 11, color: T.slate500, marginTop: 3 }}>
-                  of {goalsFmt(targetVal, m.fmt)} target
-                </div>
-                <div style={{ marginTop: 8, height: 6, background: T.slate100, borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{ width: `${Math.min(100, pct * 100)}%`, height: "100%", background: color, transition: "width 0.3s" }} />
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11 }}>
-                  <span style={{ color, fontWeight: 600 }}>{label}</span>
-                  <span style={{ color: T.slate500 }}>{paceFrac != null ? `${(paceFrac * 100).toFixed(1)}%` : "—"}</span>
-                </div>
-                {m.kind === "flow" && projectedYE != null && (
-                  <div style={{ fontSize: 10, color: T.slate400, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.slate100}` }}>
-                    Projected YE: <span style={{ color: T.slate600, fontWeight: 600 }}>{goalsFmt(projectedYE, m.fmt)}</span>
-                    {" · "}
-                    <span style={{ color: projectedYE >= targetVal ? T.green : T.red }}>
-                      {projectedYE >= targetVal ? "+" : ""}{goalsFmt(projectedYE - targetVal, m.fmt)}
-                    </span>
-                  </div>
-                )}
+                <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>{goalsFmt(targetVal, "int")}</div>
+                <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>No mapping — raw target only</div>
               </Card>
             );
-          })}
-        </div>
-      )}
+          }
+
+          const currentVal = m.current(latest);
+          let paceFrac = null;
+          let deltaCurrent = null;
+          let deltaTarget = null;
+
+          if (m.kind === "delta") {
+            const startVal = m.baseline(yearStart);
+            if (startVal != null && Number.isFinite(Number(startVal)) && currentVal != null) {
+              deltaCurrent = Number(currentVal) - Number(startVal);
+              deltaTarget = targetVal - Number(startVal);
+              if (deltaTarget > 0) paceFrac = deltaCurrent / deltaTarget;
+            }
+          } else {
+            if (currentVal != null && targetVal > 0) paceFrac = Number(currentVal) / targetVal;
+          }
+
+          const color = paceColor(paceFrac, elapsed);
+          const label = paceLabel(paceFrac, elapsed);
+          const pct = paceFrac != null ? Math.min(1.5, paceFrac) : 0;
+          const lobColor = LOB_COLORS[g.lob] || T.slate500;
+          const projectedYE = (m.kind === "ytd" && currentVal != null && elapsed > 0) ? Number(currentVal) / elapsed : null;
+          const nextYearPrep = /prep for next year|does not drive this year/i.test(g.notes || "");
+
+          return (
+            <Card key={key} style={{ padding: "14px 16px", borderTop: `3px solid ${lobColor}`, opacity: nextYearPrep ? 0.7 : 1 }}>
+              <div style={{ fontSize: 11, color: T.slate500, fontWeight: 500, marginBottom: 6 }}>{m.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+                {goalsFmt(currentVal, m.fmt)}
+              </div>
+              <div style={{ fontSize: 11, color: T.slate500, marginTop: 3 }}>
+                {m.kind === "delta"
+                  ? `+${goalsFmt(deltaCurrent, "int")} of +${goalsFmt(deltaTarget, "int")} target · ends at ${goalsFmt(targetVal, "int")}`
+                  : `of ${goalsFmt(targetVal, m.fmt)} target`}
+              </div>
+              <div style={{ marginTop: 8, height: 6, background: T.slate100, borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${Math.min(100, pct * 100)}%`, height: "100%", background: color, transition: "width 0.3s" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11 }}>
+                <span style={{ color, fontWeight: 600 }}>{label}</span>
+                <span style={{ color: T.slate500 }}>{paceFrac != null ? `${(paceFrac * 100).toFixed(1)}%` : "—"}</span>
+              </div>
+              {m.kind === "ytd" && projectedYE != null && (
+                <div style={{ fontSize: 10, color: T.slate400, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.slate100}` }}>
+                  Projected YE: <span style={{ color: T.slate600, fontWeight: 600 }}>{goalsFmt(projectedYE, m.fmt)}</span>
+                  {" · "}
+                  <span style={{ color: projectedYE >= targetVal ? T.green : T.red }}>
+                    {projectedYE >= targetVal ? "+" : ""}{goalsFmt(projectedYE - targetVal, m.fmt)}
+                  </span>
+                </div>
+              )}
+              {nextYearPrep && (
+                <div style={{ fontSize: 10, color: T.slate400, marginTop: 6, fontStyle: "italic" }}>
+                  Prep for next year — does not drive this year
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 };
