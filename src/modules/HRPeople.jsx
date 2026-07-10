@@ -516,166 +516,6 @@ const StageBadge = ({ status }) => {
   return <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:s.bg, color:s.color }}>{s.label}</span>;
 };
 
-// ─── Section: Overview ────────────────────────────────────────
-const HROverview = ({ applicants, staff, onboarding }) => {
-  const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({first_name:"", last_name:"", role:"", role_category:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
-
-  const saveEmployee = async () => {
-    if (!newEmployee.first_name || !newEmployee.last_name) return;
-    if (supabase) {
-      await supabase.from("team").insert({ ...newEmployee, agency_id: AGENCY_ID, is_active: true });
-    }
-    setShowAddEmployee(false);
-    setNewEmployee({first_name:"", last_name:"", role:"", role_category:"", role_level:"", category:"agency", email_personal:"", phone_personal:"", start_date:"", employment_type:"w2", sf_alias:"", email_sf:"", phone_extension:"", account_alpha:""});
-  };
-
-  const active      = applicants.filter(a => !["hired","rejected"].includes(a.status));
-  const newApps     = applicants.filter(a => a.status === "new").length;
-  const inInterview = applicants.filter(a => a.status === "interview").length;
-  const inOffer     = applicants.filter(a => a.status === "offer").length;
-  const activeStaff = staff.filter(s => s.is_active).length;
-  const flagged     = staff.filter(s => s.compliance_flag).length;
-
-  return (
-    <div>
-      {/* KPI Row */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:16 }}>
-        {[
-          { label:"Active Pipeline",   value:active.length,   color:T.blue,  border:T.blue  },
-          { label:"New Applicants",    value:newApps,         color:newApps>0?T.amber:T.slate400, border:newApps>0?T.amber:T.slate200 },
-          { label:"In Interviews",     value:inInterview,     color:T.purple,border:T.purple },
-          { label:"Offers Pending",    value:inOffer,         color:T.green, border:T.green },
-          { label:"Active Staff",      value:activeStaff,     color:T.slate900,  border:T.slate900  },
-          { label:"Compliance Flags",  value:flagged,         color:flagged>0?T.red:T.green, border:flagged>0?T.red:T.green },
-        ].map((k,i) => (
-          <div key={i} style={{ background:T.white, border:`1px solid ${T.slate200}`, borderTop:`3px solid ${k.border}`, borderRadius:12, padding:"14px 16px" }}>
-            <div style={{ fontSize:11, color:T.slate500, fontWeight:500, marginBottom:6 }}>{k.label}</div>
-            <div style={{ fontSize:24, fontWeight:700, color:k.color, letterSpacing:"-0.02em" }}>{k.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Compliance reminder */}
-      <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderLeft:`4px solid ${T.amber}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
-        <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:4 }}>⚠ AA05 Section I.P — Agent is liable for all staff activities</div>
-        <div style={{ fontSize:11, color:"#92400E", lineHeight:1.6 }}>
-          You are contractually responsible for every action your staff takes on behalf of the agency. All staff performing licensed activities must hold active licenses. Unlicensed staff may not quote, bind, or solicit. Family employees require year-end W-2 review with your CPA.
-        </div>
-      </div>
-
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
-        {/* Active Pipeline */}
-        
-      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
-        <button onClick={()=>setShowAddEmployee(s=>!s)} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>➕ Add Employee</button>
-      </div>
-
-      {showAddEmployee && (
-        <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:10,padding:16,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#1E3A5F",marginBottom:12}}>Add New Employee</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))",gap:10,marginBottom:10}}>
-            <input placeholder="First name *" value={newEmployee.first_name} onChange={e=>setNewEmployee({...newEmployee,first_name:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input placeholder="Last name *" value={newEmployee.last_name} onChange={e=>setNewEmployee({...newEmployee,last_name:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <select value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
-              <option value="">Role *</option>
-              <option value="Acquisition">Acquisition</option>
-              <option value="Inside Sales">Inside Sales</option>
-              <option value="Reception">Reception</option>
-              <option value="Escalation">Escalation</option>
-            </select>
-            <select value={newEmployee.role_category} onChange={e=>setNewEmployee({...newEmployee,role_category:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
-              <option value="">Role category</option>
-              <option value="Sales">Sales</option>
-              <option value="Retention">Retention</option>
-            </select>
-            <select value={newEmployee.role_level} onChange={e=>setNewEmployee({...newEmployee,role_level:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
-              <option value="">Role level (optional)</option>
-              <option value="Owner">Owner</option>
-              <option value="Office Manager">Office Manager</option>
-              <option value="Unit Manager">Unit Manager</option>
-              <option value="Section Manager">Section Manager</option>
-              <option value="Account Manager">Account Manager</option>
-              <option value="Account Associate">Account Associate</option>
-            </select>
-            <select value={newEmployee.category} onChange={e=>setNewEmployee({...newEmployee,category:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,background:"#fff"}}>
-              <option value="agency">Agency team</option>
-              <option value="admin">Admin team</option>
-            </select>
-            <input placeholder="Personal email" value={newEmployee.email_personal} onChange={e=>setNewEmployee({...newEmployee,email_personal:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input placeholder="Personal phone" value={newEmployee.phone_personal} onChange={e=>setNewEmployee({...newEmployee,phone_personal:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input type="date" placeholder="Start date" value={newEmployee.start_date} onChange={e=>setNewEmployee({...newEmployee,start_date:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <select value={newEmployee.employment_type} onChange={e=>setNewEmployee({...newEmployee,employment_type:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}}>
-              <option value="w2">W-2 Employee</option>
-              <option value="1099">1099 Contractor</option>
-              <option value="family">Family Employee (W-2)</option>
-            </select>
-          </div>
-          <div style={{fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:0.5,marginTop:4,marginBottom:8}}>State Farm fields (optional — can be added later)</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))",gap:10,marginBottom:10}}>
-            <input placeholder="SF Alias (e.g. VAELNA)" value={newEmployee.sf_alias} onChange={e=>setNewEmployee({...newEmployee,sf_alias:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
-            <input placeholder="Account alpha (e.g. A-L)" value={newEmployee.account_alpha} onChange={e=>setNewEmployee({...newEmployee,account_alpha:e.target.value.toUpperCase()})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12,textTransform:"uppercase"}} />
-            <input placeholder="SF Email" value={newEmployee.email_sf} onChange={e=>setNewEmployee({...newEmployee,email_sf:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-            <input placeholder="Phone extension" value={newEmployee.phone_extension} onChange={e=>setNewEmployee({...newEmployee,phone_extension:e.target.value})} style={{padding:"8px 10px",borderRadius:6,border:"1px solid #CBD5E1",fontSize:12}} />
-          </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-            <button onClick={()=>setShowAddEmployee(false)} style={{padding:"6px 14px",fontSize:12,background:"#F1F5F9",color:"#334155",border:"none",borderRadius:6,cursor:"pointer"}}>Cancel</button>
-            <button onClick={saveEmployee} style={{padding:"6px 14px",fontSize:12,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontWeight:600}}>Save Employee</button>
-          </div>
-        </div>
-      )}
-<Card>
-          <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>Active recruiting pipeline</div>
-          {active.length === 0 ? (
-            <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"16px 0" }}>No active applicants</div>
-          ) : active.map((app,i) => (
-            <div key={app.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:i<active.length-1?`1px solid ${T.slate100}`:"none" }}>
-              <div style={{ width:32, height:32, borderRadius:8, background:scoreBg(app.claude_score), display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                <span style={{ fontSize:13, fontWeight:700, color:scoreColor(app.claude_score) }}>{app.claude_score}</span>
-              </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:12, fontWeight:600, color:T.slate800 }}>{app.first_name} {app.last_name}</div>
-                <div style={{ fontSize:10, color:T.slate500 }}>{app.position} · {app.intake_received_at}</div>
-              </div>
-              <StageBadge status={app.status} />
-            </div>
-          ))}
-        </Card>
-
-        {/* Team Snapshot */}
-        <Card>
-          <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>Current team</div>
-          {staff.filter(s => s.is_active).map((member,i) => (
-            <div key={member.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:i<staff.length-1?`1px solid ${T.slate100}`:"none" }}>
-              <div style={{ width:32, height:32, borderRadius:8, background:hasAnyLicense(member)?T.greenLt:T.slate100, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:11, fontWeight:700, color:hasAnyLicense(member)?T.green:T.slate500 }}>
-                {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
-              </div>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:12, fontWeight:600, color:T.slate800 }}>{member.first_name} {member.last_name}</div>
-                <div style={{ fontSize:10, color:T.slate500 }}>{member.role || "-"} · {(member.employment_type || "").toString().toUpperCase()}</div>
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
-                {hasAnyLicense(member) ? (
-                  <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent:"flex-end" }}>
-                    {member.license_pc && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>P&amp;C</span>}
-                    {member.license_lh && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:"#DBEAFE", color:"#1E40AF" }}>L&amp;H</span>}
-                    {member.license_ips && <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6" }}>IPS</span>}
-                  </div>
-                ) : (
-                  <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed</span>
-                )}
-                {member.compliance_flag && (
-                  <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>⚠ CPA Flag</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </Card>
-      </div>
-    </div>
-  );
-};
-
 // ─── Section: Recruiting Pipeline ────────────────────────────
 const RecruitingPipeline = ({ applicants, onUpdate }) => {
   const [selected, setSelected] = useState(null);
@@ -2700,7 +2540,7 @@ const GrowthTab = ({ applicants, onUpdate }) => {
 
 export default function HRPeople() {
   const { data: roi } = useProducerROI();
-  const [section,     setSection]     = useState("overview");
+  const [section,     setSection]     = useState("members");
   const [applicants,  setApplicants]  = useState([]);
 
   // Load applicants from live Supabase table. Empty result yields empty pipeline.
@@ -2733,9 +2573,8 @@ export default function HRPeople() {
   };
 
   const sections = [
-    { id:"overview", label:"Overview" },
-    { id:"growth",   label:"Growth"   },
     { id:"members",  label:"Members"  },
+    { id:"growth",   label:"Growth"   },
   ];
 
   return (
@@ -2761,11 +2600,10 @@ export default function HRPeople() {
       </div>
 
       {/* Section Content */}
-      {section === "overview" && <HROverview applicants={applicants} staff={roi?.allActiveStaff || []} onboarding={[]} />}
-      {section === "growth"   && <GrowthTab  applicants={applicants} onUpdate={updateApplicantStage} />}
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
+      {section === "growth"   && <GrowthTab  applicants={applicants} onUpdate={updateApplicantStage} />}
     </div>
   );
 }
