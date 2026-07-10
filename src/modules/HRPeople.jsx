@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 
 
@@ -60,7 +60,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -1355,6 +1355,10 @@ const StaffDirectory = ({ staff }) => {
   // Counts for the view toggle
   const mergedActive = [...additions, ...((staff || []).filter(s => !additions.some(a => a.id === s.id)))];
   const activeCount = mergedActive.filter(s => s.is_active && !terminatedIds.has(s.id)).length;
+  // Owner (Peter) + admin back-office (Marie) sit at the bottom of the active list,
+  // divided from the team above. Stable sort preserves existing order for everyone else.
+  const bottomRank = (m) => (m?.is_admin_backoffice ? 2 : (m?.role_level === "Owner" ? 1 : 0));
+  const sortedActive = [...mergedActive].sort((a, b) => bottomRank(a) - bottomRank(b));
   const archivedCount = archivedStaff.filter(s => !reactivatedIds.has(s.id)).length;
 
   return (
@@ -1683,7 +1687,10 @@ const StaffDirectory = ({ staff }) => {
       })()}
 
       {/* ============== ACTIVE VIEW (existing card list) ============== */}
-      {view === "active" && mergedActive.filter(s => s.is_active && !terminatedIds.has(s.id)).map(raw => {
+      {view === "active" && (() => {
+        const _activeItems = sortedActive.filter(s => s.is_active && !terminatedIds.has(s.id));
+        const _firstBottomIdx = _activeItems.findIndex(s => bottomRank(s) > 0);
+        return _activeItems.map((raw, _idx) => {
         // Merge any saved override on top of the loaded row.
         const member = overrides[raw.id] ? { ...raw, ...overrides[raw.id] } : raw;
         const isExpanded = expanded === member.id;
@@ -1693,8 +1700,13 @@ const StaffDirectory = ({ staff }) => {
         const seatSrcProj = seatScenarioActive ? seatScenProjections : seatProjections;
         const seat = seatSrcRows.find(r => r.team_member_id === member.id) || null;
         const seatProj = seat ? (seatSrcProj.find(p => p.team_member_id === member.id) || null) : null;
+        const _showDivider = _firstBottomIdx > 0 && _idx === _firstBottomIdx;
         return (
-          <Card key={member.id} style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
+          <Fragment key={member.id}>
+          {_showDivider && (
+            <div style={{ borderTop:`2px solid ${T.slate300}`, margin:"4px 0 0" }} aria-hidden="true" />
+          )}
+          <Card style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
               {/* Avatar */}
               <div style={{ width:48, height:48, borderRadius:12, background:hasAnyLicense(member)?T.slate900:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:hasAnyLicense(member)?T.white:T.slate500, flexShrink:0 }}>
@@ -2179,8 +2191,10 @@ const StaffDirectory = ({ staff }) => {
               </div>
             )}
           </Card>
+          </Fragment>
         );
-      })}
+        });
+      })()}
     </div>
   );
 };
