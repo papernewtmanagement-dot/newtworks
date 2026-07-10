@@ -9,7 +9,7 @@ import SocialMedia from "./src/modules/SocialMedia.jsx";
 import TasksGoals from "./src/modules/TasksGoals.jsx";
 import AlertsNotifications from "./src/modules/AlertsNotifications.jsx";
 import Documents from "./src/modules/Documents.jsx";
-import HRPeople from "./src/modules/HRPeople.jsx";
+import Team from "./src/modules/Team.jsx";
 import Book from "./src/modules/Book.jsx";
 import Settings from "./src/modules/Settings.jsx";
 import MonthlyClose from "./src/modules/MonthlyClose.jsx";
@@ -672,7 +672,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals userRole={userRole} userId={userId} /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
-    hr:          <ErrorBoundary name="Team"><HRPeople /></ErrorBoundary>,
+    hr:          <ErrorBoundary name="Team"><Team /></ErrorBoundary>,
     book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
