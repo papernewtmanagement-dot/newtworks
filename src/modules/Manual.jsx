@@ -431,8 +431,7 @@ export default function Manual({ manualType }) {
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [manualType]);
 
   // Auto-default selection: once rows are loaded and selectedId is still
   // null (i.e. URL was bare /handbook), pick the root page and
