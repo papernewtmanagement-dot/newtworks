@@ -320,6 +320,167 @@ const generateSeatInsights = (row, projection) => {
   return out;
 };
 
+// ─── Coaching insights: cross-references assessment traits × seat profitability ──
+// Returns up to 3 severity-ranked insights (critical > action > concern > positive > info).
+// Each insight ties a trait pattern to a specific coaching action, framed around either
+// making the seat more profitable or matching work to the person's natural strengths.
+const generateCoachingHints = (seat, assessment) => {
+  if (!assessment) return [];
+
+  const anl = parseInt(assessment.analytical);
+  const opt = parseInt(assessment.optimism);
+  const ego = parseInt(assessment.ego_drive_score);
+  const emp = parseInt(assessment.empathy_score);
+  const asr = parseInt(assessment.assertiveness);
+  const ind = parseInt(assessment.independent_spirit);
+  const bel = parseInt(assessment.belief_in_others);
+  const com = parseInt(assessment.compassion);
+  const rec = parseInt(assessment.recognition_drive);
+  const dl  = parseInt(assessment.deadline_motivation);
+  const sp  = parseInt(assessment.self_promotion);
+  const traits = [anl, opt, ego, emp, asr, ind, bel, com, rec, dl, sp];
+  const anyTraitPresent = traits.some(v => Number.isFinite(v) && v > 0);
+  if (!anyTraitPresent) return [];  // Phase-2 placeholder rows have all traits null
+
+  const covPct = seat ? (parseFloat(seat.coverage_pct) || 0) : null;
+  const rqm    = seat ? (parseFloat(seat.retention_quality_multiplier) || 0) : null;
+  const cat    = seat?.role_category
+                || (assessment?.assessment_type === "cts_sales" ? "Sales"
+                   : (assessment?.assessment_type === "cts_service_pivot" || assessment?.assessment_type === "cts_service") ? "Retention"
+                   : null);
+  const reliability = (assessment.reliability || "").toLowerCase();
+  const distortion  = (assessment.response_distortion || "").toLowerCase();
+  const lssMath = parseInt(assessment.lss_math_speed_seconds);
+  const lssVerb = parseInt(assessment.lss_verbal_speed_seconds);
+  const lssPS   = parseInt(assessment.lss_problem_solving_speed_seconds);
+  const lssAcc  = parseInt(assessment.lss_total_accuracy);
+  const lssIdeal= parseInt(assessment.lss_total_ideal_min);
+  const hrsMax  = parseInt(assessment.recommended_coaching_hours_max);
+  const hrsMin  = parseInt(assessment.recommended_coaching_hours_min);
+
+  const hints = [];
+
+  // ─── Sales-role patterns ───
+  if (cat === "Sales") {
+    if (opt >= 70 && anl < 20 && covPct != null && covPct < 90) {
+      hints.push({
+        severity:"critical",
+        title:"Complacency archetype",
+        detail:`High Optimism (${opt}) + low Analytical (${anl}) = blind spot to own pace drops. Rides good stretches, misses declines. Coaching lever: external mirror (weekly data reviews with witnesses, immediate feedback). Do NOT confront as personality — it's structural.`,
+      });
+    } else if (ego >= 60 && covPct != null && covPct >= 100) {
+      hints.push({
+        severity:"positive",
+        title:"Producer archetype",
+        detail:`Ego Drive ${ego} + Coverage ${Math.round(covPct)}%. Protect autonomy, reward with stretch goals not micromanagement. Growth path (Section/Unit Manager) worth exploring.`,
+      });
+    }
+    if (bel >= 85 && com < 25 && asr < 45 && ind >= 80) {
+      hints.push({
+        severity:"concern",
+        title:"Broken-trust has no graceful recovery",
+        detail:`Belief ${bel} + Compassion ${com} + Assertiveness ${asr} + Independent ${ind}: extends trust freely, no softening on violation, won't confront, doesn't self-repair. When a rupture occurs, YOU must reset the trust signal explicitly — silence festers into withdrawal + covert resistance.`,
+      });
+    }
+    if (asr < 25 && covPct != null && covPct < 90) {
+      hints.push({
+        severity:"action",
+        title:"Under-negotiates on close",
+        detail:`Assertiveness ${asr} caps ask-strength. Direct coaching move: role-play push-back scenarios and objection-handling. This trait responds measurably to structured reps.`,
+      });
+    }
+    if (rec < 20 && ego >= 30 && ego < 60) {
+      hints.push({
+        severity:"info",
+        title:"Peer-parity is the money lever",
+        detail:`Recognition ${rec} means public leaderboards fall flat. Ego Drive ${ego} activates on peer comparison ("they earn what I earn"). Frame comp math against peer parity, not against absolute targets.`,
+      });
+    }
+    if (ind >= 85) {
+      hints.push({
+        severity:"info",
+        title:"Autonomy-driven",
+        detail:`Independent Spirit ${ind}: highly resistant to close supervision. Delegate outcomes, not process. Light check-in cadence, expect autonomous execution.`,
+      });
+    }
+  }
+
+  // ─── Retention-role patterns ───
+  if (cat === "Retention") {
+    if (com >= 60 && bel >= 60 && rqm != null && rqm < 0.6) {
+      hints.push({
+        severity:"action",
+        title:"Right person, wrong environment",
+        detail:`Compassion ${com} + Belief ${bel} = strong retention base. Coverage gap is agency-lapse-driven (RQM ${rqm.toFixed(2)}), NOT coaching-intensity-driven. Lapse investigation is what moves the needle for this seat.`,
+      });
+    }
+    if (com < 25) {
+      hints.push({
+        severity:"critical",
+        title:"Compassion mismatch for retention",
+        detail:`Compassion ${com} — this is the base skill of retention work. More coaching hours won't unlock what isn't there. Role-fit conversation warranted, not intensity increase.`,
+      });
+    }
+    if (dl < 30) {
+      hints.push({
+        severity:"concern",
+        title:"Slow-pace tolerance",
+        detail:`Deadline Motivation ${dl}: won't self-drive on time-sensitive work. Match to non-cadence tasks (policy audits, deep-service review). Don't put on outbound rhythms — they'll fall behind.`,
+      });
+    }
+    if (anl >= 70) {
+      hints.push({
+        severity:"info",
+        title:"Analytical strength underused",
+        detail:`Analytical ${anl}: naturally fits policy-review + coverage-audit work. Route complex service tasks here — this profile is often underutilized in pure inbound answering.`,
+      });
+    }
+  }
+
+  // ─── Cross-cutting patterns ───
+  if (Number.isFinite(hrsMax) && hrsMax >= 15) {
+    hints.push({
+      severity:"concern",
+      title:"High-touch profile",
+      detail:`Recommended coaching ${hrsMin || "?"}-${hrsMax} hrs/mo (upper band). Under-coaching drops performance visibly. If ceiling met, sustained investment produces the ROI; if not, coaching gap will widen.`,
+    });
+  }
+  if (distortion === "high") {
+    hints.push({
+      severity:"info",
+      title:"Trust behavior over self-report",
+      detail:`Response distortion tagged high — assessment scores may be inflated. Weight behavioral evidence over the numbers on this row.`,
+    });
+  }
+  if (reliability === "low") {
+    hints.push({
+      severity:"info",
+      title:"Assessment reliability is low",
+      detail:`Reliability tagged low — cross-check trait interpretation against multiple observations before acting.`,
+    });
+  }
+  if (Number.isFinite(lssMath) && Number.isFinite(lssVerb) && Number.isFinite(lssPS)
+      && lssMath > 60 && lssVerb > 45 && lssPS > 120) {
+    hints.push({
+      severity:"concern",
+      title:"Productivity ceiling from LSS",
+      detail:`LSS speeds slow across math (${lssMath}s), verbal (${lssVerb}s), problem-solving (${lssPS}s). Per-day throughput is constrained regardless of coaching. Match to deep-detail work with fewer per-day transactions.`,
+    });
+  }
+  if (Number.isFinite(lssAcc) && Number.isFinite(lssIdeal) && lssAcc <= lssIdeal + 2) {
+    hints.push({
+      severity:"concern",
+      title:"Cognitive baseline",
+      detail:`LSS total accuracy ${lssAcc} just clears ideal min ${lssIdeal}. Multi-step compound tasks (complex policy work) will be error-prone. Break work into smaller, checkable steps.`,
+    });
+  }
+
+  // Rank & cap
+  const rank = { critical:0, action:1, concern:2, positive:3, info:4 };
+  hints.sort((a, b) => (rank[a.severity] || 5) - (rank[b.severity] || 5));
+  return hints.slice(0, 3);
+};
+
 // ─── Trait rendering for Assessment panel ──
 const TraitBar = ({ label, value }) => {
   const v = Math.max(0, Math.min(100, parseInt(value)));
@@ -1784,6 +1945,22 @@ const StaffDirectory = ({ staff }) => {
                           )}
                         </div>
                       )}
+                      {(() => {
+                        const coachingHints = generateCoachingHints(seat, asmt);
+                        if (coachingHints.length === 0) return null;
+                        return (
+                          <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
+                            {coachingHints.map((h, i) => {
+                              const c = sevColor(h.severity);
+                              return (
+                                <div key={i} style={{ padding:"7px 10px", background:c.bg, borderLeft:`3px solid ${c.border}`, borderRadius:4, fontSize:11, color:T.slate700, lineHeight:1.5 }}>
+                                  <strong style={{ color:c.fg }}>{h.title}:</strong> {h.detail}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:6, marginBottom:8 }}>
                         {traits.map(([label, val]) => <TraitBar key={label} label={label} value={val} />)}
                       </div>
