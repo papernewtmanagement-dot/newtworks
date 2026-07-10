@@ -843,16 +843,19 @@ const StaffDirectory = ({ staff }) => {
   const [asmtByMember, setAsmtByMember] = useState({});
   const [prodByMember, setProdByMember] = useState({});
   const [behavioralByMember, setBehavioralByMember] = useState({});
+  const [trajectoryByMember, setTrajectoryByMember] = useState({});
+  const [trajectoryRecomputing, setTrajectoryRecomputing] = useState({});
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const activeIds = (staff || []).filter(s => s && s.is_active).map(s => s.id);
       if (activeIds.length === 0) return;
       try {
-        const [asRes, prRes, bnRes] = await Promise.all([
+        const [asRes, prRes, bnRes, trRes] = await Promise.all([
           supabase.from("team_assessments").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("assessment_date", { ascending: false }),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, premium_issued, policies_issued").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
           supabase.from("team_behavioral_notes").select("id, team_member_id, observation_date, observation_text, pattern_type, is_resolved").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).neq("pattern_type", "termination").order("observation_date", { ascending: false }).limit(120),
+          supabase.from("team_trajectory_summaries").select("team_member_id, summary, notes_analyzed_count, notes_range_start, notes_range_end, model_used, updated_at").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
         ]);
         if (cancelled) return;
         // Latest assessment per member (query already sorted by date desc)
@@ -895,12 +898,46 @@ const StaffDirectory = ({ staff }) => {
           b.byMonth = Object.values(b.byMonth).sort((x, y) => x.key.localeCompare(y.key));
         });
         setProdByMember(pMap);
+        // Trajectory summaries keyed by team_member_id
+        const tMap = {};
+        (trRes.data || []).forEach(row => { tMap[row.team_member_id] = row; });
+        setTrajectoryByMember(tMap);
       } catch (e) {
         console.error("StaffDirectory extended fetches failed:", e);
       }
     })();
     return () => { cancelled = true; };
   }, [staff]);
+
+  // Recompute one member's trajectory summary. Fires the SQL RPC (which invokes the
+  // team-trajectory-summarize edge function via net.http_post), then re-fetches
+  // this member's row after a short delay. Owner/manager only in practice
+  // (Members tab is admin-gated at the app layer).
+  const recomputeTrajectory = async (memberId) => {
+    setTrajectoryRecomputing(prev => ({ ...prev, [memberId]: true }));
+    try {
+      const { error: rpcErr } = await supabase.rpc("team_trajectory_recompute", {
+        p_team_member_id: memberId, p_all_active: false,
+      });
+      if (rpcErr) throw rpcErr;
+      // Edge fn is async through pg_net; poll for the updated_at bump.
+      const before = trajectoryByMember[memberId]?.updated_at || "";
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const { data } = await supabase.from("team_trajectory_summaries")
+          .select("team_member_id, summary, notes_analyzed_count, notes_range_start, notes_range_end, model_used, updated_at")
+          .eq("team_member_id", memberId).maybeSingle();
+        if (data && data.updated_at && data.updated_at !== before) {
+          setTrajectoryByMember(prev => ({ ...prev, [memberId]: data }));
+          break;
+        }
+      }
+    } catch (e) {
+      console.error("recomputeTrajectory failed:", e);
+    } finally {
+      setTrajectoryRecomputing(prev => { const n = { ...prev }; delete n[memberId]; return n; });
+    }
+  };
 
   // ── Termination flow state (principle 500: document the decision before making it) ──
   const [terminatingId, setTerminatingId] = useState(null);
@@ -1958,6 +1995,52 @@ const StaffDirectory = ({ staff }) => {
                                 </div>
                               );
                             })}
+                          </div>
+                        );
+                      })()}
+                      {(() => {
+                        const traj = trajectoryByMember[member.id];
+                        const recomputing = !!trajectoryRecomputing[member.id];
+                        if (!traj && !recomputing) {
+                          return (
+                            <div style={{ padding:"7px 10px", marginBottom:10, background:T.slate50, border:`1px dashed ${T.slate200}`, borderRadius:4, fontSize:11, color:T.slate500, display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                              <span>No recent trajectory summary yet.</span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); recomputeTrajectory(member.id); }}
+                                style={{ padding:"3px 10px", fontSize:10, fontWeight:600, color:T.blue, background:T.white, border:`1px solid ${T.blue}`, borderRadius:4, cursor:"pointer" }}
+                              >
+                                Compute now
+                              </button>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div style={{ padding:"8px 12px", marginBottom:10, background:"#F5F3FF", borderLeft:`3px solid #7C3AED`, borderRadius:4, fontSize:11, color:T.slate700, lineHeight:1.5 }}>
+                            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, marginBottom:4 }}>
+                              <strong style={{ color:"#5B21B6", fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em" }}>Recent trajectory</strong>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); if (!recomputing) recomputeTrajectory(member.id); }}
+                                disabled={recomputing}
+                                style={{ padding:"2px 8px", fontSize:9, fontWeight:600, color:recomputing ? T.slate400 : "#5B21B6", background:"transparent", border:"none", borderRadius:3, cursor:recomputing ? "wait" : "pointer" }}
+                              >
+                                {recomputing ? "Recomputing…" : "↻ Refresh"}
+                              </button>
+                            </div>
+                            {traj && <div>{traj.summary}</div>}
+                            {traj && (
+                              <div style={{ fontSize:9, color:T.slate500, marginTop:4 }}>
+                                {traj.notes_analyzed_count} note{traj.notes_analyzed_count === 1 ? "" : "s"} analyzed
+                                {traj.notes_range_start && traj.notes_range_end && traj.notes_range_start !== traj.notes_range_end && (
+                                  <span> · {traj.notes_range_start} → {traj.notes_range_end}</span>
+                                )}
+                                {traj.notes_range_start && traj.notes_range_start === traj.notes_range_end && (
+                                  <span> · {traj.notes_range_start}</span>
+                                )}
+                                {traj.updated_at && (
+                                  <span> · summarized {new Date(traj.updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })}</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
