@@ -320,6 +320,22 @@ const generateSeatInsights = (row, projection) => {
   return out;
 };
 
+// ─── Trait rendering for Assessment panel ──
+const TraitBar = ({ label, value }) => {
+  const v = Math.max(0, Math.min(100, parseInt(value)));
+  if (!Number.isFinite(v) || value == null) return null;
+  const barColor = v >= 70 ? T.green : v >= 40 ? T.blue : v >= 20 ? T.amber : T.red;
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:10 }}>
+      <div style={{ flex:"0 0 110px", color:T.slate700 }}>{label}</div>
+      <div style={{ flex:1, height:6, background:T.slate100, borderRadius:3, overflow:"hidden" }}>
+        <div style={{ width:v+"%", height:"100%", background:barColor, borderRadius:3 }} />
+      </div>
+      <div style={{ flex:"0 0 26px", textAlign:"right", fontWeight:700, color:T.slate900 }}>{v}</div>
+    </div>
+  );
+};
+
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
   <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"16px 18px", ...style }}>
@@ -659,6 +675,71 @@ const StaffDirectory = ({ staff }) => {
     })();
     return () => { cancelled = true; };
   }, [seatWeekEnd]);
+
+  // ── Assessment / production / behavioral note lookups for expanded row ──
+  // All three pulled in one Promise.all keyed by team_member_id. Displayed only inside
+  // the admin-only Members view — no team-tier exposure per the Newtworks visibility rule.
+  const [asmtByMember, setAsmtByMember] = useState({});
+  const [prodByMember, setProdByMember] = useState({});
+  const [behavioralByMember, setBehavioralByMember] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const activeIds = (staff || []).filter(s => s && s.is_active).map(s => s.id);
+      if (activeIds.length === 0) return;
+      try {
+        const [asRes, prRes, bnRes] = await Promise.all([
+          supabase.from("team_assessments").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("assessment_date", { ascending: false }),
+          supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, premium_issued, policies_issued").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
+          supabase.from("team_behavioral_notes").select("id, team_member_id, observation_date, observation_text, pattern_type, is_resolved").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).neq("pattern_type", "termination").order("observation_date", { ascending: false }).limit(120),
+        ]);
+        if (cancelled) return;
+        // Latest assessment per member (query already sorted by date desc)
+        const aMap = {};
+        (asRes.data || []).forEach(row => { if (!aMap[row.team_member_id]) aMap[row.team_member_id] = row; });
+        setAsmtByMember(aMap);
+        // Behavioral notes grouped, cap 5 shown later
+        const bMap = {};
+        (bnRes.data || []).forEach(row => { (bMap[row.team_member_id] = bMap[row.team_member_id] || []).push(row); });
+        setBehavioralByMember(bMap);
+        // Production: trailing 12 months from today, by LOB + by month
+        const now = new Date();
+        const cutoffYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        const cutoffMonth = now.getMonth() === 0 ? 1 : now.getMonth() + 1; // inclusive lower bound = same month prior year
+        // Equivalent numeric compare key
+        const cutoffKey = (now.getFullYear() - 1) * 100 + (now.getMonth() + 2 > 12 ? 1 : now.getMonth() + 2);
+        // NOTE: last 12 completed months. If today is Jul 2026, include Aug 2025 → Jul 2026 (13 months buffer,
+        // clamp on display side). Off-by-one small; keep simple.
+        const pMap = {};
+        (prRes.data || []).forEach(row => {
+          const key = row.period_year * 100 + row.period_month;
+          if (key < cutoffKey) return;
+          const prem = parseFloat(row.premium_issued) || 0;
+          const pols = parseInt(row.policies_issued) || 0;
+          const bucket = pMap[row.team_member_id] = pMap[row.team_member_id] || { total_prem:0, total_pols:0, byLob:{}, byMonth:{} };
+          bucket.total_prem += prem;
+          bucket.total_pols += pols;
+          const line = (row.line_of_business || "Other");
+          const lineLabel = line.charAt(0).toUpperCase() + line.slice(1);
+          bucket.byLob[line] = bucket.byLob[line] || { line:lineLabel, prem:0, pols:0 };
+          bucket.byLob[line].prem += prem;
+          bucket.byLob[line].pols += pols;
+          const mKey = row.period_year + "-" + String(row.period_month).padStart(2, "0");
+          bucket.byMonth[mKey] = bucket.byMonth[mKey] || { key:mKey, prem:0, pols:0 };
+          bucket.byMonth[mKey].prem += prem;
+          bucket.byMonth[mKey].pols += pols;
+        });
+        Object.values(pMap).forEach(b => {
+          b.byLob = Object.values(b.byLob).sort((x, y) => y.prem - x.prem);
+          b.byMonth = Object.values(b.byMonth).sort((x, y) => x.key.localeCompare(y.key));
+        });
+        setProdByMember(pMap);
+      } catch (e) {
+        console.error("StaffDirectory extended fetches failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [staff]);
 
   // ── Termination flow state (principle 500: document the decision before making it) ──
   const [terminatingId, setTerminatingId] = useState(null);
@@ -1649,6 +1730,144 @@ const StaffDirectory = ({ staff }) => {
                     ⚠ {member.compliance_flag}
                   </div>
                 )}
+                {(() => {
+                  const asmt = asmtByMember[member.id];
+                  if (!asmt) return null;
+                  const traits = [
+                    ["Ego Drive",           asmt.ego_drive_score],
+                    ["Empathy",             asmt.empathy_score],
+                    ["Analytical",          asmt.analytical],
+                    ["Assertiveness",       asmt.assertiveness],
+                    ["Independent Spirit",  asmt.independent_spirit],
+                    ["Optimism",            asmt.optimism],
+                    ["Deadline Motivation", asmt.deadline_motivation],
+                    ["Recognition Drive",   asmt.recognition_drive],
+                    ["Self-Promotion",      asmt.self_promotion],
+                    ["Belief in Others",    asmt.belief_in_others],
+                    ["Compassion",          asmt.compassion],
+                  ];
+                  const bandColor = (b) => {
+                    const s = (b || "").toLowerCase();
+                    if (s.includes("high")) return "#065F46";
+                    if (s.includes("moderate") && !s.includes("low")) return "#1E40AF";
+                    if (s.includes("low")) return "#991B1B";
+                    return T.slate700;
+                  };
+                  const compKind = asmt.assessment_type === "cts_sales" ? "sales_competencies"
+                                 : asmt.assessment_type === "cts_service_pivot" ? "service_competencies"
+                                 : null;
+                  const compRaw = compKind ? asmt[compKind] : null;
+                  const compEntries = compRaw && typeof compRaw === "object" ? Object.entries(compRaw) : [];
+                  return (
+                    <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
+                      <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Assessment &amp; coaching</div>
+                      <div style={{ marginBottom:8, fontSize:11 }}>
+                        <span style={{ color:T.slate600 }}>{asmt.assessment_type}</span>
+                        {asmt.assessment_date && <span> · {asmt.assessment_date}</span>}
+                        {asmt.overall_score != null && <span> · Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
+                        {asmt.overall_score_band && <span style={{ color:bandColor(asmt.overall_score_band), fontWeight:600 }}> ({asmt.overall_score_band})</span>}
+                        {asmt.recommended_coaching_hours_min != null && (
+                          <span> · Coaching <strong style={{ color:T.slate900 }}>{asmt.recommended_coaching_hours_min}-{asmt.recommended_coaching_hours_max}</strong> hrs/mo</span>
+                        )}
+                      </div>
+                      {(asmt.reliability || asmt.response_distortion) && (
+                        <div style={{ marginBottom:8, display:"flex", gap:6, flexWrap:"wrap" }}>
+                          {asmt.reliability && (
+                            <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.white, border:`1px solid ${T.slate200}`, color:T.slate700 }}>
+                              Reliability: <strong style={{ color:T.slate900 }}>{asmt.reliability}</strong>
+                            </span>
+                          )}
+                          {asmt.response_distortion && (
+                            <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.white, border:`1px solid ${T.slate200}`, color:T.slate700 }}>
+                              Distortion: <strong style={{ color:T.slate900 }}>{asmt.response_distortion}</strong>
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:6, marginBottom:8 }}>
+                        {traits.map(([label, val]) => <TraitBar key={label} label={label} value={val} />)}
+                      </div>
+                      {compEntries.length > 0 && (
+                        <details style={{ marginBottom:6 }}>
+                          <summary style={{ fontSize:10, color:T.blue, cursor:"pointer" }}>{compKind === "sales_competencies" ? "Sales" : "Service"} competencies ({compEntries.length}) ▾</summary>
+                          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:6, marginTop:6 }}>
+                            {compEntries.map(([k, v]) => {
+                              const nice = k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                              return <TraitBar key={k} label={nice} value={v} />;
+                            })}
+                          </div>
+                        </details>
+                      )}
+                      {(asmt.lss_total_accuracy != null || asmt.lss_math_speed_seconds != null) && (
+                        <div style={{ fontSize:11, color:T.slate600, marginBottom:8 }}>
+                          <strong style={{ color:T.slate900 }}>LSS:</strong>
+                          {asmt.lss_total_accuracy != null && <span> Accuracy <strong style={{ color:T.slate900 }}>{asmt.lss_total_accuracy}{asmt.lss_total_ideal_min ? " (ideal ≥"+asmt.lss_total_ideal_min+")" : ""}</strong></span>}
+                          {asmt.lss_math_speed_seconds != null && <span> · Math <strong style={{ color:T.slate900 }}>{asmt.lss_math_speed_seconds}s</strong></span>}
+                          {asmt.lss_verbal_speed_seconds != null && <span> · Verbal <strong style={{ color:T.slate900 }}>{asmt.lss_verbal_speed_seconds}s</strong></span>}
+                          {asmt.lss_problem_solving_speed_seconds != null && <span> · Problem-solving <strong style={{ color:T.slate900 }}>{asmt.lss_problem_solving_speed_seconds}s</strong></span>}
+                        </div>
+                      )}
+                      {asmt.notes && (
+                        <details style={{ marginBottom:6 }}>
+                          <summary style={{ fontSize:10, color:T.blue, cursor:"pointer" }}>Detailed observations ▾</summary>
+                          <div style={{ marginTop:6, whiteSpace:"pre-wrap", fontSize:11, color:T.slate700, lineHeight:1.6, padding:"8px 10px", background:T.white, borderRadius:6, border:`1px solid ${T.slate200}` }}>
+                            {asmt.notes}
+                          </div>
+                        </details>
+                      )}
+                      {(behavioralByMember[member.id] || []).length > 0 && (
+                        <details>
+                          <summary style={{ fontSize:10, color:T.blue, cursor:"pointer" }}>Recent behavioral notes ({(behavioralByMember[member.id] || []).length}) ▾</summary>
+                          <div style={{ marginTop:6, display:"flex", flexDirection:"column", gap:6 }}>
+                            {(behavioralByMember[member.id] || []).slice(0, 5).map(n => (
+                              <div key={n.id} style={{ padding:"6px 8px", background:T.white, borderRadius:6, border:`1px solid ${T.slate200}` }}>
+                                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>{n.observation_date} · {n.pattern_type || "note"}</div>
+                                <div style={{ fontSize:11, color:T.slate700, whiteSpace:"pre-wrap" }}>{n.observation_text}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const prod = prodByMember[member.id];
+                  if (!prod || prod.total_prem <= 0) return null;
+                  const monthLabel = (key) => {
+                    const [y, m] = key.split("-");
+                    return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString("en-US", { month:"short", year:"2-digit" });
+                  };
+                  return (
+                    <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
+                      <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Production — trailing 12 months</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:8, marginBottom:8 }}>
+                        {prod.byLob.map(lob => (
+                          <div key={lob.line} style={{ background:T.white, padding:"6px 8px", borderRadius:6, border:`1px solid ${T.slate200}` }}>
+                            <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>{lob.line}</div>
+                            <div style={{ fontSize:12, fontWeight:700, color:T.slate900 }}>{fmt$(lob.prem)}</div>
+                            <div style={{ fontSize:9, color:T.slate500, marginTop:2 }}>{lob.pols} polic{lob.pols === 1 ? "y" : "ies"}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize:11, color:T.slate600, marginBottom:6 }}>
+                        Trailing 12 mo total: <strong style={{ color:T.slate900 }}>{fmt$(prod.total_prem)}</strong> issued premium · <strong style={{ color:T.slate900 }}>{prod.total_pols}</strong> policies
+                      </div>
+                      <details>
+                        <summary style={{ fontSize:10, color:T.blue, cursor:"pointer" }}>Month-by-month ({prod.byMonth.length}) ▾</summary>
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(100px, 1fr))", gap:6, marginTop:6 }}>
+                          {prod.byMonth.map(m => (
+                            <div key={m.key} style={{ background:T.white, padding:"5px 8px", borderRadius:6, border:`1px solid ${T.slate200}` }}>
+                              <div style={{ fontSize:9, color:T.slate500 }}>{monthLabel(m.key)}</div>
+                              <div style={{ fontSize:11, fontWeight:600, color:T.slate900 }}>{fmt$(m.prem)}</div>
+                              <div style={{ fontSize:9, color:T.slate500 }}>{m.pols} pol</div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  );
+                })()}
                 {seat && (
                   <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
                     <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Seat profitability</div>
