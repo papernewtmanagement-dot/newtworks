@@ -1970,6 +1970,253 @@ function IdeasTab() {
 }
 
 
+// ─── Economics Tab (Phase 5) ──────────────────────────────────
+// LTV + payback per lead source. Combines lead_source_quarterly with agency
+// commission rates + compute_lapse_rate to answer "which sources are actually
+// profitable when we account for retention?" — beyond the surface-level CPA.
+function useEconomicsData() {
+  const [state, setState] = useState({ loading: true, sources: [], rates: null, lapse: [], error: null });
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [sourcesRes, agencyRes, lapseRes] = await Promise.all([
+          supabase.from("lead_source_quarterly")
+            .select("*")
+            .eq("agency_id", AGENCY_ID)
+            .order("snapshot_date", { ascending: false }),
+          supabase.from("agency")
+            .select("pc_base_rate, smvc_rate_pc, blended_rate_other, aipp_rate")
+            .eq("id", AGENCY_ID)
+            .maybeSingle(),
+          supabase.rpc("compute_lapse_rate", { p_agency_id: AGENCY_ID }),
+        ]);
+        if (cancelled) return;
+        setState({
+          loading: false,
+          error: null,
+          sources: Array.isArray(sourcesRes?.data) ? sourcesRes.data : [],
+          rates: agencyRes?.data || null,
+          lapse: Array.isArray(lapseRes?.data) ? lapseRes.data : [],
+        });
+      } catch (err) {
+        if (!cancelled) setState(s => ({ ...s, loading: false, error: err?.message || String(err) }));
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+  return state;
+}
+
+function EconomicsTab() {
+  const vp = useViewport();
+  const { loading, sources, rates, lapse, error } = useEconomicsData();
+  const [targetLapse, setTargetLapse] = useState(0.11); // aspirational retention target from userMemories
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedQuarter, setSelectedQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: T.slate500, fontSize: 13 }}>Loading…</div>;
+  if (error) return <div style={{ padding: 20, color: "#991B1B", fontSize: 13 }}>Error: {error}</div>;
+
+  const pcBase = Number(rates?.pc_base_rate) || 0;
+  const smvc = Number(rates?.smvc_rate_pc) || 0;
+  const effectivePc = pcBase + smvc;
+
+  // Blended annualized lapse from compute_lapse_rate
+  const blendedLapseRow = lapse.find(r => r.line === "blended");
+  const blendedLapse = blendedLapseRow ? Number(blendedLapseRow.annualized_rate) : null;
+  const currentRetentionYears = blendedLapse != null && blendedLapse > 0 ? 1 / blendedLapse : null;
+  const targetRetentionYears = targetLapse > 0 ? 1 / targetLapse : null;
+
+  // Filter sources to selected quarter + latest snapshot per source
+  const quarterSnaps = sources.filter(s => s.period_year === selectedYear && s.period_quarter === selectedQuarter);
+  const latestBySource = {};
+  quarterSnaps.forEach(r => {
+    const key = `${r.source}::${r.source_type || "lead_source"}`;
+    const prev = latestBySource[key];
+    if (!prev || (r.snapshot_date > prev.snapshot_date)) latestBySource[key] = r;
+  });
+  const paidSources = Object.values(latestBySource).filter(s => s.source_type === "lead_source");
+
+  // Per-source economics
+  const rows = paidSources.map(s => {
+    const hhs = Number(s.won_households) || 0;
+    const premium = Number(s.won_premium) || 0;
+    const cost = Number(s.cost_total) || 0;
+    const y1Commission = premium * effectivePc;
+    const ltvCurrent = blendedLapse != null && blendedLapse > 0 ? y1Commission / blendedLapse : null;
+    const ltvTarget = targetLapse > 0 ? y1Commission / targetLapse : null;
+    const paybackMonthsCurrent = y1Commission > 0 && cost > 0 ? (cost * 12) / y1Commission : null;
+    const ltvOverCostCurrent = cost > 0 && ltvCurrent != null ? ltvCurrent / cost : null;
+    const ltvOverCostTarget = cost > 0 && ltvTarget != null ? ltvTarget / cost : null;
+    const cpa = hhs > 0 && cost > 0 ? cost / hhs : null;
+    return {
+      ...s, hhs, premium, cost, y1Commission,
+      ltvCurrent, ltvTarget,
+      paybackMonthsCurrent, ltvOverCostCurrent, ltvOverCostTarget, cpa,
+    };
+  }).sort((a, b) => (b.ltvOverCostCurrent ?? -1) - (a.ltvOverCostCurrent ?? -1));
+
+  const kpiCols = vp.isPhone ? "repeat(auto-fit, minmax(140px, 1fr))" : "repeat(auto-fit, minmax(160px, 1fr))";
+
+  return (
+    <div>
+      {/* Period selector */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: T.slate500 }}>Quarter:</div>
+        <select value={selectedQuarter} onChange={e => setSelectedQuarter(Number(e.target.value))} style={{
+          padding: "6px 10px", fontSize: 12, fontWeight: 600, color: T.slate700,
+          background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer",
+        }}>
+          {[1,2,3,4].map(q => <option key={q} value={q}>Q{q}</option>)}
+        </select>
+        <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} style={{
+          padding: "6px 10px", fontSize: 12, fontWeight: 600, color: T.slate700,
+          background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer",
+        }}>
+          {[new Date().getFullYear() - 1, new Date().getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      <SectionTitle>Assumptions</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: kpiCols, gap: 10 }}>
+        <KpiCard
+          label="Effective P&C Rate"
+          value={`${(effectivePc * 100).toFixed(2)}%`}
+          sub={`Base ${(pcBase * 100).toFixed(1)}% + SMVC ${(smvc * 100).toFixed(2)}%`}
+        />
+        <KpiCard
+          label="Current Blended Lapse"
+          value={blendedLapse != null ? `${(blendedLapse * 100).toFixed(1)}%` : "—"}
+          sub={blendedLapseRow?.source_snapshot_date ? `As of ${blendedLapseRow.source_snapshot_date} (annualized)` : ""}
+          tone={blendedLapse != null && blendedLapse > 0.15 ? "warn" : "neutral"}
+        />
+        <KpiCard
+          label="Retention Years (current)"
+          value={currentRetentionYears != null ? currentRetentionYears.toFixed(2) : "—"}
+          sub="1 ÷ lapse rate"
+        />
+        <KpiCard
+          label="Target Retention Years"
+          value={targetRetentionYears != null ? targetRetentionYears.toFixed(2) : "—"}
+          sub={`If lapse were ${(targetLapse * 100).toFixed(1)}%`}
+          tone="good"
+        />
+      </div>
+
+      {/* Target lapse override slider/input */}
+      <div style={{ marginTop: 12, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "10px 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 11, color: T.slate500, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+            Target lapse (what-if):
+          </div>
+          <input
+            type="number" min="0.05" max="0.5" step="0.01"
+            value={targetLapse}
+            onChange={e => setTargetLapse(Math.max(0.01, Math.min(0.99, Number(e.target.value) || 0.11)))}
+            style={{ ...inputStyle, width: 80 }}
+          />
+          <span style={{ fontSize: 12, color: T.slate500 }}>= {(targetLapse * 100).toFixed(1)}%</span>
+          <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>
+            Default 11% matches the retention aspiration. Tighten it to see LTV under improved retention.
+          </div>
+        </div>
+      </div>
+
+      <SectionTitle>Per-source economics — Q{selectedQuarter} {selectedYear}</SectionTitle>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 780 }}>
+          <thead>
+            <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+              <th style={thStyle}>Source</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>HHs</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Cost</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Y1 Comm</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Payback (mo)</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>LTV (current lapse)</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>LTV / Cost</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>LTV @ {(targetLapse * 100).toFixed(0)}% lapse</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>vs Target</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 24, textAlign: "center", color: T.slate500 }}>
+                No lead-source snapshots for Q{selectedQuarter} {selectedYear} with cost data.
+              </td></tr>
+            )}
+            {rows.map(r => {
+              const paybackColor = r.paybackMonthsCurrent == null ? T.slate500
+                : r.paybackMonthsCurrent <= 12 ? "#065F46"
+                : r.paybackMonthsCurrent <= 24 ? T.gold : "#991B1B";
+              const ratioColor = r.ltvOverCostCurrent == null ? T.slate500
+                : r.ltvOverCostCurrent >= 3 ? "#065F46"
+                : r.ltvOverCostCurrent >= 1 ? T.gold : "#991B1B";
+              return (
+                <tr key={r.id} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.source}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.hhs > 0 ? fmtInt(r.hhs) : "0"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.cost > 0 ? fmtMoney(r.cost) : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.y1Commission > 0 ? fmtMoney(r.y1Commission) : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: paybackColor, fontWeight: 600 }}>
+                    {r.paybackMonthsCurrent != null ? `${r.paybackMonthsCurrent.toFixed(1)}` : "—"}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.ltvCurrent != null ? fmtMoney(r.ltvCurrent) : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: ratioColor, fontWeight: 700 }}>
+                    {r.ltvOverCostCurrent != null ? `${r.ltvOverCostCurrent.toFixed(2)}x` : "—"}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: T.slate500 }}>{r.ltvTarget != null ? fmtMoney(r.ltvTarget) : "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: r.ltvOverCostTarget >= 3 ? "#065F46" : T.slate500 }}>
+                    {r.ltvOverCostTarget != null ? `${r.ltvOverCostTarget.toFixed(2)}x` : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <SectionTitle>Lapse by line</SectionTitle>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 460 }}>
+          <thead>
+            <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+              <th style={thStyle}>Line</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Starting PIF</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Lost YTD</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>YTD Rate</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Annualized</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lapse.map(l => (
+              <tr key={l.line} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                <td style={{ ...tdStyle, fontWeight: 600, textTransform: "capitalize" }}>{l.line}</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>{l.starting_pif != null ? fmtInt(l.starting_pif) : "—"}</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>{l.lost_ytd != null ? fmtInt(l.lost_ytd) : "—"}</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>{l.ytd_rate != null ? `${(Number(l.ytd_rate) * 100).toFixed(2)}%` : "—"}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: Number(l.annualized_rate) > 0.20 ? "#991B1B" : T.slate900 }}>
+                  {l.annualized_rate != null ? `${(Number(l.annualized_rate) * 100).toFixed(2)}%` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 18, fontSize: 11, color: T.slate500, lineHeight: 1.7 }}>
+        <div><strong>Y1 Comm</strong> = won premium × effective P&C rate ({(effectivePc * 100).toFixed(2)}%). Includes SMVC lift; does NOT include AIPP.</div>
+        <div><strong>LTV</strong> = year-1 commission ÷ annualized lapse rate. Undiscounted geometric sum.</div>
+        <div><strong>Payback (mo)</strong> = cost × 12 ÷ year-1 commission. Green ≤ 12 months, amber ≤ 24, red beyond.</div>
+        <div><strong>LTV / Cost</strong> = full-lifetime return per acquisition dollar. Green ≥ 3x, amber ≥ 1x, red below.</div>
+        <div style={{ marginTop: 6 }}><strong>Follow-ups deferred to a later session:</strong> per-teammate attribution on bound HHs (needs a new bound_households table linking policy → agent). Meta social-analytics sync from social_accounts to <code style={{ background: T.slate100, padding: "1px 4px", borderRadius: 3 }}>social_analytics</code> table (schema exists, sync path not wired).</div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Points Tab (nests existing MarketingPoints module) ───────
 function PointsTab() {
   return <MarketingPoints />;
@@ -1979,6 +2226,7 @@ function PointsTab() {
 const SECTIONS = [
   { id: "overview",  label: "Overview" },
   { id: "sources",   label: "Lead Sources" },
+  { id: "economics", label: "Economics" },
   { id: "everquote", label: "EverQuote" },
   { id: "refrev",    label: "Referrals & Reviews" },
   { id: "ideas",     label: "Ideas" },
@@ -2062,6 +2310,7 @@ export default function Marketing() {
 
       {section === "overview" && <OverviewTab state={state} />}
       {section === "sources" && <SourcesTab state={state} />}
+      {section === "economics" && <EconomicsTab />}
       {section === "everquote" && <EverquoteTab />}
       {section === "refrev" && <ReferralsReviewsTab />}
       {section === "ideas" && <IdeasTab />}
