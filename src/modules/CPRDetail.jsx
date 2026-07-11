@@ -302,8 +302,24 @@ const EDIT_FIELDS = {
   ],
 };
 
-// Roles allowed to edit a CPR. Mirrors the Newtworks role taxonomy.
-const EDIT_ROLES = new Set(["owner", "manager"]);
+// Roles allowed to edit a CPR. Owner only (2026-07-11). Managers keep read access.
+const EDIT_ROLES = new Set(["owner"]);
+
+// Weeks BEFORE the current calendar quarter are read-only for everyone,
+// including the Owner. Historical CPRs are archival.
+function getCurrentQuarterStartISO(refDate = null) {
+  const d = refDate ? new Date(refDate + "T00:00:00Z") : new Date();
+  const y = d.getUTCFullYear();
+  const q = Math.floor(d.getUTCMonth() / 3);          // 0..3
+  const startMonth = q * 3;                            // 0,3,6,9
+  const iso = new Date(Date.UTC(y, startMonth, 1)).toISOString().slice(0, 10);
+  return iso;
+}
+function isHistoricalWeek(weekDateISO) {
+  if (!weekDateISO) return false;
+  const qStart = getCurrentQuarterStartISO();
+  return weekDateISO < qStart;
+}
 
 // ── Checklist constants ─────────────────────────────────────
 // Daily ops — items the team handles every day.
@@ -2034,12 +2050,16 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 // Recompute on save calls write_weekly_comp_v2 which populates base_salary,
 // commission, bonus, marketing_pool_earned_weekly, and manager_bonus from
 // the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh }) {
+function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh, canEdit = false, isOwner = false }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
+  // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
+  // Commission is now SP delta this week, columns spelled out, Health+ label,
+  // owner-only formula dropdown, edit gated to owner + non-historical weeks.
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [showFormula, setShowFormula] = useState(false);
 
   // When entering edit mode, seed drafts from current values
   useEffect(() => {
@@ -2053,6 +2073,11 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     }
   }, [editMode, details]);
 
+  // If canEdit flips off (historical week, non-owner viewer), force edit mode off.
+  useEffect(() => {
+    if (!canEdit && editMode) setEditMode(false);
+  }, [canEdit, editMode]);
+
   if (!details || details.length === 0) {
     return (
       <div>
@@ -2063,16 +2088,26 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
   }
   const sorted = sortByTenure(details, team);
 
+  // Pull weekly pool totals from residual_pool_diag (same across every detail row for the week).
+  const diagAny = details.find(d => d.residual_pool_diag) || {};
+  const diag = diagAny.residual_pool_diag || {};
+  const weeklySalesPool     = Number(diag.weekly_sales_pool || 0);
+  const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
+  const salesPoolLabel     = `Sales Share (${fmtMoneyCents(weeklySalesPool)} pool)`;
+  const retentionPoolLabel = `Retention Share (${fmtMoneyCents(weeklyRetentionPool)} pool)`;
+
   // v2 pay components — every element that hits a check under the residual-pool structure.
-  // Base + Comm are payroll-cycle earnings. Team Pool is residual bonus share (YTD-net).
-  // Marketing is the separate marketing pool share. Mgr + Health are pre-pool carveouts.
+  // Base + Commission are payroll-cycle earnings.
+  // Sales Share + Retention Share are the two halves of the residual bonus pool (65/35).
+  // Marketing is the separate marketing pool share. Manager + Health+ are pre-pool carveouts.
   const ROWS = [
     ["base_salary",                   "Base"],
-    ["commission",                    "Comm"],
-    ["bonus",                         "Team Pool"],
+    ["commission",                    "Commission"],
+    ["sales_pool_share",              salesPoolLabel],
+    ["retention_pool_share",          retentionPoolLabel],
     ["marketing_pool_earned_weekly",  "Marketing"],
-    ["manager_bonus",                 "Mgr"],
-    ["health_bonus",                  "Health"],
+    ["manager_bonus",                 "Manager"],
+    ["health_bonus",                  "Health+"],
   ];
 
   async function handleSave() {
@@ -2122,52 +2157,54 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     <div>
       <SectionHeader icon="💰" title="Payroll" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        {/* Edit toolbar — small admin-only affordance */}
-        <div style={{
-          display: "flex", justifyContent: "flex-end", alignItems: "center",
-          gap: 8, padding: "8px 14px", borderBottom: `1px solid ${T.slate200}`,
-          background: editMode ? (T.amber50 || "#fef3c7") : T.white,
-        }}>
-          {editMode && saveError && (
-            <span style={{ color: T.red600 || "#dc2626", fontSize: 12, marginRight: "auto" }}>
-              {saveError}
-            </span>
-          )}
-          {editMode ? (
-            <>
+        {/* Edit toolbar — owner-only, hidden on historical weeks (canEdit=false). */}
+        {canEdit && (
+          <div style={{
+            display: "flex", justifyContent: "flex-end", alignItems: "center",
+            gap: 8, padding: "8px 14px", borderBottom: `1px solid ${T.slate200}`,
+            background: editMode ? (T.amber50 || "#fef3c7") : T.white,
+          }}>
+            {editMode && saveError && (
+              <span style={{ color: T.red600 || "#dc2626", fontSize: 12, marginRight: "auto" }}>
+                {saveError}
+              </span>
+            )}
+            {editMode ? (
+              <>
+                <button
+                  onClick={() => setEditMode(false)}
+                  disabled={saving}
+                  style={{
+                    fontSize: 12, padding: "4px 10px", borderRadius: 4,
+                    border: `1px solid ${T.slate300}`, background: T.white,
+                    color: T.slate700, cursor: saving ? "default" : "pointer",
+                  }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  style={{
+                    fontSize: 12, padding: "4px 10px", borderRadius: 4,
+                    border: `1px solid ${T.slate700}`, background: T.slate700,
+                    color: T.white, cursor: saving ? "default" : "pointer",
+                  }}>
+                  {saving ? "Saving…" : "Save & recompute"}
+                </button>
+              </>
+            ) : (
               <button
-                onClick={() => setEditMode(false)}
-                disabled={saving}
+                onClick={() => setEditMode(true)}
                 style={{
                   fontSize: 12, padding: "4px 10px", borderRadius: 4,
                   border: `1px solid ${T.slate300}`, background: T.white,
-                  color: T.slate700, cursor: saving ? "default" : "pointer",
+                  color: T.slate700, cursor: "pointer",
                 }}>
-                Cancel
+                Edit payroll YTD
               </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                style={{
-                  fontSize: 12, padding: "4px 10px", borderRadius: 4,
-                  border: `1px solid ${T.slate700}`, background: T.slate700,
-                  color: T.white, cursor: saving ? "default" : "pointer",
-                }}>
-                {saving ? "Saving…" : "Save & recompute"}
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => setEditMode(true)}
-              style={{
-                fontSize: 12, padding: "4px 10px", borderRadius: 4,
-                border: `1px solid ${T.slate300}`, background: T.white,
-                color: T.slate700, cursor: "pointer",
-              }}>
-              Edit payroll YTD
-            </button>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -2281,7 +2318,129 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
             </tbody>
           </table>
         </div>
+
+        {/* Owner-only formula breakdown — expand to see how the Sales Pool and
+            Retention Pool for this week get built, and each person's share.  */}
+        {isOwner && (
+          <div style={{ borderTop: `1px solid ${T.slate200}`, background: T.slate50 || "#f8fafc" }}>
+            <button
+              onClick={() => setShowFormula(v => !v)}
+              style={{
+                width: "100%", padding: "8px 14px", background: "transparent",
+                border: "none", cursor: "pointer", textAlign: "left",
+                fontSize: 12, fontWeight: 700, color: T.slate700,
+              }}
+            >
+              {showFormula ? "▾" : "▸"} Formula — Sales Pool & Retention Pool (owner only)
+            </button>
+            {showFormula && (
+              <FormulaBreakdown diag={diag} sorted={sorted} weeklySalesPool={weeklySalesPool} weeklyRetentionPool={weeklyRetentionPool} />
+            )}
+          </div>
+        )}
       </Card>
+    </div>
+  );
+}
+
+// Owner-only breakdown of how the Sales Pool + Retention Pool are constructed for the week
+// and how each person's share is computed. Everything is read from residual_pool_diag
+// (populated by write_weekly_comp_v2) and the per-person detail row.
+function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }) {
+  if (!diag || Object.keys(diag).length === 0) {
+    return (
+      <div style={{ padding: "10px 14px", fontSize: 12, color: T.slate600 }}>
+        No formula diagnostics available (row not recomputed yet).
+      </div>
+    );
+  }
+  const annualEnvelope       = Number(diag.annual_envelope || 0);
+  const annualBonusPool      = Number(diag.annual_bonus_pool || 0);
+  const annualBonusPoolGross = Number(diag.annual_bonus_pool_gross || 0);
+  const annualSalesPool      = Number(diag.annual_sales_pool || 0);
+  const annualRetentionPool  = Number(diag.annual_retention_pool || 0);
+  const annualCarveouts      = Number(diag.annual_carveouts || 0);
+  const teamBaseInEnvelope   = Number(diag.team_total_base_in_envelope || 0);
+  const teamComm             = Number(diag.team_total_comm || 0);
+  const teamHealthAnnual     = Number(diag.team_total_health_annual || 0);
+  const teamBurden           = Number(diag.team_total_burden || 0);
+  const teamWc               = Number(diag.team_wc_annual || 0);
+  const salesWeight          = Number(diag.sales_weight || 0.65);
+  const retentionWeight      = Number(diag.retention_weight || 0.35);
+
+  const row = (label, value, hint) => (
+    <tr>
+      <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
+      <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{fmtMoneyCents(value)}</Td>
+      <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{hint || ""}</Td>
+    </tr>
+  );
+
+  return (
+    <div style={{ padding: "10px 14px 16px", fontSize: 12 }}>
+      <div style={{ fontWeight: 700, marginTop: 4, marginBottom: 6, color: T.slate900 }}>Pool build (annualized)</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {row("Envelope (annual $)", annualEnvelope, `${((Number(diag.pool_basis?.pool_pct) || 0) * 100).toFixed(2)}% of pool basis`)}
+          {row("− Workers Comp", -teamWc, "flat")}
+          {row("÷ (1 + burden 8%)", 0, "→ cash-available pre-people-costs")}
+          {row("− Team base salaries (in envelope)", -teamBaseInEnvelope, "tenure-multiplier applied")}
+          {row("− Team commission (annualized SP)", -teamComm, "1 SP = $1")}
+          {row("− Team health benefits (annual)", -teamHealthAnnual, "agency-paid stipends")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Gross bonus pool</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualBonusPoolGross)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+          </tr>
+          {row("− Carveouts (Mgr, Health+, MVP, WtQ, LI Stipend, Apparel, CC, Mktg)", -annualCarveouts, "pre-pool")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= Net bonus pool (annual)</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualBonusPool)}</Td>
+            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>/ 52 = {fmtMoneyCents(annualBonusPool / 52)} weekly</Td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>Split 65 / 35</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {row(`Sales Pool (${(salesWeight * 100).toFixed(0)}%)`, annualSalesPool, `/ 52 = ${fmtMoneyCents(weeklySalesPool)} weekly`)}
+          {row(`Retention Pool (${(retentionWeight * 100).toFixed(0)}%)`, annualRetentionPool, `/ 52 = ${fmtMoneyCents(weeklyRetentionPool)} weekly`)}
+        </tbody>
+      </table>
+
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>Per-person share this week</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Person</Th>
+            <Th align="right">QTD SP</Th>
+            <Th align="right">SP share</Th>
+            <Th align="right">Sales $ (65% × share × pool)</Th>
+            <Th align="right">Weighted hrs</Th>
+            <Th align="right">Hrs share</Th>
+            <Th align="right">Retention $ (35% × share × pool)</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(d => (
+            <tr key={d.team_member_id}>
+              <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
+              <Td align="right">{d.sales_points == null ? "—" : Number(d.sales_points).toFixed(0)}</Td>
+              <Td align="right">{d.residual_pool_diag ? `${Number(d.residual_pool_diag.sales_points_share_pct || 0).toFixed(2)}%` : "—"}</Td>
+              <Td align="right">{fmtMoneyCents(Number(d.sales_pool_share || 0))}</Td>
+              <Td align="right">{d.residual_pool_diag ? Number(d.residual_pool_diag.weighted_hours_at_40 || 0).toFixed(2) : "—"}</Td>
+              <Td align="right">{d.residual_pool_diag ? `${Number(d.residual_pool_diag.retention_hours_share_pct || 0).toFixed(2)}%` : "—"}</Td>
+              <Td align="right">{fmtMoneyCents(Number(d.retention_pool_share || 0))}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
+        Commission column above = this week's Sales Points earned (QTD delta vs prior Saturday in the same quarter, floored at 0 at quarter start).
+        Sales Pool + Retention Pool sum to the total residual bonus pool. Team burden accrual (8% of base + comm + bonus + carveouts) = {fmtMoneyCents(teamBurden)} annual (paid outside the team pool).
+      </div>
     </div>
   );
 }
@@ -2524,7 +2683,10 @@ function EditModeBar({ totalDirty, saving, saveError, onSave, onCancel }) {
 export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek = null, userRole = null }) {
   const data = useCPRData(weekDate);
   const edit = useEditForm();
-  const canEdit = EDIT_ROLES.has(userRole);
+  // Edit rights = owner role AND current-or-future quarter. Historical weeks
+  // are archival for everyone (including Owner).
+  const isOwner = userRole === "owner";
+  const canEdit = EDIT_ROLES.has(userRole) && !isHistoricalWeek(weekDate);
 
   // ── Week picker — dropdown listing every weekly CPR report this agency has ──
   // Fetched once on mount (no dependency on weekDate). Click any week to jump
@@ -2990,7 +3152,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
 
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
