@@ -345,10 +345,10 @@ const generateCoachingHints = (seat, assessment) => {
 
   const covPct = seat ? (parseFloat(seat.coverage_pct) || 0) : null;
   const rqm    = seat ? (parseFloat(seat.retention_quality_multiplier) || 0) : null;
-  const cat    = seat?.role_category
-                || (assessment?.assessment_type === "cts_sales" ? "Sales"
-                   : (assessment?.assessment_type === "cts_service_pivot" || assessment?.assessment_type === "cts_service") ? "Retention"
-                   : null);
+  // Role category comes from the seat (functional role). The prior fallback to
+  // assessment_type was removed when that column was dropped — role fit is now
+  // a function-based projection (see cts_best_fit_role).
+  const cat    = seat?.role_category || null;
   const reliability = (assessment.reliability || "").toLowerCase();
   const distortion  = (assessment.response_distortion || "").toLowerCase();
   const lssMath = parseInt(assessment.lss_math_speed_seconds);
@@ -1821,18 +1821,17 @@ const StaffDirectory = ({ staff }) => {
                     if (s.includes("low")) return "#991B1B";
                     return T.slate700;
                   };
-                  const compKind = asmt.assessment_type === "cts_sales" ? "sales_competencies"
-                                 : asmt.assessment_type === "cts_service_pivot" ? "service_competencies"
-                                 : null;
-                  const compRaw = compKind ? asmt[compKind] : null;
-                  const compEntries = compRaw && typeof compRaw === "object" ? Object.entries(compRaw) : [];
+                  // Competency lookup is being rebuilt against the cts_<role>_competencies
+                  // SQL functions + cts_best_fit_role. Legacy JSONB columns (sales_competencies,
+                  // service_competencies) no longer exist, and assessment_type is dropped.
+                  // Panel renders empty for now — replaced when the role-fit UI ships.
+                  const compEntries = [];
                   return (
                     <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
                       <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Assessment &amp; coaching</div>
                       <div style={{ marginBottom:8, fontSize:11 }}>
-                        <span style={{ color:T.slate600 }}>{asmt.assessment_type}</span>
-                        {asmt.assessment_date && <span> · {asmt.assessment_date}</span>}
-                        {asmt.overall_score != null && <span> · Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
+                        {asmt.assessment_date && <span style={{ color:T.slate600 }}>{asmt.assessment_date}</span>}
+                        {asmt.overall_score != null && <span>{asmt.assessment_date ? " · " : ""}Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
                         {asmt.overall_score_band && <span style={{ color:bandColor(asmt.overall_score_band), fontWeight:600 }}> ({asmt.overall_score_band})</span>}
                         {asmt.recommended_coaching_hours_min != null && (
                           <span> · Coaching <strong style={{ color:T.slate900 }}>{asmt.recommended_coaching_hours_min}-{asmt.recommended_coaching_hours_max}</strong> hrs/mo</span>
