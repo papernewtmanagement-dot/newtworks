@@ -1,0 +1,4 @@
+-- 2026-07-11 residual_pool_restore_output_column_names
+-- Fix downstream compute_warning_trigger dependency on original column names (role, role_category, role_level).
+-- Ambiguity in function body resolved via qualified aliases only; RETURNS TABLE column names preserved.
+-- Body applied via Supabase MCP; production has the final function.

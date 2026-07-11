@@ -1,0 +1,5 @@
+-- 2026-07-11 residual_pool_split_first_and_prize_cart_formula
+-- Structural change: split 65/35 BEFORE commission deduction; commissions eaten from Sales Share ONLY.
+-- MVP Prize Cart formula changed from (1% x OT x wins/13) to (1% x OT Scorecard) per Peter's stated original formula.
+-- SP-share denominator now Sales-category-only total.
+-- Body applied via Supabase MCP; see production compute_weekly_comp_residual_pool + compute_pool_carveouts.
