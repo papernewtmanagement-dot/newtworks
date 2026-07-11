@@ -8,9 +8,9 @@ import { T } from "../lib/theme.js";
 // Newtworks — State Farm Agent Edition
 //
 // Two tabs:
-//   • Size — agency-level snapshots (premium, PIFs, households)
-//            with WoW/MoM/QoQ/YoY/since-appt comparisons.
-//            Reads: v_agency_growth_summary, v_agency_snapshot_with_changes.
+//   • Snapshot — agency-level snapshots (premium, PIFs, households)
+//                Unified table showing WoW/MoM/QoQ/YoY/since-appt side-by-side per item.
+//                Reads: v_agency_growth_summary, v_agency_snapshot_with_changes.
 //   • Assignments — alphabet split of household service
 //                   assignments across the team. Snapshot-per-date.
 //                   Reads: book_alpha_split, team.
@@ -66,7 +66,7 @@ const fmt = (n) => {
 };
 
 // ============================================================
-// TAB 1 — Book Size (agency growth over time)
+// TAB 1 — Book Snapshot (agency size + growth, all horizons side-by-side)
 // ============================================================
 function useBookData() {
   const [data, setData] = useState({ summary: null, history: [] });
@@ -369,29 +369,16 @@ const BookSizeAddForm = ({ onAdded }) => {
   );
 };
 
-const BookSizeSection = () => {
+const BookSnapshotSection = () => {
   const { data, loading, refresh } = useBookData();
-  const [horizon, setHorizon] = useState("mom");
-  const [showLOB, setShowLOB] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
 
   const summary = data?.summary;
   const history = Array.isArray(data?.history) ? data.history : [];
 
-  const horizonLabel = { wow: "vs last wk", mom: "vs last mo", qoq: "vs last qtr", yoy: "YoY", cum: "since appt" }[horizon];
-  const horizonDate = summary ? {
-    wow: summary.wow_compare_date, mom: summary.mom_compare_date,
-    qoq: summary.qoq_compare_date, yoy: summary.yoy_compare_date,
-    cum: summary.anchor_date,
-  }[horizon] : null;
-  const getPct = (lob) => {
-    if (!summary) return null;
-    return summary[`${lob}_${horizon}_pct`];
-  };
-
   if (loading) {
-    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading book size…</div></Card>;
+    return <Card><div style={{ color: T.slate500, fontSize: 12 }}>Loading book snapshot…</div></Card>;
   }
   if (!summary) {
     return (
@@ -404,87 +391,102 @@ const BookSizeSection = () => {
     );
   }
 
+  const cadence = summary.cadence;
+  const isMonthly = cadence !== "weekly";
+  const hh = Number(summary.household_count) || 0;
+  const perHH = (n) => (hh > 0 && n != null ? (Number(n) / hh).toFixed(2) : null);
+  const lobSub = (pif) => {
+    if (pif == null) return "— PIF";
+    const pHH = perHH(pif);
+    return `${pif} PIF${pHH ? ` · ${pHH}/HH` : ""}`;
+  };
+
+  // View exposes *_wow/mom/qoq/yoy/cum_pct for auto, fire, life, hh — plus wow/mom/qoq/yoy_pct for pc (no pc_cum_pct).
+  // Rows with prefix=null have no comparisons available (Auto/HH is derived; Health has no data source in the view).
+  const rows = [
+    { label: "P&C Premium",  value: fmt(summary.pc_premium),   prefix: "pc",   hasCum: false, weight: "primary" },
+    { label: "Life Premium", value: fmt(summary.life_premium), prefix: "life", hasCum: true,  weight: "primary" },
+    { label: "Households",   value: hh > 0 ? hh.toLocaleString() : "—", prefix: "hh", hasCum: true, weight: "primary" },
+    { label: "Auto / HH",    value: (hh > 0 && summary.auto_pif != null) ? (summary.auto_pif / hh).toFixed(2) : "—", prefix: null, weight: "primary" },
+    { label: "Auto",   sub: lobSub(summary.auto_pif), value: fmt(summary.auto_premium), prefix: "auto",   hasCum: true, weight: "lob", borderColor: T.blue },
+    { label: "Fire",   sub: lobSub(summary.fire_pif), value: fmt(summary.fire_premium), prefix: "fire",   hasCum: true, weight: "lob", borderColor: T.amber },
+    { label: "Life",   sub: lobSub(summary.life_pif), value: fmt(summary.life_premium), prefix: "life",   hasCum: true, weight: "lob", borderColor: T.purple },
+    { label: "Health", sub: lobSub(null),             value: "—",                       prefix: null,                    weight: "lob", borderColor: T.green },
+  ];
+
+  const horizons = [
+    { id: "wow", label: "WoW",        date: summary.wow_compare_date },
+    { id: "mom", label: "MoM",        date: summary.mom_compare_date },
+    { id: "qoq", label: "QoQ",        date: summary.qoq_compare_date },
+    { id: "yoy", label: "YoY",        date: summary.yoy_compare_date },
+    { id: "cum", label: "Since appt", date: summary.anchor_date },
+  ];
+
+  const pctValue = (row, h) => {
+    if (!row.prefix) return null;
+    if (h.id === "wow" && isMonthly) return null;
+    if (h.id === "cum" && !row.hasCum) return null;
+    return summary[`${row.prefix}_${h.id}_pct`];
+  };
+
+  const stickyThFirst = { ...bookThStyle, position: "sticky", left: 0, background: T.slate50, zIndex: 2 };
+  const stickyTdFirst = { ...bookTdStyle, position: "sticky", left: 0, background: T.white, zIndex: 1 };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Card>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>
-              As of {fmtSnapDate(summary.current_snapshot_date)} <span style={{ color: T.slate400, fontWeight: 400 }}>· {summary.cadence}</span>
-            </div>
-            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-              {horizon === "wow" && summary.cadence !== "weekly"
-                ? "WoW unavailable for monthly snapshots"
-                : `Comparing ${horizonLabel} (${horizonDate ? fmtSnapDate(horizonDate) : "—"})`}
-            </div>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 2, background: T.slate100, borderRadius: 8, padding: 3 }}>
-            {[
-              { id: "wow", label: "WoW" },
-              { id: "mom", label: "MoM" },
-              { id: "qoq", label: "QoQ" },
-              { id: "yoy", label: "YoY" },
-              { id: "cum", label: "Since appt" },
-            ].map(h => (
-              <button key={h.id} onClick={() => setHorizon(h.id)} style={{
-                padding: "6px 12px", fontSize: 11,
-                fontWeight: horizon === h.id ? 600 : 400,
-                color: horizon === h.id ? T.slate900 : T.slate500,
-                background: horizon === h.id ? T.white : "transparent",
-                border: "none", borderRadius: 6, cursor: "pointer",
-                boxShadow: horizon === h.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-              }}>{h.label}</button>
-            ))}
-          </div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>
+          As of {fmtSnapDate(summary.current_snapshot_date)} <span style={{ color: T.slate400, fontWeight: 400 }}>· {cadence}</span>
         </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-          <KPICard label="P&C Premium" value={fmt(summary.pc_premium)}
-            sub={<span style={{ color: pctColor(getPct("pc")) }}>{fmtPct(getPct("pc"))} {horizonLabel}</span>}
-            border={T.blue} />
-          <KPICard label="Life Premium" value={fmt(summary.life_premium)}
-            sub={<span style={{ color: pctColor(getPct("lh")) }}>{fmtPct(getPct("lh"))} {horizonLabel}</span>}
-            border={T.purple} />
-          <KPICard label="Households" value={summary.household_count ?? "—"}
-            sub={<span style={{ color: pctColor(getPct("hh")) }}>{fmtPct(getPct("hh"))} {horizonLabel}</span>}
-            border={T.green} />
-          <KPICard label="Auto / HH"
-            value={summary.household_count > 0 && summary.auto_pif != null
-              ? (summary.auto_pif / summary.household_count).toFixed(2) : "—"}
-            sub="Policies per household" border={T.amber} />
-        </div>
-      </Card>
-
-      <Card>
-        <CollapseHeader title="Line-of-business detail" open={showLOB} onToggle={() => setShowLOB(!showLOB)} />
-        {showLOB && (
-          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-            {[
-              { key: "auto",   label: "Auto",   color: T.blue },
-              { key: "fire",   label: "Fire",   color: T.amber },
-              { key: "life",   label: "Life",   color: T.purple },
-              { key: "health", label: "Health", color: T.green },
-            ].map(lob => (
-              <div key={lob.key} style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, borderTop: `3px solid ${lob.color}`, padding: 14 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: T.slate700, marginBottom: 8 }}>{lob.label}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-                  {fmt(summary[`${lob.key}_premium`])}
-                </div>
-                <div style={{ fontSize: 11, color: pctColor(getPct(lob.key)), marginTop: 4 }}>
-                  {fmtPct(getPct(lob.key))} {horizonLabel}
-                </div>
-                <div style={{ fontSize: 11, color: T.slate400, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.slate100}` }}>
-                  PIF: <span style={{ color: T.slate700, fontWeight: 600 }}>{summary[`${lob.key}_pif`] ?? "—"}</span>
-                  {summary.household_count > 0 && summary[`${lob.key}_pif`] != null && (
-                    <span style={{ marginLeft: 6 }}>
-                      ({(summary[`${lob.key}_pif`] / summary.household_count).toFixed(2)}/HH)
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+        {isMonthly && (
+          <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+            WoW unavailable for monthly snapshots
           </div>
         )}
+
+        <div style={{ overflowX: "auto", marginTop: 14 }}>
+          <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse", minWidth: 640 }}>
+            <thead>
+              <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+                <th style={stickyThFirst}>Item</th>
+                <th style={{ ...bookThStyle, textAlign: "right" }}>Value</th>
+                {horizons.map(h => (
+                  <th key={h.id} style={{ ...bookThStyle, textAlign: "right" }}>
+                    {h.label}
+                    <div style={{ fontSize: 9, fontWeight: 400, color: T.slate400, marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
+                      {h.date ? fmtSnapDate(h.date) : "—"}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => {
+                const firstCellStyle = {
+                  ...stickyTdFirst,
+                  borderLeft: row.borderColor ? `3px solid ${row.borderColor}` : "3px solid transparent",
+                };
+                return (
+                  <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                    <td style={firstCellStyle}>
+                      <div style={{ fontWeight: 600, color: T.slate800 }}>{row.label}</div>
+                      {row.sub && <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>{row.sub}</div>}
+                    </td>
+                    <td style={{ ...bookTdStyle, textAlign: "right", fontWeight: 600, color: T.slate900 }}>{row.value}</td>
+                    {horizons.map(h => {
+                      const v = pctValue(row, h);
+                      return (
+                        <td key={h.id} style={{ ...bookTdStyle, textAlign: "right", color: pctColor(v) }}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       <Card>
@@ -1169,16 +1171,16 @@ const BookAssignmentsSection = () => {
 
 
 export default function Book() {
-  const [tab, setTab] = useState("size");
+  const [tab, setTab] = useState("snapshot");
 
   const tabs = [
-    { id: "size",        label: "Size" },
+    { id: "snapshot",    label: "Snapshot" },
     { id: "goals",       label: "Goals" },
     { id: "assignments", label: "Assignments" },
   ];
 
   const subtitle =
-    tab === "size"        ? "Agency-level book size and growth over time" :
+    tab === "snapshot"    ? "Agency-level book size + growth across every horizon" :
     tab === "goals"       ? "Year-end targets and YTD pace" :
     tab === "assignments" ? "Household alphabet split across the team" :
     "";
@@ -1195,7 +1197,7 @@ export default function Book() {
 
       <TabBar tabs={tabs} active={tab} onChange={setTab} />
 
-      {tab === "size" && <BookSizeSection />}
+      {tab === "snapshot" && <BookSnapshotSection />}
       {tab === "goals" && <BookGoalsSection />}
       {tab === "assignments" && <BookAssignmentsSection />}
     </div>
