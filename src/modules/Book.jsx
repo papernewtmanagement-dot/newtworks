@@ -441,11 +441,10 @@ const BookSnapshotSection = () => {
         )}
 
         <div style={{ overflowX: "auto", marginTop: 14 }}>
-          <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse", minWidth: 720 }}>
+          <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse", minWidth: 640 }}>
             <thead>
               <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
                 <th style={stickyThFirst}>Item</th>
-                <th style={{ ...bookThStyle, textAlign: "right" }}>PIFs · per HH</th>
                 <th style={{ ...bookThStyle, textAlign: "right" }}>Value</th>
                 {horizons.map(h => (
                   <th key={h.id} style={{ ...bookThStyle, textAlign: "right" }}>
@@ -461,9 +460,13 @@ const BookSnapshotSection = () => {
               {rows.map((row, i) => (
                 <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
                   <td style={stickyTdFirst}>
-                    <div style={{ fontWeight: 600, color: T.slate800 }}>{row.label}</div>
+                    <div style={{ fontWeight: 600, color: T.slate800 }}>
+                      {row.label}
+                      {row.pif && (
+                        <span style={{ fontWeight: 400, color: T.slate500, marginLeft: 8 }}>{row.pif}</span>
+                      )}
+                    </div>
                   </td>
-                  <td style={{ ...bookTdStyle, textAlign: "right", color: T.slate600 }}>{row.pif ?? "—"}</td>
                   <td style={{ ...bookTdStyle, textAlign: "right", fontWeight: 600, color: T.slate900 }}>{row.value}</td>
                   {horizons.map(h => {
                     const v = pctValue(row, h);
