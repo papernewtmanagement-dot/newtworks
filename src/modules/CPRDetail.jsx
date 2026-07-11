@@ -2877,6 +2877,9 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
           onReportChange={edit.setReportField}
+          formSnapshot={edit.form.snapshot}
+          isSnapshotDirty={edit.isSnapshotDirty}
+          onSnapshotChange={edit.setSnapshotField}
         />
       </Section>
 
