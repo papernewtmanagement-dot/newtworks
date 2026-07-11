@@ -81,13 +81,16 @@ const renderMarkdown = (text) => {
       return <div key={idx} style={{ fontWeight: 700, fontSize: 14, color: T.slate800, marginTop: 8, marginBottom: 4 }}>{ln.slice(4).replace(/[()<>0-9]/g, m => m).trim()}</div>;
     }
     if (ln.startsWith("- ")) {
-      const body = ln.slice(2);
-      // Check for *(optional)* prefix
-      const isOptional = /^\*\(optional\)\*/.test(body) || /^\*\s*\(optional\)/.test(body);
-      const cleaned = body.replace(/^\*\(optional\)\*\s*/, "").replace(/^\*\s*/, "");
+      let body = ln.slice(2);
+      // Detect and strip *(optional) ... * pattern common in Final Interview manual
+      const isOptional = /^\*\s*\(optional\)/i.test(body);
+      if (isOptional) {
+        // Strip leading "*(optional) " and trailing "*"
+        body = body.replace(/^\*\s*\(optional\)\s*/i, "").replace(/\*\s*$/, "");
+      }
       return (
-        <div key={idx} style={{ marginLeft: 12, marginBottom: 3, fontSize: 12, color: isOptional ? T.slate500 : T.slate800, fontStyle: isOptional ? "italic" : "normal" }}>
-          {isOptional ? "○ " : "• "}{renderInline(cleaned)}
+        <div key={idx} style={{ marginLeft: 12, marginBottom: 3, fontSize: 12, color: isOptional ? T.slate500 : T.slate800, fontStyle: isOptional ? "italic" : "normal", lineHeight: 1.5 }}>
+          <span style={{ marginRight: 4, opacity: 0.6 }}>{isOptional ? "○" : "•"}</span>{renderInline(body)}
         </div>
       );
     }
