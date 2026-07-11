@@ -1,5 +1,6 @@
 import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
+import CandidateDetail from "../components/CandidateDetail.jsx";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -345,10 +346,10 @@ const generateCoachingHints = (seat, assessment) => {
 
   const covPct = seat ? (parseFloat(seat.coverage_pct) || 0) : null;
   const rqm    = seat ? (parseFloat(seat.retention_quality_multiplier) || 0) : null;
-  // Role category comes from the seat (functional role). The prior fallback to
-  // assessment_type was removed when that column was dropped — role fit is now
-  // a function-based projection (see cts_best_fit_role).
-  const cat    = seat?.role_category || null;
+  const cat    = seat?.role_category
+                || (assessment?.assessment_type === "cts_sales" ? "Sales"
+                   : (assessment?.assessment_type === "cts_service_pivot" || assessment?.assessment_type === "cts_service") ? "Retention"
+                   : null);
   const reliability = (assessment.reliability || "").toLowerCase();
   const distortion  = (assessment.response_distortion || "").toLowerCase();
   const lssMath = parseInt(assessment.lss_math_speed_seconds);
@@ -525,6 +526,17 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
 
   const selectedApp = applicants.find(a => a.id === selected);
 
+  // Full-view candidate detail (replaces kanban when a card is clicked)
+  if (selectedApp) {
+    return (
+      <CandidateDetail
+        candidate={selectedApp}
+        onBack={() => setSelected(null)}
+        onUpdate={onUpdate}
+      />
+    );
+  }
+
   return (
     <div>
       {/* Pipeline Kanban (horizontally scrollable on narrow viewports) */}
@@ -558,38 +570,6 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
       </div>
       </div>
 
-      {/* Applicant Detail Panel */}
-      {selectedApp && (
-        <Card>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
-            <div>
-              <div style={{ fontSize:16, fontWeight:700, color:T.slate900 }}>{selectedApp.first_name} {selectedApp.last_name}</div>
-              <div style={{ fontSize:12, color:T.slate500, marginTop:2 }}>{selectedApp.position} · Received {selectedApp.intake_received_at}</div>
-            </div>
-            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-              <div style={{ width:44, height:44, borderRadius:12, background:scoreBg(selectedApp.claude_score), display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <span style={{ fontSize:18, fontWeight:700, color:scoreColor(selectedApp.claude_score) }}>{selectedApp.claude_score}</span>
-              </div>
-              <StageBadge status={selectedApp.status} />
-              
-            </div>
-          </div>
-
-          {/* AI Summary */}
-          <div style={{ background:T.slate50, borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:T.slate600, marginBottom:4 }}>RESUME ANALYSIS (Groq)</div>
-            <div style={{ fontSize:12, color:T.slate700, lineHeight:1.7 }}>{selectedApp.claude_summary}</div>
-          </div>
-
-          {/* Interview Focus */}
-          {selectedApp.interview_focus && (
-            <div style={{ background:T.amberLt, border:`1px solid #FCD34D`, borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:"#92400E", marginBottom:8 }}>ONE PAGE INTERVIEW FOCUS</div>
-              <pre style={{ fontSize:11, color:"#78350F", lineHeight:1.7, margin:0, whiteSpace:"pre-wrap", fontFamily:"inherit" }}>
-                {selectedApp.interview_focus}
-              </pre>
-            </div>
-          )}
 
           {/* Interview notes */}
           {selectedApp.interview_notes && (
@@ -1821,17 +1801,18 @@ const StaffDirectory = ({ staff }) => {
                     if (s.includes("low")) return "#991B1B";
                     return T.slate700;
                   };
-                  // Competency lookup is being rebuilt against the cts_<role>_competencies
-                  // SQL functions + cts_best_fit_role. Legacy JSONB columns (sales_competencies,
-                  // service_competencies) no longer exist, and assessment_type is dropped.
-                  // Panel renders empty for now — replaced when the role-fit UI ships.
-                  const compEntries = [];
+                  const compKind = asmt.assessment_type === "cts_sales" ? "sales_competencies"
+                                 : asmt.assessment_type === "cts_service_pivot" ? "service_competencies"
+                                 : null;
+                  const compRaw = compKind ? asmt[compKind] : null;
+                  const compEntries = compRaw && typeof compRaw === "object" ? Object.entries(compRaw) : [];
                   return (
                     <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
                       <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Assessment &amp; coaching</div>
                       <div style={{ marginBottom:8, fontSize:11 }}>
-                        {asmt.assessment_date && <span style={{ color:T.slate600 }}>{asmt.assessment_date}</span>}
-                        {asmt.overall_score != null && <span>{asmt.assessment_date ? " · " : ""}Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
+                        <span style={{ color:T.slate600 }}>{asmt.assessment_type}</span>
+                        {asmt.assessment_date && <span> · {asmt.assessment_date}</span>}
+                        {asmt.overall_score != null && <span> · Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
                         {asmt.overall_score_band && <span style={{ color:bandColor(asmt.overall_score_band), fontWeight:600 }}> ({asmt.overall_score_band})</span>}
                         {asmt.recommended_coaching_hours_min != null && (
                           <span> · Coaching <strong style={{ color:T.slate900 }}>{asmt.recommended_coaching_hours_min}-{asmt.recommended_coaching_hours_max}</strong> hrs/mo</span>
