@@ -789,15 +789,46 @@ function goalFor(goals, lob, metric) {
 // ─────────────────────────────────────────────────────────────
 
 // 1 — Opener
-function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange }) {
+function OpenerSection({ weekDate, report, snapshotForWeek, editMode, formValue, dirty, onChange }) {
   // Opener stored in weekly_cpr_reports.opener_text.
   // Same field is read by send_weekly_cpr_recap when the Saturday email goes out.
   // In edit mode: render textarea wired to form. In view mode: render text or Awaiting.
   const text = report?.opener_text && report.opener_text.trim().length > 0 ? report.opener_text : null;
+  // Book snapshot ingest status. The agency_snapshot row for this week's
+  // Saturday is pre-created by the Telegram check-in flow with the book
+  // columns empty. The Weekly Agency Snapshot Gmail parser fills them Friday
+  // ~4:30 PM CT off the SF CRM Analytics widget-subscription email and stamps
+  // crm_analytics_ingested=true. Flag confirms at a glance whether this
+  // week's book data is real or still waiting on the email.
+  const ingested = snapshotForWeek?.crm_analytics_ingested === true;
+  const ingestedAt = snapshotForWeek?.crm_analytics_ingested_at || null;
+  let ingestedAtLabel = "";
+  if (ingestedAt) {
+    try {
+      ingestedAtLabel = new Date(ingestedAt).toLocaleString("en-US", {
+        month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+      });
+    } catch { ingestedAtLabel = ""; }
+  }
   return (
     <Card>
       <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6, fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>
         CPR Recap — Week ending {fmtDateLong(weekDate)}
+      </div>
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "3px 10px", marginBottom: 12, borderRadius: 999,
+        fontSize: 11, fontWeight: 600, letterSpacing: 0.2,
+        background: ingested ? T.greenLt : T.amberLt,
+        color: ingested ? "#065f46" : "#92400e",
+        border: `1px solid ${ingested ? T.green : T.amber}`,
+      }}>
+        <span>{ingested ? "✅" : "⏳"}</span>
+        <span>
+          {ingested
+            ? `Book snapshot ingested${ingestedAtLabel ? ` · ${ingestedAtLabel}` : ""}`
+            : "Book snapshot pending — awaiting Friday CRM Analytics email"}
+        </span>
       </div>
       {editMode ? (
         <TextArea
@@ -2795,6 +2826,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section>
         <OpenerSection
           weekDate={weekDate} report={data.report}
+          snapshotForWeek={data.bookCurrent && data.bookCurrent.snapshot_date === weekDate ? data.bookCurrent : null}
           editMode={edit.active}
           formValue={edit.form.report.opener_text}
           dirty={edit.isReportDirty("opener_text")}
@@ -2877,9 +2909,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
           onReportChange={edit.setReportField}
-          formSnapshot={edit.form.snapshot}
-          isSnapshotDirty={edit.isSnapshotDirty}
-          onSnapshotChange={edit.setSnapshotField}
         />
       </Section>
 
