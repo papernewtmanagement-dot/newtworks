@@ -464,6 +464,13 @@ function useCPRData(weekDate) {
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
+    leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
+    allStarCounts: [],   // running all-star counts per person per category
+    floorConfig: [],     // round_step + direction per category
+    mvpThisWeek: null,   // mvp_history row for this week (name + SP + draws)
+    quarterPrizeBudget: null, // budget dollars for the quarter containing this week
+    priorQuartersAvgSP: {},   // {team_member_id: [{quarter_label, avg_weekly_sp}]} - reference lines
+    prizeCart: [],
   });
 
   useEffect(() => {
@@ -742,19 +749,115 @@ function useCPRData(weekDate) {
         // Prize Cart — 13 prizes for the cycle containing this week.
         // Filter: smallest quarter_ending_date >= weekDate, ordered by display_order.
         let prizeCart = [];
+        let cartQuarterEnd = null;
         try {
           const { data: prizeCartRows } = await supabase
             .from("prize_cart")
-            .select("id, display_order, prize_description, prize_url, prize_value, winner_team_member_id, won_on")
+            .select("id, display_order, prize_description, prize_url, prize_value, winner_team_member_id, won_on, quarter_ending_date")
             .eq("agency_id", AGENCY_ID)
             .gte("quarter_ending_date", weekDate)
             .order("quarter_ending_date", { ascending: true })
             .order("display_order", { ascending: true })
             .limit(13);
-          if (!cancelled) prizeCart = prizeCartRows || [];
+          if (!cancelled) {
+            prizeCart = prizeCartRows || [];
+            cartQuarterEnd = prizeCart[0]?.quarter_ending_date || null;
+          }
         } catch (e) {
           console.warn("prize_cart fetch failed:", e);
         }
+
+        // Quarter Prize Cart Budget — total quarter-ending budget (formula-driven).
+        let quarterPrizeBudget = null;
+        if (cartQuarterEnd) {
+          try {
+            const { data: bud } = await supabase
+              .from("quarter_prize_budgets")
+              .select("budget_dollars, formula_note")
+              .eq("agency_id", AGENCY_ID)
+              .eq("quarter_ending_date", cartQuarterEnd)
+              .maybeSingle();
+            if (!cancelled) quarterPrizeBudget = bud || null;
+          } catch (e) { console.warn("quarter_prize_budgets fetch failed:", e); }
+        }
+
+        // Leaderboards — Gold/Silver/Bronze × 3 categories
+        let leaderboards = [];
+        try {
+          const { data: lbRows } = await supabase
+            .from("leaderboards")
+            .select("category, tier, team_member_id, record_value, record_period_label, record_week_ending, set_at")
+            .eq("agency_id", AGENCY_ID)
+            .order("category").order("tier");
+          if (!cancelled) leaderboards = lbRows || [];
+        } catch (e) { console.warn("leaderboards fetch failed:", e); }
+
+        // All-star running counts
+        let allStarCounts = [];
+        try {
+          const { data: asRows } = await supabase
+            .from("all_star_counts")
+            .select("category, team_member_id, count, seeded_count")
+            .eq("agency_id", AGENCY_ID);
+          if (!cancelled) allStarCounts = asRows || [];
+        } catch (e) { console.warn("all_star_counts fetch failed:", e); }
+
+        // Floor config (rounding step per category)
+        let floorConfig = [];
+        try {
+          const { data: fcRows } = await supabase
+            .from("leaderboard_floor_config")
+            .select("category, round_step, round_direction, description");
+          if (!cancelled) floorConfig = fcRows || [];
+        } catch (e) { console.warn("floor_config fetch failed:", e); }
+
+        // MVP this week
+        let mvpThisWeek = null;
+        try {
+          const { data: mvpRow } = await supabase
+            .from("mvp_history")
+            .select("team_member_id, sales_points_earned, prize_draws")
+            .eq("agency_id", AGENCY_ID)
+            .eq("week_ending_date", weekDate)
+            .maybeSingle();
+          if (!cancelled) mvpThisWeek = mvpRow || null;
+        } catch (e) { console.warn("mvp_history fetch failed:", e); }
+
+        // Prior-quarter avg SP per person — from historical quarterly QTD divided by 13
+        // Serves as reference lines on Sales Points weekly-run charts (assumes even production)
+        let priorQuartersAvgSP = {};
+        try {
+          const { data: qtrRows } = await supabase
+            .from("weekly_cpr_team_detail")
+            .select("team_member_id, sales_points, weekly_cpr_report_id, weekly_cpr_reports!inner(week_ending_date)")
+            .eq("agency_id", AGENCY_ID)
+            .not("sales_points", "is", null)
+            .lt("weekly_cpr_reports.week_ending_date", weekDate)
+            .in("weekly_cpr_reports.week_ending_date", [
+              "2023-03-25","2023-06-24","2023-09-30","2023-12-30",
+              "2024-03-30","2024-06-29","2024-09-28","2024-12-28",
+              "2025-03-29","2025-06-28","2025-09-27","2025-12-27",
+              "2026-03-28","2026-06-27"
+            ]);
+          if (!cancelled && qtrRows) {
+            const grouped = {};
+            qtrRows.forEach(r => {
+              const wed = r.weekly_cpr_reports?.week_ending_date;
+              const y = wed?.slice(0,4);
+              const m = parseInt(wed?.slice(5,7), 10);
+              const q = m >= 1 && m <= 3 ? 1 : m <= 6 ? 2 : m <= 9 ? 3 : 4;
+              const label = `Q${q} ${y}`;
+              const tmId = r.team_member_id;
+              if (!grouped[tmId]) grouped[tmId] = [];
+              grouped[tmId].push({
+                quarter_label: label,
+                avg_weekly_sp: (Number(r.sales_points) || 0) / 13,
+                qtd_sp: Number(r.sales_points) || 0,
+              });
+            });
+            priorQuartersAvgSP = grouped;
+          }
+        } catch (e) { console.warn("priorQuartersAvgSP fetch failed:", e); }
 
         setState({
           loading: false, error: null,
@@ -778,6 +881,12 @@ function useCPRData(weekDate) {
           runtimeReqs,
           section11,
           prizeCart,
+          leaderboards,
+          allStarCounts,
+          floorConfig,
+          mvpThisWeek,
+          quarterPrizeBudget,
+          priorQuartersAvgSP,
         });
       } catch (err) {
         if (!cancelled) {
@@ -2354,19 +2463,55 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </div>
     );
   }
-  const annualEnvelope       = Number(diag.annual_envelope || 0);
-  const annualBonusPool      = Number(diag.annual_bonus_pool || 0);
-  const annualBonusPoolGross = Number(diag.annual_bonus_pool_gross || 0);
-  const annualSalesPool      = Number(diag.annual_sales_pool || 0);
-  const annualRetentionPool  = Number(diag.annual_retention_pool || 0);
-  const annualCarveouts      = Number(diag.annual_carveouts || 0);
-  const teamBaseInEnvelope   = Number(diag.team_total_base_in_envelope || 0);
-  const teamComm             = Number(diag.team_total_comm || 0);
-  const teamHealthAnnual     = Number(diag.team_total_health_annual || 0);
-  const teamBurden           = Number(diag.team_total_burden || 0);
-  const teamWc               = Number(diag.team_wc_annual || 0);
-  const salesWeight          = Number(diag.sales_weight || 0.65);
-  const retentionWeight      = Number(diag.retention_weight || 0.35);
+
+  // Envelope / pool math
+  const annualEnvelope        = Number(diag.annual_envelope || 0);
+  const annualBonusPool       = Number(diag.annual_bonus_pool || 0);
+  const annualBonusPoolGross  = Number(diag.annual_bonus_pool_gross || 0);
+  const annualSalesPoolPre    = Number(diag.annual_sales_pool_pre_comm || 0);
+  const annualSalesPool       = Number(diag.annual_sales_pool || 0);
+  const annualRetentionPool   = Number(diag.annual_retention_pool || 0);
+  const annualCarveouts       = Number(diag.annual_carveouts || 0);
+  const teamBaseInEnvelope    = Number(diag.team_total_base_in_envelope || 0);
+  const teamBase              = Number(diag.team_total_base || 0);
+  const teamComm              = Number(diag.team_total_comm || 0);
+  const teamHealthAnnual      = Number(diag.team_total_health_annual || 0);
+  const teamBurden            = Number(diag.team_total_burden || 0);
+  const teamWc                = Number(diag.team_wc_annual || 0);
+  const salesWeight           = Number(diag.sales_weight || 0.65);
+  const retentionWeight       = Number(diag.retention_weight || 0.35);
+  const burdenMult            = Number(diag.burden_multiplier || 0.08);
+  const teamTotalSpSalesOnly  = Number(diag.team_total_sp_sales_only || 0);
+  const teamTotalSp           = Number(diag.team_total_sp || 0);
+
+  // Basis inputs (envelope derivation)
+  const basis = diag.pool_basis || {};
+  const pcYtd            = Number(basis.pc_gross_ytd || 0);
+  const pcAnnualized     = Number(basis.pc_gross_annualized || 0);
+  const stripFactor      = Number(basis.strip_factor || 0);
+  const pcStripped       = Number(basis.pc_stripped_annualized || 0);
+  const lhYtd            = Number(basis.lh_ytd || 0);
+  const lhAnnualized     = Number(basis.lh_annualized || 0);
+  const bookPremium      = Number(basis.pc_book_premium || 0);
+  const smvcPct          = Number(basis.on_time_smvc_pct || 0);
+  const smvcDollars      = Number(basis.on_time_smvc_dollars || 0);
+  const scorecardDollars = Number(basis.on_time_scorecard_dollars || 0);
+  const totalBasis       = Number(basis.total_basis_annual || 0);
+  const compAnchorDate   = basis.comp_anchor_date;
+  const compDaysElapsed  = Number(basis.comp_days_elapsed || 0);
+  const compAnnualization = Number(basis.comp_annualization || 0);
+  const bookSnapshotDate = basis.book_snapshot_date;
+
+  // Schedule
+  const schedule    = diag.schedule || {};
+  const poolPctRaw  = Number(schedule.pool_pct || 0);    // stored as percent (e.g. 43.0)
+  const schedulePhase = schedule.phase;
+
+  // Intermediate cash-available: (envelope - WC) / (1 + burden)
+  const cashAvailPreBase = (annualEnvelope - teamWc) / (1 + burdenMult);
+
+  // Carveouts detail
+  const cvo = diag.carveouts_detail || {};
 
   const row = (label, value, hint) => (
     <tr>
@@ -2376,70 +2521,257 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
     </tr>
   );
 
+  const carveoutRow = (name, obj) => {
+    if (!obj) return null;
+    const ann = Number(obj.annual_dollars || 0);
+    return (
+      <tr>
+        <Td style={{ paddingLeft: 14, color: T.slate700 }}>{name}</Td>
+        <Td align="right">{fmtMoneyCents(ann)}</Td>
+        <Td align="right">{fmtMoneyCents(ann / 52)}</Td>
+        <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{obj.formula || ""}</Td>
+      </tr>
+    );
+  };
+
   return (
     <div style={{ padding: "10px 14px 16px", fontSize: 12 }}>
-      <div style={{ fontWeight: 700, marginTop: 4, marginBottom: 6, color: T.slate900 }}>Pool build (annualized)</div>
+
+      {/* ───── 1. HOW THE ENVELOPE IS BUILT ───── */}
+      <div style={{ fontWeight: 700, marginBottom: 4, color: T.slate900 }}>1. How the Envelope is built</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        On-time annualization = 365 / days_elapsed (Jan 1 → comp_anchor_date {compAnchorDate || "—"}, {compDaysElapsed} days → ×{compAnnualization.toFixed(4)}).
+        Book premium anchor: {bookSnapshotDate || "—"}.
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
+        <thead>
+          <tr>
+            <Th align="left">Component</Th>
+            <Th align="right">YTD / Input</Th>
+            <Th align="right">Multiplier</Th>
+            <Th align="right">Annualized $</Th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <Td style={{ paddingLeft: 14 }}>P&amp;C gross (auto/fire new+renewal)</Td>
+            <Td align="right">{fmtMoneyCents(pcYtd)}</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{compAnnualization.toFixed(3)} → ×{stripFactor.toFixed(4)}</Td>
+            <Td align="right">{fmtMoneyCents(pcStripped)}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14 }}>L&amp;H (life/health new+renewal)</Td>
+            <Td align="right">{fmtMoneyCents(lhYtd)}</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{compAnnualization.toFixed(3)}</Td>
+            <Td align="right">{fmtMoneyCents(lhAnnualized)}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14 }}>On-time SMVC $</Td>
+            <Td align="right">{(smvcPct * 100).toFixed(3)}%</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>× book prem {fmtMoneyCents(bookPremium)}</Td>
+            <Td align="right">{fmtMoneyCents(smvcDollars)}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14 }}>On-time Scorecard $</Td>
+            <Td align="right" style={{ color: T.slate500, fontSize: 11 }}>projection</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>compute_scorecard_bonus</Td>
+            <Td align="right">{fmtMoneyCents(scorecardDollars)}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>Total basis (annual)</Td>
+            <Td colSpan={2} style={{ borderTop: `1px solid ${T.slate300}` }}></Td>
+            <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(totalBasis)}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700 }}>× pool_pct {poolPctRaw.toFixed(1)}% {schedulePhase && (<span style={{ color: T.slate500, fontWeight: 400 }}>({schedulePhase})</span>)}</Td>
+            <Td colSpan={2}></Td>
+            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= Envelope {fmtMoneyCents(annualEnvelope)}</Td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ───── 2. POOL BUILD ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (annualized) — split-first structure</div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row("Envelope (annual $)", annualEnvelope, `${((Number(diag.pool_basis?.pool_pct) || 0) * 100).toFixed(2)}% of pool basis`)}
-          {row("− Workers Comp", -teamWc, "flat")}
-          {row("÷ (1 + burden 8%)", 0, "→ cash-available pre-people-costs")}
-          {row("− Team base salaries (in envelope)", -teamBaseInEnvelope, "tenure-multiplier applied")}
-          {row("− Team commission (annualized SP)", -teamComm, "1 SP = $1")}
+          {row("Envelope (annual)", annualEnvelope, `${poolPctRaw.toFixed(1)}% × total basis`)}
+          {row("− Workers Comp", -teamWc, "flat annual")}
+          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre-people costs")}
+          {row("− Team base salaries (in envelope)", -teamBaseInEnvelope, "current pay × 52 × tenure_mult")}
           {row("− Team health benefits (annual)", -teamHealthAnnual, "agency-paid stipends")}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Gross bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualBonusPoolGross)}</Td>
             <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
           </tr>
-          {row("− Carveouts (Mgr, Health+, MVP, WtQ, LI Stipend, Apparel, CC, Mktg)", -annualCarveouts, "pre-pool")}
+          {row("− Carveouts (7 items — see §3 detail)", -annualCarveouts, "pre-pool")}
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= Net bonus pool (annual)</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= Net bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualBonusPool)}</Td>
             <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>/ 52 = {fmtMoneyCents(annualBonusPool / 52)} weekly</Td>
           </tr>
         </tbody>
       </table>
 
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>Split 65 / 35</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2b. Split 65 / 35 THEN commissions from Sales Share</div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row(`Sales Pool (${(salesWeight * 100).toFixed(0)}%)`, annualSalesPool, `/ 52 = ${fmtMoneyCents(weeklySalesPool)} weekly`)}
-          {row(`Retention Pool (${(retentionWeight * 100).toFixed(0)}%)`, annualRetentionPool, `/ 52 = ${fmtMoneyCents(weeklyRetentionPool)} weekly`)}
+          {row(`Sales Pool pre-comm (${(salesWeight * 100).toFixed(0)}% × Net)`, annualSalesPoolPre, `/ 52 = ${fmtMoneyCents(annualSalesPoolPre / 52)} weekly`)}
+          {row("− Team commissions (annualized SP projection)", -teamComm, "commission = projected annual SP · comes from Sales Share ONLY")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= Sales Pool (available for SP-share bonuses)</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualSalesPool)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>/ 52 = {fmtMoneyCents(weeklySalesPool)} weekly</Td>
+          </tr>
+          {row(`Retention Pool (${(retentionWeight * 100).toFixed(0)}% × Net — untouched by commissions)`, annualRetentionPool, `/ 52 = ${fmtMoneyCents(weeklyRetentionPool)} weekly`)}
         </tbody>
       </table>
 
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>Per-person share this week</div>
+      {/* ───── 3. CARVEOUTS FULL DETAIL ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>3. Carveouts — full detail</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Line</Th>
+            <Th align="right">Annual $</Th>
+            <Th align="right">Weekly $</Th>
+            <Th align="left">Formula</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {carveoutRow("Manager Bonus", cvo.manager_bonus)}
+          {carveoutRow("Life Insurance Stipend", cvo.life_insurance_stipend)}
+          {carveoutRow("Apparel", cvo.apparel)}
+          {carveoutRow("Health Development Bonus", cvo.health_development_bonus)}
+          {carveoutRow("Champions Circle Reserve", cvo.champions_circle)}
+          {carveoutRow("MVP Prize Cart", cvo.mvp_prize_cart)}
+          {carveoutRow("Win the Quarter Trip", cvo.wtq_trip)}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Total carveouts</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualCarveouts)}</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualCarveouts / 52)}</Td>
+            <Td style={{ borderTop: `2px solid ${T.slate300}` }} />
+          </tr>
+        </tbody>
+      </table>
+      {cvo.wtq_trip?.halted && (
+        <div style={{ marginTop: 6, fontSize: 11, color: T.red }}>WtQ Trip halted: {cvo.wtq_trip.halt_reason}</div>
+      )}
+
+      {/* ───── 4. PER-PERSON BASE + COMMISSION ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>4. Per-person base + commission (current pay rates)</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Base = current pay_rate × 52 (SALARY) or × 40 × 52 (HOURLY). Base-in-envelope = base × tenure_mult (weeks in role / 52, cap 1.0).
+        Growth Budget = base × 1.08 × (1 − tenure_mult) — grows into their salary as tenure builds.
+        Commission (annual) = projected from realized quarterly SP averages across the year.
+      </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
             <Th align="left">Person</Th>
-            <Th align="right">QTD SP</Th>
-            <Th align="right">SP share</Th>
-            <Th align="right">Sales $ (65% × share × pool)</Th>
-            <Th align="right">Weighted hrs</Th>
-            <Th align="right">Hrs share</Th>
-            <Th align="right">Retention $ (35% × share × pool)</Th>
+            <Th align="right">Pay type / rate</Th>
+            <Th align="right">Annual base</Th>
+            <Th align="right">Tenure mult</Th>
+            <Th align="right">Base in env</Th>
+            <Th align="right">Growth budget</Th>
+            <Th align="right">Annual comm (proj)</Th>
+            <Th align="right">This-wk SP Δ</Th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map(d => (
-            <tr key={d.team_member_id}>
-              <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
-              <Td align="right">{d.sales_points == null ? "—" : Number(d.sales_points).toFixed(0)}</Td>
-              <Td align="right">{d.residual_pool_diag ? `${Number(d.residual_pool_diag.sales_points_share_pct || 0).toFixed(2)}%` : "—"}</Td>
-              <Td align="right">{fmtMoneyCents(Number(d.sales_pool_share || 0))}</Td>
-              <Td align="right">{d.residual_pool_diag ? Number(d.residual_pool_diag.weighted_hours_at_40 || 0).toFixed(2) : "—"}</Td>
-              <Td align="right">{d.residual_pool_diag ? `${Number(d.residual_pool_diag.retention_hours_share_pct || 0).toFixed(2)}%` : "—"}</Td>
-              <Td align="right">{fmtMoneyCents(Number(d.retention_pool_share || 0))}</Td>
-            </tr>
-          ))}
+          {sorted.map(d => {
+            const dd = d.residual_pool_diag || {};
+            const payType = dd.person_pay_type || "—";
+            const payRate = Number(dd.person_pay_rate || 0);
+            const tm = Number(dd.base_tenure_mult || 0);
+            return (
+              <tr key={d.team_member_id}>
+                <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
+                <Td align="right">{payType} ${payRate.toFixed(2)}</Td>
+                <Td align="right">{fmtMoneyCents(Number(dd.annual_base_salary || d.base_salary * 52 || 0))}</Td>
+                <Td align="right">{(tm * 100).toFixed(1)}%</Td>
+                <Td align="right">{fmtMoneyCents(Number(dd.annual_base_in_envelope || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(dd.annual_growth_budget || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(dd.annual_commission_projected || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(d.commission || 0))}</Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* ───── 5. SALES POINTS SHARE BREAKDOWN ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>5. Sales Points share breakdown (Sales team only)</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
+        share = person QTD SP ÷ Sales-team-total QTD SP ({teamTotalSpSalesOnly.toFixed(0)}). Retention team = 0% (they draw from the Retention Pool, not the SP-share pool).
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Person</Th>
+            <Th align="right">Role category</Th>
+            <Th align="right">QTD SP</Th>
+            <Th align="right">SP share %</Th>
+            <Th align="right">Weekly Sales $ = share × pool</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(d => {
+            const dd = d.residual_pool_diag || {};
+            return (
+              <tr key={d.team_member_id}>
+                <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
+                <Td align="right">{dd.role_category || "—"}</Td>
+                <Td align="right">{d.sales_points == null ? "—" : Number(d.sales_points).toFixed(0)}</Td>
+                <Td align="right">{dd ? `${Number(dd.sales_points_share_pct || 0).toFixed(2)}%` : "—"}</Td>
+                <Td align="right">{fmtMoneyCents(Number(d.sales_pool_share || 0))}</Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* ───── 6. RETENTION HOURS SHARE BREAKDOWN ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>6. Retention hours share breakdown</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
+        weighted_hours = 40 × role_w × location_w × tenure_w × license_w. share = person_hrs ÷ team_hrs_total.
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Person</Th>
+            <Th align="right">role_w</Th>
+            <Th align="right">location_w</Th>
+            <Th align="right">tenure_w</Th>
+            <Th align="right">license_w</Th>
+            <Th align="right">Weighted hrs</Th>
+            <Th align="right">Hrs share %</Th>
+            <Th align="right">Weekly Retention $</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(d => {
+            const dd = d.residual_pool_diag || {};
+            const wf = dd.weight_factors || {};
+            return (
+              <tr key={d.team_member_id}>
+                <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
+                <Td align="right">{Number(wf.role_w || 0).toFixed(2)}</Td>
+                <Td align="right">{Number(wf.location_w || 0).toFixed(2)}</Td>
+                <Td align="right">{Number(wf.tenure_w || 0).toFixed(2)}</Td>
+                <Td align="right">{Number(wf.license_w || 0).toFixed(2)}</Td>
+                <Td align="right">{Number(dd.weighted_hours_at_40 || 0).toFixed(2)}</Td>
+                <Td align="right">{`${Number(dd.retention_hours_share_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{fmtMoneyCents(Number(d.retention_pool_share || 0))}</Td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
       <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
-        Commission column above = this week's Sales Points earned (QTD delta vs prior Saturday in the same quarter, floored at 0 at quarter start).
-        Sales Pool + Retention Pool sum to the total residual bonus pool. Team burden accrual (8% of base + comm + bonus + carveouts) = {fmtMoneyCents(teamBurden)} annual (paid outside the team pool).
+        Note: Team burden accrual (8% of base + commission + bonus + carveouts) = {fmtMoneyCents(teamBurden)} annual (paid outside the team pool, not deducted here).
+        Commissions come out of the Sales Share ONLY (structural change 2026-07-11 — Retention Pool untouched by commission draws).
       </div>
     </div>
   );
@@ -2526,13 +2858,236 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
   );
 }
 
-// 21 — Leaderboards + All-Stars
-function LeaderboardsSection() {
+// 21 — Leaderboards
+function LeaderboardsSection({ leaderboards, team }) {
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  if (!leaderboards || leaderboards.length === 0) {
+    return (
+      <div>
+        <SectionHeader title="Leaderboards" />
+        <Card><Awaiting message="No leaderboard records yet" /></Card>
+      </div>
+    );
+  }
+
+  const CATS = [
+    { key: "quarter_sp",  label: "Quarter SP",       fmt: v => fmtMoneyCents(v) },
+    { key: "week_sp",     label: "Best Week SP",     fmt: v => fmtMoneyCents(v) },
+    { key: "week_quotes", label: "Best Week Quotes", fmt: v => Number(v).toFixed(0) },
+  ];
+  const TIER = { 1: { label: "🥇 Gold",   bg: "#fef3c7", border: "#f59e0b" },
+                 2: { label: "🥈 Silver", bg: "#f1f5f9", border: "#94a3b8" },
+                 3: { label: "🥉 Bronze", bg: "#fef2e2", border: "#d97706" } };
+
   return (
     <div>
-      <SectionHeader title="Leaderboards · All-Stars" />
-      <Card>
-        <Awaiting message="Leaderboard wiring pending (WtQ / Sales / Quotes rankings)" />
+      <SectionHeader title="Leaderboards" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+        {CATS.map(cat => {
+          const rows = leaderboards.filter(r => r.category === cat.key).sort((a,b) => a.tier - b.tier);
+          return (
+            <Card key={cat.key} style={{ padding: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8, color: T.slate900 }}>{cat.label}</div>
+              {rows.length === 0 && <div style={{ fontSize: 12, color: T.slate500 }}>No records yet</div>}
+              {rows.map(r => {
+                const tm = teamById[r.team_member_id];
+                const nameStr = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
+                const styling = TIER[r.tier] || {};
+                return (
+                  <div key={r.tier} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                    padding: "6px 10px", marginBottom: 4, borderRadius: 6,
+                    background: styling.bg, borderLeft: `3px solid ${styling.border}`,
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: T.slate500, fontWeight: 600 }}>{styling.label}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{nameStr}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>{cat.fmt(r.record_value)}</div>
+                      <div style={{ fontSize: 10, color: T.slate500 }}>{r.record_period_label}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// 21b — All-Stars + Trailblazer thresholds
+function AllStarsTrailblazerSection({ leaderboards, allStarCounts, floorConfig, team }) {
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const cfgByCategory = Object.fromEntries((floorConfig || []).map(c => [c.category, c]));
+  if (!leaderboards || leaderboards.length === 0) return null;
+
+  const CATS = [
+    { key: "quarter_sp",  label: "Quarter SP",       fmt: v => fmtMoneyCents(v) },
+    { key: "week_sp",     label: "Best Week SP",     fmt: v => fmtMoneyCents(v) },
+    { key: "week_quotes", label: "Best Week Quotes", fmt: v => Number(v).toFixed(0) },
+  ];
+
+  return (
+    <div>
+      <SectionHeader title="All-Stars · Trailblazer" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+        {CATS.map(cat => {
+          const bronze = leaderboards.find(r => r.category === cat.key && r.tier === 3);
+          const gold   = leaderboards.find(r => r.category === cat.key && r.tier === 1);
+          const cfg    = cfgByCategory[cat.key];
+          const step   = cfg?.round_step || 1;
+          const floorVal      = bronze ? Math.floor(Number(bronze.record_value) / step) * step : 0;
+          const trailblazer   = gold   ? Math.ceil((Number(gold.record_value) + 0.01) / step) * step : 0;
+          const counts = (allStarCounts || []).filter(r => r.category === cat.key).sort((a,b) => Number(b.count) - Number(a.count));
+          return (
+            <Card key={cat.key} style={{ padding: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8, color: T.slate900 }}>{cat.label}</div>
+
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.slate500 }}>All-Star floor (bronze rounded down to nearest {step})</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>{cat.fmt(floorVal)}</div>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.slate500 }}>Trailblazer threshold (gold rounded up to next {step})</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#0369a1" }}>{cat.fmt(trailblazer)}</div>
+                <div style={{ fontSize: 10, color: T.slate500 }}>First to cross = Trailblazer</div>
+              </div>
+
+              <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 8 }}>
+                <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>Running all-star counts</div>
+                {counts.length === 0 && <div style={{ fontSize: 12, color: T.slate400 }}>No crossings yet</div>}
+                {counts.map(r => {
+                  const tm = teamById[r.team_member_id];
+                  const nm = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
+                  return (
+                    <div key={r.team_member_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
+                      <div style={{ fontWeight: 600 }}>{nm}</div>
+                      <div>{r.count}× {r.seeded_count > 0 && <span style={{ color: T.slate400, fontSize: 10 }}>({r.seeded_count} historical)</span>}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// 21c — MVP Banner (top of CPR page for winning weeks)
+function MVPBanner({ mvpThisWeek, team, report }) {
+  if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const tm = teamById[mvpThisWeek.team_member_id];
+  const nameStr = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
+  return (
+    <div style={{
+      background: "linear-gradient(90deg, #dcfce7 0%, #bbf7d0 100%)",
+      border: "2px solid #16a34a",
+      borderRadius: 10,
+      padding: "12px 18px",
+      margin: "12px 20px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 14,
+    }}>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5 }}>🏆 This Week's MVP</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#14532d", marginTop: 2 }}>{nameStr}</div>
+      </div>
+      <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#166534" }}>SP earned</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#166534" }}>Prize draws</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#14532d" }}>{mvpThisWeek.prize_draws}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 21d — Win the Quarter Tracker (reads diag.carveouts_detail.wtq_trip)
+function WtQTrackerSection({ diag }) {
+  if (!diag) return null;
+  const cvo = diag.carveouts_detail || {};
+  const wtq = cvo.wtq_trip || {};
+  const inputs = cvo.inputs || {};
+  const wins = Number(inputs.current_cycle_wins_to_date || 0);
+  const maxPossible = Number(inputs.max_possible_wins_this_cycle || 13);
+  const week = Number(inputs.week_of_cycle || 1);
+  const halted = wtq.halted;
+  const annualPot = Number(wtq.annual_dollars || 0);
+  const otBasis = Number(inputs.annual_ot_basis || 0);
+  const cycleStart = inputs.current_cycle_start;
+  const cycleEnd = inputs.current_cycle_end;
+
+  const pctWins = Math.min(100, (wins / 13) * 100);
+  const pctFloor = Math.min(100, (wins / 9) * 100);
+
+  const quarterMVPCut = annualPot * 0.60;
+  const teamCut       = annualPot * 0.40;
+
+  return (
+    <div>
+      <SectionHeader icon="🏝️" title="Win the Quarter Tracker" />
+      <Card style={{ padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, color: T.slate500 }}>Current cycle</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{cycleStart} → {cycleEnd} · Week {week}/13</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: T.slate500 }}>Wins to date</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>{wins}<span style={{ fontSize: 14, color: T.slate500 }}> / 13</span></div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 3 }}>9-win floor (WtQ funding gate)</div>
+          <div style={{ height: 10, background: T.slate100, borderRadius: 5, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${pctFloor}%`, background: pctFloor >= 100 ? "#16a34a" : "#f59e0b", transition: "width 0.3s" }} />
+          </div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 3 }}>{wins} / 9 wins ({pctFloor.toFixed(0)}%) · max possible this cycle: {maxPossible}</div>
+        </div>
+
+        {halted ? (
+          <div style={{
+            padding: "10px 12px", background: "#fee2e2", borderRadius: 6, borderLeft: `3px solid ${T.red}`,
+            fontSize: 12, color: "#991b1b", marginBottom: 10,
+          }}>
+            <div style={{ fontWeight: 700 }}>WtQ trip HALTED — pot = $0</div>
+            <div style={{ marginTop: 2, fontSize: 11 }}>{wtq.halt_reason}</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: "10px 12px", background: "#ecfdf5", borderRadius: 6, borderLeft: `3px solid #10b981`, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "#065f46", fontWeight: 700 }}>Current pot (annualized)</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#064e3b" }}>{fmtMoneyCents(annualPot)}</div>
+              <div style={{ fontSize: 11, color: "#065f46", marginTop: 2 }}>= 10% × OT (SMVC+Scorecard) {fmtMoneyCents(otBasis)} × {wins}/13</div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ padding: 10, background: "#fef3c7", borderRadius: 6 }}>
+                <div style={{ fontSize: 11, color: "#78350f", fontWeight: 700 }}>Quarter MVP (60%)</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
+                <div style={{ fontSize: 10, color: "#78350f" }}>Top SP producer takes the biggest cut</div>
+              </div>
+              <div style={{ padding: 10, background: "#e0f2fe", borderRadius: 6 }}>
+                <div style={{ fontSize: 11, color: "#075985", fontWeight: 700 }}>Rest of Team (40%)</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCents(teamCut)}</div>
+                <div style={{ fontSize: 10, color: "#075985" }}>Split across remaining teammates</div>
+              </div>
+            </div>
+          </>
+        )}
       </Card>
     </div>
   );
@@ -2982,7 +3537,8 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         >← Back</button>
       </div>
 
-
+      {/* MVP Banner — renders only on winning weeks with an MVP recorded */}
+      <MVPBanner mvpThisWeek={data.mvpThisWeek} team={data.team} report={data.report} />
 
       {/* 1. Opener */}
       <Section>
@@ -3158,10 +3714,16 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
 
       {/* 21. Leaderboards */}
-      <Section><LeaderboardsSection /></Section>
+      <Section><LeaderboardsSection leaderboards={data.leaderboards} team={data.team} /></Section>
 
-      {/* 22. Prize Cart */}
-      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} prizeBudget={data.section11?.prize_cart_budget?.value ?? null} /></Section>
+      {/* 21b. All-Stars + Trailblazer */}
+      <Section><AllStarsTrailblazerSection leaderboards={data.leaderboards} allStarCounts={data.allStarCounts} floorConfig={data.floorConfig} team={data.team} /></Section>
+
+      {/* 21c. Win the Quarter Tracker */}
+      <Section><WtQTrackerSection diag={data.details?.[0]?.residual_pool_diag || null} /></Section>
+
+      {/* 22. Prize Cart — quarter total budget from quarter_prize_budgets */}
+      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} prizeBudget={data.quarterPrizeBudget?.budget_dollars ?? null} /></Section>
 
       {/* Footer signoff */}
       <div style={{
