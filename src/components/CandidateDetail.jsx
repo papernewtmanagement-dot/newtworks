@@ -29,6 +29,110 @@ const TRAIT_BAND = {
   optimism:            (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
 };
 
+// Maps a detected trigger to the manual section header text for question lookup.
+// direction is "Low" or "High" based on which side of ideal range the score falls.
+const triggerToHeader = (trait, value) => {
+  if (trait === "deadline_motivation" && value < 70) return "Low Deadline Motivation";
+  if (trait === "recognition_drive"   && value < 50) return "Low Recognition Drive";
+  if (trait === "assertiveness"       && value < 50) return "Low Assertiveness";
+  if (trait === "independent_spirit"  && value < 50) return "Low Independent Spirit";
+  if (trait === "analytical"          && value > 60) return "High Analytical";
+  if (trait === "compassion"          && value < 30) return "Low Compassion";
+  if (trait === "compassion"          && value > 70) return "High Compassion";
+  if (trait === "self_promotion"      && value < 10) return "Low Self-Promotion";
+  if (trait === "self_promotion"      && value > 80) return "High Self-Promotion";
+  if (trait === "belief_in_others"    && value < 20) return "Low Belief in Others";
+  if (trait === "belief_in_others"    && value > 80) return "High Belief in Others";
+  if (trait === "optimism"            && value < 20) return "Low Optimism";
+  if (trait === "optimism"            && value > 80) return "High Optimism";
+  if (trait === "lss_speed" || trait === "lss_accuracy") return "LSS Speed";
+  return null;
+};
+
+// Extract a subsection from Final Interview manual markdown by its ### header.
+// Returns the raw markdown text from that header to the next ### or ## (exclusive).
+const extractSection = (markdown, headerText) => {
+  if (!markdown || !headerText) return null;
+  const lines = markdown.split("\n");
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith("### ") && lines[i].includes(headerText)) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].startsWith("### ") || lines[i].startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+};
+
+// Minimal markdown → JSX: **bold**, *italic*, bullets, headers.
+const renderMarkdown = (text) => {
+  if (!text) return null;
+  const lines = text.split("\n");
+  return lines.map((ln, idx) => {
+    if (ln.startsWith("### ")) {
+      return <div key={idx} style={{ fontWeight: 700, fontSize: 14, color: T.slate800, marginTop: 8, marginBottom: 4 }}>{ln.slice(4).replace(/[()<>0-9]/g, m => m).trim()}</div>;
+    }
+    if (ln.startsWith("- ")) {
+      const body = ln.slice(2);
+      // Check for *(optional)* prefix
+      const isOptional = /^\*\(optional\)\*/.test(body) || /^\*\s*\(optional\)/.test(body);
+      const cleaned = body.replace(/^\*\(optional\)\*\s*/, "").replace(/^\*\s*/, "");
+      return (
+        <div key={idx} style={{ marginLeft: 12, marginBottom: 3, fontSize: 12, color: isOptional ? T.slate500 : T.slate800, fontStyle: isOptional ? "italic" : "normal" }}>
+          {isOptional ? "○ " : "• "}{renderInline(cleaned)}
+        </div>
+      );
+    }
+    if (ln.startsWith("**") && ln.endsWith("**")) {
+      return <div key={idx} style={{ fontSize: 12, fontWeight: 700, color: T.slate700, marginTop: 6 }}>{ln.replace(/\*\*/g, "")}</div>;
+    }
+    if (ln.trim() === "") {
+      return <div key={idx} style={{ height: 4 }} />;
+    }
+    return <div key={idx} style={{ fontSize: 12, color: T.slate700, marginBottom: 3 }}>{renderInline(ln)}</div>;
+  });
+};
+
+// Inline markdown for a single line: **bold** and *italic*
+const renderInline = (text) => {
+  const parts = [];
+  let remaining = text;
+  let key = 0;
+  while (remaining.length > 0) {
+    // **bold**
+    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
+    if (boldMatch) {
+      parts.push(<strong key={key++}>{boldMatch[1]}</strong>);
+      remaining = remaining.slice(boldMatch[0].length);
+      continue;
+    }
+    // *italic*
+    const italMatch = remaining.match(/^\*([^*]+)\*/);
+    if (italMatch) {
+      parts.push(<em key={key++} style={{ color: T.slate500 }}>{italMatch[1]}</em>);
+      remaining = remaining.slice(italMatch[0].length);
+      continue;
+    }
+    // Plain text up to next markdown marker
+    const next = remaining.search(/\*/);
+    if (next === -1) {
+      parts.push(<span key={key++}>{remaining}</span>);
+      break;
+    }
+    parts.push(<span key={key++}>{remaining.slice(0, next)}</span>);
+    remaining = remaining.slice(next);
+  }
+  return parts;
+};
+
 const STAGE_LABELS = {
   assessed:        "Assessed",
   email_screen:    "Email Screen",
@@ -201,7 +305,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [savingSection, setSavingSection] = useState(null);
   const [bestFit, setBestFit] = useState(null);
   const [validity, setValidity] = useState(null);
-  const [manualLoaded, setManualLoaded] = useState(false);
+  const [manualMarkdown, setManualMarkdown] = useState("");
 
   // Fetch full row on mount
   useEffect(() => {
@@ -229,6 +333,22 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .then(({ data, error }) => { if (!error) setValidity(data); })
       .catch(() => {});
   }, [detail?.id]);
+
+  // Fetch Final Interview manual page for triggered follow-up questions
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase
+      .from("manuals")
+      .select("content")
+      .eq("id", "d83be3b8-55c9-4d60-9303-13a1f84141a8")  // Final Interview page
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setManualMarkdown(data.content || "");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const triggers = useMemo(() => detectTriggers(detail), [detail]);
 
@@ -358,18 +478,38 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         </div>
       </Section>
 
-      {/* Triggered Follow-Up Questions (Commit 3 will populate from manual) */}
+      {/* Triggered Follow-Up Questions — parsed from Final Interview manual page at runtime */}
       <Section title="Triggered Follow-Up Questions" tone={T.blueLt}>
-        <div style={{ fontSize: 12, color: T.slate700 }}>
-          {triggers.length === 0 ? (
-            <>No triggers — run the baseline questions in the Final Interview manual page.</>
-          ) : (
-            <>
-              <strong>{triggers.filter(t => t.severity === "red").length}</strong> red triggers · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch triggers.
-              <div style={{ marginTop: 6, fontStyle: "italic", color: T.slate500 }}>Manual-parsed questions land in the next update. For now, open the Final Interview manual page and scroll to the trigger sections listed above.</div>
-            </>
-          )}
-        </div>
+        {triggers.length === 0 ? (
+          <div style={{ fontSize: 12, color: T.slate700 }}>
+            No triggers — all traits in ideal range. Run only the baseline questions in the Final Interview manual page.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: T.slate700, marginBottom: 12 }}>
+              <strong>{triggers.filter(t => t.severity === "red").length}</strong> red trigger(s) · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch trigger(s). Ask the core questions for each; use optionals if the picture is still unclear.
+            </div>
+            {!manualMarkdown ? (
+              <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>Loading manual...</div>
+            ) : (
+              triggers.map((t, i) => {
+                const header = triggerToHeader(t.trait, Number(t.value)) || t.label;
+                const section = extractSection(manualMarkdown, header);
+                return (
+                  <div key={i} style={{ marginBottom: 14, padding: 10, background: T.white, borderRadius: 7, borderLeft: `3px solid ${t.severity === "red" ? T.red : T.amber}` }}>
+                    {section ? (
+                      renderMarkdown(section)
+                    ) : (
+                      <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+                        No matching section found in the Final Interview manual for &quot;{header}&quot;. (Check the manual page structure.)
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </>
+        )}
       </Section>
 
       {/* Video AMA Scorecard */}
