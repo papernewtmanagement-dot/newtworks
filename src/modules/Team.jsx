@@ -346,10 +346,10 @@ const generateCoachingHints = (seat, assessment) => {
 
   const covPct = seat ? (parseFloat(seat.coverage_pct) || 0) : null;
   const rqm    = seat ? (parseFloat(seat.retention_quality_multiplier) || 0) : null;
-  const cat    = seat?.role_category
-                || (assessment?.assessment_type === "cts_sales" ? "Sales"
-                   : (assessment?.assessment_type === "cts_service_pivot" || assessment?.assessment_type === "cts_service") ? "Retention"
-                   : null);
+  // Role category comes from the seat (functional role). The prior fallback to
+  // assessment_type was removed when that column was dropped — role fit is now
+  // a function-based projection (see cts_best_fit_role).
+  const cat    = seat?.role_category || null;
   const reliability = (assessment.reliability || "").toLowerCase();
   const distortion  = (assessment.response_distortion || "").toLowerCase();
   const lssMath = parseInt(assessment.lss_math_speed_seconds);
@@ -357,8 +357,8 @@ const generateCoachingHints = (seat, assessment) => {
   const lssPS   = parseInt(assessment.lss_problem_solving_speed_seconds);
   const lssAcc  = parseInt(assessment.lss_total_accuracy);
   const lssIdeal= parseInt(assessment.lss_total_ideal_min);
-  const hrsMax  = parseInt(assessment.recommended_coaching_hours_max);
-  const hrsMin  = parseInt(assessment.recommended_coaching_hours_min);
+  // recommended_coaching_hours_min/max were dropped — coaching guidance is now
+  // provided contextually per candidate rather than as a static hrs/mo band.
 
   const hints = [];
 
@@ -440,13 +440,8 @@ const generateCoachingHints = (seat, assessment) => {
   }
 
   // ─── Cross-cutting patterns ───
-  if (Number.isFinite(hrsMax) && hrsMax >= 15) {
-    hints.push({
-      severity:"concern",
-      title:"High-touch profile",
-      detail:`Recommended coaching ${hrsMin || "?"}-${hrsMax} hrs/mo (upper band). Under-coaching drops performance visibly. If ceiling met, sustained investment produces the ROI; if not, coaching gap will widen.`,
-    });
-  }
+  // (Prior "High-touch profile" hint keyed off recommended_coaching_hours_max — column dropped.
+  //  Coaching-effort guidance is now delivered contextually per candidate.)
   if (distortion === "high") {
     hints.push({
       severity:"info",
@@ -1746,29 +1741,21 @@ const StaffDirectory = ({ staff }) => {
                     ["Belief in Others",    asmt.belief_in_others],
                     ["Compassion",          asmt.compassion],
                   ];
-                  const bandColor = (b) => {
-                    const s = (b || "").toLowerCase();
-                    if (s.includes("high")) return "#065F46";
-                    if (s.includes("moderate") && !s.includes("low")) return "#1E40AF";
-                    if (s.includes("low")) return "#991B1B";
-                    return T.slate700;
-                  };
-                  const compKind = asmt.assessment_type === "cts_sales" ? "sales_competencies"
-                                 : asmt.assessment_type === "cts_service_pivot" ? "service_competencies"
-                                 : null;
-                  const compRaw = compKind ? asmt[compKind] : null;
-                  const compEntries = compRaw && typeof compRaw === "object" ? Object.entries(compRaw) : [];
+                  // Competency lookup will be rebuilt against the cts_<role>_competencies
+                  // SQL functions + cts_best_fit_role. Legacy JSONB columns (sales_competencies,
+                  // service_competencies) don't exist, and assessment_type was dropped.
+                  // Panel renders empty for now — replaced when the role-fit UI ships.
+                  //
+                  // overall_score_band + recommended_coaching_hours_min/max were also dropped:
+                  // bands are trivially derivable from overall_score if needed, and coaching
+                  // guidance is now provided contextually per-candidate instead of static hrs/mo.
+                  const compEntries = [];
                   return (
                     <div style={{ marginBottom:12, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate700, lineHeight:1.6 }}>
                       <div style={{ fontSize:10, fontWeight:700, color:T.slate900, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Assessment &amp; coaching</div>
                       <div style={{ marginBottom:8, fontSize:11 }}>
-                        <span style={{ color:T.slate600 }}>{asmt.assessment_type}</span>
-                        {asmt.assessment_date && <span> · {asmt.assessment_date}</span>}
-                        {asmt.overall_score != null && <span> · Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
-                        {asmt.overall_score_band && <span style={{ color:bandColor(asmt.overall_score_band), fontWeight:600 }}> ({asmt.overall_score_band})</span>}
-                        {asmt.recommended_coaching_hours_min != null && (
-                          <span> · Coaching <strong style={{ color:T.slate900 }}>{asmt.recommended_coaching_hours_min}-{asmt.recommended_coaching_hours_max}</strong> hrs/mo</span>
-                        )}
+                        {asmt.assessment_date && <span style={{ color:T.slate600 }}>{asmt.assessment_date}</span>}
+                        {asmt.overall_score != null && <span>{asmt.assessment_date ? " · " : ""}Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
                       </div>
                       {(asmt.reliability || asmt.response_distortion) && (
                         <div style={{ marginBottom:8, display:"flex", gap:6, flexWrap:"wrap" }}>
@@ -2513,7 +2500,7 @@ export default function Team() {
     let cancelled = false;
     supabase
       .from("team_assessments")
-      .select("id, first_name, last_name, candidate_name, email, phone, position, status, source, claude_score, claude_summary, interview_focus, created_at, is_team_member, team_member_id, overall_score, overall_score_band, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion")
+      .select("id, first_name, last_name, candidate_name, email, phone, position, status, source, claude_score, claude_summary, interview_focus, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
       .eq("agency_id", AGENCY_ID)
       .in("status", ["assessed","email_screen","interview","reference_check","offer","hired"])
       .order("created_at", { ascending: false })

@@ -54,7 +54,6 @@ interface PersonCtx {
 }
 interface AssessmentCtx {
   overall_score: number | null;
-  overall_score_band: string | null;
   reliability: string | null;
   response_distortion: string | null;
   notes: string | null;
@@ -96,11 +95,8 @@ function buildPrompt(p: PersonCtx, a: AssessmentCtx | null, notes: NoteCtx[]): {
   const rows: string[] = [];
   rows.push(`Person: ${p.name} — ${p.role_level ?? ""} ${p.role ?? ""} (${p.role_category ?? "?"} category)${tenure != null ? `, ~${tenure} months at agency.` : "."}`);
   if (a) {
-    if (a.overall_score != null || a.overall_score_band) {
-      const parts: string[] = [];
-      if (a.overall_score != null) parts.push(`overall ${a.overall_score}/100`);
-      if (a.overall_score_band) parts.push(`band: ${a.overall_score_band}`);
-      rows.push(`Assessment: ${parts.join(" · ")}.`);
+    if (a.overall_score != null) {
+      rows.push(`Assessment: overall ${a.overall_score}/100.`);
     }
     if (a.reliability || a.response_distortion) {
       const parts: string[] = [];
@@ -190,7 +186,6 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
   if (asmt) {
     assessment = {
       overall_score: asmt.overall_score,
-      overall_score_band: asmt.overall_score_band,
       reliability: asmt.reliability,
       response_distortion: asmt.response_distortion,
       notes: asmt.notes,
