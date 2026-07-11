@@ -569,54 +569,6 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
         })}
       </div>
       </div>
-
-
-          {/* Interview notes */}
-          {selectedApp.interview_notes && (
-            <div style={{ background:T.blueLt, borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
-              <div style={{ fontSize:11, fontWeight:600, color:"#1E40AF", marginBottom:4 }}>INTERVIEW NOTES</div>
-              <div style={{ fontSize:12, color:"#1E40AF", lineHeight:1.7 }}>{selectedApp.interview_notes}</div>
-            </div>
-          )}
-
-          {/* Stage Actions */}
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {selectedApp.status === "assessed" && (
-              <>
-                <button onClick={() => onUpdate(selectedApp.id,"email_screen")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>→ Send Email Screen</button>
-                <button onClick={() => onUpdate(selectedApp.id,"archived")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Archive</button>
-              </>
-            )}
-            {selectedApp.status === "email_screen" && (
-              <>
-                <button onClick={() => onUpdate(selectedApp.id,"interview")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.amber, border:"none", borderRadius:7, cursor:"pointer" }}>→ Schedule Video AMA</button>
-                <button onClick={() => onUpdate(selectedApp.id,"archived")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Archive</button>
-              </>
-            )}
-            {selectedApp.status === "interview" && (
-              <>
-                <button onClick={() => onUpdate(selectedApp.id,"reference_check")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>→ Move to Ref Check</button>
-                <button onClick={() => onUpdate(selectedApp.id,"archived")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Archive</button>
-              </>
-            )}
-            {selectedApp.status === "reference_check" && (
-              <>
-                <button onClick={() => onUpdate(selectedApp.id,"offer")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.purple, border:"none", borderRadius:7, cursor:"pointer" }}>→ Extend Offer</button>
-                <button onClick={() => onUpdate(selectedApp.id,"archived")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Archive</button>
-              </>
-            )}
-            {selectedApp.status === "offer" && (
-              <>
-                <button onClick={() => onUpdate(selectedApp.id,"hired")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.green, border:"none", borderRadius:7, cursor:"pointer" }}>✓ Mark Hired</button>
-                <button onClick={() => onUpdate(selectedApp.id,"archived")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Offer Declined</button>
-              </>
-            )}
-            {selectedApp.status === "hired" && (
-              <button onClick={() => onUpdate(selectedApp.id,"archived")} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>✕ Archive (no longer active)</button>
-            )}
-          </div>
-        </Card>
-      )}
     </div>
   );
 };
