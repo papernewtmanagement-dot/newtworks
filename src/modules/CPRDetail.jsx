@@ -3746,7 +3746,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     // Land in the 11th repeat for a "many revolutions" feel.
     const stripPos = 10 * spinPool.length + targetIdx;
     const targetY = -(stripPos * ROW_H) + (VIEWPORT_H / 2 - ROW_H / 2);
-    const duration = 6800;  // 6.8s — long enough for anticipation, short enough to not annoy
+    const duration = 8000;  // 8s
 
     // JS-driven animation via requestAnimationFrame. Advantages over CSS transition:
     //   - Deterministic end time: we call startReveal(landed) exactly at t=1, when we
