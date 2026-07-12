@@ -3622,7 +3622,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
 
   const ROW_H = 56;      // px per prize row
   const VIEWPORT_H = 168; // 3 rows visible
-  const REPEATS = 8;     // times to duplicate the strip for wheel feel
+  const REPEATS = 12;    // times to duplicate the strip for wheel feel
 
   const drawnIds = new Set(drawn.map(p => p.id));
   const available = unwon.filter(p => !drawnIds.has(p.id));
@@ -3653,14 +3653,14 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         setPhase("spinning");
-        // Land in the 7th repeat for a "many revolutions" feel.
-        const stripPos = 6 * available.length + targetIdx;
+        // Land in the 11th repeat for a "many revolutions" feel across the longer animation.
+        const stripPos = 10 * available.length + targetIdx;
         const y = -(stripPos * ROW_H) + (VIEWPORT_H / 2 - ROW_H / 2);
         setWheelOffset(y);
         setTimeout(() => {
           setDrawn(prev => [...prev, available[targetIdx]]);
           setPhase(prev => (prev === "spinning" ? "landed_partial" : prev));
-        }, 2200);
+        }, 4200);
       });
     });
   }
@@ -3762,7 +3762,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                 }}>
                   <div style={{
                     transform: `translateY(${wheelOffset}px)`,
-                    transition: phase === "spinning" ? "transform 2.2s cubic-bezier(0.17, 0.67, 0.3, 1)" : "none",
+                    transition: phase === "spinning" ? "transform 4.2s cubic-bezier(0.12, 0.72, 0.13, 1)" : "none",
                     willChange: "transform",
                   }}>
                     {strip.map((p, i) => (
