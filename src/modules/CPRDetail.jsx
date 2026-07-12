@@ -3511,22 +3511,33 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
 }
 
 // 21c — MVP Banner (top of CPR page for winning weeks) + Prize Cart Spinner
+// UX (2026-07-12 pm6, Peter directive):
+//   - MVP has N allotted draws (from prize_draws).
+//   - Modal shows a vertical slot-reel wheel of unwon prizes.
+//   - Each spin picks one at random (sampling WITHOUT replacement within a session).
+//   - After all N draws, MVP picks their favorite from the collected list.
+//   - Selected prize is persisted (winner_team_member_id + won_on).
+//   - The other N-1 stay unwon in the cart (“go back”).
+//   - Once MVP has claimed a prize this week, banner button disables.
 function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }) {
   const [spinnerOpen, setSpinnerOpen] = useState(false);
   if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
   const tm = teamById[mvpThisWeek.team_member_id];
   const nameStr = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
-  const totalDraws = Number(mvpThisWeek.prize_draws || 0);
+  const drawsAllotted = Number(mvpThisWeek.prize_draws || 0);
   const cart = Array.isArray(prizeCart) ? prizeCart : [];
-  // Draws already used this week = prizes won by this MVP for this week's report.
-  const drawsUsed = cart.filter(p =>
+  // One claim per weekly MVP session. If they've already picked, button disables.
+  const hasClaimedThisWeek = cart.some(p =>
     p.winner_team_member_id === mvpThisWeek.team_member_id &&
     p.won_on === weekDate
-  ).length;
-  const drawsRemaining = Math.max(0, totalDraws - drawsUsed);
+  );
   const unwonPrizes = cart.filter(p => !p.winner_team_member_id);
-  const canSpin = totalDraws > 0 && drawsRemaining > 0 && unwonPrizes.length > 0;
+  const canOpen = drawsAllotted > 0 && !hasClaimedThisWeek && unwonPrizes.length > 0;
+  let buttonLabel;
+  if (hasClaimedThisWeek) buttonLabel = "🏆 Prize claimed";
+  else if (unwonPrizes.length === 0) buttonLabel = "Cart empty";
+  else buttonLabel = "🎰 Open prize cart";
   return (
     <>
       <div style={{
@@ -3555,31 +3566,26 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>
-              {drawsRemaining}/{totalDraws}
+              {drawsAllotted}{hasClaimedThisWeek ? " ✓" : ""}
             </div>
           </div>
-          {totalDraws > 0 && (
+          {drawsAllotted > 0 && (
             <button
               onClick={() => setSpinnerOpen(true)}
-              disabled={!canSpin}
+              disabled={!canOpen}
               style={{
                 padding: "10px 16px",
                 fontSize: 14,
                 fontWeight: 700,
-                color: canSpin ? "#fff" : "#65a30d",
-                background: canSpin ? "#16a34a" : "#d9f99d",
+                color: canOpen ? "#fff" : "#65a30d",
+                background: canOpen ? "#16a34a" : "#d9f99d",
                 border: "none",
                 borderRadius: 8,
-                cursor: canSpin ? "pointer" : "not-allowed",
-                boxShadow: canSpin ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
+                cursor: canOpen ? "pointer" : "not-allowed",
+                boxShadow: canOpen ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
               }}
-              title={
-                !canSpin && drawsRemaining === 0 ? "All draws claimed"
-                : !canSpin && unwonPrizes.length === 0 ? "No prizes left in cart"
-                : "Spin the prize cart"
-              }
             >
-              🎰 {drawsUsed > 0 ? "Draw again" : "Spin the cart"}
+              {buttonLabel}
             </button>
           )}
         </div>
@@ -3589,7 +3595,7 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
           mvp={{ ...mvpThisWeek, name: nameStr }}
           prizeCart={cart}
           weekDate={weekDate}
-          drawsRemaining={drawsRemaining}
+          drawsAllotted={drawsAllotted}
           onClose={() => setSpinnerOpen(false)}
           onKept={() => {
             setSpinnerOpen(false);
@@ -3601,55 +3607,68 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
   );
 }
 
-// 21c-1 — Prize Cart Spinner (modal, MVP-only, one draw at a time)
-// Simple deceleration animation. MVP picks one of the unwon prizes at random,
-// then chooses "Keep" (persists winner + won_on) or "Return" (drops without saving).
-// If MVP has multiple draws, they close the modal and reopen — draws_remaining
-// self-corrects from the DB (unwon count + this MVP's kept prizes this week).
-function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsRemaining, onClose, onKept }) {
+// 21c-1 — Prize Cart Spinner (modal)
+// Slot-reel wheel: unwon prizes scroll vertically past a center window; land on random target.
+// MVP draws up to drawsAllotted times, each pull sampling from CURRENT unwon minus already-drawn.
+// After all draws collected, MVP picks favorite from the list; only that one persists.
+function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, onKept }) {
   const unwon = (prizeCart || []).filter(p => !p.winner_team_member_id);
-  const [phase, setPhase] = useState("ready"); // ready | spinning | landed | saving | error
-  const [displayIdx, setDisplayIdx] = useState(0);
-  const [landedPrize, setLandedPrize] = useState(null);
-  const [errMsg, setErrMsg] = useState(null);
-  const intervalRef = useRef(null);
+  const [drawn, setDrawn] = useState([]); // prizes drawn this session (candidates)
+  const [phase, setPhase] = useState("ready"); // ready | resetting | spinning | landed_partial | picking
+  const [wheelOffset, setWheelOffset] = useState(0);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
 
-  useEffect(() => {
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
+  const ROW_H = 56;      // px per prize row
+  const VIEWPORT_H = 168; // 3 rows visible
+  const REPEATS = 8;     // times to duplicate the strip for wheel feel
 
-  function runSpin() {
-    if (unwon.length === 0) return;
-    setPhase("spinning");
-    // Pick target now, animate toward it. If only 1 unwon, land immediately after a short shuffle.
-    const targetIdx = Math.floor(Math.random() * unwon.length);
-    const totalMs = 2200;
-    const start = Date.now();
-    // Start fast (~60ms), decelerate to slow (~320ms) as we approach end.
-    function tick() {
-      const elapsed = Date.now() - start;
-      const t = Math.min(1, elapsed / totalMs);
-      // Ease-out step: swap index rapidly at start, less so at end
-      setDisplayIdx(i => (i + 1) % unwon.length);
-      if (t >= 1) {
-        clearInterval(intervalRef.current);
-        setDisplayIdx(targetIdx);
-        setLandedPrize(unwon[targetIdx]);
-        setPhase("landed");
-        return;
-      }
-      // Recompute interval for deceleration
-      const nextDelay = 60 + (t * t * 260); // 60ms → 320ms
-      clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(tick, nextDelay);
+  const drawnIds = new Set(drawn.map(p => p.id));
+  const available = unwon.filter(p => !drawnIds.has(p.id));
+  const drawsRemaining = Math.max(0, drawsAllotted - drawn.length);
+
+  // Build the strip. Recomputes when drawn changes (available shrinks by 1 per pull).
+  const strip = [];
+  if (available.length > 0) {
+    for (let i = 0; i < REPEATS; i++) {
+      for (const p of available) strip.push(p);
     }
-    intervalRef.current = setInterval(tick, 60);
   }
 
-  async function keepPrize() {
-    if (!landedPrize) return;
-    setPhase("saving");
-    setErrMsg(null);
+  const shouldPromptPick =
+    drawn.length > 0 && (drawn.length >= drawsAllotted || available.length === 0);
+
+  // If we reach the pick-prompt state after landing, transition phase.
+  useEffect(() => {
+    if (shouldPromptPick && phase === "landed_partial") setPhase("picking");
+  }, [shouldPromptPick, phase]);
+
+  function spin() {
+    if (available.length === 0 || drawsRemaining === 0) return;
+    const targetIdx = Math.floor(Math.random() * available.length);
+    // Reset (no transition), then animate on the next frame.
+    setPhase("resetting");
+    setWheelOffset(0);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setPhase("spinning");
+        // Land in the 7th repeat for a "many revolutions" feel.
+        const stripPos = 6 * available.length + targetIdx;
+        const y = -(stripPos * ROW_H) + (VIEWPORT_H / 2 - ROW_H / 2);
+        setWheelOffset(y);
+        setTimeout(() => {
+          setDrawn(prev => [...prev, available[targetIdx]]);
+          setPhase(prev => (prev === "spinning" ? "landed_partial" : prev));
+        }, 2200);
+      });
+    });
+  }
+
+  async function keepSelected() {
+    if (selectedIdx == null || !drawn[selectedIdx]) return;
+    setSaving(true);
+    setErr(null);
     try {
       const { error } = await supabase
         .from("prize_cart")
@@ -3657,31 +3676,24 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsRemaining, onClose, o
           winner_team_member_id: mvp.team_member_id,
           won_on: weekDate,
         })
-        .eq("id", landedPrize.id)
-        .is("winner_team_member_id", null); // guard against double-claim
+        .eq("id", drawn[selectedIdx].id)
+        .is("winner_team_member_id", null);
       if (error) throw error;
       if (typeof onKept === "function") onKept();
     } catch (e) {
-      setErrMsg(e.message || String(e));
-      setPhase("landed");
+      setErr(e.message || String(e));
+      setSaving(false);
     }
   }
 
-  function returnPrize() {
-    setLandedPrize(null);
-    setPhase("ready");
-    setDisplayIdx(0);
-  }
-
-  const currentDisplay = phase === "spinning"
-    ? unwon[displayIdx % Math.max(1, unwon.length)]
-    : (landedPrize || unwon[displayIdx % Math.max(1, unwon.length)] || null);
+  const showWheel = !shouldPromptPick && available.length > 0;
+  const emptyCart = available.length === 0 && drawn.length === 0;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      onClick={onClose}
+      onClick={saving ? undefined : onClose}
       style={{
         position: "fixed",
         inset: 0,
@@ -3698,21 +3710,25 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsRemaining, onClose, o
         style={{
           background: "#fff",
           borderRadius: 14,
-          maxWidth: 460,
+          maxWidth: 480,
           width: "100%",
           padding: 20,
           boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+          maxHeight: "90vh",
+          overflowY: "auto",
         }}
       >
+        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>🎰 Prize Cart Spinner</div>
             <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
-              {mvp.name} · {drawsRemaining} draw{drawsRemaining === 1 ? "" : "s"} remaining
+              {mvp.name} · Draw {Math.min(drawn.length + (phase === "spinning" ? 1 : 0), drawsAllotted)} of {drawsAllotted}
             </div>
           </div>
           <button
             onClick={onClose}
+            disabled={saving}
             style={{
               padding: "4px 10px",
               fontSize: 18,
@@ -3720,83 +3736,153 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsRemaining, onClose, o
               color: T.slate500,
               background: "transparent",
               border: "none",
-              cursor: "pointer",
+              cursor: saving ? "not-allowed" : "pointer",
             }}
             aria-label="Close"
           >✕</button>
         </div>
 
-        {unwon.length === 0 ? (
+        {/* Empty cart guard */}
+        {emptyCart ? (
           <div style={{ padding: 20, textAlign: "center", color: T.slate500 }}>
             No prizes left in the cart to draw.
           </div>
         ) : (
           <>
-            <div style={{
-              background: phase === "landed"
-                ? "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)"
-                : "linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)",
-              border: phase === "landed" ? "3px solid #f59e0b" : "2px solid #0ea5e9",
-              borderRadius: 10,
-              padding: "24px 16px",
-              minHeight: 100,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              textAlign: "center",
-              transition: "background 0.3s, border 0.3s",
-              marginBottom: 14,
-            }}>
-              <div>
+            {/* Slot-reel wheel */}
+            {showWheel && (
+              <div style={{ marginBottom: 14 }}>
                 <div style={{
-                  fontSize: phase === "landed" ? 20 : 16,
-                  fontWeight: phase === "landed" ? 800 : 700,
-                  color: phase === "landed" ? "#78350f" : "#075985",
-                  transition: "font-size 0.2s",
+                  position: "relative",
+                  height: VIEWPORT_H,
+                  overflow: "hidden",
+                  background: "linear-gradient(180deg, #f8fafc 0%, #e0f2fe 50%, #f8fafc 100%)",
+                  border: `2px solid ${T.slate300}`,
+                  borderRadius: 10,
                 }}>
-                  {currentDisplay ? currentDisplay.prize_description : "—"}
+                  <div style={{
+                    transform: `translateY(${wheelOffset}px)`,
+                    transition: phase === "spinning" ? "transform 2.2s cubic-bezier(0.17, 0.67, 0.3, 1)" : "none",
+                    willChange: "transform",
+                  }}>
+                    {strip.map((p, i) => (
+                      <div
+                        key={`strip-${i}-${p.id}`}
+                        style={{
+                          height: ROW_H,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: "0 12px",
+                          fontSize: 15,
+                          fontWeight: 600,
+                          color: T.slate800,
+                          borderBottom: "1px solid rgba(148, 163, 184, 0.2)",
+                          textAlign: "center",
+                        }}
+                      >
+                        {p.prize_description}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Center selection window (fixed) */}
+                  <div style={{
+                    position: "absolute",
+                    top: VIEWPORT_H / 2 - ROW_H / 2,
+                    left: 0,
+                    right: 0,
+                    height: ROW_H,
+                    pointerEvents: "none",
+                    borderTop: "2px solid #f59e0b",
+                    borderBottom: "2px solid #f59e0b",
+                    background: "rgba(254, 243, 199, 0.35)",
+                  }} />
+                  {/* Fade masks top + bottom */}
+                  <div style={{
+                    position: "absolute",
+                    top: 0, left: 0, right: 0,
+                    height: (VIEWPORT_H - ROW_H) / 2,
+                    background: "linear-gradient(180deg, rgba(248,250,252,1) 0%, rgba(248,250,252,0) 100%)",
+                    pointerEvents: "none",
+                  }} />
+                  <div style={{
+                    position: "absolute",
+                    bottom: 0, left: 0, right: 0,
+                    height: (VIEWPORT_H - ROW_H) / 2,
+                    background: "linear-gradient(0deg, rgba(248,250,252,1) 0%, rgba(248,250,252,0) 100%)",
+                    pointerEvents: "none",
+                  }} />
                 </div>
-                {phase === "landed" && (
-                  <div style={{ fontSize: 11, color: "#92400e", marginTop: 6, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
-                    🎉 You drew this prize
-                  </div>
-                )}
-                {phase === "spinning" && (
-                  <div style={{ fontSize: 11, color: "#075985", marginTop: 6, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
-                    Spinning…
-                  </div>
-                )}
               </div>
-            </div>
+            )}
 
-            {errMsg && (
+            {/* Drawn list */}
+            {drawn.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: T.slate600, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  Your draws ({drawn.length}/{drawsAllotted})
+                  {shouldPromptPick && (
+                    <span style={{ color: "#b45309", marginLeft: 8, textTransform: "none", letterSpacing: 0, fontWeight: 600 }}>
+                      — pick one, the rest go back
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {drawn.map((p, i) => {
+                    const selected = selectedIdx === i;
+                    const clickable = shouldPromptPick && !saving;
+                    return (
+                      <button
+                        key={`drawn-${p.id}-${i}`}
+                        onClick={clickable ? () => setSelectedIdx(i) : undefined}
+                        disabled={!clickable}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "10px 12px",
+                          background: selected
+                            ? "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)"
+                            : (clickable ? "#f8fafc" : "#f1f5f9"),
+                          border: `2px solid ${selected ? "#f59e0b" : T.slate200}`,
+                          borderRadius: 8,
+                          textAlign: "left",
+                          cursor: clickable ? "pointer" : "default",
+                          fontSize: 14,
+                          fontWeight: selected ? 800 : 600,
+                          color: selected ? "#78350f" : T.slate800,
+                          transition: "background 0.2s, border 0.2s",
+                          width: "100%",
+                        }}
+                      >
+                        <span>{p.prize_description}</span>
+                        {selected && (
+                          <span style={{ fontSize: 12, color: "#92400e", fontWeight: 800, flexShrink: 0, marginLeft: 8 }}>
+                            ✓ Selected
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {err && (
               <div style={{
-                fontSize: 12, color: "#991b1b", background: "#fee2e2",
-                borderRadius: 6, padding: "8px 10px", marginBottom: 10,
+                fontSize: 12,
+                color: "#991b1b",
+                background: "#fee2e2",
+                borderRadius: 6,
+                padding: "8px 10px",
+                marginBottom: 10,
               }}>
-                {errMsg}
+                {err}
               </div>
             )}
 
-            {phase === "ready" && (
-              <button
-                onClick={runSpin}
-                style={{
-                  width: "100%",
-                  padding: "12px 16px",
-                  fontSize: 15,
-                  fontWeight: 800,
-                  color: "#fff",
-                  background: "#16a34a",
-                  border: "none",
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  boxShadow: "0 4px 12px rgba(22,163,74,0.4)",
-                }}
-              >SPIN!</button>
-            )}
-
-            {phase === "spinning" && (
+            {/* Action buttons */}
+            {phase === "spinning" ? (
               <button
                 disabled
                 style={{
@@ -3811,56 +3897,50 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsRemaining, onClose, o
                   cursor: "not-allowed",
                 }}
               >Spinning…</button>
-            )}
-
-            {phase === "landed" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <button
-                  onClick={keepPrize}
-                  style={{
-                    padding: "12px 12px",
-                    fontSize: 14,
-                    fontWeight: 800,
-                    color: "#fff",
-                    background: "#16a34a",
-                    border: "none",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                  }}
-                >✓ Keep it</button>
-                <button
-                  onClick={returnPrize}
-                  disabled={unwon.length <= 1}
-                  style={{
-                    padding: "12px 12px",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    color: unwon.length <= 1 ? T.slate400 : T.slate700,
-                    background: "#fff",
-                    border: `1px solid ${T.slate300}`,
-                    borderRadius: 8,
-                    cursor: unwon.length <= 1 ? "not-allowed" : "pointer",
-                  }}
-                  title={unwon.length <= 1 ? "No other prizes to spin for" : "Return and spin again"}
-                >↻ Return & re-spin</button>
-              </div>
-            )}
-
-            {phase === "saving" && (
+            ) : shouldPromptPick ? (
               <button
-                disabled
+                onClick={keepSelected}
+                disabled={selectedIdx == null || saving}
                 style={{
                   width: "100%",
                   padding: "12px 16px",
                   fontSize: 15,
                   fontWeight: 800,
                   color: "#fff",
-                  background: "#94a3b8",
+                  background: (selectedIdx == null || saving) ? "#94a3b8" : "#16a34a",
                   border: "none",
                   borderRadius: 8,
-                  cursor: "not-allowed",
+                  cursor: (selectedIdx == null || saving) ? "not-allowed" : "pointer",
+                  boxShadow: (selectedIdx == null || saving) ? "none" : "0 4px 12px rgba(22,163,74,0.4)",
                 }}
-              >Saving…</button>
+              >
+                {saving
+                  ? "Saving…"
+                  : selectedIdx == null
+                    ? "Pick one above to keep"
+                    : "✓ Keep selected prize"}
+              </button>
+            ) : (
+              <button
+                onClick={spin}
+                disabled={available.length === 0 || drawsRemaining === 0}
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  color: "#fff",
+                  background: (available.length === 0 || drawsRemaining === 0) ? "#94a3b8" : "#16a34a",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: (available.length === 0 || drawsRemaining === 0) ? "not-allowed" : "pointer",
+                  boxShadow: (available.length === 0 || drawsRemaining === 0) ? "none" : "0 4px 12px rgba(22,163,74,0.4)",
+                }}
+              >
+                {drawn.length === 0
+                  ? `🎰 SPIN (${drawsRemaining} draw${drawsRemaining === 1 ? "" : "s"})`
+                  : `🎰 SPIN AGAIN (${drawsRemaining} left)`}
+              </button>
             )}
           </>
         )}
