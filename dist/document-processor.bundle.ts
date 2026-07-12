@@ -2100,6 +2100,7 @@ export async function processSurePayrollPdf(opts: {
 //        d. Map extension code (6-char SF VA...) -> team.email_sf -> team_member_id
 //        e. Upsert daily_call_activity rows
 //        f. Star the Gmail message (idempotency marker)
+//        g. Archive the Gmail thread (remove INBOX label)
 //   3. Return summary { ok, processed_messages, rows_upserted, skipped, errors, ... }
 // =========================================================================
 
@@ -2335,6 +2336,34 @@ async function processMessage(
     });
   } catch (e) {
     console.warn("star failed (non-fatal):", e);
+  }
+
+  // 6. Archive the thread (remove INBOX label). Mirrors maybeArchiveThread()
+  //    in index.ts — every successfully-processed doc gets its Gmail thread
+  //    off Peter's inbox. Non-fatal on failure so the DB upsert still counts.
+  const threadId: string | null =
+    msg?.threadId ?? msg?.thread_id ?? msg?.response_data?.threadId ?? null;
+  if (threadId) {
+    try {
+      const archiveRes = await callComposio({
+        apiKey: ctx.composioApiKey,
+        userId: ctx.composioUserId,
+        connectedAccountId: ctx.gmailAccountId,
+        toolSlug: "GMAIL_MODIFY_THREAD_LABELS",
+        toolArguments: {
+          thread_id: threadId,
+          remove_label_ids: ["INBOX"],
+          user_id: "me",
+        },
+      });
+      if (!archiveRes.ok) {
+        console.warn(`call_log archive (remove INBOX) failed: ${archiveRes.error}`);
+      }
+    } catch (e) {
+      console.warn("call_log archive threw (non-fatal):", e);
+    }
+  } else {
+    console.warn(`call_log archive skipped: no threadId on message ${messageId}`);
   }
 
   return { status: "processed", date: parsed.activity_date, rowsUpserted: upserted };
