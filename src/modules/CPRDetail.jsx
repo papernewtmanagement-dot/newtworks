@@ -3029,8 +3029,9 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
 }
 
 // 21 — Leaderboards
-function LeaderboardsSection({ leaderboards, team }) {
+function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team }) {
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const cfgByCategory = Object.fromEntries((floorConfig || []).map(c => [c.category, c]));
   if (!leaderboards || leaderboards.length === 0) {
     return (
       <div>
@@ -3041,23 +3042,51 @@ function LeaderboardsSection({ leaderboards, team }) {
   }
 
   const CATS = [
-    { key: "quarter_sp",  label: "Quarter SP",       fmt: v => fmtMoneyCents(v) },
-    { key: "week_sp",     label: "Best Week SP",     fmt: v => fmtMoneyCents(v) },
-    { key: "week_quotes", label: "Best Week Quotes", fmt: v => Number(v).toFixed(0) },
+    { key: "quarter_sp",  label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
+    { key: "week_sp",     label: "Weekly Sales",    fmt: v => fmtMoneyCents(v) },
+    { key: "week_quotes", label: "Weekly Quotes",   fmt: v => Number(v).toFixed(0) },
   ];
   const TIER = { 1: { label: "🥇 Gold",   bg: "#fef3c7", border: "#f59e0b" },
                  2: { label: "🥈 Silver", bg: "#f1f5f9", border: "#94a3b8" },
                  3: { label: "🥉 Bronze", bg: "#fef2e2", border: "#d97706" } };
+
+  // Normalize period label — use record_week_ending when present (ISO → "Mon DD, YYYY")
+  const fmtPeriod = (row, catKey) => {
+    if (catKey === "quarter_sp") return row.record_period_label || "—";
+    if (row.record_week_ending) {
+      try {
+        const d = new Date(row.record_week_ending + "T12:00:00");
+        return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+      } catch { return row.record_period_label || "—"; }
+    }
+    return row.record_period_label || "—";
+  };
 
   return (
     <div>
       <SectionHeader title="Leaderboards" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
         {CATS.map(cat => {
-          const rows = leaderboards.filter(r => r.category === cat.key).sort((a,b) => a.tier - b.tier);
+          const rows   = leaderboards.filter(r => r.category === cat.key).sort((a,b) => a.tier - b.tier);
+          const bronze = rows.find(r => r.tier === 3);
+          const gold   = rows.find(r => r.tier === 1);
+          const cfg    = cfgByCategory[cat.key];
+          const step   = cfg?.round_step || 1;
+          const floorVal    = bronze ? Math.floor(Number(bronze.record_value) / step) * step : 0;
+          const trailblazer = gold   ? Math.ceil((Number(gold.record_value) + 0.01) / step) * step : 0;
+          const counts = (allStarCounts || []).filter(r => r.category === cat.key).sort((a,b) => Number(b.count) - Number(a.count));
           return (
-            <Card key={cat.key} style={{ padding: 14 }}>
-              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8, color: T.slate900 }}>{cat.label}</div>
+            <Card key={cat.key} style={{ padding: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6, color: T.slate900 }}>{cat.label}</div>
+
+              {/* Trailblazer — above gold */}
+              {trailblazer > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#0369a1", marginBottom: 4, padding: "2px 4px" }}>
+                  <div style={{ fontWeight: 600 }}>▲ Trailblazer</div>
+                  <div style={{ fontWeight: 800 }}>{cat.fmt(trailblazer)}</div>
+                </div>
+              )}
+
               {rows.length === 0 && <div style={{ fontSize: 12, color: T.slate500 }}>No records yet</div>}
               {rows.map(r => {
                 const tm = teamById[r.team_member_id];
@@ -3066,81 +3095,45 @@ function LeaderboardsSection({ leaderboards, team }) {
                 return (
                   <div key={r.tier} style={{
                     display: "flex", justifyContent: "space-between", alignItems: "baseline",
-                    padding: "6px 10px", marginBottom: 4, borderRadius: 6,
+                    padding: "5px 8px", marginBottom: 3, borderRadius: 6,
                     background: styling.bg, borderLeft: `3px solid ${styling.border}`,
                   }}>
                     <div>
-                      <div style={{ fontSize: 11, color: T.slate500, fontWeight: 600 }}>{styling.label}</div>
+                      <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600 }}>{styling.label}</div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{nameStr}</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>{cat.fmt(r.record_value)}</div>
-                      <div style={{ fontSize: 10, color: T.slate500 }}>{r.record_period_label}</div>
+                      <div style={{ fontSize: 10, color: T.slate500 }}>{fmtPeriod(r, cat.key)}</div>
                     </div>
                   </div>
                 );
               })}
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
-// 21b — All-Stars + Trailblazer thresholds
-function AllStarsTrailblazerSection({ leaderboards, allStarCounts, floorConfig, team }) {
-  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
-  const cfgByCategory = Object.fromEntries((floorConfig || []).map(c => [c.category, c]));
-  if (!leaderboards || leaderboards.length === 0) return null;
+              {/* All-Star floor — below bronze */}
+              {floorVal > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.slate600, marginTop: 4, padding: "2px 4px" }}>
+                  <div style={{ fontWeight: 600 }}>All-Star floor</div>
+                  <div style={{ fontWeight: 800 }}>{cat.fmt(floorVal)}</div>
+                </div>
+              )}
 
-  const CATS = [
-    { key: "quarter_sp",  label: "Quarter SP",       fmt: v => fmtMoneyCents(v) },
-    { key: "week_sp",     label: "Best Week SP",     fmt: v => fmtMoneyCents(v) },
-    { key: "week_quotes", label: "Best Week Quotes", fmt: v => Number(v).toFixed(0) },
-  ];
-
-  return (
-    <div>
-      <SectionHeader title="All-Stars · Trailblazer" />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
-        {CATS.map(cat => {
-          const bronze = leaderboards.find(r => r.category === cat.key && r.tier === 3);
-          const gold   = leaderboards.find(r => r.category === cat.key && r.tier === 1);
-          const cfg    = cfgByCategory[cat.key];
-          const step   = cfg?.round_step || 1;
-          const floorVal      = bronze ? Math.floor(Number(bronze.record_value) / step) * step : 0;
-          const trailblazer   = gold   ? Math.ceil((Number(gold.record_value) + 0.01) / step) * step : 0;
-          const counts = (allStarCounts || []).filter(r => r.category === cat.key).sort((a,b) => Number(b.count) - Number(a.count));
-          return (
-            <Card key={cat.key} style={{ padding: 14 }}>
-              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8, color: T.slate900 }}>{cat.label}</div>
-
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: T.slate500 }}>All-Star floor (bronze rounded down to nearest {step})</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>{cat.fmt(floorVal)}</div>
-              </div>
-
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: T.slate500 }}>Trailblazer threshold (gold rounded up to next {step})</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#0369a1" }}>{cat.fmt(trailblazer)}</div>
-                <div style={{ fontSize: 10, color: T.slate500 }}>First to cross = Trailblazer</div>
-              </div>
-
-              <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 8 }}>
-                <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>Running all-star counts</div>
-                {counts.length === 0 && <div style={{ fontSize: 12, color: T.slate400 }}>No crossings yet</div>}
-                {counts.map(r => {
-                  const tm = teamById[r.team_member_id];
-                  const nm = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
-                  return (
-                    <div key={r.team_member_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
-                      <div style={{ fontWeight: 600 }}>{nm}</div>
-                      <div>{r.count}× {r.seeded_count > 0 && <span style={{ color: T.slate400, fontSize: 10 }}>({r.seeded_count} historical)</span>}</div>
-                    </div>
-                  );
-                })}
-              </div>
+              {/* Running counts */}
+              {counts.length > 0 && (
+                <div style={{ borderTop: `1px solid ${T.slate200}`, marginTop: 6, paddingTop: 6 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", fontSize: 11 }}>
+                    {counts.map(r => {
+                      const tm = teamById[r.team_member_id];
+                      const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
+                      return (
+                        <span key={r.team_member_id} style={{ color: T.slate700 }}>
+                          <b>{nm}</b> {r.count}×
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </Card>
           );
         })}
@@ -3186,140 +3179,118 @@ function MVPBanner({ mvpThisWeek, team, report }) {
 }
 
 // 21d — Win the Quarter Tracker (reads diag.carveouts_detail.wtq_trip)
-function WtQTrackerSection({ diag }) {
-  if (!diag) return null;
-  const cvo = diag.carveouts_detail || {};
+function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
+  const cvo = (diag && diag.carveouts_detail) || {};
   const wtq = cvo.wtq_trip || {};
   const inputs = cvo.inputs || {};
   const wins = Number(inputs.current_cycle_wins_to_date || 0);
-  const maxPossible = Number(inputs.max_possible_wins_this_cycle || 13);
   const week = Number(inputs.week_of_cycle || 1);
   const halted = wtq.halted;
   const annualPot = Number(wtq.annual_dollars || 0);
-  const otBasis = Number(inputs.annual_ot_basis || 0);
   const cycleStart = inputs.current_cycle_start;
   const cycleEnd = inputs.current_cycle_end;
-
-  const pctWins = Math.min(100, (wins / 13) * 100);
   const pctFloor = Math.min(100, (wins / 9) * 100);
-
   const quarterMVPCut = annualPot * 0.60;
   const teamCut       = annualPot * 0.40;
 
-  return (
-    <div>
-      <SectionHeader icon="🏝️" title="Win the Quarter Tracker" />
-      <Card style={{ padding: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
-          <div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>Current cycle</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{cycleStart} → {cycleEnd} · Week {week}/13</div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 11, color: T.slate500 }}>Wins to date</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>{wins}<span style={{ fontSize: 14, color: T.slate500 }}> / 13</span></div>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 3 }}>9-win floor (WtQ funding gate)</div>
-          <div style={{ height: 10, background: T.slate100, borderRadius: 5, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${pctFloor}%`, background: pctFloor >= 100 ? "#16a34a" : "#f59e0b", transition: "width 0.3s" }} />
-          </div>
-          <div style={{ fontSize: 10, color: T.slate500, marginTop: 3 }}>{wins} / 9 wins ({pctFloor.toFixed(0)}%) · max possible this cycle: {maxPossible}</div>
-        </div>
-
-        {halted ? (
-          <div style={{
-            padding: "10px 12px", background: "#fee2e2", borderRadius: 6, borderLeft: `3px solid ${T.red}`,
-            fontSize: 12, color: "#991b1b", marginBottom: 10,
-          }}>
-            <div style={{ fontWeight: 700 }}>WtQ trip HALTED — pot = $0</div>
-            <div style={{ marginTop: 2, fontSize: 11 }}>{wtq.halt_reason}</div>
-          </div>
-        ) : (
-          <>
-            <div style={{ padding: "10px 12px", background: "#ecfdf5", borderRadius: 6, borderLeft: `3px solid #10b981`, marginBottom: 10 }}>
-              <div style={{ fontSize: 11, color: "#065f46", fontWeight: 700 }}>Current pot (annualized)</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: "#064e3b" }}>{fmtMoneyCents(annualPot)}</div>
-              <div style={{ fontSize: 11, color: "#065f46", marginTop: 2 }}>= 10% × OT (SMVC+Scorecard) {fmtMoneyCents(otBasis)} × {wins}/13</div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div style={{ padding: 10, background: "#fef3c7", borderRadius: 6 }}>
-                <div style={{ fontSize: 11, color: "#78350f", fontWeight: 700 }}>Quarter MVP (60%)</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
-                <div style={{ fontSize: 10, color: "#78350f" }}>Top SP producer takes the biggest cut</div>
-              </div>
-              <div style={{ padding: 10, background: "#e0f2fe", borderRadius: 6 }}>
-                <div style={{ fontSize: 11, color: "#075985", fontWeight: 700 }}>Rest of Team (40%)</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCents(teamCut)}</div>
-                <div style={{ fontSize: 10, color: "#075985" }}>Split across remaining teammates</div>
-              </div>
-            </div>
-          </>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// 22 — Prize Cart
-function PrizeCartSection({ prizeCart, team, prizeBudget }) {
   const safe = Array.isArray(prizeCart) ? prizeCart : [];
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
-  const budgetAccessory = prizeBudget == null
-    ? null
-    : `($${Math.round(Number(prizeBudget)).toLocaleString("en-US")})`;
+  const budgetLabel = prizeBudget == null
+    ? "—"
+    : `$${Math.round(Number(prizeBudget)).toLocaleString("en-US")}`;
 
-  if (safe.length === 0) {
-    return (
-      <div>
-        <SectionHeader icon="🏆" title="Prize Cart" accessory={budgetAccessory} />
-        <Card><Awaiting message="No prizes loaded for this quarter yet" /></Card>
-      </div>
-    );
-  }
+  const fmtShort = (iso) => {
+    if (!iso) return "—";
+    try { return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
+    catch { return iso; }
+  };
+
+  if (!diag && safe.length === 0) return null;
 
   return (
     <div>
-      <SectionHeader icon="🏆" title="Prize Cart" accessory={budgetAccessory} />
-      <Card style={{ padding: 0 }}>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <Th style={{ paddingLeft: 16 }}>Prize</Th>
-              <Th>Winner</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {safe.map(row => {
-              const winner = row.winner_team_member_id ? teamById[row.winner_team_member_id] : null;
-              const winnerLabel = winner ? (winner.nickname || winner.first_name || "(unknown)") : "—";
-              return (
-                <tr key={row.id}>
-                  <Td style={{ paddingLeft: 16 }}>
-                    {row.prize_url ? (
-                      <a
-                        href={row.prize_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: T.slate800, textDecoration: "none" }}
-                      >
-                        {row.prize_description}
-                      </a>
-                    ) : (
-                      row.prize_description
-                    )}
-                  </Td>
-                  <Td style={{ color: winner ? T.slate800 : T.slate400 }}>
-                    {winnerLabel}
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <SectionHeader icon="🏝️" title="Win the Quarter" accessory={diag ? `Week ${week}/13 · ${fmtShort(cycleStart)}→${fmtShort(cycleEnd)}` : null} />
+      <Card style={{ padding: 12 }}>
+
+        {/* Condensed single-row strip: floor bar | pot | MVP | rest of team */}
+        {diag && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            gap: 8, marginBottom: 10,
+          }}>
+            <div style={{ padding: 8, background: "#f8fafc", borderRadius: 6 }}>
+              <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600 }}>Floor · {wins}/9 wins</div>
+              <div style={{ height: 8, background: T.slate200, borderRadius: 4, overflow: "hidden", marginTop: 4 }}>
+                <div style={{ height: "100%", width: `${pctFloor}%`, background: pctFloor >= 100 ? "#16a34a" : "#f59e0b", transition: "width 0.3s" }} />
+              </div>
+              <div style={{ fontSize: 10, color: T.slate500, marginTop: 3 }}>{wins}/13 total</div>
+            </div>
+
+            <div style={{ padding: 8, background: halted ? "#fee2e2" : "#ecfdf5", borderRadius: 6, borderLeft: `3px solid ${halted ? T.red : "#10b981"}` }}>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCents(annualPot)}</div>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `10% OT × ${wins}/13`}</div>
+            </div>
+
+            <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
+              <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP (60%)</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
+              <div style={{ fontSize: 10, color: "#78350f" }}>Top SP producer</div>
+            </div>
+
+            <div style={{ padding: 8, background: "#e0f2fe", borderRadius: 6 }}>
+              <div style={{ fontSize: 10, color: "#075985", fontWeight: 700 }}>Rest of team (40%)</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCents(teamCut)}</div>
+              <div style={{ fontSize: 10, color: "#075985" }}>Split by SP</div>
+            </div>
+          </div>
+        )}
+
+        {halted && (
+          <div style={{ fontSize: 11, color: "#991b1b", marginBottom: 8 }}>{wtq.halt_reason}</div>
+        )}
+
+        {/* Prize Cart — inline within same section */}
+        <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: T.slate900 }}>🏆 Prize Cart</div>
+            <div style={{ fontSize: 11, color: T.slate500 }}>Budget: <b style={{ color: T.slate800 }}>{budgetLabel}</b> (1% × on-time Scorecard)</div>
+          </div>
+          {safe.length === 0 ? (
+            <Awaiting message="No prizes loaded for this quarter yet" />
+          ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <Th style={{ paddingLeft: 4 }}>Prize</Th>
+                    <Th>Winner</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {safe.map(row => {
+                    const winner = row.winner_team_member_id ? teamById[row.winner_team_member_id] : null;
+                    const winnerLabel = winner ? (winner.nickname || winner.first_name || "(unknown)") : "—";
+                    return (
+                      <tr key={row.id}>
+                        <Td style={{ paddingLeft: 4 }}>
+                          {row.prize_url ? (
+                            <a href={row.prize_url} target="_blank" rel="noopener noreferrer" style={{ color: T.slate800, textDecoration: "none" }}>
+                              {row.prize_description}
+                            </a>
+                          ) : (
+                            row.prize_description
+                          )}
+                        </Td>
+                        <Td style={{ color: winner ? T.slate800 : T.slate400 }}>{winnerLabel}</Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </Card>
     </div>
@@ -3886,17 +3857,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
 
-      {/* 21. Leaderboards */}
-      <Section><LeaderboardsSection leaderboards={data.leaderboards} team={data.team} /></Section>
+      {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts) */}
+      <Section><LeaderboardsSection leaderboards={data.leaderboards} allStarCounts={data.allStarCounts} floorConfig={data.floorConfig} team={data.team} /></Section>
 
-      {/* 21b. All-Stars + Trailblazer */}
-      <Section><AllStarsTrailblazerSection leaderboards={data.leaderboards} allStarCounts={data.allStarCounts} floorConfig={data.floorConfig} team={data.team} /></Section>
-
-      {/* 21c. Win the Quarter Tracker */}
-      <Section><WtQTrackerSection diag={data.details?.[0]?.residual_pool_diag || null} /></Section>
-
-      {/* 22. Prize Cart — quarter total budget from quarter_prize_budgets */}
-      <Section><PrizeCartSection prizeCart={data.prizeCart} team={data.team} prizeBudget={data.quarterPrizeBudget?.budget_dollars ?? null} /></Section>
+      {/* 22. Win the Quarter (condensed) + Prize Cart, single section */}
+      <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} prizeBudget={data.quarterPrizeBudget?.budget_dollars ?? null} /></Section>
 
       {/* Footer signoff */}
       <div style={{
