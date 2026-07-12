@@ -3190,8 +3190,8 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
   const cycleStart = inputs.current_cycle_start;
   const cycleEnd = inputs.current_cycle_end;
   const pctFloor = Math.min(100, (wins / 9) * 100);
-  const quarterMVPCut = annualPot * 0.60;
-  const teamCut       = annualPot * 0.40;
+  const quarterMVPCut = annualPot * 0.30;
+  const teamCut       = annualPot * 0.70;
 
   const safe = Array.isArray(prizeCart) ? prizeCart : [];
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
@@ -3234,13 +3234,13 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP (60%)</div>
+              <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP (30%)</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
               <div style={{ fontSize: 10, color: "#78350f" }}>Top SP producer</div>
             </div>
 
             <div style={{ padding: 8, background: "#e0f2fe", borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: "#075985", fontWeight: 700 }}>Rest of team (40%)</div>
+              <div style={{ fontSize: 10, color: "#075985", fontWeight: 700 }}>Rest of team (70%)</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCents(teamCut)}</div>
               <div style={{ fontSize: 10, color: "#075985" }}>Split by SP</div>
             </div>
