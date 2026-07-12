@@ -1,0 +1,34 @@
+-- 20260712190000_on_time_pace_formula_trip_and_prize_cart_equal.sql
+-- MAJOR FORMULA RESET (Peter directive 2026-07-12 pm3).
+--
+-- Both WtQ Trip pot and MVP Prize Cart use the SAME formula:
+--   pool = 5% × (OT SMVC + OT Scorecard) × on-time pace
+--   on-time pace = LEAST(1.0, curr_qtr_wins / week_of_cycle)
+--
+-- At pace=1.0 (winning every week so far), both pools max at 5% × basis.
+-- WtQ Trip retains 9-win floor halt (halts to $0 if unreachable).
+-- MVP Prize Cart has no floor (restocks regardless).
+--
+-- Prior state (all reverted):
+--   - 7/11: WtQ Trip = 10% × basis × wins/13; Prize Cart = 1% × Scorecard only
+--   - 7/12 pm2: attempted 1% × basis × prior_wins/13 for prize cart (also wrong)
+--
+-- Two functions updated:
+--   1. compute_pool_carveouts: v_annual_wtq + v_annual_mvp both use v_pool_pace_dollars = 0.05 × v_annual_ot_basis × v_pace
+--   2. quarter_close_prize_cart_and_leaderboards: v_next_budget = 0.05 × basis × (closing_wins/13)
+--
+-- Also DELETES stale row from quarter_prize_budgets (agency 126794dd, quarter_ending_date 2026-10-03)
+-- that was computed under the 7/11 formula.
+--
+-- CPR page frontend rewired: reads live mvp_prize_cart.annual_dollars from carveouts_detail
+-- instead of the stored quarter_prize_budgets.budget_dollars. Prize cart budget and trip pot
+-- display equal values live.
+--
+-- Handbook "Winning & Learning" rewritten to reflect unified formula + on-time pace concept.
+-- Op-rule "Residual pool carve-outs" items #2 and #3 rewritten.
+--
+-- Rate is currently 5% (Peter said "maybe 5% at most"). Single constant to tune:
+--   v_rate in compute_pool_carveouts AND quarter_close_prize_cart_and_leaderboards.
+--
+-- Full function bodies applied live via Supabase MCP apply_migration. This file mirrors the migration
+-- for GitHub history; re-run is idempotent (CREATE OR REPLACE + DELETE ... WHERE ...).
