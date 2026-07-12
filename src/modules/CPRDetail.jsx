@@ -3315,7 +3315,7 @@ function MVPBanner({ mvpThisWeek, team, report }) {
 }
 
 // 21d — Win the Quarter Tracker (reads diag.carveouts_detail.wtq_trip)
-function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
+function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
   const cvo = (diag && diag.carveouts_detail) || {};
   const wtq = cvo.wtq_trip || {};
   const inputs = cvo.inputs || {};
@@ -3339,10 +3339,6 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
 
   const safe = Array.isArray(prizeCart) ? prizeCart : [];
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
-  const budgetLabel = prizeBudget == null
-    ? "—"
-    : `$${Math.round(Number(prizeBudget)).toLocaleString("en-US")}`;
-
   const fmtShort = (iso) => {
     if (!iso) return "—";
     try { return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
@@ -3372,9 +3368,9 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
             </div>
 
             <div style={{ padding: 8, background: halted ? "#fee2e2" : "#ecfdf5", borderRadius: 6, borderLeft: `3px solid ${halted ? T.red : "#10b981"}` }}>
-              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot</div>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot / Prize cart restock</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCents(annualPot)}</div>
-              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `5% OT × pace ${(Number(wtq.pace ?? 0) * 100).toFixed(0)}%`}</div>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `3% OT × pace ${(Number(wtq.pace ?? 0) * 100).toFixed(0)}%`}</div>
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
@@ -3397,9 +3393,8 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
 
         {/* Prize Cart — inline within same section */}
         <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
+          <div style={{ marginBottom: 6 }}>
             <div style={{ fontWeight: 700, fontSize: 13, color: T.slate900 }}>🏆 Prize Cart</div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>Budget: <b style={{ color: T.slate800 }}>{budgetLabel}</b> (5% × on-time SMVC + Scorecard × pace — same as trip pot)</div>
           </div>
           {safe.length === 0 ? (
             <Awaiting message="No prizes loaded for this quarter yet" />
@@ -4054,7 +4049,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       /></Section>
 
       {/* 22. Win the Quarter (condensed) + Prize Cart, single section */}
-      <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} prizeBudget={data.details?.[0]?.residual_pool_diag?.carveouts_detail?.mvp_prize_cart?.annual_dollars ?? null} /></Section>
+      <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} /></Section>
 
       {/* Footer signoff */}
       <div style={{
