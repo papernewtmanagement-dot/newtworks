@@ -2003,6 +2003,14 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
 }
 
 // 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1% / prior-quarter avg weekly SP columns)
+// Column tint scheme (Peter 2026-07-12 pm3):
+//   _TINT_1PCT — ↑ 1% column, subtle indigo — signals "goal/target"
+//   _TINT_HIST — historical SP columns, subtle teal — signals "reference/history"
+// Tints stretch top-to-bottom via style on every cell in those columns (incl. Team Total, Goal, WtW).
+// WtW result row colSpan narrows to 4 (stops at Q Sales Pts) so the shaded columns keep their bg.
+const _TINT_1PCT = "#eef2ff";  // indigo-50
+const _TINT_HIST = "#f0fdfa";  // teal-50
+
 function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP }) {
   if (!details || details.length === 0) {
     return (
@@ -2056,7 +2064,8 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
   const _pqByPerson = Object.fromEntries(
     Object.entries(_pqData).map(([id, arr]) => [id, Object.fromEntries((arr || []).map(r => [r.quarter_label, r]))])
   );
-  const _wtwColSpan = 5 + quarterList.length;
+  // WtW result row narrows to the first 4 columns (Person + Quotes + Net Quotes + Q Sales Pts)
+  // so the tinted ↑1% + historical columns continue full-height.
 
   return (
     <div>
@@ -2070,9 +2079,9 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Th align="right">Quotes</Th>
                 <Th align="right">Net Quotes</Th>
                 <Th align="right">Q Sales Pts</Th>
-                <Th align="right">↑ 1% vs 13-wk</Th>
+                <Th align="right" style={{ background: _TINT_1PCT }}>↑ 1% vs 13-wk</Th>
                 {quarterList.map(q => (
-                  <Th key={q} align="right">{q}</Th>
+                  <Th key={q} align="right" style={{ background: _TINT_HIST }}>{q}</Th>
                 ))}
               </tr>
             </thead>
@@ -2144,8 +2153,9 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                       </Td>
                     )}
                     {/* ↑ 1% vs 13-wk: target = 1.01 × avg new SP over prior 13 weeks (per person).
-                        ✓ icon renders when this-week new SP hit the target (adds $10 to Goals bonus). */}
-                    <Td align="right">
+                        ✓ icon renders when this-week new SP hit the target (adds $10 to Goals bonus).
+                        Column tint applied to every cell for top-to-bottom shading. */}
+                    <Td align="right" style={{ background: _TINT_1PCT }}>
                       {(() => {
                         const gd = d.residual_pool_diag?.goals_detail;
                         if (!gd) return <span style={{ color: T.slate400 }}>—</span>;
@@ -2162,10 +2172,10 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                     </Td>
                     {quarterList.map(q => {
                       const row = _pqByPerson[d.team_member_id]?.[q];
-                      if (!row) return <Td key={q} align="right" style={{ color: T.slate400 }}>—</Td>;
+                      if (!row) return <Td key={q} align="right" style={{ background: _TINT_HIST, color: T.slate400 }}>—</Td>;
                       const avg = Number(row.avg_weekly_sp) || 0;
                       return (
-                        <Td key={q} align="right" style={{ color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
+                        <Td key={q} align="right" style={{ background: _TINT_HIST, color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
                       );
                     })}
                   </tr>
@@ -2178,8 +2188,8 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Td align="right"></Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(teamNetQuotesTotal)}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
-                <Td align="right"></Td>
-                {quarterList.map(q => <Td key={q} align="right"></Td>)}
+                <Td align="right" style={{ background: _TINT_1PCT }}></Td>
+                {quarterList.map(q => <Td key={q} align="right" style={{ background: _TINT_HIST }}></Td>)}
               </tr>
 
               {/* Goal row — quotes goal includes carryover from prior week */}
@@ -2193,8 +2203,8 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Td align="right"></Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{quoteGoal}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{salesPtsGoal.toFixed(2)}</Td>
-                <Td align="right"></Td>
-                {quarterList.map(q => <Td key={q} align="right"></Td>)}
+                <Td align="right" style={{ background: _TINT_1PCT }}></Td>
+                {quarterList.map(q => <Td key={q} align="right" style={{ background: _TINT_HIST }}></Td>)}
               </tr>
 
               {/* WtW Result row — one consolidated label spanning Net Quotes + Q Sales Pts.
@@ -2202,7 +2212,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                   Loss (either missed):           Carryover: N quotes / M pts  (each piece shown only if > 0, red) */}
               <tr>
                 <Td
-                  colSpan={_wtwColSpan}
+                  colSpan={4}
                   align="center"
                   style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red }}
                 >
@@ -2215,6 +2225,8 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                         return `Carryover: ${parts.join(" / ")}`;
                       })()}
                 </Td>
+                <Td align="right" style={{ background: _TINT_1PCT }}></Td>
+                {quarterList.map(q => <Td key={q} align="right" style={{ background: _TINT_HIST }}></Td>)}
               </tr>
             </tbody>
           </table>
@@ -3096,9 +3108,10 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
   }
 
   const CATS = [
-    { key: "quarter_sp",  label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
-    { key: "week_sp",     label: "Weekly Sales",    fmt: v => fmtMoneyCents(v) },
-    { key: "week_quotes", label: "Weekly Quotes",   fmt: v => Number(v).toFixed(0) },
+    { key: "quarter_sp",   label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
+    { key: "four_week_sp", label: "4-Week Sales",    fmt: v => fmtMoneyCents(v) },
+    { key: "week_sp",      label: "Weekly Sales",    fmt: v => fmtMoneyCents(v) },
+    { key: "week_quotes",  label: "Weekly Quotes",   fmt: v => Number(v).toFixed(0) },
   ];
   const TIER = { 1: { label: "🥇 Gold",   bg: "#fef3c7", border: "#f59e0b" },
                  2: { label: "🥈 Silver", bg: "#f1f5f9", border: "#94a3b8" },
