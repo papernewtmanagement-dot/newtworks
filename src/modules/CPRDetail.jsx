@@ -3356,7 +3356,7 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
         <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
             <div style={{ fontWeight: 700, fontSize: 13, color: T.slate900 }}>🏆 Prize Cart</div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>Budget: <b style={{ color: T.slate800 }}>{budgetLabel}</b> (1% × on-time Scorecard)</div>
+            <div style={{ fontSize: 11, color: T.slate500 }}>Budget: <b style={{ color: T.slate800 }}>{budgetLabel}</b> (1% × on-time SMVC + Scorecard × prior wins/13)</div>
           </div>
           {safe.length === 0 ? (
             <Awaiting message="No prizes loaded for this quarter yet" />

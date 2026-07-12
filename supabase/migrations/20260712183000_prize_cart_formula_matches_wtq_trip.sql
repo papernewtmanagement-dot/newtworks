@@ -1,0 +1,15 @@
+-- 20260712183000_prize_cart_formula_matches_wtq_trip.sql
+-- Restore prize cart pool formula to match WtQ Trip pot at 1/10 rate + prior-qtr wins (per handbook).
+-- 2026-07-11 simplification (1% × Scorecard only, no SMVC, no wins ratio) reverted 2026-07-12 per Peter.
+-- Also solidifies "rest of team = non-MVP" language in SQL comments.
+--
+-- Two functions updated:
+--   1. compute_pool_carveouts: v_annual_mvp = 0.01 * v_annual_ot_basis * (v_prior_qtr_wins/13.0)
+--   2. quarter_close_prize_cart_and_leaderboards: v_next_budget = 0.01 * (SMVC+Scorecard) * (closing_qtr_wins/13)
+--
+-- Handbook "Winning & Learning" > Prize Cart section is authoritative spec.
+-- Full function bodies committed live via Supabase MCP apply_migration 2026-07-12 pm.
+-- This file mirrors the migration for GitHub history; re-run is idempotent (CREATE OR REPLACE).
+--
+-- See op-rule "Residual pool carve-outs — 7 pre-pool items, carve-and-forget (locked 2026-07-08)"
+-- for authoritative carve-out inventory.
