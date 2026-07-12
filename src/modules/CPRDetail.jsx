@@ -2153,6 +2153,81 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
   );
 }
 
+
+
+// 17b — Sales Points quarterly history (prior-quarter avg weekly SP per teammate)
+// Reads priorQuartersAvgSP: {team_member_id: [{quarter_label, avg_weekly_sp, qtd_sp}, ...]}
+// Renders as a table with teammates on rows, quarters on columns (newest first).
+function SalesPointsHistorySection({ priorQuartersAvgSP, team, details }) {
+  const data = priorQuartersAvgSP || {};
+  const ids = Object.keys(data).filter(id => (data[id] || []).length > 0);
+  if (ids.length === 0) return null;
+
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const allQuarters = new Set();
+  ids.forEach(id => (data[id] || []).forEach(row => allQuarters.add(row.quarter_label)));
+  const quarterList = Array.from(allQuarters).sort((a, b) => {
+    const [qA, yA] = a.split(" ");
+    const [qB, yB] = b.split(" ");
+    if (yA !== yB) return Number(yB) - Number(yA);
+    return Number(qB.slice(1)) - Number(qA.slice(1));
+  });
+
+  const salesIds = ids.filter(id => {
+    const t = teamById[id];
+    return t && t.role_category === "Sales";
+  });
+  const sortedIds = salesIds.length > 0 ? salesIds : ids;
+  sortedIds.sort((a, b) => {
+    const nameA = (teamById[a]?.nickname || teamById[a]?.first_name || "").toLowerCase();
+    const nameB = (teamById[b]?.nickname || teamById[b]?.first_name || "").toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+
+  return (
+    <div>
+      <SectionHeader icon="📈" title="Sales Points — Quarterly History" />
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+            <thead>
+              <tr>
+                <Th align="left">Person</Th>
+                {quarterList.map(q => (
+                  <Th key={q} align="right">{q}</Th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedIds.map(id => {
+                const t = teamById[id];
+                const nm = t ? (t.nickname || t.first_name || "(unknown)") : "(unknown)";
+                const byQuarter = Object.fromEntries((data[id] || []).map(r => [r.quarter_label, r]));
+                return (
+                  <tr key={id}>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{nm}</Td>
+                    {quarterList.map(q => {
+                      const row = byQuarter[q];
+                      if (!row) return <Td key={q} align="right" style={{ color: T.slate400 }}>—</Td>;
+                      const avg = Number(row.avg_weekly_sp) || 0;
+                      return (
+                        <Td key={q} align="right" style={{ color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: "8px 14px", fontSize: 11, color: T.slate500, borderTop: `1px solid ${T.slate100}` }}>
+          Values are avg weekly SP for each completed quarter (quarter-end QTD ÷ 13). Reference point for pacing current-quarter performance.
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // 19 — Payroll v2 (per-person columns, residual-pool components as rows)
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
 // paid year-to-date through SurePayroll, through end of last pay period).
@@ -3706,6 +3781,9 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           onChange={edit.setDetailField}
         weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
       </Section>
+
+      {/* 17b. Sales Points quarterly history */}
+      <Section><SalesPointsHistorySection priorQuartersAvgSP={data.priorQuartersAvgSP} team={data.team} details={data.details} /></Section>
 
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
