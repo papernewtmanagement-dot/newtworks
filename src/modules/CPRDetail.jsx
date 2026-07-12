@@ -3654,6 +3654,9 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
   const [drawn, setDrawn] = useState([]); // prizes drawn this session (candidates)
   const [phase, setPhase] = useState("ready"); // ready | resetting | spinning | revealing | landed_partial | picking
   const [wheelOffset, setWheelOffset] = useState(0);
+  // Authoritative record of what the current spin landed on. Set at spin() time,
+  // used by both the reveal overlay AND setDrawn — they cannot disagree.
+  const [landedPrize, setLandedPrize] = useState(null);
   // Frozen strip content. Only mutates when spin() is called — NOT when `drawn` changes.
   // Without this freeze, the strip would rebuild after landing (drawn shrinks available),
   // shifting all row indices under a fixed wheelOffset and visually swapping the landed prize.
@@ -3696,9 +3699,13 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     // (drawn list, available derivation) can change these once we start.
     const spinPool = available;
     const targetIdx = Math.floor(Math.random() * spinPool.length);
-    const landedPrize = spinPool[targetIdx];
+    const landed = spinPool[targetIdx];
     // Snapshot the wheel's strip contents so post-landing state changes can't shift row indices.
     setWheelStripPrizes(spinPool);
+    // Promote the landed prize to state so the reveal overlay and drawn list use
+    // the SAME value — the visual "what you drew" and the committed drawn entry
+    // are literally the same object, no math dependency between them.
+    setLandedPrize(landed);
     // Reset (no transition), then animate on the next frame.
     setPhase("resetting");
     setWheelOffset(0);
@@ -3715,7 +3722,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
         setTimeout(() => {
           setPhase(prev => (prev === "spinning" ? "revealing" : prev));
           setTimeout(() => {
-            setDrawn(prev => [...prev, landedPrize]);
+            setDrawn(prev => [...prev, landed]);
             setPhase(prev => (prev === "revealing" ? "landed_partial" : prev));
           }, 900);
         }, 4200);
@@ -3744,7 +3751,13 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     }
   }
 
-  const showWheel = !shouldPromptPick && available.length > 0;
+  // Wheel is visible while user is actively spinning or seeing the reveal.
+  // Once we commit to `drawn` (landed_partial / picking), the wheel goes away
+  // — the drawn list is now the authoritative visual for what they got.
+  const showWheel =
+    (phase === "ready" || phase === "resetting" || phase === "spinning" || phase === "revealing") &&
+    !shouldPromptPick &&
+    wheelStripPrizes.length > 0;
   const emptyCart = available.length === 0 && drawn.length === 0;
 
   return (
@@ -3776,6 +3789,13 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
           overflowY: "auto",
         }}
       >
+        <style>{`
+          @keyframes prizeCartReveal {
+            0%   { opacity: 0; transform: scale(0.85); }
+            60%  { opacity: 1; transform: scale(1.04); }
+            100% { opacity: 1; transform: scale(1); }
+          }
+        `}</style>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
           <div>
@@ -3872,6 +3892,34 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                     background: "linear-gradient(0deg, rgba(248,250,252,1) 0%, rgba(248,250,252,0) 100%)",
                     pointerEvents: "none",
                   }} />
+                  {/* Reveal overlay: opaque card covering the strip during "revealing" phase.
+                      Renders landedPrize state directly — SAME source as the drawn list card,
+                      so they cannot disagree. This is the authoritative "you drew" visual. */}
+                  {phase === "revealing" && landedPrize && (
+                    <div style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0 16px",
+                      background: "linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fbbf24 100%)",
+                      border: "3px solid #f59e0b",
+                      borderRadius: 10,
+                      boxShadow: "0 0 32px rgba(245, 158, 11, 0.6) inset",
+                      textAlign: "center",
+                      animation: "prizeCartReveal 0.35s ease-out",
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "#92400e", fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+                          🎉 You drew
+                        </div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: "#78350f", lineHeight: 1.2 }}>
+                          {landedPrize.prize_description}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
