@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
@@ -2209,12 +2209,13 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 
               {/* WtW Result row — one consolidated label spanning Net Quotes + Q Sales Pts.
                   Win  (both conditions cleared): ✓ Win the Week!  (green)
-                  Loss (either missed):           Carryover: N quotes / M pts  (each piece shown only if > 0, red) */}
+                  Loss (either missed):           Carryover: N quotes / M pts  (each piece shown only if > 0, red)
+                  Right-aligned per Peter directive 2026-07-12 pm5. */}
               <tr>
                 <Td
                   colSpan={4}
-                  align="center"
-                  style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red }}
+                  align="right"
+                  style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red, paddingRight: 10 }}
                 >
                   {(quotesPass && spPass)
                     ? "✓ Win the Week!"
@@ -2320,7 +2321,7 @@ function SalesPointsHistorySection({ priorQuartersAvgSP, team, details }) {
 function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, marketingPointsThisWeek = {}, onRefresh, canEdit = false, isOwner = false }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
-  // Commission is now SP delta this week, columns spelled out, Health+ label,
+  // Commission is now SP delta this week, columns spelled out, Health Goal label,
   // owner-only formula dropdown, edit gated to owner + non-historical weeks.
   const [editMode, setEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
@@ -2389,7 +2390,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     // Populated by write_weekly_comp_v2 (after audit_weekly_leaderboard_crossings). Detail lives on residual_pool_diag.goals_detail.
     ["goals_bonus",                   "Goals"],
     ["manager_bonus",                 "Manager"],
-    ["health_bonus",                  "Health+"],
+    ["health_bonus",                  "Health Goal"],
   ];
 
   async function handleSave() {
@@ -3509,39 +3510,360 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
   );
 }
 
-// 21c — MVP Banner (top of CPR page for winning weeks)
-function MVPBanner({ mvpThisWeek, team, report }) {
+// 21c — MVP Banner (top of CPR page for winning weeks) + Prize Cart Spinner
+function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }) {
+  const [spinnerOpen, setSpinnerOpen] = useState(false);
   if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
   const tm = teamById[mvpThisWeek.team_member_id];
   const nameStr = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
+  const totalDraws = Number(mvpThisWeek.prize_draws || 0);
+  const cart = Array.isArray(prizeCart) ? prizeCart : [];
+  // Draws already used this week = prizes won by this MVP for this week's report.
+  const drawsUsed = cart.filter(p =>
+    p.winner_team_member_id === mvpThisWeek.team_member_id &&
+    p.won_on === weekDate
+  ).length;
+  const drawsRemaining = Math.max(0, totalDraws - drawsUsed);
+  const unwonPrizes = cart.filter(p => !p.winner_team_member_id);
+  const canSpin = totalDraws > 0 && drawsRemaining > 0 && unwonPrizes.length > 0;
   return (
-    <div style={{
-      background: "linear-gradient(90deg, #dcfce7 0%, #bbf7d0 100%)",
-      border: "2px solid #16a34a",
-      borderRadius: 10,
-      padding: "14px 20px",
-      margin: "12px 20px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 16,
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-        <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
-        <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
-          MVP: {nameStr}
+    <>
+      <div style={{
+        background: "linear-gradient(90deg, #dcfce7 0%, #bbf7d0 100%)",
+        border: "2px solid #16a34a",
+        borderRadius: 10,
+        padding: "14px 20px",
+        margin: "12px 20px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+          <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
+            MVP: {nameStr}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 20, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>
+              {drawsRemaining}/{totalDraws}
+            </div>
+          </div>
+          {totalDraws > 0 && (
+            <button
+              onClick={() => setSpinnerOpen(true)}
+              disabled={!canSpin}
+              style={{
+                padding: "10px 16px",
+                fontSize: 14,
+                fontWeight: 700,
+                color: canSpin ? "#fff" : "#65a30d",
+                background: canSpin ? "#16a34a" : "#d9f99d",
+                border: "none",
+                borderRadius: 8,
+                cursor: canSpin ? "pointer" : "not-allowed",
+                boxShadow: canSpin ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
+              }}
+              title={
+                !canSpin && drawsRemaining === 0 ? "All draws claimed"
+                : !canSpin && unwonPrizes.length === 0 ? "No prizes left in cart"
+                : "Spin the prize cart"
+              }
+            >
+              🎰 {drawsUsed > 0 ? "Draw again" : "Spin the cart"}
+            </button>
+          )}
         </div>
       </div>
-      <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
+      {spinnerOpen && (
+        <PrizeCartSpinner
+          mvp={{ ...mvpThisWeek, name: nameStr }}
+          prizeCart={cart}
+          weekDate={weekDate}
+          drawsRemaining={drawsRemaining}
+          onClose={() => setSpinnerOpen(false)}
+          onKept={() => {
+            setSpinnerOpen(false);
+            if (typeof onRefresh === "function") onRefresh();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// 21c-1 — Prize Cart Spinner (modal, MVP-only, one draw at a time)
+// Simple deceleration animation. MVP picks one of the unwon prizes at random,
+// then chooses "Keep" (persists winner + won_on) or "Return" (drops without saving).
+// If MVP has multiple draws, they close the modal and reopen — draws_remaining
+// self-corrects from the DB (unwon count + this MVP's kept prizes this week).
+function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsRemaining, onClose, onKept }) {
+  const unwon = (prizeCart || []).filter(p => !p.winner_team_member_id);
+  const [phase, setPhase] = useState("ready"); // ready | spinning | landed | saving | error
+  const [displayIdx, setDisplayIdx] = useState(0);
+  const [landedPrize, setLandedPrize] = useState(null);
+  const [errMsg, setErrMsg] = useState(null);
+  const intervalRef = useRef(null);
+
+  useEffect(() => {
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, []);
+
+  function runSpin() {
+    if (unwon.length === 0) return;
+    setPhase("spinning");
+    // Pick target now, animate toward it. If only 1 unwon, land immediately after a short shuffle.
+    const targetIdx = Math.floor(Math.random() * unwon.length);
+    const totalMs = 2200;
+    const start = Date.now();
+    // Start fast (~60ms), decelerate to slow (~320ms) as we approach end.
+    function tick() {
+      const elapsed = Date.now() - start;
+      const t = Math.min(1, elapsed / totalMs);
+      // Ease-out step: swap index rapidly at start, less so at end
+      setDisplayIdx(i => (i + 1) % unwon.length);
+      if (t >= 1) {
+        clearInterval(intervalRef.current);
+        setDisplayIdx(targetIdx);
+        setLandedPrize(unwon[targetIdx]);
+        setPhase("landed");
+        return;
+      }
+      // Recompute interval for deceleration
+      const nextDelay = 60 + (t * t * 260); // 60ms → 320ms
+      clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(tick, nextDelay);
+    }
+    intervalRef.current = setInterval(tick, 60);
+  }
+
+  async function keepPrize() {
+    if (!landedPrize) return;
+    setPhase("saving");
+    setErrMsg(null);
+    try {
+      const { error } = await supabase
+        .from("prize_cart")
+        .update({
+          winner_team_member_id: mvp.team_member_id,
+          won_on: weekDate,
+        })
+        .eq("id", landedPrize.id)
+        .is("winner_team_member_id", null); // guard against double-claim
+      if (error) throw error;
+      if (typeof onKept === "function") onKept();
+    } catch (e) {
+      setErrMsg(e.message || String(e));
+      setPhase("landed");
+    }
+  }
+
+  function returnPrize() {
+    setLandedPrize(null);
+    setPhase("ready");
+    setDisplayIdx(0);
+  }
+
+  const currentDisplay = phase === "spinning"
+    ? unwon[displayIdx % Math.max(1, unwon.length)]
+    : (landedPrize || unwon[displayIdx % Math.max(1, unwon.length)] || null);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15, 23, 42, 0.7)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: "#fff",
+          borderRadius: 14,
+          maxWidth: 460,
+          width: "100%",
+          padding: 20,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>🎰 Prize Cart Spinner</div>
+            <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
+              {mvp.name} · {drawsRemaining} draw{drawsRemaining === 1 ? "" : "s"} remaining
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "4px 10px",
+              fontSize: 18,
+              lineHeight: 1,
+              color: T.slate500,
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+            }}
+            aria-label="Close"
+          >✕</button>
         </div>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{mvpThisWeek.prize_draws}</div>
-        </div>
+
+        {unwon.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: T.slate500 }}>
+            No prizes left in the cart to draw.
+          </div>
+        ) : (
+          <>
+            <div style={{
+              background: phase === "landed"
+                ? "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)"
+                : "linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)",
+              border: phase === "landed" ? "3px solid #f59e0b" : "2px solid #0ea5e9",
+              borderRadius: 10,
+              padding: "24px 16px",
+              minHeight: 100,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              textAlign: "center",
+              transition: "background 0.3s, border 0.3s",
+              marginBottom: 14,
+            }}>
+              <div>
+                <div style={{
+                  fontSize: phase === "landed" ? 20 : 16,
+                  fontWeight: phase === "landed" ? 800 : 700,
+                  color: phase === "landed" ? "#78350f" : "#075985",
+                  transition: "font-size 0.2s",
+                }}>
+                  {currentDisplay ? currentDisplay.prize_description : "—"}
+                </div>
+                {phase === "landed" && (
+                  <div style={{ fontSize: 11, color: "#92400e", marginTop: 6, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
+                    🎉 You drew this prize
+                  </div>
+                )}
+                {phase === "spinning" && (
+                  <div style={{ fontSize: 11, color: "#075985", marginTop: 6, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
+                    Spinning…
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {errMsg && (
+              <div style={{
+                fontSize: 12, color: "#991b1b", background: "#fee2e2",
+                borderRadius: 6, padding: "8px 10px", marginBottom: 10,
+              }}>
+                {errMsg}
+              </div>
+            )}
+
+            {phase === "ready" && (
+              <button
+                onClick={runSpin}
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  color: "#fff",
+                  background: "#16a34a",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  boxShadow: "0 4px 12px rgba(22,163,74,0.4)",
+                }}
+              >SPIN!</button>
+            )}
+
+            {phase === "spinning" && (
+              <button
+                disabled
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  color: "#fff",
+                  background: "#94a3b8",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "not-allowed",
+                }}
+              >Spinning…</button>
+            )}
+
+            {phase === "landed" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <button
+                  onClick={keepPrize}
+                  style={{
+                    padding: "12px 12px",
+                    fontSize: 14,
+                    fontWeight: 800,
+                    color: "#fff",
+                    background: "#16a34a",
+                    border: "none",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                  }}
+                >✓ Keep it</button>
+                <button
+                  onClick={returnPrize}
+                  disabled={unwon.length <= 1}
+                  style={{
+                    padding: "12px 12px",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: unwon.length <= 1 ? T.slate400 : T.slate700,
+                    background: "#fff",
+                    border: `1px solid ${T.slate300}`,
+                    borderRadius: 8,
+                    cursor: unwon.length <= 1 ? "not-allowed" : "pointer",
+                  }}
+                  title={unwon.length <= 1 ? "No other prizes to spin for" : "Return and spin again"}
+                >↻ Return & re-spin</button>
+              </div>
+            )}
+
+            {phase === "saving" && (
+              <button
+                disabled
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  color: "#fff",
+                  background: "#94a3b8",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "not-allowed",
+                }}
+              >Saving…</button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -4086,8 +4408,16 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         >← Back</button>
       </div>
 
-      {/* MVP Banner — renders only on winning weeks with an MVP recorded */}
-      <MVPBanner mvpThisWeek={data.mvpThisWeek} team={data.team} report={data.report} />
+      {/* MVP Banner — renders only on winning weeks with an MVP recorded.
+          Wired 2026-07-12 pm5: prizeCart + weekDate + refresh handler enable the Prize Cart Spinner. */}
+      <MVPBanner
+        mvpThisWeek={data.mvpThisWeek}
+        team={data.team}
+        report={data.report}
+        prizeCart={data.prizeCart}
+        weekDate={weekDate}
+        onRefresh={data.refresh}
+      />
 
       {/* 1. Opener */}
       <Section>
