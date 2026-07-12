@@ -1,0 +1,21 @@
+-- Applied via Supabase MCP apply_migration on 2026-07-12 pm6.
+-- Migration name: pool_math_burden_and_rolling_avg_2026_07_12_pm6
+-- Purpose: (a) Burden math rewire — WC + health stay OUTSIDE /1.08 wrap; base + comm +
+--          mgr + hdb + prize + wtq + bonus_pool ALL go INSIDE (wages → payroll tax).
+--          (b) Rolling 4wk/13wk SP avg fallback — for lookback weeks before current cycle
+--          start, fall back to (person's last completed quarter total / 13).
+--          (c) qtd_burden diag recalculated on new wider burdened base.
+--
+-- Full SQL body is stored in Supabase's migrations table.
+-- Retrieve with:
+--   SELECT statements FROM supabase_migrations.schema_migrations
+--   WHERE name = 'pool_math_burden_and_rolling_avg_2026_07_12_pm6';
+--
+-- Function updated: public.compute_weekly_comp_residual_pool(uuid, date)
+-- Key changes:
+--   - Added last_completed_q_per_person CTE (per-person prior-quarter SP total)
+--   - weekly_earned CTE: current-cycle weeks use wctd.commission, prior weeks use fallback
+--   - pool_calc: qtd_bonus_pool = (envelope - wc - health) / 1.08
+--                                 - base_in_pool - comm - mgr - hdb - prize - wtq
+--   - qtd_subtractions.qtd_burden includes all 7 wage components × 8%
+--   - carveouts_outside_pool.items now has per-item apparel/life/CC with wk/qtd/annual

@@ -1,0 +1,17 @@
+-- Applied via Supabase MCP apply_migration on 2026-07-12 pm6.
+-- Migration name: pool_math_fixes_2026_07_12_pm6
+-- Purpose: MVP Prize Cart + WtQ Trip pot renamed annual_dollars → quarterly_dollars;
+--          weekly accrual = quarterly / 13 (was /52, under-reserved by 4×).
+--
+-- Full SQL body is stored in Supabase's migrations table.
+-- Retrieve with:
+--   SELECT statements FROM supabase_migrations.schema_migrations
+--   WHERE name = 'pool_math_fixes_2026_07_12_pm6';
+--
+-- Function updated: public.compute_pool_carveouts(uuid, date)
+-- Key changes:
+--   - mvp_prize_cart JSON: added quarterly_dollars, kept annual_dollars (= quarterly * 4)
+--   - wtq_trip JSON:       same as above
+--   - weekly_dollars = quarterly / 13 for both
+--   - MVP/rest split constants (v_mvp_share_pct, v_rest_share_pct) preserved at 0.50/0.50
+--     — see 2026-07-12 pm6 flag in session note re: code/op-rule drift vs 30/70 doctrine
