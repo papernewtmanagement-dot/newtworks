@@ -21,7 +21,8 @@ import CPRDetail from "./src/modules/CPRDetail.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Licensing from "./src/modules/Licensing.jsx";
 import PFA from "./src/modules/PFA.jsx";
-import MarketingPoints from "./src/modules/MarketingPoints.jsx";
+// MarketingPoints module removed from nav 2026-07-12; per-person points now entered inline
+// on CPR Payroll section (Marketing row in edit mode). File kept in src/modules/ for now.
 import Marketing from "./src/modules/Marketing.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
