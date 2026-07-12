@@ -3652,25 +3652,33 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
 function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, onKept }) {
   const unwon = (prizeCart || []).filter(p => !p.winner_team_member_id);
   const [drawn, setDrawn] = useState([]); // prizes drawn this session (candidates)
-  const [phase, setPhase] = useState("ready"); // ready | resetting | spinning | landed_partial | picking
+  const [phase, setPhase] = useState("ready"); // ready | resetting | spinning | revealing | landed_partial | picking
   const [wheelOffset, setWheelOffset] = useState(0);
+  // Frozen strip content. Only mutates when spin() is called — NOT when `drawn` changes.
+  // Without this freeze, the strip would rebuild after landing (drawn shrinks available),
+  // shifting all row indices under a fixed wheelOffset and visually swapping the landed prize.
+  const [wheelStripPrizes, setWheelStripPrizes] = useState(() =>
+    (prizeCart || []).filter(p => !p.winner_team_member_id)
+  );
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
 
   const ROW_H = 56;      // px per prize row
   const VIEWPORT_H = 168; // 3 rows visible
-  const REPEATS = 8;     // times to duplicate the strip for wheel feel
+  const REPEATS = 12;    // times to duplicate the strip for wheel feel
 
   const drawnIds = new Set(drawn.map(p => p.id));
   const available = unwon.filter(p => !drawnIds.has(p.id));
   const drawsRemaining = Math.max(0, drawsAllotted - drawn.length);
 
-  // Build the strip. Recomputes when drawn changes (available shrinks by 1 per pull).
+  // Build the strip from the FROZEN pool captured at spin-time.
+  // If we built from live `available`, drawing a prize would rebuild the strip and
+  // shift the landed prize out from under the wheelOffset (visual mismatch).
   const strip = [];
-  if (available.length > 0) {
+  if (wheelStripPrizes.length > 0) {
     for (let i = 0; i < REPEATS; i++) {
-      for (const p of available) strip.push(p);
+      for (const p of wheelStripPrizes) strip.push(p);
     }
   }
 
@@ -3684,21 +3692,33 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
 
   function spin() {
     if (available.length === 0 || drawsRemaining === 0) return;
-    const targetIdx = Math.floor(Math.random() * available.length);
+    // Freeze the pool AND the target for this entire animation. Nothing downstream
+    // (drawn list, available derivation) can change these once we start.
+    const spinPool = available;
+    const targetIdx = Math.floor(Math.random() * spinPool.length);
+    const landedPrize = spinPool[targetIdx];
+    // Snapshot the wheel's strip contents so post-landing state changes can't shift row indices.
+    setWheelStripPrizes(spinPool);
     // Reset (no transition), then animate on the next frame.
     setPhase("resetting");
     setWheelOffset(0);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         setPhase("spinning");
-        // Land in the 7th repeat for a "many revolutions" feel.
-        const stripPos = 6 * available.length + targetIdx;
+        // Land in the 11th repeat for a "many revolutions" feel over the longer animation.
+        const stripPos = 10 * spinPool.length + targetIdx;
         const y = -(stripPos * ROW_H) + (VIEWPORT_H / 2 - ROW_H / 2);
         setWheelOffset(y);
+        // Animation completes at 4200ms. Enter REVEAL phase where the wheel sits on the
+        // landed prize (center window brightens) for 900ms — the "moment of glory".
+        // Then commit to drawn list (which shifts the button to SPIN AGAIN / pick prompt).
         setTimeout(() => {
-          setDrawn(prev => [...prev, available[targetIdx]]);
-          setPhase(prev => (prev === "spinning" ? "landed_partial" : prev));
-        }, 2200);
+          setPhase(prev => (prev === "spinning" ? "revealing" : prev));
+          setTimeout(() => {
+            setDrawn(prev => [...prev, landedPrize]);
+            setPhase(prev => (prev === "revealing" ? "landed_partial" : prev));
+          }, 900);
+        }, 4200);
       });
     });
   }
@@ -3761,7 +3781,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>🎰 Prize Cart Spinner</div>
             <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
-              {mvp.name} · Draw {Math.min(drawn.length + (phase === "spinning" ? 1 : 0), drawsAllotted)} of {drawsAllotted}
+              {mvp.name} · Draw {Math.min(drawn.length + ((phase === "spinning" || phase === "revealing") ? 1 : 0), drawsAllotted)} of {drawsAllotted}
             </div>
           </div>
           <button
@@ -3800,7 +3820,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                 }}>
                   <div style={{
                     transform: `translateY(${wheelOffset}px)`,
-                    transition: phase === "spinning" ? "transform 2.2s cubic-bezier(0.17, 0.67, 0.3, 1)" : "none",
+                    transition: phase === "spinning" ? "transform 4.2s cubic-bezier(0.12, 0.72, 0.13, 1)" : "none",
                     willChange: "transform",
                   }}>
                     {strip.map((p, i) => (
@@ -3823,7 +3843,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                       </div>
                     ))}
                   </div>
-                  {/* Center selection window (fixed) */}
+                  {/* Center selection window (fixed). Brightens during reveal for a "landed" pop. */}
                   <div style={{
                     position: "absolute",
                     top: VIEWPORT_H / 2 - ROW_H / 2,
@@ -3831,9 +3851,11 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                     right: 0,
                     height: ROW_H,
                     pointerEvents: "none",
-                    borderTop: "2px solid #f59e0b",
-                    borderBottom: "2px solid #f59e0b",
-                    background: "rgba(254, 243, 199, 0.35)",
+                    borderTop: `${phase === "revealing" ? "3" : "2"}px solid #f59e0b`,
+                    borderBottom: `${phase === "revealing" ? "3" : "2"}px solid #f59e0b`,
+                    background: phase === "revealing" ? "rgba(253, 224, 71, 0.55)" : "rgba(254, 243, 199, 0.35)",
+                    boxShadow: phase === "revealing" ? "0 0 24px rgba(245, 158, 11, 0.7) inset" : "none",
+                    transition: "background 0.25s, box-shadow 0.25s, border-width 0.25s",
                   }} />
                   {/* Fade masks top + bottom */}
                   <div style={{
@@ -3935,6 +3957,22 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                   cursor: "not-allowed",
                 }}
               >Spinning…</button>
+            ) : phase === "revealing" ? (
+              <button
+                disabled
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  color: "#fff",
+                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "not-allowed",
+                  boxShadow: "0 4px 14px rgba(245, 158, 11, 0.5)",
+                }}
+              >🎉 You drew a prize!</button>
             ) : shouldPromptPick ? (
               <button
                 onClick={keepSelected}
