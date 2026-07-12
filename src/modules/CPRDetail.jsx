@@ -2327,6 +2327,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [showFormula, setShowFormula] = useState(false);
+  const [showMarketing, setShowMarketing] = useState(false);
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
 
   // When entering edit mode, seed drafts from current values
@@ -2664,33 +2665,52 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
           </table>
         </div>
 
-        {/* Owner-only formula breakdown — expand to see how the Sales Pool and
-            Retention Pool for this week get built, and each person's share.  */}
+        {/* Owner-only formula breakdowns — expand to see how the Team Pool and
+            Marketing Bonus for this week get built, and each person's share.  */}
         {isOwner && (
-          <div style={{ borderTop: `1px solid ${T.slate200}`, background: T.slate50 || "#f8fafc" }}>
-            <button
-              onClick={() => setShowFormula(v => !v)}
-              style={{
-                width: "100%", padding: "8px 14px", background: "transparent",
-                border: "none", cursor: "pointer", textAlign: "left",
-                fontSize: 12, fontWeight: 700, color: T.slate700,
-              }}
-            >
-              {showFormula ? "▾" : "▸"} Formula — Sales Pool & Retention Pool (owner only)
-            </button>
-            {showFormula && (
-              <FormulaBreakdown diag={diag} sorted={sorted} weeklySalesPool={weeklySalesPool} weeklyRetentionPool={weeklyRetentionPool} />
-            )}
-          </div>
+          <>
+            <div style={{ borderTop: `1px solid ${T.slate200}`, background: T.slate50 || "#f8fafc" }}>
+              <button
+                onClick={() => setShowFormula(v => !v)}
+                style={{
+                  width: "100%", padding: "8px 14px", background: "transparent",
+                  border: "none", cursor: "pointer", textAlign: "left",
+                  fontSize: 12, fontWeight: 700, color: T.slate700,
+                }}
+              >
+                {showFormula ? "▾" : "▸"} Formula — Team Pool build (Sales + Retention, owner only)
+              </button>
+              {showFormula && (
+                <FormulaBreakdown diag={diag} sorted={sorted} weeklySalesPool={weeklySalesPool} weeklyRetentionPool={weeklyRetentionPool} />
+              )}
+            </div>
+            <div style={{ borderTop: `1px solid ${T.slate200}`, background: T.slate50 || "#f8fafc" }}>
+              <button
+                onClick={() => setShowMarketing(v => !v)}
+                style={{
+                  width: "100%", padding: "8px 14px", background: "transparent",
+                  border: "none", cursor: "pointer", textAlign: "left",
+                  fontSize: 12, fontWeight: 700, color: T.slate700,
+                }}
+              >
+                {showMarketing ? "▾" : "▸"} Formula — Marketing Bonus (owner only)
+              </button>
+              {showMarketing && (
+                <MarketingBonusBreakdown weekDate={weekDate} />
+              )}
+            </div>
+          </>
         )}
       </Card>
     </div>
   );
 }
 
-// Owner-only breakdown of how the Sales Pool + Retention Pool are constructed for the week
-// and how each person's share is computed. Everything is read from residual_pool_diag
-// (populated by write_weekly_comp_v2) and the per-person detail row.
+// Owner-only breakdown of how the Team Pool is constructed for the week
+// and how each person's share is computed. Reads v2 residual_pool_diag nested shape:
+//   diag.envelope.*, diag.qtd_subtractions.*, diag.qtd_pools.*, diag.carveouts_outside_pool.*,
+//   diag.team_totals.*, diag.person_qtd.*, diag.weight_factors.*, diag.constants.*,
+//   diag.pool_basis.*, diag.schedule.*, diag.carveouts_detail.*
 function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }) {
   if (!diag || Object.keys(diag).length === 0) {
     return (
@@ -2700,25 +2720,54 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
     );
   }
 
-  // Envelope / pool math
-  const annualEnvelope        = Number(diag.annual_envelope || 0);
-  const annualBonusPool       = Number(diag.annual_bonus_pool || 0);
-  const annualBonusPoolGross  = Number(diag.annual_bonus_pool_gross || 0);
-  const annualSalesPoolPre    = Number(diag.annual_sales_pool_pre_comm || 0);
-  const annualSalesPool       = Number(diag.annual_sales_pool || 0);
-  const annualRetentionPool   = Number(diag.annual_retention_pool || 0);
-  const annualCarveouts       = Number(diag.annual_carveouts || 0);
-  const teamBaseInEnvelope    = Number(diag.team_total_base_in_envelope || 0);
-  const teamBase              = Number(diag.team_total_base || 0);
-  const teamComm              = Number(diag.team_total_comm || 0);
-  const teamHealthAnnual      = Number(diag.team_total_health_annual || 0);
-  const teamBurden            = Number(diag.team_total_burden || 0);
-  const teamWc                = Number(diag.team_wc_annual || 0);
-  const salesWeight           = Number(diag.sales_weight || 0.65);
-  const retentionWeight       = Number(diag.retention_weight || 0.35);
-  const burdenMult            = Number(diag.burden_multiplier || 0.08);
-  const teamTotalSpSalesOnly  = Number(diag.team_total_sp_sales_only || 0);
-  const teamTotalSp           = Number(diag.team_total_sp || 0);
+  // Envelope (nested in diag.envelope)
+  const env = diag.envelope || {};
+  const annualBasis         = Number(env.annual_basis || 0);
+  const currentPoolPct      = Number(env.current_pool_pct || 0);
+  const weeklyEnvelope      = Number(env.weekly_envelope || 0);
+  const qtdEnvelope         = Number(env.qtd_envelope || 0);
+  const quarterlyEnvelope   = Number(env.quarterly_envelope || 0);
+
+  // Quarter meta
+  const q = diag.quarter || {};
+  const weeksElapsedQtd  = Number(q.weeks_elapsed_qtd || 0);
+  const weeksInQuarter   = Number(q.weeks_in_quarter || 13);
+
+  // QTD Subtractions (nested in diag.qtd_subtractions)
+  const sub = diag.qtd_subtractions || {};
+  const qtdBaseInPool    = Number(sub.qtd_base_in_pool || 0);
+  const qtdActualBasePaid= Number(sub.qtd_actual_base_paid || 0);
+  const qtdGrowthBudget  = Number(sub.qtd_growth_budget || 0);
+  const qtdActualHealth  = Number(sub.qtd_actual_health || 0);
+  const qtdActualComm    = Number(sub.qtd_actual_commission || 0);
+  const qtdWc            = Number(sub.qtd_wc || 0);
+  const qtdBurden        = Number(sub.qtd_burden || 0);
+
+  // QTD Pools (nested in diag.qtd_pools)
+  const pools = diag.qtd_pools || {};
+  const qtdBonusPool       = Number(pools.qtd_bonus_pool || 0);
+  const qtdSalesPoolPre    = Number(pools.qtd_sales_pool_pre_comm || 0);
+  const qtdSalesPool       = Number(pools.qtd_sales_pool || 0);
+  const qtdRetentionPool   = Number(pools.qtd_retention_pool || 0);
+
+  // Team totals (nested in diag.team_totals)
+  const tt = diag.team_totals || {};
+  const teamTotalSp          = Number(tt.qtd_sp_total || 0);
+  const teamTotalSpSalesOnly = Number(tt.qtd_sp_sales_only || 0);
+  const teamWhTotal          = Number(tt.wh_total || 0);
+
+  // Carveouts (nested in diag.carveouts_outside_pool + diag.carveouts_detail)
+  const cvoOut = diag.carveouts_outside_pool || {};
+  const annualCarveouts     = Number(cvoOut.annual_dollars || 0);
+  const quarterlyCarveouts  = Number(cvoOut.quarterly_dollars || 0);
+  const weeklyCarveouts     = Number(cvoOut.weekly_dollars || 0);
+
+  // Constants
+  const c = diag.constants || {};
+  const salesWeight     = Number(c.sales_weight || 0.65);
+  const retentionWeight = Number(c.retention_weight || 0.35);
+  const burdenMult      = Number(c.burden_multiplier || 0.08);
+  const wcAnnual        = Number(c.wc_annual || 500);
 
   // Basis inputs (envelope derivation)
   const basis = diag.pool_basis || {};
@@ -2743,8 +2792,17 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
   const poolPctRaw  = Number(schedule.pool_pct || 0);    // stored as percent (e.g. 43.0)
   const schedulePhase = schedule.phase;
 
-  // Intermediate cash-available: (envelope - WC) / (1 + burden)
-  const cashAvailPreBase = (annualEnvelope - teamWc) / (1 + burdenMult);
+  // QTD annualization helper: QTD × (weeks_in_quarter / weeks_elapsed) → annual pace
+  // Used to display "annual pace" alongside QTD dollars for context.
+  const qtdToAnnualPace = (n) => {
+    if (!weeksElapsedQtd || weeksElapsedQtd <= 0) return 0;
+    return n * (52.0 / weeksElapsedQtd);
+  };
+
+  // Intermediate cash-available for QTD pool build (per v2 math):
+  //   (qtd_envelope - qtd_wc - qtd_health - qtd_prize_cart_pro_rated - qtd_wtq_pro_rated) / (1 + burden)
+  //   In v2 (pre-Peter-2026-07-12 rewire), only WC + health are subtracted before the /1.08 wrap.
+  const cashAvailPreBase = (qtdEnvelope - qtdWc - qtdActualHealth) / (1 + burdenMult);
 
   // Carveouts detail
   const cvo = diag.carveouts_detail || {};
@@ -2773,7 +2831,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
   return (
     <div style={{ padding: "10px 14px 16px", fontSize: 12 }}>
 
-      {/* ───── 1. HOW THE ENVELOPE IS BUILT ───── */}
+      {/* ───── 1. HOW THE ENVELOPE IS BUILT (annual basis → weekly → QTD accrual) ───── */}
       <div style={{ fontWeight: 700, marginBottom: 4, color: T.slate900 }}>1. How the Envelope is built</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
         On-time annualization = 365 / days_elapsed (Jan 1 → comp_anchor_date {compAnchorDate || "—"}, {compDaysElapsed} days → ×{compAnnualization.toFixed(4)}).
@@ -2819,47 +2877,60 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(totalBasis)}</Td>
           </tr>
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700 }}>× pool_pct {poolPctRaw.toFixed(1)}% {schedulePhase && (<span style={{ color: T.slate500, fontWeight: 400 }}>({schedulePhase})</span>)}</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700 }}>× pool_pct {poolPctRaw.toFixed(2)}% {schedulePhase && (<span style={{ color: T.slate500, fontWeight: 400 }}>({schedulePhase})</span>)}</Td>
             <Td colSpan={2}></Td>
-            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= Envelope {fmtMoneyCents(annualEnvelope)}</Td>
+            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= Weekly envelope {fmtMoneyCents(weeklyEnvelope)}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate700 }}>Weeks elapsed in quarter × weekly envelope (ramp-adjusted)</Td>
+            <Td colSpan={2} align="right" style={{ color: T.slate500, fontSize: 11 }}>{weeksElapsedQtd} of {weeksInQuarter} weeks</Td>
+            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= QTD envelope {fmtMoneyCents(qtdEnvelope)}</Td>
           </tr>
         </tbody>
       </table>
 
-      {/* ───── 2. POOL BUILD ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (annualized) — split-first structure</div>
+      {/* ───── 2. POOL BUILD (QTD-based per current v2 math) ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (QTD, week {weeksElapsedQtd} of {weeksInQuarter}) — split-first structure</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        All subtractions are QTD-actual for elapsed weeks. Carveouts are agency-funded team benefits sitting outside the pool math (v2 wire).
+      </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row("Envelope (annual)", annualEnvelope, `${poolPctRaw.toFixed(1)}% × total basis`)}
-          {row("− Workers Comp", -teamWc, "flat annual")}
-          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre-people costs")}
-          {row("− Team base salaries (in envelope)", -teamBaseInEnvelope, "current pay × 52 × tenure_mult")}
-          {row("− Team health benefits (annual)", -teamHealthAnnual, "agency-paid stipends")}
+          {row("QTD envelope", qtdEnvelope, `pool_pct × basis / 52 × ${weeksElapsedQtd} weeks`)}
+          {row("− Workers Comp QTD", -qtdWc, `$${wcAnnual}/yr / 52 × ${weeksElapsedQtd}`)}
+          {row("− Team health benefits QTD", -qtdActualHealth, "agency-paid stipends × weeks elapsed")}
+          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre base+comm+bonus")}
+          {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult (new-hire ramp)")}
+          {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1 team commission")}
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Gross bonus pool</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualBonusPoolGross)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
-          </tr>
-          {row("− Carveouts (7 items — see §3 detail)", -annualCarveouts, "pre-pool")}
-          <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= Net bonus pool</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualBonusPool)}</Td>
-            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>/ 52 = {fmtMoneyCents(annualBonusPool / 52)} weekly</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD bonus pool</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
+            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>annual pace = {fmtMoneyCents(qtdToAnnualPace(qtdBonusPool))}</Td>
           </tr>
         </tbody>
       </table>
 
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2b. Split 65 / 35 THEN commissions from Sales Share</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2b. Split — 65% Sales / 35% Retention (commissions eat Sales share only)</div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row(`Sales Pool pre-comm (${(salesWeight * 100).toFixed(0)}% × Net)`, annualSalesPoolPre, `/ 52 = ${fmtMoneyCents(annualSalesPoolPre / 52)} weekly`)}
-          {row("− Team commissions (annualized SP projection)", -teamComm, "commission = projected annual SP · comes from Sales Share ONLY")}
+          {row(`QTD Sales Pool pre-comm (${(salesWeight * 100).toFixed(0)}% × Net)`, qtdSalesPoolPre, `distributed by QTD SP share (Sales roles only)`)}
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= Sales Pool (available for SP-share bonuses)</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualSalesPool)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>/ 52 = {fmtMoneyCents(weeklySalesPool)} weekly</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= QTD Sales Pool</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(qtdSalesPool)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>this-wk marginal = {fmtMoneyCents(weeklySalesPool)}</Td>
           </tr>
-          {row(`Retention Pool (${(retentionWeight * 100).toFixed(0)}% × Net — untouched by commissions)`, annualRetentionPool, `/ 52 = ${fmtMoneyCents(weeklyRetentionPool)} weekly`)}
+          {row(`QTD Retention Pool (${(retentionWeight * 100).toFixed(0)}% × Net — untouched by commissions)`, qtdRetentionPool, `this-wk marginal = ${fmtMoneyCents(weeklyRetentionPool)}`)}
+        </tbody>
+      </table>
+
+      {/* ───── 2c. CARVEOUTS OUTSIDE POOL ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2c. Carveouts (outside pool — agency-funded team benefits)</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
+        Under the current v2 wire, carveouts do NOT subtract from the bonus pool. They are agency-funded team benefits sitting alongside the pool. Totals shown for reference.
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {row("Annual carveouts total", annualCarveouts, `weekly = ${fmtMoneyCents(weeklyCarveouts)}, quarterly = ${fmtMoneyCents(quarterlyCarveouts)}`)}
         </tbody>
       </table>
 
@@ -2894,41 +2965,41 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         <div style={{ marginTop: 6, fontSize: 11, color: T.red }}>WtQ Trip halted: {cvo.wtq_trip.halt_reason}</div>
       )}
 
-      {/* ───── 4. PER-PERSON BASE + COMMISSION ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>4. Per-person base + commission (current pay rates)</div>
+      {/* ───── 4. PER-PERSON BASE + COMMISSION (QTD) ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>4. Per-person base + commission (QTD actuals)</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        Base = current pay_rate × 52 (SALARY) or × 40 × 52 (HOURLY). Base-in-envelope = base × tenure_mult (weeks in role / 52, cap 1.0).
-        Growth Budget = base × 1.08 × (1 − tenure_mult) — grows into their salary as tenure builds.
-        Commission (annual) = projected from realized quarterly SP averages across the year.
+        Actual paid QTD = actual dollars sent through payroll for weeks elapsed. Base-in-pool = paid × tenure_mult per week (weeks in role / 52, cap 1.0).
+        Growth budget = paid × (1 − tenure_mult) — agency-funded outside pool during new-hire ramp.
+        Commission QTD = SP earned QTD × $1 (post-2026-07-11 rewire).
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
             <Th align="left">Person</Th>
             <Th align="right">Pay type / rate</Th>
-            <Th align="right">Annual base</Th>
-            <Th align="right">Tenure mult</Th>
-            <Th align="right">Base in env</Th>
+            <Th align="right">Weekly base</Th>
+            <Th align="right">QTD paid</Th>
+            <Th align="right">Base in pool</Th>
             <Th align="right">Growth budget</Th>
-            <Th align="right">Annual comm (proj)</Th>
+            <Th align="right">QTD SP</Th>
             <Th align="right">This-wk SP Δ</Th>
           </tr>
         </thead>
         <tbody>
           {sorted.map(d => {
             const dd = d.residual_pool_diag || {};
+            const pq = dd.person_qtd || {};
             const payType = dd.person_pay_type || "—";
             const payRate = Number(dd.person_pay_rate || 0);
-            const tm = Number(dd.base_tenure_mult || 0);
             return (
               <tr key={d.team_member_id}>
                 <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
                 <Td align="right">{payType} ${payRate.toFixed(2)}</Td>
-                <Td align="right">{fmtMoneyCents(Number(dd.annual_base_salary || d.base_salary * 52 || 0))}</Td>
-                <Td align="right">{(tm * 100).toFixed(1)}%</Td>
-                <Td align="right">{fmtMoneyCents(Number(dd.annual_base_in_envelope || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(dd.annual_growth_budget || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(dd.annual_commission_projected || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(d.base_salary || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(pq.qtd_actual_base_paid || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(pq.qtd_base_in_pool || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(pq.qtd_growth_budget || 0))}</Td>
+                <Td align="right">{Number(pq.qtd_sp || 0).toFixed(0)}</Td>
                 <Td align="right">{fmtMoneyCents(Number(d.commission || 0))}</Td>
               </tr>
             );
@@ -3006,9 +3077,189 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </table>
 
       <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
-        Note: Team burden accrual (8% of base + commission + bonus + carveouts) = {fmtMoneyCents(teamBurden)} annual (paid outside the team pool, not deducted here).
-        Commissions come out of the Sales Share ONLY (structural change 2026-07-11 — Retention Pool untouched by commission draws).
+        QTD burden accrual (8% × QTD base + comm + bonus) = {fmtMoneyCents(qtdBurden)} (baked into pool math via /(1+burden) wrap).
+        Commissions eat Sales Share only (Retention Pool untouched — 2026-07-11 lock).
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Owner-only Marketing Bonus breakdown. Fetches compute_weekly_marketing_bonus
+// on expand and renders envelope → spend → pool → per-person share.
+// Marketing Bonus is a SEPARATE pool from the residual team pool (locked 2026-07-07):
+//   envelope = 10% × (on-time annual revenue − on-time Scorecard); AIPP not in basis.
+//   pool = 50% × YTD underspend, split by marketing_points share.
+//   Points = $ value of cash spiffs (reviews $15 + retro, referrals $30+ etc.).
+// ─────────────────────────────────────────────────────────────────────────────
+function MarketingBonusBreakdown({ weekDate }) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc("compute_weekly_marketing_bonus", {
+          p_agency_id: AGENCY_ID,
+          p_week_end_date: weekDate,
+        });
+        if (cancelled) return;
+        if (rpcErr) throw rpcErr;
+        setData(rpcData || null);
+      } catch (e) {
+        if (!cancelled) setErr(e.message || String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [weekDate]);
+
+  if (loading) return <div style={{ padding: "10px 14px", fontSize: 12, color: T.slate600 }}>Loading marketing bonus breakdown…</div>;
+  if (err)     return <div style={{ padding: "10px 14px", fontSize: 12, color: T.red }}>Error: {err}</div>;
+  if (!data)   return <div style={{ padding: "10px 14px", fontSize: 12, color: T.slate600 }}>No marketing bonus data available.</div>;
+
+  const env       = data.envelope || {};
+  const basis     = data.basis || {};
+  const spend     = data.spend || {};
+  const pool      = data.pool || {};
+  const people    = data.people || [];
+
+  const annualEnv       = Number(env.annual || 0);
+  const quarterlyEnv    = Number(env.quarterly || 0);
+  const qtdTarget       = Number(env.qtd_target || 0);
+  const pctOfBasis      = Number(env.pct_of_basis || 0);
+  const totalBasis      = Number(basis.total_basis_annual || 0);
+  const basisExScc      = Number(basis.basis_ex_scorecard_annual || 0);
+  const scorecardExcl   = Number(basis.scorecard_ontime_excluded || 0);
+  const spendQtd        = Number(spend.qtd || 0);
+  const underspendQtd   = Number(pool.underspend_qtd || 0);
+  const adjUnderspend   = Number(pool.adjusted_underspend_qtd || 0);
+  const totalPointsQtd  = Number(pool.total_points_qtd || 0);
+  const totalBareMinQtd = Number(pool.total_bare_min_qtd || 0);
+  const teamSharePct    = Number(pool.team_share_pct || 0.5);
+  const poolQtd         = Number(pool.pool_qtd || 0);
+  const weeksInQtd      = Number(data.weeks_in_qtd || 0);
+  const quarterStart    = data.quarter_start;
+  const quarterEnd      = data.quarter_end;
+
+  const row = (label, value, hint) => (
+    <tr>
+      <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
+      <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{fmtMoneyCents(value)}</Td>
+      <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{hint || ""}</Td>
+    </tr>
+  );
+
+  return (
+    <div style={{ padding: "10px 14px 16px", fontSize: 12 }}>
+
+      {/* ───── 1. ENVELOPE ───── */}
+      <div style={{ fontWeight: 700, marginBottom: 4, color: T.slate900 }}>1. Marketing envelope</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Envelope = {(pctOfBasis * 100).toFixed(1)}% × (on-time annual basis − on-time Scorecard). AIPP not in basis.
+        Quarter: {quarterStart || "—"} → {quarterEnd || "—"} ({weeksInQtd} weeks elapsed).
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {row("On-time annual basis (SMVC-stripped)", totalBasis, "from residual pool basis")}
+          {row("− On-time Scorecard $ (excluded)", -scorecardExcl, "Scorecard is its own program")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Basis ex-Scorecard (annual)</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(basisExScc)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+          </tr>
+          {row(`× ${(pctOfBasis * 100).toFixed(1)}% envelope rate`, annualEnv, `annual marketing envelope`)}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate700 }}>Quarterly envelope (annual / 4)</Td>
+            <Td align="right">{fmtMoneyCents(quarterlyEnv)}</Td>
+            <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>weeks-in-qtd target = {fmtMoneyCents(qtdTarget)}</Td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ───── 2. SPEND + UNDERSPEND ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Actual spend vs envelope</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Spend source: {spend.source || "—"}
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {row("QTD envelope target", qtdTarget, "quarterly × weeks_elapsed / weeks_in_quarter")}
+          {row("− QTD actual marketing spend", -spendQtd, "GL — 0003 MARKETING envelope + descendants")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= QTD raw underspend</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(underspendQtd)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+          </tr>
+          {row("− Bare-minimum spiffs (already paid)", -(underspendQtd - adjUnderspend), "reviews, referrals, quotes — cash already out")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Adjusted underspend</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(adjUnderspend)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ───── 3. POOL ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>3. Team pool (share of adjusted underspend)</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {row(`× ${(teamSharePct * 100).toFixed(0)}% team share of underspend`, poolQtd, "50% to team, 50% stays with agency")}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD Marketing bonus pool</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(poolQtd)}</Td>
+            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>points_qtd = {totalPointsQtd.toFixed(0)}</Td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ───── 4. PER-PERSON SHARE ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>4. Per-person breakdown</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Points = $ value of cash spiffs paid (reviews, referrals, quotes, sold). Bonus share = pool × points_share.
+        Total marketing = points (already paid via payroll) + bonus share (paid via team pool distribution).
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Person</Th>
+            <Th align="right">Points QTD</Th>
+            <Th align="right">Reviews</Th>
+            <Th align="right">Quoted</Th>
+            <Th align="right">Sold</Th>
+            <Th align="right">Share %</Th>
+            <Th align="right">Bonus share QTD</Th>
+            <Th align="right">Total mktg QTD</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {people.map(p => (
+            <tr key={p.team_member_id}>
+              <Td style={{ paddingLeft: 14 }}>{firstName(p.name)}</Td>
+              <Td align="right">{fmtMoneyCents(Number(p.points_qtd || 0))}</Td>
+              <Td align="right">{Number(p.reviews_qtd || 0).toFixed(0)}</Td>
+              <Td align="right">{Number(p.quoted_qtd || 0).toFixed(0)}</Td>
+              <Td align="right">{Number(p.sold_qtd || 0).toFixed(0)}</Td>
+              <Td align="right">{`${Number(p.share_pct || 0).toFixed(2)}%`}</Td>
+              <Td align="right">{fmtMoneyCents(Number(p.bonus_share_qtd || 0))}</Td>
+              <Td align="right" style={{ fontWeight: 700 }}>{fmtMoneyCents(Number(p.total_marketing_qtd || 0))}</Td>
+            </tr>
+          ))}
+          <tr>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Totals</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(totalPointsQtd)}</Td>
+            <Td colSpan={3} style={{ borderTop: `2px solid ${T.slate300}` }} />
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>100%</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(poolQtd)}</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(totalPointsQtd + poolQtd)}</Td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
