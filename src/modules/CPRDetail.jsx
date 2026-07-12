@@ -3190,8 +3190,16 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
   const cycleStart = inputs.current_cycle_start;
   const cycleEnd = inputs.current_cycle_end;
   const pctFloor = Math.min(100, (wins / 9) * 100);
-  const quarterMVPCut = annualPot * 0.30;
-  const teamCut       = annualPot * 0.70;
+  // Split source of truth: compute_pool_carveouts SQL (locked 2026-07-12).
+  // Fallback to constants if SQL fields absent (backward compat during rollout).
+  const mvpSharePct   = Number(wtq.mvp_share_pct ?? 0.30);
+  const restSharePct  = Number(wtq.rest_share_pct ?? 0.70);
+  const quarterMVPCut = Number(wtq.mvp_dollars ?? (annualPot * mvpSharePct));
+  const teamCut       = Number(wtq.rest_pool_dollars ?? (annualPot * restSharePct));
+  const restPerPerson = Number(wtq.rest_per_person_dollars ?? 0);
+  const restCount     = Number(wtq.rest_of_team_count ?? 0);
+  const mvpPctLabel   = `${Math.round(mvpSharePct * 100)}%`;
+  const restPctLabel  = `${Math.round(restSharePct * 100)}%`;
 
   const safe = Array.isArray(prizeCart) ? prizeCart : [];
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
@@ -3234,15 +3242,15 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP (30%)</div>
+              <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP ({mvpPctLabel})</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
               <div style={{ fontSize: 10, color: "#78350f" }}>Top SP producer</div>
             </div>
 
             <div style={{ padding: 8, background: "#e0f2fe", borderRadius: 6 }}>
-              <div style={{ fontSize: 10, color: "#075985", fontWeight: 700 }}>Rest of team (70%)</div>
+              <div style={{ fontSize: 10, color: "#075985", fontWeight: 700 }}>Rest of team ({restPctLabel})</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCents(teamCut)}</div>
-              <div style={{ fontSize: 10, color: "#075985" }}>Split by SP</div>
+              <div style={{ fontSize: 10, color: "#075985" }}>{restCount > 0 ? `Split evenly · ${fmtMoneyCents(restPerPerson)}/each` : "Split evenly"}</div>
             </div>
           </div>
         )}
