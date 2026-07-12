@@ -2239,6 +2239,77 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 
 
 // 17b — Sales Points quarterly history (prior-quarter avg weekly SP per teammate)
+// Reads priorQuartersAvgSP: {team_member_id: [{quarter_label, avg_weekly_sp, qtd_sp}, ...]}
+// Renders as a table with teammates on rows, quarters on columns (newest first).
+function SalesPointsHistorySection({ priorQuartersAvgSP, team, details }) {
+  const data = priorQuartersAvgSP || {};
+  const ids = Object.keys(data).filter(id => (data[id] || []).length > 0);
+  if (ids.length === 0) return null;
+
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const allQuarters = new Set();
+  ids.forEach(id => (data[id] || []).forEach(row => allQuarters.add(row.quarter_label)));
+  const quarterList = Array.from(allQuarters).sort((a, b) => {
+    const [qA, yA] = a.split(" ");
+    const [qB, yB] = b.split(" ");
+    if (yA !== yB) return Number(yB) - Number(yA);
+    return Number(qB.slice(1)) - Number(qA.slice(1));
+  });
+
+  const salesIds = ids.filter(id => {
+    const t = teamById[id];
+    return t && t.role_category === "Sales";
+  });
+  const sortedIds = salesIds.length > 0 ? salesIds : ids;
+  sortedIds.sort((a, b) => {
+    const nameA = (teamById[a]?.nickname || teamById[a]?.first_name || "").toLowerCase();
+    const nameB = (teamById[b]?.nickname || teamById[b]?.first_name || "").toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+
+  return (
+    <div>
+      <SectionHeader icon="📈" title="Sales Points — Quarterly History" />
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+            <thead>
+              <tr>
+                <Th align="left">Person</Th>
+                {quarterList.map(q => (
+                  <Th key={q} align="right">{q}</Th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedIds.map(id => {
+                const t = teamById[id];
+                const nm = t ? (t.nickname || t.first_name || "(unknown)") : "(unknown)";
+                const byQuarter = Object.fromEntries((data[id] || []).map(r => [r.quarter_label, r]));
+                return (
+                  <tr key={id}>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{nm}</Td>
+                    {quarterList.map(q => {
+                      const row = byQuarter[q];
+                      if (!row) return <Td key={q} align="right" style={{ color: T.slate400 }}>—</Td>;
+                      const avg = Number(row.avg_weekly_sp) || 0;
+                      return (
+                        <Td key={q} align="right" style={{ color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: "8px 14px", fontSize: 11, color: T.slate500, borderTop: `1px solid ${T.slate100}` }}>
+          Values are avg weekly SP for each completed quarter (quarter-end QTD ÷ 13). Reference point for pacing current-quarter performance.
+        </div>
+      </Card>
+    </div>
+  );
+}
 
 // 19 — Payroll v2 (per-person columns, residual-pool components as rows)
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
@@ -2818,19 +2889,24 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
-      {/* ───── 2. POOL BUILD (QTD-based per current v2 math) ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (QTD, week {weeksElapsedQtd} of {weeksInQuarter}) — split-first structure</div>
+      {/* ───── 2. POOL BUILD (QTD; new math 2026-07-12) ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (QTD, week {weeksElapsedQtd} of {weeksInQuarter})</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        All subtractions are QTD-actual for elapsed weeks. Carveouts are agency-funded team benefits sitting outside the pool math (v2 wire).
+        Manager Bonus, HDB, MVP Prize Cart, WtQ Trip subtract INSIDE the envelope (before /1.08 burden wrap).
+        Commissions subtract from the WHOLE pool. Remaining carveouts (Apparel, Life Ins, CC Reserve) sit outside — see §2c.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
           {row("QTD envelope", qtdEnvelope, `pool_pct × basis / 52 × ${weeksElapsedQtd} weeks`)}
           {row("− Workers Comp QTD", -qtdWc, `$${wcAnnual}/yr / 52 × ${weeksElapsedQtd}`)}
           {row("− Team health benefits QTD", -qtdActualHealth, "agency-paid stipends × weeks elapsed")}
-          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre base+comm+bonus")}
-          {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult (new-hire ramp)")}
-          {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1 team commission")}
+          {row("− Manager Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "SUM(wctd.manager_bonus) this cycle")}
+          {row("− Health Development Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_hdb_actual) || 0), "SUM(wctd.health_bonus) this cycle")}
+          {row("− MVP Prize Cart QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_prize_cart_accrual) || 0), `weekly × ${weeksElapsedQtd}`)}
+          {row("− Win the Quarter Trip QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_wtq_trip_accrual) || 0), `weekly × ${weeksElapsedQtd}`)}
+          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre base+comm")}
+          {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult")}
+          {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1; eats WHOLE pool")}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
@@ -2839,23 +2915,27 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2b. Split — 65% Sales / 35% Retention (commissions eat Sales share only)</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2b. Split — 1/3 retention + 1/3 rolling 13-wk SP + 1/3 rolling 4-wk SP</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Retention distributed by this-week weighted_hours. SP buckets distributed by each person's rolling SP avg (NULL / pre-hire / pre-cycle weeks = 0; denominator always 13 or 4). No role gate — anyone with SP participates.
+      </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row(`QTD Sales Pool pre-comm (${(salesWeight * 100).toFixed(0)}% × Net)`, qtdSalesPoolPre, `distributed by QTD SP share (Sales roles only)`)}
+          {row("QTD Retention Pool (1/3)", Number((diag.qtd_pools?.qtd_retention_pool) || 0), "weighted_hours share, this week only")}
+          {row("QTD SP-13wk Pool (1/3)", Number((diag.qtd_pools?.qtd_sp_13wk_pool) || 0), "rolling 13-wk SP avg share")}
+          {row("QTD SP-4wk Pool (1/3)", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= QTD Sales Pool</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(qtdSalesPool)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>this-wk marginal = {fmtMoneyCents(weeklySalesPool)}</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= QTD bonus pool (sum)</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
+            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
           </tr>
-          {row(`QTD Retention Pool (${(retentionWeight * 100).toFixed(0)}% × Net — untouched by commissions)`, qtdRetentionPool, `this-wk marginal = ${fmtMoneyCents(weeklyRetentionPool)}`)}
         </tbody>
       </table>
 
       {/* ───── 2c. CARVEOUTS OUTSIDE POOL ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2c. Carveouts (outside pool — agency-funded team benefits)</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2c. Carveouts (outside pool — 3 remaining items)</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
-        Under the current v2 wire, carveouts do NOT subtract from the bonus pool. They are agency-funded team benefits sitting alongside the pool. Totals shown for reference.
+        Apparel, Life Insurance Stipend, Champions Circle Reserve — agency-funded team benefits sitting alongside the pool.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
@@ -2863,38 +2943,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
-      {/* ───── 3. CARVEOUTS FULL DETAIL ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>3. Carveouts — full detail</div>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <Th align="left">Line</Th>
-            <Th align="right">Annual $</Th>
-            <Th align="right">Weekly $</Th>
-            <Th align="left">Formula</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {carveoutRow("Manager Bonus", cvo.manager_bonus)}
-          {carveoutRow("Life Insurance Stipend", cvo.life_insurance_stipend)}
-          {carveoutRow("Apparel", cvo.apparel)}
-          {carveoutRow("Health Development Bonus", cvo.health_development_bonus)}
-          {carveoutRow("Champions Circle Reserve", cvo.champions_circle)}
-          {carveoutRow("MVP Prize Cart", cvo.mvp_prize_cart)}
-          {carveoutRow("Win the Quarter Trip", cvo.wtq_trip)}
-          <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Total carveouts</Td>
-            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualCarveouts)}</Td>
-            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(annualCarveouts / 52)}</Td>
-            <Td style={{ borderTop: `2px solid ${T.slate300}` }} />
-          </tr>
-        </tbody>
-      </table>
-      {cvo.wtq_trip?.halted && (
-        <div style={{ marginTop: 6, fontSize: 11, color: T.red }}>WtQ Trip halted: {cvo.wtq_trip.halt_reason}</div>
-      )}
-
-      {/* ───── 4. PER-PERSON BASE + COMMISSION (QTD) ───── */}
+            {/* ───── 4. PER-PERSON BASE + COMMISSION (QTD) ───── */}
       <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>4. Per-person base + commission (QTD actuals)</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
         Actual paid QTD = actual dollars sent through payroll for weeks elapsed. Base-in-pool = paid × tenure_mult per week (weeks in role / 52, cap 1.0).
@@ -2936,31 +2985,38 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
-      {/* ───── 5. SALES POINTS SHARE BREAKDOWN ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>5. Sales Points share breakdown (Sales team only)</div>
-      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
-        share = person QTD SP ÷ Sales-team-total QTD SP ({teamTotalSpSalesOnly.toFixed(0)}). Retention team = 0% (they draw from the Retention Pool, not the SP-share pool).
+      {/* ───── 5. SALES POINTS SHARE BREAKDOWN (no role gate) ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>5. Sales Points share breakdown (any teammate with SP)</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Each SP bucket distributed by that bucket's rolling avg (13-wk sums / 13, 4-wk sums / 4). Team avg 13-wk = {Number(tt.team_avg_13wk || 0).toFixed(2)}, team avg 4-wk = {Number(tt.team_avg_4wk || 0).toFixed(2)}. Pre-cycle / pre-hire weeks contribute 0.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
             <Th align="left">Person</Th>
-            <Th align="right">Role category</Th>
             <Th align="right">QTD SP</Th>
-            <Th align="right">SP share %</Th>
-            <Th align="right">Weekly Sales $ = share × pool</Th>
+            <Th align="right">13-wk avg</Th>
+            <Th align="right">4-wk avg</Th>
+            <Th align="right">13-wk share %</Th>
+            <Th align="right">4-wk share %</Th>
+            <Th align="right">QTD SP-13 $</Th>
+            <Th align="right">QTD SP-4 $</Th>
           </tr>
         </thead>
         <tbody>
           {sorted.map(d => {
             const dd = d.residual_pool_diag || {};
+            const pq = dd.person_qtd || {};
             return (
               <tr key={d.team_member_id}>
                 <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
-                <Td align="right">{dd.role_category || "—"}</Td>
-                <Td align="right">{d.sales_points == null ? "—" : Number(d.sales_points).toFixed(0)}</Td>
-                <Td align="right">{dd ? `${Number(dd.sales_points_share_pct || 0).toFixed(2)}%` : "—"}</Td>
-                <Td align="right">{fmtMoneyCents(Number(d.sales_pool_share || 0))}</Td>
+                <Td align="right">{Number(pq.qtd_sp || 0).toFixed(0)}</Td>
+                <Td align="right">{Number(pq.rolling_13wk_avg_sp || 0).toFixed(2)}</Td>
+                <Td align="right">{Number(pq.rolling_4wk_avg_sp || 0).toFixed(2)}</Td>
+                <Td align="right">{`${Number(pq.sp13_share_ratio_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{`${Number(pq.sp4_share_ratio_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{fmtMoneyCents(Number(pq.qtd_sp13_earned || 0))}</Td>
+                <Td align="right">{fmtMoneyCents(Number(pq.qtd_sp4_earned || 0))}</Td>
               </tr>
             );
           })}
@@ -2968,9 +3024,9 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </table>
 
       {/* ───── 6. RETENTION HOURS SHARE BREAKDOWN ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>6. Retention hours share breakdown</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>6. Retention hours share breakdown (this-week hours)</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
-        weighted_hours = 40 × role_w × location_w × tenure_w × license_w. share = person_hrs ÷ team_hrs_total.
+        weighted_hours = 40 × role_w × location_w × tenure_w × license_w. share = person_hrs ÷ team_hrs_total ({Number(tt.wh_total || 0).toFixed(2)}). Uses THIS-WEEK hours only.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
@@ -2982,12 +3038,14 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             <Th align="right">license_w</Th>
             <Th align="right">Weighted hrs</Th>
             <Th align="right">Hrs share %</Th>
-            <Th align="right">Weekly Retention $</Th>
+            <Th align="right">QTD Retention $</Th>
+            <Th align="right">This-wk Retention $</Th>
           </tr>
         </thead>
         <tbody>
           {sorted.map(d => {
             const dd = d.residual_pool_diag || {};
+            const pq = dd.person_qtd || {};
             const wf = dd.weight_factors || {};
             return (
               <tr key={d.team_member_id}>
@@ -2998,6 +3056,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 <Td align="right">{Number(wf.license_w || 0).toFixed(2)}</Td>
                 <Td align="right">{Number(dd.weighted_hours_at_40 || 0).toFixed(2)}</Td>
                 <Td align="right">{`${Number(dd.retention_hours_share_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{fmtMoneyCents(Number(pq.qtd_ret_earned || 0))}</Td>
                 <Td align="right">{fmtMoneyCents(Number(d.retention_pool_share || 0))}</Td>
               </tr>
             );
@@ -3007,7 +3066,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
 
       <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
         QTD burden accrual (8% × QTD base + comm + bonus) = {fmtMoneyCents(qtdBurden)} (baked into pool math via /(1+burden) wrap).
-        Commissions eat Sales Share only (Retention Pool untouched — 2026-07-11 lock).
+        Commissions eat the WHOLE POOL (2026-07-12 rewire). Manager Bonus, HDB, MVP Prize Cart, WtQ Trip subtract inside envelope; Apparel, Life Ins Stipend, CC Reserve stay outside as agency-funded team benefits.
       </div>
     </div>
   );
@@ -3090,18 +3149,12 @@ function MarketingBonusBreakdown({ weekDate }) {
       {/* ───── 1. ENVELOPE ───── */}
       <div style={{ fontWeight: 700, marginBottom: 4, color: T.slate900 }}>1. Marketing envelope</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        Envelope = {(pctOfBasis * 100).toFixed(1)}% × (on-time annual basis − on-time Scorecard). AIPP not in basis.
+        Envelope = {(pctOfBasis * 100).toFixed(1)}% × on-time annual basis (Scorecard INCLUDED per 2026-07-12 rewire; AIPP not in basis).
         Quarter: {quarterStart || "—"} → {quarterEnd || "—"} ({weeksInQtd} weeks elapsed).
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row("On-time annual basis (SMVC-stripped)", totalBasis, "from residual pool basis")}
-          {row("− On-time Scorecard $ (excluded)", -scorecardExcl, "Scorecard is its own program")}
-          <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Basis ex-Scorecard (annual)</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(basisExScc)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
-          </tr>
+          {row("On-time annual basis (SMVC-stripped)", totalBasis, "from residual pool basis; includes Scorecard")}
           {row(`× ${(pctOfBasis * 100).toFixed(1)}% envelope rate`, annualEnv, `annual marketing envelope`)}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate700 }}>Quarterly envelope (annual / 4)</Td>
