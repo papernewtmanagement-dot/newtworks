@@ -1,0 +1,17 @@
+-- Peter directive 2026-07-12 pm4:
+-- (1) STOP filtering audit_weekly_leaderboard_crossings by role_category='Sales'.
+--     Cassie and Stephanie belong on sales podiums like anyone else.
+-- (2) WtQ + Prize Cart pot formula changes:
+--     multiplier 3% -> 1%
+--     pace uses PROJECTED wins (assume all remaining weeks won) instead of on-time pace
+--     MVP/Rest split 30/70 -> 50/50
+--     Trip pot tile sub-label: '3% OT x pace X%' -> '1% OT (SMVC + Scorecard) x N/13 weeks won'
+--     Quarter MVP tile sub-label: 'Top SP producer' -> 'Top Sales'
+-- (3) quarter_close_prize_cart_and_leaderboards: rate 3% -> 1%; pace stays actual_wins/13
+--     (quarter is done, no projection needed at close).
+-- (4) Handbook 'Winning & Learning' updated to match: formula, split percentages, 'Top Sales' label,
+--     rewrite of the "on-time pace" paragraph to describe projected-wins model.
+
+-- Full function bodies applied via CREATE OR REPLACE. See the migration file for CREATE OR REPLACE
+-- of: audit_weekly_leaderboard_crossings, compute_pool_carveouts, quarter_close_prize_cart_and_leaderboards.
+-- (Mirror kept short — DB is source of truth; body available via SELECT pg_get_functiondef.)
