@@ -3898,6 +3898,14 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                       <div
                         key={`strip-${i}-${p.id}`}
                         style={{
+                          // CRITICAL: boxSizing MUST be border-box. App has no global reset,
+                          // so default content-box would make borderBottom (1px) add to height,
+                          // making the actual DOM row 57px while ROW_H math assumes 56px.
+                          // Over stripPos=130+ rows that accumulates ~130px = 2-3 rows of drift,
+                          // and the wheel visually lands 2-3 rows away from the landed prize.
+                          // This was the root cause of every wheel/reveal mismatch — not any
+                          // race condition or state-sync issue.
+                          boxSizing: "border-box",
                           height: ROW_H,
                           display: "flex",
                           alignItems: "center",
