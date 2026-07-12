@@ -2002,8 +2002,8 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
   );
 }
 
-// 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1%)
-function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO }) {
+// 17 — Team Activity (Quotes / Net Quotes / Q Sales Pts / ↑ 1% / prior-quarter avg weekly SP columns)
+function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -2041,6 +2041,23 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
   const quotesShort = Math.max(0, quoteGoal - teamNetQuotesTotal);
   const spShort = Math.max(0, salesPtsGoal - teamSalesPtsTotal);
 
+  // Prior-quarter avg weekly SP columns (merged in-place per Peter 2026-07-12).
+  // Reads priorQuartersAvgSP: {team_member_id: [{quarter_label, avg_weekly_sp, qtd_sp}, ...]}
+  // Quarter columns render to the right of ↑1%, newest-first.
+  const _pqData = priorQuartersAvgSP || {};
+  const _pqQuarterSet = new Set();
+  Object.values(_pqData).forEach(arr => (arr || []).forEach(r => _pqQuarterSet.add(r.quarter_label)));
+  const quarterList = Array.from(_pqQuarterSet).sort((a, b) => {
+    const [qA, yA] = a.split(" ");
+    const [qB, yB] = b.split(" ");
+    if (yA !== yB) return Number(yB) - Number(yA);
+    return Number(qB.slice(1)) - Number(qA.slice(1));
+  });
+  const _pqByPerson = Object.fromEntries(
+    Object.entries(_pqData).map(([id, arr]) => [id, Object.fromEntries((arr || []).map(r => [r.quarter_label, r]))])
+  );
+  const _wtwColSpan = 5 + quarterList.length;
+
   return (
     <div>
       <SectionHeader icon="📊" title="Team Activity" />
@@ -2054,6 +2071,9 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Th align="right">Net Quotes</Th>
                 <Th align="right">Q Sales Pts</Th>
                 <Th align="right">↑ 1% vs 13-wk</Th>
+                {quarterList.map(q => (
+                  <Th key={q} align="right">{q}</Th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -2140,6 +2160,14 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                         );
                       })()}
                     </Td>
+                    {quarterList.map(q => {
+                      const row = _pqByPerson[d.team_member_id]?.[q];
+                      if (!row) return <Td key={q} align="right" style={{ color: T.slate400 }}>—</Td>;
+                      const avg = Number(row.avg_weekly_sp) || 0;
+                      return (
+                        <Td key={q} align="right" style={{ color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -2151,6 +2179,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(teamNetQuotesTotal)}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
                 <Td align="right"></Td>
+                {quarterList.map(q => <Td key={q} align="right"></Td>)}
               </tr>
 
               {/* Goal row — quotes goal includes carryover from prior week */}
@@ -2165,6 +2194,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{quoteGoal}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{salesPtsGoal.toFixed(2)}</Td>
                 <Td align="right"></Td>
+                {quarterList.map(q => <Td key={q} align="right"></Td>)}
               </tr>
 
               {/* WtW Result row — one consolidated label spanning Net Quotes + Q Sales Pts.
@@ -2172,7 +2202,7 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                   Loss (either missed):           Carryover: N quotes / M pts  (each piece shown only if > 0, red) */}
               <tr>
                 <Td
-                  colSpan={5}
+                  colSpan={_wtwColSpan}
                   align="center"
                   style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red }}
                 >
@@ -3977,31 +4007,20 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         />
       </Section>
 
-      {/* 17 + 17b. Team Activity (left) + Sales Points Quarterly History (right).
-          Two-column layout on wide screens, stacked on narrow. Per Peter 2026-07-12:
-          SP history rides alongside Team Activity rather than as a full-width band below. */}
+      {/* 17. Team Activity — SP quarterly history columns merged in-place per Peter 2026-07-12 pm.
+          Prior-quarter avg weekly SP renders as extra columns to the right of ↑1%. */}
       <Section>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: 16, alignItems: "start",
-        }}>
-          <div>
-            <TeamActivitySection
-              details={data.details} team={data.team}
-              truePayHistory={data.truePayHistory}
-              runtimeReqs={data.runtimeReqs}
-              report={data.report}
-              editMode={edit.active}
-              formDetails={edit.form.details}
-              isDirty={edit.isDetailDirty}
-              onChange={edit.setDetailField}
-              weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
-          </div>
-          <div>
-            <SalesPointsHistorySection priorQuartersAvgSP={data.priorQuartersAvgSP} team={data.team} details={data.details} />
-          </div>
-        </div>
+        <TeamActivitySection
+          details={data.details} team={data.team}
+          truePayHistory={data.truePayHistory}
+          runtimeReqs={data.runtimeReqs}
+          report={data.report}
+          editMode={edit.active}
+          formDetails={edit.form.details}
+          isDirty={edit.isDetailDirty}
+          onChange={edit.setDetailField}
+          weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO}
+          priorQuartersAvgSP={data.priorQuartersAvgSP} />
       </Section>
 
       {/* 19. Payroll */}
