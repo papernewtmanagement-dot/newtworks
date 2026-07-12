@@ -3791,8 +3791,8 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
       >
         <style>{`
           @keyframes prizeCartReveal {
-            0%   { opacity: 0; transform: scale(0.85); }
-            60%  { opacity: 1; transform: scale(1.04); }
+            0%   { opacity: 1; transform: scale(0.92); }
+            50%  { opacity: 1; transform: scale(1.05); }
             100% { opacity: 1; transform: scale(1); }
           }
         `}</style>
@@ -3834,10 +3834,16 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                   position: "relative",
                   height: VIEWPORT_H,
                   overflow: "hidden",
-                  background: "linear-gradient(180deg, #f8fafc 0%, #e0f2fe 50%, #f8fafc 100%)",
-                  border: `2px solid ${T.slate300}`,
+                  background: phase === "revealing"
+                    ? "linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fbbf24 100%)"
+                    : "linear-gradient(180deg, #f8fafc 0%, #e0f2fe 50%, #f8fafc 100%)",
+                  border: phase === "revealing" ? "3px solid #f59e0b" : `2px solid ${T.slate300}`,
                   borderRadius: 10,
+                  transition: "background 0.2s, border 0.2s",
                 }}>
+                  {/* Strip + masks + center window — UNMOUNTED during reveal so there is
+                      zero possibility the strip visual can be mistaken for the landed prize. */}
+                  {phase !== "revealing" && <>
                   <div style={{
                     transform: `translateY(${wheelOffset}px)`,
                     transition: phase === "spinning" ? "transform 4.2s cubic-bezier(0.12, 0.72, 0.13, 1)" : "none",
@@ -3892,6 +3898,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                     background: "linear-gradient(0deg, rgba(248,250,252,1) 0%, rgba(248,250,252,0) 100%)",
                     pointerEvents: "none",
                   }} />
+                  </>}
                   {/* Reveal overlay: opaque card covering the strip during "revealing" phase.
                       Renders landedPrize state directly — SAME source as the drawn list card,
                       so they cannot disagree. This is the authoritative "you drew" visual. */}
@@ -3911,10 +3918,10 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                       animation: "prizeCartReveal 0.35s ease-out",
                     }}>
                       <div>
-                        <div style={{ fontSize: 11, color: "#92400e", fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+                        <div style={{ fontSize: 13, color: "#92400e", fontWeight: 800, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 6 }}>
                           🎉 You drew
                         </div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: "#78350f", lineHeight: 1.2 }}>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#78350f", lineHeight: 1.15 }}>
                           {landedPrize.prize_description}
                         </div>
                       </div>
