@@ -3361,7 +3361,7 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
             <div style={{ padding: 8, background: halted ? "#fee2e2" : "#ecfdf5", borderRadius: 6, borderLeft: `3px solid ${halted ? T.red : "#10b981"}` }}>
               <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCents(annualPot)}</div>
-              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `10% OT × ${wins}/13`}</div>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `5% OT × pace ${(Number(wtq.pace ?? 0) * 100).toFixed(0)}%`}</div>
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
@@ -3386,7 +3386,7 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team, prizeBudget }) {
         <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
             <div style={{ fontWeight: 700, fontSize: 13, color: T.slate900 }}>🏆 Prize Cart</div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>Budget: <b style={{ color: T.slate800 }}>{budgetLabel}</b> (1% × on-time SMVC + Scorecard × prior wins/13)</div>
+            <div style={{ fontSize: 11, color: T.slate500 }}>Budget: <b style={{ color: T.slate800 }}>{budgetLabel}</b> (5% × on-time SMVC + Scorecard × pace — same as trip pot)</div>
           </div>
           {safe.length === 0 ? (
             <Awaiting message="No prizes loaded for this quarter yet" />
@@ -4041,7 +4041,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       /></Section>
 
       {/* 22. Win the Quarter (condensed) + Prize Cart, single section */}
-      <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} prizeBudget={data.quarterPrizeBudget?.budget_dollars ?? null} /></Section>
+      <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} prizeBudget={data.details?.[0]?.residual_pool_diag?.carveouts_detail?.mvp_prize_cart?.annual_dollars ?? null} /></Section>
 
       {/* Footer signoff */}
       <div style={{
