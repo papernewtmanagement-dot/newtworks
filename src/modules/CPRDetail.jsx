@@ -466,6 +466,8 @@ function useCPRData(weekDate) {
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
     leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
     allStarCounts: [],   // running all-star counts per person per category
+    allStarCrossingsThisWeek: [],      // rows in all_star_crossings for this specific week (drives per-card badges)
+    trailblazerCrossingsThisWeek: [],  // rows in trailblazer_crossings for this specific week
     floorConfig: [],     // round_step + direction per category
     mvpThisWeek: null,   // mvp_history row for this week (name + SP + draws)
     quarterPrizeBudget: null, // budget dollars for the quarter containing this week
@@ -803,6 +805,27 @@ function useCPRData(weekDate) {
           if (!cancelled) allStarCounts = asRows || [];
         } catch (e) { console.warn("all_star_counts fetch failed:", e); }
 
+        // This week's crossings — drive per-card badges on the Leaderboards section
+        let allStarCrossingsThisWeek = [];
+        try {
+          const { data: xRows } = await supabase
+            .from("all_star_crossings")
+            .select("team_member_id, category, value_at_crossing, floor_at_crossing")
+            .eq("agency_id", AGENCY_ID)
+            .eq("week_ending", weekDate);
+          if (!cancelled) allStarCrossingsThisWeek = xRows || [];
+        } catch (e) { console.warn("all_star_crossings fetch failed:", e); }
+
+        let trailblazerCrossingsThisWeek = [];
+        try {
+          const { data: tbRows } = await supabase
+            .from("trailblazer_crossings")
+            .select("team_member_id, category, crossing_value, threshold_at_crossing")
+            .eq("agency_id", AGENCY_ID)
+            .eq("week_ending", weekDate);
+          if (!cancelled) trailblazerCrossingsThisWeek = tbRows || [];
+        } catch (e) { console.warn("trailblazer_crossings fetch failed:", e); }
+
         // Floor config (rounding step per category)
         let floorConfig = [];
         try {
@@ -824,22 +847,31 @@ function useCPRData(weekDate) {
           if (!cancelled) mvpThisWeek = mvpRow || null;
         } catch (e) { console.warn("mvp_history fetch failed:", e); }
 
-        // Prior-quarter avg SP per person — from historical quarterly QTD divided by 13
-        // Serves as reference lines on Sales Points weekly-run charts (assumes even production)
+        // Prior-quarter avg SP per person — from historical quarterly QTD divided by 13.
+        // Serves as reference lines on Sales Points weekly-run charts (assumes even production).
+        // Look back at most 4 completed quarters (=1 year of context) prior to the current week.
+        // The list of quarter-end Saturdays is derived: pick the most recent quarter-end Sat that is
+        // strictly before weekDate, then step back 13 weeks at a time for a total of 4 dates.
         let priorQuartersAvgSP = {};
+        const priorQuarterEndDates = (() => {
+          if (!weekDate) return [];
+          // Full historical set of quarter-end Saturdays; pick the newest 4 that fall before weekDate
+          const ALL_QTR_ENDS = [
+            "2023-03-25","2023-06-24","2023-09-30","2023-12-30",
+            "2024-03-30","2024-06-29","2024-09-28","2024-12-28",
+            "2025-03-29","2025-06-28","2025-09-27","2025-12-27",
+            "2026-03-28","2026-06-27",
+          ];
+          return ALL_QTR_ENDS.filter(d => d < weekDate).slice(-4);
+        })();
         try {
-          const { data: qtrRows } = await supabase
+          const { data: qtrRows } = priorQuarterEndDates.length === 0 ? { data: [] } : await supabase
             .from("weekly_cpr_team_detail")
             .select("team_member_id, sales_points, weekly_cpr_report_id, weekly_cpr_reports!inner(week_ending_date)")
             .eq("agency_id", AGENCY_ID)
             .not("sales_points", "is", null)
             .lt("weekly_cpr_reports.week_ending_date", weekDate)
-            .in("weekly_cpr_reports.week_ending_date", [
-              "2023-03-25","2023-06-24","2023-09-30","2023-12-30",
-              "2024-03-30","2024-06-29","2024-09-28","2024-12-28",
-              "2025-03-29","2025-06-28","2025-09-27","2025-12-27",
-              "2026-03-28","2026-06-27"
-            ]);
+            .in("weekly_cpr_reports.week_ending_date", priorQuarterEndDates);
           if (!cancelled && qtrRows) {
             const grouped = {};
             qtrRows.forEach(r => {
@@ -902,6 +934,8 @@ function useCPRData(weekDate) {
           prizeCart,
           leaderboards,
           allStarCounts,
+          allStarCrossingsThisWeek,
+          trailblazerCrossingsThisWeek,
           floorConfig,
           mvpThisWeek,
           quarterPrizeBudget,
@@ -934,46 +968,17 @@ function goalFor(goals, lob, metric) {
 // ─────────────────────────────────────────────────────────────
 
 // 1 — Opener
-function OpenerSection({ weekDate, report, snapshotForWeek, editMode, formValue, dirty, onChange }) {
+function OpenerSection({ weekDate, report, editMode, formValue, dirty, onChange }) {
   // Opener stored in weekly_cpr_reports.opener_text.
   // Same field is read by send_weekly_cpr_recap when the Saturday email goes out.
   // In edit mode: render textarea wired to form. In view mode: render text or Awaiting.
+  // Note: the snapshot-ingest chip that used to render here was moved to the sticky
+  // control bar at the top of the page (2026-07-12 per Peter).
   const text = report?.opener_text && report.opener_text.trim().length > 0 ? report.opener_text : null;
-  // Book snapshot ingest status. The agency_snapshot row for this week's
-  // Saturday is pre-created by the Telegram check-in flow with the book
-  // columns empty. The Weekly Agency Snapshot Gmail parser fills them Friday
-  // ~4:30 PM CT off the SF CRM Analytics widget-subscription email and stamps
-  // crm_analytics_ingested=true. Flag confirms at a glance whether this
-  // week's book data is real or still waiting on the email.
-  const ingested = snapshotForWeek?.crm_analytics_ingested === true;
-  const ingestedAt = snapshotForWeek?.crm_analytics_ingested_at || null;
-  let ingestedAtLabel = "";
-  if (ingestedAt) {
-    try {
-      ingestedAtLabel = new Date(ingestedAt).toLocaleString("en-US", {
-        month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
-      });
-    } catch { ingestedAtLabel = ""; }
-  }
   return (
     <Card>
-      <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6, fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>
+      <div style={{ fontSize: 11, color: T.slate500, marginBottom: 12, fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>
         CPR Recap — Week ending {fmtDateLong(weekDate)}
-      </div>
-      <div style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        padding: "3px 10px", marginBottom: 12, borderRadius: 999,
-        fontSize: 11, fontWeight: 600, letterSpacing: 0.2,
-        background: ingested ? T.greenLt : T.amberLt,
-        color: ingested ? "#065f46" : "#92400e",
-        border: `1px solid ${ingested ? T.green : T.amber}`,
-      }}>
-        <span>{ingested ? "✅" : "⏳"}</span>
-        <span>
-          {ingested
-            ? `Book snapshot ingested${ingestedAtLabel ? ` · ${ingestedAtLabel}` : ""}`
-            : "Book snapshot pending — awaiting Friday CRM Analytics email"}
-        </span>
       </div>
       {editMode ? (
         <TextArea
@@ -2118,7 +2123,23 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
                         })()}
                       </Td>
                     )}
-                    <Td align="right">—</Td>
+                    {/* ↑ 1% vs 13-wk: target = 1.01 × avg new SP over prior 13 weeks (per person).
+                        ✓ icon renders when this-week new SP hit the target (adds $10 to Goals bonus). */}
+                    <Td align="right">
+                      {(() => {
+                        const gd = d.residual_pool_diag?.goals_detail;
+                        if (!gd) return <span style={{ color: T.slate400 }}>—</span>;
+                        const target = Number(gd.target_1pct || 0);
+                        if (!(target > 0)) return <span style={{ color: T.slate400 }}>—</span>;
+                        const hit = gd.gain_hit === true;
+                        return (
+                          <span style={{ color: hit ? T.green : T.slate700 }}>
+                            {target.toFixed(2)}
+                            {hit && <span style={{ marginLeft: 6, fontWeight: 800 }} title="1% gain hit — +$10 Goals">✓</span>}
+                          </span>
+                        );
+                      })()}
+                    </Td>
                   </tr>
                 );
               })}
@@ -2321,6 +2342,9 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
     ["sales_pool_share",              salesPoolLabel],
     ["retention_pool_share",          retentionPoolLabel],
     ["marketing_pool_earned_weekly",  "Marketing"],
+    // Goals: $10 per All-Star crossing + $10 per Trailblazer crossing + $10 if this-week new SP hit 1.01x prior 13wk avg.
+    // Populated by write_weekly_comp_v2 (after audit_weekly_leaderboard_crossings). Detail lives on residual_pool_diag.goals_detail.
+    ["goals_bonus",                   "Goals"],
     ["manager_bonus",                 "Manager"],
     ["health_bonus",                  "Health+"],
   ];
@@ -3029,7 +3053,7 @@ function TruePayHistorySection({ team, truePayHistory, weekDate }) {
 }
 
 // 21 — Leaderboards
-function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team }) {
+function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, weekDate, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [] }) {
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
   const cfgByCategory = Object.fromEntries((floorConfig || []).map(c => [c.category, c]));
   if (!leaderboards || leaderboards.length === 0) {
@@ -3062,6 +3086,25 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team })
     return row.record_period_label || "—";
   };
 
+  // Pre-compute per-category "this week" activity so we can render badges + drive $10 goals payouts.
+  const asByCat = {};
+  (allStarCrossingsThisWeek || []).forEach(r => {
+    (asByCat[r.category] = asByCat[r.category] || []).push(r);
+  });
+  const tbByCat = {};
+  (trailblazerCrossingsThisWeek || []).forEach(r => {
+    (tbByCat[r.category] = tbByCat[r.category] || []).push(r);
+  });
+  // New-podium badge: any leaderboards row whose record_week_ending matches this weekDate for weekly cats,
+  // or (for quarter_sp) any row whose record_period_label matches the current quarter and set_at is recent.
+  // Weekly cats are the reliable signal since audit stamps record_week_ending on the podium replace.
+  const newPodiumByCat = {};
+  (leaderboards || []).forEach(r => {
+    if (r.record_week_ending === weekDate) {
+      (newPodiumByCat[r.category] = newPodiumByCat[r.category] || []).push(r);
+    }
+  });
+
   return (
     <div>
       <SectionHeader title="Leaderboards" />
@@ -3075,9 +3118,57 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team })
           const floorVal    = bronze ? Math.floor(Number(bronze.record_value) / step) * step : 0;
           const trailblazer = gold   ? Math.ceil((Number(gold.record_value) + 0.01) / step) * step : 0;
           const counts = (allStarCounts || []).filter(r => r.category === cat.key).sort((a,b) => Number(b.count) - Number(a.count));
+
+          // This-week activity for this category
+          const asHits  = asByCat[cat.key]  || [];
+          const tbHits  = tbByCat[cat.key]  || [];
+          const podium  = newPodiumByCat[cat.key] || [];
+          const anyThisWeek = asHits.length + tbHits.length + podium.length > 0;
+
           return (
             <Card key={cat.key} style={{ padding: 12 }}>
               <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6, color: T.slate900 }}>{cat.label}</div>
+
+              {/* THIS WEEK badge stack — shown when any crossings/podium changes happened this week */}
+              {anyThisWeek && (
+                <div style={{
+                  marginBottom: 8, padding: "6px 8px", borderRadius: 6,
+                  background: "linear-gradient(90deg, #fef3c7 0%, #fef9c3 100%)",
+                  border: "1px solid #f59e0b",
+                }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#78350f", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>
+                    ⚡ This week
+                  </div>
+                  {tbHits.map((r, i) => {
+                    const tm = teamById[r.team_member_id];
+                    const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
+                    return (
+                      <div key={`tb-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
+                        <b>▲ Trailblazer:</b> {nm} beat {cat.fmt(r.threshold_at_crossing)} → {cat.fmt(r.crossing_value)}
+                      </div>
+                    );
+                  })}
+                  {podium.map((r, i) => {
+                    const tm = teamById[r.team_member_id];
+                    const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
+                    const tierLabel = r.tier === 1 ? "🥇 Gold" : r.tier === 2 ? "🥈 Silver" : "🥉 Bronze";
+                    return (
+                      <div key={`pd-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
+                        <b>{tierLabel}:</b> {nm} — {cat.fmt(r.record_value)}
+                      </div>
+                    );
+                  })}
+                  {asHits.map((r, i) => {
+                    const tm = teamById[r.team_member_id];
+                    const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
+                    return (
+                      <div key={`as-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
+                        <b>All-Star:</b> {nm} cleared {cat.fmt(r.floor_at_crossing)} → {cat.fmt(r.value_at_crossing)}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Trailblazer — above gold */}
               {trailblazer > 0 && (
@@ -3153,25 +3244,27 @@ function MVPBanner({ mvpThisWeek, team, report }) {
       background: "linear-gradient(90deg, #dcfce7 0%, #bbf7d0 100%)",
       border: "2px solid #16a34a",
       borderRadius: 10,
-      padding: "12px 18px",
+      padding: "14px 20px",
       margin: "12px 20px",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      gap: 14,
+      gap: 16,
     }}>
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5 }}>🏆 This Week's MVP</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#14532d", marginTop: 2 }}>{nameStr}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+        <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
+        <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
+          MVP: {nameStr}
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 16 }}>
+      <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 10, color: "#166534" }}>SP earned</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
+          <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
         </div>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 10, color: "#166534" }}>Prize draws</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#14532d" }}>{mvpThisWeek.prize_draws}</div>
+          <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{mvpThisWeek.prize_draws}</div>
         </div>
       </div>
     </div>
@@ -3666,6 +3759,42 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           </div>
         )}
         <div style={{ flex: 1, minWidth: 4 }} aria-hidden="true" />
+        {(() => {
+          // Snapshot ingest chip — centered in the control bar (was previously
+          // in OpenerSection; relocated 2026-07-12 per Peter). Only renders
+          // when a bookCurrent row exists for this week.
+          const snap = data.bookCurrent && data.bookCurrent.snapshot_date === weekDate ? data.bookCurrent : null;
+          if (!snap) return null;
+          const ingested = snap.crm_analytics_ingested === true;
+          const ingestedAt = snap.crm_analytics_ingested_at || null;
+          let ingestedAtLabel = "";
+          if (ingestedAt) {
+            try {
+              ingestedAtLabel = new Date(ingestedAt).toLocaleString("en-US", {
+                month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+              });
+            } catch { ingestedAtLabel = ""; }
+          }
+          return (
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "3px 10px", borderRadius: 999,
+              fontSize: 11, fontWeight: 600, letterSpacing: 0.2,
+              background: ingested ? T.greenLt : T.amberLt,
+              color: ingested ? "#065f46" : "#92400e",
+              border: `1px solid ${ingested ? T.green : T.amber}`,
+              flexShrink: 0, whiteSpace: "nowrap", lineHeight: 1,
+            }}>
+              <span>{ingested ? "✅" : "⏳"}</span>
+              <span>
+                {ingested
+                  ? `Snapshot ingested${ingestedAtLabel ? ` · ${ingestedAtLabel}` : ""}`
+                  : "Snapshot pending — awaiting Friday CRM Analytics email"}
+              </span>
+            </div>
+          );
+        })()}
+        <div style={{ flex: 1, minWidth: 4 }} aria-hidden="true" />
         {canEdit && !edit.active && (
           <button
             onClick={doStartEdit}
@@ -3693,7 +3822,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section>
         <OpenerSection
           weekDate={weekDate} report={data.report}
-          snapshotForWeek={data.bookCurrent && data.bookCurrent.snapshot_date === weekDate ? data.bookCurrent : null}
           editMode={edit.active}
           formValue={edit.form.report.opener_text}
           dirty={edit.isReportDirty("opener_text")}
@@ -3786,26 +3914,33 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section><SMVCScorecardSection section11={data.section11} /></Section>
 
 
-      {/* 12. Claims */}
+      {/* 12 + 13. Claims (left) + Non-Pays (right) — same row, equal widths.
+          Stacks vertically on narrow screens via grid auto-fit. Per Peter 2026-07-12. */}
       <Section>
-        <ClaimsSection
-          report={data.report}
-          editMode={edit.active}
-          formReport={edit.form.report}
-          isReportDirty={edit.isReportDirty}
-          onReportChange={edit.setReportField}
-        />
-      </Section>
-
-      {/* 13. Non-pays */}
-      <Section>
-        <NonPaysSection
-          report={data.report}
-          editMode={edit.active}
-          formReport={edit.form.report}
-          isReportDirty={edit.isReportDirty}
-          onReportChange={edit.setReportField}
-        />
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gap: 16, alignItems: "start",
+        }}>
+          <div>
+            <NonPaysSection
+              report={data.report}
+              editMode={edit.active}
+              formReport={edit.form.report}
+              isReportDirty={edit.isReportDirty}
+              onReportChange={edit.setReportField}
+            />
+          </div>
+          <div>
+            <ClaimsSection
+              report={data.report}
+              editMode={edit.active}
+              formReport={edit.form.report}
+              isReportDirty={edit.isReportDirty}
+              onReportChange={edit.setReportField}
+            />
+          </div>
+        </div>
       </Section>
 
       {/* 13.5. EUR (Underwriting Reports) — text notes */}
@@ -3842,22 +3977,32 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         />
       </Section>
 
-      {/* 17. Team activity */}
+      {/* 17 + 17b. Team Activity (left) + Sales Points Quarterly History (right).
+          Two-column layout on wide screens, stacked on narrow. Per Peter 2026-07-12:
+          SP history rides alongside Team Activity rather than as a full-width band below. */}
       <Section>
-        <TeamActivitySection
-          details={data.details} team={data.team}
-          truePayHistory={data.truePayHistory}
-          runtimeReqs={data.runtimeReqs}
-          report={data.report}
-          editMode={edit.active}
-          formDetails={edit.form.details}
-          isDirty={edit.isDetailDirty}
-          onChange={edit.setDetailField}
-        weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 16, alignItems: "start",
+        }}>
+          <div>
+            <TeamActivitySection
+              details={data.details} team={data.team}
+              truePayHistory={data.truePayHistory}
+              runtimeReqs={data.runtimeReqs}
+              report={data.report}
+              editMode={edit.active}
+              formDetails={edit.form.details}
+              isDirty={edit.isDetailDirty}
+              onChange={edit.setDetailField}
+              weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO} />
+          </div>
+          <div>
+            <SalesPointsHistorySection priorQuartersAvgSP={data.priorQuartersAvgSP} team={data.team} details={data.details} />
+          </div>
+        </div>
       </Section>
-
-      {/* 17b. Sales Points quarterly history */}
-      <Section><SalesPointsHistorySection priorQuartersAvgSP={data.priorQuartersAvgSP} team={data.team} details={data.details} /></Section>
 
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
@@ -3865,8 +4010,16 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
 
-      {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts) */}
-      <Section><LeaderboardsSection leaderboards={data.leaderboards} allStarCounts={data.allStarCounts} floorConfig={data.floorConfig} team={data.team} /></Section>
+      {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts + this-week badges) */}
+      <Section><LeaderboardsSection
+        leaderboards={data.leaderboards}
+        allStarCounts={data.allStarCounts}
+        floorConfig={data.floorConfig}
+        team={data.team}
+        weekDate={weekDate}
+        allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
+        trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
+      /></Section>
 
       {/* 22. Win the Quarter (condensed) + Prize Cart, single section */}
       <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} prizeBudget={data.quarterPrizeBudget?.budget_dollars ?? null} /></Section>
