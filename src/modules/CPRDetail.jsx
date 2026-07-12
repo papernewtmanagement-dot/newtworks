@@ -3666,6 +3666,9 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  // Guards startReveal from double-triggering when both transitionend fires
+  // AND the fallback setTimeout fires. Reset on every new spin.
+  const revealStartedRef = useRef(false);
 
   const ROW_H = 56;      // px per prize row
   const VIEWPORT_H = 168; // 3 rows visible
@@ -3693,6 +3696,22 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     if (shouldPromptPick && phase === "landed_partial") setPhase("picking");
   }, [shouldPromptPick, phase]);
 
+  // Fires the reveal + drawn-commit sequence. Called by whichever comes first:
+  // (a) the wheel's onTransitionEnd (correct trigger — fires when the CSS transition
+  //     actually finishes on the browser's clock, so the strip is guaranteed at its
+  //     final row before we swap to the reveal card), or
+  // (b) the fallback setTimeout below (safety net in case transitionend doesn't fire).
+  // revealStartedRef guards against double-invocation adding the prize to drawn twice.
+  function startReveal(landed) {
+    if (revealStartedRef.current) return;
+    revealStartedRef.current = true;
+    setPhase(prev => (prev === "spinning" ? "revealing" : prev));
+    setTimeout(() => {
+      setDrawn(prev => [...prev, landed]);
+      setPhase(prev => (prev === "revealing" ? "landed_partial" : prev));
+    }, 900);
+  }
+
   function spin() {
     if (available.length === 0 || drawsRemaining === 0) return;
     // Freeze the pool AND the target for this entire animation. Nothing downstream
@@ -3700,6 +3719,8 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     const spinPool = available;
     const targetIdx = Math.floor(Math.random() * spinPool.length);
     const landed = spinPool[targetIdx];
+    // New spin — allow reveal to fire once for this run.
+    revealStartedRef.current = false;
     // Snapshot the wheel's strip contents so post-landing state changes can't shift row indices.
     setWheelStripPrizes(spinPool);
     // Promote the landed prize to state so the reveal overlay and drawn list use
@@ -3716,16 +3737,11 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
         const stripPos = 10 * spinPool.length + targetIdx;
         const y = -(stripPos * ROW_H) + (VIEWPORT_H / 2 - ROW_H / 2);
         setWheelOffset(y);
-        // Animation completes at 4200ms. Enter REVEAL phase where the wheel sits on the
-        // landed prize (center window brightens) for 900ms — the "moment of glory".
-        // Then commit to drawn list (which shifts the button to SPIN AGAIN / pick prompt).
-        setTimeout(() => {
-          setPhase(prev => (prev === "spinning" ? "revealing" : prev));
-          setTimeout(() => {
-            setDrawn(prev => [...prev, landed]);
-            setPhase(prev => (prev === "revealing" ? "landed_partial" : prev));
-          }, 900);
-        }, 4200);
+        // FALLBACK ONLY. Primary trigger is transitionend on the strip inner div,
+        // which fires exactly when the CSS transition ends on the browser's clock.
+        // This setTimeout is a safety net at 800ms beyond the 4.2s transition in case
+        // transitionend doesn't fire (rare — DOM removal, browser bug, etc.).
+        setTimeout(() => startReveal(landed), 5000);
       });
     });
   }
@@ -3844,11 +3860,21 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                   {/* Strip + masks + center window — UNMOUNTED during reveal so there is
                       zero possibility the strip visual can be mistaken for the landed prize. */}
                   {phase !== "revealing" && <>
-                  <div style={{
-                    transform: `translateY(${wheelOffset}px)`,
-                    transition: phase === "spinning" ? "transform 4.2s cubic-bezier(0.12, 0.72, 0.13, 1)" : "none",
-                    willChange: "transform",
-                  }}>
+                  <div
+                    onTransitionEnd={(e) => {
+                      // Only fire on the transform property (not on any inherited transitions)
+                      // and only while we're in the spinning phase. landedPrize is state so it
+                      // reflects the value set at spin() start.
+                      if (e.propertyName === "transform" && phase === "spinning" && landedPrize) {
+                        startReveal(landedPrize);
+                      }
+                    }}
+                    style={{
+                      transform: `translateY(${wheelOffset}px)`,
+                      transition: phase === "spinning" ? "transform 4.2s cubic-bezier(0.12, 0.72, 0.13, 1)" : "none",
+                      willChange: "transform",
+                    }}
+                  >
                     {strip.map((p, i) => (
                       <div
                         key={`strip-${i}-${p.id}`}
