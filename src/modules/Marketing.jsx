@@ -2,7 +2,6 @@
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
-import MarketingPoints from "./MarketingPoints.jsx";
 
 // ============================================================
 // Newtworks MARKETING MODULE v1.0
@@ -12,7 +11,6 @@ import MarketingPoints from "./MarketingPoints.jsx";
 //   Overview    — KPIs, envelope status, alerts
 //   Sources     — Lead source table w/ CPA, close ratio, ROI
 //   Spend       — GL marketing spend by month vs envelope
-//   Points      — Team marketing points entry (nested MarketingPoints)
 //
 // Later phases will add:
 //   EverQuote Deep Dive (Phase 2)
@@ -1232,7 +1230,7 @@ function ReferralsView({ rows, team, onReload }) {
       </div>
 
       <div style={{ marginTop: 10, fontSize: 11, color: T.slate500, lineHeight: 1.6 }}>
-        Click the status pill to advance: received → contacted → quoted → sold → dead → received. Quoted/sold dates auto-set. Weekly point aggregate (marketing_points) is entered separately via the <strong>Points</strong> tab; that stays canonical for the 7/11 pool rollout.
+        Click the status pill to advance: received → contacted → quoted → sold → dead → received. Quoted/sold dates auto-set. Weekly per-teammate marketing points are entered inline on the <strong>CPR &gt; Payroll</strong> section (edit mode); that stays canonical for the 7/11 pool rollout.
       </div>
     </div>
   );
@@ -1420,7 +1418,7 @@ function ReviewsView({ rows, team, onReload }) {
       </div>
 
       <div style={{ marginTop: 10, fontSize: 11, color: T.slate500, lineHeight: 1.6 }}>
-        5-star reviews auto-tag as <strong>ICP</strong> (Ideal Customer Profile research pool). Weekly review-count aggregate (marketing_points) is entered separately via the <strong>Points</strong> tab.
+        5-star reviews auto-tag as <strong>ICP</strong> (Ideal Customer Profile research pool). Weekly per-teammate marketing points are entered inline on the <strong>CPR &gt; Payroll</strong> section (edit mode).
       </div>
     </div>
   );
@@ -2217,11 +2215,6 @@ function EconomicsTab() {
 }
 
 
-// ─── Points Tab (nests existing MarketingPoints module) ───────
-function PointsTab() {
-  return <MarketingPoints />;
-}
-
 // ─── Main Marketing Module ────────────────────────────────────
 const SECTIONS = [
   { id: "overview",  label: "Overview" },
@@ -2231,7 +2224,6 @@ const SECTIONS = [
   { id: "refrev",    label: "Referrals & Reviews" },
   { id: "ideas",     label: "Ideas" },
   { id: "spend",     label: "Spend" },
-  { id: "points",    label: "Points" },
 ];
 
 export default function Marketing() {
@@ -2315,7 +2307,6 @@ export default function Marketing() {
       {section === "refrev" && <ReferralsReviewsTab />}
       {section === "ideas" && <IdeasTab />}
       {section === "spend" && <SpendTab state={state} />}
-      {section === "points" && <PointsTab />}
     </div>
   );
 }
