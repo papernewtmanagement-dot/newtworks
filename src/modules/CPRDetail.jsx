@@ -3579,8 +3579,8 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
   const pctFloor = Math.min(100, (wins / 9) * 100);
   // Split source of truth: compute_pool_carveouts SQL (locked 2026-07-12).
   // Fallback to constants if SQL fields absent (backward compat during rollout).
-  const mvpSharePct   = Number(wtq.mvp_share_pct ?? 0.30);
-  const restSharePct  = Number(wtq.rest_share_pct ?? 0.70);
+  const mvpSharePct   = Number(wtq.mvp_share_pct ?? 0.50);
+  const restSharePct  = Number(wtq.rest_share_pct ?? 0.50);
   const quarterMVPCut = Number(wtq.mvp_dollars ?? (annualPot * mvpSharePct));
   const teamCut       = Number(wtq.rest_pool_dollars ?? (annualPot * restSharePct));
   const restPerPerson = Number(wtq.rest_per_person_dollars ?? 0);
@@ -3621,13 +3621,13 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
             <div style={{ padding: 8, background: halted ? "#fee2e2" : "#ecfdf5", borderRadius: 6, borderLeft: `3px solid ${halted ? T.red : "#10b981"}` }}>
               <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot / Prize cart restock</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCents(annualPot)}</div>
-              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `3% OT × pace ${(Number(wtq.pace ?? 0) * 100).toFixed(0)}%`}</div>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `1% OT (SMVC + Scorecard) × ${Number(wtq.projected_wins ?? 13)}/13 weeks won`}</div>
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
               <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP ({mvpPctLabel})</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
-              <div style={{ fontSize: 10, color: "#78350f" }}>Top SP producer</div>
+              <div style={{ fontSize: 10, color: "#78350f" }}>Top Sales</div>
             </div>
 
             <div style={{ padding: 8, background: "#e0f2fe", borderRadius: 6 }}>
