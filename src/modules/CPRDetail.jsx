@@ -470,6 +470,7 @@ function useCPRData(weekDate) {
     mvpThisWeek: null,   // mvp_history row for this week (name + SP + draws)
     quarterPrizeBudget: null, // budget dollars for the quarter containing this week
     priorQuartersAvgSP: {},   // {team_member_id: [{quarter_label, avg_weekly_sp}]} - reference lines
+    marketingPointsThisWeek: {}, // {team_member_id: {points, notes}} for the current week
     prizeCart: [],
   });
 
@@ -859,6 +860,24 @@ function useCPRData(weekDate) {
           }
         } catch (e) { console.warn("priorQuartersAvgSP fetch failed:", e); }
 
+        // Marketing points for THIS week (per-teammate). Feeds Payroll section inline entry.
+        let marketingPointsThisWeek = {};
+        try {
+          const { data: mpRows } = await supabase
+            .from("marketing_points")
+            .select("team_member_id, points, notes")
+            .eq("agency_id", AGENCY_ID)
+            .eq("week_end_date", weekDate);
+          if (mpRows) {
+            mpRows.forEach(r => {
+              marketingPointsThisWeek[r.team_member_id] = {
+                points: r.points,
+                notes: r.notes,
+              };
+            });
+          }
+        } catch (e) { console.warn("marketing_points fetch failed:", e); }
+
         setState({
           loading: false, error: null,
           report: reportRow || null,
@@ -887,6 +906,7 @@ function useCPRData(weekDate) {
           mvpThisWeek,
           quarterPrizeBudget,
           priorQuartersAvgSP,
+          marketingPointsThisWeek,
         });
       } catch (err) {
         if (!cancelled) {
@@ -2234,7 +2254,7 @@ function SalesPointsHistorySection({ priorQuartersAvgSP, team, details }) {
 // Recompute on save calls write_weekly_comp_v2 which populates base_salary,
 // commission, bonus, marketing_pool_earned_weekly, and manager_bonus from
 // the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, onRefresh, canEdit = false, isOwner = false }) {
+function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, marketingPointsThisWeek = {}, onRefresh, canEdit = false, isOwner = false }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
   // Commission is now SP delta this week, columns spelled out, Health+ label,
@@ -2244,6 +2264,7 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [showFormula, setShowFormula] = useState(false);
+  const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
 
   // When entering edit mode, seed drafts from current values
   useEffect(() => {
@@ -2253,9 +2274,19 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
         init[d.team_member_id] = d.payroll_ytd_paid ?? null;
       });
       setDrafts(init);
+      // Seed marketing drafts from any existing marketing_points rows for this week
+      const mInit = {};
+      details.forEach(d => {
+        const existing = marketingPointsThisWeek?.[d.team_member_id];
+        mInit[d.team_member_id] = {
+          points: existing?.points != null ? String(existing.points) : "",
+          notes:  existing?.notes ?? "",
+        };
+      });
+      setMarketingDrafts(mInit);
       setSaveError(null);
     }
-  }, [editMode, details]);
+  }, [editMode, details, marketingPointsThisWeek]);
 
   // If canEdit flips off (historical week, non-owner viewer), force edit mode off.
   useEffect(() => {
@@ -2319,6 +2350,32 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
           .eq("weekly_cpr_report_id", reportRow.id)
           .eq("team_member_id", tmId);
         if (updErr) throw updErr;
+      }
+
+      // Upsert marketing_points for the week (any teammate with a non-empty draft).
+      // These feed write_weekly_marketing_bonus (called internally by write_weekly_comp_v2).
+      const marketingRows = Object.entries(marketingDrafts)
+        .map(([tmId, v]) => {
+          const rawPts = v?.points;
+          if (rawPts === "" || rawPts === null || rawPts === undefined) return null;
+          const pts = Number(rawPts);
+          if (!Number.isFinite(pts)) return null;
+          return {
+            agency_id: AGENCY_ID,
+            team_member_id: tmId,
+            week_end_date: weekDate,
+            points: pts,
+            notes: (v?.notes || "").trim() || null,
+            source: "cpr_inline_input",
+            updated_at: new Date().toISOString(),
+          };
+        })
+        .filter(Boolean);
+      if (marketingRows.length > 0) {
+        const { error: mpErr } = await supabase
+          .from("marketing_points")
+          .upsert(marketingRows, { onConflict: "agency_id,team_member_id,week_end_date" });
+        if (mpErr) throw mpErr;
       }
 
       // Recompute the residual pool + carveouts + marketing pool for the week
@@ -2444,6 +2501,44 @@ function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBu
                       />
                     </Td>
                   ))}
+                </tr>
+              )}
+              {editMode && (
+                <tr style={{ background: T.amber50 || "#fef3c7" }}>
+                  <Td style={{ paddingLeft: 14, color: T.slate900, fontStyle: "italic" }}>
+                    Marketing points ($)
+                    <div style={{ fontSize: 11, color: T.slate600, fontWeight: 400 }}>
+                      Dollar value of cash marketing spiffs paid this week (feeds Marketing pool share)
+                    </div>
+                  </Td>
+                  {sorted.map(d => {
+                    const draft = marketingDrafts[d.team_member_id] || { points: "", notes: "" };
+                    const originalPts = marketingPointsThisWeek?.[d.team_member_id]?.points;
+                    const dirty = String(draft.points ?? "") !== (originalPts != null ? String(originalPts) : "");
+                    return (
+                      <Td key={d.team_member_id} align="right">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={draft.points ?? ""}
+                          onChange={e => setMarketingDrafts(prev => ({
+                            ...prev,
+                            [d.team_member_id]: { ...(prev[d.team_member_id] || { notes: "" }), points: e.target.value },
+                          }))}
+                          style={{
+                            width: 100,
+                            border: `1px solid ${dirty ? (T.amber500 || "#f59e0b") : T.slate300}`,
+                            borderRadius: 4,
+                            padding: "4px 6px",
+                            fontSize: 13,
+                            textAlign: "right",
+                            background: T.white,
+                          }}
+                        />
+                      </Td>
+                    );
+                  })}
                 </tr>
               )}
 
@@ -3786,7 +3881,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section><SalesPointsHistorySection priorQuartersAvgSP={data.priorQuartersAvgSP} team={data.team} details={data.details} /></Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
 
       {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
       {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
