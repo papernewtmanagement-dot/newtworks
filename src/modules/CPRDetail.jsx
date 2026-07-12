@@ -2893,21 +2893,22 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       {/* ───── 2. POOL BUILD (QTD; new math 2026-07-12) ───── */}
       <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (QTD, week {weeksElapsedQtd} of {weeksInQuarter})</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        Manager Bonus, HDB, MVP Prize Cart, WtQ Trip subtract INSIDE the envelope (before /1.08 burden wrap).
-        Commissions subtract from the WHOLE pool. Remaining carveouts (Apparel, Life Ins, CC Reserve) sit outside — see §2c.
+        Burden math (2026-07-12 pm6): WC + team health subtract OUTSIDE the /1.08 wrap (fringe / policy premium — no payroll tax).
+        Base salaries, commissions, Manager Bonus, HDB, MVP Prize Cart, WtQ Trip, and the residual bonus pool ALL subtract INSIDE the wrap (they're wages → burdened).
+        Prize Cart + WtQ are QUARTERLY pots; weekly accrual = pot/13. Remaining carveouts (Apparel, Life Ins, CC Reserve) sit outside the pool entirely — see §2c.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
           {row("QTD envelope", qtdEnvelope, `pool_pct × basis / 52 × ${weeksElapsedQtd} weeks`)}
-          {row("− Workers Comp QTD", -qtdWc, `$${wcAnnual}/yr / 52 × ${weeksElapsedQtd}`)}
-          {row("− Team health benefits QTD", -qtdActualHealth, "agency-paid stipends × weeks elapsed")}
-          {row("− Manager Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "SUM(wctd.manager_bonus) this cycle")}
-          {row("− Health Development Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_hdb_actual) || 0), "SUM(wctd.health_bonus) this cycle")}
-          {row("− MVP Prize Cart QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_prize_cart_accrual) || 0), `weekly × ${weeksElapsedQtd}`)}
-          {row("− Win the Quarter Trip QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_wtq_trip_accrual) || 0), `weekly × ${weeksElapsedQtd}`)}
-          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre base+comm")}
+          {row("− Workers Comp QTD", -qtdWc, `$${wcAnnual}/yr / 52 × ${weeksElapsedQtd} — OUTSIDE burden`)}
+          {row("− Team health benefits QTD", -qtdActualHealth, "§106 fringe, no payroll tax — OUTSIDE burden")}
+          {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre wages")}
           {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult")}
           {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1; eats WHOLE pool")}
+          {row("− Manager Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "SUM(wctd.manager_bonus) this cycle")}
+          {row("− Health Development Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_hdb_actual) || 0), "SUM(wctd.health_bonus) this cycle")}
+          {row("− MVP Prize Cart QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_prize_cart_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
+          {row("− Win the Quarter Trip QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_wtq_trip_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
@@ -2934,13 +2935,49 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </table>
 
       {/* ───── 2c. CARVEOUTS OUTSIDE POOL ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2c. Carveouts (outside pool — 3 remaining items)</div>
-      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6 }}>
-        Apparel, Life Insurance Stipend, Champions Circle Reserve — agency-funded team benefits sitting alongside the pool.
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2c. Carveouts (outside pool — 3 items, agency-funded)</div>
+      <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+        Apparel, Life Insurance Stipend, Champions Circle Reserve — agency-funded team benefits sitting alongside the pool. Not burdened (§106 fringe / annual reserve).
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Item</Th>
+            <Th align="right">Weekly</Th>
+            <Th align="right">QTD (wk × {weeksElapsedQtd})</Th>
+            <Th align="right">Annual</Th>
+          </tr>
+        </thead>
         <tbody>
-          {row("Annual carveouts total", annualCarveouts, `weekly = ${fmtMoneyCents(weeklyCarveouts)}, quarterly = ${fmtMoneyCents(quarterlyCarveouts)}`)}
+          {(() => {
+            const items = (diag.carveouts_outside_pool && diag.carveouts_outside_pool.items) || {};
+            const itemRow = (label, obj) => {
+              const wk  = Number(obj?.weekly_dollars || 0);
+              const qtd = Number(obj?.qtd_dollars    || 0);
+              const ann = Number(obj?.annual_dollars || (wk * 52));
+              return (
+                <tr key={label}>
+                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
+                  <Td align="right">{fmtMoneyCents(wk)}</Td>
+                  <Td align="right">{fmtMoneyCents(qtd)}</Td>
+                  <Td align="right">{fmtMoneyCents(ann)}</Td>
+                </tr>
+              );
+            };
+            return (
+              <>
+                {itemRow("Apparel", items.apparel)}
+                {itemRow("Life Insurance Stipend", items.life_insurance_stipend)}
+                {itemRow("Champions Circle Reserve", items.champions_circle_reserve)}
+                <tr>
+                  <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>Total outside-pool carveouts</Td>
+                  <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(weeklyCarveouts)}</Td>
+                  <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(Number((diag.carveouts_outside_pool && diag.carveouts_outside_pool.qtd_dollars) || 0))}</Td>
+                  <Td align="right" style={{ fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualCarveouts)}</Td>
+                </tr>
+              </>
+            );
+          })()}
         </tbody>
       </table>
 
@@ -3066,8 +3103,9 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </table>
 
       <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
-        QTD burden accrual (8% × QTD base + comm + bonus) = {fmtMoneyCents(qtdBurden)} (baked into pool math via /(1+burden) wrap).
-        Commissions eat the WHOLE POOL (2026-07-12 rewire). Manager Bonus, HDB, MVP Prize Cart, WtQ Trip subtract inside envelope; Apparel, Life Ins Stipend, CC Reserve stay outside as agency-funded team benefits.
+        QTD burden accrual (8% × [QTD base + comm + mgr + hdb + prize + wtq + bonus_pool]) = {fmtMoneyCents(qtdBurden)}. Baked into pool math via /(1+burden) wrap.
+        Commissions eat the WHOLE POOL. Base + comm + Manager Bonus + HDB + MVP Prize Cart + WtQ Trip + bonus_pool are ALL burdened (wages).
+        WC + team health benefits stay outside burden (fringe / policy premium). Apparel, Life Ins Stipend, CC Reserve stay entirely outside the pool as agency-funded benefits.
       </div>
     </div>
   );
@@ -3622,7 +3660,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
 
   const ROW_H = 56;      // px per prize row
   const VIEWPORT_H = 168; // 3 rows visible
-  const REPEATS = 12;    // times to duplicate the strip for wheel feel
+  const REPEATS = 8;     // times to duplicate the strip for wheel feel
 
   const drawnIds = new Set(drawn.map(p => p.id));
   const available = unwon.filter(p => !drawnIds.has(p.id));
@@ -3653,14 +3691,14 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         setPhase("spinning");
-        // Land in the 11th repeat for a "many revolutions" feel across the longer animation.
-        const stripPos = 10 * available.length + targetIdx;
+        // Land in the 7th repeat for a "many revolutions" feel.
+        const stripPos = 6 * available.length + targetIdx;
         const y = -(stripPos * ROW_H) + (VIEWPORT_H / 2 - ROW_H / 2);
         setWheelOffset(y);
         setTimeout(() => {
           setDrawn(prev => [...prev, available[targetIdx]]);
           setPhase(prev => (prev === "spinning" ? "landed_partial" : prev));
-        }, 4200);
+        }, 2200);
       });
     });
   }
@@ -3762,7 +3800,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
                 }}>
                   <div style={{
                     transform: `translateY(${wheelOffset}px)`,
-                    transition: phase === "spinning" ? "transform 4.2s cubic-bezier(0.12, 0.72, 0.13, 1)" : "none",
+                    transition: phase === "spinning" ? "transform 2.2s cubic-bezier(0.17, 0.67, 0.3, 1)" : "none",
                     willChange: "transform",
                   }}>
                     {strip.map((p, i) => (
@@ -3957,7 +3995,9 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
   const wins = Number(inputs.current_cycle_wins_to_date || 0);
   const week = Number(inputs.week_of_cycle || 1);
   const halted = wtq.halted;
-  const annualPot = Number(wtq.annual_dollars || 0);
+  // 2026-07-12 pm6: pot is QUARTERLY (renamed from annual_dollars).
+  // Fallback to annual_dollars if the DB hasn't been refreshed yet (defensive).
+  const annualPot = Number(wtq.quarterly_dollars ?? wtq.annual_dollars ?? 0);
   const cycleStart = inputs.current_cycle_start;
   const cycleEnd = inputs.current_cycle_end;
   const pctFloor = Math.min(100, (wins / 9) * 100);
@@ -4005,7 +4045,7 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
             <div style={{ padding: 8, background: halted ? "#fee2e2" : "#ecfdf5", borderRadius: 6, borderLeft: `3px solid ${halted ? T.red : "#10b981"}` }}>
               <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot / Prize cart restock</div>
               <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCents(annualPot)}</div>
-              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `1% OT (SMVC + Scorecard) × ${Number(wtq.projected_wins ?? 13)}/13 weeks won`}</div>
+              <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `Quarterly pot: 1% OT × ${Number(wtq.projected_wins ?? 13)}/13 wins · $${(Number(annualPot)/13).toFixed(2)}/wk accrual`}</div>
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
