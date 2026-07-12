@@ -1,0 +1,14 @@
+-- 20260712191500_wtq_prize_cart_rate_5_to_3_pct.sql
+-- Dial rate 5% -> 3% (Peter directive 2026-07-12 pm4).
+-- Single-constant change in both compute_pool_carveouts (v_rate) and quarter_close_prize_cart_and_leaderboards (v_rate).
+-- Same on-time pace formula, same 30/70 MVP split, same 9-win floor halt on trip pot only.
+-- Also refreshes stored residual_pool_diag on weekly_cpr_team_detail for 2026-07-11 (write_weekly_comp_v2 call).
+--
+-- Full function bodies applied live via Supabase MCP. This file mirrors for GitHub history.
+-- Re-run idempotent (CREATE OR REPLACE + write_weekly_comp_v2 upsert).
+--
+-- CRITICAL OP-NOTE: CPR page reads FROZEN residual_pool_diag from weekly_cpr_team_detail,
+-- NOT live compute_pool_carveouts. Any compute_pool_carveouts formula change MUST be
+-- followed by write_weekly_comp_v2(agency, week) for the affected week(s) to refresh
+-- the stored jsonb. See op-rule "CPR page reads FROZEN residual_pool_diag — refresh
+-- after formula changes".
