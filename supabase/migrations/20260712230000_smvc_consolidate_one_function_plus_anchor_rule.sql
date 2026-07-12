@@ -1,0 +1,29 @@
+-- Full SQL applied via Supabase apply_migration on 2026-07-12 pm7.
+-- Retrieve full body from supabase_migrations.schema_migrations:
+--   SELECT statements FROM supabase_migrations.schema_migrations
+--   WHERE name = 'smvc_consolidate_one_function_plus_anchor_rule_2026_07_12_pm7';
+--
+-- Summary of changes:
+--   1. NEW public.compute_agency_on_time_smvc(agency_id, as_of_date) - canonical
+--      on-time SMVC compute. Uses compute_fs_commissions_ytd (life commissions
+--      from comp_recap) for FS Credits, matching section 11's reference impl.
+--      Was previously (in two callers): agency_snapshot.life_paid_for_premium_ytd.
+--   2. get_cpr_section_11 - refactored to call compute_agency_on_time_smvc.
+--      Output shape unchanged. This function IS the reference implementation.
+--   3. compute_pool_basis_and_envelope - now calls compute_agency_on_time_smvc.
+--      Anchor date rule replaced per Peter directive:
+--        Latest comp statement day < 20 (first-half issue) -> anchor = 15th of MM
+--        Latest comp statement day >= 20 (second-half issue) -> anchor = last of MM
+--      Was previously: end-of-max_period_month (treated partial month as complete).
+--      Extracts statement day from documents.file_name via regex '^\d{2}_\d{2}_(\d{2})'.
+--      Emits new fields: comp_anchor_source, comp_latest_statement_day.
+--   4. compute_retention_budget_weekly - now calls compute_agency_on_time_smvc.
+--      Same wrong-FS-credits bug quietly fixed as side effect.
+--
+-- Result at 2026-07-11:
+--   - SMVC now 2.5298% on pool_basis (was 2.8215%), matches section 11
+--   - Anchor now 2026-07-15 (was 2026-07-31), latest statement day = 10
+--   - PC gross annualized: $485,833 (was $449,196)
+--   - Total basis annual: $532,834 (was ~$495K)
+--
+-- write_weekly_comp_v2 re-run for 2026-07-11 to refresh stored residual_pool_diag.
