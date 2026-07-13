@@ -10,8 +10,8 @@ import { mdToHtml } from "../lib/markdown.js";
 // ============================================================
 
 const REQUEST_TYPES = [
-  { id: "pto_full_day",       label: "Time off (full day)",     partial: false, location: false },
-  { id: "pto_half_day",       label: "Time off (half day)",     partial: true,  location: false },
+  { id: "time_off_full_day",  label: "Time off (full day)",     partial: false, location: false },
+  { id: "time_off_half_day",  label: "Time off (half day)",     partial: true,  location: false },
   { id: "sick",               label: "Sick",                    partial: false, location: false },
   { id: "remote_day",         label: "Remote (full day)",       partial: false, location: true  },
   { id: "remote_half_day",    label: "Remote (half day)",       partial: true,  location: true  },
@@ -28,6 +28,32 @@ const STATUS_STYLES = {
   cancelled:            { bg: "#f3f4f6", fg: "#6b7280", label: "Cancelled" },
   flagged_case_by_case: { bg: "#fde68a", fg: "#78350f", label: "Case-by-Case" }
 };
+
+// Add N business days (Mon-Fri, local time) to a Date. Weekends are skipped, not counted.
+// Team is CT-anchored so local weekday is the right anchor.
+function addBusinessDays(from, days) {
+  const result = new Date(from);
+  let remaining = days;
+  while (remaining > 0) {
+    result.setDate(result.getDate() + 1);
+    const dow = result.getDay(); // 0=Sun, 6=Sat
+    if (dow !== 0 && dow !== 6) remaining -= 1;
+  }
+  return result;
+}
+
+// Human display label. Paid-time-off requests display as "PTO" only after approval
+// with is_paid=true; unpaid or pre-decision reads generic "Time off".
+function formatRequestLabel(request) {
+  if (!request) return "";
+  const t = request.request_type;
+  const paid = request.is_paid === true;
+  if (t === "time_off_full_day") return paid ? "PTO (full day)" : "Time off (full day)";
+  if (t === "time_off_half_day") return paid ? "PTO (half day)" : "Time off (half day)";
+  const fallback = REQUEST_TYPES.find(x => x.id === t);
+  return fallback ? fallback.label : (t || "");
+}
+
 
 const COVERAGE_STYLES = {
   green:  { bg: "#dcfce7", fg: "#166534", emoji: "🟢", label: "Clear" },
@@ -98,7 +124,7 @@ const btnDeny = { ...btnBase, background: "#dc2626", color: "#fff" };
 
 // SUBMIT VIEW ================================================
 function SubmitView({ me, onSubmitted }) {
-  const [requestType, setRequestType] = useState("pto_full_day");
+  const [requestType, setRequestType] = useState("time_off_full_day");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [partialDay, setPartialDay] = useState("none");
@@ -155,7 +181,7 @@ function SubmitView({ me, onSubmitted }) {
       const initialStatus = isCaseByCase ? "flagged_case_by_case" : "voting";
 
       const voteOpenedAt = initialStatus === "voting" ? new Date().toISOString() : null;
-      const voteClosesAt = initialStatus === "voting" ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() : null;
+      const voteClosesAt = initialStatus === "voting" ? addBusinessDays(new Date(), 2).toISOString() : null;
 
       const { error: insErr } = await supabase
         .from("time_off_requests")
@@ -180,7 +206,7 @@ function SubmitView({ me, onSubmitted }) {
 
       setStartDate(""); setEndDate(""); setNotes(""); setProposedDay(""); setChecks(null);
       if (typeof onSubmitted === "function") onSubmitted();
-      alert(initialStatus === "voting" ? "Submitted. Team has 2 days to vote, then Peter decides." : "Submitted as case-by-case. Peter will review directly.");
+      alert(initialStatus === "voting" ? "Submitted. Team has 2 weekdays to vote, then Peter decides." : "Submitted as case-by-case. Peter will review directly.");
     } catch (e) {
       setError(e?.message || "Failed to submit request");
     } finally {
@@ -285,7 +311,7 @@ function VoteView({ me }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {requests.map(r => {
-        const typeLabel = REQUEST_TYPES.find(t => t.id === r.request_type)?.label || r.request_type;
+        const typeLabel = formatRequestLabel(r);
         const closesIn = r.vote_closes_at ? Math.max(0, Math.round((new Date(r.vote_closes_at) - Date.now()) / (60 * 60 * 1000))) : null;
         return (
           <div key={r.request_id} style={cardStyle}>
@@ -340,7 +366,7 @@ function MyRequestsView({ me }) {
         <div key={r.id} style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <div style={{ fontWeight: 600 }}>{REQUEST_TYPES.find(t => t.id === r.request_type)?.label || r.request_type}</div>
+              <div style={{ fontWeight: 600 }}>{formatRequestLabel(r)}</div>
               <div style={{ fontSize: 13, color: "#64748b" }}>
                 {fmtDate(r.start_date)}{r.start_date !== r.end_date && ` → ${fmtDate(r.end_date)}`}
                 {" · submitted "}{fmtDateTime(r.submitted_at)}
@@ -634,7 +660,7 @@ function HistoryView({ me }) {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map(r => {
-            const typeLabel = REQUEST_TYPES.find(t => t.id === r.request_type)?.label || r.request_type;
+            const typeLabel = formatRequestLabel(r);
             return (
               <div key={r.id} style={cardStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
@@ -686,7 +712,7 @@ function HistoryView({ me }) {
 function LogTimeOffForm({ onLogged }) {
   const [team, setTeam] = useState([]);
   const [teamId, setTeamId] = useState("");
-  const [type, setType] = useState("sick");           // sick | pto | remote
+  const [type, setType] = useState("sick");           // sick | time_off | remote
   const [dayPart, setDayPart] = useState("none");     // none | morning | afternoon
   const [isPaid, setIsPaid] = useState(true);
   const [isPlanned, setIsPlanned] = useState(false);
@@ -714,7 +740,7 @@ function LogTimeOffForm({ onLogged }) {
 
   function deriveRequestType(t, dp) {
     if (t === "sick") return "sick";
-    if (t === "pto")    return dp === "none" ? "pto_full_day" : "pto_half_day";
+    if (t === "time_off") return dp === "none" ? "time_off_full_day" : "time_off_half_day";
     if (t === "remote") return dp === "none" ? "remote_day"   : "remote_half_day";
     return "sick";
   }
@@ -775,7 +801,7 @@ function LogTimeOffForm({ onLogged }) {
               Type
               <select value={type} onChange={e => setType(e.target.value)} style={inp}>
                 <option value="sick">Sick</option>
-                <option value="pto">Time off</option>
+                <option value="time_off">Time off</option>
                 <option value="remote">Remote</option>
               </select>
             </label>
@@ -844,7 +870,7 @@ function computeDefaultPaid(req) {
   if (t === "four_day_off_change") return true;
   if (t === "sick") return true;
   // PTO — handbook §02 v25 rules
-  if (t.startsWith("pto")) {
+  if (t.startsWith("time_off")) {
     // Owner — own rules
     if (e.is_owner) return true;
     // Account Associate (= Account Representative in handbook) — accrued PTO ONLY.
@@ -870,7 +896,7 @@ function computeDefaultPaidReason(req) {
   if (t.startsWith("remote")) return "Working remotely — still paid.";
   if (t === "four_day_off_change") return "4-day off-day change — still paid.";
   if (t === "sick") return "Sick day — paid by default.";
-  if (t.startsWith("pto")) {
+  if (t.startsWith("time_off")) {
     if (e.is_owner) return "Owner — sets own rules.";
     if (e.is_account_associate) {
       const cap = e.aa_pto_days_per_year ?? 0;
@@ -921,7 +947,7 @@ async function fetchYtdPaidPtoDays(requesterTeamId, year) {
 // Day-count for the request being approved (so we can compare requested vs remaining)
 function ptoDaysForRequest(req) {
   if (!req) return 0;
-  if (!(req.request_type || "").startsWith("pto")) return 0;
+  if (!(req.request_type || "").startsWith("time_off")) return 0;
   const s = new Date(req.start_date);
   const e = new Date(req.end_date);
   const span = Math.round((e - s) / 86400000) + 1;
@@ -1102,7 +1128,7 @@ function InboxView({ me, onDecided }) {
               <div>
                 <div style={{ fontWeight: 700, fontSize: 16 }}>{requesterName}</div>
                 <div style={{ fontSize: 13, color: "#64748b" }}>
-                  {REQUEST_TYPES.find(t => t.id === r.request_type)?.label || r.request_type} · {fmtDate(r.start_date)}{r.start_date !== r.end_date && ` → ${fmtDate(r.end_date)}`}
+                  {formatRequestLabel(r)} · {fmtDate(r.start_date)}{r.start_date !== r.end_date && ` → ${fmtDate(r.end_date)}`}
                 </div>
               </div>
               <StatusBadge status={r.status} />
