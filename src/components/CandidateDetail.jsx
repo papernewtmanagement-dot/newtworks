@@ -4,6 +4,13 @@ import { T } from "../lib/theme.js";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
+const DECLINE_REASON_LABEL = {
+  active_applicant: "Active — declined",
+  offer_rescinded:  "Offer rescinded",
+  calibration_only: "Calibration",
+  former_team:      "Former team",
+};
+
 const TRAIT_LABELS = {
   deadline_motivation: "Deadline Motivation",
   recognition_drive:   "Recognition Drive",
@@ -422,8 +429,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>
           {[detail?.position, detail?.email, detail?.phone].filter(Boolean).join(" · ") || "No contact info on file"}
         </div>
-        {detail?.source && (
-          <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>Source: {detail.source} · Assessed {detail?.assessment_date || "—"}</div>
+        {(detail?.decline_reason || detail?.assessment_date) && (
+          <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+            {detail?.decline_reason && (<>Declined: {DECLINE_REASON_LABEL[detail.decline_reason] || detail.decline_reason} · </>)}
+            Assessed {detail?.assessment_date || "—"}
+          </div>
         )}
       </div>
 

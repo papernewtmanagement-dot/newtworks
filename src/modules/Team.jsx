@@ -46,7 +46,8 @@ const STAGES = {
   reference_check: { label:"Ref Check",      color:T.blue,     bg:T.blueLt,   order:3 },
   offer:           { label:"Offer",          color:T.purple,   bg:T.purpleLt, order:4 },
   hired:           { label:"Hired",          color:T.green,    bg:T.greenLt,  order:5 },
-  archived:        { label:"Archived",       color:T.red,      bg:T.redLt,    order:6 },
+  declined:        { label:"Declined",       color:T.red,      bg:T.redLt,    order:6 },
+  archived:        { label:"Archived",       color:T.slate500, bg:T.slate100, order:7 },
 };
 
 // ─── Producer ROI Hook ───────────────────────────────────────
@@ -572,11 +573,11 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
 // Read-only summary view of every candidate we walked away from (status='archived'
 // AND is_team_member=false). Row tap opens CandidateDetail with full history and
 // the option to re-activate to any pipeline stage.
-const SOURCE_LABEL = {
-  external_calibration_sample: "Calibration",
-  former_team_member:          "Former team",
-  active_applicant_declined:   "Active — declined",
-  offer_rescinded:             "Offer rescinded",
+const DECLINE_REASON_LABEL = {
+  active_applicant: "Active — declined",
+  offer_rescinded:  "Offer rescinded",
+  calibration_only: "Calibration",
+  former_team:      "Former team",
 };
 
 const trim = (s, n) => {
@@ -612,7 +613,7 @@ const DeclinedTable = ({ declined, onUpdate }) => {
     if (sortKey === "cts")         arr.sort((a,b) => (num(a.overall_score) - num(b.overall_score)) * dir);
     else if (sortKey === "resume") arr.sort((a,b) => (num(a.claude_score)  - num(b.claude_score))  * dir);
     else if (sortKey === "name")   arr.sort((a,b) => str(a.last_name).localeCompare(str(b.last_name)) * dir);
-    else if (sortKey === "source") arr.sort((a,b) => str(a.candidate_source).localeCompare(str(b.candidate_source)) * dir);
+    else if (sortKey === "source") arr.sort((a,b) => str(a.decline_reason).localeCompare(str(b.decline_reason)) * dir);
     else                           arr.sort((a,b) => (new Date(a.created_at) - new Date(b.created_at)) * dir);
     return arr;
   }, [declined, sortKey, sortDir]);
@@ -673,7 +674,7 @@ const DeclinedTable = ({ declined, onUpdate }) => {
           <tbody>
             {sorted.map(app => {
               const preview = trim(app.notes || app.claude_summary, 180);
-              const sourceLbl = SOURCE_LABEL[app.candidate_source] || app.candidate_source || "—";
+              const sourceLbl = DECLINE_REASON_LABEL[app.decline_reason] || app.decline_reason || "—";
               return (
                 <tr
                   key={app.id}
@@ -2661,9 +2662,9 @@ export default function Team() {
     let cancelled = false;
     supabase
       .from("team_assessments")
-      .select("id, first_name, last_name, candidate_name, email, phone, position, status, source, claude_score, claude_summary, interview_focus, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
+      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_score, claude_summary, interview_focus, notes, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
       .eq("agency_id", AGENCY_ID)
-      .in("status", ["assessed","email_screen","interview","reference_check","offer","hired","archived"])
+      .in("status", ["assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (cancelled || error) return;
@@ -2710,7 +2711,7 @@ export default function Team() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Team</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","archived"].includes(a.status)).length} in pipeline · {applicants.filter(a=>a.status==="archived" && !a.is_team_member).length} declined · Resume scanner active
+            {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","archived","declined"].includes(a.status)).length} in pipeline · {applicants.filter(a=>a.status==="declined").length} declined · Resume scanner active
           </div>
         </div>
         
@@ -2729,7 +2730,7 @@ export default function Team() {
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
-      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "archived")} declined={applicants.filter(a => a.status === "archived" && !a.is_team_member)} onUpdate={updateApplicantStage} />}
+      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "archived" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} onUpdate={updateApplicantStage} />}
     </div>
   );
 }
