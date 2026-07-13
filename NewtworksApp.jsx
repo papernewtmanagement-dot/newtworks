@@ -1108,10 +1108,15 @@ export default function NewtworksApp() {
                 // so force collapsed=false for nav-item styling there.
                 const itemCollapsed = viewport.isPhone ? false : navCollapsed;
                 return (
-                  <div
+                  <a
                     key={item.id}
-                    style={css.navItem(active, itemCollapsed)}
-                    onClick={() => {
+                    href={urlForState(item.id, null)}
+                    style={{ ...css.navItem(active, itemCollapsed), textDecoration: "none" }}
+                    onClick={(e) => {
+                      // Let browser handle new-tab/new-window intents natively:
+                      // middle-click, cmd/ctrl-click, shift-click, alt-click.
+                      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                      e.preventDefault();
                       if (cprWeekDate) handleCloseCPR();
                       setActiveModule(item.id);
                       if (viewport.isPhone) setNavCollapsed(true);
@@ -1129,7 +1134,7 @@ export default function NewtworksApp() {
                         {agency.alerts}
                       </span>
                     )}
-                  </div>
+                  </a>
                 );
               })}
             </div>
