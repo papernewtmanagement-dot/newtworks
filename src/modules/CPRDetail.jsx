@@ -2219,6 +2219,11 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
   const diag = diagAny.residual_pool_diag || {};
   const weeklySalesPool     = Number(diag.weekly_sales_pool || 0);
   const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
+  // Envelope = weekly bonus pool. Split into thirds under current design
+  // (qtd_pools.split_thirds:true): 1/3 to 13-wk SP, 1/3 to 4-wk SP, 1/3 to retention.
+  // Each person's share of each third is (share_ratio_pct × perThirdPool).
+  const weeklyBonusPool = weeklySalesPool + weeklyRetentionPool;
+  const perThirdPool    = weeklyBonusPool / 3;
 
   // v2 pay components — every element that hits a check under the residual-pool structure.
   // Base + Commission are payroll-cycle earnings.
@@ -2229,7 +2234,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
     ["commission",                    "Commission"],
     // Team Bonus row: shows the sum (d.bonus = sales_pool_share + retention_pool_share).
     // Expandable → 3 sub-rows below (13-wk sales split, 4-wk sales split, retention split).
-    ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklySalesPool + weeklyRetentionPool)} pool)`],
+    ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklyBonusPool)} pool)`],
     ["marketing_pool_earned_weekly",  "Marketing"],
     // Goals: $10 per All-Star crossing + $10 per Trailblazer crossing + $10 if this-week new SP hit 1.01x prior 13wk avg.
     // Populated by write_weekly_comp_v2 (after audit_weekly_leaderboard_crossings). Detail lives on residual_pool_diag.goals_detail.
@@ -2400,9 +2405,9 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                   );
                   return [
                     mainRow,
-                    subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", weeklySalesPool / 2),
-                    subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  weeklySalesPool / 2),
-                    subRow("ret",  "Retention split",   "ret_share_ratio_pct",  weeklyRetentionPool),
+                    subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", perThirdPool),
+                    subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  perThirdPool),
+                    subRow("ret",  "Retention split",   "ret_share_ratio_pct",  perThirdPool),
                   ];
                 }
                 return [
