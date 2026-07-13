@@ -10,8 +10,8 @@ import { mdToHtml } from "../lib/markdown.js";
 // ============================================================
 
 const REQUEST_TYPES = [
-  { id: "pto_full_day",       label: "PTO (full day)",          partial: false, location: false },
-  { id: "pto_half_day",       label: "PTO (half day)",          partial: true,  location: false },
+  { id: "pto_full_day",       label: "Time off (full day)",     partial: false, location: false },
+  { id: "pto_half_day",       label: "Time off (half day)",     partial: true,  location: false },
   { id: "sick",               label: "Sick",                    partial: false, location: false },
   { id: "remote_day",         label: "Remote (full day)",       partial: false, location: true  },
   { id: "remote_half_day",    label: "Remote (half day)",       partial: true,  location: true  },
@@ -775,7 +775,7 @@ function LogTimeOffForm({ onLogged }) {
               Type
               <select value={type} onChange={e => setType(e.target.value)} style={inp}>
                 <option value="sick">Sick</option>
-                <option value="pto">PTO</option>
+                <option value="pto">Time off</option>
                 <option value="remote">Remote</option>
               </select>
             </label>
