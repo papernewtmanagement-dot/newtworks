@@ -2175,6 +2175,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
   const [showFormula, setShowFormula] = useState(false);
   const [showMarketing, setShowMarketing] = useState(false);
   const [teamBonusExpanded, setTeamBonusExpanded] = useState(false);
+  const [goalsExpanded, setGoalsExpanded] = useState(false);
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
 
   // When entering edit mode, seed drafts from current values
@@ -2408,6 +2409,43 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                     subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", perThirdPool),
                     subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  perThirdPool),
                     subRow("ret",  "Retention split",   "ret_share_ratio_pct",  perThirdPool),
+                  ];
+                }
+                // Goals: expandable row → 5 $10 buckets sub-rows.
+                // Bucket values read per-person from d.residual_pool_diag.goals_detail
+                // (populated by write_weekly_comp_v2 goals block, five buckets × $10).
+                if (key === "goals_bonus") {
+                  const goalsMain = (
+                    <tr key={key} onClick={() => setGoalsExpanded(v => !v)} style={{ cursor: "pointer" }}>
+                      <Td style={{ paddingLeft: 14, color: T.slate700, userSelect: "none" }}>
+                        {goalsExpanded ? "▾" : "▸"} {label}
+                      </Td>
+                      {sorted.map(d => (
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCents(d.goals_bonus)}</Td>
+                      ))}
+                    </tr>
+                  );
+                  if (!goalsExpanded) return [goalsMain];
+                  const goalsSubRow = (subKey, subLabel, valueFn) => (
+                    <tr key={`${key}-${subKey}`}>
+                      <Td style={{ paddingLeft: 32, color: T.slate500, fontSize: 12, fontStyle: "italic" }}>{subLabel}</Td>
+                      {sorted.map(d => {
+                        const gd = d.residual_pool_diag?.goals_detail || {};
+                        return (
+                          <Td key={d.team_member_id} align="right" style={{ color: T.slate500, fontSize: 12 }}>
+                            {fmtMoneyCents(valueFn(gd))}
+                          </Td>
+                        );
+                      })}
+                    </tr>
+                  );
+                  return [
+                    goalsMain,
+                    goalsSubRow("win",    "🏆 Win the Week",       gd => (gd.won_the_week ? 10 : 0)),
+                    goalsSubRow("gain",   "📈 1% Gain target",     gd => (gd.gain_hit ? 10 : 0)),
+                    goalsSubRow("as",     "⭐ All-Star crossings",     gd => 10 * (Number(gd.as_hits)     || 0)),
+                    goalsSubRow("podium", "🥇 Podium entries",     gd => 10 * (Number(gd.podium_hits) || 0)),
+                    goalsSubRow("tb",     "🔥 Trailblazer breaks", gd => 10 * (Number(gd.tb_hits)     || 0)),
                   ];
                 }
                 return [
