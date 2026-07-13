@@ -3568,15 +3568,27 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     setSaving(true);
     setErr(null);
     try {
+      const prizeCartId = drawn[selectedIdx].id;
       const { error } = await supabase
         .from("prize_cart")
         .update({
           winner_team_member_id: mvp.team_member_id,
           won_on: weekDate,
         })
-        .eq("id", drawn[selectedIdx].id)
+        .eq("id", prizeCartId)
         .is("winner_team_member_id", null);
       if (error) throw error;
+      // Notify Marie via @paper_newt_bot. Fire-and-forget: RPC has its own
+      // alert-on-failure path, and the DB save has already succeeded.
+      try {
+        await supabase.rpc("send_mvp_prize_win_telegram", {
+          p_agency_id: AGENCY_ID,
+          p_mvp_team_id: mvp.team_member_id,
+          p_prize_cart_id: prizeCartId,
+        });
+      } catch (notifyErr) {
+        console.warn("send_mvp_prize_win_telegram failed:", notifyErr);
+      }
       if (typeof onKept === "function") onKept();
     } catch (e) {
       setErr(e.message || String(e));
