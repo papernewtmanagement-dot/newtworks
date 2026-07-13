@@ -4553,6 +4553,18 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         >← Back</button>
       </div>
 
+      {/* MVP Banner — renders only on winning weeks with an MVP recorded. Sits above the
+          CrossingsBanner because winning the week is the bigger celebration.
+          Wired 2026-07-12 pm5: prizeCart + weekDate + refresh handler enable the Prize Cart Spinner. */}
+      <MVPBanner
+        mvpThisWeek={data.mvpThisWeek}
+        team={data.team}
+        report={data.report}
+        prizeCart={data.prizeCart}
+        weekDate={weekDate}
+        onRefresh={data.refresh}
+      />
+
       {/* Crossings Banner — renders whenever any Trailblazer / new podium / All-Star crossing landed
           this week, independent of whether the team won the WtW gate. Extracted from MVPBanner
           2026-07-13 pm so these breakthroughs surface on non-winning weeks too. */}
@@ -4562,17 +4574,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
         trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
         leaderboards={data.leaderboards}
-      />
-
-      {/* MVP Banner — renders only on winning weeks with an MVP recorded.
-          Wired 2026-07-12 pm5: prizeCart + weekDate + refresh handler enable the Prize Cart Spinner. */}
-      <MVPBanner
-        mvpThisWeek={data.mvpThisWeek}
-        team={data.team}
-        report={data.report}
-        prizeCart={data.prizeCart}
-        weekDate={weekDate}
-        onRefresh={data.refresh}
       />
 
       {/* 1. Opener */}
