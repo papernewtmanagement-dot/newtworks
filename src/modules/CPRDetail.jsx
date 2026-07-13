@@ -3391,7 +3391,7 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
 //   - Selected prize is persisted (winner_team_member_id + won_on).
 //   - The other N-1 stay unwon in the cart (“go back”).
 //   - Once MVP has claimed a prize this week, banner button disables.
-function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }) {
+function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [], leaderboards = [] }) {
   const [spinnerOpen, setSpinnerOpen] = useState(false);
   if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
@@ -3410,6 +3410,43 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
   if (hasClaimedThisWeek) buttonLabel = "🏆 Prize claimed";
   else if (unwonPrizes.length === 0) buttonLabel = "Cart empty";
   else buttonLabel = "🎰 Open prize cart";
+
+  // Crossings summary chips (top-of-page highlight for this week's breakthroughs).
+  // Same source arrays that feed the LeaderboardsSection strip below.
+  const CAT_META = {
+    quarter_sp:   { label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
+    four_week_sp: { label: "4-Week Sales",    fmt: v => fmtMoneyCents(v) },
+    week_sp:      { label: "Weekly Sales",    fmt: v => fmtMoneyCents(v) },
+    week_quotes:  { label: "Weekly Quotes",   fmt: v => Number(v).toFixed(0) },
+  };
+  const tbChips = (trailblazerCrossingsThisWeek || []).map(r => {
+    const p = teamById[r.team_member_id];
+    const nm = p ? (p.nickname || p.first_name || "?") : "?";
+    const c = CAT_META[r.category] || { label: r.category, fmt: v => v };
+    return { key: "tb-" + r.team_member_id + "-" + r.category, icon: "▲", type: "Trailblazer", name: nm, catLabel: c.label, val: c.fmt(r.value_at_crossing),
+             bg: "#dbeafe", border: "#3b82f6", color: "#1e3a8a" };
+  });
+  const podiumChips = (leaderboards || [])
+    .filter(r => r.record_week_ending === weekDate)
+    .map(r => {
+      const p = teamById[r.team_member_id];
+      const nm = p ? (p.nickname || p.first_name || "?") : "?";
+      const c = CAT_META[r.category] || { label: r.category, fmt: v => v };
+      const icon = r.tier === 1 ? "🥇" : r.tier === 2 ? "🥈" : "🥉";
+      const type = r.tier === 1 ? "Gold" : r.tier === 2 ? "Silver" : "Bronze";
+      const bg   = r.tier === 1 ? "#fef3c7" : r.tier === 2 ? "#f1f5f9" : "#fef2e2";
+      const bd   = r.tier === 1 ? "#f59e0b" : r.tier === 2 ? "#94a3b8" : "#d97706";
+      const col  = r.tier === 1 ? "#78350f" : r.tier === 2 ? "#334155" : "#7c2d12";
+      return { key: "pd-" + r.category + "-" + r.tier, icon, type, name: nm, catLabel: c.label, val: c.fmt(r.record_value), bg, border: bd, color: col };
+    });
+  const asChips = (allStarCrossingsThisWeek || []).map(r => {
+    const p = teamById[r.team_member_id];
+    const nm = p ? (p.nickname || p.first_name || "?") : "?";
+    const c = CAT_META[r.category] || { label: r.category, fmt: v => v };
+    return { key: "as-" + r.team_member_id + "-" + r.category, icon: "⭐", type: "All-Star", name: nm, catLabel: c.label, val: c.fmt(r.value_at_crossing),
+             bg: "#fef9c3", border: "#eab308", color: "#713f12" };
+  });
+  const allChips = [...tbChips, ...podiumChips, ...asChips];
   return (
     <>
       <div style={{
@@ -3419,48 +3456,90 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
         padding: "14px 20px",
         margin: "12px 20px",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 16,
-        flexWrap: "wrap",
+        flexDirection: "column",
+        gap: 12,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-          <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
-            MVP: {nameStr}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 20, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>
-              {drawsAllotted}{hasClaimedThisWeek ? " ✓" : ""}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+          flexWrap: "wrap",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+            <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
+              MVP: {nameStr}
             </div>
           </div>
-          {drawsAllotted > 0 && (
-            <button
-              onClick={() => setSpinnerOpen(true)}
-              disabled={!canOpen}
-              style={{
-                padding: "10px 16px",
-                fontSize: 14,
-                fontWeight: 700,
-                color: canOpen ? "#fff" : "#65a30d",
-                background: canOpen ? "#16a34a" : "#d9f99d",
-                border: "none",
-                borderRadius: 8,
-                cursor: canOpen ? "pointer" : "not-allowed",
-                boxShadow: canOpen ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
-              }}
-            >
-              {buttonLabel}
-            </button>
-          )}
+          <div style={{ display: "flex", gap: 20, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>
+                {drawsAllotted}{hasClaimedThisWeek ? " ✓" : ""}
+              </div>
+            </div>
+            {drawsAllotted > 0 && (
+              <button
+                onClick={() => setSpinnerOpen(true)}
+                disabled={!canOpen}
+                style={{
+                  padding: "10px 16px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: canOpen ? "#fff" : "#65a30d",
+                  background: canOpen ? "#16a34a" : "#d9f99d",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: canOpen ? "pointer" : "not-allowed",
+                  boxShadow: canOpen ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
+                }}
+              >
+                {buttonLabel}
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Row 2: crossings summary strip. Renders only when at least one crossing/new podium exists this week. */}
+        {allChips.length > 0 && (
+          <div style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            paddingTop: 10,
+            borderTop: "1px dashed #16a34a",
+          }}>
+            {allChips.map(c => (
+              <div key={c.key} style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 10px",
+                borderRadius: 999,
+                background: c.bg,
+                border: `1.5px solid ${c.border}`,
+                fontSize: 13,
+                fontWeight: 700,
+                color: c.color,
+                lineHeight: 1.2,
+                boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+              }}>
+                <span style={{ fontSize: 14 }}>{c.icon}</span>
+                <span style={{ fontWeight: 800 }}>{c.type}</span>
+                <span style={{ opacity: 0.55, fontWeight: 600 }}>·</span>
+                <span>{c.name}</span>
+                <span style={{ opacity: 0.55, fontWeight: 600 }}>·</span>
+                <span style={{ fontWeight: 600 }}>{c.catLabel}</span>
+                <span style={{ fontWeight: 800 }}>{c.val}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {spinnerOpen && (
         <PrizeCartSpinner
@@ -4529,6 +4608,9 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         prizeCart={data.prizeCart}
         weekDate={weekDate}
         onRefresh={data.refresh}
+        allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
+        trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
+        leaderboards={data.leaderboards}
       />
 
       {/* 1. Opener */}
