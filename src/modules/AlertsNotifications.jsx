@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
+import { ModuleLink } from "../lib/routing.jsx";
 
 // ============================================================
 // Newtworks ALERTS & NOTIFICATIONS MODULE v1.0
@@ -280,12 +281,13 @@ const AlertCard = ({ alert, onRead, onResolve, onNavigate }) => {
           )}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {alert.action_module && !alert.is_resolved && (
-              <button
-                onClick={() => onNavigate(alert.action_module)}
-                style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}
+              <ModuleLink
+                to={alert.action_module}
+                onNavigate={onNavigate}
+                style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, borderRadius:7, cursor:"pointer", display:"inline-block" }}
               >
                 {alert.action_label || "Open Module"}
-              </button>
+              </ModuleLink>
             )}
             {!alert.is_resolved && (
               <button

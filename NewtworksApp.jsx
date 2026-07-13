@@ -18,6 +18,7 @@ import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Manual from "./src/modules/Manual.jsx";
 import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
+import { urlForState } from "./src/lib/routing.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
 import Licensing from "./src/modules/Licensing.jsx";
 import PFA from "./src/modules/PFA.jsx";
@@ -732,11 +733,7 @@ function parseUrl(pathname) {
   }
   return { module: "dashboard", cprWeekDate: null };
 }
-function urlForState(moduleId, cprWeekDate) {
-  if (cprWeekDate) return `/cpr/${cprWeekDate}`;
-  if (moduleId === "dashboard") return "/";
-  return `/${moduleId}`;
-}
+// urlForState now lives in src/lib/routing.jsx (single source of truth).
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function NewtworksApp() {
@@ -1059,10 +1056,20 @@ export default function NewtworksApp() {
                     {sessionEmail || agency.user.email}
                   </div>
                   {["Profile", "Notification Settings", "Team Access"].map(item => (
-                    <div key={item} style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.slate700, cursor: "pointer", borderRadius: 6 }}
-                      onClick={() => { if (cprWeekDate) handleCloseCPR(); setActiveModule("settings"); setUserMenuOpen(false); }}>
+                    <a
+                      key={item}
+                      href={urlForState("settings", null)}
+                      style={{ display: "block", padding: "7px 10px", fontSize: 12, color: TOKENS.slate700, cursor: "pointer", borderRadius: 6, textDecoration: "none" }}
+                      onClick={(e) => {
+                        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                        e.preventDefault();
+                        if (cprWeekDate) handleCloseCPR();
+                        setActiveModule("settings");
+                        setUserMenuOpen(false);
+                      }}
+                    >
                       {item}
-                    </div>
+                    </a>
                   ))}
                   <div style={{ borderTop: `1px solid ${TOKENS.slate200}`, marginTop: 4, paddingTop: 4 }}>
                     <div

@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ── Design Tokens ──────────────────────────────────────────────
 import { T } from "../lib/theme.js";
+import { ModuleLink } from "../lib/routing.jsx";
 
 const fmt = v => { const n=parseFloat(v); return isNaN(n)?"$0.00":"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); };
 const pct = (v,m) => (((parseFloat(v)||0)/(parseFloat(m)||1))*100).toFixed(1);
@@ -64,7 +65,7 @@ const FinancialWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="💰" title="Financial Overview"
-        action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View Full P&L →</button>}
+        action={<ModuleLink to="financials" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>View Full P&L →</ModuleLink>}
       />
       <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10}}>
         {kpis.map((k,i) => (
@@ -87,7 +88,7 @@ const AIPPWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="🏆" title={`AIPP ${a.year||2026} Progress`}
-        action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Details →</button>}
+        action={<ModuleLink to="financials" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>Details →</ModuleLink>}
       />
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:8}}>
         <div>
@@ -232,7 +233,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="📅" title={`Monthly Close — ${monthLong(current.year, current.month)}`}
-        action={<button onClick={()=>onNavigate("documents")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
+        action={<ModuleLink to="documents" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>View All →</ModuleLink>}
       />
 
       {/* Summary header */}
@@ -298,7 +299,7 @@ const TasksWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="✅" title="High Priority Tasks"
-        action={<button onClick={()=>onNavigate("tasks")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>All Tasks →</button>}
+        action={<ModuleLink to="tasks" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>All Tasks →</ModuleLink>}
       />
       {tasks.length === 0 ? (
         <EmptyRow message="No high priority tasks — you're clear! ✨" />
@@ -327,7 +328,7 @@ const OpenItemsWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="🔍" title="Open Items"
-        action={<button onClick={()=>onNavigate("memory")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
+        action={<ModuleLink to="memory" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>View All →</ModuleLink>}
       />
       {openItems.length === 0 ? (
         <EmptyRow message="No open items — you're all clear ✨" />
@@ -357,7 +358,7 @@ const AlertsWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="🔔" title="Active Alerts"
-        action={<button onClick={()=>onNavigate("alerts")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>All Alerts →</button>}
+        action={<ModuleLink to="alerts" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>All Alerts →</ModuleLink>}
       />
       {alerts.length === 0 ? (
         <div style={{display:"flex", alignItems:"center", gap:10, padding:"12px 0"}}>
@@ -397,7 +398,7 @@ const ComplianceWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="⚖️" title="Compliance Status"
-        action={<button onClick={()=>onNavigate("compliance")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Review →</button>}
+        action={<ModuleLink to="compliance" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>Review →</ModuleLink>}
       />
       {total === 0 ? (
         <div style={{fontSize:11, color:T.amber, textAlign:"center", padding:"12px 0"}}>
@@ -444,7 +445,7 @@ const GrowthBudgetWidget = ({ data, onNavigate }) => {
   return (
     <Card>
       <SectionTitle icon="🌱" title="Growth Budget"
-        action={<button onClick={()=>onNavigate("hrpeople")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View HR →</button>}
+        action={<ModuleLink to="hrpeople" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>View HR →</ModuleLink>}
       />
       <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))", gap:12, marginBottom:14}}>
         <div>
@@ -509,14 +510,14 @@ const GrowthBudgetWidget = ({ data, onNavigate }) => {
 
 // ── Main Dashboard Component ───────────────────────────────────
 // ── Widget: Weekly CPR ─────────────────────────────────────────
-const WeeklyCPRWidget = ({ data, onOpen }) => {
+const WeeklyCPRWidget = ({ data, onNavigate }) => {
   const r = data.cprLatest;
   const fmtD = (iso) => { if (!iso) return "—"; try { return new Date(iso + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}); } catch { return iso; } };
   const fmtP = (v) => (v===null||v===undefined||v==="") ? "—" : `${Number(v).toFixed(2)}%`;
   return (
     <Card>
       <SectionTitle icon="📋" title="Weekly CPR"
-        action={<button onClick={onOpen} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Open form →</button>}
+        action={<ModuleLink to="cpr" onNavigate={onNavigate} style={{fontSize:11,color:T.blue,cursor:"pointer",fontWeight:600}}>Open form →</ModuleLink>}
       />
       {r ? (
         <div>
@@ -816,7 +817,7 @@ export default function Dashboard({ onNavigate = () => {}, userRole = "staff" })
 
           {/* Fourth Row — Weekly CPR (full width) */}
           <div style={{marginBottom:14}}>
-            <WeeklyCPRWidget data={dashData} onOpen={() => onNavigate('cpr')} />
+            <WeeklyCPRWidget data={dashData} onNavigate={onNavigate} />
           </div>
 
           {/* Bottom Row — Open Items (full width) */}
