@@ -317,6 +317,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [validity, setValidity] = useState(null);
   const [timing, setTiming] = useState(null);
   const [manualMarkdown, setManualMarkdown] = useState("");
+  const [probesGenerating, setProbesGenerating] = useState(false);
+  const [probesError, setProbesError] = useState(null);
 
   // Fetch full row on mount
   useEffect(() => {
@@ -405,6 +407,30 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   );
   const saveRC = () => saveFields(["rc_notes"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
+
+  // Invoke edge fn generate-custom-probes; refresh the row on success.
+  const generateCustomProbes = async () => {
+    if (!detail?.id || !supabase) return;
+    setProbesGenerating(true);
+    setProbesError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-custom-probes", {
+        body: { assessment_id: detail.id },
+      });
+      if (error) throw new Error(error.message || String(error));
+      if (data?.error) throw new Error(data.error);
+      const { data: refreshed } = await supabase
+        .from("team_assessments")
+        .select("*")
+        .eq("id", detail.id)
+        .maybeSingle();
+      if (refreshed) setDetail(refreshed);
+    } catch (e) {
+      setProbesError(e?.message || String(e));
+    } finally {
+      setProbesGenerating(false);
+    }
+  };
 
   const displayName = [detail?.first_name, detail?.last_name].filter(Boolean).join(" ") || detail?.candidate_name || "Unknown Candidate";
 
@@ -518,6 +544,74 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             </ul>
           )}
         </div>
+      </Section>
+
+      {/* Customized Interview Probes — LLM-generated per candidate.
+          Complements the Triggered Follow-Up Questions below (which is a raw
+          manual-section pull based on trait triggers). Runs the whole framework
+          picture through the LLM for candidate-specific probes with listen_for
+          and concern annotations. */}
+      <Section title="Customized Interview Probes" tone={T.blueLt}>
+        {(!detail?.custom_probes || !Array.isArray(detail?.custom_probes?.sections) || detail.custom_probes.sections.length === 0) ? (
+          <div style={{ fontSize: 12, color: T.slate700 }}>
+            No custom probes generated yet for this candidate.
+            <div style={{ marginTop: 8 }}>
+              <button
+                onClick={generateCustomProbes}
+                disabled={probesGenerating}
+                style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.white, background: T.blue, border: "none", borderRadius: 7, cursor: probesGenerating ? "wait" : "pointer" }}
+              >
+                {probesGenerating ? "Generating... (may take ~30s)" : "Generate custom probes"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12 }}>
+              Generated {detail?.custom_probes_generated_at ? new Date(detail.custom_probes_generated_at).toLocaleString() : "—"}
+              {detail.custom_probes?.model ? ` · ${detail.custom_probes.model}` : ""}
+              {detail.custom_probes?.framework_matches_n != null ? ` · ${detail.custom_probes.framework_matches_n} framework matches` : ""}
+              {detail.custom_probes?.notes ? ` · ${detail.custom_probes.notes}` : ""}
+            </div>
+            {detail.custom_probes.sections.map((sec, si) => (
+              <div key={si} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>{sec?.focus || "Section"}</div>
+                {(Array.isArray(sec?.probes) ? sec.probes : []).map((p, pi) => (
+                  <div key={pi} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 6, borderLeft: `3px solid ${T.blue}` }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 4 }}>Q: {p?.question}</div>
+                    {p?.listen_for && (
+                      <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
+                        <strong style={{ color: T.green }}>Listen for:</strong> {p.listen_for}
+                      </div>
+                    )}
+                    {p?.concern && (
+                      <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
+                        <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
+                      </div>
+                    )}
+                    {p?.source && (
+                      <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 3 }}>{p.source}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div style={{ marginTop: 8 }}>
+              <button
+                onClick={generateCustomProbes}
+                disabled={probesGenerating}
+                style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: probesGenerating ? "wait" : "pointer" }}
+              >
+                {probesGenerating ? "Regenerating..." : "🔄 Regenerate probes"}
+              </button>
+            </div>
+          </>
+        )}
+        {probesError && (
+          <div style={{ marginTop: 8, padding: 8, background: T.redLt, borderRadius: 6, color: T.red, fontSize: 11 }}>
+            {probesError}
+          </div>
+        )}
       </Section>
 
       {/* Triggered Follow-Up Questions — parsed from Final Interview manual page at runtime */}
