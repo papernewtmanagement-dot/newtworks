@@ -476,56 +476,25 @@ function useCPRData(weekDate) {
         const year = parseInt(weekDate.slice(0, 4), 10);
 
         // 1. Team (ALL members, including archived, tenure order).
+        //
+        // Snapshot lives on weekly_cpr_team_detail directly (Peter directive 
+        // 2026-07-13 pm5 consolidation): role/role_level/pay_type/etc. columns 
+        // on the detail row are set at first-write by trigger and never 
+        // overwritten. Frontend fetches live team for name/hire_date/roster 
+        // purposes; downstream displays that need historical-frozen values 
+        // read from the detail row's snapshot cols directly.
+        //
         // Historical CPR rows can reference team_detail for members who have
         // since been terminated/archived. Filtering by is_active here would
         // leave those team_detail rows orphaned and display "(unknown)" on the page.
-        //
-        // Snapshot-first (Peter directive 2026-07-13 pm5): prefer
-        // team_weekly_snapshot rows for weekDate so promotions / role moves
-        // don't rewrite historical CPR display. Trigger populates the snapshot
-        // on weekly_cpr_reports INSERT; backfill covered all pre-existing
-        // weeks. Live-team fallback covers edge cases where a weekly_cpr_reports
-        // row somehow lacks snapshot rows.
-        let teamRows = null;
-        try {
-          const { data: snapRows } = await supabase
-            .from("team_weekly_snapshot")
-            .select("team_member_id, first_name, last_name, nickname, hire_date, start_date, role, role_level, role_category, category, is_active, archived_at, annual_benefits_value, is_admin_backoffice")
-            .eq("agency_id", AGENCY_ID)
-            .eq("week_ending_date", weekDate)
-            .eq("is_admin_backoffice", false)
-            .order("hire_date", { ascending: true })
-            .order("first_name", { ascending: true });
-          if (snapRows && snapRows.length > 0) {
-            // Remap snapshot shape → team shape (id column expected downstream)
-            teamRows = snapRows.map(s => ({
-              id: s.team_member_id,
-              first_name: s.first_name,
-              last_name: s.last_name,
-              nickname: s.nickname,
-              hire_date: s.hire_date,
-              start_date: s.start_date,
-              role: s.role,
-              role_level: s.role_level,
-              category: s.category,
-              is_active: s.is_active,
-              archived_at: s.archived_at,
-              annual_benefits_value: s.annual_benefits_value,
-            }));
-          }
-        } catch (_) {
-          // Snapshot fetch failed (table missing / RLS deny) → fall through to live team
-        }
-        if (!teamRows) {
-          const { data: liveRows } = await supabase
-            .from("team")
-            .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at, annual_benefits_value")
-            .eq("agency_id", AGENCY_ID)
-            .eq("is_admin_backoffice", false)
-            .order("hire_date", { ascending: true })
-            .order("first_name", { ascending: true });
-          teamRows = liveRows || [];
-        }
+        const { data: liveRows } = await supabase
+          .from("team")
+          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at, annual_benefits_value")
+          .eq("agency_id", AGENCY_ID)
+          .eq("is_admin_backoffice", false)
+          .order("hire_date", { ascending: true })
+          .order("first_name", { ascending: true });
+        const teamRows = liveRows || [];
 
         // 2. Report row for this week
         const { data: reportRow } = await supabase
