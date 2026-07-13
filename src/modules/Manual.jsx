@@ -410,7 +410,7 @@ export default function Manual({ manualType }) {
         }
         const { data, error: qErr } = await supabase
           .from("manuals")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, divider_after, fetched_at, updated_at, notes")
           .eq("agency_id", AGENCY_ID)
           .eq("manual_type", manualType)
           .eq("is_active", true);
@@ -490,9 +490,17 @@ export default function Manual({ manualType }) {
         for (const c of kids) walk(c, d + 1);
       }
     };
-    for (const r of (tree || [])) walk(r, 0);
+    // Iterate roots. After each root's subtree, if the root has
+    // divider_after=true, append a divider marker so the sidebar visually
+    // separates this section from what follows. Divider lands after the
+    // root's ENTIRE visible subtree (children if expanded, or just the row
+    // if collapsed), not immediately after the row.
+    for (const r of (tree || [])) {
+      walk(r, 0);
+      if (r?.divider_after) out.push({ divider: true });
+    }
     return out;
-  }, [tree, expandedIds]);
+  }, [tree, expandedIds, cfg]);
 
   // Search filter — match on title or content (case-insensitive)
   const visibleIds = useMemo(() => {
@@ -621,7 +629,19 @@ export default function Manual({ manualType }) {
 
         {/* Tree */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-          {(visibleIds ? flat : visibleFlat).map((entry) => {
+          {(visibleIds ? flat : visibleFlat).map((entry, idx) => {
+            // Divider marker inserted by visibleFlat after any root flagged
+            // divider_after=true. Search mode uses `flat` which contains no
+            // divider markers, so dividers are hidden while searching.
+            if (entry.divider) {
+              return (
+                <div
+                  key={`__divider-${idx}`}
+                  style={{ height: 1, background: T.slate300, margin: "16px 16px" }}
+                  aria-hidden="true"
+                />
+              );
+            }
             const node = entry.node;
             const depth = entry.depth;
             const isActive = node.confluence_page_id === selectedId;
