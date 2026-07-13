@@ -3316,38 +3316,13 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
   );
 }
 
-// 21c — MVP Banner (top of CPR page for winning weeks) + Prize Cart Spinner
-// UX (2026-07-12 pm6, Peter directive):
-//   - MVP has N allotted draws (from prize_draws).
-//   - Modal shows a vertical slot-reel wheel of unwon prizes.
-//   - Each spin picks one at random (sampling WITHOUT replacement within a session).
-//   - After all N draws, MVP picks their favorite from the collected list.
-//   - Selected prize is persisted (winner_team_member_id + won_on).
-//   - The other N-1 stay unwon in the cart (“go back”).
-//   - Once MVP has claimed a prize this week, banner button disables.
-function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [], leaderboards = [] }) {
-  const [spinnerOpen, setSpinnerOpen] = useState(false);
-  if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
+// 21b — Crossings Banner (top of CPR page for any week with breakthroughs)
+// Extracted from MVPBanner 2026-07-13 so this-week crossings/new podiums/All-Star clears
+// surface EVERY week they occur, not only on winning weeks with an MVP.
+// Single-source: this is the ONLY surface listing per-week crossings; LeaderboardsSection
+// cards below show current records + All-Star floor only.
+function CrossingsBanner({ team, weekDate, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [], leaderboards = [] }) {
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
-  const tm = teamById[mvpThisWeek.team_member_id];
-  const nameStr = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
-  const drawsAllotted = Number(mvpThisWeek.prize_draws || 0);
-  const cart = Array.isArray(prizeCart) ? prizeCart : [];
-  // One claim per weekly MVP session. If they've already picked, button disables.
-  const hasClaimedThisWeek = cart.some(p =>
-    p.winner_team_member_id === mvpThisWeek.team_member_id &&
-    p.won_on === weekDate
-  );
-  const unwonPrizes = cart.filter(p => !p.winner_team_member_id);
-  const canOpen = drawsAllotted > 0 && !hasClaimedThisWeek && unwonPrizes.length > 0;
-  let buttonLabel;
-  if (hasClaimedThisWeek) buttonLabel = "🏆 Prize claimed";
-  else if (unwonPrizes.length === 0) buttonLabel = "Cart empty";
-  else buttonLabel = "🎰 Open prize cart";
-
-  // Crossings summary chips - top-of-page highlight for this week's breakthroughs.
-  // Single-source: this is the ONLY surface that lists per-week crossings/new podiums;
-  // the LeaderboardsSection cards below show the current records and All-Star floor only.
   const CAT_META = {
     quarter_sp:   { label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
     four_week_sp: { label: "4-Week Sales",    fmt: v => fmtMoneyCents(v) },
@@ -3382,6 +3357,92 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh, 
              bg: "#fef9c3", border: "#eab308", color: "#713f12" };
   });
   const allChips = [...tbChips, ...podiumChips, ...asChips];
+  if (allChips.length === 0) return null;
+  return (
+    <div style={{
+      background: "linear-gradient(90deg, #fef3c7 0%, #fef9c3 100%)",
+      border: "2px solid #f59e0b",
+      borderRadius: 10,
+      padding: "12px 20px",
+      margin: "12px 20px",
+      display: "flex",
+      alignItems: "center",
+      gap: 14,
+      flexWrap: "wrap",
+    }}>
+      <div style={{
+        fontSize: 12,
+        fontWeight: 800,
+        color: "#78350f",
+        textTransform: "uppercase",
+        letterSpacing: 0.6,
+        flexShrink: 0,
+      }}>
+        ⚡ This Week
+      </div>
+      <div style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+        flex: 1,
+      }}>
+        {allChips.map(c => (
+          <div key={c.key} style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "5px 10px",
+            borderRadius: 999,
+            background: c.bg,
+            border: `1.5px solid ${c.border}`,
+            fontSize: 13,
+            fontWeight: 700,
+            color: c.color,
+            lineHeight: 1.2,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+          }}>
+            <span style={{ fontSize: 14 }}>{c.icon}</span>
+            <span style={{ fontWeight: 800 }}>{c.type}</span>
+            <span style={{ opacity: 0.55, fontWeight: 600 }}>·</span>
+            <span>{c.name}</span>
+            <span style={{ opacity: 0.55, fontWeight: 600 }}>·</span>
+            <span style={{ fontWeight: 600 }}>{c.catLabel}</span>
+            <span style={{ fontWeight: 800 }}>{c.val}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 21c — MVP Banner (top of CPR page for winning weeks) + Prize Cart Spinner
+// UX (2026-07-12 pm6, Peter directive):
+//   - MVP has N allotted draws (from prize_draws).
+//   - Modal shows a vertical slot-reel wheel of unwon prizes.
+//   - Each spin picks one at random (sampling WITHOUT replacement within a session).
+//   - After all N draws, MVP picks their favorite from the collected list.
+//   - Selected prize is persisted (winner_team_member_id + won_on).
+//   - The other N-1 stay unwon in the cart (“go back”).
+//   - Once MVP has claimed a prize this week, banner button disables.
+function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }) {
+  const [spinnerOpen, setSpinnerOpen] = useState(false);
+  if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
+  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
+  const tm = teamById[mvpThisWeek.team_member_id];
+  const nameStr = tm ? (tm.nickname || tm.first_name || "(unknown)") : "(unknown)";
+  const drawsAllotted = Number(mvpThisWeek.prize_draws || 0);
+  const cart = Array.isArray(prizeCart) ? prizeCart : [];
+  // One claim per weekly MVP session. If they've already picked, button disables.
+  const hasClaimedThisWeek = cart.some(p =>
+    p.winner_team_member_id === mvpThisWeek.team_member_id &&
+    p.won_on === weekDate
+  );
+  const unwonPrizes = cart.filter(p => !p.winner_team_member_id);
+  const canOpen = drawsAllotted > 0 && !hasClaimedThisWeek && unwonPrizes.length > 0;
+  let buttonLabel;
+  if (hasClaimedThisWeek) buttonLabel = "🏆 Prize claimed";
+  else if (unwonPrizes.length === 0) buttonLabel = "Cart empty";
+  else buttonLabel = "🎰 Open prize cart";
   return (
     <>
       <div style={{
@@ -3391,90 +3452,48 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh, 
         padding: "14px 20px",
         margin: "12px 20px",
         display: "flex",
-        flexDirection: "column",
-        gap: 12,
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
       }}>
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 16,
-          flexWrap: "wrap",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-            <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
-            <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
-              MVP: {nameStr}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 20, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>
-                {drawsAllotted}{hasClaimedThisWeek ? " ✓" : ""}
-              </div>
-            </div>
-            {drawsAllotted > 0 && (
-              <button
-                onClick={() => setSpinnerOpen(true)}
-                disabled={!canOpen}
-                style={{
-                  padding: "10px 16px",
-                  fontSize: 14,
-                  fontWeight: 700,
-                  color: canOpen ? "#fff" : "#65a30d",
-                  background: canOpen ? "#16a34a" : "#d9f99d",
-                  border: "none",
-                  borderRadius: 8,
-                  cursor: canOpen ? "pointer" : "not-allowed",
-                  boxShadow: canOpen ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
-                }}
-              >
-                {buttonLabel}
-              </button>
-            )}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+          <span style={{ fontSize: 42, lineHeight: 1 }} aria-hidden="true">🏆</span>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#14532d", letterSpacing: "-0.01em" }}>
+            MVP: {nameStr}
           </div>
         </div>
-
-        {/* Row 2: crossings summary strip. Renders only when at least one crossing/new podium exists this week. */}
-        {allChips.length > 0 && (
-          <div style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            paddingTop: 10,
-            borderTop: "1px dashed #16a34a",
-          }}>
-            {allChips.map(c => (
-              <div key={c.key} style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "5px 10px",
-                borderRadius: 999,
-                background: c.bg,
-                border: `1.5px solid ${c.border}`,
-                fontSize: 13,
-                fontWeight: 700,
-                color: c.color,
-                lineHeight: 1.2,
-                boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-              }}>
-                <span style={{ fontSize: 14 }}>{c.icon}</span>
-                <span style={{ fontWeight: 800 }}>{c.type}</span>
-                <span style={{ opacity: 0.55, fontWeight: 600 }}>·</span>
-                <span>{c.name}</span>
-                <span style={{ opacity: 0.55, fontWeight: 600 }}>·</span>
-                <span style={{ fontWeight: 600 }}>{c.catLabel}</span>
-                <span style={{ fontWeight: 800 }}>{c.val}</span>
-              </div>
-            ))}
+        <div style={{ display: "flex", gap: 20, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Sales</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>{Number(mvpThisWeek.sales_points_earned).toFixed(0)}</div>
           </div>
-        )}
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Prize draws</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#14532d" }}>
+              {drawsAllotted}{hasClaimedThisWeek ? " ✓" : ""}
+            </div>
+          </div>
+          {drawsAllotted > 0 && (
+            <button
+              onClick={() => setSpinnerOpen(true)}
+              disabled={!canOpen}
+              style={{
+                padding: "10px 16px",
+                fontSize: 14,
+                fontWeight: 700,
+                color: canOpen ? "#fff" : "#65a30d",
+                background: canOpen ? "#16a34a" : "#d9f99d",
+                border: "none",
+                borderRadius: 8,
+                cursor: canOpen ? "pointer" : "not-allowed",
+                boxShadow: canOpen ? "0 2px 6px rgba(22,163,74,0.4)" : "none",
+              }}
+            >
+              {buttonLabel}
+            </button>
+          )}
+        </div>
       </div>
       {spinnerOpen && (
         <PrizeCartSpinner
@@ -4534,6 +4553,17 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         >← Back</button>
       </div>
 
+      {/* Crossings Banner — renders whenever any Trailblazer / new podium / All-Star crossing landed
+          this week, independent of whether the team won the WtW gate. Extracted from MVPBanner
+          2026-07-13 pm so these breakthroughs surface on non-winning weeks too. */}
+      <CrossingsBanner
+        team={data.team}
+        weekDate={weekDate}
+        allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
+        trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
+        leaderboards={data.leaderboards}
+      />
+
       {/* MVP Banner — renders only on winning weeks with an MVP recorded.
           Wired 2026-07-12 pm5: prizeCart + weekDate + refresh handler enable the Prize Cart Spinner. */}
       <MVPBanner
@@ -4543,9 +4573,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         prizeCart={data.prizeCart}
         weekDate={weekDate}
         onRefresh={data.refresh}
-        allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
-        trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
-        leaderboards={data.leaderboards}
       />
 
       {/* 1. Opener */}
