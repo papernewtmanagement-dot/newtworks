@@ -88,12 +88,6 @@ const fmtSigned = (n) => {
   const r = Math.round(v);
   return r > 0 ? `+${r.toLocaleString("en-US")}` : r.toLocaleString("en-US");
 };
-const fmtPct = (n, decimals = 2) => {
-  if (n === null || n === undefined || n === "") return "—";
-  const v = Number(n);
-  if (!isFinite(v)) return "—";
-  return v.toFixed(decimals) + "%";
-};
 
 // ── Layout primitives ─────────────────────────────────────────
 const Section = ({ children, style = {} }) => (
@@ -447,7 +441,6 @@ function useCPRData(weekDate) {
     loading: true,
     error: null,
     report: null,        // weekly_cpr_reports row
-    reportPrior: null,   // weekly_cpr_reports row for prior week (for Last Wk + Δ display)
     details: [],         // weekly_cpr_team_detail rows
     team: [],            // team table (active, by tenure)
     snapshot: null,      // agency_snapshot row with YTD data (most recent <= week end)
@@ -456,9 +449,6 @@ function useCPRData(weekDate) {
     bookCurrent: null,   // agency_snapshot row (most recent)
     goals: [],           // book_performance_goals rows (current year)
     campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
-    truePayHistory: {},  // {team_member_id: [{week_ending_date, true_pay_bonus}]}
-    anchorPayrollYtd: {},  // {team_member_id: payroll_ytd_paid as of 2026-04-04 anchor (or current cycle's prior-quarter-end)}
-    retentionBudgetAnnual: null,  // annual retention budget from compute_retention_budget_weekly().budget — surfaces next to Service Share
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
     cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
@@ -503,15 +493,6 @@ function useCPRData(weekDate) {
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .eq("week_ending_date", weekDate)
-          .maybeSingle();
-
-        // 2b. Prior week's report row (for Last Wk + Δ display in Retention/Production section)
-        const priorWeekDate = addDaysISO(weekDate, -7);
-        const { data: reportPriorRow } = await supabase
-          .from("weekly_cpr_reports")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .eq("week_ending_date", priorWeekDate)
           .maybeSingle();
 
         // 3. Detail rows for this week
@@ -593,58 +574,10 @@ function useCPRData(weekDate) {
           if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
         });
 
-        // 8. True Pay Bonus history — last 39 weeks of weekly_cpr_team_detail
-        // Pulls detail rows joined to reports ordered by week_ending_date desc
-        const { data: histReports } = await supabase
-          .from("weekly_cpr_reports")
-          .select("id, week_ending_date")
-          .eq("agency_id", AGENCY_ID)
-          .lte("week_ending_date", weekDate)
-          .order("week_ending_date", { ascending: false })
-          .limit(39);
-        let truePayHistory = {};
-        let lastWeekSalesPointsByMember = {};
-        if (histReports && histReports.length > 0) {
-          const reportIds = histReports.map(r => r.id);
-          const { data: histDetail } = await supabase
-            .from("weekly_cpr_team_detail")
-            .select("team_member_id, weekly_cpr_report_id, true_pay_bonus, sales_points")
-            .eq("agency_id", AGENCY_ID)
-            .in("weekly_cpr_report_id", reportIds);
-          const reportDateById = {};
-          histReports.forEach(r => { reportDateById[r.id] = r.week_ending_date; });
-          (histDetail || []).forEach(d => {
-            const tmId = d.team_member_id;
-            if (!truePayHistory[tmId]) truePayHistory[tmId] = [];
-            truePayHistory[tmId].push({
-              week_ending_date: reportDateById[d.weekly_cpr_report_id],
-              true_pay_bonus: Number(d.true_pay_bonus) || 0,
-            });
-          });
-          Object.keys(truePayHistory).forEach(k => {
-            truePayHistory[k].sort((a, b) => a.week_ending_date.localeCompare(b.week_ending_date));
-          });
-          // Last week's Q Sales Pts per member — used for the WoW delta indicator in Team Activity
-          const lastWeekDate = (() => {
-            const dt = new Date(weekDate + "T00:00:00Z");
-            dt.setUTCDate(dt.getUTCDate() - 7);
-            return dt.toISOString().slice(0, 10);
-          })();
-          (histDetail || []).forEach(d => {
-            const wkDate = reportDateById[d.weekly_cpr_report_id];
-            if (wkDate === lastWeekDate && d.sales_points != null) {
-              lastWeekSalesPointsByMember[d.team_member_id] = Number(d.sales_points);
-            }
-          });
-        }
-
-        // Prior-quarter-end payroll YTD anchor for this week. Cycle anchor 2026-04-05 means
-        // prior-quarter-end for any week in cycle 2 is 2026-04-04. Generic: floor((week-anchor)/91)*91
-        // + anchor - 1 day = the Saturday before this cycle began.
-        let anchorPayrollYtd = {};
+        // 8. Cycle start (YYYY-MM-DD) — used to suppress WoW delta indicator across cycle
+        // boundaries. Cycle anchor 2026-04-05 (per settings cycle_anchor_date); cycles are 91 days.
         let cycleStartISO = null;
         try {
-          const ANCHOR_DATE = "2026-04-05"; // cycle anchor (per settings cycle_anchor_date)
           const anchorMs = Date.UTC(2026, 3, 5);
           const wkMs = Date.UTC(
             parseInt(weekDate.slice(0,4),10),
@@ -655,41 +588,35 @@ function useCPRData(weekDate) {
           const cyclesCompleted = Math.max(0, Math.floor(daysSince / 91));
           const cycleStartMs = anchorMs + cyclesCompleted * 91 * 86400000;
           cycleStartISO = new Date(cycleStartMs).toISOString().slice(0,10);
-          const priorQtrEndMs = cycleStartMs - 86400000;
-          const priorQtrEndDate = new Date(priorQtrEndMs).toISOString().slice(0,10);
-          const { data: anchorReport } = await supabase
+        } catch (e) {
+          console.warn("cycleStart derivation failed:", e);
+        }
+
+        // 8b. Prior-week Sales Points per member — drives WoW delta indicator in Team Activity.
+        // Focused fetch: prior week's report id → its team_detail rows.
+        const lastWeekDate = addDaysISO(weekDate, -7);
+        let lastWeekSalesPointsByMember = {};
+        try {
+          const { data: prevWeekReport } = await supabase
             .from("weekly_cpr_reports")
             .select("id")
             .eq("agency_id", AGENCY_ID)
-            .eq("week_ending_date", priorQtrEndDate)
+            .eq("week_ending_date", lastWeekDate)
             .maybeSingle();
-          if (anchorReport?.id) {
-            const { data: anchorDetail } = await supabase
+          if (prevWeekReport?.id) {
+            const { data: prevDetail } = await supabase
               .from("weekly_cpr_team_detail")
-              .select("team_member_id, payroll_ytd_paid")
+              .select("team_member_id, sales_points")
               .eq("agency_id", AGENCY_ID)
-              .eq("weekly_cpr_report_id", anchorReport.id);
-            (anchorDetail || []).forEach(d => {
-              anchorPayrollYtd[d.team_member_id] = d.payroll_ytd_paid;
+              .eq("weekly_cpr_report_id", prevWeekReport.id);
+            (prevDetail || []).forEach(d => {
+              if (d.sales_points != null) {
+                lastWeekSalesPointsByMember[d.team_member_id] = Number(d.sales_points);
+              }
             });
           }
         } catch (e) {
-          console.warn("anchor payroll YTD fetch failed:", e);
-        }
-
-        // Retention budget (annual). Shown as parenthetical next to "Retention" label.
-        let retentionBudgetAnnual = null;
-        try {
-          const { data: rbData } = await supabase
-            .rpc("compute_retention_budget_weekly", {
-              p_agency_id: AGENCY_ID,
-              p_week_ending_date: weekDate,
-            });
-          if (rbData && typeof rbData === "object" && rbData.budget != null) {
-            retentionBudgetAnnual = Number(rbData.budget);
-          }
-        } catch (e) {
-          console.warn("compute_retention_budget_weekly failed:", e);
+          console.warn("lastWeekSalesPoints fetch failed:", e);
         }
 
         // 9. Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
@@ -820,7 +747,7 @@ function useCPRData(weekDate) {
         try {
           const { data: tbRows } = await supabase
             .from("trailblazer_crossings")
-            .select("team_member_id, category, value_at_crossing, floor_at_crossing")
+            .select("team_member_id, category, crossing_value, threshold_at_crossing")
             .eq("agency_id", AGENCY_ID)
             .eq("week_ending", weekDate);
           if (!cancelled) trailblazerCrossingsThisWeek = tbRows || [];
@@ -913,7 +840,6 @@ function useCPRData(weekDate) {
         setState({
           loading: false, error: null,
           report: reportRow || null,
-          reportPrior: reportPriorRow || null,
           details: detailRows,
           team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)" })),
           snapshot,
@@ -923,9 +849,6 @@ function useCPRData(weekDate) {
           bookCurrent,
           goals: goalRows || [],
           campaignPriors,
-          truePayHistory,
-          anchorPayrollYtd,
-          retentionBudgetAnnual,
           lastWeekSalesPointsByMember,
           cycleStartISO,
           runtimeHours,
@@ -1352,7 +1275,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, report, reportPrior, editMode, formReport, isReportDirty, onReportChange, formSnapshot, isSnapshotDirty, onSnapshotChange }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, editMode, formReport, isReportDirty, onReportChange, formSnapshot, isSnapshotDirty, onSnapshotChange }) {
   if (!snapshot) {
     return (
       <div>
@@ -1361,10 +1284,6 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       </div>
     );
   }
-  const autoYsPIF = bookYearStart?.auto_pif || null;
-  const firePIF_YS = bookYearStart?.fire_pif || null;
-  const lifePIF_YS = bookYearStart?.life_pif || null;
-
   // Helper: weekly delta (this snapshot vs prior week's snapshot)
   const wkDelta = (cur, prev) => {
     if (cur === null || cur === undefined || prev === null || prev === undefined) return null;
@@ -1690,7 +1609,6 @@ function SMVCScorecardSection({ section11 }) {
                 const scLastQ    = sc.last_q      != null ? Number(sc.last_q)      : null;
                 const scLastYear = sc.last_year   != null ? Number(sc.last_year)   : null;
                 const scDiff     = sc.dollar_diff != null ? Number(sc.dollar_diff) : null;
-                const fmtMoney   = (v) => v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US");
                 const scDiffColor = scDiff == null ? T.slate500 : (scDiff >= 0 ? T.green : T.red);
                 return (
                   <tr>
@@ -2011,7 +1929,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
 const _TINT_1PCT = "#eef2ff";  // indigo-50
 const _TINT_HIST = "#f0fdfa";  // teal-50
 
-function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP }) {
+function TeamActivitySection({ details, team, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -2239,86 +2157,13 @@ function TeamActivitySection({ details, team, truePayHistory, runtimeReqs, repor
 
 
 
-// 17b — Sales Points quarterly history (prior-quarter avg weekly SP per teammate)
-// Reads priorQuartersAvgSP: {team_member_id: [{quarter_label, avg_weekly_sp, qtd_sp}, ...]}
-// Renders as a table with teammates on rows, quarters on columns (newest first).
-function SalesPointsHistorySection({ priorQuartersAvgSP, team, details }) {
-  const data = priorQuartersAvgSP || {};
-  const ids = Object.keys(data).filter(id => (data[id] || []).length > 0);
-  if (ids.length === 0) return null;
-
-  const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
-  const allQuarters = new Set();
-  ids.forEach(id => (data[id] || []).forEach(row => allQuarters.add(row.quarter_label)));
-  const quarterList = Array.from(allQuarters).sort((a, b) => {
-    const [qA, yA] = a.split(" ");
-    const [qB, yB] = b.split(" ");
-    if (yA !== yB) return Number(yB) - Number(yA);
-    return Number(qB.slice(1)) - Number(qA.slice(1));
-  });
-
-  const salesIds = ids.filter(id => {
-    const t = teamById[id];
-    return t && t.role_category === "Sales";
-  });
-  const sortedIds = salesIds.length > 0 ? salesIds : ids;
-  sortedIds.sort((a, b) => {
-    const nameA = (teamById[a]?.nickname || teamById[a]?.first_name || "").toLowerCase();
-    const nameB = (teamById[b]?.nickname || teamById[b]?.first_name || "").toLowerCase();
-    return nameA.localeCompare(nameB);
-  });
-
-  return (
-    <div>
-      <SectionHeader icon="📈" title="Sales Points — Quarterly History" />
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
-            <thead>
-              <tr>
-                <Th align="left">Person</Th>
-                {quarterList.map(q => (
-                  <Th key={q} align="right">{q}</Th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedIds.map(id => {
-                const t = teamById[id];
-                const nm = t ? (t.nickname || t.first_name || "(unknown)") : "(unknown)";
-                const byQuarter = Object.fromEntries((data[id] || []).map(r => [r.quarter_label, r]));
-                return (
-                  <tr key={id}>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{nm}</Td>
-                    {quarterList.map(q => {
-                      const row = byQuarter[q];
-                      if (!row) return <Td key={q} align="right" style={{ color: T.slate400 }}>—</Td>;
-                      const avg = Number(row.avg_weekly_sp) || 0;
-                      return (
-                        <Td key={q} align="right" style={{ color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ padding: "8px 14px", fontSize: 11, color: T.slate500, borderTop: `1px solid ${T.slate100}` }}>
-          Values are avg weekly SP for each completed quarter (quarter-end QTD ÷ 13). Reference point for pacing current-quarter performance.
-        </div>
-      </Card>
-    </div>
-  );
-}
-
 // 19 — Payroll v2 (per-person columns, residual-pool components as rows)
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
 // paid year-to-date through SurePayroll, through end of last pay period).
 // Recompute on save calls write_weekly_comp_v2 which populates base_salary,
 // commission, bonus, marketing_pool_earned_weekly, and manager_bonus from
 // the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, anchorPayrollYtd, retentionBudgetAnnual, marketingPointsThisWeek = {}, onRefresh, canEdit = false, isOwner = false }) {
+function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {}, onRefresh, canEdit = false, isOwner = false }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
   // Commission is now SP delta this week, columns spelled out, Health Goal label,
@@ -2723,11 +2568,8 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
 
   // Envelope (nested in diag.envelope)
   const env = diag.envelope || {};
-  const annualBasis         = Number(env.annual_basis || 0);
-  const currentPoolPct      = Number(env.current_pool_pct || 0);
   const weeklyEnvelope      = Number(env.weekly_envelope || 0);
   const qtdEnvelope         = Number(env.qtd_envelope || 0);
-  const quarterlyEnvelope   = Number(env.quarterly_envelope || 0);
 
   // Quarter meta
   const q = diag.quarter || {};
@@ -2737,43 +2579,31 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
   // QTD Subtractions (nested in diag.qtd_subtractions)
   const sub = diag.qtd_subtractions || {};
   const qtdBaseInPool    = Number(sub.qtd_base_in_pool || 0);
-  const qtdActualBasePaid= Number(sub.qtd_actual_base_paid || 0);
-  const qtdGrowthBudget  = Number(sub.qtd_growth_budget || 0);
   const qtdActualHealth  = Number(sub.qtd_actual_health || 0);
   const qtdActualComm    = Number(sub.qtd_actual_commission || 0);
   const qtdWc            = Number(sub.qtd_wc || 0);
   const qtdBurden        = Number(sub.qtd_burden || 0);
 
-  // QTD Pools (nested in diag.qtd_pools)
+  // QTD Pools (nested in diag.qtd_pools) — retention + SP-13wk + SP-4wk buckets read inline below
   const pools = diag.qtd_pools || {};
   const qtdBonusPool       = Number(pools.qtd_bonus_pool || 0);
-  const qtdSalesPoolPre    = Number(pools.qtd_sales_pool_pre_comm || 0);
-  const qtdSalesPool       = Number(pools.qtd_sales_pool || 0);
-  const qtdRetentionPool   = Number(pools.qtd_retention_pool || 0);
 
-  // Team totals (nested in diag.team_totals)
+  // Team totals (nested in diag.team_totals) — team_avg_13wk / team_avg_4wk read inline below
   const tt = diag.team_totals || {};
-  const teamTotalSp          = Number(tt.qtd_sp_total || 0);
-  const teamTotalSpSalesOnly = Number(tt.qtd_sp_sales_only || 0);
-  const teamWhTotal          = Number(tt.wh_total || 0);
 
   // Carveouts (nested in diag.carveouts_outside_pool + diag.carveouts_detail)
   const cvoOut = diag.carveouts_outside_pool || {};
   const annualCarveouts     = Number(cvoOut.annual_dollars || 0);
-  const quarterlyCarveouts  = Number(cvoOut.quarterly_dollars || 0);
   const weeklyCarveouts     = Number(cvoOut.weekly_dollars || 0);
 
   // Constants
   const c = diag.constants || {};
-  const salesWeight     = Number(c.sales_weight || 0.65);
-  const retentionWeight = Number(c.retention_weight || 0.35);
   const burdenMult      = Number(c.burden_multiplier || 0.08);
   const wcAnnual        = Number(c.wc_annual || 500);
 
   // Basis inputs (envelope derivation)
   const basis = diag.pool_basis || {};
   const pcYtd            = Number(basis.pc_gross_ytd || 0);
-  const pcAnnualized     = Number(basis.pc_gross_annualized || 0);
   const stripFactor      = Number(basis.strip_factor || 0);
   const pcStripped       = Number(basis.pc_stripped_annualized || 0);
   const lhYtd            = Number(basis.lh_ytd || 0);
@@ -3161,13 +2991,10 @@ function MarketingBonusBreakdown({ weekDate }) {
   const qtdTarget       = Number(env.qtd_target || 0);
   const pctOfBasis      = Number(env.pct_of_basis || 0);
   const totalBasis      = Number(basis.total_basis_annual || 0);
-  const basisExScc      = Number(basis.basis_ex_scorecard_annual || 0);
-  const scorecardExcl   = Number(basis.scorecard_ontime_excluded || 0);
   const spendQtd        = Number(spend.qtd || 0);
   const underspendQtd   = Number(pool.underspend_qtd || 0);
   const adjUnderspend   = Number(pool.adjusted_underspend_qtd || 0);
   const totalPointsQtd  = Number(pool.total_points_qtd || 0);
-  const totalBareMinQtd = Number(pool.total_bare_min_qtd || 0);
   const teamSharePct    = Number(pool.team_share_pct || 0.5);
   const poolQtd         = Number(pool.pool_qtd || 0);
   const weeksInQtd      = Number(data.weeks_in_qtd || 0);
@@ -3286,86 +3113,6 @@ function MarketingBonusBreakdown({ weekDate }) {
 }
 
 
-// 20 — True Pay Bonus History (weekly per-person + 5 averages — page version shows BOTH)
-function TruePayHistorySection({ team, truePayHistory, weekDate }) {
-  // True Pay Bonus History only shows currently-active agency team members,
-  // excluding the Owner (Peter). Inactive (terminated/archived), admin-category,
-  // and Owner staff are excluded — their historical bonuses still live in
-  // weekly_cpr_team_detail but don't render here.
-  const sorted = (team || []).filter(t =>
-    t.is_active === true && !t.archived_at && t.category === "agency" && t.role_level !== "Owner"
-  );
-  if (!truePayHistory || Object.keys(truePayHistory).length === 0) {
-    return (
-      <div>
-        <SectionHeader icon="📈" title="True Pay Bonus History" />
-        <Card><Awaiting message="No True Pay Bonus history yet — populates as weekly_cpr_team_detail accumulates" /></Card>
-      </div>
-    );
-  }
-  // Collect unique week-ending dates across all people (most recent 13 for the table)
-  const weekSet = new Set();
-  Object.values(truePayHistory).forEach(rows => rows.forEach(r => weekSet.add(r.week_ending_date)));
-  const weeks = Array.from(weekSet).sort((a, b) => a.localeCompare(b)).slice(-13);
-
-  // Build cell lookup
-  const lookup = {};
-  Object.entries(truePayHistory).forEach(([tmId, rows]) => {
-    lookup[tmId] = {};
-    rows.forEach(r => { lookup[tmId][r.week_ending_date] = r.true_pay_bonus; });
-  });
-
-  // Averages helper — over a list of values (only weeks that have data for that person)
-  const avgOver = (tmId, n) => {
-    const rows = (truePayHistory[tmId] || []).slice(-n);
-    if (rows.length === 0) return null;
-    const sum = rows.reduce((s, r) => s + (Number(r.true_pay_bonus) || 0), 0);
-    return sum / rows.length;
-  };
-
-  return (
-    <div>
-      <SectionHeader icon="📈" title="True Pay Bonus History" />
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
-            <thead>
-              <tr>
-                <Th align="left">Week</Th>
-                {sorted.map(t => <Th key={t.id} align="right">{firstName(t.full_name)}</Th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {weeks.map(w => (
-                <tr key={w}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{fmtMMDD(w)}</Td>
-                  {sorted.map(t => (
-                    <Td key={t.id} align="right">{fmtMoneyCents(lookup[t.id]?.[w])}</Td>
-                  ))}
-                </tr>
-              ))}
-              {/* Averages */}
-              {[
-                ["13-wk avg", 13],
-                ["39-wk avg", 39],
-              ].map(([label, n]) => (
-                <tr key={label}>
-                  <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{label}</Td>
-                  {sorted.map(t => (
-                    <Td key={t.id} align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>
-                      {fmtMoneyCents(avgOver(t.id, n))}
-                    </Td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
 // 21 — Leaderboards
 function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, weekDate, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [] }) {
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
@@ -3459,7 +3206,7 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
                     const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
                     return (
                       <div key={`tb-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
-                        <b>▲ Trailblazer:</b> {nm} beat {cat.fmt(r.floor_at_crossing)} → {cat.fmt(r.value_at_crossing)}
+                        <b>▲ Trailblazer:</b> {nm} beat {cat.fmt(r.threshold_at_crossing)} → {cat.fmt(r.crossing_value)}
                       </div>
                     );
                   })}
@@ -4765,8 +4512,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           goals={data.goals}
           weekDate={weekDate}
           lapseRates={data.lapseRates}
-          report={data.report}
-          reportPrior={data.reportPrior}
           editMode={edit.active}
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
@@ -4849,7 +4594,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section>
         <TeamActivitySection
           details={data.details} team={data.team}
-          truePayHistory={data.truePayHistory}
           runtimeReqs={data.runtimeReqs}
           report={data.report}
           editMode={edit.active}
@@ -4861,10 +4605,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} anchorPayrollYtd={data.anchorPayrollYtd} retentionBudgetAnnual={data.retentionBudgetAnnual} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
-
-      {/* 20. True Pay Bonus history — HIDDEN per Peter 2026-06-20; restore by uncommenting */}
-      {/* <Section><TruePayHistorySection team={data.team} truePayHistory={data.truePayHistory} weekDate={weekDate} /></Section> */}
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
 
       {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts + this-week badges) */}
       <Section><LeaderboardsSection
