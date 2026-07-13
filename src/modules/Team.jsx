@@ -62,7 +62,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -1210,6 +1210,9 @@ const StaffDirectory = ({ staff }) => {
       pay_type: member.pay_type || "",
       pay_rate: member.pay_rate ?? "",
       pay_frequency: member.pay_frequency || "",
+      annual_benefits_value: member.annual_benefits_value ?? "",
+      weekly_life_benefit_agency_paid: member.weekly_life_benefit_agency_paid ?? "",
+      weekly_health_benefit_agency_paid: member.weekly_health_benefit_agency_paid ?? "",
       license_pc: member.license_pc === true,
       license_lh: member.license_lh === true,
       license_ips: member.license_ips === true,
@@ -1242,6 +1245,9 @@ const StaffDirectory = ({ staff }) => {
       pay_type: form.pay_type.trim() || null,
       pay_rate: form.pay_rate === "" || form.pay_rate == null ? null : Number(form.pay_rate),
       pay_frequency: form.pay_frequency.trim() || null,
+      annual_benefits_value: form.annual_benefits_value === "" || form.annual_benefits_value == null ? 0 : Number(form.annual_benefits_value),
+      weekly_life_benefit_agency_paid: form.weekly_life_benefit_agency_paid === "" || form.weekly_life_benefit_agency_paid == null ? 0 : Number(form.weekly_life_benefit_agency_paid),
+      weekly_health_benefit_agency_paid: form.weekly_health_benefit_agency_paid === "" || form.weekly_health_benefit_agency_paid == null ? 0 : Number(form.weekly_health_benefit_agency_paid),
       license_pc: form.license_pc === true,
       license_lh: form.license_lh === true,
       license_ips: form.license_ips === true,
@@ -1260,6 +1266,21 @@ const StaffDirectory = ({ staff }) => {
     }
     if (payload.pay_rate != null && !Number.isFinite(payload.pay_rate)) {
       setSaveError("Pay rate must be a number.");
+      setSaving(false);
+      return;
+    }
+    if (!Number.isFinite(payload.annual_benefits_value) || payload.annual_benefits_value < 0) {
+      setSaveError("Annual benefits value must be a non-negative number.");
+      setSaving(false);
+      return;
+    }
+    if (!Number.isFinite(payload.weekly_life_benefit_agency_paid) || payload.weekly_life_benefit_agency_paid < 0) {
+      setSaveError("Weekly life benefit must be a non-negative number.");
+      setSaving(false);
+      return;
+    }
+    if (!Number.isFinite(payload.weekly_health_benefit_agency_paid) || payload.weekly_health_benefit_agency_paid < 0) {
+      setSaveError("Weekly health benefit must be a non-negative number.");
       setSaving(false);
       return;
     }
@@ -2087,6 +2108,9 @@ const StaffDirectory = ({ staff }) => {
                   </div>
                   <div><label style={labelStyle}>Pay rate</label><input style={inputStyle} type="number" step="0.01" value={form.pay_rate} onChange={e=>setForm({...form, pay_rate:e.target.value})} /></div>
                   <div><label style={labelStyle}>Pay frequency</label><input style={inputStyle} value={form.pay_frequency} onChange={e=>setForm({...form, pay_frequency:e.target.value})} placeholder="weekly / biweekly / semimonthly" /></div>
+                  <div><label style={labelStyle}>Annual benefits value ($/yr, agency-paid)</label><input style={inputStyle} type="number" step="0.01" min="0" value={form.annual_benefits_value} onChange={e=>setForm({...form, annual_benefits_value:e.target.value})} placeholder="0.00" /></div>
+                  <div><label style={labelStyle}>Weekly life benefit ($/wk, agency-paid)</label><input style={inputStyle} type="number" step="0.01" min="0" value={form.weekly_life_benefit_agency_paid} onChange={e=>setForm({...form, weekly_life_benefit_agency_paid:e.target.value})} placeholder="0.00" /></div>
+                  <div><label style={labelStyle}>Weekly health benefit ($/wk, agency-paid)</label><input style={inputStyle} type="number" step="0.01" min="0" value={form.weekly_health_benefit_agency_paid} onChange={e=>setForm({...form, weekly_health_benefit_agency_paid:e.target.value})} placeholder="0.00" /></div>
                   <div><label style={labelStyle}>Start date</label><input style={inputStyle} type="date" value={form.start_date || ""} onChange={e=>setForm({...form, start_date:e.target.value})} /></div>
                   <div><label style={labelStyle}>Licensed states (comma-separated)</label><input style={inputStyle} value={form.license_states} onChange={e=>setForm({...form, license_states:e.target.value})} placeholder="TX, NM" /></div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6, paddingTop:18 }}>
