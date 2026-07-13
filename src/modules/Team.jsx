@@ -595,16 +595,27 @@ const overallBandColor = (v) => {
 const DeclinedTable = ({ declined, onUpdate }) => {
   const [selected, setSelected] = useState(null);
   const selectedApp = declined.find(a => a.id === selected);
-  const [sort, setSort] = useState("recent"); // recent | cts_desc | resume_desc | name
+  // sortKey ∈ {name, source, resume, cts, recent}; direction ∈ {asc, desc}
+  const [sortKey, setSortKey] = useState("recent");
+  const [sortDir, setSortDir] = useState("desc");
+
+  const toggleSort = (k, defaultDir = "desc") => {
+    if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(k); setSortDir(defaultDir); }
+  };
 
   const sorted = useMemo(() => {
     const arr = [...declined];
-    if (sort === "cts_desc")    arr.sort((a,b) => (b.overall_score ?? -1) - (a.overall_score ?? -1));
-    else if (sort === "resume_desc") arr.sort((a,b) => (b.claude_score ?? -1) - (a.claude_score ?? -1));
-    else if (sort === "name")   arr.sort((a,b) => (a.last_name || "").localeCompare(b.last_name || ""));
-    else                        arr.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+    const dir = sortDir === "asc" ? 1 : -1;
+    const num = (v) => (v == null ? -Infinity : v);
+    const str = (v) => (v || "").toLowerCase();
+    if (sortKey === "cts")         arr.sort((a,b) => (num(a.overall_score) - num(b.overall_score)) * dir);
+    else if (sortKey === "resume") arr.sort((a,b) => (num(a.claude_score)  - num(b.claude_score))  * dir);
+    else if (sortKey === "name")   arr.sort((a,b) => str(a.last_name).localeCompare(str(b.last_name)) * dir);
+    else if (sortKey === "source") arr.sort((a,b) => str(a.candidate_source).localeCompare(str(b.candidate_source)) * dir);
+    else                           arr.sort((a,b) => (new Date(a.created_at) - new Date(b.created_at)) * dir);
     return arr;
-  }, [declined, sort]);
+  }, [declined, sortKey, sortDir]);
 
   if (selectedApp) {
     return (
@@ -618,97 +629,75 @@ const DeclinedTable = ({ declined, onUpdate }) => {
 
   if (declined.length === 0) {
     return (
-      <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:10, padding:"18px 14px", textAlign:"center" }}>
+      <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:8, padding:"18px 14px", textAlign:"center" }}>
         <div style={{ fontSize:11, color:T.slate500 }}>No declined candidates on file.</div>
       </div>
     );
   }
 
+  const arrow = (k) => sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+  const thBase = {
+    fontSize: 9,
+    fontWeight: 700,
+    color: T.slate600,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    padding: "6px 6px",
+    background: T.slate50,
+    borderBottom: `1px solid ${T.slate200}`,
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+    userSelect: "none",
+  };
+  const tdBase = {
+    fontSize: 11,
+    color: T.slate800,
+    padding: "6px 6px",
+    borderBottom: `1px solid ${T.slate100}`,
+    verticalAlign: "top",
+  };
+
   return (
-    <div>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, flexWrap:"wrap", gap:8 }}>
-        <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
-          <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Declined</div>
-          <div style={{ fontSize:11, color:T.slate500 }}>{declined.length} candidate{declined.length===1?"":"s"}</div>
-        </div>
-        <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
-          {[
-            { id:"recent",       label:"Recent" },
-            { id:"cts_desc",     label:"CTS" },
-            { id:"resume_desc",  label:"Resume" },
-            { id:"name",         label:"Name" },
-          ].map(o => (
-            <button key={o.id} onClick={() => setSort(o.id)} style={{
-              padding:"4px 9px", fontSize:10, fontWeight: sort===o.id?600:400,
-              color: sort===o.id?T.slate900:T.slate500,
-              background: sort===o.id?T.white:"transparent",
-              border:"none", borderRadius:6, cursor:"pointer",
-              boxShadow: sort===o.id?"0 1px 2px rgba(0,0,0,0.06)":"none",
-            }}>{o.label}</button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-        {sorted.map(app => {
-          const summary = trim(app.claude_summary, 90);
-          const notes = trim(app.notes, 180);
-          const sourceLbl = SOURCE_LABEL[app.candidate_source] || app.candidate_source || "—";
-          return (
-            <div
-              key={app.id}
-              onClick={() => setSelected(app.id)}
-              style={{
-                background: T.white,
-                border: `1px solid ${T.slate200}`,
-                borderRadius: 8,
-                padding: "10px 12px",
-                cursor: "pointer",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              {/* Row 1: name + score pills */}
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
-                <div style={{ minWidth:0, flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:600, color:T.slate900, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+    <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "auto" }}>
+          <thead>
+            <tr>
+              <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("name",   "asc")}>Name{arrow("name")}</th>
+              <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("source", "asc")}>Source{arrow("source")}</th>
+              <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("resume", "desc")}>Res{arrow("resume")}</th>
+              <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("cts",    "desc")}>CTS{arrow("cts")}</th>
+              <th style={{ ...thBase, textAlign: "left"  }}>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(app => {
+              const preview = trim(app.notes || app.claude_summary, 180);
+              const sourceLbl = SOURCE_LABEL[app.candidate_source] || app.candidate_source || "—";
+              return (
+                <tr
+                  key={app.id}
+                  onClick={() => setSelected(app.id)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <td style={{ ...tdBase, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}>
                     {app.first_name} {app.last_name}
-                  </div>
-                  <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>{sourceLbl}</div>
-                </div>
-                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                  <div style={{ textAlign:"center", minWidth:44 }}>
-                    <div style={{ fontSize:9, color:T.slate400, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.03em" }}>Resume</div>
-                    <div style={{ fontSize:13, fontWeight:700, color: app.claude_score ? scoreColor(app.claude_score) : T.slate400 }}>
-                      {app.claude_score != null ? `${app.claude_score}/10` : "—"}
-                    </div>
-                  </div>
-                  <div style={{ textAlign:"center", minWidth:44 }}>
-                    <div style={{ fontSize:9, color:T.slate400, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.03em" }}>CTS</div>
-                    <div style={{ fontSize:13, fontWeight:700, color: overallBandColor(app.overall_score) }}>
-                      {app.overall_score != null ? app.overall_score : "—"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Row 2: resume one-liner if any */}
-              {summary && (
-                <div style={{ fontSize:11, color:T.slate600, lineHeight:1.35 }}>
-                  <span style={{ fontWeight:600, color:T.slate500 }}>Resume · </span>{summary}
-                </div>
-              )}
-
-              {/* Row 3: notes preview if any (framework read, decline reason, etc.) */}
-              {notes && (
-                <div style={{ fontSize:11, color:T.slate600, lineHeight:1.35 }}>
-                  <span style={{ fontWeight:600, color:T.slate500 }}>Notes · </span>{notes}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                  </td>
+                  <td style={{ ...tdBase, fontSize: 10, color: T.slate600, whiteSpace: "nowrap" }}>{sourceLbl}</td>
+                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: app.claude_score ? scoreColor(app.claude_score) : T.slate400 }}>
+                    {app.claude_score != null ? app.claude_score : "—"}
+                  </td>
+                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: overallBandColor(app.overall_score) }}>
+                    {app.overall_score != null ? app.overall_score : "—"}
+                  </td>
+                  <td style={{ ...tdBase, color: T.slate600, minWidth: 200, lineHeight: 1.35 }}>
+                    {preview || "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -2613,6 +2602,7 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
   const [view, setView] = useState("recruiting");
   const subs = [
     { id:"recruiting", label:"Recruiting" },
+    { id:"declined",   label:`Declined (${declined.length})` },
     { id:"onboarding", label:"Onboarding" },
   ];
   return (
@@ -2648,10 +2638,10 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
       {view === "recruiting" && (
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <RecruitingPipeline applicants={applicants} onUpdate={onUpdate} />
-          <DeclinedTable declined={declined} onUpdate={onUpdate} />
           <HypotheticalHireForecast />
         </div>
       )}
+      {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
       {view === "onboarding" && <OnboardingSection onboarding={[]} />}
     </div>
   );
