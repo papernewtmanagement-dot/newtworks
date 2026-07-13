@@ -2174,6 +2174,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
   const [saveError, setSaveError] = useState(null);
   const [showFormula, setShowFormula] = useState(false);
   const [showMarketing, setShowMarketing] = useState(false);
+  const [teamBonusExpanded, setTeamBonusExpanded] = useState(false);
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
 
   // When entering edit mode, seed drafts from current values
@@ -2218,8 +2219,6 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
   const diag = diagAny.residual_pool_diag || {};
   const weeklySalesPool     = Number(diag.weekly_sales_pool || 0);
   const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
-  const salesPoolLabel     = `Sales Share (${fmtMoneyCents(weeklySalesPool)} pool)`;
-  const retentionPoolLabel = `Retention Share (${fmtMoneyCents(weeklyRetentionPool)} pool)`;
 
   // v2 pay components — every element that hits a check under the residual-pool structure.
   // Base + Commission are payroll-cycle earnings.
@@ -2228,8 +2227,9 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
   const ROWS = [
     ["base_salary",                   "Base"],
     ["commission",                    "Commission"],
-    ["sales_pool_share",              salesPoolLabel],
-    ["retention_pool_share",          retentionPoolLabel],
+    // Team Bonus row: shows the sum (d.bonus = sales_pool_share + retention_pool_share).
+    // Expandable → 3 sub-rows below (13-wk sales split, 4-wk sales split, retention split).
+    ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklySalesPool + weeklyRetentionPool)} pool)`],
     ["marketing_pool_earned_weekly",  "Marketing"],
     // Goals: $10 per All-Star crossing + $10 per Trailblazer crossing + $10 if this-week new SP hit 1.01x prior 13wk avg.
     // Populated by write_weekly_comp_v2 (after audit_weekly_leaderboard_crossings). Detail lives on residual_pool_diag.goals_detail.
@@ -2371,14 +2371,49 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
               </tr>
             </thead>
             <tbody>
-              {ROWS.map(([key, label]) => (
-                <tr key={key}>
-                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
-                  {sorted.map(d => (
-                    <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
-                  ))}
-                </tr>
-              ))}
+              {ROWS.flatMap(([key, label]) => {
+                if (key === "team_bonus") {
+                  const mainRow = (
+                    <tr key={key} onClick={() => setTeamBonusExpanded(v => !v)} style={{ cursor: "pointer" }}>
+                      <Td style={{ paddingLeft: 14, color: T.slate700, userSelect: "none" }}>
+                        {teamBonusExpanded ? "▾" : "▸"} {label}
+                      </Td>
+                      {sorted.map(d => (
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCents(d.bonus)}</Td>
+                      ))}
+                    </tr>
+                  );
+                  if (!teamBonusExpanded) return [mainRow];
+                  const subRow = (subKey, subLabel, ratioKey, poolAmount) => (
+                    <tr key={`${key}-${subKey}`}>
+                      <Td style={{ paddingLeft: 32, color: T.slate500, fontSize: 12, fontStyle: "italic" }}>{subLabel}</Td>
+                      {sorted.map(d => {
+                        const pq = d.residual_pool_diag?.person_qtd || {};
+                        const ratio = Number(pq[ratioKey] || 0) / 100;
+                        return (
+                          <Td key={d.team_member_id} align="right" style={{ color: T.slate500, fontSize: 12 }}>
+                            {fmtMoneyCents(ratio * poolAmount)}
+                          </Td>
+                        );
+                      })}
+                    </tr>
+                  );
+                  return [
+                    mainRow,
+                    subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", weeklySalesPool / 2),
+                    subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  weeklySalesPool / 2),
+                    subRow("ret",  "Retention split",   "ret_share_ratio_pct",  weeklyRetentionPool),
+                  ];
+                }
+                return [
+                  <tr key={key}>
+                    <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
+                    {sorted.map(d => (
+                      <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
+                    ))}
+                  </tr>
+                ];
+              })}
               {/* Benefits row — sourced from team.annual_benefits_value / 52.
                   Imputed non-cash value (group health). Included in Week Total.
                   Excluded from On-Time annualization (flat-added below to avoid compounding). */}
@@ -2458,7 +2493,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week Total</Td>
                 {sorted.map(d => {
-                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
+                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
                   const total = compsTotal + weeklyBenefits;
@@ -2484,7 +2519,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                   // Benefits flat-added (no compounding).
                   const ytdPaid = (d.payroll_ytd_paid === null || d.payroll_ytd_paid === undefined)
                     ? null : Number(d.payroll_ytd_paid);
-                  const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(d[k]) || 0), 0);
+                  const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
                   const ytdWithThisWeek = ytdPaid === null ? null : ytdPaid + thisWeekTotal;
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const daysEmployedThisYear = (() => {
