@@ -3201,7 +3201,7 @@ function MarketingBonusBreakdown({ weekDate }) {
 
 
 // 21 — Leaderboards
-function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, weekDate, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [] }) {
+function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, weekDate }) {
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
   const cfgByCategory = Object.fromEntries((floorConfig || []).map(c => [c.category, c]));
   if (!leaderboards || leaderboards.length === 0) {
@@ -3235,25 +3235,6 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
     return row.record_period_label || "—";
   };
 
-  // Pre-compute per-category "this week" activity so we can render badges + drive $10 goals payouts.
-  const asByCat = {};
-  (allStarCrossingsThisWeek || []).forEach(r => {
-    (asByCat[r.category] = asByCat[r.category] || []).push(r);
-  });
-  const tbByCat = {};
-  (trailblazerCrossingsThisWeek || []).forEach(r => {
-    (tbByCat[r.category] = tbByCat[r.category] || []).push(r);
-  });
-  // New-podium badge: any leaderboards row whose record_week_ending matches this weekDate for weekly cats,
-  // or (for quarter_sp) any row whose record_period_label matches the current quarter and set_at is recent.
-  // Weekly cats are the reliable signal since audit stamps record_week_ending on the podium replace.
-  const newPodiumByCat = {};
-  (leaderboards || []).forEach(r => {
-    if (r.record_week_ending === weekDate) {
-      (newPodiumByCat[r.category] = newPodiumByCat[r.category] || []).push(r);
-    }
-  });
-
   return (
     <div>
       <SectionHeader title="Leaderboards" />
@@ -3268,56 +3249,9 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
           const trailblazer = gold   ? Math.ceil((Number(gold.record_value) + 0.01) / step) * step : 0;
           const counts = (allStarCounts || []).filter(r => r.category === cat.key).sort((a,b) => Number(b.count) - Number(a.count));
 
-          // This-week activity for this category
-          const asHits  = asByCat[cat.key]  || [];
-          const tbHits  = tbByCat[cat.key]  || [];
-          const podium  = newPodiumByCat[cat.key] || [];
-          const anyThisWeek = asHits.length + tbHits.length + podium.length > 0;
-
           return (
             <Card key={cat.key} style={{ padding: 12 }}>
               <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6, color: T.slate900 }}>{cat.label}</div>
-
-              {/* THIS WEEK badge stack — shown when any crossings/podium changes happened this week */}
-              {anyThisWeek && (
-                <div style={{
-                  marginBottom: 8, padding: "6px 8px", borderRadius: 6,
-                  background: "linear-gradient(90deg, #fef3c7 0%, #fef9c3 100%)",
-                  border: "1px solid #f59e0b",
-                }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#78350f", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>
-                    ⚡ This week
-                  </div>
-                  {tbHits.map((r, i) => {
-                    const tm = teamById[r.team_member_id];
-                    const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
-                    return (
-                      <div key={`tb-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
-                        <b>▲ Trailblazer:</b> {nm} beat {cat.fmt(r.floor_at_crossing)} → {cat.fmt(r.value_at_crossing)}
-                      </div>
-                    );
-                  })}
-                  {podium.map((r, i) => {
-                    const tm = teamById[r.team_member_id];
-                    const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
-                    const tierLabel = r.tier === 1 ? "🥇 Gold" : r.tier === 2 ? "🥈 Silver" : "🥉 Bronze";
-                    return (
-                      <div key={`pd-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
-                        <b>{tierLabel}:</b> {nm} — {cat.fmt(r.record_value)}
-                      </div>
-                    );
-                  })}
-                  {asHits.map((r, i) => {
-                    const tm = teamById[r.team_member_id];
-                    const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
-                    return (
-                      <div key={`as-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
-                        <b>All-Star:</b> {nm} cleared {cat.fmt(r.floor_at_crossing)} → {cat.fmt(r.value_at_crossing)}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
 
               {/* Trailblazer — above gold */}
               {trailblazer > 0 && (
@@ -3411,8 +3345,9 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh, 
   else if (unwonPrizes.length === 0) buttonLabel = "Cart empty";
   else buttonLabel = "🎰 Open prize cart";
 
-  // Crossings summary chips (top-of-page highlight for this week's breakthroughs).
-  // Same source arrays that feed the LeaderboardsSection strip below.
+  // Crossings summary chips - top-of-page highlight for this week's breakthroughs.
+  // Single-source: this is the ONLY surface that lists per-week crossings/new podiums;
+  // the LeaderboardsSection cards below show the current records and All-Star floor only.
   const CAT_META = {
     quarter_sp:   { label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
     four_week_sp: { label: "4-Week Sales",    fmt: v => fmtMoneyCents(v) },
@@ -4788,15 +4723,13 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
 
-      {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts + this-week badges) */}
+      {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
         leaderboards={data.leaderboards}
         allStarCounts={data.allStarCounts}
         floorConfig={data.floorConfig}
         team={data.team}
         weekDate={weekDate}
-        allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
-        trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
       /></Section>
 
       {/* 22. Win the Quarter (condensed) + Prize Cart, single section */}
