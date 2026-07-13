@@ -568,6 +568,152 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
   );
 };
 
+// ─── Declined Candidates Table ────────────────────────────────
+// Read-only summary view of every candidate we walked away from (status='archived'
+// AND is_team_member=false). Row tap opens CandidateDetail with full history and
+// the option to re-activate to any pipeline stage.
+const SOURCE_LABEL = {
+  external_calibration_sample: "Calibration",
+  former_team_member:          "Former team",
+  active_applicant_declined:   "Active — declined",
+  offer_rescinded:             "Offer rescinded",
+};
+
+const trim = (s, n) => {
+  if (!s) return "";
+  const clean = String(s).replace(/\s+/g, " ").trim();
+  return clean.length > n ? clean.slice(0, n - 1) + "…" : clean;
+};
+
+const overallBandColor = (v) => {
+  if (v == null) return T.slate400;
+  if (v >= 70) return T.green;
+  if (v >= 55) return T.amber;
+  return T.red;
+};
+
+const DeclinedTable = ({ declined, onUpdate }) => {
+  const [selected, setSelected] = useState(null);
+  const selectedApp = declined.find(a => a.id === selected);
+  const [sort, setSort] = useState("recent"); // recent | cts_desc | resume_desc | name
+
+  const sorted = useMemo(() => {
+    const arr = [...declined];
+    if (sort === "cts_desc")    arr.sort((a,b) => (b.overall_score ?? -1) - (a.overall_score ?? -1));
+    else if (sort === "resume_desc") arr.sort((a,b) => (b.claude_score ?? -1) - (a.claude_score ?? -1));
+    else if (sort === "name")   arr.sort((a,b) => (a.last_name || "").localeCompare(b.last_name || ""));
+    else                        arr.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+    return arr;
+  }, [declined, sort]);
+
+  if (selectedApp) {
+    return (
+      <CandidateDetail
+        candidate={selectedApp}
+        onBack={() => setSelected(null)}
+        onUpdate={onUpdate}
+      />
+    );
+  }
+
+  if (declined.length === 0) {
+    return (
+      <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:10, padding:"18px 14px", textAlign:"center" }}>
+        <div style={{ fontSize:11, color:T.slate500 }}>No declined candidates on file.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>Declined</div>
+          <div style={{ fontSize:11, color:T.slate500 }}>{declined.length} candidate{declined.length===1?"":"s"}</div>
+        </div>
+        <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
+          {[
+            { id:"recent",       label:"Recent" },
+            { id:"cts_desc",     label:"CTS" },
+            { id:"resume_desc",  label:"Resume" },
+            { id:"name",         label:"Name" },
+          ].map(o => (
+            <button key={o.id} onClick={() => setSort(o.id)} style={{
+              padding:"4px 9px", fontSize:10, fontWeight: sort===o.id?600:400,
+              color: sort===o.id?T.slate900:T.slate500,
+              background: sort===o.id?T.white:"transparent",
+              border:"none", borderRadius:6, cursor:"pointer",
+              boxShadow: sort===o.id?"0 1px 2px rgba(0,0,0,0.06)":"none",
+            }}>{o.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+        {sorted.map(app => {
+          const summary = trim(app.claude_summary, 90);
+          const notes = trim(app.notes, 180);
+          const sourceLbl = SOURCE_LABEL[app.candidate_source] || app.candidate_source || "—";
+          return (
+            <div
+              key={app.id}
+              onClick={() => setSelected(app.id)}
+              style={{
+                background: T.white,
+                border: `1px solid ${T.slate200}`,
+                borderRadius: 8,
+                padding: "10px 12px",
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              {/* Row 1: name + score pills */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:T.slate900, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                    {app.first_name} {app.last_name}
+                  </div>
+                  <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>{sourceLbl}</div>
+                </div>
+                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                  <div style={{ textAlign:"center", minWidth:44 }}>
+                    <div style={{ fontSize:9, color:T.slate400, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.03em" }}>Resume</div>
+                    <div style={{ fontSize:13, fontWeight:700, color: app.claude_score ? scoreColor(app.claude_score) : T.slate400 }}>
+                      {app.claude_score != null ? `${app.claude_score}/10` : "—"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"center", minWidth:44 }}>
+                    <div style={{ fontSize:9, color:T.slate400, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.03em" }}>CTS</div>
+                    <div style={{ fontSize:13, fontWeight:700, color: overallBandColor(app.overall_score) }}>
+                      {app.overall_score != null ? app.overall_score : "—"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: resume one-liner if any */}
+              {summary && (
+                <div style={{ fontSize:11, color:T.slate600, lineHeight:1.35 }}>
+                  <span style={{ fontWeight:600, color:T.slate500 }}>Resume · </span>{summary}
+                </div>
+              )}
+
+              {/* Row 3: notes preview if any (framework read, decline reason, etc.) */}
+              {notes && (
+                <div style={{ fontSize:11, color:T.slate600, lineHeight:1.35 }}>
+                  <span style={{ fontWeight:600, color:T.slate500 }}>Notes · </span>{notes}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // ─── Section: Staff Directory ─────────────────────────────────
 const StaffDirectory = ({ staff }) => {
   const [expanded, setExpanded] = useState(null);
@@ -2463,7 +2609,7 @@ const HypotheticalHireForecast = () => {
 // Persistent Growth Budget header (with expandable ramping list) always
 // visible. Sub-nav toggles between Recruiting and Onboarding. Hypothetical
 // hire forecast lives inside the Recruiting sub-view.
-const GrowthTab = ({ applicants, onUpdate }) => {
+const GrowthTab = ({ applicants, declined, onUpdate }) => {
   const [view, setView] = useState("recruiting");
   const subs = [
     { id:"recruiting", label:"Recruiting" },
@@ -2502,6 +2648,7 @@ const GrowthTab = ({ applicants, onUpdate }) => {
       {view === "recruiting" && (
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <RecruitingPipeline applicants={applicants} onUpdate={onUpdate} />
+          <DeclinedTable declined={declined} onUpdate={onUpdate} />
           <HypotheticalHireForecast />
         </div>
       )}
@@ -2526,7 +2673,7 @@ export default function Team() {
       .from("team_assessments")
       .select("id, first_name, last_name, candidate_name, email, phone, position, status, source, claude_score, claude_summary, interview_focus, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
       .eq("agency_id", AGENCY_ID)
-      .in("status", ["assessed","email_screen","interview","reference_check","offer","hired"])
+      .in("status", ["assessed","email_screen","interview","reference_check","offer","hired","archived"])
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (cancelled || error) return;
@@ -2557,10 +2704,8 @@ export default function Team() {
       console.error("Failed to update candidate status:", error);
       // Optionally: revert optimistic update on failure
     }
-    // If status transitions to archived (or non-visible stage), remove from list
-    if (!["assessed","email_screen","interview","reference_check","offer","hired"].includes(newStatus)) {
-      setApplicants(prev => prev.filter(a => a.id !== id));
-    }
+    // Note: rows keep their place in state after status change. Kanban filters
+    // visible-pipeline stages; DeclinedTable renders status='archived' rows.
   };
 
   const sections = [
@@ -2575,7 +2720,7 @@ export default function Team() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Team</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","archived"].includes(a.status)).length} candidates in pipeline · Resume scanner active
+            {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","archived"].includes(a.status)).length} in pipeline · {applicants.filter(a=>a.status==="archived" && !a.is_team_member).length} declined · Resume scanner active
           </div>
         </div>
         
@@ -2594,7 +2739,7 @@ export default function Team() {
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
-      {section === "growth"   && <GrowthTab  applicants={applicants} onUpdate={updateApplicantStage} />}
+      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "archived")} declined={applicants.filter(a => a.status === "archived" && !a.is_team_member)} onUpdate={updateApplicantStage} />}
     </div>
   );
 }
