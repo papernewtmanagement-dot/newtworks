@@ -820,7 +820,7 @@ function useCPRData(weekDate) {
         try {
           const { data: tbRows } = await supabase
             .from("trailblazer_crossings")
-            .select("team_member_id, category, value_at_crossing, floor_at_crossing")
+            .select("team_member_id, category, crossing_value, threshold_at_crossing")
             .eq("agency_id", AGENCY_ID)
             .eq("week_ending", weekDate);
           if (!cancelled) trailblazerCrossingsThisWeek = tbRows || [];
@@ -3459,7 +3459,7 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
                     const nm = tm ? (tm.nickname || tm.first_name || "?") : "?";
                     return (
                       <div key={`tb-${i}`} style={{ fontSize: 11, color: "#78350f" }}>
-                        <b>▲ Trailblazer:</b> {nm} beat {cat.fmt(r.floor_at_crossing)} → {cat.fmt(r.value_at_crossing)}
+                        <b>▲ Trailblazer:</b> {nm} beat {cat.fmt(r.threshold_at_crossing)} → {cat.fmt(r.crossing_value)}
                       </div>
                     );
                   })}
