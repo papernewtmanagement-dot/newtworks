@@ -453,6 +453,31 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           <MetricBox label="Ego Drive" value={detail?.ego_drive_score} />
           <MetricBox label="Empathy" value={detail?.empathy_score} />
         </div>
+        {timing != null && timing?.overall_flag !== "no_data" && (
+          <div style={{ marginTop: 10, padding: 10, background: T.slate50, borderRadius: 7 }}>
+            <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, marginBottom: 4 }}>Timing flag</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{
+                padding: "2px 8px",
+                borderRadius: 4,
+                fontWeight: 700,
+                fontSize: 12,
+                background: timing.overall_flag === "red" ? "#fee2e2" : timing.overall_flag === "yellow" ? "#fef3c7" : "#d1fae5",
+                color: timing.overall_flag === "red" ? "#991b1b" : timing.overall_flag === "yellow" ? "#92400e" : "#065f46",
+              }}>
+                {timing.overall_flag === "red" ? "🔴" : timing.overall_flag === "yellow" ? "🟡" : "🟢"} {String(timing.overall_flag).toUpperCase()}
+              </span>
+              <span style={{ color: T.slate500, fontSize: 12 }}>
+                total {timing.total_min}m · CTS {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
+              </span>
+            </div>
+            {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
+              <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
+                {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       {/* Analysis */}
@@ -461,28 +486,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           <div style={{ fontSize: 12, marginBottom: 4 }}><strong>Best-fit role:</strong> {bestFit ? JSON.stringify(bestFit) : "Not computed"}</div>
           {validity != null && (
             <div style={{ fontSize: 12, marginBottom: 4 }}><strong>Profile validity:</strong> {typeof validity === "string" ? validity : JSON.stringify(validity)}</div>
-          )}
-          {timing != null && timing?.overall_flag !== "no_data" && (
-            <div style={{ fontSize: 12, marginBottom: 4 }}>
-              <strong>Timing flag:</strong>{" "}
-              <span style={{
-                padding: "1px 6px",
-                borderRadius: 4,
-                fontWeight: 600,
-                background: timing.overall_flag === "red" ? "#fee2e2" : timing.overall_flag === "yellow" ? "#fef3c7" : "#d1fae5",
-                color: timing.overall_flag === "red" ? "#991b1b" : timing.overall_flag === "yellow" ? "#92400e" : "#065f46",
-              }}>
-                {timing.overall_flag === "red" ? "🔴" : timing.overall_flag === "yellow" ? "🟡" : "🟢"} {String(timing.overall_flag).toUpperCase()}
-              </span>
-              <span style={{ color: T.slate500, marginLeft: 6 }}>
-                total {timing.total_min}m · CTS {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
-              </span>
-              {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
-                <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-                  {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
-                </div>
-              )}
-            </div>
           )}
         </div>
         {detail?.claude_summary && (
