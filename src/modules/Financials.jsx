@@ -204,10 +204,16 @@ function useFinancialsData() {
         for (const d of (payrollDetailRows.data || [])) {
           (detailByRun[d.payroll_run_id] ||= []).push(d);
         }
+        // Postgres `date` columns arrive as bare YYYY-MM-DD. `new Date(...)` parses
+        // that as UTC midnight, which renders one day earlier in Central Time (Fri pay
+        // date shows as Thu). Append "T00:00:00" so JS parses it as local midnight.
+        const parseLocalDate = (iso) => (typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso))
+          ? new Date(iso + "T00:00:00")
+          : new Date(iso);
         const payroll = (payrollRunsRes.data || []).map(run => {
-          const startStr = new Date(run.pay_period_start).toLocaleDateString("en-US", { month:"short", day:"numeric" });
-          const endStr   = new Date(run.pay_period_end).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
-          const dateStr  = run.pay_date ? new Date(run.pay_date).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
+          const startStr = parseLocalDate(run.pay_period_start).toLocaleDateString("en-US", { month:"short", day:"numeric" });
+          const endStr   = parseLocalDate(run.pay_period_end).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+          const dateStr  = run.pay_date ? parseLocalDate(run.pay_date).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
           return {
             pay_period: `${startStr} – ${endStr}`,
             pay_date:   dateStr,

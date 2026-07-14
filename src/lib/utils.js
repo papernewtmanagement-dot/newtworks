@@ -21,13 +21,28 @@ export function pct(val, max) {
 }
 
 /**
+ * parseLocalDate — parse a date value without UTC-shifting bare YYYY-MM-DD strings.
+ * Postgres `date` columns arrive as bare "YYYY-MM-DD"; `new Date("YYYY-MM-DD")` treats
+ * that as UTC midnight, which renders as the *previous* day in Central Time. Append
+ * "T00:00:00" so JS parses it as local midnight instead. Full ISO timestamps and Date
+ * objects pass through unchanged.
+ */
+export function parseLocalDate(val) {
+  if (val instanceof Date) return val;
+  if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    return new Date(val + "T00:00:00");
+  }
+  return new Date(val);
+}
+
+/**
  * fmtDate — format a date string for display
  * fmtDate("2026-04-15") → "Apr 15, 2026"
  */
 export function fmtDate(dateStr) {
   if (!dateStr) return "—";
   try {
-    return new Date(dateStr).toLocaleDateString("en-US", {
+    return parseLocalDate(dateStr).toLocaleDateString("en-US", {
       month: "short", day: "numeric", year: "numeric"
     });
   } catch {
@@ -42,7 +57,7 @@ export function fmtDate(dateStr) {
 export function fmtDateShort(dateStr) {
   if (!dateStr) return "—";
   try {
-    return new Date(dateStr).toLocaleDateString("en-US", {
+    return parseLocalDate(dateStr).toLocaleDateString("en-US", {
       month: "short", day: "numeric"
     });
   } catch {
