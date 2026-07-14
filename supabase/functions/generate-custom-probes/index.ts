@@ -1,12 +1,12 @@
 // deno-lint-ignore-file no-explicit-any
-// Edge function: generate-custom-probes
+// Edge function: generate-custom-probes  (v5 — no-manuals prompt, keeps openai/gpt-oss-120b)
 //
-// Given a team_assessments row id, produce a structured, candidate-specific set of
-// interview probe questions. Writes result to team_assessments.custom_probes +
-// team_assessments.custom_probes_generated_at.
-//
-// Model: Groq (agency default from settings.groq_model_default, fallback openai/gpt-oss-120b)
-// Key:   settings.groq_api_key (agency-scoped)
+// v5 changes vs v4:
+//   - Dropped fetchManualSnippets + manual-section prompt injection. Framework
+//     matches from hiregauge_evaluate_candidate already carry actionable probe
+//     content per rule; manuals were adding ~1800 tokens without adding much
+//     value. Freed headroom against Groq’s 8k TPM ceiling for gpt-oss-120b.
+//   - Baked agency voice + style directives into SYSTEM_PROMPT.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -63,40 +63,29 @@ function traitReadout(a: any): string {
   return lines.join("\n");
 }
 
-async function fetchManualSnippets(): Promise<{ videoAMA: string; finalInterview: string; hiringPrep: string }> {
-  const titles = ["Video AMA (Qualified Screen)", "Final Interview", "Hiring Prep"];
-  const { data } = await supa
-    .from("manuals")
-    .select("title, content")
-    .in("title", titles)
-    .eq("manual_type", "admin");
-  const byTitle: Record<string, string> = Object.fromEntries(
-    (data || []).map((r: any) => [r.title, r.content || ""]),
-  );
-  return {
-    videoAMA:       (byTitle["Video AMA (Qualified Screen)"] || "").slice(0, 2500),
-    finalInterview: (byTitle["Final Interview"] || "").slice(0, 3000),
-    hiringPrep:     (byTitle["Hiring Prep"] || "").slice(0, 1500),
-  };
-}
-
-const SYSTEM_PROMPT = `You are the intelligence layer of Newtworks, Peter Story's State Farm agency in San Antonio, TX. Your job right now is to compile CANDIDATE-SPECIFIC interview probe questions for the hiring pipeline. Peter or Marie will use these questions during Video AMA or Final Interview.
+const SYSTEM_PROMPT = `You are the intelligence layer of Newtworks, Peter Story’s State Farm agency in San Antonio, TX. Your job right now is to compile CANDIDATE-SPECIFIC interview probe questions for the hiring pipeline. Peter or Marie will use these questions during Video AMA (60-min Qualified Screen with Peter) or Final Interview (deeper dive with Unit Manager present).
 
 Framework context:
-- The agency uses HireGauge (Suggs CTS + Story Agency calibration). CTS traits (deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism) each have ideal ranges. LSS measures problem-solving capacity. Reliability + response_distortion are validity indicators (text bands: high/moderate/low, sometimes very high/very low).
+- The agency uses HireGauge (Suggs CTS + Story Agency calibration). CTS traits (deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism) each have ideal ranges. LSS measures problem-solving capacity. Reliability + response_distortion are validity band indicators (values: very high / high / moderate / low / very low).
 - Character floor is non-negotiable at 7/10 across Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility (measured in Video AMA + Final Interview scorecards, not CTS).
-- Every hire participates in selling — even reception/retention seats.
-- Every team member carries image-bearer dignity (Genesis 1:27) — probes should be direct but never demeaning.
+- Every hire participates in selling — even reception/retention seats. Every team member carries image-bearer dignity (Genesis 1:27) — probes should be direct but never demeaning.
 
 Rules for the probes you produce:
-1. Every probe must be traceable to a specific signal in the data you receive. Never invent generic screening questions. If the data doesn't support a section, omit it.
+1. Every probe must be traceable to a specific signal in the data you receive. Never invent generic screening questions. If the data doesn’t support a section, omit it.
 2. Group probes by focus. Suggested groupings (include only where warranted): "Resume signals", "Character floor verification", "Trait triggers", "Archetype probes", "Motivation probe", "Structure fit", "Validity follow-up".
 3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:analytical=75(high)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate").
 4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age).
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
-6. Voice: direct, agency-style, first-person plural ("we'd like to understand..."). Never corporate HR filler.
-7. If the framework returned interview_probe strings for matched rules, use them as the starting anchor for probes in the relevant section — personalize wording to this specific candidate.
-8. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
+6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate’s actual numbers and situation.
+7. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
+
+Style directives (agency voice):
+- Direct, first-person plural: "We’d like to understand...", "Walk us through...", "Tell us about a time when..."
+- Behavioral, not hypothetical: "Describe a specific instance where..." not "How would you handle..."
+- Never HR-corporate filler. Bad: "At State Farm, we value teamwork — how do you demonstrate that?" Good: "Give us a recent example where a teammate got credit that could have been yours."
+- Short questions. If the instinct is to compound-question, split into two probes.
+- listen_for describes what a genuine answer sounds like — specifics vs. platitudes, ownership vs. blame, presence vs. rehearsed.
+- concern names the specific red flag, not "poor answer".
 
 Output requirements:
 - Return ONLY valid JSON. No markdown fences, no preamble, no trailing prose.
@@ -105,7 +94,7 @@ Output requirements:
   "sections": [
     { "focus": "string", "probes": [ { "question": "string", "listen_for": "string", "concern": "string", "source": "string" } ] }
   ],
-  "notes": "optional string — caveats about generation, e.g. 'resume text not available so no resume-signal probes included'"
+  "notes": "optional string — caveats about generation, e.g. ‘resume text not available so no resume-signal probes included’"
 }`;
 
 async function generateProbes(context: any, groqKey: string, model: string): Promise<any> {
@@ -116,9 +105,9 @@ CTS TRAIT SCORES (ideal ranges annotated):
 ${context.trait_readout}
 
 LSS (accuracy / speed sec):
-  math:   ${context.a.lss_math_accuracy ?? "—"}/? / ${context.a.lss_math_speed_seconds ?? "—"}s
-  verbal: ${context.a.lss_verbal_accuracy ?? "—"}/? / ${context.a.lss_verbal_speed_seconds ?? "—"}s
-  ps:     ${context.a.lss_problem_solving_accuracy ?? "—"}/? / ${context.a.lss_problem_solving_speed_seconds ?? "—"}s
+  math:   ${context.a.lss_math_accuracy ?? "—"} / ${context.a.lss_math_speed_seconds ?? "—"}s
+  verbal: ${context.a.lss_verbal_accuracy ?? "—"} / ${context.a.lss_verbal_speed_seconds ?? "—"}s
+  ps:     ${context.a.lss_problem_solving_accuracy ?? "—"} / ${context.a.lss_problem_solving_speed_seconds ?? "—"}s
   total:  ${context.a.lss_total_accuracy ?? "—"}/35
 
 VALIDITY (band labels; framework validity_rule matches will fire if concerning):
@@ -131,16 +120,7 @@ ${context.a.claude_summary || "(no resume summary on file)"}
 FRAMEWORK MATCHES (from hiregauge_evaluate_candidate):
 ${context.framework_readout}
 
-REFERENCE — Video AMA question skeleton (do not duplicate; layer probes on top):
-${context.manuals.videoAMA}
-
-REFERENCE — Final Interview question skeleton with trait-triggered sections:
-${context.manuals.finalInterview}
-
-REFERENCE — Hiring Prep procedures:
-${context.manuals.hiringPrep}
-
-RESUME TEXT: ${context.resume_text ? context.resume_text : "(not available in v1 — do not fabricate resume-specific probes, note this in output.notes)"}
+RESUME TEXT: ${context.resume_text ? context.resume_text : "(not available — do not fabricate resume-specific probes, note this in output.notes)"}
 
 Generate the JSON now. Return only the JSON object, nothing else.`;
 
@@ -207,15 +187,12 @@ Deno.serve(async (req: Request) => {
         ).join("\n")
       : "(no framework rules matched)";
 
-    const manuals = await fetchManualSnippets();
-
     const context = {
       candidate_name: [a.first_name, a.last_name].filter(Boolean).join(" ") || a.candidate_name || "Candidate",
       position: a.position,
       trait_readout: traitReadout(a),
       framework_readout,
       resume_text: null,
-      manuals,
       a,
     };
 
@@ -225,7 +202,7 @@ Deno.serve(async (req: Request) => {
 
     const probes = await generateProbes(context, groqKey, model);
 
-    probes.version         = 1;
+    probes.version         = 5;
     probes.model           = model;
     probes.resume_analyzed = Boolean(context.resume_text);
     probes.framework_matches_n = Array.isArray(fw) ? fw.length : 0;
