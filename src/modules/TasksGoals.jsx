@@ -4,7 +4,7 @@ import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
-// Newtworks TASKS & GOALS MODULE v1.2
+// Newtworks TASKS & GOALS MODULE v1.3
 // Newtworks — State Farm Agent Edition
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
@@ -21,6 +21,9 @@ import EmptyState from "../components/EmptyState.jsx";
 //   • Priority system: critical / high / medium / low
 //   • Tasks created by agent, Claude, or automations
 //   • Goals track revenue, AIPP, team, compliance, personal
+//   • Edit / Delete / Reopen buttons on every task (owner + manager only)
+//   • Optional Telegram reminder (🔔): datetime-precise due_at, cron
+//     dispatcher DMs Peter <=60 min before deadline
 //
 // DATA: Reads tasks, goals tables in Supabase.
 //       module_reference column removed 2026-06-29; Module concept
@@ -207,8 +210,26 @@ const ProgressBar = ({ value, max, color=T.blue, height=8 }) => {
   );
 };
 
+// Format a Date for <input type="datetime-local"> (yyyy-MM-ddTHH:mm in local TZ)
+const toDatetimeLocalString = (d) => {
+  if (!d || Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+// Human-readable due label — datetime-aware. Falls back to task.due_date string.
+const formatDueLabel = (task) => {
+  if (task?.due_at_raw) {
+    const d = new Date(task.due_at_raw);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString("en-US", { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" });
+    }
+  }
+  return task?.due_date || "";
+};
+
 // ─── Task Card Component ──────────────────────────────────────
-const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, isExpanded=false, onToggleExpand }) => {
+const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, isExpanded=false, onToggleExpand, canEdit=false, onEdit, onDelete, onReopen }) => {
   // Expansion state is lifted to TasksList (expandedIds) so it can drive both description and children visibility.
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
   const cat = categoryConfig(task.task_category);
@@ -328,8 +349,21 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
               );
             })()}
             {inFocus && !isCompleted && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.amberLt, color:T.amber, border:`1px solid ${T.amber}40` }}>★ This Week</span>}
+            {task.remind_via_telegram && (
+              <span
+                title={task.reminded_at ? "Reminder sent" : "Telegram reminder armed"}
+                style={{
+                  fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20,
+                  background: task.reminded_at ? T.slate100 : (T.blueLt || "#EFF6FF"),
+                  color:      task.reminded_at ? T.slate500 : T.blue,
+                  border:     `1px solid ${task.reminded_at ? T.slate200 : (T.blue + "40")}`,
+                }}
+              >
+                🔔 {task.reminded_at ? "Sent" : "Armed"}
+              </span>
+            )}
             <span style={{ fontSize:10, color:overdue?T.red:days<=3?T.amber:T.slate400, fontWeight:overdue||days<=3?600:400 }}>
-              {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${task.due_date}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${task.due_date}`}
+              {isCompleted ? `Completed ${task.completed_at}` : overdue ? `Overdue — ${formatDueLabel(task)}` : days===0 ? "Due today" : days===1 ? "Due tomorrow" : `Due ${formatDueLabel(task)}`}
             </span>
             {task.assigned_to && <span style={{ fontSize:10, color:T.slate400 }}>→ {task.assigned_to_name || task.assigned_to}</span>}
             <span style={{ fontSize:9, color:T.slate400, fontStyle:"italic" }}>by {task.created_by}</span>
@@ -356,6 +390,53 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           </button>
         )}
 
+        {canEdit && isCompleted && onReopen && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onReopen(task); }}
+            title="Reopen task"
+            aria-label="Reopen task"
+            style={{
+              width:36, height:36, padding:0,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:16, lineHeight:1, color:T.slate500,
+              background:"transparent", border:"none", borderRadius:10,
+              cursor:"pointer", flexShrink:0, WebkitTapHighlightColor:"transparent"
+            }}>
+            ↺
+          </button>
+        )}
+
+        {canEdit && !isCompleted && onEdit && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(task); }}
+            title="Edit"
+            aria-label="Edit task"
+            style={{
+              width:36, height:36, padding:0,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:14, lineHeight:1, color:T.slate500,
+              background:"transparent", border:"none", borderRadius:10,
+              cursor:"pointer", flexShrink:0, WebkitTapHighlightColor:"transparent"
+            }}>
+            ✏️
+          </button>
+        )}
+
+        {canEdit && onDelete && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(task); }}
+            title="Delete"
+            aria-label="Delete task"
+            style={{
+              width:36, height:36, padding:0,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:14, lineHeight:1, color:T.slate500,
+              background:"transparent", border:"none", borderRadius:10,
+              cursor:"pointer", flexShrink:0, WebkitTapHighlightColor:"transparent"
+            }}>
+            🗑️
+          </button>
+        )}
 
         <button
           onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(task.id); }}
@@ -386,18 +467,34 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
   );
 };
 
-// ─── New Task Modal ───────────────────────────────────────────
-const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", defaultParentId = null, adminUsers = [], currentUserId = null, currentUserRole = null }) => {
+// ─── Task Modal (Create + Edit) ───────────────────────────────
+const TaskModal = ({
+  onSave, onCancel,
+  allTasks = [], defaultType = "task", defaultParentId = null,
+  adminUsers = [], currentUserId = null, currentUserRole = null,
+  initialTask = null,
+}) => {
+  const isEdit = !!initialTask;
   // Owner can assign to any admin; manager can only assign to themselves.
   const canAssignOthers = currentUserRole === "owner";
   const assignableUsers = canAssignOthers
     ? adminUsers
     : adminUsers.filter(u => u.id === currentUserId);
+  const initialDueAt = initialTask?.due_at_raw ? new Date(initialTask.due_at_raw) : null;
   const [form, setForm] = useState({
-    title:"", description:"", priority:"medium", task_category:"",
-    in_weekly_focus:false, due_date:"", assigned_to: currentUserId || "",
-    task_type: defaultType,
-    parent_task_id: defaultParentId || "",
+    title:           initialTask?.title || "",
+    description:     initialTask?.description || "",
+    priority:        initialTask?.priority || "medium",
+    task_category:   initialTask?.task_category || "",
+    in_weekly_focus: !!initialTask?.in_weekly_focus,
+    // due_date holds ISO YYYY-MM-DD for the native <input type="date">
+    due_date:        initialTask?.due_date_raw || "",
+    // due_at holds "YYYY-MM-DDTHH:mm" for <input type="datetime-local">, local TZ
+    due_at:          initialDueAt ? toDatetimeLocalString(initialDueAt) : "",
+    remind_via_telegram: !!initialTask?.remind_via_telegram,
+    assigned_to:     initialTask?.assigned_to || currentUserId || "",
+    task_type:       initialTask?.task_type || defaultType,
+    parent_task_id:  initialTask?.parent_task_id || defaultParentId || "",
   });
   const set = (k, v) => setForm(f => {
     const next = { ...f, [k]:v };
@@ -418,7 +515,7 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
   })();
 
   const typ = typeConfig(form.task_type);
-  const heading = `New ${typ.label}`;
+  const heading = isEdit ? `Edit ${typ.label}` : `New ${typ.label}`;
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
@@ -482,9 +579,20 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
               </select>
             </div>
             <div>
-              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>DUE DATE</label>
-              <input type="text" value={form.due_date} onChange={e => set("due_date", e.target.value)} placeholder="May 1, 2026"
-                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>
+                {form.remind_via_telegram ? "DUE DATE & TIME" : "DUE DATE"}
+              </label>
+              {form.remind_via_telegram ? (
+                <input type="datetime-local"
+                  value={form.due_at}
+                  onChange={e => set("due_at", e.target.value)}
+                  style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+              ) : (
+                <input type="date"
+                  value={form.due_date || ""}
+                  onChange={e => set("due_date", e.target.value)}
+                  style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+              )}
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>ASSIGNED TO</label>
@@ -502,21 +610,24 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
             <input type="checkbox" checked={!!form.in_weekly_focus} onChange={e => set("in_weekly_focus", e.target.checked)} />
             <span>★ Push to this week&rsquo;s to-dos</span>
           </label>
+          <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:T.slate700, cursor:"pointer", padding:"6px 0" }}>
+            <input type="checkbox" checked={!!form.remind_via_telegram} onChange={e => set("remind_via_telegram", e.target.checked)} />
+            <span>🔔 Remind me via Telegram (requires a due date &amp; time)</span>
+          </label>
         </div>
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8 }}>
           <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
-          <button onClick={() => form.title.trim() && onSave({
+          <button
+            onClick={() => form.title.trim() && onSave({
               ...form,
-              id:`t${Date.now()}`,
-              status:"open",
-              created_by:"Jane Smith",
-              created_at:"Today",
+              id: initialTask?.id || null,
+              isEdit,
               parent_task_id: form.parent_task_id || null,
               task_type: form.task_type || "task",
             })}
             disabled={!form.title.trim()}
             style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.title.trim()?T.blue:"#94A3B8", border:"none", borderRadius:7, cursor:form.title.trim()?"pointer":"not-allowed" }}>
-            Create {typ.label}
+            {isEdit ? "Save" : `Create ${typ.label}`}
           </button>
         </div>
       </div>
@@ -525,7 +636,7 @@ const NewTaskModal = ({ onSave, onCancel, allTasks = [], defaultType = "task", d
 };
 
 // ─── Section: This Week's To-Dos ──────────────────────────────
-const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
+const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus, canEdit, onEdit, onDelete, onReopen }) => {
   const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed");
 
   // Local expand state — independent of Overview's expandedIds. Non-persistent: a fresh
@@ -572,6 +683,10 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
           onToggleFocus={onToggleFocus}
           isExpanded={isOpen}
           onToggleExpand={toggleTodoExpand}
+          canEdit={canEdit}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onReopen={onReopen}
         />
         {isOpen && kids.length > 0 && kids.map(k => renderTodoTree(k, depth + 1))}
       </div>
@@ -621,7 +736,7 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus }) => {
 };
 
 // ─── Section: Tasks List ──────────────────────────────────────
-const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus, userRole, userId, adminUsers = [] }) => {
+const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, userRole, userId, adminUsers = [], canEdit, onEdit, onDelete }) => {
   const isOwner = userRole === "owner";
   // Owner picks All / Mine / each other admin. Managers see only own via RLS; chips hidden.
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -665,9 +780,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus, userRo
     });
   };
   // expandAll/collapseAll removed — per-card chevron is the only expand mechanism.
-  const [showModal,  setShowModal]  = useState(false);
-  const [newType,    setNewType]    = useState("task");          // type for the "+ New" modal
-  const [newParentId, setNewParentId] = useState(null);          // optional preset parent
+  // Modal state lifted to <TasksGoals> — a single modal instance handles both create and edit.
 
   const statusPriorityCatPass = (t) => {
     if (filter === "open"        && t.status === "completed")  return false;
@@ -789,11 +902,13 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus, userRo
           {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
         </select>
 <div style={{ flex:1 }} />
-        {/* "+ New" — pick type inside the modal */}
-        <button onClick={() => { setNewType("task"); setNewParentId(null); setShowModal(true); }} title="New item"
-          style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
-          + New
-        </button>
+        {/* "+ New" — opens the parent-owned modal in create mode */}
+        {canEdit && (
+          <button onClick={() => onOpenNew && onOpenNew()} title="New item"
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:8, cursor:"pointer", boxShadow:"0 1px 3px rgba(0,0,0,0.1)" }}>
+            + New
+          </button>
+        )}
         
       </div>
 
@@ -880,28 +995,18 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd, onToggleFocus, userRo
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={depth}
               onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
               isExpanded={expandedIds.has(task.id)}
-              onToggleExpand={toggleExpand} />
+              onToggleExpand={toggleExpand}
+              canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} />
           ))
         ) : (
           filtered.map(task => (
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={0}
-              onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus} />
+              onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
+              canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} />
           ))
         )}
       </div>
 
-      {showModal && (
-        <NewTaskModal
-          allTasks={tasks}
-          defaultType={newType}
-          defaultParentId={newParentId}
-          adminUsers={adminUsers}
-          currentUserId={userId}
-          currentUserRole={userRole}
-          onSave={(task) => { onAdd(task); setShowModal(false); }}
-          onCancel={() => setShowModal(false)}
-        />
-      )}
     </div>
   );
 };
@@ -988,7 +1093,7 @@ const GoalsSection = ({ goals }) => {
 };
 
 // ─── Section: Completed ───────────────────────────────────────
-const CompletedSection = ({ tasks }) => {
+const CompletedSection = ({ tasks, canEdit, onReopen }) => {
   const completed = tasks.filter(t => t.status === "completed");
   return (
     <Card>
@@ -1012,6 +1117,21 @@ const CompletedSection = ({ tasks }) => {
                 <div style={{ fontSize:10, color:T.slate400, marginTop:1 }}>{cat ? `${cat.icon} ${cat.label} · ` : ""}Completed {task.completed_at}</div>
               </div>
               <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color, flexShrink:0 }}>{pr.label}</span>
+              {canEdit && onReopen && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onReopen(task); }}
+                  title="Reopen task"
+                  aria-label="Reopen task"
+                  style={{
+                    width:32, height:32, padding:0,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:14, lineHeight:1, color:T.slate500,
+                    background:"transparent", border:"none", borderRadius:8,
+                    cursor:"pointer", flexShrink:0, WebkitTapHighlightColor:"transparent"
+                  }}>
+                  ↺
+                </button>
+              )}
             </div>
           );
         })}
@@ -1063,13 +1183,19 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       };
       setTasks(liveTasks.map(t => ({
         ...t,
-        status:         normStatus(t.status),
-        task_category:  t.task_category || null,
-        task_type:      t.task_type || "task",
-        parent_task_id: t.parent_task_id || null,
-        in_weekly_focus:!!t.in_weekly_focus,
-        due_date:       t.due_date ? new Date(t.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
-        completed_at:   t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+        status:              normStatus(t.status),
+        task_category:       t.task_category || null,
+        task_type:           t.task_type || "task",
+        parent_task_id:      t.parent_task_id || null,
+        in_weekly_focus:     !!t.in_weekly_focus,
+        // Keep raw ISO YYYY-MM-DD (for native <input type="date">) alongside the display form.
+        due_date_raw:        t.due_date || null,
+        due_date:            t.due_date ? new Date(t.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+        // due_at is timestamptz — keep the raw ISO for reminder logic + datetime-aware display.
+        due_at_raw:          t.due_at || null,
+        remind_via_telegram: !!t.remind_via_telegram,
+        reminded_at:         t.reminded_at || null,
+        completed_at:        t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
       })));
     }
   }, [liveTasks]);
@@ -1088,6 +1214,14 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       assigned_to_name: t.assigned_to ? (nameById.get(t.assigned_to) || t.assigned_to) : null,
     }));
   }, [tasks, adminUsers]);
+
+  // Modal state — a single modal instance handles both create and edit.
+  // Declared before the early returns below to keep React hook-call order stable
+  // across the loading→loaded transition (op-rule: hooks-before-early-returns).
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalInitialTask, setModalInitialTask] = useState(null);
+  const [modalDefaultType, setModalDefaultType] = useState("task");
+  const [modalDefaultParentId, setModalDefaultParentId] = useState(null);
 
   if (tasksLoading || goalsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading tasks and goals…</div>;
   if (tasks.length === 0 && goals.length === 0) return <EmptyState module="tasks" />;
@@ -1110,45 +1244,155 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
     }
   };
 
-  const addTask = async (taskFromModal) => {
-    // Persist to Supabase first when running on live data, then update local state.
-    const dueIso = (() => {
-      if (!taskFromModal.due_date) return null;
-      const d = new Date(taskFromModal.due_date);
-      return Number.isFinite(d.getTime()) ? d.toISOString().slice(0,10) : null;
-    })();
-    const payload = {
-      agency_id:        AGENCY_ID,
-      title:            taskFromModal.title,
-      description:      taskFromModal.description || null,
-      priority:         taskFromModal.priority || "medium",
-      status:           "open",
-      task_category:    taskFromModal.task_category || null,
-      task_type:        taskFromModal.task_type || "task",
-      parent_task_id:   taskFromModal.parent_task_id || null,
-      in_weekly_focus:  !!taskFromModal.in_weekly_focus,
-      due_date:         dueIso,
-      assigned_to:      taskFromModal.assigned_to || userId || null,
-      created_by:       "Newtworks user",
+  // ── Task edit/delete/reopen — access gate ──
+  // Owner + manager see the affordances; manager writes are RLS-scoped to their own rows.
+  const canEdit = userRole === "owner" || userRole === "manager";
+
+  const openNewTaskModal = () => {
+    setModalInitialTask(null);
+    setModalDefaultType("task");
+    setModalDefaultParentId(null);
+    setModalOpen(true);
+  };
+  const openEditTaskModal = (task) => {
+    setModalInitialTask(task);
+    setModalOpen(true);
+  };
+  const closeModal = () => {
+    setModalOpen(false);
+    setModalInitialTask(null);
+  };
+
+  // Resolve due_date (date) vs due_at (timestamptz) from the modal's form state.
+  // Rules:
+  //   remind_via_telegram = true  → due_at required; due_date derived from its local date component
+  //   remind_via_telegram = false → due_date only (YYYY-MM-DD); due_at cleared
+  const buildTaskPayload = (form) => {
+    const remind = !!form.remind_via_telegram;
+    let dueDateIso = null;
+    let dueAtIso   = null;
+    if (remind && form.due_at) {
+      const d = new Date(form.due_at);
+      if (Number.isFinite(d.getTime())) {
+        dueAtIso   = d.toISOString();
+        const pad = (n) => String(n).padStart(2, "0");
+        dueDateIso = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      }
+    } else if (!remind && form.due_date) {
+      // form.due_date is already YYYY-MM-DD from <input type="date">
+      dueDateIso = form.due_date;
+    }
+    return {
+      title:               form.title,
+      description:         form.description || null,
+      priority:            form.priority || "medium",
+      task_category:       form.task_category || null,
+      task_type:           form.task_type || "task",
+      parent_task_id:      form.parent_task_id || null,
+      in_weekly_focus:     !!form.in_weekly_focus,
+      due_date:            dueDateIso,
+      due_at:              dueAtIso,
+      remind_via_telegram: remind,
+      assigned_to:         form.assigned_to || userId || null,
     };
+  };
+
+  // Normalizer mirroring the initial-load shape — used for insert/update responses.
+  const normalizeLiveRow = (row) => ({
+    ...row,
+    status:              (row.status === "closed" || row.status === "completed") ? "completed"
+                       : (row.status === "in_progress" ? "in_progress" : "open"),
+    task_category:       row.task_category || null,
+    task_type:           row.task_type || "task",
+    parent_task_id:      row.parent_task_id || null,
+    in_weekly_focus:     !!row.in_weekly_focus,
+    due_date_raw:        row.due_date || null,
+    due_date:            row.due_date ? new Date(row.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+    due_at_raw:          row.due_at || null,
+    remind_via_telegram: !!row.remind_via_telegram,
+    reminded_at:         row.reminded_at || null,
+    completed_at:        row.completed_at ? new Date(row.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+  });
+
+  const addTask = async (formFromModal) => {
+    const payload = { ...buildTaskPayload(formFromModal), agency_id: AGENCY_ID, status: "open", created_by: "Newtworks user" };
     if (supabase && !useMockData) {
       const { data, error } = await supabase.from("tasks").insert(payload).select().maybeSingle();
       if (error) { console.error("[TasksGoals] addTask insert failed:", error); return; }
-      if (data) {
-        setTasks(prev => [{
-          ...data,
-          status:         "open",
-          task_category:  data.task_category || null,
-          task_type:      data.task_type || "task",
-          parent_task_id: data.parent_task_id || null,
-          in_weekly_focus:!!data.in_weekly_focus,
-          due_date:       data.due_date ? new Date(data.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
-        }, ...prev]);
-        return;
-      }
+      if (data) { setTasks(prev => [normalizeLiveRow(data), ...prev]); return; }
     }
     // Mock fallback
-    setTasks(prev => [{ ...taskFromModal, status:"open" }, ...prev]);
+    setTasks(prev => [{ ...formFromModal, id: `t${Date.now()}`, status: "open", created_by: "Newtworks user" }, ...prev]);
+  };
+
+  const saveEditedTask = async (formFromModal) => {
+    const id = formFromModal.id;
+    if (!id) { console.error("[TasksGoals] saveEditedTask called without id"); return; }
+    const patch = buildTaskPayload(formFromModal);
+    // Optimistic local update
+    const prevSnapshot = tasks;
+    setTasks(prev => prev.map(t => t.id === id
+      ? { ...t,
+          ...patch,
+          due_date_raw: patch.due_date,
+          due_date:     patch.due_date ? new Date(patch.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+          due_at_raw:   patch.due_at }
+      : t
+    ));
+    if (supabase && typeof id === "string" && !useMockData) {
+      const { data, error } = await supabase
+        .from("tasks")
+        .update(patch)
+        .eq("id", id)
+        .eq("agency_id", AGENCY_ID)
+        .select()
+        .maybeSingle();
+      if (error) { console.error("[TasksGoals] saveEditedTask update failed:", error); setTasks(prevSnapshot); return; }
+      if (data) setTasks(prev => prev.map(t => t.id === id ? normalizeLiveRow(data) : t));
+    }
+  };
+
+  // Unified save — routes based on form.isEdit flag from the modal.
+  const saveTask = async (formFromModal) => {
+    if (formFromModal.isEdit) await saveEditedTask(formFromModal);
+    else await addTask(formFromModal);
+    closeModal();
+  };
+
+  const deleteTask = async (task) => {
+    if (!task || !task.id) return;
+    // Guard against orphaned children — refuse hard delete when this task has children.
+    const hasChildren = tasks.some(t => t.parent_task_id === task.id);
+    if (hasChildren) {
+      window.alert("This " + (task.task_type || "task") + " has children. Delete or reparent them first.");
+      return;
+    }
+    const ok = window.confirm("Delete this task? This cannot be undone.");
+    if (!ok) return;
+    const prevSnapshot = tasks;
+    setTasks(prev => prev.filter(t => t.id !== task.id));
+    if (supabase && typeof task.id === "string" && !useMockData) {
+      const { error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("id", task.id)
+        .eq("agency_id", AGENCY_ID);
+      if (error) { console.error("[TasksGoals] deleteTask failed:", error); setTasks(prevSnapshot); }
+    }
+  };
+
+  const reopenTask = async (task) => {
+    if (!task || !task.id) return;
+    const prevSnapshot = tasks;
+    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: "open", completed_at: "" } : t));
+    if (supabase && typeof task.id === "string" && !useMockData) {
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status: "open", completed_at: null })
+        .eq("id", task.id)
+        .eq("agency_id", AGENCY_ID);
+      if (error) { console.error("[TasksGoals] reopenTask failed:", error); setTasks(prevSnapshot); }
+    }
   };
 
   const toggleFocus = async (id, next) => {
@@ -1196,10 +1440,24 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       </div>
 
       {/* Section Content */}
-      {section === "todos"     && <ToDosSection  tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} />}
-      {section === "overview"  && <TasksList     tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(() =>{})} onAdd={addTask} onToggleFocus={toggleFocus} userRole={userRole} userId={userId} adminUsers={adminUsers} />}
-      {section === "goals"     && <GoalsSection  goals={goals} />}
-      {section === "completed" && <CompletedSection tasks={tasksWithDisplay} />}
+      {section === "todos"     && <ToDosSection      tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onReopen={reopenTask} />}
+      {section === "overview"  && <TasksList         tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onOpenNew={openNewTaskModal} onToggleFocus={toggleFocus} userRole={userRole} userId={userId} adminUsers={adminUsers} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} />}
+      {section === "goals"     && <GoalsSection      goals={goals} />}
+      {section === "completed" && <CompletedSection  tasks={tasksWithDisplay} canEdit={canEdit} onReopen={reopenTask} />}
+
+      {modalOpen && (
+        <TaskModal
+          allTasks={tasks}
+          defaultType={modalDefaultType}
+          defaultParentId={modalDefaultParentId}
+          adminUsers={adminUsers}
+          currentUserId={userId}
+          currentUserRole={userRole}
+          initialTask={modalInitialTask}
+          onSave={saveTask}
+          onCancel={closeModal}
+        />
+      )}
     </div>
   );
 }
