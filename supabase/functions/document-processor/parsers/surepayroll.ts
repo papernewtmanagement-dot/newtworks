@@ -22,7 +22,7 @@ interface SPEmployeeBlock {
   deduction_items: Record<string, SPItem>;
   employer_items: Record<string, SPItem>;
 }
-interface ParsedSurePayroll {
+export interface ParsedSurePayroll {
   employer_entity_name: string; pay_period_start: string; pay_period_end: string;
   check_date: string; transmit_date: string | null;
   employees: SPEmployeeBlock[];
@@ -164,6 +164,229 @@ function parseSurePayrollEmployeeBlock(last: string, first: string, block: strin
   return emp;
 }
 
+// =========================================================================
+// CSV parser (2026-07-14) — SurePayroll now also delivers per-week CSVs.
+// Header row is stable across weeks (verified across 8 files 5/22–7/17).
+// Numeric columns only in data rows (no embedded commas), but we tolerate
+// quoted fields defensively. CSV carries NO YTD data — YTD backfill happens
+// downstream in processSurePayrollParsed by summing prior payroll_detail
+// gross_pay rows within the calendar year.
+// =========================================================================
+
+function parseCsvLine(line: string): string[] {
+  // Handles quoted fields; unquoted fields split on commas.
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else { inQ = false; }
+      } else { cur += c; }
+    } else {
+      if (c === ",") { out.push(cur); cur = ""; }
+      else if (c === '"') { inQ = true; }
+      else { cur += c; }
+    }
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+function mdyToIso(s: string): string {
+  // "7/17/2026" -> "2026-07-17"
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) throw new Error(`Bad date: ${s}`);
+  return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+}
+
+function num(s: string | undefined): number {
+  if (s === undefined || s === null || s === "") return 0;
+  const n = parseFloat(s.replace(/[,$\s]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+export function parseSurePayrollCsvText(text: string): ParsedSurePayroll {
+  // Normalize line endings; drop empty trailing lines
+  const lines = text.replace(/\r\n?/g, "\n").split("\n").filter(l => l.trim().length > 0);
+  if (lines.length < 2) throw new Error(`CSV has only ${lines.length} line(s); need header + at least one row`);
+
+  const header = parseCsvLine(lines[0]);
+  const idx: Record<string, number> = {};
+  for (let i = 0; i < header.length; i++) idx[header[i]] = i;
+
+  const need = (col: string): number => {
+    if (!(col in idx)) throw new Error(`CSV missing required column: "${col}"`);
+    return idx[col];
+  };
+
+  // Required columns (fail loudly if header shifts)
+  const cFirst    = need("First Name");
+  const cLast     = need("Last Name");
+  const cUnState  = need("Unemployment State");
+  const cInState  = need("Income Tax State");
+  const cCheck    = need("Check Date");
+  const cPStart   = need("Period Start");
+  const cPEnd     = need("Period End");
+  const cGross    = need("Gross Wage");
+  const cNet      = need("Net Pay");
+
+  // Optional columns — safe fallback to -1 (empty)
+  const optIdx = (col: string) => (col in idx ? idx[col] : -1);
+  const cHrsReg   = optIdx("Hours - Regular");
+  const cHrsOt    = optIdx("Hours - OT");
+  const cHrsVac   = optIdx("Hours - Vacation");
+  const cHrsSick  = optIdx("Hours - Sick");
+  const cHrsOther = optIdx("Hours - Other");
+  const cEarnSal  = optIdx("Earning - Salary");
+  const cEarnHr   = optIdx("Earning - Hourly");
+  const cEarnCom  = optIdx("Earning - Commission");
+  const cEarnBon  = optIdx("Earning - Bonus");
+  const cEarnOt   = optIdx("Earning - OT");
+  const cEarnReim = optIdx("Earning - Reimbursements");
+  const cEarnOth  = optIdx("Earning - Other");
+  const cBenHea   = optIdx("Employee Benefit - Health");
+  const cBenDen   = optIdx("Employee Benefit - Dental");
+  const cBenVis   = optIdx("Employee Benefit - Vision");
+  const cBen401   = optIdx("Employee Benefit - 401K");
+  const cBenHsa   = optIdx("Employee Benefit - HSA");
+  const cBenIra   = optIdx("Employee Benefit - IRA");
+  const cBenLif   = optIdx("Employee Benefit - Life");
+  const cBenFsa   = optIdx("Employee Benefit - FSA");
+  const cDedGar   = optIdx("Employee Deduction - Garnishment");
+  const cDedOth   = optIdx("Employee Deduction - Other");
+  const cTaxDis   = optIdx("Employee Tax - Disability");
+  const cTaxFed   = optIdx("Employee Tax - FED WTH");
+  const cTaxFica  = optIdx("Employee Tax - FICA");
+  const cTaxMed   = optIdx("Employee Tax - MEDFICA");
+  const cTaxSt    = optIdx("Employee Tax - State");
+  const cTaxOth   = optIdx("Employee Tax - Other");
+  const cErFica   = optIdx("Employer Tax - FICA");
+  const cErMed    = optIdx("Employer Tax - MEDC");
+  const cErUnem   = optIdx("Employer Tax - Unemployment");
+  const cErTaxOth = optIdx("Employer Tax - Other");
+  const cErDed    = optIdx("Employer Deductions");
+
+  const getStr = (row: string[], i: number): string => (i >= 0 && i < row.length ? row[i] : "");
+  const getNum = (row: string[], i: number): number => num(getStr(row, i));
+
+  const employees: SPEmployeeBlock[] = [];
+  const checkDates: string[] = [];
+  const periodStarts: string[] = [];
+  const periodEnds: string[] = [];
+
+  for (let li = 1; li < lines.length; li++) {
+    const row = parseCsvLine(lines[li]);
+    if (row.length < 6) continue; // skip incomplete lines defensively
+
+    const first = getStr(row, cFirst).trim();
+    const last  = getStr(row, cLast).trim();
+    if (!first || !last) continue;
+
+    checkDates.push(mdyToIso(getStr(row, cCheck)));
+    periodStarts.push(mdyToIso(getStr(row, cPStart)));
+    periodEnds.push(mdyToIso(getStr(row, cPEnd)));
+
+    const inState  = getStr(row, cInState).toUpperCase();
+    const unState  = getStr(row, cUnState).toUpperCase();
+
+    const hrsReg   = getNum(row, cHrsReg);
+    const hrsOt    = getNum(row, cHrsOt);
+    const hrsVac   = getNum(row, cHrsVac);
+    const hrsSick  = getNum(row, cHrsSick);
+    const hrsOther = getNum(row, cHrsOther);
+
+    const earnSal  = getNum(row, cEarnSal);
+    const earnHr   = getNum(row, cEarnHr);
+    const earnCom  = getNum(row, cEarnCom);
+    const earnBon  = getNum(row, cEarnBon);
+    const earnOt   = getNum(row, cEarnOt);
+    const earnReim = getNum(row, cEarnReim);
+    const earnOth  = getNum(row, cEarnOth);
+
+    const emp: SPEmployeeBlock = {
+      first_name: first,
+      last_name: last,
+      income_state: inState,
+      net_pay: getNum(row, cNet),
+      period_gross: getNum(row, cGross),
+      ytd_gross: 0, // CSV has no YTD; downstream backfill computes it
+      period_hours: hrsReg + hrsOt, // productive hours; vacation/sick/other tracked separately
+      earnings_items: {
+        SALARY:         { period: earnSal,  ytd: 0, hours: earnSal > 0 ? hrsReg : 0 },
+        HOURLY:         { period: earnHr,   ytd: 0, hours: earnHr  > 0 ? hrsReg : 0 },
+        COMMISSION:     { period: earnCom,  ytd: 0 },
+        BONUS:          { period: earnBon,  ytd: 0 },
+        OT:             { period: earnOt,   ytd: 0, hours: hrsOt },
+        REIMBURSEMENTS: { period: earnReim, ytd: 0 },
+        OTHER:          { period: earnOth,  ytd: 0 },
+        VACATION_HRS:   { period: 0,        ytd: 0, hours: hrsVac },
+        SICK_HRS:       { period: 0,        ytd: 0, hours: hrsSick },
+        OTHER_HRS:      { period: 0,        ytd: 0, hours: hrsOther },
+      },
+      deduction_items: {
+        HEALTH:      { period: getNum(row, cBenHea), ytd: 0 },
+        DENTAL:      { period: getNum(row, cBenDen), ytd: 0 },
+        VISION:      { period: getNum(row, cBenVis), ytd: 0 },
+        "401K":      { period: getNum(row, cBen401), ytd: 0 },
+        HSA:         { period: getNum(row, cBenHsa), ytd: 0 },
+        IRA:         { period: getNum(row, cBenIra), ytd: 0 },
+        LIFE:        { period: getNum(row, cBenLif), ytd: 0 },
+        FSA:         { period: getNum(row, cBenFsa), ytd: 0 },
+        GARNISHMENT: { period: getNum(row, cDedGar), ytd: 0 },
+        OTHER_DED:   { period: getNum(row, cDedOth), ytd: 0 },
+        DISABILITY:  { period: getNum(row, cTaxDis), ytd: 0 },
+        "FED WTH":   { period: getNum(row, cTaxFed), ytd: 0 },
+        FICA:        { period: getNum(row, cTaxFica), ytd: 0 },
+        MEDFICA:     { period: getNum(row, cTaxMed), ytd: 0 },
+        TAX_OTHER:   { period: getNum(row, cTaxOth), ytd: 0 },
+        [`STATE-${inState || "XX"}`]: { period: getNum(row, cTaxSt), ytd: 0 },
+      },
+      employer_items: {
+        "CO FICA":                    { period: getNum(row, cErFica),  ytd: 0 },
+        "CO MEDC":                    { period: getNum(row, cErMed),   ytd: 0 },
+        [`CO UNEM-${unState || "XX"}`]: { period: getNum(row, cErUnem),  ytd: 0 },
+        ER_OTHER:                     { period: getNum(row, cErTaxOth),ytd: 0 },
+        ER_DED:                       { period: getNum(row, cErDed),   ytd: 0 },
+      },
+    };
+    employees.push(emp);
+  }
+
+  if (employees.length === 0) throw new Error("CSV had header but no valid employee rows");
+
+  // Compute totals (mirror the PDF path exactly)
+  const eeTaxKeys = ["FED WTH", "FICA", "MEDFICA"];
+  const totals = {
+    period_gross: employees.reduce((s, e) => s + e.period_gross, 0),
+    period_employee_taxes: employees.reduce((s, e) =>
+      s + eeTaxKeys.reduce((a, k) => a + (e.deduction_items[k]?.period ?? 0), 0)
+        + Object.entries(e.deduction_items).filter(([k]) => /^STATE-/.test(k)).reduce((a, [, v]) => a + v.period, 0), 0),
+    period_employee_deductions: employees.reduce((s, e) =>
+      s + Object.entries(e.deduction_items).filter(([k]) => !eeTaxKeys.includes(k) && !/^STATE-/.test(k)).reduce((a, [, v]) => a + v.period, 0), 0),
+    period_employer_taxes: employees.reduce((s, e) =>
+      s + Object.values(e.employer_items).reduce((a, b) => a + b.period, 0), 0),
+    net_pay: employees.reduce((s, e) => s + e.net_pay, 0),
+    total_cash_requirement: 0, // not present in CSV
+  };
+
+  // Dates: min start, max end, max check (rows all share the same values in observed CSVs)
+  const minStart = periodStarts.sort()[0];
+  const maxEnd = periodEnds.sort().reverse()[0];
+  const maxCheck = checkDates.sort().reverse()[0];
+
+  return {
+    employer_entity_name: "PAPERNEWT LLC",
+    pay_period_start: minStart,
+    pay_period_end: maxEnd,
+    check_date: maxCheck,
+    transmit_date: null, // not in CSV
+    employees,
+    totals,
+  };
+}
+
 async function spMatchTeamMember(last: string, first: string): Promise<{ id: string; agency_id: string | null } | null> {
   const { data, error } = await sb.from("team").select("id, agency_id").ilike("last_name", last).ilike("first_name", first).maybeSingle();
   if (error || !data) return null;
@@ -188,21 +411,21 @@ interface SPProcessResult {
   alerts_resolved?: number;
 }
 
-export async function processSurePayrollPdf(opts: {
+export async function processSurePayrollParsed(opts: {
   agencyId: string;
   documentId: string;
   gmailMessageId: string;
   gmailThreadId: string;
-  pdfText: string;
+  parsed: ParsedSurePayroll;
+  sourceText: string;          // stored in raw_pdf_text for audit (legacy column name)
+  sourceFormat: "pdf" | "csv"; // shapes the notes field + YTD-backfill branch
   composioApiKey: string;
   composioUserId: string;
   gmailAccountId: string;
 }): Promise<SPProcessResult> {
-  let parsed: ParsedSurePayroll;
-  try { parsed = parseSurePayrollText(opts.pdfText); }
-  catch (e) { return { ok: false, error: `parser: ${(e as Error).message}` }; }
+  const parsed = opts.parsed;
 
-  const { data: entity } = await sb.from("business_entities").select("id, entity_name").ilike("entity_name", "PaperNewt%").maybeSingle();
+  const { data: entity } = await sb.from("business_entities").select("id, name").ilike("name", "PaperNewt%").maybeSingle();
   const businessEntityId = entity?.id ?? null;
 
   const { data: existingByPeriod } = await sb.from("payroll_runs").select("id").eq("agency_id", opts.agencyId).eq("pay_period_end", parsed.pay_period_end).maybeSingle();
@@ -217,8 +440,8 @@ export async function processSurePayrollPdf(opts: {
     total_employee_deductions: parsed.totals.period_employee_deductions, total_cash_requirement: parsed.totals.total_cash_requirement,
     status: "imported", gmail_message_id: opts.gmailMessageId, gmail_thread_id: opts.gmailThreadId,
     source_document_id: opts.documentId,
-    raw_pdf_text: opts.pdfText.slice(0, 20000), parsed_at: new Date().toISOString(),
-    notes: `Auto-ingested via document-processor SurePayroll parser. ${parsed.employees.length} employees.`,
+    raw_pdf_text: opts.sourceText.slice(0, 20000), parsed_at: new Date().toISOString(),
+    notes: `Auto-ingested via document-processor SurePayroll ${opts.sourceFormat.toUpperCase()} parser. ${parsed.employees.length} employees.`,
   };
 
   let runRowId: string;
@@ -257,13 +480,33 @@ export async function processSurePayrollPdf(opts: {
     const empPeriodTotal      = Object.values(e.employer_items).reduce((s, v) => s + v.period, 0);
     const empYtdTotal         = Object.values(e.employer_items).reduce((s, v) => s + v.ytd, 0);
 
+    // YTD backfill: PDF path carries per-item YTD from the source. CSV path
+    // does not — we compute cumulative YTD gross from prior payroll_detail rows
+    // in the same calendar year (excluding this run itself). Downstream columns
+    // driven by ytd_total (weekly_cpr_team_detail.payroll_ytd_paid) require this.
+    let effectiveYtdGross = e.ytd_gross;
+    let effectiveEarningsYtd = earningsYtdTotal;
+    if (opts.sourceFormat === "csv" || effectiveYtdGross === 0) {
+      const yearStart = `${parsed.check_date.slice(0, 4)}-01-01`;
+      const { data: priorRows } = await sb
+        .from("payroll_detail")
+        .select("gross_pay, payroll_runs!inner(pay_date)")
+        .eq("team_member_id", match.id)
+        .eq("agency_id", opts.agencyId)
+        .gte("payroll_runs.pay_date", yearStart)
+        .lt("payroll_runs.pay_date", parsed.check_date);
+      const priorGross = (priorRows ?? []).reduce((s: number, r: any) => s + parseFloat(r.gross_pay ?? 0), 0);
+      effectiveYtdGross = Math.round((priorGross + e.period_gross) * 100) / 100;
+      effectiveEarningsYtd = effectiveYtdGross; // matches item-sum semantics
+    }
+
     detailRows.push({
       payroll_run_id: runRowId, agency_id: opts.agencyId, business_entity_id: businessEntityId, team_member_id: match.id,
       gross_pay: e.period_gross, federal_tax: e.deduction_items["FED WTH"]?.period ?? 0, state_tax: stateTax,
       social_security: e.deduction_items["FICA"]?.period ?? 0, medicare: e.deduction_items["MEDFICA"]?.period ?? 0,
       other_deductions: otherDed, net_pay: e.net_pay, employment_type: "W2",
-      ytd_gross: e.ytd_gross, employer_taxes: employerSum,
-      raw_earnings: { state: e.income_state, period_hours: e.period_hours, items: e.earnings_items, period_total: earningsPeriodTotal, ytd_total: earningsYtdTotal },
+      ytd_gross: effectiveYtdGross, employer_taxes: employerSum,
+      raw_earnings: { state: e.income_state, period_hours: e.period_hours, items: e.earnings_items, period_total: earningsPeriodTotal, ytd_total: effectiveEarningsYtd },
       raw_deductions: { items: e.deduction_items, period_total: dedPeriodTotal, ytd_total: dedYtdTotal },
       raw_employer_taxes: { items: e.employer_items, period_total: empPeriodTotal, ytd_total: empYtdTotal },
     });
@@ -273,7 +516,7 @@ export async function processSurePayrollPdf(opts: {
         period_hours: e.period_hours,
         items: e.earnings_items,
         period_total: earningsPeriodTotal,
-        ytd_total: earningsYtdTotal,
+        ytd_total: effectiveEarningsYtd,
       };
     }
   }
