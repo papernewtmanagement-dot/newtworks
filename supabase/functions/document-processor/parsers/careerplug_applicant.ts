@@ -153,8 +153,9 @@ async function processCareerplugMessage(
   }
 
   // 2. LLM parse (with subject + from for context)
+  const cleanedBody = stripCareerplugTrackers(bodyText);
   const llmInput =
-    `SUBJECT: ${subject}\nFROM: ${fromEmail}\nRECEIVED_AT (ISO): ${receivedAtISO}\n\n=== BODY ===\n${bodyText.slice(0, 24000)}\n=== END BODY ===\n`;
+    `SUBJECT: ${subject}\nFROM: ${fromEmail}\nRECEIVED_AT (ISO): ${receivedAtISO}\n\n=== BODY ===\n${cleanedBody.slice(0, 8000)}\n=== END BODY ===\n`;
 
   const parseRes = await parseWithLLM({
     agencyId: ctx.agencyId,
@@ -164,7 +165,7 @@ async function processCareerplugMessage(
     userContent: llmInput,
     documentId: null,
     purpose: "careerplug_applicant_extract",
-    maxTokens: 3000,
+    maxTokens: 800,
   });
 
   if (!parseRes.ok) {
@@ -332,6 +333,17 @@ function tryDecodeB64Url(b64: string): string | null {
   } catch (_e) {
     return null;
   }
+}
+
+function stripCareerplugTrackers(text: string): string {
+  // CareerPlug notification bodies are ~90% base64 tracking URLs. Every
+  // clickable text is followed by a parenthesized URL blob. Strip them —
+  // they carry zero applicant signal and blow past Groq's TPM budget.
+  return text
+    .replace(/\(\s*https?:\/\/email\.reply\.careerplug\.com\/[^\s)]+\s*\)/gi, "")
+    .replace(/https?:\/\/email\.reply\.careerplug\.com\/[^\s)]+/gi, "")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 function stripHtml(html: string): string {
