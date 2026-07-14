@@ -2539,12 +2539,12 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                   );
                   return [
                     goalsMain,
+                    goalsSubRow("health", "💪 Health Goal",         (_gd, d) => Number(d.health_bonus)    || 0),
                     goalsSubRow("win",    "🏆 Win the Week",         gd    => (gd.won_the_week ? 10 : 0)),
                     goalsSubRow("gain",   "📈 1% Gain target",       gd    => (gd.gain_hit ? 10 : 0)),
                     goalsSubRow("as",     "⭐ All-Star crossings",   gd    => 10 * (Number(gd.as_hits)     || 0)),
                     goalsSubRow("podium", "🥇 Leaderboard entries",  gd    => 10 * (Number(gd.podium_hits) || 0)),
                     goalsSubRow("tb",     "🔥 Trailblazer breaks",   gd    => 10 * (Number(gd.tb_hits)     || 0)),
-                    goalsSubRow("health", "💪 Health Goal",         (_gd, d) => Number(d.health_bonus)    || 0),
                   ];
                 }
                 return [
