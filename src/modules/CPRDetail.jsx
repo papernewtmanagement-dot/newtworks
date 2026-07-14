@@ -1417,6 +1417,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  auto_new,  newWkD:  wkDelta(resolvedAutoNew,  priorAutoNew),
       lostYtd: auto_lost, lostWkD: wkDelta(resolvedAutoLost, priorAutoLost),
       gainYtd: auto_new - auto_lost,
+      priorGainYtd: (priorAutoNew != null && priorAutoLost != null) ? Number(priorAutoNew) - Number(priorAutoLost) : null,
       onTimeWkD: gainWkDR(resolvedAutoNew, priorAutoNew, resolvedAutoLost, priorAutoLost),
       goal: goalFor(goals, "auto", "gain"),
       lapseRate: (lapseRates && lapseRates.auto != null) ? lapseRates.auto : null,
@@ -1427,6 +1428,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  fire_new,  newWkD:  wkDelta(resolvedFireNew,  priorFireNew),
       lostYtd: fire_lost, lostWkD: wkDelta(resolvedFireLost, priorFireLost),
       gainYtd: fire_new - fire_lost,
+      priorGainYtd: (priorFireNew != null && priorFireLost != null) ? Number(priorFireNew) - Number(priorFireLost) : null,
       onTimeWkD: gainWkDR(resolvedFireNew, priorFireNew, resolvedFireLost, priorFireLost),
       goal: goalFor(goals, "fire", "gain"),
       lapseRate: (lapseRates && lapseRates.fire != null) ? lapseRates.fire : null,
@@ -1437,6 +1439,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  life_new,  newWkD:  wkDelta(resolvedLifeNew,  priorLifeNew),
       lostYtd: life_lost, lostWkD: wkDelta(resolvedLifeLost, priorLifeLost),
       gainYtd: life_new - life_lost,
+      priorGainYtd: (priorLifeNew != null && priorLifeLost != null) ? Number(priorLifeNew) - Number(priorLifeLost) : null,
       onTimeWkD: gainWkDR(resolvedLifeNew, priorLifeNew, resolvedLifeLost, priorLifeLost),
       goal: goalFor(goals, "life", "gain"),
       lapseRate: (lapseRates && lapseRates.life != null) ? lapseRates.life : null,
@@ -1447,6 +1450,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_count,
+      priorGainYtd: (priorLifeCount == null) ? null : Number(priorLifeCount),
       onTimeWkD: wkDelta(resolvedLifeCount, priorLifeCount),
       goal: goalFor(goals, "life", "net_paid_for"),
       lapseRate: null,
@@ -1457,6 +1461,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem,
+      priorGainYtd: (priorLifePremium == null) ? null : Number(priorLifePremium),
       onTimeWkD: wkDelta(resolvedLifePremium, priorLifePremium),
       goal: goalFor(goals, "life", "premium"),
       isMoney: true,
@@ -1470,6 +1475,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: auto_prem_book,
+      priorGainYtd: (priorAutoPrem == null) ? null : Number(priorAutoPrem),
       paceBaseline: yearStartAutoPrem,
       onTimeWkD: wkDelta(resolvedAutoPrem, priorAutoPrem),
       goal: premGoalAuto,
@@ -1482,6 +1488,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: fire_prem_book,
+      priorGainYtd: (priorFirePrem == null) ? null : Number(priorFirePrem),
       paceBaseline: yearStartFirePrem,
       onTimeWkD: wkDelta(resolvedFirePrem, priorFirePrem),
       goal: premGoalFire,
@@ -1494,6 +1501,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem_book,
+      priorGainYtd: (priorLifePrem == null) ? null : Number(priorLifePrem),
       paceBaseline: yearStartLifePrem,
       onTimeWkD: wkDelta(resolvedLifePrem, priorLifePrem),
       goal: premGoalLife,
@@ -1636,13 +1644,23 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 //   - Standard rows (no paceBaseline): gainYtd is a YTD gain → annualize whole value.
                 //   - Premium rows (paceBaseline set): gainYtd is a SNAPSHOT of current book →
                 //     project growth from year-start: onTime = baseline + growth × 365/daysElapsed.
-                let onTime;
-                if (r.paceBaseline != null && r.gainYtd != null) {
-                  const growthYtd = Number(r.gainYtd) - Number(r.paceBaseline);
-                  onTime = Number(r.paceBaseline) + (growthYtd * 365) / daysElapsed;
-                } else {
-                  onTime = (Number(r.gainYtd) * 365) / daysElapsed;
-                }
+                const projectOnTime = (gainVal, daysElapsedForCalc) => {
+                  if (gainVal == null || !(daysElapsedForCalc > 0)) return null;
+                  if (r.paceBaseline != null) {
+                    const growth = Number(gainVal) - Number(r.paceBaseline);
+                    return Number(r.paceBaseline) + (growth * 365) / daysElapsedForCalc;
+                  }
+                  return (Number(gainVal) * 365) / daysElapsedForCalc;
+                };
+                const onTime = projectOnTime(r.gainYtd, daysElapsed) ?? NaN;
+                // On Time WoW delta = change in the year-end projection, not the raw wkD.
+                // Prior projection uses (daysElapsed - 7) — the same number of days elapsed
+                // as of the prior week. Falls back to r.onTimeWkD only if we can't compute
+                // a prior projection (missing priorGainYtd or too early in year).
+                const priorOnTime = projectOnTime(r.priorGainYtd, daysElapsed - 7);
+                const onTimeDelta = (priorOnTime != null && Number.isFinite(onTime))
+                  ? (onTime - priorOnTime)
+                  : r.onTimeWkD;
                 const onTimeRounded = r.isMoney ? onTime : Math.round(onTime);
                 const diff = (r.goal !== null && r.goal !== undefined && r.gainYtd !== null && r.gainYtd !== undefined)
                   ? (onTime - Number(r.goal))
@@ -1721,7 +1739,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                         </span>
                       </Td>
                     ) : renderValDelta(r.gainYtd, r.onTimeWkD, undefined, false)}
-                    {renderValDelta(onTimeRounded, r.onTimeWkD, T.slate50, true)}
+                    {renderValDelta(onTimeRounded, onTimeDelta, T.slate50, true)}
                     <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>
                       {(r.goal === null || r.goal === undefined)
                         ? "—"
