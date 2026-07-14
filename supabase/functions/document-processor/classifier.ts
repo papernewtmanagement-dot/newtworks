@@ -140,22 +140,24 @@ export interface DocClassifyInput {
 }
 
 const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean }> = [
-  // ----- SUREPAYROLL (v37, 2026-07-07) — SF-forwarded SurePayroll summary.
-  //       Deterministic regex parser. Must be first so it wins over the
-  //       generic filename-fallback "payroll" rule that would otherwise
-  //       route to adp_payroll. Requires .pdf extension to avoid matching
-  //       inline images (image001.gif etc.) that come with the email. -----
+  // ----- SUREPAYROLL (v37 PDF 2026-07-07, v52 +CSV 2026-07-14) —
+  //       SF-forwarded SurePayroll summary. Deterministic parsers for both
+  //       formats: unpdf regex for PDF, header-mapped column parser for CSV.
+  //       Must be first so it wins over the generic filename-fallback
+  //       "payroll" rule that would otherwise route to adp_payroll. Requires
+  //       .pdf or .csv extension to avoid matching inline images
+  //       (image001.gif etc.) that come with the email. -----
   { docType: "surepayroll_payroll",
     test: (i) => /statefarm/i.test(i.fromEmail)
               && /payroll/i.test(i.subject + " " + i.fileName)
-              && /\.pdf$/i.test(i.fileName) },
+              && /\.(pdf|csv)$/i.test(i.fileName) },
 
-  // ----- SUREPAYROLL non-PDF attachments (inline images) — SKIP silently.
-  //       Same sender + subject match but non-PDF file: don't try to parse. -----
+  // ----- SUREPAYROLL non-parseable attachments (inline images) — SKIP silently.
+  //       Same sender + subject match but neither pdf nor csv: don't try. -----
   { docType: "skip",
     test: (i) => /statefarm/i.test(i.fromEmail)
               && /payroll/i.test(i.subject)
-              && !/\.pdf$/i.test(i.fileName) },
+              && !/\.(pdf|csv)$/i.test(i.fileName) },
 
   // ----- ARCHIVE — any .zip is unpacked, contents reclassified individually -----
   { docType: "archive_bundle",
