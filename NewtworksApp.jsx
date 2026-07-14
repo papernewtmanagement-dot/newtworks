@@ -27,6 +27,7 @@ import PFA from "./src/modules/PFA.jsx";
 import Marketing from "./src/modules/Marketing.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
+import Onboarding from "./src/modules/Onboarding.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -101,6 +102,7 @@ const NAV_ITEMS = [
   { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
+  { id: "onboarding",  label: "Onboarding",  icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
   { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
@@ -668,6 +670,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary key="handbook" name="Handbook"><Manual manualType="handbook" /></ErrorBoundary>,
     processes:   <ErrorBoundary key="processes" name="Processes"><Manual manualType="processes" /></ErrorBoundary>,
+    onboarding:  <ErrorBoundary name="Onboarding"><Onboarding userRole={userRole} userId={userId} /></ErrorBoundary>,
     admin:       <ErrorBoundary key="admin" name="Admin"><Manual manualType="admin" /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
