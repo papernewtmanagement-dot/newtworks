@@ -1,0 +1,163 @@
+-- 20260714_tasks_reminders.sql
+-- Adds Telegram-reminder plumbing to public.tasks + a pg_cron-driven dispatcher.
+--
+-- Applied via Supabase MCP as two migrations on 2026-07-14:
+--   1) tasks_add_due_at_and_reminders
+--   2) dispatch_task_reminders_and_schedule
+-- Mirrored here per GitHub-mirror op-rule so schema history is grep-able.
+
+-- === PART 1: schema =========================================================
+
+ALTER TABLE public.tasks
+  ADD COLUMN IF NOT EXISTS due_at timestamptz,
+  ADD COLUMN IF NOT EXISTS remind_via_telegram boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS reminded_at timestamptz;
+
+COMMENT ON COLUMN public.tasks.due_at IS
+  'Optional datetime-precise due deadline. When remind_via_telegram=true, dispatch_task_reminders() DMs Peter <=60 min before this timestamp.';
+COMMENT ON COLUMN public.tasks.remind_via_telegram IS
+  'When true and due_at set and status open, dispatch_task_reminders() sends a Telegram DM to Peter and stamps reminded_at.';
+COMMENT ON COLUMN public.tasks.reminded_at IS
+  'Set by dispatch_task_reminders() after successful send. Cleared automatically when due_at is bumped to a future timestamp (tg_task_due_at_reset_reminder).';
+
+CREATE OR REPLACE FUNCTION public.reset_task_reminded_at_on_due_change()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.due_at IS DISTINCT FROM OLD.due_at
+     AND NEW.due_at IS NOT NULL
+     AND NEW.due_at > NOW() THEN
+    NEW.reminded_at := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tg_task_due_at_reset_reminder ON public.tasks;
+CREATE TRIGGER tg_task_due_at_reset_reminder
+BEFORE UPDATE ON public.tasks
+FOR EACH ROW EXECUTE FUNCTION public.reset_task_reminded_at_on_due_change();
+
+CREATE INDEX IF NOT EXISTS idx_tasks_reminder_scan
+  ON public.tasks (due_at)
+  WHERE remind_via_telegram = true AND reminded_at IS NULL AND status = 'open' AND due_at IS NOT NULL;
+
+-- === PART 2: dispatcher + schedule ==========================================
+
+CREATE OR REPLACE FUNCTION public.dispatch_task_reminders()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_agency_id uuid := '126794dd-25ff-47d2-a436-724499733365';
+  v_chat_id bigint;
+  v_now timestamptz := NOW();
+  v_recipe_id uuid;
+  v_run_start timestamptz := clock_timestamp();
+  v_task RECORD;
+  v_msg text;
+  v_local_due text;
+  v_count int := 0;
+  v_ids uuid[] := ARRAY[]::uuid[];
+  v_out jsonb;
+BEGIN
+  SELECT id INTO v_recipe_id
+  FROM public.automation_recipes
+  WHERE recipe_name = 'Task Reminder Dispatcher' AND agency_id = v_agency_id
+  LIMIT 1;
+
+  SELECT ttm.telegram_user_id INTO v_chat_id
+  FROM public.team_telegram_map ttm
+  JOIN public.team t ON t.id = ttm.team_id
+  WHERE t.agency_id = v_agency_id
+    AND t.role_level = 'Owner'
+    AND ttm.is_excluded_paper_newt_bot = false
+  LIMIT 1;
+
+  IF v_chat_id IS NULL THEN
+    v_out := jsonb_build_object(
+      'records_processed', 0,
+      'output_summary', 'skipped: no owner chat_id in team_telegram_map (paper_newt_bot channel)');
+    IF v_recipe_id IS NOT NULL THEN
+      INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, records_processed, output_summary, duration_seconds)
+      VALUES (v_agency_id, v_recipe_id, v_now, 'success', 0, v_out->>'output_summary',
+              ROUND(EXTRACT(EPOCH FROM (clock_timestamp() - v_run_start)))::int);
+    END IF;
+    RETURN v_out;
+  END IF;
+
+  FOR v_task IN
+    SELECT id, title, due_at, priority, task_type
+    FROM public.tasks
+    WHERE agency_id = v_agency_id
+      AND remind_via_telegram = true
+      AND due_at IS NOT NULL
+      AND reminded_at IS NULL
+      AND status = 'open'
+      AND due_at <= v_now + INTERVAL '60 minutes'
+    ORDER BY due_at
+    LIMIT 50
+  LOOP
+    v_local_due := to_char(v_task.due_at AT TIME ZONE 'America/Chicago', 'FMDay Mon FMDD, FMHH12:MI AM');
+    v_msg := format(
+      E'\u23f0 Task reminder\n\n%s\n\nDue: %s CT\nPriority: %s\n\nOpen Newtworks \u2192 Tasks & Goals',
+      v_task.title,
+      v_local_due,
+      COALESCE(v_task.priority, 'medium')
+    );
+    BEGIN
+      PERFORM public.telegram_send_message_v2(v_chat_id, v_msg, 'paper_newt');
+      UPDATE public.tasks SET reminded_at = v_now WHERE id = v_task.id;
+      v_ids := array_append(v_ids, v_task.id);
+      v_count := v_count + 1;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'dispatch_task_reminders: telegram send failed for task % (%): %', v_task.id, v_task.title, SQLERRM;
+    END;
+  END LOOP;
+
+  v_out := jsonb_build_object(
+    'records_processed', v_count,
+    'output_summary', CASE WHEN v_count = 0 THEN 'no tasks due within 60 min'
+                            ELSE format('sent %s reminder(s)', v_count) END,
+    'task_ids', to_jsonb(v_ids)
+  );
+
+  IF v_recipe_id IS NOT NULL THEN
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, records_processed, output_summary, duration_seconds)
+    VALUES (v_agency_id, v_recipe_id, v_now, 'success', v_count, v_out->>'output_summary',
+            ROUND(EXTRACT(EPOCH FROM (clock_timestamp() - v_run_start)))::int);
+  END IF;
+
+  RETURN v_out;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.dispatch_task_reminders() FROM PUBLIC, anon, authenticated;
+
+-- Recipe row for UI visibility only; pg_cron does the actual scheduling.
+INSERT INTO public.automation_recipes (
+  agency_id, recipe_name, recipe_description, trigger_type,
+  cron_expression, composio_action, internal_handler, is_active
+)
+SELECT
+  '126794dd-25ff-47d2-a436-724499733365',
+  'Task Reminder Dispatcher',
+  'Every 5 min: DM Peter via @paper_newt_bot when an open task with remind_via_telegram=true is within 60 min of its due_at. Direct-cron (pg_cron -> SQL fn), not routed through automation-runner.',
+  'manual',
+  NULL,
+  'INTERNAL',
+  'dispatch_task_reminders',
+  true
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.automation_recipes
+  WHERE recipe_name = 'Task Reminder Dispatcher'
+    AND agency_id = '126794dd-25ff-47d2-a436-724499733365'
+);
+
+SELECT cron.unschedule(jobname) FROM cron.job WHERE jobname = 'task-reminder-tick';
+SELECT cron.schedule(
+  'task-reminder-tick',
+  '*/5 * * * *',
+  $cron$SELECT public.dispatch_task_reminders();$cron$
+);
