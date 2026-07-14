@@ -276,6 +276,7 @@ async function processMessage(
         toolArguments: {
           thread_id: threadId,
           remove_label_ids: ["INBOX"],
+          add_label_ids: ["Label_29"], // "Call Logs"
           user_id: "me",
         },
       });
