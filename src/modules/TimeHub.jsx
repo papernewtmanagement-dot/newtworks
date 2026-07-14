@@ -1,7 +1,7 @@
-import { useState } from "react";
 import TimeClock from "./TimeClock.jsx";
 import TimeOffRequests from "./TimeOffRequests.jsx";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─────────────────────────────────────────────────────────────────────────────
 // TimeHub: parent module that unifies Timeclock and Time Off & Remote under a
 // single nav entry with a top-level tab switch.
@@ -18,7 +18,7 @@ const TABS = [
 ];
 
 export default function TimeHub() {
-  const [activeTab, setActiveTab] = useState("timeclock");
+  const [activeTab, setActiveTab] = useTabParam("tab", "timeclock", ["timeclock","timeoff"]);
 
   return (
     <div>

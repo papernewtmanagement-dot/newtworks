@@ -37,6 +37,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Document Type Config ─────────────────────────────────────
 const DOC_TYPES = {
   comp_recap:     { label:"COMP_RECAP",      color:T.green,  bg:T.greenLt,  icon:"📊" },
@@ -641,7 +642,7 @@ const UploadSection = () => {
 
 // ─── Main Documents Module ────────────────────────────────────
 export default function Documents() {
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","intake","library","upload"]);
   const { data: liveDocs, loading: docsLoading } = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
   const documents = (liveDocs && liveDocs.length > 0)

@@ -29,6 +29,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { T } from "../lib/theme.js";
 import { StaffRequestSection, AdminApprovalQueue } from "./TimeClockEditRequests.jsx";
 
+import { useTabParam } from "../lib/routing.jsx";
 const YELLOW_HR = 39;
 const RED_HR = 40;
 
@@ -278,7 +279,7 @@ function filterVisibleStaff(staff, user) {
 export default function TimeClock() {
   const { user, loading: userLoading } = useCurrentUser();
   const canSeeAdmin = !!user && ["owner", "manager"].includes(user.role);
-  const [tab, setTab] = useState("kiosk");
+  const [tab, setTab] = useTabParam("subtab", "kiosk", ["kiosk","admin"]);
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 

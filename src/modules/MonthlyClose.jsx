@@ -37,6 +37,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 const MONTHS = ["", "January","February","March","April","May","June",
   "July","August","September","October","November","December"];
 
@@ -199,7 +200,7 @@ const ChecklistRow = ({ item, doc, busy, monthClosed, onMark, onRevert }) => {
 
 // ─── Main Module ──────────────────────────────────────────────
 export default function MonthlyClose() {
-  const [section, setSection] = useState("checklist");
+  const [section, setSection] = useTabParam("tab", "checklist", ["checklist","timeline"]);
   const [busyId, setBusyId] = useState(null);
   const [closing, setClosing] = useState(false);
 

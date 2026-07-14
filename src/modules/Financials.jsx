@@ -25,6 +25,7 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 // ─── Live Supabase Data Hook ─────────────────────────────────
@@ -1570,7 +1571,7 @@ const PrintPackage = ({ data, periodLabel }) => {
 
 // ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","balsheet","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
   const { data: liveData, loading } = useFinancialsData();
   if (liveData) MOCK = liveData;

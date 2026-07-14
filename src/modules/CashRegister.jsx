@@ -19,6 +19,7 @@ import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 const fmt = (n) => new Intl.NumberFormat("en-US", { style:"currency", currency:"USD" }).format(n ?? 0);
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) : "—";
 
@@ -637,7 +638,7 @@ function useCashRegisterData() {
 
 // ─── Main Export ──────────────────────────────────────────────
 export default function CashRegister() {
-  const [activeTab, setActiveTab] = useState("balances");
+  const [activeTab, setActiveTab] = useTabParam("tab", "balances", ["balances","queue","register","rules","weekly"]);
   const { data, loading, refresh } = useCashRegisterData();
 
   const tabs = [

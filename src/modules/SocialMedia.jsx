@@ -29,6 +29,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Platform Config ──────────────────────────────────────────
 const PLATFORMS = {
   facebook:  { label:"Facebook",  color:"#1877F2", bg:"#E7F0FD", icon:"f",  scheduling:"Auto-scheduled",  frequency:"4-5 posts/week", best_time:"Tue-Thu 9-11AM" },
@@ -705,7 +706,7 @@ Please draft a complete, compliant post ready to publish. Include:
 
 // ─── Main Social Media Module ─────────────────────────────────
 export default function SocialMedia() {
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","analytics","calendar","create","platforms"]);
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
 
   // ── Live data from content_calendar + social_accounts ───────

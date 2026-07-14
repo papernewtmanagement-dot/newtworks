@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
 
+import { useTabParam } from "../lib/routing.jsx";
 // ============================================================
 // Newtworks BOOK MODULE
 // Newtworks — State Farm Agent Edition
@@ -1165,7 +1166,7 @@ const BookAssignmentsSection = () => {
 
 
 export default function Book() {
-  const [tab, setTab] = useState("snapshot");
+  const [tab, setTab] = useTabParam("tab", "snapshot", ["snapshot","goals","assignments"]);
 
   const tabs = [
     { id: "snapshot",    label: "Snapshot" },

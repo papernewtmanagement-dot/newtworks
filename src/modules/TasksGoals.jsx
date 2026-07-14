@@ -31,6 +31,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Priority Config ──────────────────────────────────────────
 const PRIORITY = {
   critical: { color:T.red,    bg:T.redLt,    label:"Critical", dot:"🔴" },
@@ -1021,7 +1022,7 @@ const CompletedSection = ({ tasks }) => {
 
 // ─── Main Tasks & Goals Module ────────────────────────────────
 export default function TasksGoals({ onNavigate, userRole, userId }) {
-  const [section,  setSection]  = useState("todos");
+  const [section, setSection] = useTabParam("tab", "todos", ["todos","goals","overview","completed"]);
   const { data: liveTasks, loading: tasksLoading } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
   const { data: liveGoals, loading: goalsLoading } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";

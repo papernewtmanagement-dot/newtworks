@@ -31,6 +31,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Mock Data ────────────────────────────────────────────────
 const MOCK_RECIPES = [
   {
@@ -681,7 +682,7 @@ const DocImporter = ({ imports }) => {
 
 // ─── Main Automations Module ──────────────────────────────────
 export default function Automations() {
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","recipes","runlog","importer","briefing","connections"]);
   const { data: liveRecipes, loading: recipesLoading } = useSupabaseTable("automation_recipes", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const { data: liveRunLog }   = useSupabaseTable("automation_run_log", AGENCY_ID, { orderBy: "run_at", ascending: false });
   const { data: liveSettings } = useSupabaseTable("settings", AGENCY_ID);

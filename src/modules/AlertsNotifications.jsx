@@ -36,6 +36,7 @@ import { ModuleLink } from "../lib/routing.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Alert Type Config ────────────────────────────────────────
 const ALERT_TYPES = {
   compliance:   { label:"Compliance",   color:T.red,    bg:T.redLt,    icon:"🛡️" },
@@ -561,7 +562,7 @@ const NotificationPrefs = () => {
 
 // ─── Main Alerts Module ───────────────────────────────────────
 export default function AlertsNotifications({ onNavigate }) {
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","all","history","prefs"]);
   const { data: liveAlerts, loading: alertsLoading } = useSupabaseTable("alerts", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
   const [alerts, setAlerts] = useState(useMockData ? MOCK_ALERTS : []);

@@ -28,6 +28,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Category Config ──────────────────────────────────────────
 const CATEGORY_CONFIG = {
   contract:              { label: "Contract Basics",        color: T.slate900,   icon: "📜" },
@@ -568,7 +569,7 @@ const AuditLog = ({ log = [], agencyName = "Agent", onRefresh }) => {
 
 // ─── Main Compliance Center Module ───────────────────────────
 export default function ComplianceCenter() {
-  const [section, setSection] = useState("dashboard");
+  const [section, setSection] = useTabParam("tab", "dashboard", ["dashboard","calendar","checklist","log","rules"]);
 
   // ── Live data ────────────────────────────────────────────────
   const [rules, setRules] = useState([]);

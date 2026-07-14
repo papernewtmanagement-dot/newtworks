@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { mdToHtml } from "../lib/markdown.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ============================================================
 // Time Off & Remote Request Module
 // Spec: persistent_memory id fcaa841a-68f0-481c-a348-9d07f1699a85
@@ -1178,7 +1179,7 @@ function InboxView({ me, onDecided }) {
 // MAIN ================================================
 export default function TimeOffRequests() {
   const [me, setMe] = useState(null);
-  const [activeTab, setActiveTab] = useState("submit");
+  const [activeTab, setActiveTab] = useTabParam("subtab", "submit", ["submit","history","inbox","my","vote"]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [policyOpen, setPolicyOpen] = useState(false);

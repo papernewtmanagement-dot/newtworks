@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // =====================================================================
 // PFA.jsx — Premium Fund Account
 //
@@ -1117,7 +1118,7 @@ function ClosesTab() {
 // =====================================================================
 export default function PFA({ userRole }) {
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [activeTab, setActiveTab] = useState("today");
+  const [activeTab, setActiveTab] = useTabParam("tab", "today", ["today","statements","closes","recon","ledger"]);
   const [pfaAccountId, setPfaAccountId] = useState(null);
   const [teamRoster, setTeamRoster] = useState([]);
 

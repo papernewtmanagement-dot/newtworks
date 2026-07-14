@@ -22,6 +22,7 @@ import ComplianceCenter from "./ComplianceCenter.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Domain Metadata ──────────────────────────────────────────
 // Visual config per known domain. Domains not in this map fall
 // back to DEFAULT_DOMAIN_META.
@@ -469,7 +470,7 @@ What I'd like to discuss:
 // (principles tab) AND hosts the operational compliance tooling
 // (compliance tab — wraps the existing ComplianceCenter module).
 export default function CorePrinciples() {
-  const [outerTab, setOuterTab] = useState("principles");
+  const [outerTab, setOuterTab] = useTabParam("tab", "principles", ["principles","compliance"]);
   const tabs = [
     { id: "principles", label: "Principles",        icon: "📜" },
     { id: "compliance", label: "Compliance Center", icon: "⚖️" },

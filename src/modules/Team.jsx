@@ -38,6 +38,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Pipeline Stage Config ────────────────────────────────────
 const STAGES = {
   applied:         { label:"Applied",        color:T.slate500, bg:T.slate100, order:0 },
@@ -985,7 +986,7 @@ const StaffDirectory = ({ staff }) => {
   };
 
   // ── Reactivation flow state ──
-  const [view, setView] = useState("active"); // "active" or "archived"
+  const [view, setView] = useTabParam("mtab", "active", ["active","archived"]); // "active" or "archived"
   const [archivedStaff, setArchivedStaff] = useState([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [archivedError, setArchivedError] = useState("");
@@ -2601,7 +2602,7 @@ const HypotheticalHireForecast = () => {
 // visible. Sub-nav toggles between Recruiting and Onboarding. Hypothetical
 // hire forecast lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, onUpdate }) => {
-  const [view, setView] = useState("recruiting");
+  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","onboarding","declined"]);
   const subs = [
     { id:"recruiting", label:"Recruiting" },
     { id:"declined",   label:`Declined (${declined.length})` },
@@ -2654,7 +2655,7 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
 
 export default function Team() {
   const { data: roi } = useProducerROI();
-  const [section,     setSection]     = useState("members");
+  const [section, setSection] = useTabParam("tab", "members", ["members","growth"]);
   const [applicants,  setApplicants]  = useState([]);
 
   // Load applicants from live Supabase table. Empty result yields empty pipeline.

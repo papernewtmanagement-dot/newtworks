@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ============================================================
 // Newtworks MARKETING MODULE v1.0
 // Newtworks — State Farm Agent Edition
@@ -1440,7 +1441,7 @@ function InputRow({ label, span, children }) {
 
 function ReferralsReviewsTab() {
   const vp = useViewport();
-  const [subTab, setSubTab] = useState("referrals");
+  const [subTab, setSubTab] = useTabParam("subtab", "referrals", ["referrals","reviews"]);
   const { loading, referrals, reviews, error, reload } = useRefRevData();
   const team = useTeamRoster();
 
@@ -2232,7 +2233,7 @@ export default function Marketing() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [quarter, setQuarter] = useState(Math.floor(now.getMonth() / 3) + 1);
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","refrev","sources","spend","economics","everquote","ideas"]);
   const state = useMarketingData(year, quarter);
 
   // Year/quarter selector options

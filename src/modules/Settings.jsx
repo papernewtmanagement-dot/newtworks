@@ -30,6 +30,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
+import { useTabParam } from "../lib/routing.jsx";
 // ─── Role Config ──────────────────────────────────────────────
 const ROLES = {
   owner:     { label:"Owner",      color:T.slate900,   bg:T.slate100, description:"Full access including settings and all financial data" },
@@ -608,7 +609,7 @@ const Security = () => {
 // ─── Section: About ───────────────────────────────────────────
 const About = ({ agency: agencyProp }) => {
   const agency = agencyProp || {};
-  const [tab, setTab] = useState("stack");
+  const [tab, setTab] = useTabParam("subtab", "stack", ["stack","how"]);
 
   const components = [
     {
@@ -816,7 +817,7 @@ export default function Settings() {
     loadSettings();
   }, []);
 
-  const [section, setSection] = useState("profile");
+  const [section, setSection] = useTabParam("tab", "profile", ["profile","about","config","connections","security","team"]);
 
   const sections = [
     { id:"profile",     label:"Agency Profile"    },
