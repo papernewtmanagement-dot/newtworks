@@ -2317,7 +2317,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
   // v2 pay components — every element that hits a check under the residual-pool structure.
   // Base + Commission are payroll-cycle earnings.
   // Sales Share + Retention Share are the two halves of the residual bonus pool (65/35).
-  // Marketing is the separate marketing pool share. Manager + Health+ are pre-pool carveouts.
+  // Marketing is the separate marketing pool share. Manager + Health Goal are pre-pool carveouts.
   const ROWS = [
     ["base_salary",                   "Base"],
     ["commission",                    "Commission"],
@@ -2325,10 +2325,13 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
     // Expandable → 3 sub-rows below (13-wk sales split, 4-wk sales split, retention split).
     ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklyBonusPool)} pool)`],
     ["marketing_pool_earned_weekly",  "Marketing"],
-    // Goals: $10 per All-Star crossing + $10 per Trailblazer crossing + $10 if this-week new SP hit 1.01x prior 13wk avg.
-    // Populated by write_weekly_comp_v2 (after audit_weekly_leaderboard_crossings). Detail lives on residual_pool_diag.goals_detail.
+    // Goals: expandable row displaying goals_bonus + health_bonus.
+    // Expands to 6 sub-rows (5 goals_bonus $10 buckets from residual_pool_diag.goals_detail,
+    // populated by write_weekly_comp_v2 after audit_weekly_leaderboard_crossings, + Health Goal from d.health_bonus).
     ["goals_bonus",                   "Goals"],
-    ["health_bonus",                  "Health Goal"],
+    // health_bonus row is skipped in render (folded into Goals expander above), but
+    // kept in ROWS so Week Total + OT Annual reduce()s still pick up the dollar value.
+    ["health_bonus",                  "Health Goal (in Goals)"],
     ["manager_bonus",                 "Manager"],
   ];
 
@@ -2499,9 +2502,14 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                     subRow("ret",  "Retention split",   "ret_share_ratio_pct",  perThirdPool),
                   ];
                 }
-                // Goals: expandable row → 5 $10 buckets sub-rows.
-                // Bucket values read per-person from d.residual_pool_diag.goals_detail
-                // (populated by write_weekly_comp_v2 goals block, five buckets × $10).
+                // Health Goal is shown inside the Goals expander (see below).
+                // Skip rendering it as a standalone row. Kept in ROWS array so
+                // Week Total + OT Annual sums still pick up d.health_bonus.
+                if (key === "health_bonus") return [];
+                // Goals: expandable row → 6 sub-rows (5 goals_bonus $10 buckets + Health Goal up to $25).
+                // Buckets 1-5 read per-person from d.residual_pool_diag.goals_detail;
+                // Health Goal reads d.health_bonus (pre-pool carveout, $25 gated on ≥5 team health checkins).
+                // Main-row cell shows the SUM (goals_bonus + health_bonus).
                 if (key === "goals_bonus") {
                   const goalsMain = (
                     <tr key={key} onClick={() => setGoalsExpanded(v => !v)} style={{ cursor: "pointer" }}>
@@ -2509,7 +2517,9 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                         {goalsExpanded ? "▾" : "▸"} {label}
                       </Td>
                       {sorted.map(d => (
-                        <Td key={d.team_member_id} align="right">{fmtMoneyCents(d.goals_bonus)}</Td>
+                        <Td key={d.team_member_id} align="right">
+                          {fmtMoneyCents((Number(d.goals_bonus) || 0) + (Number(d.health_bonus) || 0))}
+                        </Td>
                       ))}
                     </tr>
                   );
@@ -2521,7 +2531,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                         const gd = d.residual_pool_diag?.goals_detail || {};
                         return (
                           <Td key={d.team_member_id} align="right" style={{ color: T.slate500, fontSize: 12 }}>
-                            {fmtMoneyCents(valueFn(gd))}
+                            {fmtMoneyCents(valueFn(gd, d))}
                           </Td>
                         );
                       })}
@@ -2529,11 +2539,12 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                   );
                   return [
                     goalsMain,
-                    goalsSubRow("win",    "🏆 Win the Week",       gd => (gd.won_the_week ? 10 : 0)),
-                    goalsSubRow("gain",   "📈 1% Gain target",     gd => (gd.gain_hit ? 10 : 0)),
-                    goalsSubRow("as",     "⭐ All-Star crossings",     gd => 10 * (Number(gd.as_hits)     || 0)),
-                    goalsSubRow("podium", "🥇 Leaderboard entries", gd => 10 * (Number(gd.podium_hits) || 0)),
-                    goalsSubRow("tb",     "🔥 Trailblazer breaks", gd => 10 * (Number(gd.tb_hits)     || 0)),
+                    goalsSubRow("win",    "🏆 Win the Week",         gd    => (gd.won_the_week ? 10 : 0)),
+                    goalsSubRow("gain",   "📈 1% Gain target",       gd    => (gd.gain_hit ? 10 : 0)),
+                    goalsSubRow("as",     "⭐ All-Star crossings",   gd    => 10 * (Number(gd.as_hits)     || 0)),
+                    goalsSubRow("podium", "🥇 Leaderboard entries",  gd    => 10 * (Number(gd.podium_hits) || 0)),
+                    goalsSubRow("tb",     "🔥 Trailblazer breaks",   gd    => 10 * (Number(gd.tb_hits)     || 0)),
+                    goalsSubRow("health", "💪 Health Goal",         (_gd, d) => Number(d.health_bonus)    || 0),
                   ];
                 }
                 return [
