@@ -571,6 +571,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               Generated {detail?.custom_probes_generated_at ? new Date(detail.custom_probes_generated_at).toLocaleString() : "—"}
               {detail.custom_probes?.model ? ` · ${detail.custom_probes.model}` : ""}
               {detail.custom_probes?.framework_matches_n != null ? ` · ${detail.custom_probes.framework_matches_n} framework matches` : ""}
+              {detail.custom_probes?.resume_analyzed
+                ? ` · resume read (${detail.custom_probes.resume_length_chars || 0} chars, ${detail.custom_probes.resume_source || "?"})`
+                : detail.custom_probes?.resume_source
+                  ? ` · resume not read (${detail.custom_probes.resume_source})`
+                  : ""}
               {detail.custom_probes?.notes ? ` · ${detail.custom_probes.notes}` : ""}
             </div>
             {detail.custom_probes.sections.map((sec, si) => (
