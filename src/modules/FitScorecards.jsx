@@ -41,6 +41,14 @@ const TIER_LABELS = {
   weeks_14_plus: "Weeks 14+",
 };
 
+// Cadence per handbook "Your Path" §Scorecarding Cadence. Not user-editable.
+// Also enforced server-side by tg_fit_scorecards_enforce_entry_type trigger.
+const ENTRY_TYPE_BY_TIER = {
+  weeks_1_8:     "conversation",
+  weeks_9_13:    "quote_review",
+  weeks_14_plus: "end_of_day",
+};
+
 // ─── date helpers (America/Chicago, Sunday-anchored week) ─────────
 
 function todayInCT() {
@@ -443,7 +451,8 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
 
   const [teamMemberId, setTMI]   = useState(initialMember || "");
   const [date,       setDate]    = useState(isEdit ? row.scorecard_date : todayInCT());
-  const [entryType,  setET]      = useState(isEdit ? row.entry_type : "conversation");
+  const [tenureTier, setTenureTier] = useState(isEdit ? row.tenure_tier_at_entry : null);
+  const entryType = tenureTier ? ENTRY_TYPE_BY_TIER[tenureTier] : null;
   const [custName,   setCust]    = useState(isEdit ? (row.customer_first_name || "") : "");
   const [oppRef,     setOpp]     = useState(isEdit ? (row.opportunity_ref || "") : "");
   const [recTurned,  setRec]     = useState(isEdit ? row.recording_turned_in : false);
@@ -457,15 +466,23 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
   const [saving,     setSaving]  = useState(false);
   const [err,        setErr]     = useState(null);
 
+  // Auto-resolve tenure tier (and therefore entry_type) whenever team member or date changes.
+  // Entry type is not user-selectable — cadence is dictated by tenure per handbook "Your Path".
+  useEffect(() => {
+    if (!teamMemberId || !date) { setTenureTier(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .rpc("fit_scorecard_tenure_tier", { p_team_id: teamMemberId, p_as_of: date });
+      if (!cancelled && !error) setTenureTier(data || "weeks_14_plus");
+    })();
+    return () => { cancelled = true; };
+  }, [teamMemberId, date]);
+
   async function handleSave() {
     if (!teamMemberId) { setErr("Pick a team member."); return; }
+    if (!tenureTier)   { setErr("Tenure tier still resolving — try again."); return; }
     setSaving(true); setErr(null);
-
-    // resolve tenure tier at entry
-    const { data: tierData, error: tierErr } = await supabase
-      .rpc("fit_scorecard_tenure_tier", { p_team_id: teamMemberId, p_as_of: date });
-    if (tierErr) { setSaving(false); setErr(tierErr.message); return; }
-    const tenure = tierData || "weeks_14_plus";
 
     const payload = {
       agency_id:            AGENCY_ID,
@@ -473,7 +490,7 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
       created_by_user_id:   userId || null,
       scorecard_date:       date,
       entry_type:           entryType,
-      tenure_tier_at_entry: tenure,
+      tenure_tier_at_entry: tenureTier,
       customer_first_name:  custName || null,
       opportunity_ref:      oppRef  || null,
       recording_turned_in:  !!recTurned,
@@ -550,13 +567,22 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
               style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }} />
           </label>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
-            Entry type
-            <select value={entryType} onChange={(e) => setET(e.target.value)}
-              style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }}>
-              {ENTRY_TYPES.map((et) => <option key={et.value} value={et.value}>{et.label}</option>)}
-            </select>
-          </label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
+            <span>Entry type</span>
+            <div style={{
+              padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6,
+              background: T.slate50 || "#f8fafc", color: T.slate900,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+              minHeight: 32,
+            }}>
+              <span style={{ fontWeight: 500 }}>
+                {entryType ? (ENTRY_TYPES.find((e) => e.value === entryType)?.label || entryType) : "—"}
+              </span>
+              <span style={{ fontSize: "0.72rem", color: T.slate500 || "#64748b" }}>
+                {tenureTier ? `Auto · ${TIER_LABELS[tenureTier]}` : "resolving…"}
+              </span>
+            </div>
+          </div>
 
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
             Customer first name (optional)
