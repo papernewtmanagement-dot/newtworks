@@ -1415,12 +1415,19 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     const sign = v > 0 ? "+" : "";
     return isMoney ? sign + fmtMoney(v) : sign + v.toLocaleString("en-US");
   };
-  // Per spec: green if up, red if down, grey if flat — uniform across all three delta columns.
+  // Per spec: green if up, red if down, grey if flat — for New / On Time (up = good).
   const deltaColor = (d) => {
     if (d === null || d === undefined) return T.slate500;
     const v = Number(d);
     if (!isFinite(v) || Math.abs(v) < 0.001) return T.slate500;
     return v > 0 ? T.green : T.red;
+  };
+  // Inverted for the Lost column: growing lost = red (worse), shrinking = green (better).
+  const deltaColorLost = (d) => {
+    if (d === null || d === undefined) return T.slate500;
+    const v = Number(d);
+    if (!isFinite(v) || Math.abs(v) < 0.001) return T.slate500;
+    return v > 0 ? T.red : T.green;
   };
   // Diff color: positive (above goal) = green, negative (below goal) = red.
   const diffColor = (diff) => {
@@ -1458,7 +1465,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                   ? "—"
                   : (r.isMoney ? fmtMoney(v) : fmtInt(v));
 
-                const renderValDelta = (ytd, wkD, bg, weightBoost) => {
+                const renderValDelta = (ytd, wkD, bg, weightBoost, colorFn = deltaColor) => {
                   if (ytd === null || ytd === undefined) {
                     return (
                       <Td align="right" style={{ background: bg, color: T.slate400 }}>—</Td>
@@ -1469,7 +1476,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                       <span style={{ fontWeight: weightBoost ? 700 : 500, color: T.slate900 }}>
                         {formatYtd(ytd)}
                       </span>
-                      <span style={{ marginLeft: 6, color: deltaColor(wkD), fontWeight: 600 }}>
+                      <span style={{ marginLeft: 6, color: colorFn(wkD), fontWeight: 600 }}>
                         {deltaText(wkD, r.isMoney)}
                       </span>
                     </Td>
@@ -1483,7 +1490,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 const bucketForm = isSnap ? formSnapshot : formReport;
                 const bucketChange = isSnap ? onSnapshotChange : onReportChange;
                 const bucketDirty = isSnap ? isSnapshotDirty : isReportDirty;
-                const renderEditOrVal = (key, ytd, wkD, bg) => {
+                const renderEditOrVal = (key, ytd, wkD, bg, colorFn = deltaColor) => {
                   if (editableRow && key) {
                     return (
                       <Td align="right" style={{ background: bg, padding: 4, whiteSpace: "nowrap" }}>
@@ -1495,19 +1502,19 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                           step={1}
                           style={{ width: 70 }}
                         />
-                        <span style={{ marginLeft: 6, color: deltaColor(wkD), fontWeight: 600, fontSize: 11 }}>
+                        <span style={{ marginLeft: 6, color: colorFn(wkD), fontWeight: 600, fontSize: 11 }}>
                           {deltaText(wkD, r.isMoney)}
                         </span>
                       </Td>
                     );
                   }
-                  return renderValDelta(ytd, wkD, bg, false);
+                  return renderValDelta(ytd, wkD, bg, false, colorFn);
                 };
                 return (
                   <tr key={r.label}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{r.label}</Td>
                     {renderEditOrVal(r.newKey,  r.newYtd,  r.newWkD,  undefined)}
-                    {renderEditOrVal(r.lostKey, r.lostYtd, r.lostWkD, undefined)}
+                    {renderEditOrVal(r.lostKey, r.lostYtd, r.lostWkD, undefined, deltaColorLost)}
                     <Td align="right">
                       {(r.lapseRate === null || r.lapseRate === undefined)
                         ? <span style={{ color: T.slate400 }}>—</span>
