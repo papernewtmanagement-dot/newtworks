@@ -2598,7 +2598,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                     goalsSubRow("win",    "🏆 Win the Week",         gd    => (gd.won_the_week ? 10 : 0)),
                     goalsSubRow("gain",   "📈 1% Gain target",       gd    => (gd.gain_hit ? 10 : 0)),
                     goalsSubRow("as",     "⭐ All-Star crossings",   gd    => 10 * (Number(gd.as_hits)     || 0)),
-                    goalsSubRow("podium", "🥇 Leaderboard entries",  gd    => 10 * (Number(gd.podium_hits) || 0)),
+                    goalsSubRow("leaderboard", "🥇 Leaderboard entries",  gd    => 10 * (Number(gd.leaderboard_hits) || 0)),
                     goalsSubRow("tb",     "🔥 Trailblazer breaks",   gd    => 10 * (Number(gd.tb_hits)     || 0)),
                   ];
                 }
@@ -3462,7 +3462,7 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
 }
 
 // 21b — Crossings Banner (top of CPR page for any week with breakthroughs)
-// Extracted from MVPBanner 2026-07-13 so this-week crossings/new podiums/All-Star clears
+// Extracted from MVPBanner 2026-07-13 so this-week crossings/new leaderboards/All-Star clears
 // surface EVERY week they occur, not only on winning weeks with an MVP.
 // Single-source: this is the ONLY surface listing per-week crossings; LeaderboardsSection
 // cards below show current records + All-Star floor only.
@@ -3481,7 +3481,7 @@ function CrossingsBanner({ team, weekDate, allStarCrossingsThisWeek = [], trailb
     return { key: "tb-" + r.team_member_id + "-" + r.category, icon: "▲", type: "Trailblazer", name: nm, catLabel: c.label, val: c.fmt(r.value_at_crossing),
              bg: "#dbeafe", border: "#3b82f6", color: "#1e3a8a" };
   });
-  const podiumChips = (leaderboards || [])
+  const leaderboardChips = (leaderboards || [])
     .filter(r => r.record_week_ending === weekDate)
     .map(r => {
       const p = teamById[r.team_member_id];
@@ -3501,7 +3501,7 @@ function CrossingsBanner({ team, weekDate, allStarCrossingsThisWeek = [], trailb
     return { key: "as-" + r.team_member_id + "-" + r.category, icon: "⭐", type: "All-Star", name: nm, catLabel: c.label, val: c.fmt(r.value_at_crossing),
              bg: "#fef9c3", border: "#eab308", color: "#713f12" };
   });
-  const allChips = [...tbChips, ...podiumChips, ...asChips];
+  const allChips = [...tbChips, ...leaderboardChips, ...asChips];
   if (allChips.length === 0) return null;
   return (
     <div style={{
@@ -4710,7 +4710,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         onRefresh={data.refresh}
       />
 
-      {/* Crossings Banner — renders whenever any Trailblazer / new podium / All-Star crossing landed
+      {/* Crossings Banner — renders whenever any Trailblazer / new leaderboard / All-Star crossing landed
           this week, independent of whether the team won the WtW gate. Extracted from MVPBanner
           2026-07-13 pm so these breakthroughs surface on non-winning weeks too. */}
       <CrossingsBanner
@@ -4897,7 +4897,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
 
-      {/* 21. Leaderboards (merged: podium + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
+      {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
         leaderboards={data.leaderboards}
         allStarCounts={data.allStarCounts}
