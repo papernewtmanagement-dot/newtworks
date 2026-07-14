@@ -171,7 +171,7 @@ export default function FitScorecards({ userRole, userId }) {
     (async () => {
       const { data, error } = await supabase
         .from("team")
-        .select("id, first_name, last_name, alias, user_id, hire_date, start_date, category, is_admin_backoffice, is_active, archived_at, role, role_category")
+        .select("id, first_name, last_name, nickname, user_id, hire_date, start_date, category, is_admin_backoffice, is_active, archived_at, role, role_category")
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
         .eq("is_active", true)
@@ -232,7 +232,7 @@ export default function FitScorecards({ userRole, userId }) {
 
   function displayName(p) {
     if (!p) return "—";
-    if (p.alias) return p.alias;
+    if (p.nickname) return p.nickname;
     return `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—";
   }
 
@@ -537,7 +537,7 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
             >
               {memberOptions.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.alias || `${p.first_name || ""} ${p.last_name || ""}`.trim()}
+                  {p.nickname || `${p.first_name || ""} ${p.last_name || ""}`.trim()}
                 </option>
               ))}
             </select>
