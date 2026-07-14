@@ -1067,7 +1067,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
         task_type:      t.task_type || "task",
         parent_task_id: t.parent_task_id || null,
         in_weekly_focus:!!t.in_weekly_focus,
-        due_date:       t.due_date ? new Date(t.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+        due_date:       t.due_date ? new Date(t.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
         completed_at:   t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
       })));
     }
@@ -1141,7 +1141,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
           task_type:      data.task_type || "task",
           parent_task_id: data.parent_task_id || null,
           in_weekly_focus:!!data.in_weekly_focus,
-          due_date:       data.due_date ? new Date(data.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+          due_date:       data.due_date ? new Date(data.due_date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
         }, ...prev]);
         return;
       }
