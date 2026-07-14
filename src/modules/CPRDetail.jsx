@@ -1531,19 +1531,24 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     },
   ];
 
-  // Delta display: "-" if flat/null; otherwise signed number (or signed money)
+  // Blank marker — thin gray line, replaces every "—" placeholder in this section.
+  const BLANK = (
+    <span style={{ display: "inline-block", width: 22, height: 1, background: T.slate300, verticalAlign: "middle" }} />
+  );
+  // Delta text: null on blank/flat so caller can render BLANK; else signed string.
   const deltaText = (d, isMoney) => {
-    if (d === null || d === undefined) return "—";
+    if (d === null || d === undefined) return null;
     const v = isMoney ? d : Math.round(d);
-    if (Math.abs(v) < 0.001) return "—";
+    if (Math.abs(v) < 0.001) return null;
     const sign = v > 0 ? "+" : "";
     return isMoney ? sign + fmtMoney(v) : sign + v.toLocaleString("en-US");
   };
   // Per spec: green if up, red if down, grey if flat — for New / On Time (up = good).
-  const deltaColor = (d) => {
+  // Accepts eps override for percent-scale deltas (rate rows).
+  const deltaColor = (d, eps = 0.001) => {
     if (d === null || d === undefined) return T.slate500;
     const v = Number(d);
-    if (!isFinite(v) || Math.abs(v) < 0.001) return T.slate500;
+    if (!isFinite(v) || Math.abs(v) < eps) return T.slate500;
     return v > 0 ? T.green : T.red;
   };
   // Inverted for the Lost column: growing lost = red (worse), shrinking = green (better).
@@ -1554,9 +1559,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     return v > 0 ? T.red : T.green;
   };
   // Diff color: positive (above goal) = green, negative (below goal) = red.
-  const diffColor = (diff) => {
+  const diffColor = (diff, eps = 0.001) => {
     if (diff === null || diff === undefined) return T.slate500;
-    if (Math.abs(diff) < 0.001) return T.slate500;
+    if (Math.abs(diff) < eps) return T.slate500;
     return diff > 0 ? T.green : T.red;
   };
 
@@ -1580,57 +1585,62 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
             </thead>
             <tbody>
               {rows.map(r => {
-                // Row-background shade for non-LOB rows (premium + rate).
-                // Applied to non-column-tinted tds so the row visually separates
-                // from the LOB rows above without competing with existing column tints.
-                const rowBg = (r.rowKind === "premium" || r.rowKind === "rate") ? T.slate100 : undefined;
+                // Row-shade selector — three tints per row kind (row bg, mid, dark).
+                //   Premium rows: light-green ramp.
+                //   Rate rows (SMVC %, SMVC $, Scorecard): light-blue ramp.
+                //   Standard LOB rows: no row bg; existing neutral column tints.
+                const shades =
+                  r.rowKind === "premium" ? { row: "#EDF6E1", mid: "#D2E6B0", dark: "#A5CB78" } :
+                  r.rowKind === "rate"    ? { row: "#E4EEFA", mid: "#BAD3EE", dark: "#8AB1DD" } :
+                                            { row: undefined,  mid: T.slate50,  dark: T.blueLt };
+                const rowBg = shades.row;
 
                 // ─── Rate rows (SMVC %, SMVC $, Scorecard) ───
                 // No new/lost/lapse/YTD. On Time column shows the current value with
                 // week-over-week delta. Goal + Diff show variance from target.
                 if (r.rowKind === "rate") {
                   const isPct = r.valueKind === "pct";
+                  const eps   = isPct ? 0.00005 : 0.005;
                   const val   = r.value;
                   const prior = r.valuePrior;
                   const wkD   = (val != null && prior != null) ? (val - prior) : null;
                   const goal  = r.goal;
                   const diff  = (val != null && goal != null) ? (val - goal) : null;
-                  const fmtVal = (v) => {
-                    if (v == null) return "—";
-                    return isPct ? (v * 100).toFixed(2) + "%" : fmtMoney(v);
-                  };
+                  const fmtVal = (v) => (v == null) ? null : (isPct ? (v * 100).toFixed(2) + "%" : fmtMoney(v));
                   const fmtDeltaLocal = (v) => {
-                    if (v == null) return "—";
-                    const eps = isPct ? 0.00005 : 0.005;
-                    if (Math.abs(v) < eps) return "—";
+                    if (v == null || Math.abs(v) < eps) return null;
                     const sign = v > 0 ? "+" : "";
                     return isPct ? sign + (v * 100).toFixed(2) + "%" : sign + fmtMoney(v);
                   };
                   const fmtDiffLocal = (v) => {
-                    if (v == null) return "—";
-                    const eps = isPct ? 0.00005 : 0.005;
-                    if (Math.abs(v) < eps) return isPct ? "0.00%" : "$0";
+                    if (v == null || Math.abs(v) < eps) return null;
                     const sign = v >= 0 ? "+" : "";
                     return isPct ? sign + (v * 100).toFixed(2) + "%" : sign + fmtMoney(v);
                   };
+                  const valTxt   = fmtVal(val);
+                  const deltaTxt = fmtDeltaLocal(wkD);
+                  const goalTxt  = fmtVal(goal);
+                  const diffTxt  = fmtDiffLocal(diff);
                   return (
                     <tr key={r.label}>
                       <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600, background: rowBg }}>{r.label}</Td>
-                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
-                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
-                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
-                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
-                      <Td align="right" style={{ background: T.slate50 }}>
-                        {val == null
-                          ? <span style={{ color: T.slate400 }}>—</span>
-                          : <>
-                              <span style={{ fontWeight: 700, color: T.slate900 }}>{fmtVal(val)}</span>
-                              <span style={{ marginLeft: 6, color: deltaColor(wkD), fontWeight: 600 }}>{fmtDeltaLocal(wkD)}</span>
-                            </>}
+                      <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
+                      <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
+                      <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
+                      <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
+                      <Td align="right" style={{ background: shades.mid }}>
+                        {valTxt == null ? BLANK : (
+                          <>
+                            <span style={{ fontWeight: 700, color: T.slate900 }}>{valTxt}</span>
+                            <span style={{ marginLeft: 6, color: deltaColor(wkD, eps), fontWeight: 600 }}>
+                              {deltaTxt ?? BLANK}
+                            </span>
+                          </>
+                        )}
                       </Td>
-                      <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>{fmtVal(goal)}</Td>
-                      <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor(diff) }}>
-                        {fmtDiffLocal(diff)}
+                      <Td align="right" style={{ background: shades.mid, color: T.slate700 }}>{goalTxt ?? BLANK}</Td>
+                      <Td align="right" style={{ background: shades.dark, fontWeight: 700, color: diffColor(diff, eps) }}>
+                        {diffTxt ?? BLANK}
                       </Td>
                     </tr>
                   );
@@ -1666,13 +1676,13 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                   ? (onTime - Number(r.goal))
                   : null;
                 const formatYtd = (v) => (v === null || v === undefined)
-                  ? "—"
+                  ? null
                   : (r.isMoney ? fmtMoney(v) : fmtInt(v));
 
                 const renderValDelta = (ytd, wkD, bg, weightBoost, colorFn = deltaColor) => {
                   if (ytd === null || ytd === undefined) {
                     return (
-                      <Td align="right" style={{ background: bg || rowBg, color: T.slate400 }}>—</Td>
+                      <Td align="right" style={{ background: bg || rowBg }}>{BLANK}</Td>
                     );
                   }
                   return (
@@ -1681,7 +1691,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                         {formatYtd(ytd)}
                       </span>
                       <span style={{ marginLeft: 6, color: colorFn(wkD), fontWeight: 600 }}>
-                        {deltaText(wkD, r.isMoney)}
+                        {deltaText(wkD, r.isMoney) ?? BLANK}
                       </span>
                     </Td>
                   );
@@ -1707,13 +1717,18 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                           style={{ width: 70 }}
                         />
                         <span style={{ marginLeft: 6, color: colorFn(wkD), fontWeight: 600, fontSize: 11 }}>
-                          {deltaText(wkD, r.isMoney)}
+                          {deltaText(wkD, r.isMoney) ?? BLANK}
                         </span>
                       </Td>
                     );
                   }
                   return renderValDelta(ytd, wkD, bg, false, colorFn);
                 };
+                const diffTxt = (diff === null)
+                  ? null
+                  : (r.isMoney
+                      ? (diff >= 0 ? "+" : "") + fmtMoney(diff)
+                      : fmtSigned(Math.round(diff)));
                 return (
                   <tr key={r.label}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600, background: rowBg }}>{r.label}</Td>
@@ -1721,7 +1736,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                     {renderEditOrVal(r.lostKey, r.lostYtd, r.lostWkD, undefined, deltaColorLost)}
                     <Td align="right" style={{ background: rowBg }}>
                       {(r.lapseRate === null || r.lapseRate === undefined)
-                        ? <span style={{ color: T.slate400 }}>—</span>
+                        ? BLANK
                         : <span style={{ color: T.slate900, fontWeight: 500 }}>{Number(r.lapseRate).toFixed(1)}%</span>}
                     </Td>
                     {editableRow && r.ytdKey ? (
@@ -1735,22 +1750,18 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                           style={{ width: 70 }}
                         />
                         <span style={{ marginLeft: 6, color: deltaColor(r.onTimeWkD), fontWeight: 600, fontSize: 11 }}>
-                          {deltaText(r.onTimeWkD, r.isMoney)}
+                          {deltaText(r.onTimeWkD, r.isMoney) ?? BLANK}
                         </span>
                       </Td>
                     ) : renderValDelta(r.gainYtd, r.onTimeWkD, undefined, false)}
-                    {renderValDelta(onTimeRounded, onTimeDelta, T.slate50, true)}
-                    <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>
+                    {renderValDelta(onTimeRounded, onTimeDelta, shades.mid, true)}
+                    <Td align="right" style={{ background: shades.mid, color: T.slate700 }}>
                       {(r.goal === null || r.goal === undefined)
-                        ? "—"
+                        ? BLANK
                         : (r.isMoney ? fmtMoney(r.goal) : fmtInt(r.goal))}
                     </Td>
-                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor(diff) }}>
-                      {diff === null
-                        ? "—"
-                        : (r.isMoney
-                            ? (diff >= 0 ? "+" : "") + fmtMoney(diff)
-                            : fmtSigned(Math.round(diff)))}
+                    <Td align="right" style={{ background: shades.dark, fontWeight: 700, color: diffColor(diff) }}>
+                      {diffTxt ?? BLANK}
                     </Td>
                   </tr>
                 );
