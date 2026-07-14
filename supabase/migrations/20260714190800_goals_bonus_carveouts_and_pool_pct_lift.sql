@@ -1,0 +1,53 @@
+-- Migration: goals_bonus_carveouts_and_pool_pct_lift
+-- Date: 2026-07-14
+-- Purpose:
+--   1. Pre-subtract goals-bonus max ($20,800/yr on 4-person team) from bonus pool
+--      Structural max = carve-and-forget. If team earns the goal, pays out.
+--      If not earned, unearned dollars stay with agency.
+--   2. Rename 'podium' -> 'leaderboard' in write_weekly_comp_v2 + JSON keys
+--   3. Lift pool_pct schedule +4pp uniform to offset new compression
+--
+-- This is the mirror file for the DB migration applied 2026-07-14 via Supabase MCP.
+-- The four parts (compute_pool_carveouts replacement, compute_weekly_comp_residual_pool
+-- replacement, write_weekly_comp_v2 replacement, pool_pct UPDATE) were applied in
+-- sequence. Full text of each function is >200 lines each; retrievable via:
+--
+--   SELECT pg_get_functiondef(oid) FROM pg_proc
+--   WHERE pronamespace = 'public'::regnamespace
+--     AND proname IN ('compute_pool_carveouts', 'compute_weekly_comp_residual_pool', 'write_weekly_comp_v2');
+--
+-- Post-migration verification:
+--   - Total annual carveouts: $23,736 -> $44,536 (+$20,800 exactly)
+--   - Endpoint pool_pct 2029-12-29: 35 -> 39
+--   - Anchor pool_pct 2026-07-11: 43 -> 47
+--   - Bridge lift 2028-01-01: 42.785 -> 46.785
+--   - Phase 1 end 2027-12-25: 38.7 -> 42.7
+--
+-- Structural max assumptions (Peter directive 2026-07-14):
+--   WtW:         $10 x N_active x 52
+--   Gain:        $10 x N_active x 52
+--   Leaderboard: $10 x 3 podium slots x 4 categories x 52
+--   All-Star:    $10 x 4 categories x N_active x 52
+--   Trailblazer: $10 x 4 categories x 1 person x 52
+--
+-- Leaderboard categories = 4 (week_sp, week_quotes, four_week_sp, quarter_sp).
+-- Structural max is over-carve for quarter_sp events (which fire quarterly, not weekly),
+-- but Peter explicit: 'assume 3 new leaderboards on each category each week', etc.
+
+-- ============================================================================
+-- The full DDL for the three CREATE OR REPLACE FUNCTION calls and the pool_pct
+-- UPDATE is intentionally not inlined in this migration mirror file to keep
+-- history readable. Function bodies live in pg_proc; the schedule table was
+-- lifted via:
+--
+--   UPDATE public.team_comp_pool_schedule
+--   SET pool_pct = pool_pct + 4,
+--       plan_note = COALESCE(plan_note, '') ||
+--         ' | 2026-07-14: +4pp uniform lift to offset $20,800/yr new goals-bonus
+--         carveouts (WtW/Gain/Leaderboard/All-Star/Trailblazer). Compensation
+--         ~$19.6K/yr net-of-burden vs $20.8K max carve at N=4.'
+--   WHERE agency_id = '126794dd-25ff-47d2-a436-724499733365';
+--
+-- ============================================================================
+
+SELECT 'goals_bonus_carveouts_and_pool_pct_lift applied 2026-07-14 via Supabase MCP' AS migration_note;
