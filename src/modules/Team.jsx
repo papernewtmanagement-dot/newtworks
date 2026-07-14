@@ -14,10 +14,9 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 //   1. Overview      — Pipeline summary, team snapshot, alerts
 //   2. Recruiting    — Kanban: Assessed→EmailScreen→Interview→RefCheck→Offer→Hired
 //   3. Candidate Detail — CTS scores, resume, scorecards (new: click a card)
-//   4. Onboarding    — Active onboarding checklists per new hire
-//   5. Staff         — Current team directory with licensing status
-//   6. Performance   — Monthly KPI tracking per staff member
-//   7. Commissions   — Commission structures and monthly calculations
+//   4. Staff         — Current team directory with licensing status
+//   5. Performance   — Monthly KPI tracking per staff member
+//   6. Commissions   — Commission structures and monthly calculations
 //
 // KEY AUTOMATION:
 //   Resume Scanner (Composio + Groq) auto-creates applicant
@@ -30,8 +29,8 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 //   • New hires must be notified to SF within required timeframe
 //   • Agent is liable for all staff activities (AA05 Section I.P)
 //
-// DATA: Reads team_assessments (people table), staff, onboarding_checklists,
-//       team_performance, commission_structures tables
+// DATA: Reads team_assessments (people table), staff, team_performance,
+//       commission_structures tables
 // ============================================================
 
 
@@ -2298,71 +2297,6 @@ const StaffDirectory = ({ staff }) => {
   );
 };
 
-// ─── Section: Onboarding ─────────────────────────────────────
-const OnboardingSection = ({ onboarding }) => {
-  const categoryColors = {
-    licensing:  { color:T.green,  bg:T.greenLt  },
-    documents:  { color:T.blue,   bg:T.blueLt   },
-    compliance: { color:T.red,    bg:T.redLt    },
-    systems:    { color:T.teal,   bg:T.tealLt   },
-    training:   { color:T.purple, bg:T.purpleLt },
-  };
-
-  return (
-    <div>
-      {onboarding.map(record => {
-        const completed = record.items.filter(i => i.completed).length;
-        const total = record.items.length;
-        const pctDone = Math.round((completed/total)*100);
-        const grouped = record.items.reduce((acc, item) => {
-          if (!acc[item.category]) acc[item.category] = [];
-          acc[item.category].push(item);
-          return acc;
-        }, {});
-
-        return (
-          <Card key={record.team_member_id}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
-              <div>
-                <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{record.team_member_name}</div>
-                <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Started {record.start_date} · {record.days_employed} days employed · {record.template} template</div>
-              </div>
-              <div style={{ textAlign:"right" }}>
-                <div style={{ fontSize:22, fontWeight:700, color:pctDone===100?T.green:T.amber, letterSpacing:"-0.02em" }}>{pctDone}%</div>
-                <div style={{ fontSize:10, color:T.slate400 }}>{completed}/{total} complete</div>
-              </div>
-            </div>
-
-            <div style={{ height:8, background:T.slate100, borderRadius:4, overflow:"hidden", marginBottom:16 }}>
-              <div style={{ height:"100%", width:`${pctDone}%`, background:pctDone===100?T.green:T.amber, borderRadius:4, transition:"width 0.6s ease" }} />
-            </div>
-
-            {Object.entries(grouped).map(([cat, items]) => {
-              const cc = categoryColors[cat] || { color:T.slate500, bg:T.slate100 };
-              return (
-                <div key={cat} style={{ marginBottom:14 }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:cc.color, marginBottom:6, textTransform:"capitalize" }}>{cat}</div>
-                  {items.map((item,i) => (
-                    <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 0", borderBottom:i<items.length-1?`1px solid ${T.slate100}`:"none" }}>
-                      <div style={{ width:18, height:18, borderRadius:4, background:item.completed?T.green:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                        {item.completed && <span style={{ color:T.white, fontSize:10 }}>✓</span>}
-                      </div>
-                      <span style={{ flex:1, fontSize:12, color:item.completed?T.slate400:T.slate800, textDecoration:item.completed?"line-through":"none" }}>{item.item}</span>
-                      <span style={{ fontSize:10, color:T.slate400, flexShrink:0 }}>{item.due}</span>
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-          </Card>
-        );
-      })}
-    </div>
-  );
-};
-
-
-
 const GrowthBudgetHeader = () => {
   const [roster, setRoster]           = useState([]);
   const [ytd, setYtd]                 = useState(0);
@@ -2599,14 +2533,14 @@ const HypotheticalHireForecast = () => {
 
 // ─── Growth Tab ───────────────────────────────────────────────
 // Persistent Growth Budget header (with expandable ramping list) always
-// visible. Sub-nav toggles between Recruiting and Onboarding. Hypothetical
-// hire forecast lives inside the Recruiting sub-view.
+// visible. Sub-nav toggles between Recruiting and Declined. Onboarding
+// lives in the top-level Onboarding module. Hypothetical hire forecast
+// lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, onUpdate }) => {
-  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","onboarding","declined"]);
+  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","declined"]);
   const subs = [
     { id:"recruiting", label:"Recruiting" },
     { id:"declined",   label:`Declined (${declined.length})` },
-    { id:"onboarding", label:"Onboarding" },
   ];
   return (
     <div>
@@ -2645,7 +2579,6 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
         </div>
       )}
       {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
-      {view === "onboarding" && <OnboardingSection onboarding={[]} />}
     </div>
   );
 };
