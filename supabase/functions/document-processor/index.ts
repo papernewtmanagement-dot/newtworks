@@ -513,7 +513,23 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
 // same gmail_thread_id is in a terminal state (processed/error/skipped). If so,
 // archive the thread in Gmail by removing the INBOX label. Sets
 // documents.gmail_archived_at for all rows in the thread so we know it happened.
-async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefined): Promise<void> {
+// Gmail label routing per docType. Created 2026-07-14. Update this map when
+// adding a new docType. Nulls skip label-add (still removes INBOX).
+const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
+  bank_statement_primary:   "Label_22", // "Bank Statements"
+  bank_statement_secondary: "Label_22",
+  bank_statement_pfa:       "Label_28", // "PFA"
+  comp_recap_1h:            "Label_24", // "SF Compensation"
+  comp_recap_daily:         "Label_24",
+  deduction_statement:      "Label_25", // "SF Deductions"
+  surepayroll_payroll:      "Label_26", // "Payroll"
+  adp_payroll:              "Label_26",
+  commission_report:        "Label_27", // "Production"
+  team_production:          "Label_27",
+  careerplug_applicant:     "Label_20", // "Applicants" (attachment pipeline)
+};
+
+async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefined, docType?: string): Promise<void> {
   if (!threadId) return;
   // Inner zip files inherit empty threadId — skip.
   try {
@@ -535,6 +551,9 @@ async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefin
       toolArguments: {
         thread_id: threadId,
         remove_label_ids: ["INBOX"],
+        ...(docType && ARCHIVE_LABEL_FOR_DOCTYPE[docType]
+          ? { add_label_ids: [ARCHIVE_LABEL_FOR_DOCTYPE[docType]!] }
+          : {}),
         user_id: "me",
       },
     });
@@ -744,7 +763,7 @@ async function processOneAttachment(
           await markDocument(documentId, "processed", r.jeCount,
             ["journal_entries", "journal_lines"],
             `${r.jeCount} JEs posted, ${r.suspenseCount} in suspense`);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed",
@@ -773,7 +792,7 @@ async function processOneAttachment(
         if (r.ok) {
           await markDocument(documentId, "processed", r.written, ["comp_recap"],
             `${r.written} comp_recap rows written`);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -806,7 +825,7 @@ async function processOneAttachment(
         if (r.ok) {
           await markDocument(documentId, "processed", r.written, ["comp_recap"],
             `${r.written} deduction rows written`);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -849,7 +868,7 @@ async function processOneAttachment(
           const note = `PFA statement: ${res.totalLines} lines · ${res.matched} matched · ${res.inserted} inserted` + (unm > 0 ? ` · ${unm} unmatched` : "");
           await markDocument(documentId, "processed", res.totalLines,
             (unm > 0 ? ["pfa_bank_statements", "pfa_transactions", "alerts"] : ["pfa_bank_statements", "pfa_transactions"]), note);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -899,7 +918,7 @@ async function processOneAttachment(
           const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}, ${r.alerts_resolved} alerts resolved${mergeNote}${unmatchedNote}`;
           await markDocument(documentId, "processed", r.employees_written ?? 0,
             ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail", "alerts"], note);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -934,7 +953,7 @@ async function processOneAttachment(
           await markDocument(documentId, "processed", r.detailCount + 1,
             ["payroll_runs", "payroll_detail"],
             `payroll run ${r.run.pay_date}: ${r.detailCount} detail rows`);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -980,7 +999,7 @@ async function processOneAttachment(
             ? `${r.written} rows; ${r.unmatchedStaff.length} unmatched: ${r.unmatchedStaff.slice(0,5).join(", ")}`
             : `${r.written} producer_production rows written`;
           await markDocument(documentId, "processed", r.written, ["producer_production"], note);
-          await maybeArchiveThread(ctx, att.threadId);
+          await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -1011,7 +1030,7 @@ async function processOneAttachment(
         // the parent notification is parsed.
         await markDocument(documentId, "processed", 0, ["documents"],
           "CareerPlug resume stored via attachment pipeline; linkage handled by mode=careerplug");
-        await maybeArchiveThread(ctx, att.threadId);
+        await maybeArchiveThread(ctx, att.threadId, docType);
         results.push({
           documentId, fileName: att.fileName, fromEmail: att.fromEmail,
           docType, status: "processed", jeCount: 0, suspenseCount: 0,
