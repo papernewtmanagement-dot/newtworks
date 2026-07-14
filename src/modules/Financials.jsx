@@ -9,14 +9,13 @@ import MonthlyClose from "./MonthlyClose.jsx";
 // Newtworks — State Farm Agent Edition
 //
 // SECTIONS:
-//   1. Overview        — Summary cards + revenue trend chart
+//   1. Overview        — Summary cards + revenue trend chart + Goals feed
 //   2. P&L             — Monthly/quarterly/annual P&L
-//   3. COMP_RECAP      — SF compensation detail by period
-//   4. AIPP & Scorecard — Progress tracking
-//   5. Payroll         — Staff payroll history
-//   6. Bank Accounts   — Account balances and reconciliation
-//   7. Credit & Debt   — Cards, loans, lines of credit
-//   8. General Ledger  — Full transaction ledger
+//   3. Comp Recap      — SF compensation detail by period, grouped by LOB, 1H/2H checks
+//   4. Payroll         — Staff payroll history (blank rows for missing weeks)
+//   5. Bank Accounts   — Account balances and reconciliation
+//   6. Credit & Debt   — Cards, loans, lines of credit (one row per account)
+//   7. General Ledger  — Full transaction ledger
 //
 // DATA: Reads live from Supabase views/tables via useFinancialsData().
 // ============================================================
@@ -40,11 +39,18 @@ function useFinancialsData() {
         const currentMonth = new Date().getMonth() + 1;     // 1-12
         const quarterStart = Math.floor((currentMonth - 1) / 3) * 3 + 1;
 
+        // Latest CPR week seeds the on-time SMVC + Scorecard payload
+        const { data: cprLatest } = await supabase.from("weekly_cpr_reports")
+          .select("week_ending_date").eq("agency_id", AGENCY_ID)
+          .order("week_ending_date", { ascending: false }).limit(1).maybeSingle();
+        const s11AsOf = cprLatest?.week_ending_date || new Date().toISOString().split("T")[0];
+
         const [
           isRows, priorIsRows, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
-          aippRow, scorecardRows, balanceSheetRows,
+          aippRow, balanceSheetRows,
           growthBudgetRes, growthCeilingRes,
+          bookLatestRes, bookYearStartRes, s11Res,
         ] = await Promise.all([
           // Income statement view (current year)
           supabase.from("v_income_statement")
@@ -97,12 +103,6 @@ function useFinancialsData() {
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
 
-          // Scorecard — bands only (actuals derived at runtime, not stored). Reads from unified sf_program_targets.
-          supabase.from("sf_program_targets")
-            .select("program_year, period, bucket_name, min_target, max_target, notes")
-            .eq("program", "scorecard")
-            .order("program_year", { ascending: false }).limit(20),
-
           // Balance Sheet — anchored to prior-books 4/30/2026 opening balances + post-4/30 GL activity
           supabase.from("v_balance_sheet_anchored")
             .select("account_code, account_name, account_type, anchor_0430, activity_since_0430, balance_current"),
@@ -114,6 +114,23 @@ function useFinancialsData() {
 
           // Growth budget annual ceiling (10% of on-time annual gross ex-scorecard)
           supabase.rpc("get_growth_budget_ceiling", { p_agency_id: AGENCY_ID }),
+
+          // Goals feed — latest P&C book snapshot + year-start P&C snapshot for 25%/yr growth pace
+          // Filter on non-null premiums (weekly rows are seeded with counts first)
+          supabase.from("agency_snapshot")
+            .select("snapshot_date, auto_premium, fire_premium")
+            .eq("agency_id", AGENCY_ID)
+            .not("auto_premium","is",null).not("fire_premium","is",null)
+            .order("snapshot_date",{ascending:false}).limit(1).maybeSingle(),
+          supabase.from("agency_snapshot")
+            .select("snapshot_date, auto_premium, fire_premium")
+            .eq("agency_id", AGENCY_ID)
+            .gte("snapshot_date", `${currentYear}-01-01`)
+            .not("auto_premium","is",null).not("fire_premium","is",null)
+            .order("snapshot_date",{ascending:true}).limit(1).maybeSingle(),
+
+          // Canonical SF compute — smvc on-time %, applied %, dollar_diff, scorecard points + $ diff
+          supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: s11AsOf }),
         ]);
 
         const isData = isRows.data || [];
@@ -164,7 +181,7 @@ function useFinancialsData() {
           is_scorecard_eligible: r.is_scorecard_eligible,
         }));
 
-        // AIPP — alias schema fields to the names AIPPSection expects
+        // AIPP — alias schema fields for the Goals feed's on-time projection row
         const aippRaw = aippRow.data || null;
         const aipp = aippRaw ? {
           year:          aippRaw.program_year || currentYear,
@@ -181,17 +198,6 @@ function useFinancialsData() {
             return { month: m, amount: Math.round(earned) };
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, hasData: false, monthlyEarned: MONTHS.map(m => ({month:m, amount:0})) };
-
-        // Scorecard — bands only. Per the compensation_data_freshness principle, "actual" and
-        // achievement % are computed at runtime from agency_snapshot, never stored on the targets table.
-        // Map min/max into the legacy {metric, actual, target, pct} shape consumed by ScorecardSection;
-        // actual/pct render as 0 until ScorecardSection is updated to call compute_on_time_smvc.
-        const scorecard = (scorecardRows.data || []).map(s => ({
-          metric: s.bucket_name,
-          actual: 0,
-          target: parseFloat(s.max_target || 0),
-          pct:    0,
-        }));
 
         // Payroll — combine runs + detail, grouped by run
         const detailByRun = {};
@@ -226,6 +232,85 @@ function useFinancialsData() {
           payment: parseFloat(c.minimum_payment || 0),
           dueDay:  c.payment_due_day,
         }));
+
+        // Goals feed pace computation
+        // ---------------------------------
+        // Statuses use the Dashboard "always up" scale so this matches the Dashboard widget:
+        //   >= 90 green / 75-89 amber / < 75 red. Labels: Ahead / On Pace / Close / Behind / Off Pace.
+        // Ratings live in the rendering component; here we just supply pace_pct + labels.
+        const goalsPace = { pc: null, cc: null, smvc: null, aipp: null };
+        try {
+          const book   = bookLatestRes?.data || null;
+          const bookYs = bookYearStartRes?.data || null;
+          if (book && bookYs) {
+            const ysPCPrem  = (parseFloat(bookYs.auto_premium)||0) + (parseFloat(bookYs.fire_premium)||0);
+            const curPCPrem = (parseFloat(book.auto_premium)||0)   + (parseFloat(book.fire_premium)||0);
+            const netYTD    = curPCPrem - ysPCPrem;
+            const tgtGain   = ysPCPrem * 0.25;
+            const now       = new Date();
+            const ysDate    = new Date(bookYs.snapshot_date + "T00:00:00Z");
+            const bookDate  = new Date(book.snapshot_date   + "T00:00:00Z");
+            const effEnd    = bookDate < now ? bookDate : now;
+            const daysInWin = Math.max(1, Math.floor((effEnd - ysDate) / 86400000));
+            const annualGain= netYTD * (365 / daysInWin);
+            const otPct     = ysPCPrem > 0 ? (annualGain / ysPCPrem) * 100 : 0;
+            const pace_pct  = otPct > 0 ? (otPct / 25) * 100 : 0;
+            const fmtUsd = (n) => `$${Math.round(n).toLocaleString()}`;
+            const fmtUsdSigned = (n) => `${n>=0?"+":"−"}$${Math.abs(Math.round(n)).toLocaleString()}`;
+            goalsPace.pc = {
+              current_label: fmtUsdSigned(annualGain),
+              target_label:  `+${fmtUsd(tgtGain)}`,
+              sub: `${otPct.toFixed(1)}% / 25%`,
+              pace_pct,
+            };
+          }
+        } catch (e) { /* swallow */ }
+
+        const s11 = s11Res?.data || null;
+        try {
+          if (s11?.scorecard_bonus?.computed_breakdown?.points_breakdown) {
+            const pb = s11.scorecard_bonus.computed_breakdown.points_breakdown;
+            const autoBest = parseFloat(pb.auto_best) || 0;
+            const fireBest = parseFloat(pb.fire_best) || 0;
+            const fsPts    = parseFloat(pb.fs_credits) || 0;
+            const ccTotal  = autoBest + fireBest + fsPts;
+            const dollarDiff = parseFloat(s11.scorecard_bonus.dollar_diff) || 0;
+            const dSign = dollarDiff >= 0 ? "+" : "−";
+            const dAbs = `$${Math.abs(Math.round(dollarDiff)).toLocaleString()}`;
+            goalsPace.cc = {
+              current_label: `${Math.round(ccTotal)} pts`,
+              target_label:  `400 pts`,
+              sub: `Auto ${Math.round(autoBest)} · Fire ${Math.round(fireBest)} · FS ${Math.round(fsPts)} · vs last yr ${dSign}${dAbs}`,
+              pace_pct: (ccTotal / 400) * 100,
+            };
+          }
+          if (s11?.smvc?.on_time != null) {
+            const otPct     = (parseFloat(s11.smvc.on_time) || 0) * 100;
+            const appPct    = (parseFloat(s11.smvc.applied) || 0) * 100;
+            const dollarDiff= parseFloat(s11.smvc.dollar_diff) || 0;
+            const tgtSmvc   = 2.70;
+            const dSign = dollarDiff >= 0 ? "+" : "−";
+            const dAbs = `$${Math.abs(Math.round(dollarDiff)).toLocaleString()}`;
+            goalsPace.smvc = {
+              current_label: `${otPct.toFixed(2)}%`,
+              target_label:  `${tgtSmvc.toFixed(2)}%`,
+              sub: `Currently applied ${appPct.toFixed(2)}% · pace ${dSign}${dAbs} vs applied`,
+              pace_pct: tgtSmvc > 0 ? (otPct / tgtSmvc) * 100 : 0,
+            };
+          }
+        } catch (e) { /* swallow */ }
+
+        try {
+          if (aipp && aipp.hasData && aipp.target > 0) {
+            const projPct = (aipp.projected / aipp.target) * 100;
+            goalsPace.aipp = {
+              current_label: fmt(aipp.projected),
+              target_label:  fmt(aipp.target),
+              sub: `${Math.round((aipp.earned / aipp.target) * 100)}% earned YTD · ${fmt(aipp.earned)} of ${fmt(aipp.target)}`,
+              pace_pct: projPct,
+            };
+          }
+        } catch (e) { /* swallow */ }
 
         // Balance Sheet — group anchored rows by type, with totals
         const bsRows = (balanceSheetRows.data || []).map(r => ({
@@ -308,7 +393,7 @@ function useFinancialsData() {
           pl: { income: incomeLines, expenses: expenseLines },
           compRecaps,
           aipp,
-          scorecard,
+          goalsPace,
           bankAccounts: (bankRows.data || []).map(b => ({
             name: b.account_name,
             balance: parseFloat(b.current_balance||0),
@@ -381,7 +466,7 @@ let MOCK = {
   pl:{income:[],expenses:[]},
   compRecaps:[],
   aipp: { year: new Date().getFullYear(), target:0, earned:0, projected:0, priorYear:0, hasData:false, monthlyEarned: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(m=>({month:m,amount:0})) },
-  scorecard: [],
+  goalsPace: { pc:null, cc:null, smvc:null, aipp:null },
   bankAccounts:[],creditAccounts:[],glEntries:[],payroll:[],
   balanceSheet:{ assets:[], liabilities:[], equity:[], totalAssets:0, totalLiabilities:0, totalEquity:0, asOfLabel:"" },
 };
@@ -582,6 +667,56 @@ const OwnerProfitPaceCard = ({ data }) => {
   );
 };
 
+// ─── Goals Feed Card (mirrors Dashboard's Standing Goals widget) ──
+// Rows: P&C Growth 25%/yr · Champions Circle 400 pts · SMVC 2.70% · AIPP on-time
+const GoalsFeedCard = ({ data }) => {
+  const g = data?.goalsPace || {};
+  const statusColor = (p) => {
+    if (p == null) return T.slate400;
+    if (p >= 90)   return T.green;
+    if (p >= 75)   return T.amber;
+    return T.red;
+  };
+  const statusLabel = (p) => {
+    if (p == null) return "—";
+    if (p >= 110)  return "Ahead";
+    if (p >= 100)  return "On Pace";
+    if (p >= 90)   return "Close";
+    if (p >= 75)   return "Behind";
+    return "Off Pace";
+  };
+  const Row = ({ icon, title, current, target, sub, pacePct }) => {
+    const c = statusColor(pacePct);
+    return (
+      <div style={{padding:"11px 0", borderBottom:`1px solid ${T.slate100}`}}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:5, gap:8, flexWrap:"wrap"}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, fontSize:12, fontWeight:700, color:T.slate800, minWidth:0, flex:1}}>
+            <span style={{fontSize:15}}>{icon}</span>
+            <span style={{overflow:"hidden", textOverflow:"ellipsis"}}>{title}</span>
+          </div>
+          <div style={{fontSize:10, fontWeight:700, color:c, padding:"2px 9px", borderRadius:10, background:`${c}18`, flexShrink:0}}>{statusLabel(pacePct)}</div>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6, gap:8, flexWrap:"wrap"}}>
+          <div style={{fontSize:15, fontWeight:800, color:T.slate900}}>
+            {current || "—"}<span style={{fontSize:11, fontWeight:500, color:T.slate500}}> / {target || "—"}</span>
+          </div>
+          {sub && <div style={{fontSize:10, color:T.slate500, textAlign:"right", maxWidth:"100%"}}>{sub}</div>}
+        </div>
+        <ProgressBar value={Math.max(0, Math.min(pacePct||0, 100))} max={100} color={c} height={6} />
+      </div>
+    );
+  };
+  return (
+    <Card>
+      <CardHeader title="Goals — On-Time Pace" sub="From the Dashboard goals feed · profit pace above · numbers refresh with each CPR" />
+      <Row icon="📈" title="P&C Premium Growth (25%/yr)"     current={g.pc?.current_label}   target={g.pc?.target_label}   sub={g.pc?.sub}   pacePct={g.pc?.pace_pct} />
+      <Row icon="🏆" title="Champions Circle (400 Scorecard pts)" current={g.cc?.current_label}   target={g.cc?.target_label}   sub={g.cc?.sub}   pacePct={g.cc?.pace_pct} />
+      <Row icon="📊" title="SMVC (target 2.70%)"             current={g.smvc?.current_label} target={g.smvc?.target_label} sub={g.smvc?.sub} pacePct={g.smvc?.pace_pct} />
+      <Row icon="💰" title="AIPP — On-Time Projection"       current={g.aipp?.current_label} target={g.aipp?.target_label} sub={g.aipp?.sub} pacePct={g.aipp?.pace_pct} />
+    </Card>
+  );
+};
+
 // ─── Section: Overview ───────────────────────────────────────
 const OverviewSection = ({ period, setPeriod, data }) => {
   const d = data?.summary || {};
@@ -599,6 +734,11 @@ const OverviewSection = ({ period, setPeriod, data }) => {
       {/* Owner Profit Pace — standing +1pp/quarter goal (independent of period selector) */}
       <div style={{ marginBottom: 14 }}>
         <OwnerProfitPaceCard data={data} />
+      </div>
+
+      {/* Goals feed — P&C growth, Champions Circle, SMVC, AIPP on-time */}
+      <div style={{ marginBottom: 14 }}>
+        <GoalsFeedCard data={data} />
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -751,12 +891,15 @@ const PLSection = ({ data }) => {
   );
 };
 
-// ─── Section: COMP_RECAP ─────────────────────────────────────
+// ─── Section: Comp Recap ─────────────────────────────────────
+// Grouped by line of business (auto → fire → life → health → ips → bank → pet
+// → state_farm_bonuses → expense_reimbursement → reportable_benefit → other →
+// deductions), then within each group by new first, then renewal. Each line
+// item shows the 1H check, 2H check, and month total side-by-side.
 const CompRecapSection = ({ data }) => {
   const compRecaps = Array.isArray(data?.compRecaps) ? data.compRecaps : [];
   const allPeriods = [...new Set(compRecaps.map(r => r?.period_label).filter(Boolean))];
   const [period, setPeriod] = useState("");
-  // Initialize period to most recent once data arrives
   useEffect(() => {
     if (allPeriods.length > 0 && !allPeriods.includes(period)) {
       setPeriod(allPeriods[0]);
@@ -764,14 +907,163 @@ const CompRecapSection = ({ data }) => {
   }, [allPeriods.join("|")]);
   const periods  = allPeriods;
   const filtered = compRecaps.filter(r => r.period_label === period);
-  const total    = filtered.reduce((s,r) => s + parseFloat(r.amount || 0), 0);
-  const aippTotal = filtered.filter(r => r.is_aipp_eligible).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
+
+  // LOB display order + labels
+  const LOB_ORDER = [
+    { key: "auto",   label: "Auto" },
+    { key: "fire",   label: "Fire" },
+    { key: "life",   label: "Life" },
+    { key: "health", label: "Health" },
+    { key: "ips",    label: "IPS" },
+    { key: "bank",   label: "Bank" },
+    { key: "pet",    label: "Pet" },
+  ];
+  // Categories that aren't LOB-shaped — collected under separate group headers at the bottom
+  const OTHER_GROUPS = [
+    { keys: ["state_farm_bonuses"],       label: "State Farm Bonuses" },
+    { keys: ["expense_reimbursement"],    label: "Expense Reimbursement" },
+    { keys: ["reportable_benefit"],       label: "Reportable Benefits" },
+    { keys: ["other"],                    label: "Other" },
+  ];
+
+  const humanizeDeduction = (cat) => {
+    const map = {
+      deduction_advertising:  "Advertising",
+      deduction_license:      "Licensing",
+      deduction_supplies:     "Supplies",
+      deduction_technology:   "Technology",
+      deduction_credit_union: "Credit Union",
+      deduction_medical:      "Medical",
+      deduction_other:        "Other",
+    };
+    return map[cat] || cat.replace(/^deduction_/, "").replace(/_/g, " ");
+  };
+
+  // Sum an array of rows into { h1, h2, total }
+  const sumRows = (rows) => rows.reduce((acc, r) => {
+    const amt = parseFloat(r.amount || 0);
+    if (r.comp_type === "1H") acc.h1 += amt;
+    else if (r.comp_type === "2H") acc.h2 += amt;
+    acc.total += amt;
+    return acc;
+  }, { h1: 0, h2: 0, total: 0 });
+
+  // Roll rows into a { description -> { h1, h2, total, is_aipp_eligible } } map
+  const rollByDescription = (rows) => {
+    const m = new Map();
+    for (const r of rows) {
+      const key = r.description || `${r.comp_type} — ${r.comp_category}`;
+      const cur = m.get(key) || { description: key, h1: 0, h2: 0, total: 0, is_aipp_eligible: r.is_aipp_eligible };
+      const amt = parseFloat(r.amount || 0);
+      if (r.comp_type === "1H") cur.h1 += amt;
+      else if (r.comp_type === "2H") cur.h2 += amt;
+      cur.total += amt;
+      cur.is_aipp_eligible = cur.is_aipp_eligible || !!r.is_aipp_eligible;
+      m.set(key, cur);
+    }
+    return [...m.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  };
+
+  const grandTotal    = filtered.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+  const grandH1       = filtered.filter(r => r.comp_type === "1H").reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+  const grandH2       = filtered.filter(r => r.comp_type === "2H").reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+  const grandAippTot  = filtered.filter(r => r.is_aipp_eligible).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+
+  // Cell + subtotal builders
+  const money = (n) => fmt(Math.round(n));
+  const HeaderRow = ({ label, spans = 5 }) => (
+    <tr>
+      <td colSpan={spans} style={{ padding: "12px 8px 6px 8px", fontSize: 11, fontWeight: 700, color: T.slate900, background: T.slate50, textTransform: "uppercase", letterSpacing: "0.05em", borderTop: `2px solid ${T.slate200}` }}>{label}</td>
+    </tr>
+  );
+  const SubHeader = ({ label }) => (
+    <tr>
+      <td colSpan={5} style={{ padding: "6px 8px 4px 20px", fontSize: 10, fontWeight: 600, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</td>
+    </tr>
+  );
+  const LineRow = ({ r }) => (
+    <tr style={{ borderBottom: `1px solid ${T.slate100}` }}>
+      <td style={{ padding: "7px 8px 7px 20px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
+      <td style={{ padding: "7px 8px", textAlign: "center" }}>
+        {r.is_aipp_eligible
+          ? <Pill type="success">AIPP</Pill>
+          : <span style={{ fontSize: 11, color: T.slate400 }}>—</span>}
+      </td>
+      <td style={{ padding: "7px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{r.h1 === 0 ? "—" : money(r.h1)}</td>
+      <td style={{ padding: "7px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{r.h2 === 0 ? "—" : money(r.h2)}</td>
+      <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{money(r.total)}</td>
+    </tr>
+  );
+  const SubTotalRow = ({ label, h1, h2, total }) => (
+    <tr style={{ borderBottom: `1px solid ${T.slate200}`, background: "#FAFBFC" }}>
+      <td style={{ padding: "6px 8px 6px 20px", fontSize: 11, fontWeight: 600, color: T.slate600 }}>{label}</td>
+      <td />
+      <td style={{ padding: "6px 8px", fontSize: 11, fontWeight: 600, color: T.slate700, textAlign: "right" }}>{money(h1)}</td>
+      <td style={{ padding: "6px 8px", fontSize: 11, fontWeight: 600, color: T.slate700, textAlign: "right" }}>{money(h2)}</td>
+      <td style={{ padding: "6px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(total)}</td>
+    </tr>
+  );
+
+  // Build rendered body
+  const body = [];
+  let idx = 0;
+  const push = (el) => { body.push(<span key={`k${idx++}`} style={{ display: "contents" }}>{el}</span>); };
+
+  // Main LOBs (auto/fire/life/health/ips/bank/pet)
+  for (const lob of LOB_ORDER) {
+    const newRows      = filtered.filter(r => r.comp_category === `${lob.key}_new`);
+    const renewalRows  = filtered.filter(r => r.comp_category === `${lob.key}_renewal`);
+    if (newRows.length === 0 && renewalRows.length === 0) continue;
+    const lobRows   = [...newRows, ...renewalRows];
+    const lobSum    = sumRows(lobRows);
+    const newSum    = sumRows(newRows);
+    const renewalSum= sumRows(renewalRows);
+    push(<HeaderRow label={lob.label} />);
+    if (newRows.length > 0) {
+      push(<SubHeader label="New" />);
+      for (const r of rollByDescription(newRows)) push(<LineRow r={r} />);
+      push(<SubTotalRow label={`${lob.label} New subtotal`} h1={newSum.h1} h2={newSum.h2} total={newSum.total} />);
+    }
+    if (renewalRows.length > 0) {
+      push(<SubHeader label="Renewal" />);
+      for (const r of rollByDescription(renewalRows)) push(<LineRow r={r} />);
+      push(<SubTotalRow label={`${lob.label} Renewal subtotal`} h1={renewalSum.h1} h2={renewalSum.h2} total={renewalSum.total} />);
+    }
+    push(<SubTotalRow label={`${lob.label} total`} h1={lobSum.h1} h2={lobSum.h2} total={lobSum.total} />);
+  }
+
+  // Non-LOB groups (bonuses, reimbursement, benefits, other)
+  for (const grp of OTHER_GROUPS) {
+    const rows = filtered.filter(r => grp.keys.includes(r.comp_category));
+    if (rows.length === 0) continue;
+    const grpSum = sumRows(rows);
+    push(<HeaderRow label={grp.label} />);
+    for (const r of rollByDescription(rows)) push(<LineRow r={r} />);
+    push(<SubTotalRow label={`${grp.label} total`} h1={grpSum.h1} h2={grpSum.h2} total={grpSum.total} />);
+  }
+
+  // Deductions group — last, one row per deduction sub-category
+  const deductionRows = filtered.filter(r => (r.comp_category || "").startsWith("deduction_"));
+  if (deductionRows.length > 0) {
+    const dedSum = sumRows(deductionRows);
+    push(<HeaderRow label="Deductions" />);
+    // Group by deduction sub-category
+    const subCats = [...new Set(deductionRows.map(r => r.comp_category))];
+    for (const cat of subCats) {
+      const catRows = deductionRows.filter(r => r.comp_category === cat);
+      const catSum  = sumRows(catRows);
+      push(<SubHeader label={humanizeDeduction(cat)} />);
+      for (const r of rollByDescription(catRows)) push(<LineRow r={r} />);
+      push(<SubTotalRow label={`${humanizeDeduction(cat)} subtotal`} h1={catSum.h1} h2={catSum.h2} total={catSum.total} />);
+    }
+    push(<SubTotalRow label="Deductions total" h1={dedSum.h1} h2={dedSum.h2} total={dedSum.total} />);
+  }
 
   return (
     <Card>
       <CardHeader
-        title="SF COMP_RECAP Detail"
-        sub="State Farm compensation breakdown by period"
+        title="SF Comp Recap Detail"
+        sub="State Farm compensation, grouped by line of business · new then renewal · 1H = first-half check, 2H = second-half check"
       />
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
         {periods.map(p => (
@@ -786,32 +1078,26 @@ const CompRecapSection = ({ data }) => {
       </div>
 
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
-            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left" }}>Compensation Type</th>
-            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "center" }}>AIPP Eligible</th>
-            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Amount</th>
+            <th style={{ padding: "8px 8px 8px 20px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left" }}>Line Item</th>
+            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "center" }}>AIPP</th>
+            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Check 1 (1H)</th>
+            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Check 2 (2H)</th>
+            <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Month Total</th>
           </tr>
         </thead>
         <tbody>
-          {filtered.map((r,i) => (
-            <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-              <td style={{ padding: "8px 8px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
-              <td style={{ padding: "8px 8px", textAlign: "center" }}>
-                {r.is_aipp_eligible
-                  ? <Pill type="success">AIPP</Pill>
-                  : <span style={{ fontSize: 11, color: T.slate400 }}>—</span>}
-              </td>
-              <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(Math.round(r.amount))}</td>
-            </tr>
-          ))}
+          {body}
         </tbody>
         <tfoot>
           <tr style={{ borderTop: `2px solid ${T.slate800}` }}>
-            <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 700, color: T.slate900 }}>Total</td>
-            <td style={{ padding: "8px 8px", fontSize: 11, textAlign: "center", color: T.slate500 }}>AIPP: {fmt(aippTotal)}</td>
-            <td style={{ padding: "8px 8px", fontSize: 13, fontWeight: 700, color: T.blue, textAlign: "right" }}>{fmt(total)}</td>
+            <td style={{ padding: "10px 8px 10px 20px", fontSize: 12, fontWeight: 700, color: T.slate900 }}>Grand total</td>
+            <td style={{ padding: "10px 8px", fontSize: 11, textAlign: "center", color: T.slate500 }}>AIPP: {fmt(grandAippTot)}</td>
+            <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(grandH1)}</td>
+            <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(grandH2)}</td>
+            <td style={{ padding: "10px 8px", fontSize: 13, fontWeight: 700, color: T.blue, textAlign: "right" }}>{money(grandTotal)}</td>
           </tr>
         </tfoot>
       </table>
@@ -820,130 +1106,88 @@ const CompRecapSection = ({ data }) => {
   );
 };
 
-// ─── Section: AIPP & Scorecard ──────────────────────────────
-const AIPPSection = ({ data }) => {
-  const aippData = data?.aipp || {};
-  const year       = aippData.year       || new Date().getFullYear();
-  const target     = aippData.target     || 0;
-  const earned     = aippData.earned     || 0;
-  const projected  = aippData.projected  || 0;
-  const priorYear  = aippData.priorYear  || 0;
-  const hasAippData = !!aippData.hasData && target > 0;
-  const monthlyEarned = Array.isArray(aippData.monthlyEarned) ? aippData.monthlyEarned : [];
-  const scorecard    = Array.isArray(data?.scorecard) ? data.scorecard : [];
-  const achievement = pct(earned, target);
-  const projPct = pct(projected, target);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-
-        {/* AIPP Progress */}
-        <Card>
-          <CardHeader
-            title={`AIPP ${year} — Annual Incentive Progress`}
-          />
-          {hasAippData ? (
-            <>
-              <div style={{ fontSize: 32, fontWeight: 700, color: T.green, letterSpacing: "-0.03em", marginBottom: 4 }}>
-                {achievement}%
-              </div>
-              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-                {fmt(earned)} earned of {fmt(target)} target
-              </div>
-              <ProgressBar value={earned} max={target} color={T.green} height={10} />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.slate400, marginTop: 6, marginBottom: 16 }}>
-                <span>Jan {year}</span><span>Dec {year}</span>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
-                {[
-                  { label: "Earned YTD",    value: fmt(earned),    color: T.green },
-                  { label: "Projected",     value: fmt(projected), color: projPct >= 95 ? T.green : T.amber },
-                  { label: "Prior Year",    value: fmt(priorYear), color: T.slate500 },
-                ].map((s,i) => (
-                  <div key={i} style={{ background: T.slate50, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>{s.label}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ marginTop: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Monthly earned — {year}</div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {monthlyEarned.map((m,i) => (
-                    <div key={i} style={{ flex: 1, background: T.blueLt, borderRadius: 6, padding: "6px 4px", textAlign: "center" }}>
-                      <div style={{ fontSize: 9, color: T.slate500 }}>{m.month}</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: T.blue, marginTop: 2 }}>{fmt(m.amount)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div style={{ padding: "8px 0" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700, marginBottom: 6 }}>Awaiting AIPP program data</div>
-              <div style={{ fontSize: 12, color: T.slate500, lineHeight: 1.5 }}>
-                AIPP projection turns on once the {year} program-year target and producer production
-                are loaded. AIPP is 5% of qualifying new P&amp;C premium issued (Auto/Fire, plus small Health),
-                paid each January, for agents with 60+ months of service.
-              </div>
-            </div>
-          )}
-        </Card>
-
-        {/* Scorecard */}
-        <Card>
-          <CardHeader
-            title={`Scorecard Metrics — ${year}`}
-            sub="Progress toward performance recognition"
-          />
-          {scorecard.length > 0 ? (
-            scorecard.map((m, i) => (
-              <div key={i} style={{ marginBottom: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                  <span style={{ fontSize: 12, color: T.slate700 }}>{m.metric}</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 11, color: T.slate500 }}>{m.actual}/{m.target}</span>
-                    <Pill type={m.pct >= 100 ? "success" : m.pct >= 75 ? "warning" : "danger"}>
-                      {m.pct}%
-                    </Pill>
-                  </div>
-                </div>
-                <ProgressBar
-                  value={m.actual}
-                  max={m.target}
-                  color={m.pct >= 100 ? T.green : m.pct >= 75 ? T.amber : T.red}
-                  height={6}
-                />
-              </div>
-            ))
-          ) : (
-            <div style={{ padding: "8px 0" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700, marginBottom: 6 }}>No Scorecard metrics loaded yet</div>
-              <div style={{ fontSize: 12, color: T.slate500, lineHeight: 1.5 }}>
-                Scorecard tracking populates once {year} benchmarks and current production are entered.
-                Life &amp; Health production in Q3/Q4 lifts next year's Auto/Fire Scorecard multiplier.
-              </div>
-            </div>
-          )}
-        </Card>
-      </div>
-    </div>
-  );
-};
-
 // ─── Section: Payroll ─────────────────────────────────────────
+// Enumerates every Sunday–Saturday week from the earliest recorded run through
+// the current week. Recorded runs render normally; expected-but-missing weeks
+// render as blank rows tagged "Missing" so gaps are visually obvious.
 const PayrollSection = ({ data }) => {
-  const ytdGross = (data.payroll || []).reduce((s,r) => s + parseFloat(r.gross || 0), 0);
-  const ytdTax   = (data.payroll || []).reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
+  const rows = Array.isArray(data.payroll) ? data.payroll : [];
+  const ytdGross = rows.reduce((s,r) => s + parseFloat(r.gross || 0), 0);
+  const ytdTax   = rows.reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
+
+  // Parse "MMM d – MMM d, yyyy" pay_period back to a Date for the period start (Sunday).
+  // Payroll data hook doesn't preserve the raw start date, so we reconstruct from the label.
+  const parsePeriodStart = (r) => {
+    const label = r.pay_period || r.period || "";
+    const parts = label.split(" – ");
+    if (parts.length !== 2) return null;
+    // parts[1] carries the year: "Jul 4, 2026" — use its year with parts[0]'s "Jun 28".
+    const yearMatch = parts[1].match(/(\d{4})/);
+    if (!yearMatch) return null;
+    const year = yearMatch[1];
+    const d = new Date(`${parts[0]} ${year}`);
+    return Number.isFinite(d.getTime()) ? d : null;
+  };
+  // Sunday-anchored week key (yyyy-mm-dd)
+  const toSundayKey = (d) => {
+    const dt = new Date(d);
+    dt.setHours(0,0,0,0);
+    // Pay period always starts on a Sunday; if the parsed date drifted, snap back.
+    if (dt.getDay() !== 0) dt.setDate(dt.getDate() - dt.getDay());
+    return dt.toISOString().split("T")[0];
+  };
+
+  // Build a map of recorded rows by Sunday key
+  const byKey = new Map();
+  let earliest = null, latest = null;
+  for (const r of rows) {
+    const start = parsePeriodStart(r);
+    if (!start) continue;
+    const key = toSundayKey(start);
+    byKey.set(key, { ...r, _start: start });
+    if (!earliest || start < earliest) earliest = start;
+    if (!latest   || start > latest)   latest = start;
+  }
+
+  // Enumerate weeks between earliest and current-week-start
+  let enumerated = [];
+  if (earliest) {
+    const now = new Date();
+    const curStart = new Date(now);
+    curStart.setHours(0,0,0,0);
+    curStart.setDate(curStart.getDate() - curStart.getDay()); // this week's Sunday
+    const stopAt = latest && latest > curStart ? latest : curStart;
+    const cursor = new Date(earliest);
+    while (cursor <= stopAt) {
+      const key = toSundayKey(cursor);
+      if (byKey.has(key)) {
+        enumerated.push({ kind: "row", key, row: byKey.get(key) });
+      } else {
+        const end = new Date(cursor); end.setDate(end.getDate() + 6);
+        const payDate = new Date(end); payDate.setDate(payDate.getDate() + 6); // Fri after Saturday period end
+        const fmtDate = (d, opts) => d.toLocaleDateString("en-US", opts);
+        enumerated.push({
+          kind: "blank", key,
+          label: `${fmtDate(cursor, {month:"short", day:"numeric"})} – ${fmtDate(end, {month:"short", day:"numeric", year:"numeric"})}`,
+          payDate: fmtDate(payDate, {month:"short", day:"numeric", year:"numeric"}),
+        });
+      }
+      cursor.setDate(cursor.getDate() + 7);
+    }
+    // Show most recent first
+    enumerated.sort((a,b) => (a.key < b.key ? 1 : -1));
+  } else {
+    // No data — nothing to enumerate; falls through to empty tbody
+    enumerated = [];
+  }
+
+  const missingCount = enumerated.filter(e => e.kind === "blank").length;
 
   return (
     <Card>
       <CardHeader
         title="Payroll History"
-        sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}`}
+        sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}${missingCount ? ` · ${missingCount} missing week${missingCount === 1 ? "" : "s"}` : ""}`}
       />
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -955,18 +1199,36 @@ const PayrollSection = ({ data }) => {
           </tr>
         </thead>
         <tbody>
-          {(data.payroll || []).map((r,i) => (
-            <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-              <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>{r.pay_period||r.period}</td>
-              <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate600 }}>{r.pay_date||r.payDate||"-"}</td>
-              <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(r.gross)}</td>
-              <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.taxes||0))}</td>
-              <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.net||0))}</td>
-              <td style={{ padding: "9px 8px", textAlign: "right" }}>
-                <Pill type="success">{r.status}</Pill>
-              </td>
-            </tr>
-          ))}
+          {enumerated.map((e,i) => {
+            if (e.kind === "row") {
+              const r = e.row;
+              return (
+                <tr key={e.key} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>{r.pay_period||r.period}</td>
+                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate600 }}>{r.pay_date||r.payDate||"-"}</td>
+                  <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(r.gross)}</td>
+                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.taxes||0))}</td>
+                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.net||0))}</td>
+                  <td style={{ padding: "9px 8px", textAlign: "right" }}>
+                    <Pill type="success">{r.status}</Pill>
+                  </td>
+                </tr>
+              );
+            }
+            // Missing week
+            return (
+              <tr key={e.key} style={{ borderBottom: `1px solid ${T.slate100}`, background: T.amberLt + "40" }}>
+                <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate500, fontStyle: "italic" }}>{e.label}</td>
+                <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400 }}>{e.payDate}</td>
+                <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400, textAlign: "right" }}>—</td>
+                <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400, textAlign: "right" }}>—</td>
+                <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400, textAlign: "right" }}>—</td>
+                <td style={{ padding: "9px 8px", textAlign: "right" }}>
+                  <Pill type="warning">Missing</Pill>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       </div>
@@ -1008,66 +1270,64 @@ const BankSection = ({ data }) => {
 };
 
 // ─── Section: Credit & Debt ───────────────────────────────────
+// One line per account: on desktop everything fits horizontally, on phones it
+// wraps naturally onto multiple lines via flex-wrap + minmax fields.
 const CreditSection = ({ data }) => {
-  const totalDebt = (data.creditAccounts || []).reduce((s,r) => s + r.balance, 0);
-  const totalAvailable = (data.creditAccounts || []).filter(a => a.limit).reduce((s,r) => s + (r.limit - r.balance), 0);
+  const accounts = Array.isArray(data.creditAccounts) ? data.creditAccounts : [];
+  const totalDebt      = accounts.reduce((s,r) => s + (r?.balance || 0), 0);
+  const totalAvailable = accounts.filter(a => a.limit).reduce((s,r) => s + (r.limit - r.balance), 0);
+
+  const typeLabel = (t) => t === "credit_card" ? "Credit Card" : t === "loan" ? "Loan" : "Line of Credit";
+
+  // Compact one-line row (flex-wrap fires only when the row runs out of horizontal room, i.e. phones)
+  const AccountRow = ({ a }) => {
+    const util = a.limit ? pct(a.balance, a.limit) : null;
+    const utilColor = util == null ? T.slate400 : util > 30 ? T.amber : T.green;
+    const Field = ({ label, value, color = T.slate900, minWidth = 90 }) => (
+      <div style={{ minWidth, flex: "0 1 auto" }}>
+        <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
+      </div>
+    );
+    return (
+      <div style={{
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px",
+        padding: "10px 14px",
+        background: T.white,
+        border: `1px solid ${T.slate200}`,
+        borderRadius: 10,
+      }}>
+        <div style={{ flex: "1 1 220px", minWidth: 180 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 1 }}>
+            {typeLabel(a.type)}{a.rate ? ` · ${a.rate}% APR` : ""}{a.needsReview ? " · " : ""}
+            {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle" }}><Pill type="warning">Review</Pill></span> : null}
+          </div>
+        </div>
+        <Field label="Balance"   value={fmt(a.balance)} color={T.red} />
+        {a.limit ? <Field label="Available" value={fmt(a.limit - a.balance)} color={T.green} /> : null}
+        {a.payment ? <Field label="Min Pmt" value={fmt(a.payment)} color={T.amber} /> : null}
+        {a.dueDay ? <Field label="Due" value={`Day ${a.dueDay}`} color={T.slate700} minWidth={60} /> : null}
+        {a.limit ? (
+          <div style={{ minWidth: 110, flex: "0 1 auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.slate500, marginBottom: 2, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+              <span>Utilization</span><span style={{ color: utilColor, fontWeight: 700 }}>{util}%</span>
+            </div>
+            <ProgressBar value={a.balance} max={a.limit} color={utilColor} height={5} />
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
         <KPICard label="Total Debt Exposure" value={fmt(totalDebt)} color={T.red} border={T.red} />
         <KPICard label="Available Credit" value={fmt(totalAvailable)} color={T.green} border={T.green} />
-        <KPICard label="Accounts Tracked" value={String((data.creditAccounts || []).length)} sub="Balances from ledger" border={T.amber} />
+        <KPICard label="Accounts Tracked" value={String(accounts.length)} sub="Balances from ledger" border={T.amber} />
       </div>
-
-      {(data.creditAccounts || []).map((a, i) => (
-        <Card key={i}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{a.name}</div>
-              <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-                {a.type === "credit_card" ? "Credit Card" : a.type === "loan" ? "Loan" : "Line of Credit"}{a.rate ? ` · ${a.rate}% APR` : ""}
-              </div>
-              {a.needsReview ? (
-                <div style={{ marginTop: 4 }}><Pill type="warning">Review</Pill></div>
-              ) : null}
-            </div>
-            
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px,1fr))", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Current Balance</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: T.red }}>{fmt(a.balance)}</div>
-            </div>
-            {a.limit && (
-              <div>
-                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Available Credit</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.green }}>{fmt(a.limit - a.balance)}</div>
-              </div>
-            )}
-            {a.payment ? (
-            <div>
-              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Min Payment</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: T.amber }}>{fmt(a.payment)}</div>
-            </div>
-            ) : null}
-            {a.dueDay ? (
-            <div>
-              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Due Date</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800 }}>Day {a.dueDay}</div>
-            </div>
-            ) : null}
-          </div>
-
-          {a.limit && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 10, color: T.slate400, marginBottom: 4 }}>Utilization: {pct(a.balance, a.limit)}%</div>
-              <ProgressBar value={a.balance} max={a.limit} color={pct(a.balance,a.limit) > 30 ? T.amber : T.green} height={6} />
-            </div>
-          )}
-        </Card>
-      ))}
+      {accounts.map((a, i) => <AccountRow key={i} a={a} />)}
     </div>
   );
 };
@@ -1312,8 +1572,7 @@ export default function Financials() {
   const viewSections = [
     { id: "overview",  label: "Overview"        },
     { id: "pl",        label: "P&L"             },
-    { id: "comp",      label: "COMP_RECAP"      },
-    { id: "aipp",      label: "AIPP & Scorecard"},
+    { id: "comp",      label: "Comp Recap"      },
     { id: "payroll",   label: "Payroll"         },
     { id: "bank",      label: "Bank Accounts"   },
     { id: "credit",    label: "Credit & Debt"   },
@@ -1382,7 +1641,6 @@ export default function Financials() {
       {section === "overview" && <OverviewSection period={period} setPeriod={setPeriod} data={MOCK} />}
       {section === "pl"       && <PLSection data={MOCK} />}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
-      {section === "aipp"     && <AIPPSection data={MOCK} />}
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
       {section === "credit"   && <CreditSection data={MOCK} />}
