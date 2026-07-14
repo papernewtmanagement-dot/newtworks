@@ -50,7 +50,7 @@ import { parseCompRecap } from "./parsers/comp_recap.ts";
 import { parseDeductionStatement } from "./parsers/deduction.ts";
 import { parsePayrollRun } from "./parsers/payroll.ts";
 import { parseProductionReport } from "./parsers/production.ts";
-import { processSurePayrollPdf } from "./parsers/surepayroll.ts";
+import { processSurePayrollParsed, parseSurePayrollText, parseSurePayrollCsvText, type ParsedSurePayroll } from "./parsers/surepayroll.ts";
 import { processPfaStatement } from "./parsers/pfa_statement.ts";
 import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
@@ -892,7 +892,9 @@ async function processOneAttachment(
         break;
       }
             case "surepayroll_payroll": {
-        // preserveFormat=true — SurePayroll parser needs original whitespace
+        // PDF path: extractText uses unpdf with preserveFormat=true (parser needs
+        // original whitespace). CSV path: extractText auto-decodes text bytes.
+        const isCsv = /\.csv$/i.test(att.fileName);
         const ex = await extractText(ctx, att, bytesB64, true);
         if (!ex.ok) {
           await markDocument(documentId, "error", 0, [], ex.error);
@@ -903,10 +905,25 @@ async function processOneAttachment(
           });
           break;
         }
-        const r = await processSurePayrollPdf({
+        let parsed: ParsedSurePayroll;
+        try {
+          parsed = isCsv ? parseSurePayrollCsvText(ex.text) : parseSurePayrollText(ex.text);
+        } catch (e) {
+          const err = `parser: ${(e as Error).message}`;
+          await markDocument(documentId, "error", 0, [], err);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: err, sourceLabel: uploadSource,
+          });
+          break;
+        }
+        const r = await processSurePayrollParsed({
           agencyId: ctx.agencyId, documentId,
           gmailMessageId: att.messageId, gmailThreadId: att.threadId,
-          pdfText: ex.text,
+          parsed,
+          sourceText: ex.text,
+          sourceFormat: isCsv ? "csv" : "pdf",
           composioApiKey: ctx.composioApiKey,
           composioUserId: ctx.composioUserId,
           gmailAccountId: ctx.gmailAccountId,
