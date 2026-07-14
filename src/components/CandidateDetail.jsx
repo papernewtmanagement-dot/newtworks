@@ -153,6 +153,32 @@ const STAGE_LABELS = {
   archived:        "Archived",
 };
 
+// Rules from hiregauge_evaluate_candidate get bucketed by cross-referencing
+// their short_label against the arrays returned by
+// hiregauge_composite_recommendation. Order in UI: failed floors first
+// (most decision-relevant), then decline / consider / hire, then informational.
+const BUCKET_CONFIG = {
+  failed_floor:  { title: "Character floors failed", tone: "red" },
+  soft_decline:  { title: "Decline signals",         tone: "red" },
+  consider:      { title: "Consider signals",        tone: "amber" },
+  hire:          { title: "Hire signals",            tone: "green" },
+  informational: { title: "Informational",           tone: "slate" },
+};
+
+// Candidate.status → which hiring_stage rules are most relevant right now.
+// Used only for a small chip that highlights stage-relevant rules; nothing
+// is hidden — the framework read is comprehensive by design.
+const STAGE_TO_RELEVANT_RULE_STAGES = {
+  assessed:        ["assessment_review", "resume_review"],
+  email_screen:    ["assessment_review", "interview"],
+  interview:       ["interview", "reference_check"],
+  reference_check: ["reference_check", "interview"],
+  offer:           ["reference_check", "onboarding"],
+  hired:           ["onboarding", "retention"],
+  declined:        [],
+  archived:        [],
+};
+
 const SCORECARD_FIELDS = [
   { key: "personal_presence",           label: "Personal Presence",           type: "num" },
   { key: "resume_quality",              label: "Resume Quality",              type: "num" },
@@ -319,6 +345,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [manualMarkdown, setManualMarkdown] = useState("");
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
+  const [composite, setComposite] = useState(null);
+  const [frameworkRules, setFrameworkRules] = useState([]);
 
   // Fetch full row on mount
   useEffect(() => {
@@ -348,6 +376,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     supabase.rpc("cts_timing_assessment", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error) setTiming(data); })
       .catch(() => {});
+    // HireGauge framework read — composite verdict + all matched rules.
+    // Both RPCs are read-only, IMMUTABLE per candidate, safe to call every mount.
+    supabase.rpc("hiregauge_composite_recommendation", { p_assessment_id: detail.id })
+      .then(({ data, error }) => {
+        if (!error && Array.isArray(data) && data[0]) setComposite(data[0]);
+      })
+      .catch(() => {});
+    supabase.rpc("hiregauge_evaluate_candidate", { p_assessment_id: detail.id })
+      .then(({ data, error }) => {
+        if (!error && Array.isArray(data)) setFrameworkRules(data);
+      })
+      .catch(() => {});
   }, [detail?.id]);
 
   // Fetch Final Interview manual page for triggered follow-up questions
@@ -367,6 +407,44 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   }, []);
 
   const triggers = useMemo(() => detectTriggers(detail), [detail]);
+
+  // Bucket evaluate_candidate rows by verdict impact using composite's signal
+  // arrays as the routing table. Composite's decline_signals annotate unverified
+  // floors with " (unverified)" suffix — strip before matching. Rules with no
+  // match land in "informational" as a safe default.
+  const rulesByImpact = useMemo(() => {
+    const buckets = { failed_floor: [], soft_decline: [], consider: [], hire: [], informational: [] };
+    if (!composite) return buckets;
+    const strip = (s) => (s || "").replace(/\s*\(unverified\)\s*$/, "").trim();
+    const declineSet  = new Set((composite.decline_signals  || []).map(strip));
+    const considerSet = new Set(composite.consider_signals || []);
+    const hireSet     = new Set(composite.hire_signals     || []);
+    const infoSet     = new Set(composite.informational_signals || []);
+    (frameworkRules || []).forEach((r) => {
+      const label = r.out_short_label;
+      if (r.out_match_confidence === "floor_failed") {
+        buckets.failed_floor.push(r);
+      } else if (hireSet.has(label)) {
+        buckets.hire.push(r);
+      } else if (declineSet.has(label)) {
+        buckets.soft_decline.push(r);
+      } else if (considerSet.has(label)) {
+        buckets.consider.push(r);
+      } else if (infoSet.has(label)) {
+        buckets.informational.push(r);
+      } else {
+        buckets.informational.push(r);
+      }
+    });
+    return buckets;
+  }, [composite, frameworkRules]);
+
+  // Which hiring stages are most relevant given candidate's current status.
+  // Rules whose out_hiring_stage intersects this list get a subtle highlight.
+  const relevantRuleStages = useMemo(
+    () => new Set(STAGE_TO_RELEVANT_RULE_STAGES[detail?.status] || []),
+    [detail?.status]
+  );
 
   const updateField = (field, value) => {
     setDetail(prev => ({ ...prev, [field]: value }));
@@ -544,6 +622,140 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             </ul>
           )}
         </div>
+      </Section>
+
+      {/* HireGauge Framework Read — auto-computed verdict + every matched
+          rule from hiregauge_evaluate_candidate. Bucketed by verdict impact
+          via hiregauge_composite_recommendation's signal arrays. This is the
+          raw framework read; Customized Interview Probes below is the
+          LLM-crafted, candidate-specific probe list built from this same input. */}
+      <Section title="HireGauge Framework Read">
+        {!composite ? (
+          <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+            {frameworkRules?.length === 0
+              ? "No trait data yet — framework read waits for CTS scores."
+              : "Loading framework read..."}
+          </div>
+        ) : (
+          <>
+            {/* Verdict banner */}
+            {(() => {
+              const v = composite.verdict;
+              const bg = v === "decline" ? T.redLt : v === "hire" ? T.greenLt : T.amberLt;
+              const fg = v === "decline" ? T.red   : v === "hire" ? T.green   : T.amber;
+              return (
+                <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: bg, borderLeft: `4px solid ${fg}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: fg, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      {v || "unknown"}
+                    </span>
+                    <span style={{ fontSize: 11, color: T.slate600 }}>
+                      {composite.matched_rules_count ?? 0} rules matched · {composite.floor_failures_count ?? 0} floor failure(s)
+                    </span>
+                  </div>
+                  {composite.primary_reason && (
+                    <div style={{ fontSize: 12, color: T.slate800, lineHeight: 1.5 }}>{composite.primary_reason}</div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Signal counts row */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, fontSize: 11 }}>
+              {[
+                { label: "Floors failed",       count: composite.character_floors_failed?.length || 0, fg: T.red },
+                { label: "Decline signals",     count: composite.decline_signals?.length || 0,        fg: T.red },
+                { label: "Consider signals",    count: composite.consider_signals?.length || 0,       fg: T.amber },
+                { label: "Hire signals",        count: composite.hire_signals?.length || 0,           fg: T.green },
+                { label: "Informational",       count: composite.informational_signals?.length || 0,  fg: T.slate500 },
+              ].filter((s) => s.count > 0).map((s) => (
+                <span key={s.label} style={{
+                  padding: "3px 8px", borderRadius: 4, background: T.white,
+                  border: `1px solid ${s.fg}`, color: s.fg, fontWeight: 600,
+                }}>
+                  {s.count} × {s.label}
+                </span>
+              ))}
+            </div>
+
+            {/* Rules by bucket */}
+            {["failed_floor", "soft_decline", "consider", "hire", "informational"].map((bucketKey) => {
+              const rules = rulesByImpact[bucketKey] || [];
+              if (rules.length === 0) return null;
+              const cfg = BUCKET_CONFIG[bucketKey];
+              const bucketFg = cfg.tone === "red" ? T.red : cfg.tone === "amber" ? T.amber : cfg.tone === "green" ? T.green : T.slate500;
+              return (
+                <div key={bucketKey} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: bucketFg, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                    {cfg.title} ({rules.length})
+                  </div>
+                  {rules.map((r) => {
+                    const stageMatch = Array.isArray(r.out_hiring_stage)
+                      && r.out_hiring_stage.some((s) => relevantRuleStages.has(s));
+                    return (
+                      <div key={r.out_rule_id} style={{
+                        padding: 10, marginBottom: 6, background: T.white, borderRadius: 7,
+                        borderLeft: `3px solid ${bucketFg}`,
+                        boxShadow: stageMatch ? `0 0 0 1px ${bucketFg}22` : "none",
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                          <div style={{ flex: 1, minWidth: 220 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>
+                              {r.out_short_label ? <>{r.out_short_label} · </> : null}{r.out_rule_name}
+                            </div>
+                            <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>
+                              {(r.out_rule_type || "").replace(/_/g, " ")}
+                              {r.out_calibration_status ? ` · ${r.out_calibration_status.replace(/_/g, " ")}` : ""}
+                              {r.out_n_count > 0 ? ` · n=${r.out_n_count}` : ""}
+                              {Array.isArray(r.out_hiring_stage) && r.out_hiring_stage.length > 0
+                                ? ` · stage: ${r.out_hiring_stage.join(", ")}`
+                                : ""}
+                              {stageMatch ? " · relevant now" : ""}
+                            </div>
+                          </div>
+                          {r.out_match_confidence && (
+                            <span style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace" }}>{r.out_match_confidence}</span>
+                          )}
+                        </div>
+                        {r.out_description && (
+                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>{r.out_description}</div>
+                        )}
+                        {r.out_recommendation && (
+                          <div style={{ fontSize: 11, color: T.slate800, marginTop: 6, lineHeight: 1.5 }}>
+                            <strong>Recommendation: </strong>{r.out_recommendation}
+                          </div>
+                        )}
+                        {r.out_diagnostic_action && (
+                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>
+                            <strong>Diagnostic: </strong>{r.out_diagnostic_action}
+                          </div>
+                        )}
+                        {r.out_interview_probe && (
+                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>
+                            <strong>Interview probe: </strong>{r.out_interview_probe}
+                          </div>
+                        )}
+                        {r.out_coaching_prescription && (
+                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>
+                            <strong>Coaching: </strong>{r.out_coaching_prescription}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+
+            {(!rulesByImpact.failed_floor.length && !rulesByImpact.soft_decline.length
+              && !rulesByImpact.consider.length && !rulesByImpact.hire.length
+              && !rulesByImpact.informational.length) && (
+              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+                No framework rules matched this candidate's profile.
+              </div>
+            )}
+          </>
+        )}
       </Section>
 
       {/* Customized Interview Probes — LLM-generated per candidate.
