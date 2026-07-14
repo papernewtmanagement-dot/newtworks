@@ -66,6 +66,14 @@ interface ExtractedApplicant {
   raw_line: string | null;           // optional: verbatim snippet for debug
 }
 
+// ---------- Applicant storage destinations ----------
+// Gmail label + Drive folder for ingested CareerPlug applicants. Created
+// 2026-07-14 via Gmail:create_label + Google Drive:create_file. Hardcoded
+// here (not in settings) because these IDs never change once created — if
+// they ever DO get recreated, update these two lines.
+const APPLICANTS_GMAIL_LABEL_ID  = "Label_20";                          // "Applicants" label in paper.newt.management@gmail.com
+const APPLICANTS_DRIVE_FOLDER_ID = "1GI0h2mEiuGb7BmQevkqpqQ9WM1CWVK4K"; // "Applicants" folder in paper.newt.management Drive root
+
 // ---------- LLM extraction prompt ----------
 
 const CAREERPLUG_EXTRACT_PROMPT = `You are extracting applicant data from a CareerPlug hiring platform notification email for a State Farm insurance agency.
@@ -265,6 +273,7 @@ async function processCareerplugMessage(
         toolArguments: {
           thread_id: threadId,
           remove_label_ids: ["INBOX"],
+          add_label_ids: [APPLICANTS_GMAIL_LABEL_ID],
           user_id: "me",
         },
       });
@@ -490,6 +499,7 @@ async function storeResume(
           mime_type: "application/pdf",
           file_content: bytesB64,           // base64 body
           is_base64: true,
+          folder_to_upload_to: APPLICANTS_DRIVE_FOLDER_ID,
         },
       });
       if (uploadRes.ok) {
