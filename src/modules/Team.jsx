@@ -40,14 +40,15 @@ import { T } from "../lib/theme.js";
 
 // ─── Pipeline Stage Config ────────────────────────────────────
 const STAGES = {
-  assessed:        { label:"Assessed",       color:T.slate500, bg:T.slate100, order:0 },
-  email_screen:    { label:"Email Screen",   color:T.slate600, bg:T.slate100, order:1 },
-  interview:       { label:"Interview",      color:T.amber,    bg:T.amberLt,  order:2 },
-  reference_check: { label:"Ref Check",      color:T.blue,     bg:T.blueLt,   order:3 },
-  offer:           { label:"Offer",          color:T.purple,   bg:T.purpleLt, order:4 },
-  hired:           { label:"Hired",          color:T.green,    bg:T.greenLt,  order:5 },
-  declined:        { label:"Declined",       color:T.red,      bg:T.redLt,    order:6 },
-  archived:        { label:"Archived",       color:T.slate500, bg:T.slate100, order:7 },
+  applied:         { label:"Applied",        color:T.slate500, bg:T.slate100, order:0 },
+  assessed:        { label:"Assessed",       color:T.slate500, bg:T.slate100, order:1 },
+  email_screen:    { label:"Email Screen",   color:T.slate600, bg:T.slate100, order:2 },
+  interview:       { label:"Interview",      color:T.amber,    bg:T.amberLt,  order:3 },
+  reference_check: { label:"Ref Check",      color:T.blue,     bg:T.blueLt,   order:4 },
+  offer:           { label:"Offer",          color:T.purple,   bg:T.purpleLt, order:5 },
+  hired:           { label:"Hired",          color:T.green,    bg:T.greenLt,  order:6 },
+  declined:        { label:"Declined",       color:T.red,      bg:T.redLt,    order:7 },
+  archived:        { label:"Archived",       color:T.slate500, bg:T.slate100, order:8 },
 };
 
 // ─── Producer ROI Hook ───────────────────────────────────────
@@ -510,7 +511,7 @@ const ProgressBar = ({ value, max, color=T.blue, height=6 }) => (
 );
 
 const StageBadge = ({ status }) => {
-  const s = STAGES[status] || STAGES.new;
+  const s = STAGES[status] || STAGES.applied;
   return <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:s.bg, color:s.color }}>{s.label}</span>;
 };
 
