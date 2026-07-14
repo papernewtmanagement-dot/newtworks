@@ -1532,9 +1532,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   ];
 
   // Blank marker — thin gray line, replaces every "—" placeholder in this section.
-  const BLANK = (
-    <span style={{ display: "inline-block", width: 22, height: 1, background: T.slate300, verticalAlign: "middle" }} />
-  );
+  const BLANK = <span style={{ color: T.slate300, fontWeight: 400 }}>–</span>;
   // Delta text: null on blank/flat so caller can render BLANK; else signed string.
   const deltaText = (d, isMoney) => {
     if (d === null || d === undefined) return null;
@@ -1590,8 +1588,8 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 //   Rate rows (SMVC %, SMVC $, Scorecard): light-blue ramp.
                 //   Standard LOB rows: no row bg; existing neutral column tints.
                 const shades =
-                  r.rowKind === "premium" ? { row: "#EDF6E1", mid: "#D2E6B0", dark: "#A5CB78" } :
-                  r.rowKind === "rate"    ? { row: "#E4EEFA", mid: "#BAD3EE", dark: "#8AB1DD" } :
+                  r.rowKind === "premium" ? { row: "#F3F9E7", mid: "#DEEBC1", dark: "#C4DC9C" } :
+                  r.rowKind === "rate"    ? { row: "#EEF3FB", mid: "#CFDEEE", dark: "#A9C4E4" } :
                                             { row: undefined,  mid: T.slate50,  dark: T.blueLt };
                 const rowBg = shades.row;
 
@@ -2596,10 +2594,10 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                     goalsMain,
                     goalsSubRow("health", "💪 Health Goal",         (_gd, d) => Number(d.health_bonus)    || 0),
                     goalsSubRow("win",    "🏆 Win the Week",         gd    => (gd.won_the_week ? 10 : 0)),
-                    goalsSubRow("gain",   "📈 1% Gain target",       gd    => (gd.gain_hit ? 10 : 0)),
-                    goalsSubRow("as",     "⭐ All-Star crossings",   gd    => 10 * (Number(gd.as_hits)     || 0)),
-                    goalsSubRow("leaderboard", "🥇 Leaderboard entries",  gd    => 10 * (Number(gd.leaderboard_hits) || 0)),
-                    goalsSubRow("tb",     "🔥 Trailblazer breaks",   gd    => 10 * (Number(gd.tb_hits)     || 0)),
+                    goalsSubRow("gain",   "📈 1% Gain",              gd    => (gd.gain_hit ? 10 : 0)),
+                    goalsSubRow("as",     "⭐ All-Star",             gd    => 10 * (Number(gd.as_hits)     || 0)),
+                    goalsSubRow("leaderboard", "🥇 Leaderboard",         gd    => 10 * (Number(gd.leaderboard_hits ?? gd.podium_hits) || 0)),
+                    goalsSubRow("tb",     "🔥 Trailblazer",          gd    => 10 * (Number(gd.tb_hits)     || 0)),
                   ];
                 }
                 return [
