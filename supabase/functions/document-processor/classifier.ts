@@ -129,6 +129,7 @@ export type DocType =
   | "surepayroll_payroll"
   | "commission_report"
   | "team_production"
+  | "careerplug_applicant"
   | "archive_bundle"
   | "skip";
 
@@ -159,6 +160,18 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   // ----- ARCHIVE — any .zip is unpacked, contents reclassified individually -----
   { docType: "archive_bundle",
     test: (i) => /\.zip$/i.test(i.fileName) },
+
+  // ----- CAREERPLUG APPLICANT (2026-07-13) — resume PDF attached to a
+  //       CareerPlug new-applicant notification. The parent notification
+  //       email is handled by processCareerplugMode (called via body.mode
+  //       === "careerplug"), which owns applicant intake. This rule catches
+  //       the case where a resume PDF also arrives through the standard
+  //       attachment pipeline; classifying as careerplug_applicant routes
+  //       it to a lightweight handler (see index.ts). -----
+  { docType: "careerplug_applicant",
+    test: (i) => /careerplug/i.test(i.fromEmail) &&
+                 /\.pdf$/i.test(i.fileName) &&
+                 /resume|cv|applicant/i.test(i.fileName + " " + i.subject) },
 
   // ----- FROST PFA STATEMENT (2026-07-09) — must come BEFORE the generic
   //       bank statement rules. Sender = Frost Bank; subject/filename mentions

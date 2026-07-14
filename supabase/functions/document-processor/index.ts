@@ -53,6 +53,7 @@ import { parseProductionReport } from "./parsers/production.ts";
 import { processSurePayrollPdf } from "./parsers/surepayroll.ts";
 import { processPfaStatement } from "./parsers/pfa_statement.ts";
 import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
+import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
 import { createSuspenseTask } from "./suspense.ts";
 
@@ -1002,6 +1003,22 @@ async function processOneAttachment(
         }
         break;
       }
+      case "careerplug_applicant": {
+        // CareerPlug resume PDF that arrived through the standard attachment
+        // path (parent notification email is handled by processCareerplugMode).
+        // Persist the document row as processed and archive the thread. Linking
+        // the resume to a team_assessments row happens in the mode path when
+        // the parent notification is parsed.
+        await markDocument(documentId, "processed", 0, ["documents"],
+          "CareerPlug resume stored via attachment pipeline; linkage handled by mode=careerplug");
+        await maybeArchiveThread(ctx, att.threadId);
+        results.push({
+          documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+          docType, status: "processed", jeCount: 0, suspenseCount: 0,
+          sourceLabel: uploadSource,
+        });
+        break;
+      }
       default: {
         await markDocument(documentId, "awaiting_parser_implementation",
           0, [], `Parser for ${docType} not yet implemented`);
@@ -1059,6 +1076,12 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processCallLogMode(callLogCtx, body);
     return jsonResponse({ ok: true, mode: "call_log", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "careerplug") {
+    const cpCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processCareerplugMode(cpCtx, body);
+    return jsonResponse({ ok: true, mode: "careerplug", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
 
   const ctx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
