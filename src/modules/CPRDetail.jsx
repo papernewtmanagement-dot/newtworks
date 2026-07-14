@@ -1383,8 +1383,20 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   // If Peter tunes this, edit the constant here. Goal source is not in book_performance_goals yet.
   const SMVC_PCT_GOAL     = 0.027;
   const smvcDollarsGoal   = (pcBookPremium != null) ? SMVC_PCT_GOAL * pcBookPremium : null;
-  // Scorecard $ goal — not yet defined by Peter. Leave null; row displays "—" for Goal + Diff.
-  const SCORECARD_GOAL = null;
+  // Scorecard $ goal — Peter set to $150,000 (2026-07-14).
+  const SCORECARD_GOAL = 150000;
+
+  // ─── Premium rows: baseline + growth-goal setup ───
+  // Auto/Fire/Life $ values in the YTD column are SNAPSHOTS of current book premium,
+  // not YTD accumulations. Pace/On Time must project GROWTH from year-start baseline,
+  // not annualize the whole book. Goal = 25% growth over year-start baseline.
+  const yearStartAutoPrem = (bookYearStart?.auto_premium == null) ? null : Number(bookYearStart.auto_premium);
+  const yearStartFirePrem = (bookYearStart?.fire_premium == null) ? null : Number(bookYearStart.fire_premium);
+  const yearStartLifePrem = (bookYearStart?.life_premium == null) ? null : Number(bookYearStart.life_premium);
+  const PREMIUM_GROWTH_TARGET_PCT = 0.25;  // Peter directive 2026-07-14: 25% growth from year-start
+  const premGoalAuto = (yearStartAutoPrem == null) ? null : yearStartAutoPrem * (1 + PREMIUM_GROWTH_TARGET_PCT);
+  const premGoalFire = (yearStartFirePrem == null) ? null : yearStartFirePrem * (1 + PREMIUM_GROWTH_TARGET_PCT);
+  const premGoalLife = (yearStartLifePrem == null) ? null : yearStartLifePrem * (1 + PREMIUM_GROWTH_TARGET_PCT);
 
   // Combined wk-delta for the On Time column when it represents Gain (new - lost).
   // Takes resolved values so it stays accurate when manual overrides are in play.
@@ -1458,8 +1470,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: auto_prem_book,
+      paceBaseline: yearStartAutoPrem,
       onTimeWkD: wkDelta(resolvedAutoPrem, priorAutoPrem),
-      goal: goalFor(goals, "auto", "premium"),
+      goal: premGoalAuto,
       isMoney: true,
       lapseRate: null,
     },
@@ -1469,8 +1482,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: fire_prem_book,
+      paceBaseline: yearStartFirePrem,
       onTimeWkD: wkDelta(resolvedFirePrem, priorFirePrem),
-      goal: goalFor(goals, "fire", "premium"),
+      goal: premGoalFire,
       isMoney: true,
       lapseRate: null,
     },
@@ -1480,8 +1494,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
       gainYtd: life_prem_book,
+      paceBaseline: yearStartLifePrem,
       onTimeWkD: wkDelta(resolvedLifePrem, priorLifePrem),
-      goal: goalFor(goals, "life", "premium_book"),
+      goal: premGoalLife,
       isMoney: true,
       lapseRate: null,
     },
@@ -1616,7 +1631,18 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 // ─── Standard LOB rows + Life NPF rows + Premium rows ───
                 // Premium rows: newKey/lostKey are undefined and newYtd/lostYtd/lapseRate
                 // are null, so New/Lost/Lapse naturally render as dashes via existing helpers.
-                const onTime = (Number(r.gainYtd) * 365) / daysElapsed;
+                //
+                // Pace / On Time:
+                //   - Standard rows (no paceBaseline): gainYtd is a YTD gain → annualize whole value.
+                //   - Premium rows (paceBaseline set): gainYtd is a SNAPSHOT of current book →
+                //     project growth from year-start: onTime = baseline + growth × 365/daysElapsed.
+                let onTime;
+                if (r.paceBaseline != null && r.gainYtd != null) {
+                  const growthYtd = Number(r.gainYtd) - Number(r.paceBaseline);
+                  onTime = Number(r.paceBaseline) + (growthYtd * 365) / daysElapsed;
+                } else {
+                  onTime = (Number(r.gainYtd) * 365) / daysElapsed;
+                }
                 const onTimeRounded = r.isMoney ? onTime : Math.round(onTime);
                 const diff = (r.goal !== null && r.goal !== undefined && r.gainYtd !== null && r.gainYtd !== undefined)
                   ? (onTime - Number(r.goal))
