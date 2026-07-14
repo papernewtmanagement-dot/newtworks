@@ -97,8 +97,8 @@ function Button({ children, variant = "primary", onClick, disabled, size = "md",
     md: { padding: "8px 14px", fontSize: "0.95rem" },
   };
   const variants = {
-    primary: { background: T.accent, color: "#fff", border: `1px solid ${T.accent}` },
-    ghost:   { background: "transparent", color: T.text, border: `1px solid ${T.border}` },
+    primary: { background: T.blue, color: "#fff", border: `1px solid ${T.blue}` },
+    ghost:   { background: "transparent", color: T.slate900, border: `1px solid ${T.slate200}` },
     danger:  { background: "#c0392b", color: "#fff", border: "1px solid #c0392b" },
   };
   return (
@@ -120,7 +120,7 @@ function Button({ children, variant = "primary", onClick, disabled, size = "md",
 function Card({ children, style }) {
   return (
     <div style={{
-      background: T.surface, border: `1px solid ${T.border}`,
+      background: T.white, border: `1px solid ${T.slate200}`,
       borderRadius: 8, padding: 16, ...(style || {}),
     }}>
       {children}
@@ -251,7 +251,7 @@ export default function FitScorecards({ userRole, userId }) {
   }
 
   return (
-    <div style={{ padding: 16, color: T.text }}>
+    <div style={{ padding: 16, color: T.slate900 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: "1.3rem" }}>Simple Conversation FIT Scorecards</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -268,7 +268,7 @@ export default function FitScorecards({ userRole, userId }) {
           <select
             value={filterMember}
             onChange={(e) => setFM(e.target.value)}
-            style={{ padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text }}
+            style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }}
           >
             <option value="all">Whole team</option>
             {team.map((p) => (
@@ -302,14 +302,14 @@ export default function FitScorecards({ userRole, userId }) {
             const avg = b.count ? b.sum / b.count : null;
             return (
               <div key={dim.key} style={{
-                border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                border: `1px solid ${T.slate200}`, borderRadius: 6, padding: "8px 10px",
               }}>
-                <div style={{ fontSize: "0.78rem", color: T.textMuted || "#6b7280" }}>{dim.label}</div>
+                <div style={{ fontSize: "0.78rem", color: T.slate500 }}>{dim.label}</div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                   <span style={{ fontSize: "1.15rem", fontWeight: 700 }}>
                     {avg === null ? "—" : avg.toFixed(2)}
                   </span>
-                  <span style={{ fontSize: "0.75rem", color: T.textMuted || "#6b7280" }}>
+                  <span style={{ fontSize: "0.75rem", color: T.slate500 }}>
                     n={b.count}
                   </span>
                 </div>
@@ -328,7 +328,7 @@ export default function FitScorecards({ userRole, userId }) {
           Entries this week {loading ? "…" : `(${entries.length})`}
         </div>
         {!loading && entries.length === 0 && (
-          <div style={{ color: T.textMuted || "#6b7280", fontSize: "0.9rem" }}>
+          <div style={{ color: T.slate500, fontSize: "0.9rem" }}>
             No entries yet for this week.
           </div>
         )}
@@ -338,7 +338,7 @@ export default function FitScorecards({ userRole, userId }) {
             const canEdit = isAdmin || row.team_member_id === selfTeamId;
             return (
               <div key={row.id} style={{
-                border: `1px solid ${T.border}`, borderRadius: 6, padding: 10,
+                border: `1px solid ${T.slate200}`, borderRadius: 6, padding: 10,
                 display: "flex", flexDirection: "column", gap: 6,
               }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -368,8 +368,8 @@ export default function FitScorecards({ userRole, userId }) {
                     return (
                       <span key={dim.key} style={{
                         fontSize: "0.78rem", padding: "2px 6px",
-                        border: `1px solid ${T.border}`, borderRadius: 4,
-                        color: v == null ? (T.textMuted || "#6b7280") : T.text,
+                        border: `1px solid ${T.slate200}`, borderRadius: 4,
+                        color: v == null ? (T.slate500) : T.slate900,
                       }}>
                         {dim.label}: {v == null ? "—" : v}
                       </span>
@@ -377,7 +377,7 @@ export default function FitScorecards({ userRole, userId }) {
                   })}
                 </div>
                 {row.notes && (
-                  <div style={{ fontSize: "0.85rem", color: T.textMuted || "#6b7280" }}>
+                  <div style={{ fontSize: "0.85rem", color: T.slate500 }}>
                     {row.notes}
                   </div>
                 )}
@@ -419,9 +419,9 @@ function ScorePicker({ value, onChange }) {
             style={{
               padding: "4px 10px",
               borderRadius: 4,
-              border: `1px solid ${active ? T.accent : T.border}`,
-              background: active ? T.accent : "transparent",
-              color: active ? "#fff" : T.text,
+              border: `1px solid ${active ? T.blue : T.slate200}`,
+              background: active ? T.blue : "transparent",
+              color: active ? "#fff" : T.slate900,
               fontWeight: active ? 600 : 400,
               cursor: "pointer",
               fontSize: "0.85rem",
@@ -500,14 +500,15 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
       display: "flex", alignItems: "center", justifyContent: "center",
       zIndex: 1000, padding: 16,
     }}>
       <div style={{
-        background: T.surface, borderRadius: 8, padding: 16,
+        background: T.white, borderRadius: 8, padding: 16,
         maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto",
-        border: `1px solid ${T.border}`, color: T.text,
+        border: `1px solid ${T.slate200}`, color: T.slate900,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
       }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
           <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
@@ -533,7 +534,7 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
               value={teamMemberId}
               onChange={(e) => setTMI(e.target.value)}
               disabled={!canPickMember && memberOptions.length <= 1}
-              style={{ padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text }}
+              style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }}
             >
               {memberOptions.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -546,13 +547,13 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
             Date
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-              style={{ padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text }} />
+              style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }} />
           </label>
 
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
             Entry type
             <select value={entryType} onChange={(e) => setET(e.target.value)}
-              style={{ padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text }}>
+              style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }}>
               {ENTRY_TYPES.map((et) => <option key={et.value} value={et.value}>{et.label}</option>)}
             </select>
           </label>
@@ -560,7 +561,7 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
             Customer first name (optional)
             <input value={custName} onChange={(e) => setCust(e.target.value)}
-              style={{ padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text }} />
+              style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }} />
           </label>
         </div>
 
@@ -572,11 +573,11 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
           {recTurned && (
             <input value={recUrl} onChange={(e) => setRecUrl(e.target.value)}
               placeholder="Recording URL (optional)"
-              style={{ marginTop: 6, width: "100%", padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text }} />
+              style={{ marginTop: 6, width: "100%", padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900 }} />
           )}
         </div>
 
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: 6, padding: 10, marginBottom: 12 }}>
+        <div style={{ border: `1px solid ${T.slate200}`, borderRadius: 6, padding: 10, marginBottom: 12 }}>
           <div style={{ fontWeight: 600, marginBottom: 6, fontSize: "0.9rem" }}>Scores (1–3, or N/A)</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
             {DIMENSIONS.map((dim) => (
@@ -591,7 +592,7 @@ function EntryModal({ mode, row, team, selfTeamId, isAdmin, userId, onClose, onS
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", marginBottom: 12 }}>
           Notes (optional)
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-            style={{ padding: "6px 10px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.text, resize: "vertical" }} />
+            style={{ padding: "6px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, color: T.slate900, resize: "vertical" }} />
         </label>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
