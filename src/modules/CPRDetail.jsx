@@ -287,6 +287,8 @@ const EDIT_FIELDS = {
     "life_new_ytd", "life_lost_ytd",
     "life_paid_for_count_ytd",
     "life_paid_for_premium_ytd",
+    // Premium book — Auto/Fire feed pc_book_premium (basis for SMVC $ translation).
+    "auto_premium", "fire_premium", "life_premium",
   ],
   detail: [
     "code_reds", "code_yellows",
@@ -454,6 +456,7 @@ function useCPRData(weekDate) {
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
+    section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
     leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
     allStarCounts: [],   // running all-star counts per person per category
     allStarCrossingsThisWeek: [],      // rows in all_star_crossings for this specific week (drives per-card badges)
@@ -674,12 +677,25 @@ function useCPRData(weekDate) {
 
         if (cancelled) return;
 
-        // Section 11 data (SMVC & Scorecard) — fetched live via RPC
+        // Section 11 data (SMVC & Scorecard) — fetched live via RPC.
+        // Also fetch prior-week snapshot to drive week-over-week delta on the
+        // SMVC % / SMVC $ / Scorecard rows now merged into Agency Performance.
         let section11 = null;
+        let section11Prior = null;
         try {
-          const { data: sec11Data } = await supabase
-            .rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: weekDate });
-          if (!cancelled) section11 = sec11Data || null;
+          const priorWeekISO = (() => {
+            const d = new Date(weekDate + "T00:00:00Z");
+            d.setUTCDate(d.getUTCDate() - 7);
+            return d.toISOString().slice(0, 10);
+          })();
+          const [{ data: sec11Data }, { data: sec11PriorData }] = await Promise.all([
+            supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: weekDate }),
+            supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: priorWeekISO }),
+          ]);
+          if (!cancelled) {
+            section11 = sec11Data || null;
+            section11Prior = sec11PriorData || null;
+          }
         } catch (e) {
           // Section 11 fetch failure shouldn't block the rest of the page
           console.warn("get_cpr_section_11 failed:", e);
@@ -863,6 +879,7 @@ function useCPRData(weekDate) {
           runtimeHours,
           runtimeReqs,
           section11,
+          section11Prior,
           prizeCart,
           leaderboards,
           allStarCounts,
@@ -1284,7 +1301,7 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
 }
 
 // 10 — Agency Performance (full version — all rows the email dropped)
-function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, editMode, formReport, isReportDirty, onReportChange, formSnapshot, isSnapshotDirty, onSnapshotChange }) {
+function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goals, weekDate, lapseRates, editMode, formReport, isReportDirty, onReportChange, formSnapshot, isSnapshotDirty, onSnapshotChange, section11, section11Prior }) {
   if (!snapshot) {
     return (
       <div>
@@ -1319,6 +1336,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const resolvedLifeLost    = src.life_lost_ytd;
   const resolvedLifeCount   = src.life_paid_for_count_ytd;
   const resolvedLifePremium = src.life_paid_for_premium_ytd;
+  const resolvedAutoPrem    = src.auto_premium;
+  const resolvedFirePrem    = src.fire_premium;
+  const resolvedLifePrem    = src.life_premium;
 
   // Prior week's values — always from prior snapshot row (never editable).
   // Weekly deltas are computed against THESE so they reflect week-over-week change.
@@ -1330,6 +1350,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const priorLifeLost    = snapshotPrior?.life_lost_ytd;
   const priorLifeCount   = snapshotPrior?.life_paid_for_count_ytd;
   const priorLifePremium = snapshotPrior?.life_paid_for_premium_ytd;
+  const priorAutoPrem    = snapshotPrior?.auto_premium;
+  const priorFirePrem    = snapshotPrior?.fire_premium;
+  const priorLifePrem    = snapshotPrior?.life_premium;
 
   // Pull metrics (numeric, resolved)
   const auto_new   = Number(resolvedAutoNew)  || 0;
@@ -1340,6 +1363,28 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   const life_lost  = Number(resolvedLifeLost) || 0;
   const life_count = Number(resolvedLifeCount) || 0;
   const life_prem  = Number(resolvedLifePremium) || 0;
+  const auto_prem_book = (resolvedAutoPrem == null) ? null : Number(resolvedAutoPrem);
+  const fire_prem_book = (resolvedFirePrem == null) ? null : Number(resolvedFirePrem);
+  const life_prem_book = (resolvedLifePrem == null) ? null : Number(resolvedLifePrem);
+
+  // SMVC / Scorecard values for the merged bottom-of-table rate rows.
+  // section11.smvc.on_time = current on-time SMVC % (decimal, e.g. 0.0233 for 2.33%)
+  // pc_book_premium (auto + fire premium book) is the basis that translates % → $.
+  const smvcPctVal      = (section11?.smvc?.on_time     != null) ? Number(section11.smvc.on_time)     : null;
+  const smvcPctPrior    = (section11Prior?.smvc?.on_time != null) ? Number(section11Prior.smvc.on_time) : null;
+  const pcBookPremium   = (auto_prem_book != null && fire_prem_book != null) ? (auto_prem_book + fire_prem_book) : null;
+  const pcBookPremPrior = (priorAutoPrem != null && priorFirePrem != null) ? (Number(priorAutoPrem) + Number(priorFirePrem)) : null;
+  const smvcDollarsVal  = (smvcPctVal   != null && pcBookPremium   != null) ? smvcPctVal   * pcBookPremium   : null;
+  const smvcDollarsPrior= (smvcPctPrior != null && pcBookPremPrior != null) ? smvcPctPrior * pcBookPremPrior : null;
+  const scorecardVal    = (section11?.scorecard_bonus?.on_time     != null) ? Number(section11.scorecard_bonus.on_time)     : null;
+  const scorecardPrior  = (section11Prior?.scorecard_bonus?.on_time != null) ? Number(section11Prior.scorecard_bonus.on_time) : null;
+
+  // SMVC % goal — Peter's memorized target for the period (2.7%).
+  // If Peter tunes this, edit the constant here. Goal source is not in book_performance_goals yet.
+  const SMVC_PCT_GOAL     = 0.027;
+  const smvcDollarsGoal   = (pcBookPremium != null) ? SMVC_PCT_GOAL * pcBookPremium : null;
+  // Scorecard $ goal — not yet defined by Peter. Leave null; row displays "—" for Goal + Diff.
+  const SCORECARD_GOAL = null;
 
   // Combined wk-delta for the On Time column when it represents Gain (new - lost).
   // Takes resolved values so it stays accurate when manual overrides are in play.
@@ -1385,7 +1430,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       lapseRate: (lapseRates && lapseRates.life != null) ? lapseRates.life : null,
     },
     {
-      label: "Life #", editable: true,
+      label: "Life NPF #", editable: true,
       ytdKey: "life_paid_for_count_ytd", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
@@ -1395,7 +1440,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       lapseRate: null,
     },
     {
-      label: "Life $", editable: true,
+      label: "Life NPF $", editable: true,
       ytdKey: "life_paid_for_premium_ytd", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
@@ -1404,6 +1449,62 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       goal: goalFor(goals, "life", "premium"),
       isMoney: true,
       lapseRate: null,
+    },
+    // ─── Premium rows ─── new/lost/lapse hidden; YTD editable dollar value.
+    // Rendered with a subtle row-background shade to distinguish from LOB rows above.
+    {
+      label: "Auto $", editable: true, rowKind: "premium",
+      ytdKey: "auto_premium", target: "snapshot",
+      newYtd:  null, newWkD:  null,
+      lostYtd: null, lostWkD: null,
+      gainYtd: auto_prem_book,
+      onTimeWkD: wkDelta(resolvedAutoPrem, priorAutoPrem),
+      goal: goalFor(goals, "auto", "premium"),
+      isMoney: true,
+      lapseRate: null,
+    },
+    {
+      label: "Fire $", editable: true, rowKind: "premium",
+      ytdKey: "fire_premium", target: "snapshot",
+      newYtd:  null, newWkD:  null,
+      lostYtd: null, lostWkD: null,
+      gainYtd: fire_prem_book,
+      onTimeWkD: wkDelta(resolvedFirePrem, priorFirePrem),
+      goal: goalFor(goals, "fire", "premium"),
+      isMoney: true,
+      lapseRate: null,
+    },
+    {
+      label: "Life $", editable: true, rowKind: "premium",
+      ytdKey: "life_premium", target: "snapshot",
+      newYtd:  null, newWkD:  null,
+      lostYtd: null, lostWkD: null,
+      gainYtd: life_prem_book,
+      onTimeWkD: wkDelta(resolvedLifePrem, priorLifePrem),
+      goal: goalFor(goals, "life", "premium_book"),
+      isMoney: true,
+      lapseRate: null,
+    },
+    // ─── SMVC & Scorecard rows ─── merged in from prior standalone section.
+    // These are RATE rows: no new/lost/lapse/YTD. Value + WoW delta in On Time column.
+    // Goal + Diff show variance from target.
+    {
+      label: "SMVC %", rowKind: "rate", valueKind: "pct",
+      value: smvcPctVal,
+      valuePrior: smvcPctPrior,
+      goal: SMVC_PCT_GOAL,
+    },
+    {
+      label: "SMVC $", rowKind: "rate", valueKind: "money",
+      value: smvcDollarsVal,
+      valuePrior: smvcDollarsPrior,
+      goal: smvcDollarsGoal,
+    },
+    {
+      label: "Scorecard", rowKind: "rate", valueKind: "money",
+      value: scorecardVal,
+      valuePrior: scorecardPrior,
+      goal: SCORECARD_GOAL,
     },
   ];
 
@@ -1456,9 +1557,68 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
             </thead>
             <tbody>
               {rows.map(r => {
+                // Row-background shade for non-LOB rows (premium + rate).
+                // Applied to non-column-tinted tds so the row visually separates
+                // from the LOB rows above without competing with existing column tints.
+                const rowBg = (r.rowKind === "premium" || r.rowKind === "rate") ? T.slate100 : undefined;
+
+                // ─── Rate rows (SMVC %, SMVC $, Scorecard) ───
+                // No new/lost/lapse/YTD. On Time column shows the current value with
+                // week-over-week delta. Goal + Diff show variance from target.
+                if (r.rowKind === "rate") {
+                  const isPct = r.valueKind === "pct";
+                  const val   = r.value;
+                  const prior = r.valuePrior;
+                  const wkD   = (val != null && prior != null) ? (val - prior) : null;
+                  const goal  = r.goal;
+                  const diff  = (val != null && goal != null) ? (val - goal) : null;
+                  const fmtVal = (v) => {
+                    if (v == null) return "—";
+                    return isPct ? (v * 100).toFixed(2) + "%" : fmtMoney(v);
+                  };
+                  const fmtDeltaLocal = (v) => {
+                    if (v == null) return "—";
+                    const eps = isPct ? 0.00005 : 0.005;
+                    if (Math.abs(v) < eps) return "—";
+                    const sign = v > 0 ? "+" : "";
+                    return isPct ? sign + (v * 100).toFixed(2) + "%" : sign + fmtMoney(v);
+                  };
+                  const fmtDiffLocal = (v) => {
+                    if (v == null) return "—";
+                    const eps = isPct ? 0.00005 : 0.005;
+                    if (Math.abs(v) < eps) return isPct ? "0.00%" : "$0";
+                    const sign = v >= 0 ? "+" : "";
+                    return isPct ? sign + (v * 100).toFixed(2) + "%" : sign + fmtMoney(v);
+                  };
+                  return (
+                    <tr key={r.label}>
+                      <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600, background: rowBg }}>{r.label}</Td>
+                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
+                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
+                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
+                      <Td align="right" style={{ background: rowBg, color: T.slate400 }}>—</Td>
+                      <Td align="right" style={{ background: T.slate50 }}>
+                        {val == null
+                          ? <span style={{ color: T.slate400 }}>—</span>
+                          : <>
+                              <span style={{ fontWeight: 700, color: T.slate900 }}>{fmtVal(val)}</span>
+                              <span style={{ marginLeft: 6, color: deltaColor(wkD), fontWeight: 600 }}>{fmtDeltaLocal(wkD)}</span>
+                            </>}
+                      </Td>
+                      <Td align="right" style={{ background: T.slate50, color: T.slate700 }}>{fmtVal(goal)}</Td>
+                      <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor(diff) }}>
+                        {fmtDiffLocal(diff)}
+                      </Td>
+                    </tr>
+                  );
+                }
+
+                // ─── Standard LOB rows + Life NPF rows + Premium rows ───
+                // Premium rows: newKey/lostKey are undefined and newYtd/lostYtd/lapseRate
+                // are null, so New/Lost/Lapse naturally render as dashes via existing helpers.
                 const onTime = (Number(r.gainYtd) * 365) / daysElapsed;
                 const onTimeRounded = r.isMoney ? onTime : Math.round(onTime);
-                const diff = (r.goal !== null && r.goal !== undefined)
+                const diff = (r.goal !== null && r.goal !== undefined && r.gainYtd !== null && r.gainYtd !== undefined)
                   ? (onTime - Number(r.goal))
                   : null;
                 const formatYtd = (v) => (v === null || v === undefined)
@@ -1468,11 +1628,11 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 const renderValDelta = (ytd, wkD, bg, weightBoost, colorFn = deltaColor) => {
                   if (ytd === null || ytd === undefined) {
                     return (
-                      <Td align="right" style={{ background: bg, color: T.slate400 }}>—</Td>
+                      <Td align="right" style={{ background: bg || rowBg, color: T.slate400 }}>—</Td>
                     );
                   }
                   return (
-                    <Td align="right" style={{ background: bg }}>
+                    <Td align="right" style={{ background: bg || rowBg }}>
                       <span style={{ fontWeight: weightBoost ? 700 : 500, color: T.slate900 }}>
                         {formatYtd(ytd)}
                       </span>
@@ -1493,7 +1653,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 const renderEditOrVal = (key, ytd, wkD, bg, colorFn = deltaColor) => {
                   if (editableRow && key) {
                     return (
-                      <Td align="right" style={{ background: bg, padding: 4, whiteSpace: "nowrap" }}>
+                      <Td align="right" style={{ background: bg || rowBg, padding: 4, whiteSpace: "nowrap" }}>
                         <NumberInput
                           value={bucketForm?.[key]}
                           onChange={v => bucketChange(key, v)}
@@ -1512,16 +1672,16 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 };
                 return (
                   <tr key={r.label}>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{r.label}</Td>
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600, background: rowBg }}>{r.label}</Td>
                     {renderEditOrVal(r.newKey,  r.newYtd,  r.newWkD,  undefined)}
                     {renderEditOrVal(r.lostKey, r.lostYtd, r.lostWkD, undefined, deltaColorLost)}
-                    <Td align="right">
+                    <Td align="right" style={{ background: rowBg }}>
                       {(r.lapseRate === null || r.lapseRate === undefined)
                         ? <span style={{ color: T.slate400 }}>—</span>
                         : <span style={{ color: T.slate900, fontWeight: 500 }}>{Number(r.lapseRate).toFixed(1)}%</span>}
                     </Td>
                     {editableRow && r.ytdKey ? (
-                      <Td align="right" style={{ padding: 4, whiteSpace: "nowrap" }}>
+                      <Td align="right" style={{ background: rowBg, padding: 4, whiteSpace: "nowrap" }}>
                         <NumberInput
                           value={bucketForm?.[r.ytdKey]}
                           onChange={v => bucketChange(r.ytdKey, v)}
@@ -1554,94 +1714,6 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
             </tbody>
           </table>
         </div>
-      </Card>
-    </div>
-  );
-}
-
-// 11 — SMVC & Scorecard
-// Renders the SMVC row from get_cpr_section_11 (live computed) + a Scorecard Bonus
-// row + two budget lines as placeholders. The compute_scorecard_bonus() function
-// and budget formulas are pending; those cells show "—" until built.
-function SMVCScorecardSection({ section11 }) {
-  if (!section11) {
-    return (
-      <div>
-        <SectionHeader icon="🎯" title="SMVC & Scorecard" />
-        <Card><Awaiting message="No SMVC data loaded yet for this week" /></Card>
-      </div>
-    );
-  }
-
-  const smvc = section11.smvc || {};
-  const onTime   = smvc.on_time     != null ? Number(smvc.on_time)     : null;
-  const lastWk   = smvc.last_wk     != null ? Number(smvc.last_wk)     : null;
-  const lastQ    = smvc.last_q      != null ? Number(smvc.last_q)      : null;
-  // "Last Year" column for SMVC = this year's applied SMVC rate (agency.smvc_rate_pc).
-  // That rate is the realized outcome of last year's performance, paid out this year.
-  // Backend exposes both smvc.last_year and smvc.applied (same value) for the rename.
-  const lastYear = smvc.last_year   != null ? Number(smvc.last_year)   : null;
-  const diff     = smvc.dollar_diff != null ? Number(smvc.dollar_diff) : null;
-
-  const fmtPct = (v) => v == null ? "—" : (v * 100).toFixed(2) + "%";
-  const fmtDiff = (v) => {
-    if (v == null) return "—";
-    const sign = v >= 0 ? "+" : "-";
-    return sign + "$" + Math.abs(Math.round(v)).toLocaleString("en-US");
-  };
-  const diffColor = diff == null ? T.slate500 : (diff >= 0 ? T.green : T.red);
-
-  return (
-    <div>
-      <SectionHeader icon="🎯" title="SMVC & Scorecard" />
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
-            <thead>
-              <tr>
-                <Th align="left"></Th>
-                <Th align="right">Last Wk</Th>
-                <Th align="right">Last Q</Th>
-                <Th align="right" style={{ background: T.slate50 }}>Last Year</Th>
-                <Th align="right">On-Time</Th>
-                <Th align="right" style={{ background: T.blueLt, color: T.slate800 }}>$ Diff</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* SMVC row — Last Wk | Last Q | Last Year | On-Time | $ Diff */}
-              <tr>
-                <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>SMVC</Td>
-                <Td align="right">{fmtPct(lastWk)}</Td>
-                <Td align="right">{fmtPct(lastQ)}</Td>
-                <Td align="right" style={{ background: T.slate50, fontWeight: 700 }}>{fmtPct(lastYear)}</Td>
-                <Td align="right">{fmtPct(onTime)}</Td>
-                <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: diffColor }}>{fmtDiff(diff)}</Td>
-              </tr>
-              {/* Scorecard Bonus row — Last Wk | Last Q | Last Year | On-Time | $ Diff */}
-              {(() => {
-                const sc = section11.scorecard_bonus || {};
-                const scOnTime   = sc.on_time     != null ? Number(sc.on_time)     : null;
-                const scLastWk   = sc.last_wk     != null ? Number(sc.last_wk)     : null;
-                const scLastQ    = sc.last_q      != null ? Number(sc.last_q)      : null;
-                const scLastYear = sc.last_year   != null ? Number(sc.last_year)   : null;
-                const scDiff     = sc.dollar_diff != null ? Number(sc.dollar_diff) : null;
-                const scDiffColor = scDiff == null ? T.slate500 : (scDiff >= 0 ? T.green : T.red);
-                return (
-                  <tr>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>Scorecard Bonus</Td>
-                    <Td align="right" style={{ color: scLastWk == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastWk)}</Td>
-                    <Td align="right" style={{ color: scLastQ == null ? T.slate500 : T.slate700 }}>{fmtMoney(scLastQ)}</Td>
-                    <Td align="right" style={{ background: T.slate50, fontWeight: 700, color: scLastYear == null ? T.slate500 : T.slate800 }}>{fmtMoney(scLastYear)}</Td>
-                    <Td align="right">{fmtMoney(scOnTime)}</Td>
-                    <Td align="right" style={{ background: T.blueLt, fontWeight: 700, color: scDiffColor }}>{fmtDiff(scDiff)}</Td>
-                  </tr>
-                );
-              })()}
-            </tbody>
-          </table>
-        </div>
-        {/* Budget row removed 2026-06-20 — Prize Cart Budget now appears inline on the Prize
-            Cart section header; WtQ Trip Budget removed entirely per Peter. */}
       </Card>
     </div>
   );
@@ -2460,7 +2532,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                     goalsSubRow("win",    "🏆 Win the Week",       gd => (gd.won_the_week ? 10 : 0)),
                     goalsSubRow("gain",   "📈 1% Gain target",     gd => (gd.gain_hit ? 10 : 0)),
                     goalsSubRow("as",     "⭐ All-Star crossings",     gd => 10 * (Number(gd.as_hits)     || 0)),
-                    goalsSubRow("podium", "🥇 Podium entries",     gd => 10 * (Number(gd.podium_hits) || 0)),
+                    goalsSubRow("podium", "🥇 Leaderboard entries", gd => 10 * (Number(gd.podium_hits) || 0)),
                     goalsSubRow("tb",     "🔥 Trailblazer breaks", gd => 10 * (Number(gd.tb_hits)     || 0)),
                   ];
                 }
@@ -4670,11 +4742,12 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formSnapshot={edit.form.snapshot}
           isSnapshotDirty={edit.isSnapshotDirty}
           onSnapshotChange={edit.setSnapshotField}
+          section11={data.section11}
+          section11Prior={data.section11Prior}
         />
       </Section>
 
-      {/* 11. SMVC & Scorecard */}
-      <Section><SMVCScorecardSection section11={data.section11} /></Section>
+      {/* 11. SMVC & Scorecard — merged into Agency Performance section (rate rows). */}
 
 
       {/* 12 + 13. Claims (left) + Non-Pays (right) — same row, equal widths.
