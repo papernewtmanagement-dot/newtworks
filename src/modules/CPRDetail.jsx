@@ -2328,8 +2328,8 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
     // Goals: $10 per All-Star crossing + $10 per Trailblazer crossing + $10 if this-week new SP hit 1.01x prior 13wk avg.
     // Populated by write_weekly_comp_v2 (after audit_weekly_leaderboard_crossings). Detail lives on residual_pool_diag.goals_detail.
     ["goals_bonus",                   "Goals"],
-    ["manager_bonus",                 "Manager"],
     ["health_bonus",                  "Health Goal"],
+    ["manager_bonus",                 "Manager"],
   ];
 
   async function handleSave() {
