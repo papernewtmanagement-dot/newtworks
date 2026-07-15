@@ -2961,19 +2961,24 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         <tbody>
           {row("QTD envelope", qtdEnvelope, `pool_pct × basis / 52 × ${weeksElapsedQtd} weeks`)}
           {row("− Workers Comp QTD", -qtdWc, `$${wcAnnual}/yr / 52 × ${weeksElapsedQtd} — OUTSIDE burden`)}
-          {row("− Team health benefits QTD", -qtdActualHealth, "§106 fringe, no payroll tax — OUTSIDE burden")}
+          {row("− Team health benefits QTD", -qtdActualHealth, (() => {
+            const twh = Number(diag.team_totals?.team_weekly_health || 0);
+            const pph = diag.team_totals?.per_person_health || [];
+            const perPerson = (Array.isArray(pph) ? pph : []).filter(p => Number(p.weekly_health) > 0).map(p => `${(p.name||"").split(" ")[0]} $${Number(p.weekly_health).toFixed(2)}`).join(" + ");
+            return `$${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) × ${weeksElapsedQtd} wks — OUTSIDE burden`;
+          })())}
           {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre wages")}
           {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult")}
           {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1; eats WHOLE pool")}
           {row("− Manager Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "SUM(wctd.manager_bonus) this cycle")}
-          {row("− Health Development Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_hdb_actual) || 0), "SUM(wctd.health_bonus) this cycle")}
+          {row("− Health Development Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_hdb_max_accrual) || 0), `$25/wk × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
           {row("− MVP Prize Cart QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_prize_cart_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
           {row("− Win the Quarter Trip QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_wtq_trip_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
           {row("− WtW Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_wtw_bonus_accrual) || 0), `$10 × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
           {row("− 1% Gain Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_gain_bonus_accrual) || 0), `$10 × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
-          {row("− Leaderboard Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_leaderboard_bonus_accrual) || 0), `$5 × 3 slots × 4 cats × ${weeksElapsedQtd} wks; carve-and-forget`)}
-          {row("− All-Star Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_all_star_bonus_accrual) || 0), `$5 × 4 cats × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
-          {row("− Trailblazer Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_trailblazer_bonus_accrual) || 0), `$5 × 4 cats × ${weeksElapsedQtd} wks; carve-and-forget`)}
+          {row("− Leaderboard Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_leaderboard_bonus_accrual) || 0), `($10 × 3 slots × 4 cats × ${weeksElapsedQtd} wks) ÷ 2; carve-and-forget`)}
+          {row("− All-Star Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_all_star_bonus_accrual) || 0), `($10 × 4 cats × team × ${weeksElapsedQtd} wks) ÷ 2; carve-and-forget`)}
+          {row("− Trailblazer Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_trailblazer_bonus_accrual) || 0), `($10 × 4 cats × ${weeksElapsedQtd} wks) ÷ 2; carve-and-forget`)}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
