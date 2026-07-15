@@ -1177,7 +1177,7 @@ const PLSection = ({ data }) => {
             <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
               {columns.flatMap((c) => [
                 <th key={`${c.key}-h-$`} style={{ padding: "2px 8px 6px 8px", fontSize: 10, fontWeight: 500, color: T.slate400, textAlign: "right", borderLeft: `1px solid ${T.slate100}` }}>$</th>,
-                <th key={`${c.key}-h-d`} style={{ padding: "2px 8px 6px 4px", fontSize: 10, fontWeight: 500, color: T.slate400, textAlign: "right", borderLeft: `1px dotted ${T.slate200}` }}>Δ YoY</th>,
+                <th key={`${c.key}-h-d`} style={{ padding: "2px 8px 6px 4px", fontSize: 10, fontWeight: 500, color: T.slate400, textAlign: "right", borderLeft: `1px dotted ${T.slate200}` }}>Δ</th>,
               ])}
             </tr>
           </thead>
