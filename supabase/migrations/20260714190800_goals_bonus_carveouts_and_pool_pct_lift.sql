@@ -4,7 +4,7 @@
 --   1. Pre-subtract goals-bonus max ($20,800/yr on 4-person team) from bonus pool
 --      Structural max = carve-and-forget. If team earns the goal, pays out.
 --      If not earned, unearned dollars stay with agency.
---   2. Rename 'podium' -> 'leaderboard' in write_weekly_comp_v2 + JSON keys
+--   2. Sync goals-bonus JSON keys with leaderboards terminology
 --   3. Lift pool_pct schedule +4pp uniform to offset new compression
 --
 -- This is the mirror file for the DB migration applied 2026-07-14 via Supabase MCP.
@@ -26,7 +26,7 @@
 -- Structural max assumptions (Peter directive 2026-07-14):
 --   WtW:         $10 x N_active x 52
 --   Gain:        $10 x N_active x 52
---   Leaderboard: $10 x 3 podium slots x 4 categories x 52
+--   Leaderboard: $10 x 3 leaderboard slots x 4 categories x 52
 --   All-Star:    $10 x 4 categories x N_active x 52
 --   Trailblazer: $10 x 4 categories x 1 person x 52
 --
