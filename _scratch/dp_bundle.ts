@@ -2202,11 +2202,9 @@ export async function processSurePayrollParsed(opts: {
 }): Promise<SPProcessResult> {
   const parsed = opts.parsed;
 
-  // business_entity_id: pass null and let the tg_default_business_entity_from_agency
-  // trigger stamp Peter Story State Farm (b2222222). This matches how every other
-  // payroll_runs row lands — do NOT silently override this without an explicit
-  // agency-wide two-entity decision from Peter. (2026-07-15)
-  const businessEntityId = null;
+  // Payroll records live under PaperNewt LLC (employer of record for W-2 tax
+  // purposes). Cash movement JEs stay on Peter Story State Farm. (2026-07-15)
+  const businessEntityId = "b1111111-1111-1111-1111-111111111111";
 
   const { data: existingByPeriod } = await sb.from("payroll_runs").select("id").eq("agency_id", opts.agencyId).eq("pay_period_end", parsed.pay_period_end).maybeSingle();
 
