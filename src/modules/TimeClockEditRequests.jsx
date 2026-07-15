@@ -482,9 +482,7 @@ function RequestFormModal({ user, initial, weekStart, onClose, onSubmitted }) {
 
   const title = isMissedShift
     ? "Request: missed shift"
-    : openEntry
-      ? "Request: missed clock-out"
-      : "Request: edit this punch";
+    : "Request: edit this punch";
 
   return (
     <ModalShell onClose={busy ? () => {} : onClose}>
@@ -496,19 +494,27 @@ function RequestFormModal({ user, initial, weekStart, onClose, onSubmitted }) {
       </div>
 
       <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-        {/* Type picker — only when editing existing closed entry (missed_clock_out vs wrong_time) */}
-        {!isMissedShift && !openEntry && (
+        {/* Type picker — shown for any edit of an existing entry (open or closed) */}
+        {!isMissedShift && (
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 6 }}>What's wrong?</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <Button
                 variant={editType === "wrong_time" ? "dark" : "secondary"}
                 onClick={() => setEditType("wrong_time")}
-              >Wrong time(s)</Button>
-              <Button
-                variant={editType === "missed_clock_out" ? "dark" : "secondary"}
-                onClick={() => setEditType("missed_clock_out")}
-              >Missed clock-out</Button>
+              >{openEntry ? "Wrong clock-in time" : "Wrong time(s)"}</Button>
+              {!openEntry && (
+                <Button
+                  variant={editType === "missed_clock_out" ? "dark" : "secondary"}
+                  onClick={() => setEditType("missed_clock_out")}
+                >Missed clock-out</Button>
+              )}
+              {openEntry && (
+                <Button
+                  variant={editType === "missed_clock_out" ? "dark" : "secondary"}
+                  onClick={() => setEditType("missed_clock_out")}
+                >Add clock-out</Button>
+              )}
             </div>
           </div>
         )}
@@ -545,7 +551,8 @@ function RequestFormModal({ user, initial, weekStart, onClose, onSubmitted }) {
             <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>
               Clock out{" "}
               {editType === "missed_shift" && <span style={{ color: T.slate400, fontWeight: 400 }}>(optional if still working)</span>}
-              {editType === "wrong_time" && <span style={{ color: T.slate400, fontWeight: 400 }}>(leave blank to keep original)</span>}
+              {editType === "wrong_time" && existingEntry?.clock_out_at && <span style={{ color: T.slate400, fontWeight: 400 }}>(leave blank to keep original)</span>}
+              {editType === "wrong_time" && !existingEntry?.clock_out_at && <span style={{ color: T.slate400, fontWeight: 400 }}>(leave blank if still working)</span>}
             </div>
             <TextInput type="datetime-local" value={clockOut} onChange={(e) => setClockOut(e.target.value)} />
             {editType === "wrong_time" && existingEntry?.clock_out_at && (
