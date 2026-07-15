@@ -104,9 +104,9 @@ function useFinancialsData() {
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
 
-          // Balance Sheet — anchored to prior-books 4/30/2026 opening balances + post-4/30 GL activity
+          // Balance Sheet — anchored to 6/30/2026 opening balances + post-6/30 GL activity
           supabase.from("v_balance_sheet_anchored")
-            .select("account_code, account_name, account_type, anchor_0430, activity_since_0430, balance_current"),
+            .select("account_code, account_name, account_type, opening_balance, activity_since_open, balance_current"),
 
           // Growth budget YTD (salary ramp + licensing 6715)
           supabase.from("v_growth_budget_full_ytd")
@@ -324,8 +324,8 @@ function useFinancialsData() {
           code:    r.account_code,
           name:    r.account_name,
           type:    r.account_type,
-          anchor:  parseFloat(r.anchor_0430 || 0),
-          activity:parseFloat(r.activity_since_0430 || 0),
+          anchor:  parseFloat(r.opening_balance || 0),
+          activity:parseFloat(r.activity_since_open || 0),
           balance: parseFloat(r.balance_current || 0),
         }));
         const bsGroup = (t) => bsRows.filter(r => r.type === t).sort((a,b) => a.code.localeCompare(b.code));
