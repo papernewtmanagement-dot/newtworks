@@ -1,6 +1,6 @@
 -- Peter directive 2026-07-12 pm4:
 -- (1) STOP filtering audit_weekly_leaderboard_crossings by role_category='Sales'.
---     Cassie and Stephanie belong on sales podiums like anyone else.
+--     Cassie and Stephanie belong on sales leaderboards like anyone else.
 -- (2) WtQ + Prize Cart pot formula changes:
 --     multiplier 3% -> 1%
 --     pace uses PROJECTED wins (assume all remaining weeks won) instead of on-time pace
