@@ -11,12 +11,13 @@ import { useTabParam } from "../lib/routing.jsx";
 // ============================================================
 
 const REQUEST_TYPES = [
-  { id: "time_off_full_day",  label: "Time off (full day)",     partial: false, location: false },
-  { id: "time_off_half_day",  label: "Time off (half day)",     partial: true,  location: false },
-  { id: "sick",               label: "Sick",                    partial: false, location: false },
-  { id: "remote_day",         label: "Remote (full day)",       partial: false, location: true  },
-  { id: "remote_half_day",    label: "Remote (half day)",       partial: true,  location: true  },
-  { id: "four_day_off_change",label: "Change my 4-day off day", partial: false, location: false }
+  { id: "time_off_full_day",             label: "Time off (full day)",              partial: false, location: false, submitViaDropdown: true  },
+  { id: "time_off_half_day",             label: "Time off (half day)",              partial: true,  location: false, submitViaDropdown: true  },
+  { id: "sick",                          label: "Sick",                             partial: false, location: false, submitViaDropdown: false },
+  { id: "remote_day",                    label: "Remote (full day)",                partial: false, location: true,  submitViaDropdown: true  },
+  { id: "remote_half_day",               label: "Remote (half day)",                partial: true,  location: true,  submitViaDropdown: true  },
+  { id: "four_day_off_change",           label: "Change my 4-day off day (legacy)", partial: false, location: false, submitViaDropdown: false },
+  { id: "standing_time_off_preference",  label: "Standing weekly preference",       partial: false, location: false, submitViaDropdown: false }
 ];
 
 const STATUS_STYLES = {
@@ -51,6 +52,7 @@ function formatRequestLabel(request) {
   const paid = request.is_paid === true;
   if (t === "time_off_full_day") return paid ? "PTO (full day)" : "Time off (full day)";
   if (t === "time_off_half_day") return paid ? "PTO (half day)" : "Time off (half day)";
+  if (t === "standing_time_off_preference") return "Standing weekly preference";
   const fallback = REQUEST_TYPES.find(x => x.id === t);
   return fallback ? fallback.label : (t || "");
 }
@@ -122,6 +124,238 @@ const btnNo = { ...btnBase, background: "#dc2626", color: "#fff" };
 const btnAbstain = { ...btnBase, background: "#e2e8f0", color: "#475569" };
 const btnApprove = { ...btnBase, background: "#16a34a", color: "#fff" };
 const btnDeny = { ...btnBase, background: "#dc2626", color: "#fff" };
+
+// ============================================================
+// STANDING TIME OFF PREFERENCE — components
+// ============================================================
+const DOW_LABELS = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri" };
+const DAY_PART_LABELS = { morning: "morning", afternoon: "afternoon", full: "full day" };
+const PATTERN_LABELS = { off: "off", remote: "remote" };
+const TRIGGER_LABELS = {
+  always: "Every week",
+  wtw_won_prior_week: "Only weeks after we win Win the Week the prior week"
+};
+
+function stopSummary(p) {
+  // "Mon morning remote" / "Wed afternoon off" / "Fri full day off"
+  const dow = DOW_LABELS[p.day_of_week] || p.day_of_week;
+  const part = DAY_PART_LABELS[p.day_part] || p.day_part;
+  const pat = PATTERN_LABELS[p.pattern] || p.pattern;
+  return `${dow} ${part} ${pat}`;
+}
+
+function MyStandingPrefsPanel({ me }) {
+  const [prefs, setPrefs] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      if (!me?.id || !supabase) { setLoaded(true); return; }
+      try {
+        const { data } = await supabase
+          .from("standing_time_off_preferences")
+          .select("id, day_of_week, day_part, pattern, is_paid, trigger_type, effective_from, effective_until, notes")
+          .eq("agency_id", AGENCY_ID)
+          .eq("team_member_id", me.id)
+          .is("archived_at", null);
+        setPrefs(Array.isArray(data) ? data : []);
+      } catch (e) { console.error("standing prefs load", e); }
+      finally { setLoaded(true); }
+    }
+    load();
+  }, [me?.id]);
+
+  if (!loaded) return null;
+
+  // Group by trigger for display
+  const byTrigger = prefs.reduce((acc, p) => {
+    (acc[p.trigger_type] = acc[p.trigger_type] || []).push(p);
+    return acc;
+  }, {});
+
+  return (
+    <div style={{ ...cardStyle, background: prefs.length ? "#f0f9ff" : "#f8fafc", borderColor: prefs.length ? "#bae6fd" : "#e2e8f0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: prefs.length ? 10 : 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#0c4a6e" }}>My Standing Preferences</div>
+        {prefs.length === 0 && <div style={{ fontSize: 12, color: "#64748b" }}>— none yet. Submit one below.</div>}
+      </div>
+      {Object.entries(byTrigger).map(([trigger, items]) => (
+        <div key={trigger} style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#0369a1", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>
+            {TRIGGER_LABELS[trigger] || trigger}
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#0f172a" }}>
+            {items.map(p => (
+              <li key={p.id}>
+                {stopSummary(p)}{p.is_paid ? " (paid)" : " (unpaid)"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {prefs.length > 0 && (
+        <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
+          These auto-generate as approved time-off entries each qualifying week.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StandingPrefBuilder({ me, onSubmitted }) {
+  const [expanded, setExpanded] = useState(false);
+  const [days, setDays] = useState([
+    { day_of_week: "monday", day_part: "morning", pattern: "remote" }
+  ]);
+  const [trigger, setTrigger] = useState("wtw_won_prior_week");
+  const [isPaid, setIsPaid] = useState(true);
+  const [effectiveFrom, setEffectiveFrom] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  function addDay() {
+    setDays([...days, { day_of_week: "monday", day_part: "morning", pattern: "off" }]);
+  }
+  function removeDay(idx) {
+    setDays(days.filter((_, i) => i !== idx));
+  }
+  function updateDay(idx, field, value) {
+    setDays(days.map((d, i) => (i === idx ? { ...d, [field]: value } : d)));
+  }
+
+  async function submit() {
+    if (!me?.id || !supabase) return;
+    if (days.length === 0) { setError("Add at least one day to the pattern."); return; }
+    if (!effectiveFrom) { setError("Pick an effective-from date."); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const voteOpenedAt = new Date().toISOString();
+      const voteClosesAt = addBusinessDays(new Date(), 2).toISOString();
+      const { error: insErr } = await supabase.from("time_off_requests").insert({
+        agency_id: AGENCY_ID,
+        requester_team_id: me.id,
+        request_type: "standing_time_off_preference",
+        start_date: effectiveFrom,
+        end_date: effectiveFrom,
+        partial_day: "none",
+        notes: notes || null,
+        status: "voting",
+        vote_opened_at: voteOpenedAt,
+        vote_closes_at: voteClosesAt,
+        standing_pref_days: days,
+        standing_pref_trigger: trigger,
+        standing_pref_is_paid: isPaid
+      });
+      if (insErr) throw insErr;
+      setDays([{ day_of_week: "monday", day_part: "morning", pattern: "remote" }]);
+      setNotes(""); setEffectiveFrom("");
+      setExpanded(false);
+      alert("Standing preference submitted. Team has 2 weekdays to vote, then Peter decides.");
+      if (typeof onSubmitted === "function") onSubmitted();
+    } catch (e) {
+      setError(e?.message || "Submit failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const dowOptions = [
+    { v: "monday", l: "Monday" }, { v: "tuesday", l: "Tuesday" }, { v: "wednesday", l: "Wednesday" },
+    { v: "thursday", l: "Thursday" }, { v: "friday", l: "Friday" }
+  ];
+  const dayPartOptions = [
+    { v: "morning", l: "Morning (~8:30 AM – 1 PM CT)" },
+    { v: "afternoon", l: "Afternoon (~1 PM – 5:30 PM CT)" },
+    { v: "full", l: "Full workday" }
+  ];
+  const patternOptions = [
+    { v: "off", l: "Off (not working)" },
+    { v: "remote", l: "Remote (still working, from home)" }
+  ];
+
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
+      >
+        <span>➕ Request a standing weekly preference</span>
+        <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "#64748b", fontSize: 18, lineHeight: 1 }}>›</span>
+      </button>
+      {expanded && (
+        <div style={{ padding: "12px 16px 16px", borderTop: "1px solid #e2e8f0" }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10, lineHeight: 1.5 }}>
+            A standing preference recurs weekly instead of being a one-off. Once approved, each qualifying week the pattern auto-generates approved time-off entries on your calendar and shows up in coverage checks. Examples: "Fridays off when we win the week the prior week," or "Every Tuesday and Thursday afternoon off."
+          </div>
+
+          <label style={labelStyle}>Pattern (add one row per day)</label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {days.map((d, idx) => (
+              <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 6, alignItems: "center" }}>
+                <select value={d.day_of_week} onChange={e => updateDay(idx, "day_of_week", e.target.value)} style={inputStyle}>
+                  {dowOptions.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+                <select value={d.day_part} onChange={e => updateDay(idx, "day_part", e.target.value)} style={inputStyle}>
+                  {dayPartOptions.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+                <select value={d.pattern} onChange={e => updateDay(idx, "pattern", e.target.value)} style={inputStyle}>
+                  {patternOptions.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => removeDay(idx)}
+                  disabled={days.length <= 1}
+                  style={{ padding: "6px 10px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: days.length <= 1 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600, opacity: days.length <= 1 ? 0.4 : 1 }}
+                >Remove</button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={addDay}
+            style={{ marginTop: 8, padding: "6px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+          >+ Add another day</button>
+
+          <label style={labelStyle}>When does this pattern apply?</label>
+          <select value={trigger} onChange={e => setTrigger(e.target.value)} style={inputStyle}>
+            <option value="always">Every week (unconditional)</option>
+            <option value="wtw_won_prior_week">Only weeks after we win Win the Week the prior week</option>
+          </select>
+
+          <label style={labelStyle}>Pay treatment</label>
+          <select value={isPaid ? "paid" : "unpaid"} onChange={e => setIsPaid(e.target.value === "paid")} style={inputStyle}>
+            <option value="paid">Paid</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+
+          <label style={labelStyle}>Effective from (first Monday the pattern should count)</label>
+          <input type="date" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} style={inputStyle} />
+
+          <label style={labelStyle}>Notes / context (optional)</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} style={{ ...inputStyle, minHeight: 60, fontFamily: "inherit" }} placeholder="Why this pattern, what it enables, etc." />
+
+          {error && <div style={{ color: "#dc2626", marginTop: 8, fontSize: 13 }}>{error}</div>}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
+            <button
+              onClick={submit}
+              disabled={submitting}
+              style={{ ...btnPrimary, opacity: submitting ? 0.5 : 1 }}
+            >
+              {submitting ? "Submitting…" : "Submit for team vote"}
+            </button>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>
+              Voting: 2 weekdays. Peter decides after.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // SUBMIT VIEW ================================================
 function SubmitView({ me, onSubmitted }) {
@@ -218,12 +452,15 @@ function SubmitView({ me, onSubmitted }) {
   const canSubmit = startDate && (isPartial || endDate || isChange) && !submitting;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <MyStandingPrefsPanel me={me} />
+      <StandingPrefBuilder me={me} onSubmitted={onSubmitted} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
       <div>
         <h3 style={{ marginTop: 0 }}>New Request</h3>
         <label style={labelStyle}>Type</label>
         <select value={requestType} onChange={e => setRequestType(e.target.value)} style={inputStyle}>
-          {REQUEST_TYPES.filter(t => t.id !== "sick").map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          {REQUEST_TYPES.filter(t => t.submitViaDropdown).map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         {!isChange && (<>
           <label style={labelStyle}>Start date</label>
@@ -272,6 +509,7 @@ function SubmitView({ me, onSubmitted }) {
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );
