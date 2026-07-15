@@ -1,5 +1,5 @@
 -- Peter directive 2026-07-12 pm3: add "4-week sales" leaderboard (rolling 4-week SP sum).
--- Same podium/all-star/trailblazer mechanics as week_sp / week_quotes / quarter_sp.
+-- Same leaderboard/all-star/trailblazer mechanics as week_sp / week_quotes / quarter_sp.
 
 -- ── 0. Widen CHECK constraints across the 4 tables that pin the category to a fixed list ──
 ALTER TABLE public.leaderboard_floor_config DROP CONSTRAINT IF EXISTS leaderboard_floor_config_category_check;
