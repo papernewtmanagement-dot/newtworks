@@ -2227,7 +2227,11 @@ export async function processSurePayrollParsed(opts: {
   let runRowId: string;
   let mergedExisting = false;
   if (existingByPeriod?.id) {
-    const { error: updErr } = await sb.from("payroll_runs").update(runFields).eq("id", existingByPeriod.id);
+    // On UPDATE, do NOT touch business_entity_id — the trigger only runs on
+    // INSERT, and blanket UPDATE would blank the field if we pass null. Whatever
+    // entity the row was originally stamped with wins.
+    const { business_entity_id: _drop, ...updateFields } = runFields;
+    const { error: updErr } = await sb.from("payroll_runs").update(updateFields).eq("id", existingByPeriod.id);
     if (updErr) return { ok: false, error: `payroll_runs update: ${updErr.message}` };
     runRowId = existingByPeriod.id;
     mergedExisting = true;
@@ -2239,6 +2243,11 @@ export async function processSurePayrollParsed(opts: {
     }
     runRowId = runRow.id;
   }
+
+  // Read back business_entity_id from the parent row so detail rows stay
+  // consistent (whether INSERT stamped it via trigger or UPDATE preserved it).
+  const { data: runRowEntity } = await sb.from("payroll_runs").select("business_entity_id").eq("id", runRowId).maybeSingle();
+  const detailBusinessEntityId = runRowEntity?.business_entity_id ?? null;
 
   const unmatched: string[] = [];
   const detailRows: any[] = [];
@@ -2280,7 +2289,7 @@ export async function processSurePayrollParsed(opts: {
     }
 
     detailRows.push({
-      payroll_run_id: runRowId, agency_id: opts.agencyId, business_entity_id: businessEntityId, team_member_id: match.id,
+      payroll_run_id: runRowId, agency_id: opts.agencyId, business_entity_id: detailBusinessEntityId, team_member_id: match.id,
       gross_pay: e.period_gross, federal_tax: e.deduction_items["FED WTH"]?.period ?? 0, state_tax: stateTax,
       social_security: e.deduction_items["FICA"]?.period ?? 0, medicare: e.deduction_items["MEDFICA"]?.period ?? 0,
       other_deductions: otherDed, net_pay: e.net_pay, employment_type: "W2",
