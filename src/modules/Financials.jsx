@@ -144,15 +144,34 @@ function useFinancialsData() {
           return { month: m, revenue: Math.round(rev), expenses: Math.round(exp) };
         });
 
-        // P&L line items
-        const buildLines = (type) =>
-          [...new Set(isData.filter(r=>r.account_type===type).map(r=>r.account_name))].map(name => {
-            const rows = isData.filter(r=>r.account_name===name && r.account_type===type);
-            const ytd = rows.reduce((s,r)=>s+parseFloat(r.amount||0),0);
-            const mtd = rows.filter(r=>r.month===currentMonth).reduce((s,r)=>s+parseFloat(r.amount||0),0);
-            const qtd = rows.filter(r=>r.month>=quarterStart && r.month<=currentMonth).reduce((s,r)=>s+parseFloat(r.amount||0),0);
-            return { name, mtd: Math.round(mtd), qtd: Math.round(qtd), ytd: Math.round(ytd) };
+        // P&L line items — includes per-month arrays (Jan..Dec, 0-based) for
+        // current year AND prior year so PLSection can slice at any grain.
+        const priorIsData = priorIsRows.data || [];
+        const buildLines = (type) => {
+          const allNames = new Set([
+            ...isData.filter(r => r.account_type === type).map(r => r.account_name),
+            ...priorIsData.filter(r => r.account_type === type).map(r => r.account_name),
+          ]);
+          return [...allNames].map(name => {
+            const rows       = isData.filter(r => r.account_name === name && r.account_type === type);
+            const priorRows  = priorIsData.filter(r => r.account_name === name && r.account_type === type);
+            const perMonth      = Array(12).fill(0);
+            const perMonthPrior = Array(12).fill(0);
+            for (const r of rows)      perMonth[(r.month || 1) - 1]      += parseFloat(r.amount || 0);
+            for (const r of priorRows) perMonthPrior[(r.month || 1) - 1] += parseFloat(r.amount || 0);
+            const ytd = rows.reduce((s,r) => s + parseFloat(r.amount || 0), 0);
+            const mtd = rows.filter(r => r.month === currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
+            const qtd = rows.filter(r => r.month >= quarterStart && r.month <= currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
+            return {
+              name,
+              mtd: Math.round(mtd),
+              qtd: Math.round(qtd),
+              ytd: Math.round(ytd),
+              perMonth:      perMonth.map(Math.round),
+              perMonthPrior: perMonthPrior.map(Math.round),
+            };
           });
+        };
 
         const incomeLines  = buildLines("income");
         const expenseLines = buildLines("expense");
@@ -836,61 +855,311 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 };
 
 // ─── Section: P&L ────────────────────────────────────────────
+// Grain toggle: Monthly (Jan..current-month + YTD), Quarterly (current QTD +
+// prior Q + Δ Seq + prior-year Q + Δ YoY + YTD), Annual (YTD current + prior
+// year + Δ). % of income checkbox adds a per-cell percentage next to each
+// dollar. Non-completed periods carry a "(partial)" tag.
 const PLSection = ({ data }) => {
   const pl = data?.pl || { income: [], expenses: [] };
   const incomeRows  = Array.isArray(pl.income)   ? pl.income   : [];
   const expenseRows = Array.isArray(pl.expenses) ? pl.expenses : [];
-  const totalIncomeMTD  = incomeRows.reduce((s,r) => s + (r?.mtd || 0), 0);
-  const totalExpMTD     = expenseRows.reduce((s,r) => s + (r?.mtd || 0), 0);
-  const totalIncomeYTD  = incomeRows.reduce((s,r) => s + (r?.ytd || 0), 0);
-  const totalExpYTD     = expenseRows.reduce((s,r) => s + (r?.ytd || 0), 0);
 
-  const curMonthLabel = monthYearLabel(data?.currentMonth, data?.currentYear);
-  const qLabel = data?.quarterStart ? `Q${Math.floor((data.quarterStart - 1) / 3) + 1} ${data?.currentYear || ""}` : "Quarter";
-  const ytdLabel = `YTD ${data?.currentYear || ""}`;
+  const year          = data?.currentYear  || new Date().getFullYear();
+  const currentMonth  = data?.currentMonth || (new Date().getMonth() + 1);
+  const currentQnum   = Math.floor((currentMonth - 1) / 3) + 1;
+  const qStartMonth   = (currentQnum - 1) * 3 + 1;
+  const priorQnum     = currentQnum === 1 ? 4 : currentQnum - 1;
+  const priorQYear    = currentQnum === 1 ? year - 1 : year;
+  const priorQStart   = (priorQnum - 1) * 3 + 1;
+  const priorQEnd     = priorQStart + 2;
 
-  const TRow = ({ label, mtd, qtd, ytd, bold, indent, isTotal, isNeg }) => (
+  const [grain, setGrain]     = useState("quarterly"); // monthly | quarterly | annual
+  const [showPct, setShowPct] = useState(false);
+
+  // --- Column value extractors ------------------------------------------------
+  // Each extractor takes a line object { perMonth[12], perMonthPrior[12] } and
+  // returns a number for the column. Prior-year fields use perMonthPrior.
+  const sum = (arr, from, to) => arr.slice(from, to + 1).reduce((s,x) => s + (x || 0), 0);
+
+  const monthCols = () => {
+    const cols = [];
+    for (let m = 1; m <= currentMonth; m++) {
+      cols.push({
+        key: `m${m}`,
+        label: MONTHS[m - 1],
+        partial: (m === currentMonth), // current month is mid-month by default
+        getValue: (line) => line.perMonth[m - 1] || 0,
+      });
+    }
+    cols.push({
+      key: "ytd",
+      label: `YTD ${year}`,
+      partial: true,
+      getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
+    });
+    return cols;
+  };
+
+  const quarterCols = () => [
+    {
+      key: "qtd",
+      label: `Q${currentQnum} ${year} (through ${MONTHS[currentMonth - 1]})`,
+      partial: true,
+      getValue: (line) => sum(line.perMonth, qStartMonth - 1, currentMonth - 1),
+    },
+    {
+      key: "priorQ",
+      label: `Q${priorQnum} ${priorQYear}`,
+      partial: false,
+      // Prior quarter is either last quarter of THIS year (from perMonth) or
+      // last quarter of LAST year (from perMonthPrior — Q4 of prior year).
+      getValue: (line) => currentQnum === 1
+        ? sum(line.perMonthPrior, priorQStart - 1, priorQEnd - 1)
+        : sum(line.perMonth,      priorQStart - 1, priorQEnd - 1),
+    },
+    {
+      key: "dSeq",
+      label: "Δ vs prior Q",
+      isDelta: true,
+      partial: false,
+      getValue: (line, tot) => {
+        const cur = sum(line.perMonth, qStartMonth - 1, currentMonth - 1);
+        const pri = currentQnum === 1
+          ? sum(line.perMonthPrior, priorQStart - 1, priorQEnd - 1)
+          : sum(line.perMonth,      priorQStart - 1, priorQEnd - 1);
+        return cur - pri;
+      },
+    },
+    {
+      key: "yoyQ",
+      label: `Q${currentQnum} ${year - 1}`,
+      partial: false,
+      getValue: (line) => sum(line.perMonthPrior, qStartMonth - 1, qStartMonth + 1),
+    },
+    {
+      key: "dYoy",
+      label: "Δ YoY",
+      isDelta: true,
+      partial: false,
+      getValue: (line) => {
+        const cur = sum(line.perMonth,      qStartMonth - 1, currentMonth - 1);
+        const yoy = sum(line.perMonthPrior, qStartMonth - 1, qStartMonth + 1);
+        return cur - yoy;
+      },
+    },
+    {
+      key: "ytd",
+      label: `YTD ${year}`,
+      partial: true,
+      getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
+    },
+  ];
+
+  const annualCols = () => [
+    {
+      key: "ytd",
+      label: `YTD ${year} (through ${MONTHS[currentMonth - 1]})`,
+      partial: true,
+      getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
+    },
+    {
+      key: "priorYear",
+      label: `${year - 1}`,
+      partial: false,
+      getValue: (line) => sum(line.perMonthPrior, 0, 11),
+    },
+    {
+      key: "dYoy",
+      label: "Δ YoY",
+      isDelta: true,
+      partial: false,
+      getValue: (line) => sum(line.perMonth, 0, currentMonth - 1) - sum(line.perMonthPrior, 0, 11),
+    },
+  ];
+
+  const columns = grain === "monthly" ? monthCols()
+                : grain === "annual"  ? annualCols()
+                :                       quarterCols();
+
+  // --- Totals per column ------------------------------------------------------
+  // Total income per column, needed both for the totals row and as the
+  // denominator when showPct=true.
+  const totalIncomeByCol = columns.map(c =>
+    incomeRows.reduce((s, line) => s + c.getValue(line), 0)
+  );
+  const totalExpByCol = columns.map(c =>
+    expenseRows.reduce((s, line) => s + c.getValue(line), 0)
+  );
+
+  // --- Cell rendering ---------------------------------------------------------
+  // For non-delta columns: "$X" (optionally with · Y% of income when showPct on).
+  // For delta columns: "+$X (+Y%)" colored good/bad based on line direction.
+  const fmtCell = (raw, colIdx, col, opts = {}) => {
+    const { isIncomeLine, isExpenseLine, isNetLine } = opts;
+    if (col.isDelta) {
+      const absv  = Math.abs(raw);
+      const sign  = raw > 0 ? "+" : raw < 0 ? "−" : "";
+      const dollar = `${sign}$${absv.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+      // Color: income up = good, expense up = bad, net up = good
+      let color = T.slate500;
+      if (raw !== 0) {
+        const goodDirection =
+          isIncomeLine ? raw > 0
+        : isExpenseLine ? raw < 0
+        : isNetLine     ? raw > 0
+        :                 raw > 0;
+        color = goodDirection ? T.green : T.red;
+      }
+      return <span style={{ color }}>{dollar}</span>;
+    }
+    // Non-delta
+    const dollar = fmt(raw);
+    if (!showPct) return dollar;
+    const denom = totalIncomeByCol[colIdx] || 0;
+    if (!denom) return dollar;
+    const pct = (raw / denom) * 100;
+    const pctStr = `${pct >= 0 ? "" : ""}${pct.toFixed(1)}%`;
+    return <>{dollar}<span style={{ color: T.slate400, fontSize: 10, marginLeft: 4 }}>· {pctStr}</span></>;
+  };
+
+  const Cell = ({ value, colIdx, col, bold, isTotal, opts }) => (
+    <td style={{
+      padding: "7px 8px",
+      fontSize: 12,
+      textAlign: "right",
+      fontWeight: bold ? 600 : 400,
+      color: bold ? T.slate900 : T.slate700,
+      whiteSpace: "nowrap",
+      background: col.isDelta ? T.slate50 : (isTotal ? T.slate50 : "transparent"),
+    }}>
+      {fmtCell(value, colIdx, col, opts)}
+    </td>
+  );
+
+  const DataRow = ({ label, line, bold, indent, isTotal, columnsRow, opts }) => (
     <tr style={{ background: isTotal ? T.slate50 : "transparent" }}>
-      <td style={{ padding: "7px 8px", fontSize: 12, color: indent ? T.slate600 : T.slate800, paddingLeft: indent ? 24 : 8, fontWeight: bold ? 600 : 400 }}>{label}</td>
-      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 600 : 400, color: isNeg ? T.red : bold ? T.slate900 : T.slate700 }}>{fmt(mtd)}</td>
-      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 600 : 400, color: isNeg ? T.red : bold ? T.slate900 : T.slate700 }}>{fmt(qtd)}</td>
-      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 600 : 400, color: isNeg ? T.red : bold ? T.slate900 : T.slate700 }}>{fmt(ytd)}</td>
+      <td style={{
+        padding: "7px 8px",
+        fontSize: 12,
+        color: indent ? T.slate600 : T.slate800,
+        paddingLeft: indent ? 24 : 8,
+        fontWeight: bold ? 600 : 400,
+        whiteSpace: "nowrap",
+      }}>{label}</td>
+      {columnsRow.map((v, i) => (
+        <Cell key={i} value={v} colIdx={i} col={columns[i]} bold={bold} isTotal={isTotal} opts={opts} />
+      ))}
     </tr>
+  );
+
+  // Grain / format toggle bar
+  const grainBtn = (key, label) => (
+    <button
+      key={key}
+      onClick={() => setGrain(key)}
+      style={{
+        padding: "6px 12px",
+        fontSize: 12,
+        fontWeight: 500,
+        background: grain === key ? T.slate800 : "#fff",
+        color:      grain === key ? "#fff"     : T.slate600,
+        border: `1px solid ${grain === key ? T.slate800 : T.slate200}`,
+        borderRadius: 6,
+        cursor: "pointer",
+      }}
+    >{label}</button>
   );
 
   return (
     <Card>
       <CardHeader
         title="Profit & Loss Statement"
-        sub={`Cash basis · Calendar year ${data?.currentYear || ""}`}
+        sub={`Cash basis · Calendar year ${year}`}
       />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "0 0 12px 0" }}>
+        {grainBtn("monthly",   "Monthly")}
+        {grainBtn("quarterly", "Quarterly")}
+        {grainBtn("annual",    "Annual")}
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 12, fontSize: 12, color: T.slate600, cursor: "pointer" }}>
+          <input type="checkbox" checked={showPct} onChange={(e) => setShowPct(e.target.checked)} />
+          Show % of income
+        </label>
+      </div>
+
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left" }}>Account</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{curMonthLabel}</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{qLabel}</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{ytdLabel}</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left", whiteSpace: "nowrap" }}>Account</th>
+              {columns.map((c, i) => (
+                <th key={c.key} style={{
+                  padding: "8px 8px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: c.isDelta ? T.slate500 : T.slate500,
+                  textAlign: "right",
+                  whiteSpace: "nowrap",
+                  background: c.isDelta ? T.slate50 : "transparent",
+                }}>
+                  {c.label}
+                  {c.partial && (
+                    <div style={{ fontSize: 9, fontWeight: 500, color: T.slate400, marginTop: 2 }}>(partial)</div>
+                  )}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            <TRow label="INCOME" bold />
-            {incomeRows.map((r,i) => (
-              <TRow key={i} label={r.name} mtd={r.mtd} qtd={r.qtd} ytd={r.ytd} indent />
+            <tr>
+              <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate800 }}>INCOME</td>
+              {columns.map((c, i) => <td key={i} />)}
+            </tr>
+            {incomeRows.map((line, i) => (
+              <DataRow
+                key={i}
+                label={line.name}
+                indent
+                columnsRow={columns.map(c => c.getValue(line))}
+                opts={{ isIncomeLine: true }}
+              />
             ))}
-            <TRow label="Total Income" mtd={totalIncomeMTD} qtd={incomeRows.reduce((s,r)=>s+r.qtd,0)} ytd={totalIncomeYTD} bold isTotal />
+            <DataRow
+              label="Total Income"
+              bold isTotal
+              columnsRow={totalIncomeByCol}
+              opts={{ isIncomeLine: true }}
+            />
 
-            <tr><td colSpan={4} style={{ padding: "6px 0" }} /></tr>
+            <tr><td colSpan={columns.length + 1} style={{ padding: "6px 0" }} /></tr>
 
-            <TRow label="EXPENSES" bold />
-            {expenseRows.map((r,i) => (
-              <TRow key={i} label={r.name} mtd={r.mtd} qtd={r.qtd} ytd={r.ytd} indent />
+            <tr>
+              <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate800 }}>EXPENSES</td>
+              {columns.map((c, i) => <td key={i} />)}
+            </tr>
+            {expenseRows.map((line, i) => (
+              <DataRow
+                key={i}
+                label={line.name}
+                indent
+                columnsRow={columns.map(c => c.getValue(line))}
+                opts={{ isExpenseLine: true }}
+              />
             ))}
-            <TRow label="Total Expenses" mtd={totalExpMTD} qtd={expenseRows.reduce((s,r)=>s+r.qtd,0)} ytd={totalExpYTD} bold isTotal />
+            <DataRow
+              label="Total Expenses"
+              bold isTotal
+              columnsRow={totalExpByCol}
+              opts={{ isExpenseLine: true }}
+            />
 
-            <tr><td colSpan={4} style={{ padding: "2px 0", borderTop: `2px solid ${T.slate800}` }} /></tr>
-            <TRow label="NET INCOME" mtd={totalIncomeMTD-totalExpMTD} qtd={incomeRows.reduce((s,r)=>s+r.qtd,0)-expenseRows.reduce((s,r)=>s+r.qtd,0)} ytd={totalIncomeYTD-totalExpYTD} bold isTotal />
+            <tr><td colSpan={columns.length + 1} style={{ padding: "2px 0", borderTop: `2px solid ${T.slate800}` }} /></tr>
+            <DataRow
+              label="NET INCOME"
+              bold isTotal
+              columnsRow={totalIncomeByCol.map((inc, i) => inc - totalExpByCol[i])}
+              opts={{ isNetLine: true }}
+            />
           </tbody>
         </table>
       </div>
