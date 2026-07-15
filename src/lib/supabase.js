@@ -17,14 +17,18 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
 // Find it with: SELECT id FROM agency LIMIT 1;
 export const AGENCY_ID = import.meta.env.VITE_AGENCY_ID || null
 
-// Business Entity ID — the legal entity scope for accounting/banking/GL queries.
-// Pairs with agency_id during the dual-scoped phase (see persistent_memory operational_rule
-// "agency_id → business_entity_id refactor: phased plan").
-// PaperNewt LLC:         b1111111-1111-1111-1111-111111111111
-// Peter Story State Farm: b2222222-2222-2222-2222-222222222222 (default operating entity)
-export const BUSINESS_ENTITY_ID = import.meta.env.VITE_BUSINESS_ENTITY_ID || 'b2222222-2222-2222-2222-222222222222'
+// Business Entity ID — PaperNewt LLC is the S-Corp parent and the entity that
+// consolidates ALL financial records (Story Agency P&L rolls into PaperNewt for
+// S-Corp tax filing). Financials module + all entity-scoped queries filter on this.
+// The individual entities:
+//   PaperNewt LLC:          b1111111-1111-1111-1111-111111111111 (default — this)
+//   Peter Story State Farm: b2222222-2222-2222-2222-222222222222 (operating DBA;
+//                             remains meaningful for team.business_entity_id
+//                             — which employee works for which entity —
+//                             but NOT for financial records)
+export const BUSINESS_ENTITY_ID = import.meta.env.VITE_BUSINESS_ENTITY_ID || 'b1111111-1111-1111-1111-111111111111'
 
-// Payroll Entity ID — PaperNewt LLC is the W-2 employer of record. All payroll_runs
-// and payroll_detail rows live here regardless of where the cash JEs post from.
-// (Decision 2026-07-15: two-entity split — records on PaperNewt, cash on PSSF.)
-export const PAYROLL_ENTITY_ID = 'b1111111-1111-1111-1111-111111111111'
+// Legacy alias — same value as BUSINESS_ENTITY_ID now that the whole module
+// is PaperNewt-scoped. Kept as an export for backward compatibility with any
+// components still importing it; safe to remove in a future cleanup.
+export const PAYROLL_ENTITY_ID = BUSINESS_ENTITY_ID
