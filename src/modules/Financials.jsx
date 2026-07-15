@@ -1359,7 +1359,7 @@ const BalanceSheetSection = ({ data }) => {
     <Card>
       <CardHeader
         title="Balance Sheet"
-        sub={`Anchored to 4/30/2026 close + live GL · As of ${bs.asOfLabel || "current"}`}
+        sub={`Anchored to 6/30/2026 close + live GL · As of ${bs.asOfLabel || "current"}`}
       />
 
       {!ties && (
@@ -1535,7 +1535,7 @@ const PrintPackage = ({ data, periodLabel }) => {
         <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>Newtworks</div>
         <div style={{ marginTop: 80, fontSize: 10, color: "#94A3B8", maxWidth: 420, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 }}>
           This package contains the Profit &amp; Loss Statement, Balance Sheet, Bank Account balances,
-          and Credit &amp; Debt balances. Balance Sheet is anchored to the 4/30/2026 QuickBooks close
+          and Credit &amp; Debt balances. Balance Sheet is anchored to the 6/30/2026 statement close
           plus subsequent general-ledger activity.
         </div>
       </div>
@@ -1554,7 +1554,7 @@ const PrintPackage = ({ data, periodLabel }) => {
       <div className="newtworks-print-page">
         <PrintTable
           title="Balance Sheet"
-          sub={`As of ${bs.asOfLabel || periodName} · anchored to 4/30/2026 close + GL activity`}
+          sub={`As of ${bs.asOfLabel || periodName} · anchored to 6/30/2026 close + GL activity`}
           cols={["Account", "Balance"]}
           rows={bsRows}
         />
