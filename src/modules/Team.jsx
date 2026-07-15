@@ -2538,7 +2538,7 @@ const HypotheticalHireForecast = () => {
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, onUpdate }) => {
-  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","closing","declined"]);
+  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined"]);
   // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
   const RECRUITING_STAGES = ["applied","assessed","email_screen","interview"];
   const CLOSING_STAGES    = ["reference_check","offer","hired"];
@@ -2546,7 +2546,7 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
   const closingApps    = applicants.filter(a => CLOSING_STAGES.includes(a.status));
   const subs = [
     { id:"recruiting", label:`Recruiting (${recruitingApps.length})` },
-    { id:"closing",    label:`Closing (${closingApps.length})` },
+    { id:"finalists",  label:`Finalists (${closingApps.length})` },
     { id:"declined",   label:`Declined (${declined.length})` },
   ];
   return (
@@ -2585,7 +2585,7 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
           <HypotheticalHireForecast />
         </div>
       )}
-      {view === "closing" && (
+      {view === "finalists" && (
         <RecruitingPipeline applicants={closingApps} onUpdate={onUpdate} stages={CLOSING_STAGES} />
       )}
       {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
