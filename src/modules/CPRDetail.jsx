@@ -1588,8 +1588,8 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                 //   Rate rows (SMVC %, SMVC $, Scorecard): light-blue ramp.
                 //   Standard LOB rows: no row bg; existing neutral column tints.
                 const shades =
-                  r.rowKind === "premium" ? { row: "#F3F9E7", mid: "#DEEBC1", dark: "#C4DC9C" } :
-                  r.rowKind === "rate"    ? { row: "#EEF3FB", mid: "#CFDEEE", dark: "#A9C4E4" } :
+                  r.rowKind === "premium" ? { row: "#F6FAEC", mid: "#E4EFCD", dark: "#D3E5B3" } :
+                  r.rowKind === "rate"    ? { row: "#F0F5FC", mid: "#D6E3F0", dark: "#B9D0E9" } :
                                             { row: undefined,  mid: T.slate50,  dark: T.blueLt };
                 const rowBg = shades.row;
 
