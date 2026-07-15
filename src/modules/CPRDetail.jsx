@@ -2596,7 +2596,7 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
                     goalsSubRow("win",    "🏆 Win the Week",         gd    => (gd.won_the_week ? 10 : 0)),
                     goalsSubRow("gain",   "📈 1% Gain",              gd    => (gd.gain_hit ? 10 : 0)),
                     goalsSubRow("as",     "⭐ All-Star",             gd    => 10 * (Number(gd.as_hits)     || 0)),
-                    goalsSubRow("leaderboard", "🥇 Leaderboard",         gd    => 10 * (Number(gd.leaderboard_hits ?? gd.podium_hits) || 0)),
+                    goalsSubRow("leaderboard", "🥇 Leaderboard",         gd    => 10 * (Number(gd.leaderboard_hits) || 0)),
                     goalsSubRow("tb",     "🔥 Trailblazer",          gd    => 10 * (Number(gd.tb_hits)     || 0)),
                   ];
                 }
