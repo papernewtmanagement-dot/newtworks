@@ -2971,14 +2971,41 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
           {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult")}
           {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1; eats WHOLE pool")}
           {row("− Manager Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "SUM(wctd.manager_bonus) this cycle")}
-          {row("− Health Development Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_hdb_max_accrual) || 0), `$25/wk × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
           {row("− MVP Prize Cart QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_prize_cart_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
           {row("− Win the Quarter Trip QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_wtq_trip_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
-          {row("− WtW Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_wtw_bonus_accrual) || 0), `$10 × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
-          {row("− 1% Gain Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_gain_bonus_accrual) || 0), `$10 × team × ${weeksElapsedQtd} wks; carve-and-forget`)}
-          {row("− Leaderboard Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_leaderboard_bonus_accrual) || 0), `($10 × 3 slots × 4 cats × ${weeksElapsedQtd} wks) ÷ 2; carve-and-forget`)}
-          {row("− All-Star Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_all_star_bonus_accrual) || 0), `($10 × 4 cats × team × ${weeksElapsedQtd} wks) ÷ 2; carve-and-forget`)}
-          {row("− Trailblazer Bonus QTD (max accrual)", -Number((diag.qtd_subtractions?.qtd_trailblazer_bonus_accrual) || 0), `($10 × 4 cats × ${weeksElapsedQtd} wks) ÷ 2; carve-and-forget`)}
+          {(() => {
+            const hdb = Number((diag.qtd_subtractions?.qtd_hdb_max_accrual) || 0);
+            const wtw = Number((diag.qtd_subtractions?.qtd_wtw_bonus_accrual) || 0);
+            const gain = Number((diag.qtd_subtractions?.qtd_gain_bonus_accrual) || 0);
+            const ldr = Number((diag.qtd_subtractions?.qtd_leaderboard_bonus_accrual) || 0);
+            const asb = Number((diag.qtd_subtractions?.qtd_all_star_bonus_accrual) || 0);
+            const tb = Number((diag.qtd_subtractions?.qtd_trailblazer_bonus_accrual) || 0);
+            const grpTotal = hdb + wtw + gain + ldr + asb + tb;
+            const rampSum = Number((cvo?.inputs?.team_tenure_ramp_sum) || 0);
+            const teamCt = Number((cvo?.inputs?.team_count) || 0);
+            const subRow = (label, val, hint) => (
+              <tr key={label}>
+                <Td style={{ paddingLeft: 28, color: T.slate600 }}>{label}</Td>
+                <Td align="right" style={{ color: T.slate700 }}>{fmtMoneyCents(-val)}</Td>
+                <Td style={{ color: T.slate500, fontSize: 11, paddingLeft: 10 }}>{hint}</Td>
+              </tr>
+            );
+            return (
+              <>
+                <tr>
+                  <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700 }}>− Team goals-bonus carveouts QTD (max, tenure-ramped)</Td>
+                  <Td align="right" style={{ color: T.slate900, fontWeight: 700 }}>{fmtMoneyCents(-grpTotal)}</Td>
+                  <Td style={{ color: T.slate500, fontSize: 11, paddingLeft: 10 }}>{`Σ tenure_ramp = ${rampSum.toFixed(4)} (vs raw team = ${teamCt})`}</Td>
+                </tr>
+                {subRow("HDB (max)", hdb, `$25/wk × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
+                {subRow("WtW", wtw, `$10 × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
+                {subRow("1% Gain", gain, `$10 × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
+                {subRow("Leaderboard", ldr, `($10 × 3 × 4 × ${weeksElapsedQtd}) ÷ 2 — not team-multiplied`)}
+                {subRow("All-Star", asb, `($10 × 4 × Σ tenure_ramp × ${weeksElapsedQtd}) ÷ 2`)}
+                {subRow("Trailblazer", tb, `($10 × 4 × 1 × ${weeksElapsedQtd}) ÷ 2 — not team-multiplied`)}
+              </>
+            );
+          })()}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
