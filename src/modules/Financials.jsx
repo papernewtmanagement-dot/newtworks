@@ -58,10 +58,10 @@ function useFinancialsData() {
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
 
-          // Income statement view (prior year) — for quarterly margin comparison on Owner Profit Pace
+          // Income statement view (prior 3 years) — powers annual grain (3 completed years side-by-side) and quarterly grain (Q of prior year for the trailing view).
           supabase.from("v_income_statement")
-            .select("account_type, amount, month, year")
-            .eq("year", currentYear - 1).order("month"),
+            .select("account_name, account_type, amount, month, year")
+            .gte("year", currentYear - 3).lt("year", currentYear).order("year").order("month"),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
@@ -144,9 +144,11 @@ function useFinancialsData() {
           return { month: m, revenue: Math.round(rev), expenses: Math.round(exp) };
         });
 
-        // P&L line items — includes per-month arrays (Jan..Dec, 0-based) for
-        // current year AND prior year so PLSection can slice at any grain.
+        // P&L line items — includes per-month arrays for current year AND each of
+        // the last 3 prior years so PLSection can slice at any grain (monthly,
+        // quarterly trailing, annual trailing).
         const priorIsData = priorIsRows.data || [];
+        const historyYears = [currentYear - 3, currentYear - 2, currentYear - 1];
         const buildLines = (type) => {
           const allNames = new Set([
             ...isData.filter(r => r.account_type === type).map(r => r.account_name),
@@ -156,9 +158,15 @@ function useFinancialsData() {
             const rows       = isData.filter(r => r.account_name === name && r.account_type === type);
             const priorRows  = priorIsData.filter(r => r.account_name === name && r.account_type === type);
             const perMonth      = Array(12).fill(0);
-            const perMonthPrior = Array(12).fill(0);
-            for (const r of rows)      perMonth[(r.month || 1) - 1]      += parseFloat(r.amount || 0);
-            for (const r of priorRows) perMonthPrior[(r.month || 1) - 1] += parseFloat(r.amount || 0);
+            for (const r of rows) perMonth[(r.month || 1) - 1] += parseFloat(r.amount || 0);
+            // perMonthByYear: { 2023:[12], 2024:[12], 2025:[12], 2026:[12] }
+            const perMonthByYear = {};
+            for (const yr of [...historyYears, currentYear]) perMonthByYear[yr] = Array(12).fill(0);
+            for (const r of priorRows) {
+              if (perMonthByYear[r.year]) perMonthByYear[r.year][(r.month || 1) - 1] += parseFloat(r.amount || 0);
+            }
+            for (const r of rows) perMonthByYear[currentYear][(r.month || 1) - 1] += parseFloat(r.amount || 0);
+            const perMonthPrior = perMonthByYear[currentYear - 1] || Array(12).fill(0);
             const ytd = rows.reduce((s,r) => s + parseFloat(r.amount || 0), 0);
             const mtd = rows.filter(r => r.month === currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
             const qtd = rows.filter(r => r.month >= quarterStart && r.month <= currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
@@ -167,8 +175,11 @@ function useFinancialsData() {
               mtd: Math.round(mtd),
               qtd: Math.round(qtd),
               ytd: Math.round(ytd),
-              perMonth:      perMonth.map(Math.round),
-              perMonthPrior: perMonthPrior.map(Math.round),
+              perMonth:       perMonth.map(Math.round),
+              perMonthPrior:  perMonthPrior.map(Math.round),
+              perMonthByYear: Object.fromEntries(
+                Object.entries(perMonthByYear).map(([y, arr]) => [y, arr.map(Math.round)])
+              ),
             };
           });
         };
@@ -855,10 +866,12 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 };
 
 // ─── Section: P&L ────────────────────────────────────────────
-// Grain toggle: Monthly (Jan..current-month + YTD), Quarterly (current QTD +
-// prior Q + Δ Seq + prior-year Q + Δ YoY + YTD), Annual (YTD current + prior
-// year + Δ). % of income checkbox adds a per-cell percentage next to each
-// dollar. Non-completed periods carry a "(partial)" tag.
+// Grain toggle:
+//   Monthly   — Jan..current-month + YTD, chronological left→right
+//   Quarterly — last 3 completed quarters + current QTD (partial) + Δ vs prior Q + YTD
+//   Annual    — last 3 completed years + current YTD (partial) + Δ vs prior year
+// % of income checkbox adds a per-cell percentage next to each dollar.
+// Non-completed periods carry a "(partial)" tag.
 const PLSection = ({ data }) => {
   const pl = data?.pl || { income: [], expenses: [] };
   const incomeRows  = Array.isArray(pl.income)   ? pl.income   : [];
@@ -900,82 +913,79 @@ const PLSection = ({ data }) => {
     return cols;
   };
 
-  const quarterCols = () => [
-    {
+  // Helper to sum a quarter's months from a perMonthByYear array
+  const sumQ = (arr, qNum) => sum(arr || [], (qNum - 1) * 3, (qNum - 1) * 3 + 2);
+
+  // Quarterly: last 3 completed quarters + current QTD (partial) + Δ vs prior Q + YTD.
+  // Left-to-right chronological, oldest → newest. Handles year rollover.
+  const quarterCols = () => {
+    // Build the sequence of (year, qNum) for the 3 quarters immediately before
+    // the current one, then append the current partial quarter.
+    const seq = [];
+    let y = year, q = currentQnum;
+    for (let i = 0; i < 3; i++) {
+      q -= 1;
+      if (q === 0) { q = 4; y -= 1; }
+      seq.unshift({ year: y, qNum: q });          // unshift so oldest ends up first
+    }
+    const cols = seq.map(({ year: yr, qNum }) => ({
+      key: `q${yr}-${qNum}`,
+      label: `Q${qNum} ${yr}`,
+      partial: false,
+      getValue: (line) => sumQ(line.perMonthByYear?.[yr], qNum),
+    }));
+    cols.push({
       key: "qtd",
       label: `Q${currentQnum} ${year} (through ${MONTHS[currentMonth - 1]})`,
       partial: true,
       getValue: (line) => sum(line.perMonth, qStartMonth - 1, currentMonth - 1),
-    },
-    {
-      key: "priorQ",
-      label: `Q${priorQnum} ${priorQYear}`,
-      partial: false,
-      // Prior quarter is either last quarter of THIS year (from perMonth) or
-      // last quarter of LAST year (from perMonthPrior — Q4 of prior year).
-      getValue: (line) => currentQnum === 1
-        ? sum(line.perMonthPrior, priorQStart - 1, priorQEnd - 1)
-        : sum(line.perMonth,      priorQStart - 1, priorQEnd - 1),
-    },
-    {
+    });
+    cols.push({
       key: "dSeq",
       label: "Δ vs prior Q",
       isDelta: true,
       partial: false,
-      getValue: (line, tot) => {
-        const cur = sum(line.perMonth, qStartMonth - 1, currentMonth - 1);
-        const pri = currentQnum === 1
-          ? sum(line.perMonthPrior, priorQStart - 1, priorQEnd - 1)
-          : sum(line.perMonth,      priorQStart - 1, priorQEnd - 1);
-        return cur - pri;
-      },
-    },
-    {
-      key: "yoyQ",
-      label: `Q${currentQnum} ${year - 1}`,
-      partial: false,
-      getValue: (line) => sum(line.perMonthPrior, qStartMonth - 1, qStartMonth + 1),
-    },
-    {
-      key: "dYoy",
-      label: "Δ YoY",
-      isDelta: true,
-      partial: false,
       getValue: (line) => {
-        const cur = sum(line.perMonth,      qStartMonth - 1, currentMonth - 1);
-        const yoy = sum(line.perMonthPrior, qStartMonth - 1, qStartMonth + 1);
-        return cur - yoy;
+        const cur   = sum(line.perMonth, qStartMonth - 1, currentMonth - 1);
+        const prior = sumQ(line.perMonthByYear?.[seq[seq.length - 1].year], seq[seq.length - 1].qNum);
+        return cur - prior;
       },
-    },
-    {
+    });
+    cols.push({
       key: "ytd",
       label: `YTD ${year}`,
       partial: true,
       getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
-    },
-  ];
+    });
+    return cols;
+  };
 
-  const annualCols = () => [
-    {
+  // Annual: last 3 completed years + current YTD (partial) + Δ vs prior year.
+  const annualCols = () => {
+    const cols = [];
+    for (let yr = year - 3; yr <= year - 1; yr++) {
+      cols.push({
+        key: `y${yr}`,
+        label: `${yr}`,
+        partial: false,
+        getValue: (line) => sum(line.perMonthByYear?.[yr], 0, 11),
+      });
+    }
+    cols.push({
       key: "ytd",
       label: `YTD ${year} (through ${MONTHS[currentMonth - 1]})`,
       partial: true,
       getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
-    },
-    {
-      key: "priorYear",
-      label: `${year - 1}`,
-      partial: false,
-      getValue: (line) => sum(line.perMonthPrior, 0, 11),
-    },
-    {
+    });
+    cols.push({
       key: "dYoy",
-      label: "Δ YoY",
+      label: "Δ vs prior year",
       isDelta: true,
       partial: false,
-      getValue: (line) => sum(line.perMonth, 0, currentMonth - 1) - sum(line.perMonthPrior, 0, 11),
-    },
-  ];
+      getValue: (line) => sum(line.perMonth, 0, currentMonth - 1) - sum(line.perMonthByYear?.[year - 1], 0, 11),
+    });
+    return cols;
+  };
 
   const columns = grain === "monthly" ? monthCols()
                 : grain === "annual"  ? annualCols()
