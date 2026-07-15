@@ -2,7 +2,7 @@
 --   1. Win-the-week (team-wide, per teammate)
 --   2. 1% gain target (per person)
 --   3. All-Star crossings (per crossing this week)
---   4. Podium entries (per new leaderboard tier row this week)  -- NEW
+--   4. Leaderboard entries (per new leaderboard tier row this week)  -- NEW
 --   5. Trailblazer crossings (per crossing this week)
 -- Peter directive 2026-07-13. Hardcoded $10 × count/flag per bucket.
 
@@ -145,9 +145,9 @@ BEGIN
   --   1. Win-the-week      → $10 to every teammate if won_the_week
   --   2. 1% gain target    → $10 if this-wk new SP >= 1.01 × avg weekly SP of most recent completed quarter
   --   3. All-Star crossing → $10 × count of all_star_crossings rows this week
-  --   4. Podium entry      → $10 × count of leaderboards rows for this week (Gold/Silver/Bronze earned) -- NEW
+  --   4. Leaderboard entry      → $10 × count of leaderboards rows for this week (Gold/Silver/Bronze earned) -- NEW
   --   5. Trailblazer       → $10 × count of trailblazer_crossings rows this week
-  -- Runs AFTER audit so crossings + podium tables reflect this week's results.
+  -- Runs AFTER audit so crossings + leaderboard tables reflect this week's results.
   BEGIN
     WITH curr AS (
       SELECT d.team_member_id, COALESCE(d.sales_points, 0)::numeric AS curr_qtd
@@ -200,9 +200,9 @@ BEGIN
       WHERE agency_id = p_agency_id AND week_ending = p_week_end_date
       GROUP BY team_member_id
     ),
-    -- Podium entries this week: weekly categories via record_week_ending;
+    -- Leaderboard entries this week: weekly categories via record_week_ending;
     -- quarter_sp only at quarter close (matched by period_label).
-    podium_counts AS (
+    leaderboard_counts AS (
       SELECT team_member_id, COUNT(*) AS n
       FROM public.leaderboards
       WHERE agency_id = p_agency_id
@@ -222,13 +222,13 @@ BEGIN
         COALESCE(a.avg_new_sp, 0)::numeric * 1.01 AS target_1pct,
         (COALESCE(a.avg_new_sp, 0) > 0 AND t.this_wk_new_sp >= COALESCE(a.avg_new_sp, 0) * 1.01) AS gain_hit,
         COALESCE(asc_.n, 0)::int AS as_hits,
-        COALESCE(pc.n, 0)::int   AS podium_hits,
+        COALESCE(pc.n, 0)::int   AS leaderboard_hits,
         COALESCE(tb.n, 0)::int   AS tb_hits,
         COALESCE(v_won_the_week, false) AS won_the_week
       FROM this_new_sp t
       LEFT JOIN prior_avg a      ON a.team_member_id  = t.team_member_id
       LEFT JOIN as_counts asc_   ON asc_.team_member_id = t.team_member_id
-      LEFT JOIN podium_counts pc ON pc.team_member_id  = t.team_member_id
+      LEFT JOIN leaderboard_counts pc ON pc.team_member_id  = t.team_member_id
       LEFT JOIN tb_counts tb     ON tb.team_member_id  = t.team_member_id
     ),
     with_dollars AS (
@@ -236,7 +236,7 @@ BEGIN
              (10 * (
                 p.as_hits
                 + p.tb_hits
-                + p.podium_hits
+                + p.leaderboard_hits
                 + CASE WHEN p.gain_hit THEN 1 ELSE 0 END
                 + CASE WHEN p.won_the_week THEN 1 ELSE 0 END
              ))::numeric AS dollars
@@ -250,7 +250,7 @@ BEGIN
               'won_the_week',        w.won_the_week,
               'gain_hit',            w.gain_hit,
               'as_hits',             w.as_hits,
-              'podium_hits',         w.podium_hits,
+              'leaderboard_hits',         w.leaderboard_hits,
               'tb_hits',             w.tb_hits,
               'this_wk_new_sp',      ROUND(w.this_wk_new_sp, 2),
               'avg_prior_13wk',      ROUND(w.avg_prior_13wk, 2),
@@ -258,19 +258,19 @@ BEGIN
               'ref_quarter_end',     w.ref_quarter_end,
               'target_1pct',         ROUND(w.target_1pct, 2),
               'dollars',             w.dollars,
-              'formula',             '$10 win-the-week (team) + $10 1% gain + $10 per All-Star crossing + $10 per Podium entry + $10 per Trailblazer crossing'
+              'formula',             '$10 win-the-week (team) + $10 1% gain + $10 per All-Star crossing + $10 per Leaderboard entry + $10 per Trailblazer crossing'
             )
           ),
           updated_at = now()
       FROM with_dollars w
       WHERE wctd.weekly_cpr_report_id = v_report_id
         AND wctd.team_member_id = w.team_member_id
-      RETURNING wctd.id, w.dollars, w.won_the_week, w.gain_hit, w.as_hits, w.podium_hits, w.tb_hits, w.this_wk_new_sp, w.target_1pct
+      RETURNING wctd.id, w.dollars, w.won_the_week, w.gain_hit, w.as_hits, w.leaderboard_hits, w.tb_hits, w.this_wk_new_sp, w.target_1pct
     )
     SELECT COUNT(*), COALESCE(jsonb_agg(jsonb_build_object(
       'team_member_id', id, 'dollars', dollars,
       'won_the_week', won_the_week, 'gain_hit', gain_hit,
-      'as_hits', as_hits, 'podium_hits', podium_hits, 'tb_hits', tb_hits,
+      'as_hits', as_hits, 'leaderboard_hits', leaderboard_hits, 'tb_hits', tb_hits,
       'this_wk_new_sp', this_wk_new_sp, 'target_1pct', target_1pct
     )), '[]'::jsonb)
     INTO v_goals_rows_updated, v_goals_detail
