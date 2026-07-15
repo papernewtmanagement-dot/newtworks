@@ -516,9 +516,10 @@ const StageBadge = ({ status }) => {
 };
 
 // ─── Section: Recruiting Pipeline ────────────────────────────
-const RecruitingPipeline = ({ applicants, onUpdate }) => {
+const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   const [selected, setSelected] = useState(null);
-  const stages = ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
+  // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
+  const stages = stagesProp || ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
 
 
   const selectedApp = applicants.find(a => a.id === selected);
@@ -538,7 +539,7 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
     <div>
       {/* Pipeline Kanban (horizontally scrollable on narrow viewports) */}
       <div style={{ overflowX:"auto", marginBottom:16, marginLeft:-4, marginRight:-4, paddingLeft:4, paddingRight:4 }}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(120px,1fr))", gap:8, minWidth:"720px" }}>
+      <div style={{ display:"grid", gridTemplateColumns:`repeat(${stages.length},minmax(120px,1fr))`, gap:8, minWidth:`${Math.max(360, stages.length * 120)}px` }}>
         {stages.map(stage => {
           const s = STAGES[stage];
           const stageApps = applicants.filter(a => a.status === stage);
@@ -2537,9 +2538,15 @@ const HypotheticalHireForecast = () => {
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, onUpdate }) => {
-  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","declined"]);
+  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","closing","declined"]);
+  // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
+  const RECRUITING_STAGES = ["applied","assessed","email_screen","interview"];
+  const CLOSING_STAGES    = ["reference_check","offer","hired"];
+  const recruitingApps = applicants.filter(a => RECRUITING_STAGES.includes(a.status));
+  const closingApps    = applicants.filter(a => CLOSING_STAGES.includes(a.status));
   const subs = [
-    { id:"recruiting", label:"Recruiting" },
+    { id:"recruiting", label:`Recruiting (${recruitingApps.length})` },
+    { id:"closing",    label:`Closing (${closingApps.length})` },
     { id:"declined",   label:`Declined (${declined.length})` },
   ];
   return (
@@ -2574,9 +2581,12 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
       {/* Sub-view content */}
       {view === "recruiting" && (
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <RecruitingPipeline applicants={applicants} onUpdate={onUpdate} />
+          <RecruitingPipeline applicants={recruitingApps} onUpdate={onUpdate} stages={RECRUITING_STAGES} />
           <HypotheticalHireForecast />
         </div>
+      )}
+      {view === "closing" && (
+        <RecruitingPipeline applicants={closingApps} onUpdate={onUpdate} stages={CLOSING_STAGES} />
       )}
       {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
     </div>
