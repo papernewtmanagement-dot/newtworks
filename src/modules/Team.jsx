@@ -518,7 +518,7 @@ const StageBadge = ({ status }) => {
 // ─── Section: Recruiting Pipeline ────────────────────────────
 const RecruitingPipeline = ({ applicants, onUpdate }) => {
   const [selected, setSelected] = useState(null);
-  const stages = ["assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
+  const stages = ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
 
 
   const selectedApp = applicants.find(a => a.id === selected);
@@ -2599,7 +2599,7 @@ export default function Team() {
       .from("team_assessments")
       .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_score, claude_summary, interview_focus, notes, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
       .eq("agency_id", AGENCY_ID)
-      .in("status", ["assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
+      .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (cancelled || error) return;
