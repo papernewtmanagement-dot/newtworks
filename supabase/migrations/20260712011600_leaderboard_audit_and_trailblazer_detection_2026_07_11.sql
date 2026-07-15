@@ -2,7 +2,7 @@
 -- Leaderboard audit + trailblazer crossing detection
 -- Wires weekly + quarter-close crossings into all_star_counts,
 -- all_star_crossings (new event-log table), trailblazer_crossings,
--- and leaderboards podium.
+-- and leaderboards.
 -- =============================================================
 
 -- Event log for weekly all-star crossings — idempotency + history
@@ -49,7 +49,7 @@ DECLARE
   v_report_id          uuid;
   v_all_star_hits      int := 0;
   v_trailblazer_hits   int := 0;
-  v_podium_updates     int := 0;
+  v_leaderboard_updates     int := 0;
   v_cat_result         jsonb := '[]'::jsonb;
   r                    record;
   cfg                  record;
@@ -199,8 +199,8 @@ BEGIN
               AND (SELECT COUNT(*) FROM wiped) >= 0
             RETURNING 1
           )
-          SELECT COUNT(*) INTO v_podium_updates FROM (
-            SELECT v_podium_updates + (SELECT COUNT(*) FROM reinserted) AS x
+          SELECT COUNT(*) INTO v_leaderboard_updates FROM (
+            SELECT v_leaderboard_updates + (SELECT COUNT(*) FROM reinserted) AS x
           ) s;
         END IF;
       END IF;
@@ -220,7 +220,7 @@ BEGIN
     'is_quarter_close', v_is_quarter_close,
     'all_star_hits_this_run', v_all_star_hits,
     'trailblazer_hits_this_run', v_trailblazer_hits,
-    'podium_updates_this_run', v_podium_updates,
+    'leaderboard_updates_this_run', v_leaderboard_updates,
     'categories', v_cat_result,
     'ran_at', now()
   );
