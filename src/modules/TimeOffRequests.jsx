@@ -784,23 +784,161 @@ function HistoryEditModal({ request, team, onClose, onSaved, onDeleted }) {
   );
 }
 
+// ============================================================
+// TEAM CALENDAR VIEW (replaces the old request-list history)
+// ============================================================
+function startOfWeekMondayLocal(d) {
+  const day = d.getDay(); // 0=Sun, 1=Mon...6=Sat
+  const diff = day === 0 ? -6 : 1 - day;
+  const nd = new Date(d);
+  nd.setDate(d.getDate() + diff);
+  nd.setHours(0, 0, 0, 0);
+  return nd;
+}
+function addDaysLocal(d, n) {
+  const nd = new Date(d);
+  nd.setDate(d.getDate() + n);
+  return nd;
+}
+function isoDayLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function dayShortLabel(d) { return d.toLocaleDateString(undefined, { weekday: "short" }); }
+function dayMonthShort(d) { return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+
+const CALENDAR_PENDING_STATUSES = new Set(["voting","awaiting_decision","flagged_case_by_case","pending"]);
+
+function categorizeRequestForCalendar(r) {
+  const t = r.request_type || "";
+  if (t === "sick") return "sick";
+  if (t.startsWith("remote")) return "remote";
+  return "off"; // time_off_full_day, time_off_half_day, four_day_off_change
+}
+
+function CellBlocks({ requests }) {
+  if (!requests || requests.length === 0) return null;
+  const segments = { morning: null, afternoon: null, full: null };
+  for (const r of requests) {
+    const isPending = CALENDAR_PENDING_STATUSES.has(r.status);
+    const kind = categorizeRequestForCalendar(r);
+    const part = r.partial_day && r.partial_day !== "none" ? r.partial_day : "full";
+    const existing = segments[part];
+    if (!existing || (existing.pending && !isPending)) {
+      segments[part] = { kind, pending: isPending, r };
+    }
+  }
+  const colorMap = {
+    off:    { bg: "#fecaca", border: "#f87171" },
+    sick:   { bg: "#fed7aa", border: "#fb923c" },
+    remote: { bg: "#bfdbfe", border: "#60a5fa" }
+  };
+  function blockStyle(seg) {
+    if (!seg) return { background: "transparent" };
+    const c = colorMap[seg.kind] || colorMap.off;
+    if (seg.pending) {
+      return { background: "transparent", border: `2px dashed ${c.border}`, borderRadius: 3, boxSizing: "border-box" };
+    }
+    return { background: c.bg, borderLeft: `3px solid ${c.border}` };
+  }
+  if (segments.full) {
+    return <div style={{ ...blockStyle(segments.full), height: "100%", minHeight: 42, borderRadius: 3 }} />;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 42, gap: 2 }}>
+      <div style={{ ...blockStyle(segments.morning), flex: 1, borderRadius: 3 }} />
+      <div style={{ ...blockStyle(segments.afternoon), flex: 1, borderRadius: 3 }} />
+    </div>
+  );
+}
+
+function CalendarDetailModal({ mode, teamId, dateISO, team, cellIndex, isOwner, onEdit, onClose }) {
+  let title; let listReqs = [];
+  const nameById = {};
+  for (const t of team) nameById[t.id] = `${t.first_name || ""} ${t.last_name || ""}`.trim();
+  const displayDate = new Date(dateISO + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  if (mode === "cell") {
+    title = `${nameById[teamId] || "—"} · ${displayDate}`;
+    listReqs = cellIndex[`${teamId}|${dateISO}`] || [];
+  } else {
+    title = displayDate;
+    for (const [key, arr] of Object.entries(cellIndex)) {
+      if (key.endsWith(`|${dateISO}`)) listReqs.push(...arr);
+    }
+  }
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1000 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: "min(560px, 100%)", maxHeight: "92vh", overflow: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b", lineHeight: 1 }}>×</button>
+        </div>
+        {listReqs.length === 0 ? (
+          <div style={{ color: "#64748b", padding: 20, textAlign: "center" }}>No time off recorded.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {listReqs.map(r => (
+              <div key={r.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      {mode === "day" && <div style={{ fontWeight: 600 }}>{nameById[r.requester_team_id] || "Unknown"}</div>}
+                      <StatusBadge status={r.status} />
+                      {r.is_paid === false && <span style={{ fontSize: 11, color: "#7c2d12", background: "#ffedd5", padding: "2px 8px", borderRadius: 10 }}>Unpaid</span>}
+                      {r.derived_from_standing_pref_id && <span style={{ fontSize: 11, color: "#0369a1", background: "#e0f2fe", padding: "2px 8px", borderRadius: 10 }}>Standing</span>}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>
+                      {formatRequestLabel(r)}{r.partial_day && r.partial_day !== "none" ? ` (${r.partial_day})` : ""}
+                      {" · "}
+                      {fmtDate(r.start_date)}{r.start_date !== r.end_date && ` → ${fmtDate(r.end_date)}`}
+                    </div>
+                    {r.notes && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}><span style={{ color: "#94a3b8" }}>Notes:</span> {r.notes}</div>}
+                    {r.decision_note && <div style={{ fontSize: 12, color: "#1e40af", marginTop: 2 }}><span style={{ color: "#94a3b8" }}>Decision note:</span> {r.decision_note}</div>}
+                  </div>
+                  {isOwner && (
+                    <button onClick={() => onEdit(r)} style={{ padding: "6px 10px", background: "#f1f5f9", color: "#1e40af", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HistoryView({ me }) {
-  const [requests, setRequests] = useState([]);
+  // Team roster + weekly time-off calendar. Replaces the prior stack-of-requests list view.
+  const [weekStart, setWeekStart] = useState(() => startOfWeekMondayLocal(new Date()));
   const [team, setTeam] = useState([]);
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  // Filters
-  const [filterStatus, setFilterStatus] = useState("decided"); // decided | all | approved | denied | cancelled | etc.
-  const [filterTeamId, setFilterTeamId] = useState("");
-  const [filterYear, setFilterYear] = useState("all");
-
-  // Edit modal target
+  const [expanded, setExpanded] = useState(null); // {mode:'cell'|'day', teamId?, dateISO}
   const [editing, setEditing] = useState(null);
-
+  const [refreshKey, setRefreshKey] = useState(0);
   const isOwner = me?.role_level === "Owner";
 
-  const bump = () => setRefreshKey(k => k + 1);
+  const days = useMemo(() => [0,1,2,3,4].map(i => addDaysLocal(weekStart, i)), [weekStart]);
+  const weekStartIso = isoDayLocal(weekStart);
+  const weekEndIso = isoDayLocal(days[4]);
+
+  useEffect(() => {
+    async function loadTeam() {
+      if (!supabase) return;
+      const { data } = await supabase.from("team")
+        .select("id, first_name, last_name, role_level")
+        .eq("agency_id", AGENCY_ID)
+        .eq("category", "agency")
+        .eq("is_admin_backoffice", false)
+        .is("archived_at", null)
+        .order("first_name");
+      setTeam(Array.isArray(data) ? data : []);
+    }
+    loadTeam();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -808,130 +946,132 @@ function HistoryView({ me }) {
       if (!supabase) return;
       setLoading(true);
       try {
-        const teamRes = await supabase.from("team")
-          .select("id, first_name, last_name, role_level")
-          .eq("agency_id", AGENCY_ID)
-          .eq("is_admin_backoffice", false)
-          .order("first_name");
-        if (!cancelled) setTeam(Array.isArray(teamRes.data) ? teamRes.data : []);
-
-        const reqRes = await supabase.from("time_off_requests")
+        const { data } = await supabase.from("time_off_requests")
           .select("*")
           .eq("agency_id", AGENCY_ID)
-          .order("start_date", { ascending: false })
-          .order("submitted_at", { ascending: false })
-          .limit(500);
-        if (!cancelled) setRequests(Array.isArray(reqRes.data) ? reqRes.data : []);
-      } catch (e) {
-        console.error("HistoryView load failed", e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+          .lte("start_date", weekEndIso)
+          .gte("end_date", weekStartIso)
+          .neq("request_type", "standing_time_off_preference")
+          .in("status", ["approved","voting","awaiting_decision","flagged_case_by_case","pending"]);
+        if (!cancelled) setRequests(Array.isArray(data) ? data : []);
+      } catch (e) { console.error("Calendar load failed", e); }
+      finally { if (!cancelled) setLoading(false); }
     }
     load();
     return () => { cancelled = true; };
-  }, [refreshKey]);
+  }, [weekStartIso, weekEndIso, refreshKey]);
 
-  const decidedStatuses = new Set(["approved", "denied", "cancelled", "expired"]);
-  const pendingStatuses = new Set(["voting", "awaiting_decision", "flagged_case_by_case", "pending"]);
-
-  const filtered = requests.filter(r => {
-    if (filterStatus === "decided" && !decidedStatuses.has(r.status)) return false;
-    if (filterStatus === "pending" && !pendingStatuses.has(r.status)) return false;
-    if (!["decided", "pending", "all"].includes(filterStatus) && r.status !== filterStatus) return false;
-    if (filterTeamId && r.requester_team_id !== filterTeamId) return false;
-    if (filterYear !== "all") {
-      const y = (r.start_date || "").slice(0, 4);
-      if (y !== filterYear) return false;
+  const cellIndex = useMemo(() => {
+    const idx = {};
+    for (const r of requests) {
+      const s = new Date(r.start_date + "T12:00:00");
+      const e = new Date(r.end_date + "T12:00:00");
+      for (let d = new Date(s); d <= e; d = addDaysLocal(d, 1)) {
+        const dow = d.getDay();
+        if (dow === 0 || dow === 6) continue; // weekend
+        const key = `${r.requester_team_id}|${isoDayLocal(d)}`;
+        (idx[key] = idx[key] || []).push(r);
+      }
     }
-    return true;
-  });
+    return idx;
+  }, [requests]);
 
-  // Compute year options from data
-  const years = Array.from(new Set(requests.map(r => (r.start_date || "").slice(0, 4)).filter(Boolean))).sort().reverse();
+  const todayIso = isoDayLocal(new Date());
+  const isCurrentWeek = weekStartIso === isoDayLocal(startOfWeekMondayLocal(new Date()));
 
-  // Lookup map for names
-  const nameById = {};
-  for (const t of team) nameById[t.id] = `${t.first_name || ""} ${t.last_name || ""}`.trim();
-
-  const selStyle = { padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, background: "#fff" };
+  const weekBtn = { padding: "6px 12px", background: "#fff", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#0f172a" };
+  const thNameStyle = { padding: "8px 10px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", borderRight: "1px solid #e2e8f0", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#475569", minWidth: 110, position: "sticky", left: 0, zIndex: 1 };
+  const thDayStyle  = (isToday) => ({ padding: "6px 6px", background: isToday ? "#eff6ff" : "#f8fafc", borderBottom: "1px solid #e2e8f0", borderRight: "1px solid #e2e8f0", textAlign: "center", fontSize: 12, fontWeight: 600, color: isToday ? "#1e40af" : "#475569", cursor: "pointer", userSelect: "none" });
+  const tdNameStyle = { padding: "8px 10px", borderBottom: "1px solid #f1f5f9", borderRight: "1px solid #e2e8f0", verticalAlign: "middle", background: "#fafafa", position: "sticky", left: 0, zIndex: 1 };
+  const tdCellStyle = (isToday, hasReqs) => ({ padding: 3, borderBottom: "1px solid #f1f5f9", borderRight: "1px solid #f1f5f9", height: 48, minWidth: 88, background: isToday ? "#f0f9ff" : "#fff", cursor: hasReqs ? "pointer" : "default" });
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
-        <label style={{ fontSize: 12, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
-          Status
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={selStyle}>
-            <option value="decided">Decided (approved/denied/cancelled/expired)</option>
-            <option value="approved">Approved only</option>
-            <option value="denied">Denied only</option>
-            <option value="cancelled">Cancelled only</option>
-            <option value="expired">Expired only</option>
-            <option value="pending">Pending</option>
-            <option value="all">All</option>
-          </select>
-        </label>
-        <label style={{ fontSize: 12, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
-          Person
-          <select value={filterTeamId} onChange={e => setFilterTeamId(e.target.value)} style={selStyle}>
-            <option value="">Everyone</option>
-            {team.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>)}
-          </select>
-        </label>
-        <label style={{ fontSize: 12, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
-          Year
-          <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={selStyle}>
-            <option value="all">All years</option>
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-        </label>
-        <div style={{ marginLeft: "auto", fontSize: 12, color: "#94a3b8" }}>
-          {filtered.length} record{filtered.length === 1 ? "" : "s"}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => setWeekStart(addDaysLocal(weekStart, -7))} style={weekBtn}>← Prev</button>
+          <button onClick={() => setWeekStart(startOfWeekMondayLocal(new Date()))} style={{ ...weekBtn, background: isCurrentWeek ? "#eff6ff" : "#fff", color: isCurrentWeek ? "#1e40af" : "#0f172a" }}>Today</button>
+          <button onClick={() => setWeekStart(addDaysLocal(weekStart, 7))} style={weekBtn}>Next →</button>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "#0f172a" }}>
+          Week of {dayMonthShort(weekStart)} – {dayMonthShort(days[4])}, {weekStart.getFullYear()}
         </div>
       </div>
 
       {loading ? (
-        <div style={{ color: "#64748b" }}>Loading…</div>
-      ) : filtered.length === 0 ? (
-        <div style={{ color: "#64748b", padding: 24, textAlign: "center", background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 8 }}>
-          No records match these filters.
-        </div>
+        <div style={{ color: "#64748b", padding: 20 }}>Loading…</div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.map(r => {
-            const typeLabel = formatRequestLabel(r);
-            return (
-              <div key={r.id} style={cardStyle}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 600 }}>{nameById[r.requester_team_id] || "Unknown"}</div>
-                      <StatusBadge status={r.status} />
-                      {r.is_paid === false && <span style={{ fontSize: 11, color: "#7c2d12", background: "#ffedd5", padding: "2px 8px", borderRadius: 10 }}>Unpaid</span>}
-                      {r.is_planned === false && (r.status === "approved" || r.status === "denied") && <span style={{ fontSize: 11, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 10 }}>Unplanned</span>}
-                    </div>
-                    <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>
-                      {typeLabel}{r.partial_day && r.partial_day !== "none" ? ` (${r.partial_day})` : ""}
-                      {" · "}
-                      {fmtDate(r.start_date)}{r.start_date !== r.end_date && ` → ${fmtDate(r.end_date)}`}
-                    </div>
-                    <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
-                      Submitted {fmtDateTime(r.submitted_at)}
-                      {r.decided_at && <> · Decided {fmtDateTime(r.decided_at)}</>}
-                    </div>
-                    {r.notes && <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}><span style={{ color: "#94a3b8" }}>Notes:</span> {r.notes}</div>}
-                    {r.decision_note && <div style={{ marginTop: 4, fontSize: 13, color: "#1e40af" }}><span style={{ color: "#94a3b8" }}>Decision note:</span> {r.decision_note}</div>}
-                  </div>
-                  {isOwner && (
-                    <button onClick={() => setEditing(r)} style={{ ...btnBase, background: "#f1f5f9", color: "#1e40af", border: "1px solid #cbd5e1" }}>
-                      Edit
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 640 }}>
+            <thead>
+              <tr>
+                <th style={thNameStyle}>Teammate</th>
+                {days.map(d => {
+                  const iso = isoDayLocal(d);
+                  const isToday = iso === todayIso;
+                  return (
+                    <th key={iso}
+                        style={thDayStyle(isToday)}
+                        onClick={() => setExpanded({ mode: "day", dateISO: iso })}
+                        title="Click to see everyone on this day">
+                      <div>{dayShortLabel(d)}</div>
+                      <div style={{ fontSize: 11, color: isToday ? "#3b82f6" : "#94a3b8", fontWeight: 400, marginTop: 1 }}>{dayMonthShort(d)}</div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {team.length === 0 ? (
+                <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: "#94a3b8" }}>No active team members.</td></tr>
+              ) : team.map(t => (
+                <tr key={t.id}>
+                  <td style={tdNameStyle}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{t.first_name}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8" }}>{t.last_name}</div>
+                  </td>
+                  {days.map(d => {
+                    const iso = isoDayLocal(d);
+                    const isToday = iso === todayIso;
+                    const key = `${t.id}|${iso}`;
+                    const cellReqs = cellIndex[key] || [];
+                    const hasReqs = cellReqs.length > 0;
+                    return (
+                      <td
+                        key={key}
+                        onClick={() => hasReqs && setExpanded({ mode: "cell", teamId: t.id, dateISO: iso })}
+                        style={tdCellStyle(isToday, hasReqs)}
+                      >
+                        <CellBlocks requests={cellReqs} />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10, fontSize: 11, color: "#64748b", alignItems: "center" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fecaca", borderLeft: "3px solid #f87171", borderRadius: 2 }} /> Off / PTO</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fed7aa", borderLeft: "3px solid #fb923c", borderRadius: 2 }} /> Sick</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#bfdbfe", borderLeft: "3px solid #60a5fa", borderRadius: 2 }} /> Remote</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, border: "2px dashed #94a3b8", borderRadius: 2 }} /> Pending vote</span>
+        <span style={{ color: "#94a3b8" }}>· split cell = half-day (top=morning · bottom=afternoon) · click any cell for detail</span>
+      </div>
+
+      {expanded && (
+        <CalendarDetailModal
+          mode={expanded.mode}
+          teamId={expanded.teamId}
+          dateISO={expanded.dateISO}
+          team={team}
+          cellIndex={cellIndex}
+          isOwner={isOwner}
+          onEdit={r => { setEditing(r); setExpanded(null); }}
+          onClose={() => setExpanded(null)}
+        />
       )}
 
       {editing && isOwner && (
@@ -939,8 +1079,8 @@ function HistoryView({ me }) {
           request={editing}
           team={team}
           onClose={() => setEditing(null)}
-          onSaved={bump}
-          onDeleted={bump}
+          onSaved={() => { setRefreshKey(k => k + 1); setEditing(null); }}
+          onDeleted={() => { setRefreshKey(k => k + 1); setEditing(null); }}
         />
       )}
     </div>
@@ -1490,7 +1630,7 @@ export default function TimeOffRequests() {
     { id: "submit",  label: "Submit Request" },
     { id: "vote",    label: "Vote on Requests" },
     { id: "my",      label: "My Requests" },
-    { id: "history", label: "History" }
+    { id: "history", label: "Team Calendar" }
   ];
   if (isOwner) tabs.push({ id: "inbox", label: "Inbox" });
 
