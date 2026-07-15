@@ -1,6 +1,6 @@
 -- Fix: week_quotes leaderboard should compare NET QUOTES (quotes_discussed - paid), not quotes_modified.
 -- quotes_modified is a small adjustment column, not the productivity metric.
--- Symptom (2026-07-12): John Kostov had 30 discussed / 29 net for week 2026-07-11 but stayed off the podium
+-- Symptom (2026-07-12): John Kostov had 30 discussed / 29 net for week 2026-07-11 but stayed off the leaderboards
 -- because audit function was reading d.quotes_modified (=0 for John) instead of net_quotes.
 
 CREATE OR REPLACE FUNCTION public.audit_weekly_leaderboard_crossings(p_agency_id uuid, p_week_end_date date)
@@ -16,7 +16,7 @@ DECLARE
   v_report_id          uuid;
   v_all_star_hits      int := 0;
   v_trailblazer_hits   int := 0;
-  v_podium_updates     int := 0;
+  v_leaderboard_updates     int := 0;
   v_cat_result         jsonb := '[]'::jsonb;
   r                    record;
   cfg                  record;
@@ -187,8 +187,8 @@ BEGIN
               AND (SELECT COUNT(*) FROM wiped) >= 0
             RETURNING 1
           )
-          SELECT COUNT(*) INTO v_podium_updates FROM (
-            SELECT v_podium_updates + (SELECT COUNT(*) FROM reinserted) AS x
+          SELECT COUNT(*) INTO v_leaderboard_updates FROM (
+            SELECT v_leaderboard_updates + (SELECT COUNT(*) FROM reinserted) AS x
           ) s;
         END IF;
       END IF;
@@ -208,7 +208,7 @@ BEGIN
     'is_quarter_close', v_is_quarter_close,
     'all_star_hits_this_run', v_all_star_hits,
     'trailblazer_hits_this_run', v_trailblazer_hits,
-    'podium_updates_this_run', v_podium_updates,
+    'leaderboard_updates_this_run', v_leaderboard_updates,
     'categories', v_cat_result,
     'ran_at', now()
   );
