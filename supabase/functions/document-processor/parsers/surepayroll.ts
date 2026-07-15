@@ -425,8 +425,9 @@ export async function processSurePayrollParsed(opts: {
 }): Promise<SPProcessResult> {
   const parsed = opts.parsed;
 
-  const { data: entity } = await sb.from("business_entities").select("id, name").ilike("name", "PaperNewt%").maybeSingle();
-  const businessEntityId = entity?.id ?? null;
+  // Payroll records live under PaperNewt LLC (W-2 employer of record).
+  // Cash movement JEs stay on Peter Story State Farm. (2026-07-15 decision)
+  const businessEntityId = "b1111111-1111-1111-1111-111111111111";
 
   const { data: existingByPeriod } = await sb.from("payroll_runs").select("id").eq("agency_id", opts.agencyId).eq("pay_period_end", parsed.pay_period_end).maybeSingle();
 
