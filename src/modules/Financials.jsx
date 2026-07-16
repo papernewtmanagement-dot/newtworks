@@ -1,4 +1,4 @@
- import { useState, useEffect } from "react";
+ import { useState, useEffect, Fragment } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CashRegister from "./CashRegister.jsx";
 import Documents from "./Documents.jsx";
@@ -1243,6 +1243,226 @@ const PLSection = ({ data }) => {
 // → state_farm_bonuses → expense_reimbursement → reportable_benefit → other →
 // deductions), then within each group by new first, then renewal. Each line
 // item shows the 1H check, 2H check, and month total side-by-side.
+const PriorYearPLSection = () => {
+  const [years, setYears] = useState([]);
+  const [year, setYear] = useState(null);
+  const [compareYear, setCompareYear] = useState(null);
+  const [rowsByYear, setRowsByYear] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch year list once
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("prior_year_pl")
+        .select("period_year")
+        .eq("agency_id", AGENCY_ID)
+        .eq("business_entity_id", BUSINESS_ENTITY_ID)
+        .order("period_year", { ascending: false });
+      if (cancelled) return;
+      if (error) { setError(error.message); return; }
+      const uniq = Array.from(new Set((data || []).map(r => r.period_year)));
+      setYears(uniq);
+      if (uniq.length) {
+        setYear((y) => y ?? uniq[0]);
+        setCompareYear((c) => c ?? (uniq[1] ?? null));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Fetch rows for chosen + compare year
+  useEffect(() => {
+    if (year === null) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const need = [year];
+      if (compareYear !== null && compareYear !== year) need.push(compareYear);
+      const { data, error } = await supabase
+        .from("prior_year_pl")
+        .select("period_year, period_month, is_partial_period, section, section_type, account_name, amount")
+        .eq("agency_id", AGENCY_ID)
+        .eq("business_entity_id", BUSINESS_ENTITY_ID)
+        .in("period_year", need);
+      if (cancelled) return;
+      if (error) { setError(error.message); setLoading(false); return; }
+      const bucket = {};
+      for (const r of data || []) {
+        (bucket[r.period_year] ??= []).push(r);
+      }
+      setRowsByYear(bucket);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [year, compareYear]);
+
+  // Aggregate: cheap enough to recompute per render (max ~600 rows/year)
+  const aggregate = (yearRows) => {
+    const out = {};
+    for (const r of yearRows || []) {
+      const sec = (out[r.section] ??= { section_type: r.section_type, accounts: {} });
+      const acc = (sec.accounts[r.account_name] ??= { total: 0, hasPartial: false });
+      acc.total += Number(r.amount) || 0;
+      if (r.is_partial_period) acc.hasPartial = true;
+    }
+    return out;
+  };
+
+  const aggY = aggregate(rowsByYear[year]);
+  const aggC = aggregate(rowsByYear[compareYear]);
+  const showCompare = compareYear !== null;
+
+  const secSort = (a, b) => {
+    const ta = aggY[a]?.section_type ?? aggC[a]?.section_type ?? "Expense";
+    const tb = aggY[b]?.section_type ?? aggC[b]?.section_type ?? "Expense";
+    if (ta !== tb) return ta === "Income" ? -1 : 1;
+    return a.localeCompare(b);
+  };
+  const allSections = Array.from(new Set([...Object.keys(aggY), ...Object.keys(aggC)])).sort(secSort);
+
+  const secTotal = (agg, sec) => Object.values(agg[sec]?.accounts || {}).reduce((s, a) => s + a.total, 0);
+  const grand = (agg, kind) => Object.entries(agg).reduce(
+    (s, [, obj]) => obj.section_type === kind
+      ? s + Object.values(obj.accounts).reduce((ss, a) => ss + a.total, 0)
+      : s, 0);
+  const gY = { Income: grand(aggY, "Income"), Expense: grand(aggY, "Expense") };
+  const gC = { Income: grand(aggC, "Income"), Expense: grand(aggC, "Expense") };
+  gY.Net = gY.Income - gY.Expense;
+  gC.Net = gC.Income - gC.Expense;
+
+  const dcell = { textAlign: "right", padding: "6px 10px", fontSize: 12, fontVariantNumeric: "tabular-nums" };
+  const dColor = (d) => d > 0 ? T.green : d < 0 ? T.red : T.slate500;
+  const dD = (a, b) => (a || 0) - (b || 0);
+  const dP = (a, b) => !b ? null : Math.round(((a - b) / Math.abs(b)) * 100);
+
+  if (error) return <Card><div style={{ padding: 16, color: T.red }}>Error loading prior-year P&L: {error}</div></Card>;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Prior Years P&L"
+        sub="PaperNewt LLC · Cash basis · Compare any two years side-by-side"
+        action={
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: 11, color: T.slate500 }}>Year:
+              <select value={year ?? ""} onChange={(e) => setYear(Number(e.target.value))}
+                style={{ marginLeft: 4, padding: "3px 6px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+                {years.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 11, color: T.slate500 }}>vs:
+              <select value={compareYear ?? ""} onChange={(e) => setCompareYear(e.target.value === "" ? null : Number(e.target.value))}
+                style={{ marginLeft: 4, padding: "3px 6px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+                <option value="">— none —</option>
+                {years.filter(y => y !== year).map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+          </div>
+        }
+      />
+      {loading ? (
+        <div style={{ padding: 20, color: T.slate500, fontSize: 12 }}>Loading…</div>
+      ) : (
+        <div style={{ padding: 12, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${T.slate300}`, textAlign: "left", color: T.slate700 }}>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}>Account</th>
+                <th style={{ ...dcell, fontWeight: 600, color: T.slate900 }}>{year}</th>
+                {showCompare && <>
+                  <th style={{ ...dcell, fontWeight: 600, color: T.slate500 }}>{compareYear}</th>
+                  <th style={{ ...dcell, fontWeight: 600 }}>$ Δ</th>
+                  <th style={{ ...dcell, fontWeight: 600 }}>% Δ</th>
+                </>}
+              </tr>
+            </thead>
+            <tbody>
+              {["Income", "Expense"].map((kind) => {
+                const secs = allSections.filter(s => (aggY[s]?.section_type ?? aggC[s]?.section_type) === kind);
+                if (!secs.length) return null;
+                return (
+                  <Fragment key={kind}>
+                    <tr>
+                      <td colSpan={showCompare ? 5 : 2}
+                        style={{ padding: "12px 10px 6px", fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                        {kind}
+                      </td>
+                    </tr>
+                    {secs.map(sec => {
+                      const tY = secTotal(aggY, sec);
+                      const tC = secTotal(aggC, sec);
+                      const accSet = new Set([
+                        ...Object.keys(aggY[sec]?.accounts || {}),
+                        ...Object.keys(aggC[sec]?.accounts || {}),
+                      ]);
+                      return (
+                        <Fragment key={kind + "|" + sec}>
+                          <tr style={{ background: T.slate50 }}>
+                            <td style={{ padding: "5px 10px", fontWeight: 600, color: T.slate800 }}>{sec}</td>
+                            <td style={{ ...dcell, fontWeight: 600 }}>{fmt(tY)}</td>
+                            {showCompare && <>
+                              <td style={{ ...dcell, color: T.slate500 }}>{fmt(tC)}</td>
+                              <td style={{ ...dcell, color: dColor(dD(tY, tC)) }}>{fmt(dD(tY, tC))}</td>
+                              <td style={{ ...dcell, color: dColor(dD(tY, tC)) }}>{dP(tY, tC) === null ? "—" : `${dP(tY, tC)}%`}</td>
+                            </>}
+                          </tr>
+                          {Array.from(accSet).sort().map(name => {
+                            const y = aggY[sec]?.accounts[name]?.total ?? 0;
+                            const c = aggC[sec]?.accounts[name]?.total ?? 0;
+                            const partial = aggY[sec]?.accounts[name]?.hasPartial;
+                            return (
+                              <tr key={sec + "|" + name} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                                <td style={{ padding: "4px 10px 4px 24px", color: T.slate700 }}>
+                                  {name}{partial ? <span style={{ color: T.amber, marginLeft: 4 }} title="Contains partial-month data">*</span> : null}
+                                </td>
+                                <td style={dcell}>{fmt(y)}</td>
+                                {showCompare && <>
+                                  <td style={{ ...dcell, color: T.slate500 }}>{fmt(c)}</td>
+                                  <td style={{ ...dcell, color: dColor(dD(y, c)) }}>{fmt(dD(y, c))}</td>
+                                  <td style={{ ...dcell, color: dColor(dD(y, c)) }}>{dP(y, c) === null ? "—" : `${dP(y, c)}%`}</td>
+                                </>}
+                              </tr>
+                            );
+                          })}
+                        </Fragment>
+                      );
+                    })}
+                    <tr style={{ borderTop: `2px solid ${T.slate300}`, background: T.slate100 }}>
+                      <td style={{ padding: "6px 10px", fontWeight: 700 }}>Total {kind}</td>
+                      <td style={{ ...dcell, fontWeight: 700 }}>{fmt(gY[kind])}</td>
+                      {showCompare && <>
+                        <td style={{ ...dcell, fontWeight: 700, color: T.slate500 }}>{fmt(gC[kind])}</td>
+                        <td style={{ ...dcell, fontWeight: 700, color: dColor(dD(gY[kind], gC[kind])) }}>{fmt(dD(gY[kind], gC[kind]))}</td>
+                        <td style={{ ...dcell, fontWeight: 700, color: dColor(dD(gY[kind], gC[kind])) }}>{dP(gY[kind], gC[kind]) === null ? "—" : `${dP(gY[kind], gC[kind])}%`}</td>
+                      </>}
+                    </tr>
+                  </Fragment>
+                );
+              })}
+              <tr style={{ borderTop: `3px double ${T.slate500}`, background: T.slate50 }}>
+                <td style={{ padding: "8px 10px", fontWeight: 700, color: T.slate900 }}>Net Income</td>
+                <td style={{ ...dcell, fontWeight: 700, color: gY.Net >= 0 ? T.green : T.red }}>{fmt(gY.Net)}</td>
+                {showCompare && <>
+                  <td style={{ ...dcell, fontWeight: 700, color: gC.Net >= 0 ? T.green : T.red }}>{fmt(gC.Net)}</td>
+                  <td style={{ ...dcell, fontWeight: 700, color: dColor(dD(gY.Net, gC.Net)) }}>{fmt(dD(gY.Net, gC.Net))}</td>
+                  <td style={{ ...dcell, fontWeight: 700, color: dColor(dD(gY.Net, gC.Net)) }}>{dP(gY.Net, gC.Net) === null ? "—" : `${dP(gY.Net, gC.Net)}%`}</td>
+                </>}
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ padding: "10px 4px 0", fontSize: 10, color: T.slate500 }}>
+            * = section contains partial-month data (e.g. May 2026 covers 5/1–5/11 only). Source: <code>prior_year_pl</code>, QBO exports parsed 2019–2026.
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+
 const CompRecapSection = ({ data }) => {
   const compRecaps = Array.isArray(data?.compRecaps) ? data.compRecaps : [];
   const allPeriods = [...new Set(compRecaps.map(r => r?.period_label).filter(Boolean))];
@@ -1911,7 +2131,7 @@ const PrintPackage = ({ data, periodLabel }) => {
 
 // ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
-  const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","balsheet","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","prior","balsheet","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
   const { data: liveData, loading } = useFinancialsData();
   if (liveData) MOCK = liveData;
@@ -1919,6 +2139,7 @@ export default function Financials() {
   const viewSections = [
     { id: "overview",  label: "Overview"        },
     { id: "pl",        label: "P&L"             },
+    { id: "prior",     label: "Prior Years"     },
     { id: "comp",      label: "Comp Recap"      },
     { id: "payroll",   label: "Payroll"         },
     { id: "bank",      label: "Bank Accounts"   },
@@ -1987,6 +2208,7 @@ export default function Financials() {
       {/* Section Content */}
       {section === "overview" && <OverviewSection period={period} setPeriod={setPeriod} data={MOCK} />}
       {section === "pl"       && <PLSection data={MOCK} />}
+      {section === "prior"    && <PriorYearPLSection />}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
