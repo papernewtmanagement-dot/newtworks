@@ -7,6 +7,12 @@ import { T } from "../lib/theme.js";
 // CPR LIST — Sidebar-routed index of past Weekly CPR Recaps
 // Reachable via sidebar item "CPR"; click a row to open /cpr/YYYY-MM-DD
 // Read-only summary list; full detail/edit happens on /cpr/{date} page.
+//
+// Team-visibility rule (Peter 2026-07-15): non-admin viewers see PRIOR
+// weeks only. The current Sun–Sat week's CPR (week_ending_date >=
+// current-week Saturday, America/Chicago) is admin-only. Admin
+// (owner + manager) sees everything. Companion gate lives in
+// CPRDetail.jsx to block URL-bypass on /cpr/<currentSaturday>.
 // ============================================================
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
@@ -31,6 +37,33 @@ function fmtRange(satISO) {
     return `${start.toLocaleDateString("en-US", opts)} – ${end.toLocaleDateString("en-US", opts)}`;
   } catch { return satISO; }
 }
+function addDaysISO(iso, days) {
+  if (!isValidISODate(iso)) return null;
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// Current Sun–Sat week's ending Saturday, in America/Chicago. Returns ISO YYYY-MM-DD.
+// Used to gate the "current week" CPR from non-admin viewers.
+function currentCPRWeekSaturdayCT() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
+  }).formatToParts(new Date());
+  const y = parts.find(p => p.type === "year").value;
+  const m = parts.find(p => p.type === "month").value;
+  const d = parts.find(p => p.type === "day").value;
+  const wd = parts.find(p => p.type === "weekday").value;
+  const dayIdx = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
+  const daysToSat = 6 - dayIdx; // 0 on Saturday, 6 on Sunday
+  const todayISO = `${y}-${m}-${d}`;
+  return addDaysISO(todayISO, daysToSat);
+}
+
+// ── Roles ──────────────────────────────────────────────────────────────────────
+// Admin tier sees every CPR (including the current week). Team tier sees prior
+// weeks only. Mirrors ADMIN_ROLES in NewtworksApp.jsx.
+const ADMIN_ROLES = new Set(["owner", "manager"]);
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtInt = (n) => {
@@ -76,9 +109,11 @@ function openCPR(weekDate) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function CPRList() {
+export default function CPRList({ userRole = null }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "16px" : _vp.isTablet ? "20px 18px 40px" : "30px 30px 60px";
+
+  const isAdmin = ADMIN_ROLES.has(userRole);
 
   const [state, setState] = useState({
     loading: true,
@@ -107,7 +142,15 @@ export default function CPRList() {
           setState({ loading: false, error: error.message, reports: [] });
           return;
         }
-        setState({ loading: false, error: null, reports: data || [] });
+        // Team tier: hide the current Sun–Sat week (and any future rows).
+        // Admin tier: see everything. Filter runs client-side so the RLS
+        // policy on weekly_cpr_reports is not affected.
+        let rows = data || [];
+        if (!isAdmin) {
+          const currentSat = currentCPRWeekSaturdayCT();
+          rows = rows.filter(r => r.week_ending_date < currentSat);
+        }
+        setState({ loading: false, error: null, reports: rows });
       } catch (err) {
         if (!cancelled) {
           setState({ loading: false, error: err?.message || "Failed to load CPR Recaps", reports: [] });
@@ -116,7 +159,7 @@ export default function CPRList() {
     }
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [isAdmin]);
 
   // Notes preview (first ~110 chars of opener)
   const previewNotes = (notes) => {
