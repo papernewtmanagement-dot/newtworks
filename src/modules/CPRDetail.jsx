@@ -4551,6 +4551,32 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     );
   }
 
+  // Team-visibility gate: current-week CPR is admin-only (owner+manager).
+  // Team viewers see prior weeks only. Blocks URL-bypass on /cpr/<currentSat>.
+  // Fires before data load so no fetch is issued for hidden weeks.
+  if (!ADMIN_ROLES.has(userRole) && isCurrentOrFutureCPRWeek(weekDate)) {
+    return (
+      <div style={{ padding: 30 }}>
+        <Card>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 8 }}>
+            This week's CPR isn't available yet
+          </div>
+          <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
+            The recap for the current Sun–Sat week ({fmtDateLong(weekDate)}) is finalized after the week closes. Prior weeks are available on the CPR list.
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              marginTop: 14, padding: "8px 16px", fontSize: 12, fontWeight: 600,
+              background: T.blue, color: T.white, border: "none", borderRadius: 8,
+              cursor: "pointer",
+            }}
+          >Back to CPR list</button>
+        </Card>
+      </div>
+    );
+  }
+
   if (data.loading) {
     return (
       <div style={{ padding: 30, fontSize: 13, color: T.slate500 }}>
