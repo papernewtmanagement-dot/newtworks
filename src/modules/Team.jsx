@@ -515,7 +515,7 @@ const StageBadge = ({ status }) => {
   return <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:s.bg, color:s.color }}>{s.label}</span>;
 };
 
-// ─── Section: Recruiting Pipeline ────────────────────────────
+// ─── Section: Recruiting Pipeline ──────────────────────────── 
 const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   // Persist selected candidate in URL query (?candidate=<uuid>) so refresh
   // returns to the same detail view. useTabParam without an allowlist just
