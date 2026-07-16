@@ -36,6 +36,30 @@ const TRAIT_BAND = {
   optimism:            (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
 };
 
+// Validity bands — reliability higher-is-better, distortion lower-is-better.
+// Values are text: 'very_low' | 'low' | 'moderate' | 'high' | 'very_high'.
+const RELIABILITY_BAND = (v) => {
+  if (v == null) return "none";
+  if (v === "very_high" || v === "high") return "green";
+  if (v === "moderate") return "yellow";
+  return "red"; // low, very_low
+};
+const DISTORTION_BAND = (v) => {
+  if (v == null) return "none";
+  if (v === "very_low" || v === "low") return "green";
+  if (v === "moderate") return "yellow";
+  return "red"; // high, very_high
+};
+
+// Competency band — green ≥ 50, yellow 40–49, red < 40. Same threshold across
+// all four role fits (per Peter directive 2026-07-16).
+const competencyBand = (v) => {
+  if (v == null) return "none";
+  if (v >= 50) return "green";
+  if (v >= 40) return "yellow";
+  return "red";
+};
+
 // Maps a detected trigger to the manual section header text for question lookup.
 // direction is "Low" or "High" based on which side of ideal range the score falls.
 const triggerToHeader = (trait, value) => {
@@ -580,13 +604,46 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
       {/* Assessment — top box merging LSS breakdown, validity, drive/empathy,
           traits (left column) with all competencies + role fit + best fit
-          (right column). Timing flag footer preserves the wall-clock validity
-          signal. CTS label dropped from all headings per Peter 2026-07-16. */}
+          (right column). Timing flag now sits at the TOP of the left column
+          as a fully colored row (per Peter 2026-07-16). CTS label dropped
+          from all headings. */}
       <Section title="Assessment">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
 
           {/* LEFT COLUMN */}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {/* Timing flag — row background colored by cts_timing_assessment
+                overall_flag (red / yellow / green). Consolidates former
+                footer chip (label + pill) into a single colored strip. */}
+            {timing != null && timing?.overall_flag !== "no_data" && (() => {
+              const flag = String(timing.overall_flag || "green").toLowerCase();
+              const bg = flag === "red" ? T.redLt : flag === "yellow" ? T.amberLt : T.greenLt;
+              const fg = flag === "red" ? T.red   : flag === "yellow" ? T.amber  : T.green;
+              return (
+                <div style={{
+                  padding: "8px 10px",
+                  background: bg,
+                  borderRadius: 6,
+                  borderLeft: `3px solid ${fg}`,
+                  boxSizing: "border-box",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>Timing</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: fg, whiteSpace: "nowrap" }}>
+                      {timing.total_min}m
+                      <span style={{ fontSize: 10, color: T.slate600, fontWeight: 400, marginLeft: 6 }}>
+                        total · Traits {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
+                      </span>
+                    </span>
+                  </div>
+                  {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
+                    <div style={{ fontSize: 11, color: T.slate600, marginTop: 4 }}>
+                      {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <AssessRow
               label="LSS Math"
               value={detail?.lss_math_accuracy}
@@ -636,12 +693,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             <AssessRow
               label="Reliability"
               value={detail?.reliability}
-              extra={detail?.reliability != null && detail.reliability < 50 ? "⚠️" : null}
+              band={RELIABILITY_BAND(detail?.reliability)}
             />
             <AssessRow
               label="Distortion"
               value={detail?.response_distortion}
-              extra={detail?.response_distortion != null && detail.response_distortion > 60 ? "⚠️ high" : null}
+              band={DISTORTION_BAND(detail?.response_distortion)}
             />
             <AssessRow label="Drive" value={detail?.ego_drive_score} />
             <AssessRow label="Empathy" value={detail?.empathy_score} />
@@ -685,7 +742,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 );
               }
               return entries.map(([k, v]) => {
-                const band = v == null ? "none" : v >= 70 ? "green" : v >= 50 ? "yellow" : "red";
+                const band = competencyBand(v);
                 return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
               });
             })()}
@@ -750,42 +807,45 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </div>
         </div>
 
-        {/* Timing flag footer — validity signal from cts_timing_assessment
-            RPC. Label reads "Traits" instead of "CTS" per Peter 2026-07-16. */}
-        {timing != null && timing?.overall_flag !== "no_data" && (
-          <div style={{ marginTop: 14, padding: 10, background: T.slate50, borderRadius: 7 }}>
-            <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, marginBottom: 4 }}>Timing flag</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{
-                padding: "2px 8px",
-                borderRadius: 4,
-                fontWeight: 700,
-                fontSize: 12,
-                background: timing.overall_flag === "red" ? "#fee2e2" : timing.overall_flag === "yellow" ? "#fef3c7" : "#d1fae5",
-                color:      timing.overall_flag === "red" ? "#991b1b" : timing.overall_flag === "yellow" ? "#92400e" : "#065f46",
-              }}>
-                {timing.overall_flag === "red" ? "🔴" : timing.overall_flag === "yellow" ? "🟡" : "🟢"} {String(timing.overall_flag).toUpperCase()}
-              </span>
-              <span style={{ color: T.slate500, fontSize: 12 }}>
-                total {timing.total_min}m · Traits {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
-              </span>
-            </div>
-            {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
-              <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
-                {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Timing flag moved to top of left column above (Peter 2026-07-16). */}
       </Section>
 
       {/* Analysis */}
       <Section title="Analysis" tone={T.slate50}>
-        <div style={{ marginBottom: 10 }}>
-          {validity != null && (
-            <div style={{ fontSize: 12, marginBottom: 4 }}><strong>Profile validity:</strong> {typeof validity === "string" ? validity : JSON.stringify(validity)}</div>
-          )}
-        </div>
+        {/* Profile validity — only surface when non-valid. Reliability +
+            Distortion cells above already carry the underlying reads via
+            band coloring; showing the raw jsonb here added noise, so we
+            only render an actionable banner when the validity function
+            flags questionable/unknown. Warning text comes from the RPC. */}
+        {(() => {
+          const v0 = Array.isArray(validity) && validity.length > 0 ? validity[0] : null;
+          if (!v0) return null;
+          const status = v0.validity_status;
+          if (status === "valid") return null;
+          const isUnknown = status === "unknown";
+          const bg = isUnknown ? T.slate100 : T.redLt;
+          const fg = isUnknown ? T.slate500 : T.red;
+          const msg = v0.warning
+            || (isUnknown ? "Assessment scores not yet available — validity cannot be evaluated."
+                          : "Profile flagged as questionable. Review Reliability + Distortion above before weighing scores.");
+          return (
+            <div style={{
+              marginBottom: 10,
+              padding: "8px 10px",
+              background: bg,
+              borderRadius: 6,
+              borderLeft: `3px solid ${fg}`,
+              boxSizing: "border-box",
+              fontSize: 12,
+              color: T.slate700,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: fg, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 }}>
+                Profile validity — {status}
+              </div>
+              {msg}
+            </div>
+          );
+        })()}
         {detail?.claude_summary && (
           <div style={{ padding: 10, background: T.white, borderRadius: 7, fontSize: 12, marginBottom: 10, color: T.slate700 }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: T.slate500, textTransform: "uppercase", marginBottom: 4 }}>Claude Summary</div>
