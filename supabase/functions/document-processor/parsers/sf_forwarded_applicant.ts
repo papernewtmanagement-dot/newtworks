@@ -22,7 +22,7 @@
 //        c. Identify + download each PDF attachment (resume, CTS profile, notes)
 //        d. Extract CTS scores from CTS PDF via unpdf + Groq
 //        e. Upload PDFs to Drive Applicants folder
-//        f. Upsert row into team_assessments
+//        f. Upsert row into hiring_candidates
 //        g. Star + Applicants-label the Gmail message
 //   3. Return summary
 // =========================================================================
@@ -387,7 +387,7 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   }
   const resumeUrl = uploads.find((u) => u.role === "resume")?.url ?? null;
 
-  // Assemble the team_assessments row
+  // Assemble the hiring_candidates row
   const finalFirstName = scores.first_name || first_name;
   const finalLastName  = scores.last_name  || last_name;
 
@@ -395,12 +395,12 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   //   Match by (email if present) OR by (first+last name)
   let existingId: string | null = null;
   if (scores.email) {
-    const { data } = await sb.from("team_assessments")
+    const { data } = await sb.from("hiring_candidates")
       .select("id").eq("agency_id", ctx.agencyId).eq("email", scores.email).maybeSingle();
     existingId = data?.id ?? null;
   }
   if (!existingId && finalFirstName && finalLastName) {
-    const { data } = await sb.from("team_assessments")
+    const { data } = await sb.from("hiring_candidates")
       .select("id").eq("agency_id", ctx.agencyId)
       .eq("first_name", finalFirstName).eq("last_name", finalLastName).maybeSingle();
     existingId = data?.id ?? null;
@@ -440,19 +440,19 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   let assessmentId: string | null;
   if (existingId) {
     // Only overwrite CTS + resume_url; preserve any human-added claude_summary/notes/etc
-    const { data, error } = await sb.from("team_assessments")
+    const { data, error } = await sb.from("hiring_candidates")
       .update(rowPayload).eq("id", existingId).select("id").single();
     if (error) return { message_id: messageId, status: "error", error: `update assessment: ${error.message}` };
     assessmentId = data?.id ?? existingId;
     // Append rather than overwrite notes
-    await sb.from("team_assessments").update({
-      notes: (await sb.from("team_assessments").select("notes").eq("id", assessmentId).maybeSingle()).data?.notes
+    await sb.from("hiring_candidates").update({
+      notes: (await sb.from("hiring_candidates").select("notes").eq("id", assessmentId).maybeSingle()).data?.notes
         ? undefined  // preserve existing notes if any; TODO: append instead
         : noteBlock,
     }).eq("id", assessmentId);
   } else {
     rowPayload.notes = noteBlock;
-    const { data, error } = await sb.from("team_assessments")
+    const { data, error } = await sb.from("hiring_candidates")
       .insert(rowPayload).select("id").single();
     if (error) return { message_id: messageId, status: "error", error: `insert assessment: ${error.message}` };
     assessmentId = data?.id ?? null;
