@@ -517,7 +517,10 @@ const StageBadge = ({ status }) => {
 
 // ─── Section: Recruiting Pipeline ────────────────────────────
 const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
-  const [selected, setSelected] = useState(null);
+  // Persist selected candidate in URL query (?candidate=<uuid>) so refresh
+  // returns to the same detail view. useTabParam without an allowlist just
+  // syncs the value bidirectionally with the URL query string.
+  const [selected, setSelected] = useTabParam("candidate", null);
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
   const stages = stagesProp || ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
 
