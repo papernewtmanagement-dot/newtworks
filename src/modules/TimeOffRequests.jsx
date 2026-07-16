@@ -132,8 +132,8 @@ const DOW_LABELS = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: 
 const DAY_PART_LABELS = { morning: "morning", afternoon: "afternoon", full: "full day" };
 const PATTERN_LABELS = { off: "off", remote: "remote" };
 const TRIGGER_LABELS = {
-  always: "Every week (no WtW requirement)",
-  wtw_won_prior_week: "Only after we win Win the Week the prior week"
+  wtw_won_prior_week: "WtW day off — applies only in weeks after we win Win the Week the prior week",
+  always: "WtW day off — every week (grandfathered)"
 };
 
 function stopSummary(p) {
@@ -288,7 +288,7 @@ function StandingPrefBuilder({ me, onSubmitted }) {
       {expanded && (
         <div style={{ padding: "12px 16px 16px", borderTop: "1px solid #e2e8f0" }}>
           <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10, lineHeight: 1.5 }}>
-            A WtW day off is a recurring weekly pattern tied to the Win the Week program. Once approved, each qualifying week auto-generates approved time-off entries on your calendar and shows up in coverage checks. Examples: "Fridays off when we win the week the prior week," or "Every Tuesday and Thursday afternoon off (no WtW requirement)."
+            A WtW day off is a recurring weekly pattern earned through Win the Week: it only applies in weeks after we win the prior week. Once approved, each qualifying week auto-generates approved time-off entries on your calendar and shows up in coverage checks. Examples: Fridays off, Monday afternoon off, Tuesday and Thursday afternoons off.
           </div>
 
           <label style={labelStyle}>Pattern (add one row per day)</label>
@@ -319,11 +319,10 @@ function StandingPrefBuilder({ me, onSubmitted }) {
             style={{ marginTop: 8, padding: "6px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
           >+ Add another day</button>
 
-          <label style={labelStyle}>When does this pattern apply?</label>
-          <select value={trigger} onChange={e => setTrigger(e.target.value)} style={inputStyle}>
-            <option value="always">Every week (no WtW requirement)</option>
-            <option value="wtw_won_prior_week">Only after we win Win the Week the prior week</option>
-          </select>
+          <div style={{ ...labelStyle, marginBottom: 4 }}>When this applies</div>
+          <div style={{ padding: "8px 10px", background: "#fef3c7", border: "1px solid #f59e0b", borderRadius: 6, fontSize: 12, color: "#78350f" }}>
+            Only in weeks after we win Win the Week the prior week.
+          </div>
 
           <label style={labelStyle}>Pay treatment</label>
           <select value={isPaid ? "paid" : "unpaid"} onChange={e => setIsPaid(e.target.value === "paid")} style={inputStyle}>
