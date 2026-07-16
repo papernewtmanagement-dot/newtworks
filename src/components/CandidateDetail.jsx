@@ -416,7 +416,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     if (!candidate?.id || !supabase) return;
     let cancelled = false;
     supabase
-      .from("team_assessments")
+      .from("hiring_assessments")
       .select("*")
       .eq("id", candidate.id)
       .maybeSingle()
@@ -536,7 +536,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     if (sectionKey === "decision" && detail.final_decision) updates.decision_at = new Date().toISOString();
 
     const { error, data } = await supabase
-      .from("team_assessments")
+      .from("hiring_assessments")
       .update(updates)
       .eq("id", detail.id)
       .select()
@@ -572,7 +572,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       if (error) throw new Error(error.message || String(error));
       if (data?.error) throw new Error(data.error);
       const { data: refreshed } = await supabase
-        .from("team_assessments")
+        .from("hiring_assessments")
         .select("*")
         .eq("id", detail.id)
         .maybeSingle();
@@ -615,7 +615,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </div>
 
-      {/* Walkthrough — surfaces team_assessments.notes, which is where
+      {/* Walkthrough — surfaces hiring_assessments.notes, which is where
           Claude's per-candidate narrative reads live (33 of 42 candidates
           as of 2026-07-16). Placed at top of the module so the synthesis
           is what you see first. Preserved-whitespace rendering — content
