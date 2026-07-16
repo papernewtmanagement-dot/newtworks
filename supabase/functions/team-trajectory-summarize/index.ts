@@ -1,10 +1,10 @@
 // =========================================================================
 // team-trajectory-summarize edge function (v2 — max_tokens 700)
 // =========================================================================
-// Reads the last 90 days of team_behavioral_notes for a team member, feeds
+// Reads the last 90 days of team_profile.behavioral_log for a team member, feeds
 // them plus CTS assessment context to Groq (openai/gpt-oss-120b), stores the
 // 2-3 sentence synthesized "recent behavioral trajectory" summary in
-// team_trajectory_summaries. Displayed in the Team/Members expanded row.
+// team_profile.trajectory_summary. Displayed in the Team/Members expanded row.
 //
 // v2 change: max_tokens raised from 400 to 700 after Peter's summary
 // truncated mid-word on v1.
@@ -179,7 +179,7 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
     is_active: teamRow.is_active,
   };
 
-  const { data: asmt } = await sb.from("team_assessments")
+  const { data: asmt } = await sb.from("hiring_assessments")
     .select("*").eq("agency_id", agencyId).eq("team_member_id", teamMemberId)
     .order("assessment_date", { ascending: false }).limit(1).maybeSingle();
   let assessment: AssessmentCtx | null = null;
@@ -205,18 +205,30 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
     };
   }
 
+  // Read behavioral_log from team_profile (folded from team_behavioral_notes on 2026-07-16).
+  // Log is markdown, newest-first, with `## YYYY-MM-DD · pattern` headers.
+  const { data: profile, error: profileErr } = await sb.from("team_profile")
+    .select("behavioral_log")
+    .eq("agency_id", agencyId).eq("team_member_id", teamMemberId).maybeSingle();
+  if (profileErr) return { ok: false, error: `team_profile fetch failed: ${profileErr.message}` };
+
+  // Parse markdown log into structured notes for the prompt. Header format:
+  //   `## YYYY-MM-DD · pattern_type[ · source: X][ · **RESOLVED** date]\n<body>`
+  // Entries separated by `\n\n---\n\n`.
   const cutoff = new Date(Date.now() - NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const { data: noteRows, error: notesErr } = await sb.from("team_behavioral_notes")
-    .select("observation_date, pattern_type, observation_text, is_resolved")
-    .eq("agency_id", agencyId).eq("team_member_id", teamMemberId)
-    .gte("observation_date", cutoff).neq("pattern_type", "termination")
-    .order("observation_date", { ascending: false }).limit(30);
-  if (notesErr) return { ok: false, error: `notes fetch failed: ${notesErr.message}` };
-  const notes: NoteCtx[] = (noteRows ?? []).map(n => ({
-    observation_date: n.observation_date as string,
-    pattern_type: n.pattern_type as string | null,
-    observation_text: n.observation_text as string,
-  }));
+  const notes: NoteCtx[] = [];
+  const logMd = (profile?.behavioral_log ?? "").trim();
+  if (logMd) {
+    for (const entry of logMd.split(/\n\n---\n\n/)) {
+      const m = entry.match(/^## (\d{4}-\d{2}-\d{2}) · ([^\n·]+?)(?:\s*·[^\n]*)?\n([\s\S]*)$/);
+      if (!m) continue;
+      const [, date, pattern, body] = m;
+      if (date < cutoff) continue;
+      if (pattern.trim() === "termination") continue;
+      notes.push({ observation_date: date, pattern_type: pattern.trim(), observation_text: body.trim() });
+      if (notes.length >= 30) break;
+    }
+  }
 
   if (notes.length === 0 && !assessment) {
     return { ok: false, error: "no notes and no assessment — nothing to summarize" };
@@ -229,16 +241,17 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
   const rangeStart = notes.length > 0 ? notes[notes.length - 1].observation_date : null;
   const rangeEnd   = notes.length > 0 ? notes[0].observation_date : null;
 
-  const { data: upserted, error: upErr } = await sb.from("team_trajectory_summaries")
+  // Write trajectory fields onto team_profile (row must exist; upsert on conflict for safety)
+  const { data: upserted, error: upErr } = await sb.from("team_profile")
     .upsert({
       agency_id: agencyId,
       team_member_id: teamMemberId,
-      summary: llm.text,
-      notes_analyzed_count: notes.length,
-      notes_range_start: rangeStart,
-      notes_range_end: rangeEnd,
-      model_used: llm.model,
-      updated_at: new Date().toISOString(),
+      trajectory_summary: llm.text,
+      trajectory_notes_analyzed_count: notes.length,
+      trajectory_notes_range_start: rangeStart,
+      trajectory_notes_range_end: rangeEnd,
+      trajectory_model_used: llm.model,
+      trajectory_updated_at: new Date().toISOString(),
     }, { onConflict: "team_member_id" })
     .select().single();
   if (upErr) return { ok: false, error: `upsert failed: ${upErr.message}` };
