@@ -179,7 +179,7 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
     is_active: teamRow.is_active,
   };
 
-  const { data: asmt } = await sb.from("hiring_assessments")
+  const { data: asmt } = await sb.from("hiring_candidates")
     .select("*").eq("agency_id", agencyId).eq("team_member_id", teamMemberId)
     .order("assessment_date", { ascending: false }).limit(1).maybeSingle();
   let assessment: AssessmentCtx | null = null;
