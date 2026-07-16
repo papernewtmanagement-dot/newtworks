@@ -183,9 +183,14 @@ async function extractCtsScoresFromPdf(pdfText: string, groqKey: string, model: 
 
 // ---------- PDF byte helpers -------------------------------------------------
 
-async function attachmentBytesToB64(
+// Fetches attachment metadata from Gmail. Returns both s3url (for downloading
+// bytes to feed unpdf) and s3key (for handing to Drive UPLOAD_FILE without
+// round-tripping through base64). Composio's Drive UPLOAD_FILE schema wants
+// s3key of a file already in its S3 bucket; the older {file_content, is_base64}
+// shape silently uploads 0-byte placeholders.
+async function fetchAttachmentInfo(
   ctx: SFForwardCtx, messageId: string, attachmentId: string,
-): Promise<{ ok: true; b64: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; s3url: string; s3key: string } | { ok: false; error: string }> {
   const getRes = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
@@ -199,24 +204,26 @@ async function attachmentBytesToB64(
     },
   });
   if (!getRes.ok) return { ok: false, error: `attachment fetch: ${getRes.error}` };
-
   const s3url = getRes.data?.file?.s3url ?? getRes.data?.downloaded_file_content?.s3url;
-  if (s3url) {
-    try {
-      const r = await fetch(s3url);
-      if (!r.ok) return { ok: false, error: `s3url fetch HTTP ${r.status}` };
-      const buf = new Uint8Array(await r.arrayBuffer());
-      let bin = "";
-      const CHUNK = 0x8000;
-      for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-      return { ok: true, b64: btoa(bin) };
-    } catch (e) {
-      return { ok: false, error: `s3url fetch threw: ${e instanceof Error ? e.message : String(e)}` };
-    }
+  if (!s3url) return { ok: false, error: "no s3url on attachment response" };
+  const m = s3url.match(/https?:\/\/[^/]+\/(.+?)\?/);
+  const s3key = m ? m[1] : null;
+  if (!s3key) return { ok: false, error: "could not extract s3key from s3url" };
+  return { ok: true, s3url, s3key };
+}
+
+async function s3urlToBytesB64(s3url: string): Promise<{ ok: true; b64: string } | { ok: false; error: string }> {
+  try {
+    const r = await fetch(s3url);
+    if (!r.ok) return { ok: false, error: `s3url fetch HTTP ${r.status}` };
+    const buf = new Uint8Array(await r.arrayBuffer());
+    let bin = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+    return { ok: true, b64: btoa(bin) };
+  } catch (e) {
+    return { ok: false, error: `s3url fetch threw: ${e instanceof Error ? e.message : String(e)}` };
   }
-  const inline = getRes.data?.data ?? getRes.data?.bytes;
-  if (typeof inline === "string" && inline.length > 0) return { ok: true, b64: inline };
-  return { ok: false, error: "no s3url and no inline bytes on attachment response" };
 }
 
 async function extractPdfText(bytesB64: string): Promise<string | null> {
@@ -232,7 +239,7 @@ async function extractPdfText(bytesB64: string): Promise<string | null> {
 }
 
 async function uploadPdfToDrive(
-  ctx: SFForwardCtx, bytesB64: string, targetName: string,
+  ctx: SFForwardCtx, s3key: string, targetName: string,
 ): Promise<{ fileId: string | null; url: string | null }> {
   if (!ctx.driveAccountId) return { fileId: null, url: null };
   try {
@@ -241,10 +248,11 @@ async function uploadPdfToDrive(
       connectedAccountId: ctx.driveAccountId,
       toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
       toolArguments: {
-        file_name: targetName,
-        mime_type: "application/pdf",
-        file_content: bytesB64,
-        is_base64: true,
+        file_to_upload: {
+          name: targetName,
+          mimetype: "application/pdf",
+          s3key,
+        },
         folder_to_upload_to: APPLICANTS_DRIVE_FOLDER_ID,
       },
     });
@@ -344,9 +352,12 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
     .select("setting_value").eq("agency_id", ctx.agencyId).eq("setting_key", "groq_model_default").maybeSingle();
   const model = modelSetting?.setting_value ?? GROQ_MODEL_FALLBACK;
 
-  // Extract CTS scores from the CTS PDF
+  // Extract CTS scores from the CTS PDF. Fetch info once, use s3url for
+  // downloading bytes to feed unpdf and reuse s3key for the Drive upload.
   const ctsAtt = byRole.cts[0];
-  const ctsBytes = await attachmentBytesToB64(ctx, messageId, ctsAtt.attachmentId ?? ctsAtt.id);
+  const ctsInfo = await fetchAttachmentInfo(ctx, messageId, ctsAtt.attachmentId ?? ctsAtt.id);
+  if (!ctsInfo.ok) return { message_id: messageId, status: "error", error: `CTS attachment: ${ctsInfo.error}` };
+  const ctsBytes = await s3urlToBytesB64(ctsInfo.s3url);
   if (!ctsBytes.ok) return { message_id: messageId, status: "error", error: `CTS bytes: ${ctsBytes.error}` };
   const ctsText = await extractPdfText(ctsBytes.b64);
   if (!ctsText) return { message_id: messageId, status: "error", error: "CTS PDF text extraction failed" };
@@ -354,18 +365,23 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   const scores = await extractCtsScoresFromPdf(ctsText, groqKey, model);
   if (!scores) return { message_id: messageId, status: "error", error: "CTS Groq extraction returned null" };
 
-  // Upload all PDFs to Drive (best-effort; not blocking)
+  // Upload all PDFs to Drive (best-effort; not blocking). Reuse the s3key
+  // Composio already generated when we fetched attachment metadata — no
+  // point in round-tripping bytes through the edge fn.
   const dateSlug = (scores.assessment_date || receivedAtISO.slice(0, 10)).replace(/-/g, "");
   const nameSlug = candidateName.replace(/\s+/g, " ").trim();
 
   const uploads: { role: string; url: string | null; fileId: string | null; filename: string }[] = [];
   for (const [role, atts] of Object.entries(byRole)) {
     for (const a of atts as any[]) {
-      const bytes = await attachmentBytesToB64(ctx, messageId, a.attachmentId ?? a.id);
-      if (!bytes.ok) { uploads.push({ role, url: null, fileId: null, filename: a.filename }); continue; }
+      const attId = a.attachmentId ?? a.id;
+      // For the CTS attachment we already have s3key from the earlier fetch.
+      const info = (role === "cts") ? { ok: true as const, s3key: ctsInfo.s3key }
+                                    : await fetchAttachmentInfo(ctx, messageId, attId);
+      if (!info.ok) { uploads.push({ role, url: null, fileId: null, filename: a.filename }); continue; }
       const roleLabel = role === "resume" ? "Resume" : role === "cts" ? "CTS Profile" : role === "notes" ? "Recruiter Notes" : "Applicant Document";
       const targetName = `${roleLabel} - ${nameSlug} - ${dateSlug}.pdf`;
-      const up = await uploadPdfToDrive(ctx, bytes.b64, targetName);
+      const up = await uploadPdfToDrive(ctx, info.s3key, targetName);
       uploads.push({ role, url: up.url, fileId: up.fileId, filename: a.filename });
     }
   }
