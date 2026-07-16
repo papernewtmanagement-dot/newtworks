@@ -406,6 +406,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
+  // Three-construct verdict (Nature/Nurture/Drivers) — per-layer verdicts +
+  // framework prediction + retrospective observation + calibration status.
+  // Fetched via hiregauge_three_construct_verdict RPC.
+  const [threeConstruct, setThreeConstruct] = useState(null);
 
   // Fetch full row on mount
   useEffect(() => {
@@ -449,6 +453,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     supabase.rpc("hiregauge_evaluate_candidate", { p_assessment_id: detail.id })
       .then(({ data, error }) => {
         if (!error && Array.isArray(data)) setFrameworkRules(data);
+      })
+      .catch(() => {});
+    // Three-construct verdict: Nature/Nurture/Drivers per-layer verdicts +
+    // pre-hire framework prediction + retrospective observation + calibration.
+    supabase.rpc("hiregauge_three_construct_verdict", { p_assessment_id: detail.id })
+      .then(({ data, error }) => {
+        if (!error && Array.isArray(data) && data[0]) setThreeConstruct(data[0]);
       })
       .catch(() => {});
   }, [detail?.id]);
@@ -873,6 +884,169 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         </div>
 
         {/* Timing flag moved to top of left column above (Peter 2026-07-16). */}
+      </Section>
+
+      {/* Three-Construct Verdict — Nature/Nurture/Drivers framework read
+          from hiregauge_three_construct_verdict. Displays per-layer verdicts
+          (Resume/Assessment/Interview), per-construct scores, and total
+          weighted score with 3-threshold preview. Retrospective observation
+          and calibration status shown separately from framework prediction. */}
+      <Section title="Three-Construct Verdict">
+        {!threeConstruct ? (
+          <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+            No trait data yet — three-construct verdict waits for assessment scores.
+          </div>
+        ) : (
+          <>
+            {/* Overall verdict banner: framework prediction + score + 3-threshold preview */}
+            {(() => {
+              const v = threeConstruct.verdict;
+              const s = threeConstruct.score_0_10;
+              const bg = v === "hire" ? T.greenLt
+                       : v === "consider" ? T.amberLt
+                       : (v === "decline" || v === "decline_character") ? T.redLt
+                       : T.slate50;
+              const fg = v === "hire" ? T.green
+                       : v === "consider" ? T.amber
+                       : (v === "decline" || v === "decline_character") ? T.red
+                       : T.slate600;
+              return (
+                <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: bg, borderLeft: `4px solid ${fg}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                    <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: fg, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      {(v || "insufficient data").replace(/_/g, " ")}
+                    </span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>
+                      {s != null ? Number(s).toFixed(2) : "—"}
+                      <span style={{ fontSize: 12, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>/ 10</span>
+                    </span>
+                    <span style={{ fontSize: 11, color: T.slate600 }}>
+                      confidence: {threeConstruct.confidence || "—"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, fontSize: 10, color: T.slate600 }}>
+                    <span>@7.0 threshold: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
+                    <span>@7.5: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
+                    <span>@8.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Constructs row: Nature (35%) / Nurture (30%) / Drivers (35%) */}
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>
+              Constructs
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+              {[
+                { key: "nature",  label: "Nature",  score: threeConstruct.nature_score,  weight: "35%", desc: "innate" },
+                { key: "nurture", label: "Nurture", score: threeConstruct.nurture_score, weight: "30%", desc: "formed" },
+                { key: "drivers", label: "Drivers", score: threeConstruct.drivers_score, weight: "35%", desc: "motivation" },
+              ].map((c) => {
+                const bandFg = c.score == null ? T.slate500
+                             : c.score >= 7.5 ? T.green
+                             : c.score >= 6.0 ? T.amber
+                             : T.red;
+                return (
+                  <div key={c.key} style={{ padding: 10, background: T.slate50, borderRadius: 7, borderLeft: `3px solid ${bandFg}` }}>
+                    <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600 }}>
+                      {c.label} <span style={{ opacity: 0.6 }}>· {c.weight}</span>
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
+                      {c.score != null ? Number(c.score).toFixed(2) : "—"}
+                      <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                    </div>
+                    <div style={{ fontSize: 9, color: T.slate500 }}>{c.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Layers row: Resume / Assessment / Interview with per-layer verdicts */}
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>
+              Layers
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+              {[
+                { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
+                { key: "assessment", label: "Assessment", score: threeConstruct.assessment_score, verdict: threeConstruct.assessment_verdict },
+                { key: "interview",  label: "Interview",  score: threeConstruct.interview_score,  verdict: threeConstruct.interview_verdict },
+              ].map((l) => {
+                const vf = l.verdict === "pass" ? T.green
+                         : l.verdict === "consider" ? T.amber
+                         : (l.verdict === "decline" || l.verdict === "decline_character") ? T.red
+                         : T.slate500;
+                return (
+                  <div key={l.key} style={{ padding: 10, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7 }}>
+                    <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, marginBottom: 4 }}>
+                      {l.label}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+                        {l.score != null ? Number(l.score).toFixed(2) : "—"}
+                      </span>
+                      <span style={{ padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, color: T.white, background: vf, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                        {(l.verdict || "n/a").replace(/_/g, " ")}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Character floor + retrospective observation + calibration + dimensions scored */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 }}>
+              {threeConstruct.character_floor_status && (
+                <div style={{
+                  padding: "4px 10px", borderRadius: 5,
+                  background: threeConstruct.character_floor_status === "floor_failed" ? T.redLt
+                             : threeConstruct.character_floor_status === "floor_passed" ? T.greenLt
+                             : T.slate100,
+                  color: threeConstruct.character_floor_status === "floor_failed" ? T.red
+                        : threeConstruct.character_floor_status === "floor_passed" ? T.green
+                        : T.slate600,
+                  fontWeight: 600
+                }}>
+                  char floor: {threeConstruct.character_floor_status.replace(/_/g, " ")}
+                  {Array.isArray(threeConstruct.character_floor_failed) && threeConstruct.character_floor_failed.length > 0 && ` (${threeConstruct.character_floor_failed.join(", ")})`}
+                </div>
+              )}
+              {threeConstruct.retrospective_verdict && threeConstruct.retrospective_verdict !== "not_scored" && (
+                <div style={{
+                  padding: "4px 10px", borderRadius: 5,
+                  background: threeConstruct.retrospective_verdict === "pass" ? T.greenLt
+                             : threeConstruct.retrospective_verdict === "flag" ? T.amberLt
+                             : threeConstruct.retrospective_verdict === "fail_confirmed" ? T.redLt
+                             : T.slate100,
+                  color: threeConstruct.retrospective_verdict === "pass" ? T.green
+                        : threeConstruct.retrospective_verdict === "flag" ? T.amber
+                        : threeConstruct.retrospective_verdict === "fail_confirmed" ? T.red
+                        : T.slate600,
+                  fontWeight: 600
+                }}>
+                  retrospective: {threeConstruct.retrospective_verdict.replace(/_/g, " ")}
+                </div>
+              )}
+              {threeConstruct.calibration_status && threeConstruct.calibration_status !== "no_retrospective" && (
+                <div style={{
+                  padding: "4px 10px", borderRadius: 5,
+                  background: threeConstruct.calibration_status.includes("agrees") ? T.greenLt
+                             : threeConstruct.calibration_status.includes("missed") ? T.amberLt
+                             : T.slate100,
+                  color: threeConstruct.calibration_status.includes("agrees") ? T.green
+                        : threeConstruct.calibration_status.includes("missed") ? T.amber
+                        : T.slate600,
+                  fontWeight: 600
+                }}>
+                  calibration: {threeConstruct.calibration_status.replace(/_/g, " ")}
+                </div>
+              )}
+              <div style={{ padding: "4px 10px", borderRadius: 5, background: T.slate100, color: T.slate600, fontWeight: 600 }}>
+                {threeConstruct.dimensions_scored ?? 0}/9 dimensions scored
+              </div>
+            </div>
+          </>
+        )}
       </Section>
 
       {/* HireGauge Framework Read — auto-computed verdict + every matched
