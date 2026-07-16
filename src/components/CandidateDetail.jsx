@@ -557,7 +557,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     SCORECARD_FIELDS.map(f => `fi_${f.key}`).concat(["fi_notes"]),
     "fi"
   );
-  const saveRC = () => saveFields(["rc_notes"], "rc");
+  const saveRC = () => saveFields(["rc_notes", "ref_nature", "ref_nurture", "ref_drivers"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
 
   // Invoke edge fn generate-custom-probes; refresh the row on success.
@@ -1334,7 +1334,40 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       />
 
       {/* Reference Check */}
-      <Section title="Reference Check Notes">
+      <Section title="Reference Check">
+        {/* Reference layer scoring — feeds Results 4×3 matrix Reference row */}
+        <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 7, background: T.slate50, border: `1px solid ${T.slate200}` }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
+            Reference Layer Scoring <span style={{ opacity: 0.7, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontStyle: "italic" }}>· 1–10 based on 2–3 reference calls; feeds Result matrix Reference row</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+            {[
+              { key: "ref_nature",  label: "Nature",  hint: "core temperament, drive, honesty" },
+              { key: "ref_nurture", label: "Nurture", hint: "developed skills, resilience, adaptability" },
+              { key: "ref_drivers", label: "Drivers", hint: "motivation quality, ownership, work ethic" },
+            ].map(({ key, label, hint }) => (
+              <div key={key}>
+                <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2, fontWeight: 600 }}>{label}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={detail?.[key] ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "") { updateField(key, null); return; }
+                    const n = Math.max(1, Math.min(10, parseInt(raw, 10) || 0));
+                    updateField(key, n);
+                  }}
+                  placeholder="—"
+                  style={{ width: "100%", padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, textAlign: "center" }}
+                />
+                <div style={{ fontSize: 9, color: T.slate500, marginTop: 2 }}>{hint}</div>
+              </div>
+            ))}
+          </div>
+        </div>
         <textarea
           value={detail?.rc_notes || ""}
           onChange={(e) => updateField("rc_notes", e.target.value)}
@@ -1344,7 +1377,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         />
         <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={saveRC} disabled={savingSection === "rc"} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.white, background: T.blue, border: "none", borderRadius: 7, cursor: savingSection === "rc" ? "wait" : "pointer" }}>
-            {savingSection === "rc" ? "Saving..." : "Save Reference Notes"}
+            {savingSection === "rc" ? "Saving..." : "Save Reference Check"}
           </button>
           {detail?.rc_completed_at && (
             <span style={{ fontSize: 10, color: T.slate500 }}>Refs completed {new Date(detail.rc_completed_at).toLocaleString()}</span>
