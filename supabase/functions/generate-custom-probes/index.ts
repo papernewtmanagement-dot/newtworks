@@ -306,7 +306,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: a, error: aErr } = await supa
-      .from("hiring_assessments")
+      .from("hiring_candidates")
       .select("*")
       .eq("id", assessmentId)
       .maybeSingle();
@@ -348,7 +348,7 @@ Deno.serve(async (req: Request) => {
 
     const nowIso = new Date().toISOString();
     const { error: uErr } = await supa
-      .from("hiring_assessments")
+      .from("hiring_candidates")
       .update({
         custom_probes: probes,
         custom_probes_generated_at: nowIso,
