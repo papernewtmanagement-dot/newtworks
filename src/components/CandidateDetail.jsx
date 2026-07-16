@@ -886,15 +886,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         {/* Timing flag moved to top of left column above (Peter 2026-07-16). */}
       </Section>
 
-      {/* Three-Construct Verdict — Nature/Nurture/Drivers framework read
-          from hiregauge_three_construct_verdict. Displays per-layer verdicts
-          (Resume/Assessment/Interview), per-construct scores, and total
-          weighted score with 3-threshold preview. Retrospective observation
-          and calibration status shown separately from framework prediction. */}
-      <Section title="Three-Construct Verdict">
+      {/* Results — Suggs four-layer × three-construct framework read from
+          hiregauge_three_construct_verdict. Displays the full 4×3 matrix
+          (Resume/Assessment/Interview/Reference × Nature/Nurture/Drivers)
+          with each cell showing score + weight applied, the per-construct
+          weighted total row, and the overall Result row with verdict.
+          Post-hire Observation shown below the table — weightless calibration
+          companion (retrospective_verdict_override + calibration_status +
+          character_floor_status + dimensions counter). */}
+      <Section title="Results">
         {!threeConstruct ? (
           <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
-            No trait data yet — three-construct verdict waits for assessment scores.
+            No trait data yet — results wait for assessment scores.
           </div>
         ) : (
           <>
@@ -933,68 +936,107 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               );
             })()}
 
-            {/* Constructs row: Nature (35%) / Nurture (30%) / Drivers (35%) */}
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>
-              Constructs
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
-              {[
-                { key: "nature",  label: "Nature",  score: threeConstruct.nature_score,  weight: "35%", desc: "innate" },
-                { key: "nurture", label: "Nurture", score: threeConstruct.nurture_score, weight: "30%", desc: "formed" },
-                { key: "drivers", label: "Drivers", score: threeConstruct.drivers_score, weight: "35%", desc: "motivation" },
-              ].map((c) => {
-                const bandFg = c.score == null ? T.slate500
-                             : c.score >= 7.5 ? T.green
-                             : c.score >= 6.0 ? T.amber
-                             : T.red;
-                return (
-                  <div key={c.key} style={{ padding: 10, background: T.slate50, borderRadius: 7, borderLeft: `3px solid ${bandFg}` }}>
-                    <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600 }}>
-                      {c.label} <span style={{ opacity: 0.6 }}>· {c.weight}</span>
-                    </div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-                      {c.score != null ? Number(c.score).toFixed(2) : "—"}
-                      <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
-                    </div>
-                    <div style={{ fontSize: 9, color: T.slate500 }}>{c.desc}</div>
-                  </div>
-                );
-              })}
-            </div>
+            {/* 4×3 matrix table — layers as rows, constructs as columns.
+                Each cell shows the (0-10) score plus the weight applied within that construct.
+                Cell background bands by score band (green ≥7.5 / amber ≥6.0 / red <6.0). */}
+            {(() => {
+              const matrix = threeConstruct.meta?.matrix || {};
+              const weights = threeConstruct.meta?.layer_weights_within_construct || {};
+              const cw = threeConstruct.meta?.construct_weights || {};
+              const layers = [
+                { key: "resume",     label: "Resume" },
+                { key: "assessment", label: "Assessment" },
+                { key: "interview",  label: "Interview" },
+                { key: "reference",  label: "Reference" },
+              ];
+              const constructs = [
+                { key: "nature",  label: "Nature",  weight: cw.nature,  score: threeConstruct.nature_score  },
+                { key: "nurture", label: "Nurture", weight: cw.nurture, score: threeConstruct.nurture_score },
+                { key: "drivers", label: "Drivers", weight: cw.drivers, score: threeConstruct.drivers_score },
+              ];
+              const scoreBg = (v) => v == null ? T.slate50
+                                   : v >= 7.5 ? T.greenLt
+                                   : v >= 6.0 ? T.amberLt
+                                   : T.redLt;
+              const scoreFg = (v) => v == null ? T.slate500
+                                   : v >= 7.5 ? T.green
+                                   : v >= 6.0 ? T.amber
+                                   : T.red;
+              const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
+              const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "left", borderBottom: `1px solid ${T.slate200}` };
+              const rowLabel = { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
 
-            {/* Layers row: Resume / Assessment / Interview with per-layer verdicts */}
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>
-              Layers
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
-              {[
-                { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
-                { key: "assessment", label: "Assessment", score: threeConstruct.assessment_score, verdict: threeConstruct.assessment_verdict },
-                { key: "interview",  label: "Interview",  score: threeConstruct.interview_score,  verdict: threeConstruct.interview_verdict },
-              ].map((l) => {
-                const vf = l.verdict === "pass" ? T.green
-                         : l.verdict === "consider" ? T.amber
-                         : (l.verdict === "decline" || l.verdict === "decline_character") ? T.red
-                         : T.slate500;
-                return (
-                  <div key={l.key} style={{ padding: 10, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7 }}>
-                    <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, marginBottom: 4 }}>
-                      {l.label}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
-                        {l.score != null ? Number(l.score).toFixed(2) : "—"}
-                      </span>
-                      <span style={{ padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, color: T.white, background: vf, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                        {(l.verdict || "n/a").replace(/_/g, " ")}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+              return (
+                <div style={{ marginBottom: 14, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+                    <thead>
+                      <tr style={{ background: T.slate50 }}>
+                        <th style={{ ...th, width: 110 }}></th>
+                        {constructs.map((c) => (
+                          <th key={c.key} style={th}>
+                            {c.label} <span style={{ color: T.slate500, fontWeight: 500 }}>· {pctFmt(c.weight)}</span>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {layers.map((layer) => (
+                        <tr key={layer.key} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                          <td style={rowLabel}>{layer.label}</td>
+                          {constructs.map((c) => {
+                            const cell = matrix?.[c.key]?.[layer.key];
+                            const w = weights?.[c.key]?.[layer.key];
+                            return (
+                              <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}` }}>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
+                                  {cell != null ? Number(cell).toFixed(2) : "—"}
+                                </div>
+                                <div style={{ fontSize: 9, color: cell == null ? T.slate500 : scoreFg(cell), fontWeight: 600 }}>
+                                  weight {pctFmt(w)}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                      {/* Per-construct weighted total row */}
+                      <tr style={{ borderTop: `2px solid ${T.slate200}`, background: T.slate50 }}>
+                        <td style={{ ...rowLabel, background: T.slate100, fontWeight: 700 }}>Construct</td>
+                        {constructs.map((c) => (
+                          <td key={c.key} style={{ padding: "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}` }}>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
+                              {c.score != null ? Number(c.score).toFixed(2) : "—"}
+                              <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                            </div>
+                          </td>
+                        ))}
+                      </tr>
+                      {/* Overall result row */}
+                      <tr>
+                        <td style={{ ...rowLabel, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
+                        <td colSpan={3} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}` }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
+                              {threeConstruct.score_0_10 != null ? Number(threeConstruct.score_0_10).toFixed(2) : "—"}
+                              <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                            </span>
+                            <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 10, fontWeight: 700, color: T.white, background: scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
+                              {(threeConstruct.verdict || "insufficient data").replace(/_/g, " ")}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
 
-            {/* Character floor + retrospective observation + calibration + dimensions scored */}
+            {/* Observation strip — post-hire, weightless.
+                Retrospective override + calibration status + character floor + dimensions scored. */}
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>
+              Observation <span style={{ opacity: 0.7, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontStyle: "italic" }}>· post-hire, unweighted</span>
+            </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 }}>
               {threeConstruct.character_floor_status && (
                 <div style={{
@@ -1042,7 +1084,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 </div>
               )}
               <div style={{ padding: "4px 10px", borderRadius: 5, background: T.slate100, color: T.slate600, fontWeight: 600 }}>
-                {threeConstruct.dimensions_scored ?? 0}/9 dimensions scored
+                {threeConstruct.dimensions_scored ?? 0}/12 dimensions scored
               </div>
             </div>
           </>
