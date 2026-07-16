@@ -58,6 +58,7 @@ ORDER = [
     "parsers/sf_daily_call_log.ts",
     "parsers/pfa_statement.ts",
     "parsers/careerplug_applicant.ts",
+    "parsers/sf_forwarded_applicant.ts",
     "index.ts",
 ]
 
