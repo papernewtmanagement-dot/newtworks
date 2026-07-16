@@ -17,7 +17,7 @@ const REQUEST_TYPES = [
   { id: "remote_day",                    label: "Remote (full day)",                partial: false, location: true,  submitViaDropdown: true  },
   { id: "remote_half_day",               label: "Remote (half day)",                partial: true,  location: true,  submitViaDropdown: true  },
   { id: "four_day_off_change",           label: "Change my 4-day off day (legacy)", partial: false, location: false, submitViaDropdown: false },
-  { id: "standing_time_off_preference",  label: "Standing weekly preference",       partial: false, location: false, submitViaDropdown: false }
+  { id: "standing_time_off_preference",  label: "WtW day off",                      partial: false, location: false, submitViaDropdown: false }
 ];
 
 const STATUS_STYLES = {
@@ -52,7 +52,7 @@ function formatRequestLabel(request) {
   const paid = request.is_paid === true;
   if (t === "time_off_full_day") return paid ? "PTO (full day)" : "Time off (full day)";
   if (t === "time_off_half_day") return paid ? "PTO (half day)" : "Time off (half day)";
-  if (t === "standing_time_off_preference") return "Standing weekly preference";
+  if (t === "standing_time_off_preference") return "WtW day off";
   const fallback = REQUEST_TYPES.find(x => x.id === t);
   return fallback ? fallback.label : (t || "");
 }
@@ -132,8 +132,8 @@ const DOW_LABELS = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: 
 const DAY_PART_LABELS = { morning: "morning", afternoon: "afternoon", full: "full day" };
 const PATTERN_LABELS = { off: "off", remote: "remote" };
 const TRIGGER_LABELS = {
-  always: "Every week",
-  wtw_won_prior_week: "Only weeks after we win Win the Week the prior week"
+  always: "Every week (no WtW requirement)",
+  wtw_won_prior_week: "Only after we win Win the Week the prior week"
 };
 
 function stopSummary(p) {
@@ -176,7 +176,7 @@ function MyStandingPrefsPanel({ me }) {
   return (
     <div style={{ ...cardStyle, background: prefs.length ? "#f0f9ff" : "#f8fafc", borderColor: prefs.length ? "#bae6fd" : "#e2e8f0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: prefs.length ? 10 : 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#0c4a6e" }}>My Standing Preferences</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#0c4a6e" }}>My WtW Days Off</div>
         {prefs.length === 0 && <div style={{ fontSize: 12, color: "#64748b" }}>— none yet. Submit one below.</div>}
       </div>
       {Object.entries(byTrigger).map(([trigger, items]) => (
@@ -252,7 +252,7 @@ function StandingPrefBuilder({ me, onSubmitted }) {
       setDays([{ day_of_week: "monday", day_part: "morning", pattern: "remote" }]);
       setNotes(""); setEffectiveFrom("");
       setExpanded(false);
-      alert("Standing preference submitted. Team has 2 weekdays to vote, then Peter decides.");
+      alert("WtW day off request submitted. Team has 2 weekdays to vote, then Peter decides.");
       if (typeof onSubmitted === "function") onSubmitted();
     } catch (e) {
       setError(e?.message || "Submit failed");
@@ -282,13 +282,13 @@ function StandingPrefBuilder({ me, onSubmitted }) {
         onClick={() => setExpanded(v => !v)}
         style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
       >
-        <span>➕ Request a standing weekly preference</span>
+        <span>➕ Request a WtW day off</span>
         <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "#64748b", fontSize: 18, lineHeight: 1 }}>›</span>
       </button>
       {expanded && (
         <div style={{ padding: "12px 16px 16px", borderTop: "1px solid #e2e8f0" }}>
           <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10, lineHeight: 1.5 }}>
-            A standing preference recurs weekly instead of being a one-off. Once approved, each qualifying week the pattern auto-generates approved time-off entries on your calendar and shows up in coverage checks. Examples: "Fridays off when we win the week the prior week," or "Every Tuesday and Thursday afternoon off."
+            A WtW day off is a recurring weekly pattern tied to the Win the Week program. Once approved, each qualifying week auto-generates approved time-off entries on your calendar and shows up in coverage checks. Examples: "Fridays off when we win the week the prior week," or "Every Tuesday and Thursday afternoon off (no WtW requirement)."
           </div>
 
           <label style={labelStyle}>Pattern (add one row per day)</label>
@@ -321,8 +321,8 @@ function StandingPrefBuilder({ me, onSubmitted }) {
 
           <label style={labelStyle}>When does this pattern apply?</label>
           <select value={trigger} onChange={e => setTrigger(e.target.value)} style={inputStyle}>
-            <option value="always">Every week (unconditional)</option>
-            <option value="wtw_won_prior_week">Only weeks after we win Win the Week the prior week</option>
+            <option value="always">Every week (no WtW requirement)</option>
+            <option value="wtw_won_prior_week">Only after we win Win the Week the prior week</option>
           </select>
 
           <label style={labelStyle}>Pay treatment</label>
@@ -934,7 +934,7 @@ function CalendarDetailModal({ mode, teamId, dateISO, team, cellIndex, isOwner, 
                       {mode === "day" && <div style={{ fontWeight: 600 }}>{nameById[r.requester_team_id] || "Unknown"}</div>}
                       <StatusBadge status={r.status} />
                       {r.is_paid === false && <span style={{ fontSize: 11, color: "#7c2d12", background: "#ffedd5", padding: "2px 8px", borderRadius: 10 }}>Unpaid</span>}
-                      {r.derived_from_standing_pref_id && <span style={{ fontSize: 11, color: "#0369a1", background: "#e0f2fe", padding: "2px 8px", borderRadius: 10 }}>Standing</span>}
+                      {r.derived_from_standing_pref_id && <span style={{ fontSize: 11, color: "#0369a1", background: "#e0f2fe", padding: "2px 8px", borderRadius: 10 }}>WtW</span>}
                     </div>
                     <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>
                       {formatRequestLabel(r)}{r.partial_day && r.partial_day !== "none" ? ` (${r.partial_day})` : ""}
@@ -1104,7 +1104,7 @@ function HistoryView({ me }) {
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fecaca", borderLeft: "3px solid #f87171", borderRadius: 2 }} /> Off / PTO</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fed7aa", borderLeft: "3px solid #fb923c", borderRadius: 2 }} /> Sick</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#bfdbfe", borderLeft: "3px solid #60a5fa", borderRadius: 2 }} /> Remote</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fef3c7", borderLeft: "3px solid #f59e0b", borderRadius: 2 }} /> Standing / WtW</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fef3c7", borderLeft: "3px solid #f59e0b", borderRadius: 2 }} /> WtW day off</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, border: "2px dashed #94a3b8", borderRadius: 2 }} /> Pending vote</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#059669" }}>$</span>paid /
