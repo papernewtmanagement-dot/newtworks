@@ -870,9 +870,9 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 //   Monthly   — Jan..current-month + YTD, chronological left→right
 //   Quarterly — last 3 completed quarters + current QTD (partial) + YTD
 //   Annual    — last 3 completed years + current YTD (partial)
-// EVERY period column has a paired Δ YoY sub-column showing % change vs the
-// same period one year prior. Two-row header (parent label spans 2 cols,
-// then $ / Δ YoY sub-headers).
+// EVERY period column has a paired Δ sub-column showing YoY % change vs the
+// same period one year prior. Single-row header (parent label spans both the
+// $ and Δ cells).
 // % of income checkbox adds a per-cell percentage next to each dollar.
 // Non-completed periods carry a "(partial)" tag. Partial periods compare
 // same-partial slice YoY (e.g. YTD 2026 through Jul vs Jan–Jul 2025).
@@ -1153,12 +1153,11 @@ const PLSection = ({ data }) => {
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
           <thead>
-            {/* Top row: parent header per column, spanning 2 sub-columns */}
-            <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
-              <th rowSpan={2} style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Account</th>
+            <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left", whiteSpace: "nowrap" }}>Account</th>
               {columns.map((c) => (
                 <th key={c.key} colSpan={2} style={{
-                  padding: "8px 8px 4px 8px",
+                  padding: "8px 8px",
                   fontSize: 11,
                   fontWeight: 600,
                   color: T.slate500,
@@ -1172,13 +1171,6 @@ const PLSection = ({ data }) => {
                   )}
                 </th>
               ))}
-            </tr>
-            {/* Sub-header row: $ / Δ under each parent */}
-            <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
-              {columns.flatMap((c) => [
-                <th key={`${c.key}-h-$`} style={{ padding: "2px 8px 6px 8px", fontSize: 10, fontWeight: 500, color: T.slate400, textAlign: "right", borderLeft: `1px solid ${T.slate100}` }}>$</th>,
-                <th key={`${c.key}-h-d`} style={{ padding: "2px 8px 6px 4px", fontSize: 10, fontWeight: 500, color: T.slate400, textAlign: "right", borderLeft: `1px dotted ${T.slate200}` }}>Δ</th>,
-              ])}
             </tr>
           </thead>
           <tbody>
