@@ -347,6 +347,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [probesError, setProbesError] = useState(null);
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
+  const [competencies, setCompetencies] = useState(null);
 
   // Fetch full row on mount
   useEffect(() => {
@@ -375,6 +376,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .catch(() => {});
     supabase.rpc("cts_timing_assessment", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error) setTiming(data); })
+      .catch(() => {});
+    // Competencies for all four role fits (single RPC returning JSONB keyed by role)
+    supabase.rpc("cts_all_competencies", { p_assessment_id: detail.id })
+      .then(({ data, error }) => { if (!error) setCompetencies(data); })
       .catch(() => {});
     // HireGauge framework read — composite verdict + all matched rules.
     // Both RPCs are read-only, IMMUTABLE per candidate, safe to call every mount.
@@ -594,10 +599,88 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </Section>
 
+      {/* Role Fit & Competencies — best-fit role, per-role OS scores, and
+          competency detail for the best-fit role. Replaces the old raw-JSON
+          "Best-fit role" line. Falls back gracefully when CTS unassessed. */}
+      <Section title="Role Fit & Competencies">
+        {(() => {
+          const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+          if (!bf) {
+            return (
+              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+                Best-fit role computes from CTS traits — awaiting assessment.
+              </div>
+            );
+          }
+          const ROLE_LABELS = {
+            sales: "Sales",
+            service: "Service",
+            service_sales: "Service Sales",
+            aspirant: "Aspirant",
+          };
+          const roleTiles = [
+            { key: "sales", os: bf.sales_os },
+            { key: "service", os: bf.service_os },
+            { key: "service_sales", os: bf.service_sales_os },
+            { key: "aspirant", os: bf.aspirant_os },
+          ];
+          const bestKey = bf.best_role;
+          const bestComp = competencies?.[bestKey] || null;
+          const formatCompLabel = (k) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+          return (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 14 }}>
+                {roleTiles.map((r) => {
+                  const isBest = r.key === bestKey;
+                  return (
+                    <div key={r.key} style={{
+                      padding: 10, borderRadius: 7,
+                      background: isBest ? T.greenLt : T.slate50,
+                      border: isBest ? `2px solid ${T.green}` : `1px solid ${T.slate200}`,
+                    }}>
+                      <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, letterSpacing: 0.3 }}>
+                        {ROLE_LABELS[r.key] || r.key}
+                        {isBest && <span style={{ marginLeft: 6, color: T.green, fontWeight: 700 }}>★ BEST FIT</span>}
+                      </div>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: isBest ? T.green : T.slate900, marginTop: 2 }}>
+                        {r.os ?? "—"}
+                        <span style={{ fontSize: 11, fontWeight: 400, color: T.slate500, marginLeft: 4 }}>OS</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {bestComp ? (
+                <>
+                  <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8 }}>
+                    <strong>Competencies for {ROLE_LABELS[bestKey] || bestKey}:</strong>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 6 }}>
+                    {Object.entries(bestComp).map(([k, v]) => {
+                      const band = v == null ? "none" : v >= 70 ? "green" : v >= 50 ? "yellow" : "red";
+                      const colors = bandColor(band);
+                      return (
+                        <div key={k} style={{ padding: 8, background: colors.bg, borderRadius: 6, borderLeft: `3px solid ${colors.fg}` }}>
+                          <div style={{ fontSize: 10, color: T.slate600, fontWeight: 600 }}>{formatCompLabel(k)}</div>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: colors.fg }}>{v ?? "—"}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+                  Competencies computed at runtime from CTS traits.
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </Section>
+
       {/* Analysis */}
       <Section title="Analysis" tone={T.slate50}>
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 12, marginBottom: 4 }}><strong>Best-fit role:</strong> {bestFit ? JSON.stringify(bestFit) : "Not computed"}</div>
           {validity != null && (
             <div style={{ fontSize: 12, marginBottom: 4 }}><strong>Profile validity:</strong> {typeof validity === "string" ? validity : JSON.stringify(validity)}</div>
           )}
@@ -641,14 +724,22 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             {/* Verdict banner */}
             {(() => {
               const v = composite.verdict;
-              const bg = v === "decline" ? T.redLt : v === "hire" ? T.greenLt : T.amberLt;
-              const fg = v === "decline" ? T.red   : v === "hire" ? T.green   : T.amber;
+              const ctx = composite.retrospective_context;
+              const isRetro = v === "retrospective_read";
+              const bg = isRetro ? T.blueLt : v === "decline" ? T.redLt : v === "hire" ? T.greenLt : T.amberLt;
+              const fg = isRetro ? T.blue   : v === "decline" ? T.red   : v === "hire" ? T.green   : T.amber;
+              const label = isRetro ? "RETROSPECTIVE READ" : (v || "unknown");
               return (
                 <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: bg, borderLeft: `4px solid ${fg}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
                     <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: fg, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                      {v || "unknown"}
+                      {label}
                     </span>
+                    {ctx === "former_team" && (
+                      <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                        Former team
+                      </span>
+                    )}
                     <span style={{ fontSize: 11, color: T.slate600 }}>
                       {composite.matched_rules_count ?? 0} rules matched · {composite.floor_failures_count ?? 0} floor failure(s)
                     </span>
