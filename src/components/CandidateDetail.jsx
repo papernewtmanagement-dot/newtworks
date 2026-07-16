@@ -277,7 +277,9 @@ const characterFloorPassed = (detail, prefix) => {
 
 const Section = ({ title, children, tone }) => (
   <div style={{ marginBottom: 20, padding: 14, background: tone || T.white, border: `1px solid ${T.slate200}`, borderRadius: 10 }}>
-    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate600, marginBottom: 10 }}>{title}</div>
+    {title && (
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate600, marginBottom: 10 }}>{title}</div>
+    )}
     {children}
   </div>
 );
@@ -608,7 +610,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           as a fully colored row. Profile-validity banner (when non-valid)
           spans both columns above the grid — the standalone Analysis
           section was retired 2026-07-16 as fully redundant with Assessment. */}
-      <Section title="Assessment">
+      <Section>
         {/* Profile validity banner — only renders when validity_status is
             questionable or unknown. Sits above both columns because it
             applies to the whole read. Uses the warning text from
@@ -645,6 +647,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
           {/* LEFT COLUMN */}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
+              Assessment
+            </div>
             {/* Timing flag — row background colored by cts_timing_assessment
                 overall_flag (red / yellow / green). Consolidates former
                 footer chip (label + pill) into a single colored strip. */}
