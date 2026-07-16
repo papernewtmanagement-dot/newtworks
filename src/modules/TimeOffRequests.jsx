@@ -818,6 +818,62 @@ function categorizeRequestForCalendar(r) {
   return "off"; // time_off_full_day, time_off_half_day, four_day_off_change
 }
 
+const CALENDAR_KIND_COLORS = {
+  off:    { bg: "#fecaca", border: "#f87171" },
+  sick:   { bg: "#fed7aa", border: "#fb923c" },
+  remote: { bg: "#bfdbfe", border: "#60a5fa" }
+};
+const CALENDAR_STANDING_BG = "#fef3c7";       // amber-100
+const CALENDAR_STANDING_BORDER = "#f59e0b";   // amber-500 (used for legend swatch)
+const CAL_ICON_PAID_OK = "#059669";           // green-600
+const CAL_ICON_BAD     = "#dc2626";           // red-600
+
+function calendarBlockStyle(seg, isStanding) {
+  if (!seg) return { background: "transparent" };
+  const c = CALENDAR_KIND_COLORS[seg.kind] || CALENDAR_KIND_COLORS.off;
+  if (seg.pending) {
+    return { background: "transparent", border: `2px dashed ${c.border}`, borderRadius: 3, boxSizing: "border-box" };
+  }
+  const bg = isStanding ? CALENDAR_STANDING_BG : c.bg;
+  return { background: bg, borderLeft: `3px solid ${c.border}` };
+}
+
+function SegmentBlock({ seg, isSplit }) {
+  if (!seg) {
+    // empty placeholder to keep flex layout stable when only morning or only afternoon is populated
+    return <div style={{ flex: isSplit ? 1 : undefined, height: isSplit ? undefined : "100%", background: "transparent", borderRadius: 3 }} />;
+  }
+  const isStanding = !!seg.r.derived_from_standing_pref_id;
+  const style = calendarBlockStyle(seg, isStanding);
+  const showIcons = !seg.pending;
+  const paid    = seg.r.is_paid    !== false;
+  const planned = seg.r.is_planned !== false;
+  const iconFontSize = isSplit ? 10 : 13;
+  return (
+    <div style={{
+      ...style,
+      flex: isSplit ? 1 : undefined,
+      height: isSplit ? undefined : "100%",
+      borderRadius: 3,
+      position: "relative"
+    }}>
+      {showIcons && (
+        <div style={{
+          position: "absolute",
+          top: 1, right: 3,
+          display: "flex", gap: 3,
+          fontSize: iconFontSize, lineHeight: 1, fontWeight: 700,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          pointerEvents: "none"
+        }}>
+          <span style={{ color: paid    ? CAL_ICON_PAID_OK : CAL_ICON_BAD }} title={paid    ? "Paid"    : "Unpaid"}>$</span>
+          <span style={{ color: planned ? CAL_ICON_PAID_OK : CAL_ICON_BAD }} title={planned ? "Planned" : "Unplanned"}>{planned ? "✓" : "!"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CellBlocks({ requests }) {
   if (!requests || requests.length === 0) return null;
   const segments = { morning: null, afternoon: null, full: null };
@@ -830,26 +886,17 @@ function CellBlocks({ requests }) {
       segments[part] = { kind, pending: isPending, r };
     }
   }
-  const colorMap = {
-    off:    { bg: "#fecaca", border: "#f87171" },
-    sick:   { bg: "#fed7aa", border: "#fb923c" },
-    remote: { bg: "#bfdbfe", border: "#60a5fa" }
-  };
-  function blockStyle(seg) {
-    if (!seg) return { background: "transparent" };
-    const c = colorMap[seg.kind] || colorMap.off;
-    if (seg.pending) {
-      return { background: "transparent", border: `2px dashed ${c.border}`, borderRadius: 3, boxSizing: "border-box" };
-    }
-    return { background: c.bg, borderLeft: `3px solid ${c.border}` };
-  }
   if (segments.full) {
-    return <div style={{ ...blockStyle(segments.full), height: "100%", minHeight: 42, borderRadius: 3 }} />;
+    return (
+      <div style={{ height: "100%", minHeight: 42 }}>
+        <SegmentBlock seg={segments.full} isSplit={false} />
+      </div>
+    );
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 42, gap: 2 }}>
-      <div style={{ ...blockStyle(segments.morning), flex: 1, borderRadius: 3 }} />
-      <div style={{ ...blockStyle(segments.afternoon), flex: 1, borderRadius: 3 }} />
+      <SegmentBlock seg={segments.morning}   isSplit={true} />
+      <SegmentBlock seg={segments.afternoon} isSplit={true} />
     </div>
   );
 }
@@ -1057,7 +1104,16 @@ function HistoryView({ me }) {
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fecaca", borderLeft: "3px solid #f87171", borderRadius: 2 }} /> Off / PTO</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fed7aa", borderLeft: "3px solid #fb923c", borderRadius: 2 }} /> Sick</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#bfdbfe", borderLeft: "3px solid #60a5fa", borderRadius: 2 }} /> Remote</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, background: "#fef3c7", borderLeft: "3px solid #f59e0b", borderRadius: 2 }} /> Standing / WtW</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 14, height: 14, border: "2px dashed #94a3b8", borderRadius: 2 }} /> Pending vote</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#059669" }}>$</span>paid /
+          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#dc2626" }}>$</span>unpaid
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#059669" }}>✓</span>planned /
+          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#dc2626" }}>!</span>unplanned
+        </span>
         <span style={{ color: "#94a3b8" }}>· split cell = half-day (top=morning · bottom=afternoon) · click any cell for detail</span>
       </div>
 
