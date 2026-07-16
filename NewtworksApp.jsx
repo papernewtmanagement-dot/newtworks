@@ -665,7 +665,7 @@ const ComingSoon = ({ module }) => (
 const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
-    cpr:         <ErrorBoundary name="CPR"><CPRList /></ErrorBoundary>,
+    cpr:         <ErrorBoundary name="CPR"><CPRList userRole={userRole} /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary key="handbook" name="Handbook"><Manual manualType="handbook" /></ErrorBoundary>,
