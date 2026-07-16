@@ -144,9 +144,10 @@ function stopSummary(p) {
   return `${dow} ${part} ${pat}`;
 }
 
-function MyStandingPrefsPanel({ me }) {
+function MyStandingPrefsPanel({ me, onSubmitted }) {
   const [prefs, setPrefs] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -173,41 +174,68 @@ function MyStandingPrefsPanel({ me }) {
     return acc;
   }, {});
 
+  const changeBtnStyle = {
+    padding: "5px 12px",
+    background: "#0c4a6e",
+    color: "#fff",
+    border: "none",
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap"
+  };
+
   return (
-    <div style={{ ...cardStyle, background: prefs.length ? "#f0f9ff" : "#f8fafc", borderColor: prefs.length ? "#bae6fd" : "#e2e8f0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: prefs.length ? 10 : 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#0c4a6e" }}>My WtW Days Off</div>
-        {prefs.length === 0 && <div style={{ fontSize: 12, color: "#64748b" }}>— none yet. Submit one below.</div>}
-      </div>
-      {Object.entries(byTrigger).map(([trigger, items]) => (
-        <div key={trigger} style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#0369a1", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>
-            {TRIGGER_LABELS[trigger] || trigger}
+    <>
+      <div style={{ ...cardStyle, background: prefs.length ? "#f0f9ff" : "#f8fafc", borderColor: prefs.length ? "#bae6fd" : "#e2e8f0" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: prefs.length ? 10 : 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#0c4a6e" }}>My WtW Days Off</div>
+          <button onClick={() => setBuilderOpen(true)} style={changeBtnStyle}>
+            Change my WtW day off
+          </button>
+        </div>
+        {prefs.length === 0 && (
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+            No WtW day off pattern set yet.
           </div>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#0f172a" }}>
-            {items.map(p => (
-              <li key={p.id}>
-                {stopSummary(p)}{p.is_paid ? " (paid)" : " (unpaid)"}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-      {prefs.length > 0 && (
-        <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
-          These auto-generate as approved time-off entries each qualifying week.
-        </div>
+        )}
+        {Object.entries(byTrigger).map(([trigger, items]) => (
+          <div key={trigger} style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#0369a1", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>
+              {TRIGGER_LABELS[trigger] || trigger}
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#0f172a" }}>
+              {items.map(p => (
+                <li key={p.id}>
+                  {stopSummary(p)}{p.is_paid ? " (paid)" : " (unpaid)"}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {prefs.length > 0 && (
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
+            These auto-generate as approved time-off entries each qualifying week.
+          </div>
+        )}
+      </div>
+      {builderOpen && (
+        <StandingPrefBuilder
+          me={me}
+          onSubmitted={() => { setBuilderOpen(false); if (typeof onSubmitted === "function") onSubmitted(); }}
+          onClose={() => setBuilderOpen(false)}
+        />
       )}
-    </div>
+    </>
   );
 }
 
-function StandingPrefBuilder({ me, onSubmitted }) {
-  const [expanded, setExpanded] = useState(false);
+function StandingPrefBuilder({ me, onSubmitted, onClose }) {
   const [days, setDays] = useState([
     { day_of_week: "monday", day_part: "morning", pattern: "remote" }
   ]);
-  const [trigger, setTrigger] = useState("wtw_won_prior_week");
+  const [trigger] = useState("wtw_won_prior_week");
   const [isPaid, setIsPaid] = useState(true);
   const [effectiveFrom, setEffectiveFrom] = useState("");
   const [notes, setNotes] = useState("");
@@ -249,10 +277,7 @@ function StandingPrefBuilder({ me, onSubmitted }) {
         standing_pref_is_paid: isPaid
       });
       if (insErr) throw insErr;
-      setDays([{ day_of_week: "monday", day_part: "morning", pattern: "remote" }]);
-      setNotes(""); setEffectiveFrom("");
-      setExpanded(false);
-      alert("WtW day off request submitted. Team has 2 weekdays to vote, then Peter decides.");
+      alert("Change submitted. Team has 2 weekdays to vote, then Peter decides.");
       if (typeof onSubmitted === "function") onSubmitted();
     } catch (e) {
       setError(e?.message || "Submit failed");
@@ -276,17 +301,24 @@ function StandingPrefBuilder({ me, onSubmitted }) {
   ];
 
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", overflow: "hidden" }}>
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: "#0f172a", textAlign: "left" }}
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1000 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#fff", borderRadius: 10, width: "min(560px, 100%)", maxHeight: "92vh", overflow: "auto" }}
+        onClick={e => e.stopPropagation()}
       >
-        <span>➕ Request a WtW day off</span>
-        <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "#64748b", fontSize: 18, lineHeight: 1 }}>›</span>
-      </button>
-      {expanded && (
-        <div style={{ padding: "12px 16px 16px", borderTop: "1px solid #e2e8f0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid #e2e8f0" }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Change my WtW day off</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b", lineHeight: 1 }}
+            aria-label="Close"
+          >×</button>
+        </div>
+        <div style={{ padding: "12px 20px 20px" }}>
           <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10, lineHeight: 1.5 }}>
             A WtW day off is a recurring weekly pattern earned through Win the Week: it only applies in weeks after we win the prior week. Once approved, each qualifying week auto-generates approved time-off entries on your calendar and shows up in coverage checks. Examples: Fridays off, Monday afternoon off, Tuesday and Thursday afternoons off.
           </div>
@@ -338,20 +370,26 @@ function StandingPrefBuilder({ me, onSubmitted }) {
 
           {error && <div style={{ color: "#dc2626", marginTop: 8, fontSize: 13 }}>{error}</div>}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, flexWrap: "wrap" }}>
             <button
+              type="button"
               onClick={submit}
               disabled={submitting}
               style={{ ...btnPrimary, opacity: submitting ? 0.5 : 1 }}
             >
               {submitting ? "Submitting…" : "Submit for team vote"}
             </button>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ padding: "8px 14px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            >Cancel</button>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>
               Voting: 2 weekdays. Peter decides after.
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -452,8 +490,7 @@ function SubmitView({ me, onSubmitted }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <MyStandingPrefsPanel me={me} />
-      <StandingPrefBuilder me={me} onSubmitted={onSubmitted} />
+      <MyStandingPrefsPanel me={me} onSubmitted={onSubmitted} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
       <div>
         <h3 style={{ marginTop: 0 }}>New Request</h3>
