@@ -70,6 +70,19 @@ SYSTEM_PROMPT_RENAMES = {
     "parsers/pfa_statement.ts": "SYSTEM_PROMPT_PFA_STATEMENT",
 }
 
+# Per-file extra renames for other module-scoped symbols that collide across
+# parsers. Applied after SYSTEM_PROMPT rename. Values are (old, new) tuples so
+# all references within the same file are rewritten consistently.
+EXTRA_RENAMES = {
+    "parsers/sf_forwarded_applicant.ts": [
+        # GROQ_ENDPOINT also declared in lib/llm.ts (identical value)
+        ("GROQ_ENDPOINT", "GROQ_ENDPOINT_SFFWD"),
+        # APPLICANTS_* also declared in parsers/careerplug_applicant.ts (identical values)
+        ("APPLICANTS_GMAIL_LABEL_ID", "APPLICANTS_GMAIL_LABEL_ID_SFFWD"),
+        ("APPLICANTS_DRIVE_FOLDER_ID", "APPLICANTS_DRIVE_FOLDER_ID_SFFWD"),
+    ],
+}
+
 BANNER = (
     "// =========================================================================\n"
     "// document-processor bundle (auto-generated)\n"
@@ -129,6 +142,9 @@ def build_bundle(source_dir: Path) -> str:
         text = path.read_text(encoding="utf-8")
         if rel in SYSTEM_PROMPT_RENAMES:
             text = text.replace("SYSTEM_PROMPT", SYSTEM_PROMPT_RENAMES[rel])
+        if rel in EXTRA_RENAMES:
+            for old, new in EXTRA_RENAMES[rel]:
+                text = text.replace(old, new)
         text = strip_imports(text, externals_seen)
         processed[rel] = text
 
@@ -162,6 +178,13 @@ def validate(bundle: str) -> None:
     # Exactly one entry point
     if bundle.count("Deno.serve(run);") != 1:
         raise ValueError(f"expected exactly one `Deno.serve(run);`, found {bundle.count('Deno.serve(run);')}")
+    # No top-level `const NAME =` collisions across concatenated files.
+    # Duplicates at module scope produce a Deno parse error → BOOT_ERROR 503.
+    from collections import Counter
+    const_names = re.findall(r'^(?:export\s+)?const\s+(\w+)\b', bundle, re.MULTILINE)
+    dupes = {k: v for k, v in Counter(const_names).items() if v > 1}
+    if dupes:
+        raise ValueError(f"top-level const collisions: {dupes} — add per-file rename to EXTRA_RENAMES")
 
 
 def main() -> int:
