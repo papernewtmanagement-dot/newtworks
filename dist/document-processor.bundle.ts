@@ -3720,10 +3720,10 @@ interface CtsScores {
 }
 
 // Same as CareerPlug — Applicants label + Drive folder in paper.newt.management
-const APPLICANTS_GMAIL_LABEL_ID  = "Label_20";
-const APPLICANTS_DRIVE_FOLDER_ID = "1GI0h2mEiuGb7BmQevkqpqQ9WM1CWVK4K";
+const APPLICANTS_GMAIL_LABEL_ID_SFFWD  = "Label_20";
+const APPLICANTS_DRIVE_FOLDER_ID_SFFWD = "1GI0h2mEiuGb7BmQevkqpqQ9WM1CWVK4K";
 
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_ENDPOINT_SFFWD = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL_FALLBACK = "openai/gpt-oss-120b";
 
 // ---------- Subject → candidate name -----------------------------------------
@@ -3800,7 +3800,7 @@ ${pdfText.slice(0, 20000)}
 Return only the JSON object, nothing else.`;
 
 async function extractCtsScoresFromPdf(pdfText: string, groqKey: string, model: string): Promise<CtsScores | null> {
-  const resp = await fetch(GROQ_ENDPOINT, {
+  const resp = await fetch(GROQ_ENDPOINT_SFFWD, {
     method: "POST",
     headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -3897,7 +3897,7 @@ async function uploadPdfToDrive(
           mimetype: "application/pdf",
           s3key,
         },
-        folder_to_upload_to: APPLICANTS_DRIVE_FOLDER_ID,
+        folder_to_upload_to: APPLICANTS_DRIVE_FOLDER_ID_SFFWD,
       },
     });
     if (!up.ok) { console.warn(`Drive upload ${targetName} failed: ${up.error}`); return { fileId: null, url: null }; }
@@ -3918,7 +3918,7 @@ async function starAndLabel(ctx: SFForwardCtx, messageId: string): Promise<void>
       toolSlug: "GMAIL_MODIFY_LABELS",
       toolArguments: {
         message_id: messageId,
-        add_label_ids: ["STARRED", APPLICANTS_GMAIL_LABEL_ID],
+        add_label_ids: ["STARRED", APPLICANTS_GMAIL_LABEL_ID_SFFWD],
         remove_label_ids: [],
         user_id: "me",
       },
