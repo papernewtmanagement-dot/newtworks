@@ -604,6 +604,30 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </div>
 
+      {/* Walkthrough — surfaces team_assessments.notes, which is where
+          Claude's per-candidate narrative reads live (33 of 42 candidates
+          as of 2026-07-16). Placed at top of the module so the synthesis
+          is what you see first. Preserved-whitespace rendering — content
+          is structured prose with ALL-CAPS section labels, bullets, and
+          divider bars; no markdown parsing needed. */}
+      {detail?.notes && detail.notes.trim().length > 0 && (
+        <Section tone={T.slate50}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
+            Walkthrough
+          </div>
+          <div style={{
+            fontSize: 12.5,
+            lineHeight: 1.55,
+            color: T.slate800,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          }}>
+            {detail.notes}
+          </div>
+        </Section>
+      )}
+
       {/* Assessment — top box merging LSS breakdown, validity, drive/empathy,
           traits (left column) with all competencies + role fit + best fit
           (right column). Timing flag sits at the TOP of the left column
