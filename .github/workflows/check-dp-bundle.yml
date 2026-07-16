@@ -1,0 +1,68 @@
+name: check document-processor bundle is fresh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/document-processor/**"
+      - "scripts/bundle_document_processor.py"
+      - "dist/document-processor.bundle.ts"
+      - ".github/workflows/check-dp-bundle.yml"
+  pull_request:
+    paths:
+      - "supabase/functions/document-processor/**"
+      - "scripts/bundle_document_processor.py"
+      - "dist/document-processor.bundle.ts"
+      - ".github/workflows/check-dp-bundle.yml"
+
+jobs:
+  bundle-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Regenerate bundle to a temp path
+        run: |
+          mkdir -p /tmp/dp-check
+          python3 scripts/bundle_document_processor.py \
+            --out /tmp/dp-check/fresh.bundle.ts
+
+      - name: Compare committed bundle against fresh regen
+        run: |
+          COMMITTED="dist/document-processor.bundle.ts"
+          FRESH="/tmp/dp-check/fresh.bundle.ts"
+
+          if [ ! -f "$COMMITTED" ]; then
+            echo "::error::$COMMITTED is missing. Run: python3 scripts/bundle_document_processor.py && git add $COMMITTED"
+            exit 1
+          fi
+
+          COMMITTED_SHA=$(sha256sum "$COMMITTED" | cut -d' ' -f1)
+          FRESH_SHA=$(sha256sum "$FRESH" | cut -d' ' -f1)
+
+          echo "committed sha256: $COMMITTED_SHA"
+          echo "fresh sha256:     $FRESH_SHA"
+
+          if [ "$COMMITTED_SHA" = "$FRESH_SHA" ]; then
+            echo "bundle is fresh ✓"
+            exit 0
+          fi
+
+          echo ""
+          echo "::error::dist/document-processor.bundle.ts is STALE relative to the 17 source files in supabase/functions/document-processor/"
+          echo ""
+          echo "To fix, run this locally and commit the result:"
+          echo ""
+          echo "    python3 scripts/bundle_document_processor.py"
+          echo "    git add dist/document-processor.bundle.ts"
+          echo "    git commit -m 'chore(dp): regenerate bundle'"
+          echo ""
+          echo "--- diff (first 200 lines) ---"
+          diff "$COMMITTED" "$FRESH" | head -200 || true
+          exit 1
