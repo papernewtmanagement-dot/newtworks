@@ -210,7 +210,7 @@ Rules for the probes you produce:
 4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age).
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
 6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate’s actual numbers and situation.
-7. If resume text IS provided: generate at least one "Resume signals" section with probes tied to specific claims (verifiable metric requests, scaffolded-career sourcing tests, self-superiority-language verification, gap explanation asks). Reference the exact resume phrasing when you can.
+7. If resume text IS provided: you MUST return AT LEAST 4 sections — the framework/trait sections (character floor verification, trait triggers, structure fit, motivation probe as warranted per rule 2) AND an ADDITIONAL "Resume signals" section. "Resume signals" is IN ADDITION TO the other sections, not INSTEAD of them. The Resume signals section carries probes tied to specific resume claims (verifiable metric requests, scaffolded-career sourcing tests, self-superiority-language verification, gap explanation asks). Reference the exact resume phrasing when you can. Never collapse the entire output down to only resume signals — the CTS/framework/motivation probes are ALWAYS the core of the interview and must remain.
 8. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
 
 Style directives (agency voice):
@@ -339,7 +339,7 @@ Deno.serve(async (req: Request) => {
 
     const probes = await generateProbes(context, groqKey, model);
 
-    probes.version              = 7;
+    probes.version              = 7.2;
     probes.model                = model;
     probes.resume_analyzed      = Boolean(context.resume_text);
     probes.resume_source        = resumeFetch.source;
