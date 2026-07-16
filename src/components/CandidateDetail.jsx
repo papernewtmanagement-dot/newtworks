@@ -928,7 +928,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                    : v >= 6.0 ? T.amber
                                    : T.red;
               const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
-              const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "left", borderBottom: `1px solid ${T.slate200}` };
+              const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center", borderBottom: `1px solid ${T.slate200}` };
               const rowLabel = { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
 
               return (
@@ -952,7 +952,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             const cell = matrix?.[c.key]?.[layer.key];
                             const w = weights?.[c.key]?.[layer.key];
                             return (
-                              <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}` }}>
+                              <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                                 <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
                                   {cell != null ? Number(cell).toFixed(2) : "—"}
                                 </div>
@@ -964,11 +964,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                           })}
                         </tr>
                       ))}
-                      {/* Per-construct weighted total row */}
+                      {/* Per-construct weighted subtotal row */}
                       <tr style={{ borderTop: `2px solid ${T.slate200}`, background: T.slate50 }}>
-                        <td style={{ ...rowLabel, background: T.slate100, fontWeight: 700 }}>Construct</td>
+                        <td style={{ ...rowLabel, background: T.slate100, fontWeight: 700 }}>Subtotal</td>
                         {constructs.map((c) => (
-                          <td key={c.key} style={{ padding: "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}` }}>
+                          <td key={c.key} style={{ padding: "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                             <div style={{ fontSize: 16, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
                               {c.score != null ? Number(c.score).toFixed(2) : "—"}
                               <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
@@ -976,11 +976,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                           </td>
                         ))}
                       </tr>
-                      {/* Overall result row */}
+                      {/* Overall result row — score + verdict + confidence + threshold previews */}
                       <tr>
                         <td style={{ ...rowLabel, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
-                        <td colSpan={3} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}` }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <td colSpan={3} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
                             <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
                               {threeConstruct.score_0_10 != null ? Number(threeConstruct.score_0_10).toFixed(2) : "—"}
                               <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
@@ -988,6 +988,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 10, fontWeight: 700, color: T.white, background: scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
                               {(threeConstruct.verdict || "insufficient data").replace(/_/g, " ")}
                             </span>
+                            <span style={{ fontSize: 11, color: T.slate600 }}>
+                              confidence: {threeConstruct.confidence || "—"}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 12, fontSize: 10, color: T.slate600, justifyContent: "center", flexWrap: "wrap" }}>
+                            <span>@7.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
+                            <span>@7.5: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
+                            <span>@8.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
                           </div>
                         </td>
                       </tr>
