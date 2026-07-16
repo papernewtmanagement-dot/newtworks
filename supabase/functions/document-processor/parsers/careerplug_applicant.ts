@@ -442,7 +442,9 @@ async function storeResume(
   pdf: PdfAttachment,
   a: ExtractedApplicant,
 ): Promise<StoreResumeResult> {
-  // 1. Download attachment bytes
+  // 1. Fetch attachment metadata (Composio returns an s3url pointing at the
+  //    file already stored in its temp bucket — we extract the s3key for the
+  //    Drive UPLOAD call instead of round-tripping through base64 ourselves).
   const getRes = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
@@ -458,33 +460,21 @@ async function storeResume(
   if (!getRes.ok) return { ok: false, error: `GMAIL_GET_ATTACHMENT: ${getRes.error}` };
   const file = getRes.data?.file ?? getRes.data?.data?.file;
   const s3url = file?.s3url;
-  let bytesB64 = "";
-  if (s3url) {
-    try {
-      const r = await fetch(s3url);
-      if (!r.ok) return { ok: false, error: `s3url fetch HTTP ${r.status}` };
-      const buf = new Uint8Array(await r.arrayBuffer());
-      let bin = "";
-      const CHUNK = 0x8000;
-      for (let i = 0; i < buf.length; i += CHUNK) {
-        bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-      }
-      bytesB64 = btoa(bin);
-    } catch (e) {
-      return { ok: false, error: `s3url threw: ${e instanceof Error ? e.message : String(e)}` };
-    }
-  } else {
-    const fallback = getRes.data?.data ?? getRes.data?.bytes;
-    if (typeof fallback === "string") bytesB64 = fallback;
-    else return { ok: false, error: "no s3url and no inline bytes" };
-  }
+  if (!s3url) return { ok: false, error: "no s3url on attachment response" };
+  const s3keyMatch = s3url.match(/https?:\/\/[^/]+\/(.+?)\?/);
+  const s3key = s3keyMatch ? s3keyMatch[1] : null;
+  if (!s3key) return { ok: false, error: "could not extract s3key from s3url" };
 
   // 2. Compose a stable filename: "Resume - <FirstLast> - <YYYYMMDD>.pdf"
   const nameSlug = [a.first_name, a.last_name].filter(Boolean).join(" ") || "unknown";
   const dateSlug = receivedAtISO.slice(0, 10).replace(/-/g, "");
   const targetName = `Resume - ${nameSlug} - ${dateSlug}.pdf`;
 
-  // 3. Upload to Drive if we have a drive account, else skip Drive step
+  // 3. Upload to Drive using the current GOOGLEDRIVE_UPLOAD_FILE schema:
+  //    file_to_upload: { name, mimetype, s3key }. Composio's backend copies
+  //    directly from its S3 bucket to Drive. The old (file_content + is_base64)
+  //    shape silently uploads 0-byte placeholders — Priscilla Brito's original
+  //    upload 2026-07-15 hit that bug.
   let driveFileId: string | null = null;
   let driveUrl:    string | null = null;
   if (ctx.driveAccountId) {
@@ -495,16 +485,18 @@ async function storeResume(
         connectedAccountId: ctx.driveAccountId,
         toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
         toolArguments: {
-          file_name: targetName,
-          mime_type: "application/pdf",
-          file_content: bytesB64,           // base64 body
-          is_base64: true,
+          file_to_upload: {
+            name: targetName,
+            mimetype: "application/pdf",
+            s3key,
+          },
           folder_to_upload_to: APPLICANTS_DRIVE_FOLDER_ID,
         },
       });
       if (uploadRes.ok) {
         driveFileId = uploadRes.data?.id ?? uploadRes.data?.fileId ?? uploadRes.data?.response_data?.id ?? null;
-        driveUrl    = uploadRes.data?.webViewLink ?? uploadRes.data?.web_view_link ?? uploadRes.data?.response_data?.webViewLink ?? null;
+        // New Composio Drive response doesn't return webViewLink; construct it.
+        driveUrl    = driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : null;
       } else {
         console.warn(`resume Drive upload failed (non-fatal): ${uploadRes.error}`);
       }
