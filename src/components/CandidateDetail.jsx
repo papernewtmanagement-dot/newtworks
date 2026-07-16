@@ -901,41 +901,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </div>
         ) : (
           <>
-            {/* Overall verdict banner: framework prediction + score + 3-threshold preview */}
-            {(() => {
-              const v = threeConstruct.verdict;
-              const s = threeConstruct.score_0_10;
-              const bg = v === "hire" ? T.greenLt
-                       : v === "consider" ? T.amberLt
-                       : (v === "decline" || v === "decline_character") ? T.redLt
-                       : T.slate50;
-              const fg = v === "hire" ? T.green
-                       : v === "consider" ? T.amber
-                       : (v === "decline" || v === "decline_character") ? T.red
-                       : T.slate600;
-              return (
-                <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: bg, borderLeft: `4px solid ${fg}` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-                    <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: fg, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                      {(v || "insufficient data").replace(/_/g, " ")}
-                    </span>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>
-                      {s != null ? Number(s).toFixed(2) : "—"}
-                      <span style={{ fontSize: 12, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>/ 10</span>
-                    </span>
-                    <span style={{ fontSize: 11, color: T.slate600 }}>
-                      confidence: {threeConstruct.confidence || "—"}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", gap: 12, fontSize: 10, color: T.slate600 }}>
-                    <span>@7.0 threshold: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
-                    <span>@7.5: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
-                    <span>@8.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
-                  </div>
-                </div>
-              );
-            })()}
-
             {/* 4×3 matrix table — layers as rows, constructs as columns.
                 Each cell shows the (0-10) score plus the weight applied within that construct.
                 Cell background bands by score band (green ≥7.5 / amber ≥6.0 / red <6.0). */}
