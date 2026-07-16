@@ -1079,9 +1079,9 @@ const PLSection = ({ data }) => {
     whiteSpace: "nowrap",
     background: isTotal ? T.slate50 : "transparent",
     ...(isDelta ? {
-      paddingLeft: 4,
-      paddingRight: 8,
-      fontSize: 11,
+      padding: "7px 4px 7px 2px",
+      fontSize: 10,
+      width: "1%",
       borderLeft: `1px dotted ${T.slate200}`,
     } : {}),
   });
