@@ -1,0 +1,351 @@
+-- =====================================================================
+-- Phase 1e verdict rewrite:
+-- - Per-layer scores + verdicts (resume/assessment/interview)
+-- - Retrospective as SEPARATE signal (not an override)
+-- - Framework verdict independent of retrospective
+-- - calibration_status compares framework prediction vs retrospective observation
+-- =====================================================================
+DROP FUNCTION IF EXISTS public.hiregauge_three_construct_verdict(uuid);
+
+CREATE OR REPLACE FUNCTION public.hiregauge_three_construct_verdict(p_assessment_id uuid)
+RETURNS TABLE (
+  assessment_id uuid,
+  -- Overall framework verdict + score + preview at 3 thresholds
+  verdict text,                     -- framework's pre-hire prediction: hire/consider/decline/decline_character/insufficient_data
+  score_0_10 numeric,
+  score_hire_at_70 text,
+  score_hire_at_75 text,
+  score_hire_at_80 text,
+  -- Per-layer scores + verdicts
+  resume_score numeric,
+  resume_verdict text,              -- pass/consider/decline/not_scored
+  assessment_score numeric,
+  assessment_verdict text,          -- pass/consider/decline/not_scored
+  interview_score numeric,
+  interview_verdict text,           -- pass/consider/decline/decline_character/not_scored
+  -- Per-construct scores (Nature/Nurture/Drivers)
+  nature_score numeric,
+  nurture_score numeric,
+  drivers_score numeric,
+  -- Character floor detail
+  character_floor_status text,
+  character_floor_failed text[],
+  -- Retrospective observation (Peter-scored post-hire, SEPARATE from framework)
+  retrospective_verdict text,       -- pass/flag/fail_confirmed/not_scored
+  retrospective_notes text,
+  retrospective_context text,       -- hired_and_performing/former_team/null
+  -- Calibration: framework prediction vs retrospective observation
+  calibration_status text,          -- framework_agrees_positive/framework_agrees_negative/framework_missed_positive/framework_missed_negative/partial/no_retrospective
+  -- Confidence
+  dimensions_scored integer,
+  confidence text,
+  meta jsonb
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  v_ta record;
+  v_team_id uuid;
+  v_is_active boolean;
+  v_is_archived boolean;
+  -- Per-construct-per-layer scores (0-10)
+  v_nr numeric; v_na numeric; v_ni numeric;  -- Nature Resume/Assessment/Interview
+  v_nur numeric; v_nua numeric; v_nui numeric;  -- Nurture
+  v_dr numeric; v_da numeric; v_di numeric;  -- Drivers
+  -- Layer weights within each construct
+  v_nature_r_w numeric := 0.05; v_nature_a_w numeric := 0.75; v_nature_i_w numeric := 0.20;
+  v_nurture_r_w numeric := 0.15; v_nurture_a_w numeric := 0.25; v_nurture_i_w numeric := 0.60;
+  v_drivers_r_w numeric := 0.15; v_drivers_a_w numeric := 0.30; v_drivers_i_w numeric := 0.55;
+  v_nature_w numeric := 0.35; v_nurture_w numeric := 0.30; v_drivers_w numeric := 0.35;
+  v_asub_os_w numeric := 0.55; v_asub_comp_w numeric := 0.35; v_asub_lss_w numeric := 0.10;
+  -- Nature-Assessment intermediate
+  v_best_fit_role text; v_best_fit_os numeric;
+  v_sales_comp_avg numeric;
+  v_lss_score numeric;
+  v_lss_acc numeric;
+  v_role_comp_json jsonb;
+  -- Counters
+  v_dims_scored int := 0;
+  v_char_floors_failed text[] := ARRAY[]::text[];
+  v_char_floor_status text;
+  v_verdict text;
+  v_confidence text;
+  v_calibration text;
+  v_retro_verdict text;
+BEGIN
+  SELECT * INTO v_ta FROM public.team_assessments WHERE id = p_assessment_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  SELECT t.id, (t.archived_at IS NULL AND COALESCE(t.is_active, false)), (t.archived_at IS NOT NULL)
+    INTO v_team_id, v_is_active, v_is_archived
+    FROM public.team t WHERE t.id = v_ta.team_member_id;
+
+  retrospective_context := CASE
+    WHEN v_is_active THEN 'hired_and_performing'
+    WHEN v_is_archived THEN 'former_team'
+    ELSE NULL
+  END;
+
+  -- =====================================================================
+  -- Fill the 3x3 matrix of construct × layer scores (0-10 each)
+  -- =====================================================================
+
+  -- Resume layer (same value across all 3 constructs since it's a single score)
+  IF v_ta.resume_quality IS NOT NULL THEN
+    v_nr  := v_ta.resume_quality::numeric;
+    v_nur := v_ta.resume_quality::numeric;
+    v_dr  := v_ta.resume_quality::numeric;
+    v_dims_scored := v_dims_scored + 1;
+  END IF;
+
+  -- Nature-Assessment: OS + adjusted competencies + LSS
+  IF v_ta.deadline_motivation IS NOT NULL THEN
+    SELECT bfr.best_role, bfr.best_os::numeric INTO v_best_fit_role, v_best_fit_os
+      FROM public.cts_best_fit_role(p_assessment_id) bfr;
+
+    v_role_comp_json := CASE v_best_fit_role
+      WHEN 'sales' THEN public.cts_sales_competencies_adjusted(p_assessment_id)
+      WHEN 'service' THEN public.cts_service_competencies_adjusted(p_assessment_id)
+      WHEN 'service_sales' THEN public.cts_service_sales_competencies_adjusted(p_assessment_id)
+      WHEN 'aspirant' THEN public.cts_aspirant_competencies_adjusted(p_assessment_id)
+    END;
+
+    SELECT AVG((val)::numeric) INTO v_sales_comp_avg
+      FROM jsonb_each_text(v_role_comp_json) e(key, val) WHERE e.key <> '_meta';
+
+    v_lss_acc := COALESCE(v_ta.lss_total_accuracy, 0);
+    v_lss_score := LEAST(10.0, GREATEST(0.0, v_lss_acc / 3.5));
+
+    v_na := (COALESCE(v_best_fit_os / 10.0, 0) * v_asub_os_w
+           + COALESCE(v_sales_comp_avg / 10.0, 0) * v_asub_comp_w
+           + v_lss_score * v_asub_lss_w);
+
+    -- Drivers-Assessment: DM + RD + IS avg (from raw CTS traits)
+    v_da := (COALESCE(v_ta.deadline_motivation, 0)
+           + COALESCE(v_ta.recognition_drive, 0)
+           + COALESCE(v_ta.independent_spirit, 0))::numeric / 30.0;
+
+    v_dims_scored := v_dims_scored + 1;
+  END IF;
+
+  -- Nurture-Assessment: CTS reliability + distortion proxy
+  IF v_ta.reliability IS NOT NULL THEN
+    v_nua := CASE
+      WHEN v_ta.reliability IN ('high','very_high') AND v_ta.response_distortion = 'low' THEN 7
+      WHEN v_ta.reliability = 'moderate' AND v_ta.response_distortion IN ('low','moderate') THEN 5
+      WHEN v_ta.response_distortion = 'high' THEN 2
+      ELSE 4
+    END;
+    v_dims_scored := v_dims_scored + 1;
+  END IF;
+
+  -- Nature-Interview: role play scores
+  IF v_ta.rp_needs IS NOT NULL OR v_ta.rp_presentation IS NOT NULL OR v_ta.rp_closing IS NOT NULL OR v_ta.rp_objection IS NOT NULL THEN
+    v_ni := (COALESCE(v_ta.rp_needs, 0) + COALESCE(v_ta.rp_presentation, 0)
+           + COALESCE(v_ta.rp_closing, 0) + COALESCE(v_ta.rp_objection, 0))::numeric
+           / NULLIF(((CASE WHEN v_ta.rp_needs IS NULL THEN 0 ELSE 1 END)
+                   + (CASE WHEN v_ta.rp_presentation IS NULL THEN 0 ELSE 1 END)
+                   + (CASE WHEN v_ta.rp_closing IS NULL THEN 0 ELSE 1 END)
+                   + (CASE WHEN v_ta.rp_objection IS NULL THEN 0 ELSE 1 END)), 0);
+    v_dims_scored := v_dims_scored + 1;
+  END IF;
+
+  -- Nurture-Interview: character scores + floor check
+  IF v_ta.char_honesty IS NOT NULL AND v_ta.char_honesty < 7 THEN v_char_floors_failed := array_append(v_char_floors_failed, 'char_honesty'); END IF;
+  IF v_ta.char_hwe     IS NOT NULL AND v_ta.char_hwe     < 7 THEN v_char_floors_failed := array_append(v_char_floors_failed, 'char_hwe'); END IF;
+  IF v_ta.char_persres IS NOT NULL AND v_ta.char_persres < 7 THEN v_char_floors_failed := array_append(v_char_floors_failed, 'char_persres'); END IF;
+  IF v_ta.char_concern IS NOT NULL AND v_ta.char_concern < 7 THEN v_char_floors_failed := array_append(v_char_floors_failed, 'char_concern'); END IF;
+
+  character_floor_status := CASE
+    WHEN array_length(v_char_floors_failed, 1) > 0 THEN 'floor_failed'
+    WHEN v_ta.char_honesty IS NOT NULL OR v_ta.char_hwe IS NOT NULL OR v_ta.char_persres IS NOT NULL OR v_ta.char_concern IS NOT NULL THEN 'floor_passed'
+    ELSE 'not_scored'
+  END;
+
+  IF v_ta.char_honesty IS NOT NULL OR v_ta.char_hwe IS NOT NULL OR v_ta.char_persres IS NOT NULL OR v_ta.char_concern IS NOT NULL THEN
+    v_nui := (COALESCE(v_ta.char_honesty, 0) + COALESCE(v_ta.char_hwe, 0)
+            + COALESCE(v_ta.char_persres, 0) + COALESCE(v_ta.char_concern, 0))::numeric
+            / NULLIF(((CASE WHEN v_ta.char_honesty IS NULL THEN 0 ELSE 1 END)
+                    + (CASE WHEN v_ta.char_hwe IS NULL THEN 0 ELSE 1 END)
+                    + (CASE WHEN v_ta.char_persres IS NULL THEN 0 ELSE 1 END)
+                    + (CASE WHEN v_ta.char_concern IS NULL THEN 0 ELSE 1 END)), 0);
+    v_dims_scored := v_dims_scored + 1;
+  END IF;
+
+  -- Drivers-Interview: motivation interview scores
+  IF v_ta.mot_level IS NOT NULL OR v_ta.mot_attitude_sales IS NOT NULL OR v_ta.mot_own_products IS NOT NULL THEN
+    v_di := (COALESCE(v_ta.mot_level, 0) + COALESCE(v_ta.mot_attitude_sales, 0) + COALESCE(v_ta.mot_own_products, 0))::numeric
+          / NULLIF(((CASE WHEN v_ta.mot_level IS NULL THEN 0 ELSE 1 END)
+                  + (CASE WHEN v_ta.mot_attitude_sales IS NULL THEN 0 ELSE 1 END)
+                  + (CASE WHEN v_ta.mot_own_products IS NULL THEN 0 ELSE 1 END)), 0);
+    v_dims_scored := v_dims_scored + 1;
+  END IF;
+
+  -- =====================================================================
+  -- Compute per-construct scores (weighted avg over available layers)
+  -- =====================================================================
+  DECLARE
+    v_wsum numeric; v_sum numeric;
+  BEGIN
+    -- Nature
+    v_wsum := 0; v_sum := 0;
+    IF v_nr IS NOT NULL THEN v_sum := v_sum + v_nr * v_nature_r_w; v_wsum := v_wsum + v_nature_r_w; END IF;
+    IF v_na IS NOT NULL THEN v_sum := v_sum + v_na * v_nature_a_w; v_wsum := v_wsum + v_nature_a_w; END IF;
+    IF v_ni IS NOT NULL THEN v_sum := v_sum + v_ni * v_nature_i_w; v_wsum := v_wsum + v_nature_i_w; END IF;
+    nature_score := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+
+    -- Nurture
+    v_wsum := 0; v_sum := 0;
+    IF v_nur IS NOT NULL THEN v_sum := v_sum + v_nur * v_nurture_r_w; v_wsum := v_wsum + v_nurture_r_w; END IF;
+    IF v_nua IS NOT NULL THEN v_sum := v_sum + v_nua * v_nurture_a_w; v_wsum := v_wsum + v_nurture_a_w; END IF;
+    IF v_nui IS NOT NULL THEN v_sum := v_sum + v_nui * v_nurture_i_w; v_wsum := v_wsum + v_nurture_i_w; END IF;
+    nurture_score := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+
+    -- Drivers
+    v_wsum := 0; v_sum := 0;
+    IF v_dr IS NOT NULL THEN v_sum := v_sum + v_dr * v_drivers_r_w; v_wsum := v_wsum + v_drivers_r_w; END IF;
+    IF v_da IS NOT NULL THEN v_sum := v_sum + v_da * v_drivers_a_w; v_wsum := v_wsum + v_drivers_a_w; END IF;
+    IF v_di IS NOT NULL THEN v_sum := v_sum + v_di * v_drivers_i_w; v_wsum := v_wsum + v_drivers_i_w; END IF;
+    drivers_score := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+  END;
+
+  -- =====================================================================
+  -- Compute per-layer scores (weighted avg over constructs)
+  -- =====================================================================
+  DECLARE
+    v_wsum numeric; v_sum numeric;
+  BEGIN
+    -- Resume layer (avg of construct×resume weighted by construct weight)
+    v_wsum := 0; v_sum := 0;
+    IF v_nr IS NOT NULL THEN v_sum := v_sum + v_nr * v_nature_w; v_wsum := v_wsum + v_nature_w; END IF;
+    IF v_nur IS NOT NULL THEN v_sum := v_sum + v_nur * v_nurture_w; v_wsum := v_wsum + v_nurture_w; END IF;
+    IF v_dr IS NOT NULL THEN v_sum := v_sum + v_dr * v_drivers_w; v_wsum := v_wsum + v_drivers_w; END IF;
+    resume_score := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+
+    -- Assessment layer
+    v_wsum := 0; v_sum := 0;
+    IF v_na IS NOT NULL THEN v_sum := v_sum + v_na * v_nature_w; v_wsum := v_wsum + v_nature_w; END IF;
+    IF v_nua IS NOT NULL THEN v_sum := v_sum + v_nua * v_nurture_w; v_wsum := v_wsum + v_nurture_w; END IF;
+    IF v_da IS NOT NULL THEN v_sum := v_sum + v_da * v_drivers_w; v_wsum := v_wsum + v_drivers_w; END IF;
+    assessment_score := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+
+    -- Interview layer
+    v_wsum := 0; v_sum := 0;
+    IF v_ni IS NOT NULL THEN v_sum := v_sum + v_ni * v_nature_w; v_wsum := v_wsum + v_nature_w; END IF;
+    IF v_nui IS NOT NULL THEN v_sum := v_sum + v_nui * v_nurture_w; v_wsum := v_wsum + v_nurture_w; END IF;
+    IF v_di IS NOT NULL THEN v_sum := v_sum + v_di * v_drivers_w; v_wsum := v_wsum + v_drivers_w; END IF;
+    interview_score := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+  END;
+
+  -- =====================================================================
+  -- Overall score (weighted avg over available constructs)
+  -- =====================================================================
+  DECLARE
+    v_wsum numeric := 0; v_sum numeric := 0;
+  BEGIN
+    IF nature_score IS NOT NULL THEN v_sum := v_sum + nature_score * v_nature_w; v_wsum := v_wsum + v_nature_w; END IF;
+    IF nurture_score IS NOT NULL THEN v_sum := v_sum + nurture_score * v_nurture_w; v_wsum := v_wsum + v_nurture_w; END IF;
+    IF drivers_score IS NOT NULL THEN v_sum := v_sum + drivers_score * v_drivers_w; v_wsum := v_wsum + v_drivers_w; END IF;
+    score_0_10 := CASE WHEN v_wsum > 0 THEN v_sum / v_wsum ELSE NULL END;
+  END;
+
+  -- =====================================================================
+  -- Per-layer verdicts (thresholds 7.5 pass / 6.0 consider)
+  -- =====================================================================
+  resume_verdict := CASE
+    WHEN resume_score IS NULL THEN 'not_scored'
+    WHEN resume_score >= 7.5 THEN 'pass'
+    WHEN resume_score >= 6.0 THEN 'consider'
+    ELSE 'decline'
+  END;
+
+  assessment_verdict := CASE
+    WHEN assessment_score IS NULL THEN 'not_scored'
+    WHEN assessment_score >= 7.5 THEN 'pass'
+    WHEN assessment_score >= 6.0 THEN 'consider'
+    ELSE 'decline'
+  END;
+
+  interview_verdict := CASE
+    WHEN interview_score IS NULL THEN 'not_scored'
+    WHEN character_floor_status = 'floor_failed' THEN 'decline_character'
+    WHEN interview_score >= 7.5 THEN 'pass'
+    WHEN interview_score >= 6.0 THEN 'consider'
+    ELSE 'decline'
+  END;
+
+  -- =====================================================================
+  -- Framework verdict (pre-hire prediction; NOT influenced by retrospective)
+  -- =====================================================================
+  verdict := CASE
+    WHEN character_floor_status = 'floor_failed' THEN 'decline_character'
+    WHEN score_0_10 IS NULL THEN 'insufficient_data'
+    WHEN score_0_10 >= 7.5 THEN 'hire'
+    WHEN score_0_10 >= 6.0 THEN 'consider'
+    ELSE 'decline'
+  END;
+
+  -- Threshold previews
+  score_hire_at_70 := CASE WHEN score_0_10 IS NULL THEN 'n/a'
+    WHEN score_0_10 >= 7.0 THEN 'hire' WHEN score_0_10 >= 5.5 THEN 'consider' ELSE 'decline' END;
+  score_hire_at_75 := CASE WHEN score_0_10 IS NULL THEN 'n/a'
+    WHEN score_0_10 >= 7.5 THEN 'hire' WHEN score_0_10 >= 6.0 THEN 'consider' ELSE 'decline' END;
+  score_hire_at_80 := CASE WHEN score_0_10 IS NULL THEN 'n/a'
+    WHEN score_0_10 >= 8.0 THEN 'hire' WHEN score_0_10 >= 6.5 THEN 'consider' ELSE 'decline' END;
+
+  -- =====================================================================
+  -- Retrospective (SEPARATE — Peter's post-hire observation)
+  -- =====================================================================
+  v_retro_verdict := COALESCE(v_ta.retrospective_verdict_override, 'not_scored');
+  retrospective_verdict := v_retro_verdict;
+  retrospective_notes := v_ta.retrospective_notes;
+
+  -- =====================================================================
+  -- Calibration status
+  -- =====================================================================
+  v_calibration := CASE
+    WHEN v_retro_verdict = 'not_scored' THEN 'no_retrospective'
+    WHEN v_retro_verdict = 'pass' AND verdict IN ('hire','consider') THEN 'framework_agrees_positive'
+    WHEN v_retro_verdict = 'fail_confirmed' AND verdict IN ('decline','decline_character') THEN 'framework_agrees_negative'
+    WHEN v_retro_verdict = 'pass' AND verdict IN ('decline','decline_character') THEN 'framework_missed_positive'
+    WHEN v_retro_verdict = 'fail_confirmed' AND verdict IN ('hire','consider') THEN 'framework_missed_negative'
+    WHEN v_retro_verdict = 'flag' THEN 'partial'
+    ELSE 'no_retrospective'
+  END;
+  calibration_status := v_calibration;
+
+  -- Character floor detail
+  character_floor_failed := v_char_floors_failed;
+
+  -- Confidence
+  dimensions_scored := v_dims_scored;
+  v_confidence := CASE WHEN v_dims_scored >= 7 THEN 'high' WHEN v_dims_scored >= 4 THEN 'medium' ELSE 'low' END;
+  confidence := v_confidence;
+
+  assessment_id := p_assessment_id;
+  meta := jsonb_build_object(
+    'matrix', jsonb_build_object(
+      'nature',  jsonb_build_object('resume', v_nr,  'assessment', v_na,  'interview', v_ni),
+      'nurture', jsonb_build_object('resume', v_nur, 'assessment', v_nua, 'interview', v_nui),
+      'drivers', jsonb_build_object('resume', v_dr,  'assessment', v_da,  'interview', v_di)
+    ),
+    'construct_weights', jsonb_build_object('nature', v_nature_w, 'nurture', v_nurture_w, 'drivers', v_drivers_w),
+    'layer_weights_within_construct', jsonb_build_object(
+      'nature', jsonb_build_object('resume', v_nature_r_w, 'assessment', v_nature_a_w, 'interview', v_nature_i_w),
+      'nurture', jsonb_build_object('resume', v_nurture_r_w, 'assessment', v_nurture_a_w, 'interview', v_nurture_i_w),
+      'drivers', jsonb_build_object('resume', v_drivers_r_w, 'assessment', v_drivers_a_w, 'interview', v_drivers_i_w)
+    ),
+    'thresholds_used', jsonb_build_object('hire', 7.5, 'consider', 6.0),
+    'best_fit_role', v_best_fit_role,
+    'best_fit_os', v_best_fit_os,
+    'lss_accuracy', v_lss_acc,
+    'reliability', v_ta.reliability,
+    'response_distortion', v_ta.response_distortion
+  );
+  RETURN NEXT;
+END;
+$$;
+
+COMMENT ON FUNCTION public.hiregauge_three_construct_verdict(uuid) IS
+'Three-construct (Nature/Nurture/Drivers) verdict function. Per-layer verdicts (resume/assessment/interview) + framework verdict (pre-hire prediction) + retrospective as SEPARATE signal + calibration_status comparing framework vs retrospective observation. Character floor at 7/10 on interview-scored columns. Provisional thresholds 7.5/6.0 with score_hire_at_70/75/80 preview.';
