@@ -93,6 +93,8 @@ const AGENCY_DEFAULTS = {
 // module added below MUST default to roles: ADMIN_ROLES unless Peter explicitly
 // authorizes team visibility. See persistent_memory operational_rule
 // "Newtworks webapp default visibility — owner-only unless Peter authorizes team access".
+// 2026-07-15 carve-out: within CPR (team-visible), the current Sun–Sat weeks
+// row is hidden from non-admin viewers (see CPRList.jsx + CPRDetail.jsx gate).
 const ADMIN_ROLES = ["owner", "manager"];
 const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
 const NAV_ITEMS = [
