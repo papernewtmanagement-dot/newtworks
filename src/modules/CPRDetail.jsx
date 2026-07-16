@@ -301,6 +301,31 @@ const EDIT_FIELDS = {
 // Roles allowed to edit a CPR. Owner only (2026-07-11). Managers keep read access.
 const EDIT_ROLES = new Set(["owner"]);
 
+// Admin tier — sees the current-week CPR. Team tier (staff/readonly/etc)
+// sees prior weeks only. Mirrors ADMIN_ROLES in NewtworksApp.jsx.
+// Peter directive 2026-07-15: current-week CPR is admin-only. Companion
+// filter lives in CPRList.jsx (list view hides current-week row for team).
+const ADMIN_ROLES = new Set(["owner", "manager"]);
+
+// Current Sun–Sat week's ending Saturday, in America/Chicago. ISO YYYY-MM-DD.
+function currentCPRWeekSaturdayCT() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
+  }).formatToParts(new Date());
+  const y = parts.find(p => p.type === "year").value;
+  const m = parts.find(p => p.type === "month").value;
+  const d = parts.find(p => p.type === "day").value;
+  const wd = parts.find(p => p.type === "weekday").value;
+  const dayIdx = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
+  const daysToSat = 6 - dayIdx; // 0 on Saturday, 6 on Sunday
+  return addDaysISO(`${y}-${m}-${d}`, daysToSat);
+}
+function isCurrentOrFutureCPRWeek(weekEndingISO) {
+  if (!weekEndingISO) return false;
+  return weekEndingISO >= currentCPRWeekSaturdayCT();
+}
+
 // Weeks BEFORE the current calendar quarter are read-only for everyone,
 // including the Owner. Historical CPRs are archival.
 function getCurrentQuarterStartISO(refDate = null) {
