@@ -96,12 +96,13 @@ function extractDriveFileId(url: string): string | null {
   return null;
 }
 
-// Handle the three response shapes Composio's Drive tools return:
-//   1. { file: { s3url: "..." } }        — most common for large files
-//   2. { file_content: "<base64>" }      — inline for small files
-//   3. { data: "<base64>" }              — legacy inline shape
+// Handle the response shapes Composio's Drive download returns:
+//   1. { downloaded_file_content: { s3url: "..." } }  — actual shape for GOOGLEDRIVE_DOWNLOAD_FILE
+//   2. { file: { s3url: "..." } }                     — Gmail attachment shape (fallback)
+//   3. { file_content: "<base64>" }                   — inline for small files
+//   4. { data: "<base64>" }                           — legacy inline shape
 async function composioDriveBytesToB64(composioData: any): Promise<{ ok: true; b64: string } | { ok: false; error: string }> {
-  const s3url = composioData?.file?.s3url;
+  const s3url = composioData?.downloaded_file_content?.s3url ?? composioData?.file?.s3url;
   if (s3url) {
     try {
       const r = await fetch(s3url);
