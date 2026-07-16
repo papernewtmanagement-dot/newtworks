@@ -265,6 +265,38 @@ const MetricBox = ({ label, value, extra }) => (
   </div>
 );
 
+// Single horizontal row inside the Assessment top box. Left-aligned label,
+// right-aligned value + optional smaller extra (units, secondary metric, or
+// warning glyph). Optional `band` drives left-border color and value tint
+// via bandColor(); pass "none" for a neutral grey stripe, null for no band.
+const AssessRow = ({ label, value, extra, band }) => {
+  const colors = band ? bandColor(band) : null;
+  const bg = colors ? colors.bg : T.slate50;
+  const stripe = colors ? colors.fg : T.slate200;
+  const valueColor = colors && (band === "green" || band === "yellow" || band === "red") ? colors.fg : T.slate900;
+  return (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "6px 10px",
+      background: bg,
+      borderRadius: 6,
+      borderLeft: `3px solid ${stripe}`,
+      boxSizing: "border-box",
+      gap: 8,
+    }}>
+      <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
+        {value ?? "—"}
+        {extra != null && extra !== "" && (
+          <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>{extra}</span>
+        )}
+      </span>
+    </div>
+  );
+};
+
 const ScorecardForm = ({ title, prefix, detail, onFieldChange, onSave, saving, tone }) => {
   const charFloorPassed = characterFloorPassed(detail, prefix);
   return (
@@ -546,34 +578,182 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </div>
 
-      {/* CTS Score Panel */}
-      <Section title="CTS Assessment — Traits">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-          {Object.entries(TRAIT_LABELS).map(([trait, label]) => {
-            const value = detail?.[trait];
-            const band = TRAIT_BAND[trait](value);
-            const colors = bandColor(band);
-            return (
-              <div key={trait} style={{ background: colors.bg, padding: 10, borderRadius: 7, borderLeft: `3px solid ${colors.fg}` }}>
-                <div style={{ fontSize: 10, textTransform: "uppercase", color: T.slate600, fontWeight: 600 }}>{label}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: colors.fg, marginTop: 2 }}>{value ?? "—"}</div>
-              </div>
-            );
-          })}
-        </div>
-      </Section>
+      {/* Assessment — top box merging LSS breakdown, validity, drive/empathy,
+          traits (left column) with all competencies + role fit + best fit
+          (right column). Timing flag footer preserves the wall-clock validity
+          signal. CTS label dropped from all headings per Peter 2026-07-16. */}
+      <Section title="Assessment">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
 
-      <Section title="CTS Assessment — Other Metrics">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
-          <MetricBox label="Overall Score" value={detail?.overall_score} extra={detail?.overall_score_band ? `(${detail.overall_score_band})` : ""} />
-          <MetricBox label="LSS Accuracy" value={detail?.lss_total_accuracy} extra={detail?.lss_total_accuracy != null ? "/35" : ""} />
-          <MetricBox label="Reliability" value={detail?.reliability} extra={detail?.reliability != null && detail.reliability < 50 ? "⚠️" : ""} />
-          <MetricBox label="Distortion" value={detail?.response_distortion} extra={detail?.response_distortion != null && detail.response_distortion > 60 ? "⚠️ high" : ""} />
-          <MetricBox label="Ego Drive" value={detail?.ego_drive_score} />
-          <MetricBox label="Empathy" value={detail?.empathy_score} />
+          {/* LEFT COLUMN */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <AssessRow
+              label="LSS Math"
+              value={detail?.lss_math_accuracy}
+              extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
+            />
+            <AssessRow
+              label="LSS Verbal"
+              value={detail?.lss_verbal_accuracy}
+              extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
+            />
+            <AssessRow
+              label="LSS Problem Solving"
+              value={detail?.lss_problem_solving_accuracy}
+              extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
+            />
+            <AssessRow
+              label="LSS Total"
+              value={detail?.lss_total_accuracy}
+              extra={detail?.lss_total_accuracy != null ? "/35" : null}
+              band={
+                detail?.lss_total_accuracy == null ? "none"
+                : detail.lss_total_accuracy >= 30 ? "green"
+                : detail.lss_total_accuracy >= 25 ? "yellow"
+                : "red"
+              }
+            />
+            <AssessRow
+              label="LSS Speed"
+              value={(() => {
+                const m = Number(detail?.lss_math_speed_seconds);
+                const v = Number(detail?.lss_verbal_speed_seconds);
+                const p = Number(detail?.lss_problem_solving_speed_seconds);
+                if (!Number.isFinite(m) || !Number.isFinite(v) || !Number.isFinite(p)) return null;
+                return Math.round((m + v + p) / 3);
+              })()}
+              extra="s/item avg"
+              band={(() => {
+                const maxSpeed = Math.max(
+                  Number(detail?.lss_math_speed_seconds) || 0,
+                  Number(detail?.lss_verbal_speed_seconds) || 0,
+                  Number(detail?.lss_problem_solving_speed_seconds) || 0
+                );
+                if (!maxSpeed) return "none";
+                return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
+              })()}
+            />
+            <AssessRow
+              label="Reliability"
+              value={detail?.reliability}
+              extra={detail?.reliability != null && detail.reliability < 50 ? "⚠️" : null}
+            />
+            <AssessRow
+              label="Distortion"
+              value={detail?.response_distortion}
+              extra={detail?.response_distortion != null && detail.response_distortion > 60 ? "⚠️ high" : null}
+            />
+            <AssessRow label="Drive" value={detail?.ego_drive_score} />
+            <AssessRow label="Empathy" value={detail?.empathy_score} />
+
+            {/* Horizontal divider between validity/drive/empathy block and traits */}
+            <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+            {/* 9 traits, one row each with band coloring */}
+            {Object.entries(TRAIT_LABELS).map(([trait, label]) => {
+              const value = detail?.[trait];
+              const band = TRAIT_BAND[trait](value);
+              return <AssessRow key={trait} label={label} value={value} band={band} />;
+            })}
+          </div>
+
+          {/* RIGHT COLUMN */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {(() => {
+              // Union of all four role competencies. Shared names have the
+              // same underlying value (formulas produce identical results),
+              // so a simple first-wins merge keeps every distinct competency
+              // once. Sorted alphabetically by canonical snake_case key so
+              // ordering is stable across candidates.
+              const all = {};
+              if (competencies && typeof competencies === "object") {
+                ["sales", "service", "service_sales", "aspirant"].forEach((role) => {
+                  const roleC = competencies[role] || {};
+                  Object.entries(roleC).forEach(([k, v]) => {
+                    if (!(k in all)) all[k] = v;
+                  });
+                });
+              }
+              const entries = Object.entries(all).sort(([a], [b]) => a.localeCompare(b));
+              const formatCompLabel = (k) =>
+                k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+              if (entries.length === 0) {
+                return (
+                  <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                    Competencies computed at runtime from traits.
+                  </div>
+                );
+              }
+              return entries.map(([k, v]) => {
+                const band = v == null ? "none" : v >= 70 ? "green" : v >= 50 ? "yellow" : "red";
+                return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
+              });
+            })()}
+
+            {/* Divider before role fit block */}
+            <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+            {/* Role fit scores + best fit indicator */}
+            {(() => {
+              const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+              if (!bf) {
+                return (
+                  <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                    Best-fit role computes from traits — awaiting assessment.
+                  </div>
+                );
+              }
+              const ROLE_LABELS = {
+                sales:         "Sales",
+                service:       "Service",
+                service_sales: "Service Sales",
+                aspirant:      "Aspirant",
+              };
+              const roleRows = [
+                { key: "sales",         os: bf.sales_os },
+                { key: "service",       os: bf.service_os },
+                { key: "service_sales", os: bf.service_sales_os },
+                { key: "aspirant",      os: bf.aspirant_os },
+              ];
+              const bestKey = bf.best_role;
+              return (
+                <>
+                  {roleRows.map((r) => (
+                    <AssessRow
+                      key={r.key}
+                      label={`${ROLE_LABELS[r.key] || r.key} Fit`}
+                      value={r.os}
+                      extra="OS"
+                      band={r.key === bestKey ? "green" : null}
+                    />
+                  ))}
+                  <div style={{
+                    marginTop: 6,
+                    padding: "8px 10px",
+                    background: T.greenLt,
+                    borderRadius: 6,
+                    borderLeft: `3px solid ${T.green}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}>
+                    <span style={{ fontSize: 10, textTransform: "uppercase", color: T.slate600, fontWeight: 700, letterSpacing: 0.3 }}>
+                      Best Fit
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: T.green }}>
+                      ★ {ROLE_LABELS[bestKey] || bestKey}
+                    </span>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
         </div>
+
+        {/* Timing flag footer — validity signal from cts_timing_assessment
+            RPC. Label reads "Traits" instead of "CTS" per Peter 2026-07-16. */}
         {timing != null && timing?.overall_flag !== "no_data" && (
-          <div style={{ marginTop: 10, padding: 10, background: T.slate50, borderRadius: 7 }}>
+          <div style={{ marginTop: 14, padding: 10, background: T.slate50, borderRadius: 7 }}>
             <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, marginBottom: 4 }}>Timing flag</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{
@@ -582,12 +762,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 fontWeight: 700,
                 fontSize: 12,
                 background: timing.overall_flag === "red" ? "#fee2e2" : timing.overall_flag === "yellow" ? "#fef3c7" : "#d1fae5",
-                color: timing.overall_flag === "red" ? "#991b1b" : timing.overall_flag === "yellow" ? "#92400e" : "#065f46",
+                color:      timing.overall_flag === "red" ? "#991b1b" : timing.overall_flag === "yellow" ? "#92400e" : "#065f46",
               }}>
                 {timing.overall_flag === "red" ? "🔴" : timing.overall_flag === "yellow" ? "🟡" : "🟢"} {String(timing.overall_flag).toUpperCase()}
               </span>
               <span style={{ color: T.slate500, fontSize: 12 }}>
-                total {timing.total_min}m · CTS {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
+                total {timing.total_min}m · Traits {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
               </span>
             </div>
             {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
@@ -597,85 +777,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             )}
           </div>
         )}
-      </Section>
-
-      {/* Role Fit & Competencies — best-fit role, per-role OS scores, and
-          competency detail for the best-fit role. Replaces the old raw-JSON
-          "Best-fit role" line. Falls back gracefully when CTS unassessed. */}
-      <Section title="Role Fit & Competencies">
-        {(() => {
-          const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
-          if (!bf) {
-            return (
-              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
-                Best-fit role computes from CTS traits — awaiting assessment.
-              </div>
-            );
-          }
-          const ROLE_LABELS = {
-            sales: "Sales",
-            service: "Service",
-            service_sales: "Service Sales",
-            aspirant: "Aspirant",
-          };
-          const roleTiles = [
-            { key: "sales", os: bf.sales_os },
-            { key: "service", os: bf.service_os },
-            { key: "service_sales", os: bf.service_sales_os },
-            { key: "aspirant", os: bf.aspirant_os },
-          ];
-          const bestKey = bf.best_role;
-          const bestComp = competencies?.[bestKey] || null;
-          const formatCompLabel = (k) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-          return (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 14 }}>
-                {roleTiles.map((r) => {
-                  const isBest = r.key === bestKey;
-                  return (
-                    <div key={r.key} style={{
-                      padding: 10, borderRadius: 7,
-                      background: isBest ? T.greenLt : T.slate50,
-                      border: isBest ? `2px solid ${T.green}` : `1px solid ${T.slate200}`,
-                    }}>
-                      <div style={{ fontSize: 9, textTransform: "uppercase", color: T.slate500, fontWeight: 600, letterSpacing: 0.3 }}>
-                        {ROLE_LABELS[r.key] || r.key}
-                        {isBest && <span style={{ marginLeft: 6, color: T.green, fontWeight: 700 }}>★ BEST FIT</span>}
-                      </div>
-                      <div style={{ fontSize: 22, fontWeight: 700, color: isBest ? T.green : T.slate900, marginTop: 2 }}>
-                        {r.os ?? "—"}
-                        <span style={{ fontSize: 11, fontWeight: 400, color: T.slate500, marginLeft: 4 }}>OS</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {bestComp ? (
-                <>
-                  <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8 }}>
-                    <strong>Competencies for {ROLE_LABELS[bestKey] || bestKey}:</strong>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 6 }}>
-                    {Object.entries(bestComp).map(([k, v]) => {
-                      const band = v == null ? "none" : v >= 70 ? "green" : v >= 50 ? "yellow" : "red";
-                      const colors = bandColor(band);
-                      return (
-                        <div key={k} style={{ padding: 8, background: colors.bg, borderRadius: 6, borderLeft: `3px solid ${colors.fg}` }}>
-                          <div style={{ fontSize: 10, color: T.slate600, fontWeight: 600 }}>{formatCompLabel(k)}</div>
-                          <div style={{ fontSize: 16, fontWeight: 700, color: colors.fg }}>{v ?? "—"}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              ) : (
-                <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
-                  Competencies computed at runtime from CTS traits.
-                </div>
-              )}
-            </>
-          );
-        })()}
       </Section>
 
       {/* Analysis */}
@@ -692,7 +793,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </div>
         )}
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>CTS triggers detected:</div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Trait triggers detected:</div>
           {triggers.length === 0 ? (
             <div style={{ fontSize: 12, color: T.green }}>None — all traits in ideal range ✓</div>
           ) : (
@@ -716,7 +817,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         {!composite ? (
           <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
             {frameworkRules?.length === 0
-              ? "No trait data yet — framework read waits for CTS scores."
+              ? "No trait data yet — framework read waits for assessment scores."
               : "Loading framework read..."}
           </div>
         ) : (
