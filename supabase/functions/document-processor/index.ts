@@ -1044,7 +1044,7 @@ async function processOneAttachment(
         // CareerPlug resume PDF that arrived through the standard attachment
         // path (parent notification email is handled by processCareerplugMode).
         // Persist the document row as processed and archive the thread. Linking
-        // the resume to a team_assessments row happens in the mode path when
+        // the resume to a hiring_candidates row happens in the mode path when
         // the parent notification is parsed.
         await markDocument(documentId, "processed", 0, ["documents"],
           "CareerPlug resume stored via attachment pipeline; linkage handled by mode=careerplug");
