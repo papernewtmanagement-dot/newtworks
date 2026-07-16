@@ -490,7 +490,9 @@ function SubmitView({ me, onSubmitted }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <MyStandingPrefsPanel me={me} onSubmitted={onSubmitted} />
+      {(me?.role_level === "Account Manager" || me?.role_level === "Unit Manager") && (
+        <MyStandingPrefsPanel me={me} onSubmitted={onSubmitted} />
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
       <div>
         <h3 style={{ marginTop: 0 }}>New Request</h3>
