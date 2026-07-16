@@ -604,10 +604,43 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
       {/* Assessment — top box merging LSS breakdown, validity, drive/empathy,
           traits (left column) with all competencies + role fit + best fit
-          (right column). Timing flag now sits at the TOP of the left column
-          as a fully colored row (per Peter 2026-07-16). CTS label dropped
-          from all headings. */}
+          (right column). Timing flag sits at the TOP of the left column
+          as a fully colored row. Profile-validity banner (when non-valid)
+          spans both columns above the grid — the standalone Analysis
+          section was retired 2026-07-16 as fully redundant with Assessment. */}
       <Section title="Assessment">
+        {/* Profile validity banner — only renders when validity_status is
+            questionable or unknown. Sits above both columns because it
+            applies to the whole read. Uses the warning text from
+            cts_profile_validity RPC when present. */}
+        {(() => {
+          const v0 = Array.isArray(validity) && validity.length > 0 ? validity[0] : null;
+          if (!v0 || v0.validity_status === "valid") return null;
+          const status = v0.validity_status;
+          const isUnknown = status === "unknown";
+          const bg = isUnknown ? T.slate100 : T.redLt;
+          const fg = isUnknown ? T.slate500 : T.red;
+          const msg = v0.warning
+            || (isUnknown ? "Assessment scores not yet available — validity cannot be evaluated."
+                          : "Profile flagged as questionable. Weigh Reliability + Distortion below before trusting scores.");
+          return (
+            <div style={{
+              marginBottom: 14,
+              padding: "8px 10px",
+              background: bg,
+              borderRadius: 6,
+              borderLeft: `3px solid ${fg}`,
+              boxSizing: "border-box",
+              fontSize: 12,
+              color: T.slate700,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: fg, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 }}>
+                Profile validity — {status}
+              </div>
+              {msg}
+            </div>
+          );
+        })()}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
 
           {/* LEFT COLUMN */}
@@ -716,6 +749,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
           {/* RIGHT COLUMN */}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
+              Competencies
+            </div>
             {(() => {
               // Union of all four role competencies. Shared names have the
               // same underlying value (formulas produce identical results),
@@ -808,64 +844,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         </div>
 
         {/* Timing flag moved to top of left column above (Peter 2026-07-16). */}
-      </Section>
-
-      {/* Analysis */}
-      <Section title="Analysis" tone={T.slate50}>
-        {/* Profile validity — only surface when non-valid. Reliability +
-            Distortion cells above already carry the underlying reads via
-            band coloring; showing the raw jsonb here added noise, so we
-            only render an actionable banner when the validity function
-            flags questionable/unknown. Warning text comes from the RPC. */}
-        {(() => {
-          const v0 = Array.isArray(validity) && validity.length > 0 ? validity[0] : null;
-          if (!v0) return null;
-          const status = v0.validity_status;
-          if (status === "valid") return null;
-          const isUnknown = status === "unknown";
-          const bg = isUnknown ? T.slate100 : T.redLt;
-          const fg = isUnknown ? T.slate500 : T.red;
-          const msg = v0.warning
-            || (isUnknown ? "Assessment scores not yet available — validity cannot be evaluated."
-                          : "Profile flagged as questionable. Review Reliability + Distortion above before weighing scores.");
-          return (
-            <div style={{
-              marginBottom: 10,
-              padding: "8px 10px",
-              background: bg,
-              borderRadius: 6,
-              borderLeft: `3px solid ${fg}`,
-              boxSizing: "border-box",
-              fontSize: 12,
-              color: T.slate700,
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: fg, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 }}>
-                Profile validity — {status}
-              </div>
-              {msg}
-            </div>
-          );
-        })()}
-        {detail?.claude_summary && (
-          <div style={{ padding: 10, background: T.white, borderRadius: 7, fontSize: 12, marginBottom: 10, color: T.slate700 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: T.slate500, textTransform: "uppercase", marginBottom: 4 }}>Claude Summary</div>
-            {detail.claude_summary}
-          </div>
-        )}
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Trait triggers detected:</div>
-          {triggers.length === 0 ? (
-            <div style={{ fontSize: 12, color: T.green }}>None — all traits in ideal range ✓</div>
-          ) : (
-            <ul style={{ margin: "4px 0 0 0", paddingLeft: 18, fontSize: 12 }}>
-              {triggers.map((t, i) => (
-                <li key={i} style={{ color: t.severity === "red" ? T.red : T.amber, marginBottom: 2 }}>
-                  <strong>{t.label}:</strong> {t.value} <em>({t.severity === "red" ? "trigger" : "watch"})</em>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       </Section>
 
       {/* HireGauge Framework Read — auto-computed verdict + every matched
