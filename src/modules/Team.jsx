@@ -29,7 +29,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 //   • New hires must be notified to SF within required timeframe
 //   • Agent is liable for all staff activities (AA05 Section I.P)
 //
-// DATA: Reads team_assessments (people table), staff, team_performance,
+// DATA: Reads hiring_assessments (people table), staff, team_performance,
 //       commission_structures tables
 // ============================================================
 
@@ -773,7 +773,7 @@ const StaffDirectory = ({ staff }) => {
       if (activeIds.length === 0) return;
       try {
         const [asRes, prRes, bnRes, trRes] = await Promise.all([
-          supabase.from("team_assessments").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("assessment_date", { ascending: false }),
+          supabase.from("hiring_assessments").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("assessment_date", { ascending: false }),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, premium_issued, policies_issued").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
           supabase.from("team_behavioral_notes").select("id, team_member_id, observation_date, observation_text, pattern_type, is_resolved").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).neq("pattern_type", "termination").order("observation_date", { ascending: false }).limit(120),
           supabase.from("team_trajectory_summaries").select("team_member_id, summary, notes_analyzed_count, notes_range_start, notes_range_end, model_used, updated_at").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
@@ -2606,7 +2606,7 @@ export default function Team() {
     if (!supabase || !AGENCY_ID) return;
     let cancelled = false;
     supabase
-      .from("team_assessments")
+      .from("hiring_assessments")
       .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_score, claude_summary, interview_focus, notes, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
       .eq("agency_id", AGENCY_ID)
       .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
@@ -2632,7 +2632,7 @@ export default function Team() {
     setApplicants(prev => prev.map(a => a.id === id ? {...a, status:newStatus} : a));
     // Persist to DB
     const { error } = await supabase
-      .from("team_assessments")
+      .from("hiring_assessments")
       .update({ status: newStatus, status_updated_at: new Date().toISOString() })
       .eq("id", id)
       .select();
