@@ -943,8 +943,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           layer-specific detail. Resume expansion shows extracted resume
           text; Assessment expansion holds the full LSS + traits + role-fit
           + competencies view (formerly a standalone top box); Interview /
-          Reference expansions reserved for follow-up work. Observation
-          strip stays at the bottom of the section (post-hire calibration). */}
+          Reference expansions reserved for follow-up work. */}
       <Section title="Results">
         {!threeConstruct ? (
           <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
@@ -1091,61 +1090,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               );
             })()}
 
-            {/* Observation strip — post-hire, weightless.
-                Retrospective override + calibration status + character floor + dimensions scored. */}
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>
-              Observation <span style={{ opacity: 0.7, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontStyle: "italic" }}>· post-hire, unweighted</span>
-            </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 }}>
-              {threeConstruct.character_floor_status && (
-                <div style={{
-                  padding: "4px 10px", borderRadius: 5,
-                  background: threeConstruct.character_floor_status === "floor_failed" ? T.redLt
-                             : threeConstruct.character_floor_status === "floor_passed" ? T.greenLt
-                             : T.slate100,
-                  color: threeConstruct.character_floor_status === "floor_failed" ? T.red
-                        : threeConstruct.character_floor_status === "floor_passed" ? T.green
-                        : T.slate600,
-                  fontWeight: 600
-                }}>
-                  char floor: {threeConstruct.character_floor_status.replace(/_/g, " ")}
-                  {Array.isArray(threeConstruct.character_floor_failed) && threeConstruct.character_floor_failed.length > 0 && ` (${threeConstruct.character_floor_failed.join(", ")})`}
-                </div>
-              )}
-              {threeConstruct.retrospective_verdict && threeConstruct.retrospective_verdict !== "not_scored" && (
-                <div style={{
-                  padding: "4px 10px", borderRadius: 5,
-                  background: threeConstruct.retrospective_verdict === "pass" ? T.greenLt
-                             : threeConstruct.retrospective_verdict === "flag" ? T.amberLt
-                             : threeConstruct.retrospective_verdict === "fail_confirmed" ? T.redLt
-                             : T.slate100,
-                  color: threeConstruct.retrospective_verdict === "pass" ? T.green
-                        : threeConstruct.retrospective_verdict === "flag" ? T.amber
-                        : threeConstruct.retrospective_verdict === "fail_confirmed" ? T.red
-                        : T.slate600,
-                  fontWeight: 600
-                }}>
-                  retrospective: {threeConstruct.retrospective_verdict.replace(/_/g, " ")}
-                </div>
-              )}
-              {threeConstruct.calibration_status && threeConstruct.calibration_status !== "no_retrospective" && (
-                <div style={{
-                  padding: "4px 10px", borderRadius: 5,
-                  background: threeConstruct.calibration_status.includes("agrees") ? T.greenLt
-                             : threeConstruct.calibration_status.includes("missed") ? T.amberLt
-                             : T.slate100,
-                  color: threeConstruct.calibration_status.includes("agrees") ? T.green
-                        : threeConstruct.calibration_status.includes("missed") ? T.amber
-                        : T.slate600,
-                  fontWeight: 600
-                }}>
-                  calibration: {threeConstruct.calibration_status.replace(/_/g, " ")}
-                </div>
-              )}
-              <div style={{ padding: "4px 10px", borderRadius: 5, background: T.slate100, color: T.slate600, fontWeight: 600 }}>
-                {threeConstruct.dimensions_scored ?? 0}/12 dimensions scored
-              </div>
-            </div>
           </>
         )}
       </Section>
