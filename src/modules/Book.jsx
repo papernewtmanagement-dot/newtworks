@@ -842,7 +842,8 @@ const BookAssignmentsSection = () => {
   const [teamList, setTeamList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedDate, setSelectedDate] = useState(null);
+  // URL-persisted so refresh keeps the same snapshot date open.
+  const [selectedDate, setSelectedDate] = useTabParam("date", null);
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({});
