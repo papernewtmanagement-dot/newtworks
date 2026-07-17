@@ -3035,6 +3035,333 @@ export async function processPfaStatement(opts: {
   };
 }
 
+// ==================== parsers/pdf_columnar.ts ====================
+// =========================================================================
+// parsers/pdf_columnar.ts
+// =========================================================================
+// Column-aware PDF text extraction using pdfjs-dist positions (via unpdf's
+// getDocumentProxy). Handles the two-column resume problem: pdfjs's default
+// content-stream order interleaves left/right column text line-by-line, so
+// a resume with a narrow left sidebar (contact/skills) and a wide right
+// column (experience) comes out as jumbled text (see Cassandra Alves,
+// Stephanie Rogers, Randy Castle in the 2026-07-17 audit).
+//
+// Approach per page:
+//   1. Pull every TextItem with its (x, y, width, height) from pdfjs.
+//   2. Detect a vertical whitespace band in the middle of the page — count
+//      items crossing each of 200 x-slices; find the widest contiguous
+//      empty stretch in the middle 60% of the page. If it's > ~3% of page
+//      width, treat as a column boundary.
+//   3. Bucket items into columns by their horizontal midpoint.
+//   4. Within each column, group items into lines by y (bottom-origin, so
+//      higher y = higher on the page), then join left-to-right.
+//   5. Concatenate columns left-to-right with a blank line between.
+//
+// Falls back to single-column extraction (equivalent to unpdf.extractText)
+// when no significant middle gap is detected on a page. Single-column pages
+// come out identical to the plain unpdf path.
+//
+// Called by:  parsers/careerplug_applicant.ts (resume PDF extraction).
+//             Not used for bank/comp/deduction/payroll — those are
+//             single-column by construction and go through the existing
+//             extractText() path in index.ts.
+// =========================================================================
+
+
+interface PdfTextItem {
+  str: string;
+  x: number;       // left edge (user space, bottom-origin)
+  y: number;       // baseline y (bottom-origin)
+  width: number;
+  height: number;
+}
+
+export async function extractPdfTextColumnAware(bytes: Uint8Array): Promise<string> {
+  const pdf = await getDocumentProxy(bytes);
+  const numPages: number = (pdf as any).numPages;
+  const pageTexts: string[] = [];
+
+  for (let p = 1; p <= numPages; p++) {
+    const page = await (pdf as any).getPage(p);
+    const viewport = page.getViewport({ scale: 1 });
+    const pageWidth: number = viewport.width;
+    const content = await page.getTextContent();
+
+    const items: PdfTextItem[] = [];
+    for (const raw of content.items as any[]) {
+      if (!raw || typeof raw.str !== "string") continue;
+      if (raw.str === "") continue;
+      const transform = raw.transform;
+      if (!Array.isArray(transform) || transform.length < 6) continue;
+      items.push({
+        str: raw.str,
+        x: Number(transform[4]) || 0,
+        y: Number(transform[5]) || 0,
+        width: Number(raw.width) || 0,
+        height: Number(raw.height) || 0,
+      });
+    }
+
+    if (items.length === 0) {
+      pageTexts.push("");
+      continue;
+    }
+
+    const boundaries = detectColumnBoundaries(items, pageWidth);
+
+    if (boundaries.length === 0) {
+      pageTexts.push(itemsToText(items));
+    } else {
+      const cuts = [0, ...boundaries, pageWidth + 1e6];
+      const columnItems: PdfTextItem[][] = cuts.slice(0, -1).map(() => []);
+      for (const item of items) {
+        const mx = item.x + item.width / 2;
+        for (let c = 0; c < cuts.length - 1; c++) {
+          if (mx >= cuts[c] && mx < cuts[c + 1]) {
+            columnItems[c].push(item);
+            break;
+          }
+        }
+      }
+      const columnTexts = columnItems
+        .filter((col) => col.length > 0)
+        .map((col) => itemsToText(col));
+      pageTexts.push(columnTexts.join("\n\n"));
+    }
+  }
+
+  return pageTexts.join("\n\n").trim();
+}
+
+/**
+ * Fallback single-column extraction using unpdf's built-in extractText.
+ * Exported so callers can degrade gracefully if column-aware throws.
+ */
+export async function extractPdfTextPlain(bytes: Uint8Array): Promise<string> {
+  const pdf = await getDocumentProxy(bytes);
+  const { text } = await unpdfExtractText(pdf, { mergePages: true });
+  return Array.isArray(text) ? text.join("\n") : String(text ?? "");
+}
+
+// -----------------------------------------------------------------------------
+
+function detectColumnBoundaries(items: PdfTextItem[], pageWidth: number): number[] {
+  if (items.length < 20 || pageWidth <= 0) return [];
+
+  const NUM_BANDS = 200;
+  const bandWidth = pageWidth / NUM_BANDS;
+  const bandCounts = new Array(NUM_BANDS).fill(0);
+  for (const item of items) {
+    const bStart = Math.max(0, Math.floor(item.x / bandWidth));
+    const bEnd = Math.min(NUM_BANDS - 1, Math.floor((item.x + Math.max(0, item.width)) / bandWidth));
+    for (let b = bStart; b <= bEnd; b++) bandCounts[b]++;
+  }
+
+  // Only consider gaps whose CENTER lands in the middle 60% of the page
+  // (between 20% and 80%). Anything closer to the edges is a page margin,
+  // not a column boundary.
+  const minCenterBand = Math.floor(NUM_BANDS * 0.2);
+  const maxCenterBand = Math.floor(NUM_BANDS * 0.8);
+
+  let bestStart = -1;
+  let bestWidth = 0;
+  let curStart = -1;
+  for (let b = 0; b < NUM_BANDS; b++) {
+    if (bandCounts[b] === 0) {
+      if (curStart < 0) curStart = b;
+    } else {
+      if (curStart >= 0) {
+        const w = b - curStart;
+        const centerBand = curStart + Math.floor(w / 2);
+        if (w > bestWidth && centerBand >= minCenterBand && centerBand <= maxCenterBand) {
+          bestWidth = w;
+          bestStart = curStart;
+        }
+        curStart = -1;
+      }
+    }
+  }
+  if (curStart >= 0) {
+    const w = NUM_BANDS - curStart;
+    const centerBand = curStart + Math.floor(w / 2);
+    if (w > bestWidth && centerBand >= minCenterBand && centerBand <= maxCenterBand) {
+      bestWidth = w;
+      bestStart = curStart;
+    }
+  }
+
+  // Require the gap to be wider than 3% of page width. On US letter (612pt)
+  // that's ~18pt — about the width of a comfortable column gutter.
+  const MIN_GAP_BANDS = Math.max(3, Math.floor(NUM_BANDS * 0.03));
+  if (bestWidth < MIN_GAP_BANDS || bestStart < 0) return [];
+
+  const boundaryX = (bestStart + bestWidth / 2) * bandWidth;
+  return [boundaryX];
+}
+
+/**
+ * Group items into lines by y (with a small tolerance for baseline drift),
+ * sort lines top-to-bottom, then within each line sort left-to-right and
+ * insert spaces where the horizontal gap between items exceeds ~30% of the
+ * previous glyph width.
+ */
+function itemsToText(items: PdfTextItem[]): string {
+  const LINE_TOL = 3; // points
+
+  // Sort by y descending (top-of-page first, since pdfjs uses bottom-origin),
+  // then x ascending as a stable secondary key.
+  const sorted = [...items].sort((a, b) => {
+    if (Math.abs(b.y - a.y) > LINE_TOL) return b.y - a.y;
+    return a.x - b.x;
+  });
+
+  const lines: PdfTextItem[][] = [];
+  let curLine: PdfTextItem[] = [];
+  let curLineY: number | null = null;
+
+  for (const item of sorted) {
+    if (curLineY === null || Math.abs(item.y - curLineY) <= LINE_TOL) {
+      curLine.push(item);
+      // Use the first-seen y as the line's anchor — keeps tolerance stable.
+      if (curLineY === null) curLineY = item.y;
+    } else {
+      lines.push(curLine);
+      curLine = [item];
+      curLineY = item.y;
+    }
+  }
+  if (curLine.length > 0) lines.push(curLine);
+
+  const out: string[] = [];
+  for (const line of lines) {
+    const s = lineToString(line);
+    if (s.trim().length > 0) out.push(s);
+  }
+  return out.join("\n");
+}
+
+function lineToString(items: PdfTextItem[]): string {
+  if (items.length === 0) return "";
+  items.sort((a, b) => a.x - b.x);
+  let out = items[0].str;
+  for (let i = 1; i < items.length; i++) {
+    const prev = items[i - 1];
+    const cur = items[i];
+    const prevRight = prev.x + prev.width;
+    const gap = cur.x - prevRight;
+    const avgCharW = prev.width / Math.max(prev.str.length, 1);
+    const prevEndsSpace = /\s$/.test(prev.str);
+    const curStartsSpace = /^\s/.test(cur.str);
+    if (gap > avgCharW * 0.3 && !prevEndsSpace && !curStartsSpace) out += " ";
+    out += cur.str;
+  }
+  return out;
+}
+
+// ==================== parsers/resume_reformat.ts ====================
+// =========================================================================
+// parsers/resume_reformat.ts
+// =========================================================================
+// Adds visual section separators to raw resume text for readability in the
+// Newtworks HRPeople UI (whitespace: pre-wrap). Mirrors the DB function
+// public._resume_reformat_add_separators() exactly — keep in sync.
+//
+// Two things happen:
+//   1. Extraction artifacts fixed: literal '\n' string (backslash-n) → real
+//      newline, and (cid:127) → '•' (Type1 font glyph mapping failure that
+//      unpdf leaves in when the font's bullet char isn't unicode-mapped).
+//   2. Divider inserted before every recognized section header ("Objective",
+//      "Skills", "Experience", "Education", etc — 50+ variants).
+//
+// Idempotent: input that already contains the divider is returned unchanged,
+// so re-running the doc-processor on a re-extracted resume won't stack
+// dividers.
+// =========================================================================
+
+const KNOWN_HEADERS: ReadonlySet<string> = new Set([
+  // summary / objective
+  "objective", "career objective",
+  "summary", "professional summary", "profile", "profile summary", "about me",
+  // experience
+  "experience", "work experience", "professional experience",
+  "employment history", "relevant experience", "work history",
+  // skills
+  "skills", "skills & abilities", "skills & competencies", "skills and competencies",
+  "skills and abilities", "technical skills", "technical proficiencies",
+  "core competencies", "expertise", "key skills",
+  "key skills and characteristics", "areas of strength", "courses & skills",
+  // education
+  "education", "educational background", "education/professional development",
+  "education & credentials",
+  // certifications / licenses
+  "certifications", "licenses", "certifications & licenses",
+  "certifications and licenses", "licenses & certifications",
+  // other
+  "languages", "language",
+  "references", "awards", "honors", "awards & recognition",
+  "projects", "volunteer experience", "activities",
+  "assessments", "contact", "contacts", "contact information",
+  "interests", "hobbies", "publications", "affiliations",
+  "key achievements", "achievements", "additional information",
+  "professional development",
+]);
+
+const DIVIDER = "────────────────────────────────────────";
+
+function isSectionHeader(line: string): boolean {
+  const s = line.trim();
+  if (!s || s.length > 60) return false;
+  const clean = s.replace(/:+$/, "").trim();
+  return KNOWN_HEADERS.has(clean.toLowerCase());
+}
+
+export function reformatResumeSeparators(raw: string): string {
+  if (!raw || raw.trim() === "") return raw;
+  // Idempotency guard — don't re-process text that already has our divider.
+  if (raw.includes(DIVIDER)) return raw;
+
+  let cleaned = raw.replace(/\\n/g, "\n");
+  cleaned = cleaned.replace(/\(cid:127\)/g, "•");
+  cleaned = cleaned.replace(/\(cid:129\)/g, "•");
+  cleaned = cleaned.replace(/\(cid:9679\)/g, "●");
+
+  const lines = cleaned.split("\n");
+  const firstNonEmptyIdx = lines.findIndex((l) => l.trim() !== "");
+
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (i === firstNonEmptyIdx) {
+      out.push(line);
+      continue;
+    }
+    if (isSectionHeader(line)) {
+      while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+      out.push("");
+      out.push(DIVIDER);
+      out.push("");
+      out.push(line.replace(/:+$/, "").trim());
+    } else {
+      out.push(line);
+    }
+  }
+
+  // Collapse runs of 3+ blank lines to 2
+  const collapsed: string[] = [];
+  let blankRun = 0;
+  for (const l of out) {
+    if (l.trim() === "") {
+      blankRun++;
+      if (blankRun <= 2) collapsed.push(l);
+    } else {
+      blankRun = 0;
+      collapsed.push(l);
+    }
+  }
+
+  return collapsed.join("\n").replace(/^\n+|\n+$/g, "") + "\n";
+}
+
 // ==================== parsers/careerplug_applicant.ts ====================
 // =========================================================================
 // parsers/careerplug_applicant.ts
@@ -3072,6 +3399,7 @@ export async function processPfaStatement(opts: {
 // =========================================================================
 
 // deno-lint-ignore-file no-explicit-any
+
 
 interface CareerplugBody {
   agency_id?: string;
@@ -3244,14 +3572,18 @@ async function processCareerplugMessage(
     // Attach a resume PDF if available. When there are exactly N applicants
     // and N PDFs in the message, associate by index; otherwise attach the
     // first PDF only to the first applicant and let others be resume-less.
+    // storeResume() ALSO extracts the resume text (column-aware + reformatted)
+    // for downstream write into hiring_candidates.resume_extracted_text after
+    // the upsert RPC returns the candidate id.
     let resumeDocumentId: string | null = null;
+    let stored: StoreResumeResult | null = null;
     if (pdfAttachments.length > 0) {
       const pdf = pdfAttachments.length === applicants.length
         ? pdfAttachments[idx]
         : (idx === 0 ? pdfAttachments[0] : null);
       if (pdf) {
-        const stored = await storeResume(ctx, messageId, subject, receivedAtISO, pdf, a);
-        if (stored.ok) resumeDocumentId = stored.documentId;
+        stored = await storeResume(ctx, messageId, subject, receivedAtISO, pdf, a);
+        if (stored.ok) resumeDocumentId = stored.documentId ?? null;
       }
     }
 
@@ -3296,6 +3628,24 @@ async function processCareerplugMessage(
       assessment_id: res.assessment_id,
     });
     if (res.action === "inserted" || res.action === "updated_by_email") upserted++;
+
+    // Write extracted resume text back to hiring_candidates.resume_extracted_text.
+    // ONLY when the column is currently NULL or empty — never clobbers a
+    // hand-corrected text on a re-run of the same message.
+    if (stored?.ok && stored.resumeText && res.assessment_id) {
+      try {
+        const { error: upErr } = await sb
+          .from("hiring_candidates")
+          .update({ resume_extracted_text: stored.resumeText })
+          .eq("id", res.assessment_id)
+          .or("resume_extracted_text.is.null,resume_extracted_text.eq.");
+        if (upErr) {
+          console.warn(`resume_extracted_text update for ${res.assessment_id} failed: ${upErr.message}`);
+        }
+      } catch (e) {
+        console.warn(`resume_extracted_text update threw for ${res.assessment_id}:`, e);
+      }
+    }
   }
 
   // 5. Star + 6. Archive
@@ -3469,6 +3819,9 @@ async function starMessage(ctx: CareerplugCtx, messageId: string): Promise<void>
 interface StoreResumeResult {
   ok: boolean;
   documentId?: string;
+  /** Column-aware extracted + reformatted resume text. Present only when
+   *  PDF text extraction succeeded and produced non-empty output. */
+  resumeText?: string;
   error?: string;
 }
 
@@ -3507,6 +3860,34 @@ async function storeResume(
   const nameSlug = [a.first_name, a.last_name].filter(Boolean).join(" ") || "unknown";
   const dateSlug = receivedAtISO.slice(0, 10).replace(/-/g, "");
   const targetName = `Resume - ${nameSlug} - ${dateSlug}.pdf`;
+
+  // 2b. Extract resume text (column-aware, reformatted). Best-effort — a
+  // failure here does not block the Drive upload or the documents insert;
+  // the row can still land with resume_url pointing at the Drive file and
+  // resume_extracted_text NULL, and Peter can re-run extraction later.
+  let resumeText: string | null = null;
+  try {
+    const r = await fetch(s3url);
+    if (r.ok) {
+      const buf = new Uint8Array(await r.arrayBuffer());
+      let raw = "";
+      try {
+        raw = await extractPdfTextColumnAware(buf);
+      } catch (colErr) {
+        console.warn(`resume column-aware extract failed; falling back to plain unpdf: ${colErr instanceof Error ? colErr.message : String(colErr)}`);
+        try { raw = await extractPdfTextPlain(buf); } catch (plainErr) {
+          console.warn(`resume plain unpdf also failed: ${plainErr instanceof Error ? plainErr.message : String(plainErr)}`);
+        }
+      }
+      if (raw && raw.trim().length > 0) {
+        resumeText = reformatResumeSeparators(raw);
+      }
+    } else {
+      console.warn(`resume s3url fetch for text extraction returned HTTP ${r.status}`);
+    }
+  } catch (e) {
+    console.warn("resume text extraction threw (non-fatal):", e);
+  }
 
   // 3. Upload to Drive using the current GOOGLEDRIVE_UPLOAD_FILE schema:
   //    file_to_upload: { name, mimetype, s3key }. Composio's backend copies
@@ -3562,7 +3943,11 @@ async function storeResume(
   if (docErr || !docRow) {
     return { ok: false, error: `documents insert: ${docErr?.message ?? "unknown"}` };
   }
-  return { ok: true, documentId: docRow.id as string };
+  return {
+    ok: true,
+    documentId: docRow.id as string,
+    resumeText: resumeText ?? undefined,
+  };
 }
 
 // ---------- Mode entry point ----------
@@ -3669,7 +4054,7 @@ export async function processCareerplugMode(
 //        c. Identify + download each PDF attachment (resume, CTS profile, notes)
 //        d. Extract CTS scores from CTS PDF via unpdf + Groq
 //        e. Upload PDFs to Drive Applicants folder
-//        f. Upsert row into team_assessments
+//        f. Upsert row into hiring_candidates
 //        g. Star + Applicants-label the Gmail message
 //   3. Return summary
 // =========================================================================
@@ -4031,7 +4416,7 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   }
   const resumeUrl = uploads.find((u) => u.role === "resume")?.url ?? null;
 
-  // Assemble the team_assessments row
+  // Assemble the hiring_candidates row
   const finalFirstName = scores.first_name || first_name;
   const finalLastName  = scores.last_name  || last_name;
 
@@ -4039,12 +4424,12 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   //   Match by (email if present) OR by (first+last name)
   let existingId: string | null = null;
   if (scores.email) {
-    const { data } = await sb.from("team_assessments")
+    const { data } = await sb.from("hiring_candidates")
       .select("id").eq("agency_id", ctx.agencyId).eq("email", scores.email).maybeSingle();
     existingId = data?.id ?? null;
   }
   if (!existingId && finalFirstName && finalLastName) {
-    const { data } = await sb.from("team_assessments")
+    const { data } = await sb.from("hiring_candidates")
       .select("id").eq("agency_id", ctx.agencyId)
       .eq("first_name", finalFirstName).eq("last_name", finalLastName).maybeSingle();
     existingId = data?.id ?? null;
@@ -4084,19 +4469,19 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   let assessmentId: string | null;
   if (existingId) {
     // Only overwrite CTS + resume_url; preserve any human-added claude_summary/notes/etc
-    const { data, error } = await sb.from("team_assessments")
+    const { data, error } = await sb.from("hiring_candidates")
       .update(rowPayload).eq("id", existingId).select("id").single();
     if (error) return { message_id: messageId, status: "error", error: `update assessment: ${error.message}` };
     assessmentId = data?.id ?? existingId;
     // Append rather than overwrite notes
-    await sb.from("team_assessments").update({
-      notes: (await sb.from("team_assessments").select("notes").eq("id", assessmentId).maybeSingle()).data?.notes
+    await sb.from("hiring_candidates").update({
+      notes: (await sb.from("hiring_candidates").select("notes").eq("id", assessmentId).maybeSingle()).data?.notes
         ? undefined  // preserve existing notes if any; TODO: append instead
         : noteBlock,
     }).eq("id", assessmentId);
   } else {
     rowPayload.notes = noteBlock;
-    const { data, error } = await sb.from("team_assessments")
+    const { data, error } = await sb.from("hiring_candidates")
       .insert(rowPayload).select("id").single();
     if (error) return { message_id: messageId, status: "error", error: `insert assessment: ${error.message}` };
     assessmentId = data?.id ?? null;
@@ -5190,7 +5575,7 @@ async function processOneAttachment(
         // CareerPlug resume PDF that arrived through the standard attachment
         // path (parent notification email is handled by processCareerplugMode).
         // Persist the document row as processed and archive the thread. Linking
-        // the resume to a team_assessments row happens in the mode path when
+        // the resume to a hiring_candidates row happens in the mode path when
         // the parent notification is parsed.
         await markDocument(documentId, "processed", 0, ["documents"],
           "CareerPlug resume stored via attachment pipeline; linkage handled by mode=careerplug");
