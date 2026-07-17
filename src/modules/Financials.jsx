@@ -53,19 +53,15 @@ function useFinancialsData() {
           growthBudgetRes, growthCeilingRes,
           bookLatestRes, bookYearStartRes, s11Res,
         ] = await Promise.all([
-          // Income statement view (current year). ~250 rows under normal load, well below default cap.
-          supabase.from("v_income_statement")
-            .select("account_name, account_type, amount, month, year")
-            .eq("year", currentYear).order("month")
-            .limit(50000),
-
-          // Income statement view (prior 4 years) — powers annual grain + paired YoY deltas.
-          // Historical prior_year_pl rows are one per (year, month, section, account_name). Four full years easily blows past the PostgREST default 1000-row cap (was silently truncating 2024/2025 into empty columns). Explicit high limit + stable ordering fixes it.
-          supabase.from("v_income_statement")
-            .select("account_name, account_type, amount, month, year")
-            .gte("year", currentYear - 4).lt("year", currentYear)
-            .order("year").order("month")
-            .limit(50000),
+          // P&L history — ALL years via RPC returning a single JSON blob (one row).
+          // Direct v_income_statement queries hit the project PostgREST db_max_rows cap
+          // (~1000) even with explicit .limit(50000), so 2024/2025 were silently getting
+          // dropped from the annual grain. json_agg wraps the whole result set into a
+          // single row so the row cap can't touch it. Split into isData / priorIsData
+          // in JS below. Aggregated at (year, month, account_name, account_type) —
+          // downstream buildLines math stays unchanged.
+          supabase.rpc("get_pnl_history"),
+          Promise.resolve({ data: null }),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
@@ -138,7 +134,9 @@ function useFinancialsData() {
           supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: s11AsOf }),
         ]);
 
-        const isData = isRows.data || [];
+        const pnlRaw = isRows?.data;
+        const pnlRows = Array.isArray(pnlRaw) ? pnlRaw : [];
+        const isData = pnlRows.filter(r => r.year === currentYear);
 
         // Monthly chart
         const monthlyRevenue = MONTHS.map((m, i) => {
@@ -151,8 +149,13 @@ function useFinancialsData() {
         // P&L line items — includes per-month arrays for current year AND each of
         // the last 3 prior years so PLSection can slice at any grain (monthly,
         // quarterly trailing, annual trailing).
-        const priorIsData = priorIsRows.data || [];
-        const historyYears = [currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1];
+        const priorIsData = pnlRows.filter(r => r.year !== currentYear);
+        // historyYears now derived from data (RPC returns all available years back to 2019).
+        // Sorted ascending; used by buildLines to init perMonthByYear buckets so the annual
+        // grain picker can pick any window of prior years without a re-fetch.
+        const historyYears = [...new Set(priorIsData.map(r => r.year))]
+          .filter(y => y < currentYear && y >= currentYear - 10)
+          .sort((a, b) => a - b);
         const buildLines = (type) => {
           const allNames = new Set([
             ...isData.filter(r => r.account_type === type).map(r => r.account_name),
@@ -899,6 +902,9 @@ const PLSection = ({ data }) => {
 
   const [grain, setGrain]     = useState("quarterly"); // monthly | quarterly | annual
   const [showPct, setShowPct] = useState(false);
+  // Annual grain: how many prior years to show as side-by-side columns (plus YTD current).
+  // Data goes back to 2019 in the RPC; picker lets Peter widen/narrow the compare window.
+  const [yearsBack, setYearsBack] = useState(3);
 
   // --- Column value extractors ------------------------------------------------
   // Each extractor takes a line object { perMonth[12], perMonthPrior[12] } and
@@ -989,7 +995,7 @@ const PLSection = ({ data }) => {
   // of prior year.
   const annualCols = () => {
     const cols = [];
-    for (let yr = year - 3; yr <= year - 1; yr++) {
+    for (let yr = year - yearsBack; yr <= year - 1; yr++) {
       cols.push({
         key:      `y${yr}`,
         label:    `${yr}`,
@@ -1151,6 +1157,22 @@ const PLSection = ({ data }) => {
         {grainBtn("monthly",   "Monthly")}
         {grainBtn("quarterly", "Quarterly")}
         {grainBtn("annual",    "Annual")}
+        {grain === "annual" && (
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 12, fontSize: 12, color: T.slate600 }}>
+            Show:
+            <select
+              value={yearsBack}
+              onChange={(e) => setYearsBack(Number(e.target.value))}
+              style={{ padding: "5px 8px", fontSize: 12, background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6, color: T.slate800, cursor: "pointer" }}
+            >
+              <option value={1}>Last 1 year + YTD</option>
+              <option value={3}>Last 3 years + YTD</option>
+              <option value={5}>Last 5 years + YTD</option>
+              <option value={7}>Last 7 years + YTD</option>
+              <option value={10}>Last 10 years + YTD</option>
+            </select>
+          </label>
+        )}
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 12, fontSize: 12, color: T.slate600, cursor: "pointer" }}>
           <input type="checkbox" checked={showPct} onChange={(e) => setShowPct(e.target.checked)} />
           Show % of income
