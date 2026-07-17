@@ -913,7 +913,7 @@ const PLSection = ({ data }) => {
   // --- Column value extractors ------------------------------------------------
   // Each extractor takes a line object { perMonth[12], perMonthPrior[12] } and
   // returns a number for the column. Prior-year fields use perMonthPrior.
-  const sum = (arr, from, to) => arr.slice(from, to + 1).reduce((s,x) => s + (x || 0), 0);
+  const sum = (arr, from, to) => (Array.isArray(arr) ? arr : []).slice(from, to + 1).reduce((s,x) => s + (x || 0), 0);
 
   // Every non-summary column has a getValue and (optionally) a getPriorValue
   // for paired YoY delta. getPriorValue returns null → "—" (no comparison
