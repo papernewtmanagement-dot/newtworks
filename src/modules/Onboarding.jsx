@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
+import { useTabParam } from "../lib/routing.jsx";
 
 // ─── constants ─────────────────────────────────────
 const ADMIN_ROLES = ["owner", "manager"];
@@ -664,17 +665,12 @@ export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
   const { loading, error, plans, steps, team, myTeamMemberId, reload } = useOnboardingData(userId, isAdmin);
 
-  const [selectedPlanId, setSelectedPlanId] = useState(null);
+  // URL-persisted so refresh keeps the same plan open. Replaces the prior
+  // useState + manual ?plan= useEffect pair — useTabParam handles both the
+  // read on mount and the write on every setSelectedPlanId call.
+  const [selectedPlanId, setSelectedPlanId] = useTabParam("plan", null);
   const [showCreate, setShowCreate] = useState(false);
   const [actionError, setActionError] = useState("");
-
-  // Parse ?plan= from URL to allow deep links
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const q = new URLSearchParams(window.location.search);
-    const pid = q.get("plan");
-    if (pid) setSelectedPlanId(pid);
-  }, []);
 
   const teamById = useMemo(() => {
     const m = new Map();
