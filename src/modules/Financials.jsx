@@ -1817,15 +1817,20 @@ const BankSection = ({ data }) => {
           <Card key={i}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700 }}>{a.name}</div>
-              {a.needsReview ? (
+              {a.needsStatement ? (
+                <Pill type="warning">Awaiting stmt</Pill>
+              ) : a.needsReview ? (
                 <Pill type="warning">Review</Pill>
               ) : null}
+            </div>
+            <div style={{ fontSize: 10, color: T.slate500, marginBottom: 6, letterSpacing: "0.02em" }}>
+              {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ") || <span style={{ color: T.amber }}>Add institution / last 4</span>}
             </div>
             <div style={{ fontSize: 24, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
               {fmt(a.balance)}
             </div>
             <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>
-              {a.asOf ? `As of ${a.asOf}` : "Ledger-derived balance"}
+              {a.needsStatement ? "No balance yet — statement pending" : a.asOf ? `As of ${a.asOf}` : "Ledger-derived balance"}
             </div>
           </Card>
         ))}
@@ -1870,8 +1875,11 @@ const CreditSection = ({ data }) => {
         <div style={{ flex: "1 1 220px", minWidth: 180 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 1 }}>
-            {typeLabel(a.type)}{a.rate ? ` · ${a.rate}% APR` : ""}{a.needsReview ? " · " : ""}
-            {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle" }}><Pill type="warning">Review</Pill></span> : null}
+            {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ")}
+            {(a.institution || a.last4) ? " · " : ""}
+            {typeLabel(a.type)}{a.rate ? ` · ${a.rate}% APR` : ""}
+            {a.needsLast4 ? <span style={{ color: T.amber, marginLeft: 6 }}>· Add last 4</span> : null}
+            {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 6 }}><Pill type="warning">Review</Pill></span> : null}
           </div>
         </div>
         <Field label="Balance"   value={fmt(a.balance)} color={T.red} />
