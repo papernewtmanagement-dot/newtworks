@@ -57,6 +57,8 @@ ORDER = [
     "parsers/surepayroll.ts",
     "parsers/sf_daily_call_log.ts",
     "parsers/pfa_statement.ts",
+    "parsers/pdf_columnar.ts",
+    "parsers/resume_reformat.ts",
     "parsers/careerplug_applicant.ts",
     "parsers/sf_forwarded_applicant.ts",
     "index.ts",
