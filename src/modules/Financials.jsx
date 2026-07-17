@@ -1156,7 +1156,27 @@ const PLSection = ({ data }) => {
       if (!groups[sec]) groups[sec] = [];
       groups[sec].push(line);
     }
-    const sectionKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    // Section ordering. Income has an explicit desired order (Peter directive
+    // 2026-07-17): State Farm at top, SF-Comp partners in the middle, External
+    // at the bottom. Expense sections already sort correctly by their numbered
+    // 0001/0002/0003/... prefix, so alphabetical is right for expense.
+    const INCOME_SECTION_RANK = {
+      "State Farm":          1,
+      "Alliances - SF Comp": 2,
+      "IPS - SF Comp":       3,
+      "External":            9,
+    };
+    const rankOf = (sec) => {
+      if (opts && opts.isIncomeLine) {
+        return INCOME_SECTION_RANK[sec] ?? 5;
+      }
+      return 0;
+    };
+    const sectionKeys = Object.keys(groups).sort((a, b) => {
+      const ra = rankOf(a), rb = rankOf(b);
+      if (ra !== rb) return ra - rb;
+      return a.localeCompare(b);
+    });
     const nodes = [];
     sectionKeys.forEach((sec) => {
       const grpLines = groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name));
