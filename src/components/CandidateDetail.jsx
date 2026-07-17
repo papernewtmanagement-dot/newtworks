@@ -424,6 +424,39 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
               </div>
             );
           })()}
+          {detail?.cts_invited_at && detail?.cts_started_at && (() => {
+            const invited = new Date(detail.cts_invited_at);
+            const started = new Date(detail.cts_started_at);
+            const ms = started - invited;
+            if (!Number.isFinite(ms) || ms < 0) return null;
+            const totalMin = Math.floor(ms / 60000);
+            const totalHrs = Math.floor(ms / 3600000);
+            const days = Math.floor(ms / 86400000);
+            const leftoverHrs = totalHrs - days * 24;
+            const label = totalMin < 60
+              ? `${totalMin}m`
+              : totalHrs < 24
+                ? `${totalHrs}h`
+                : leftoverHrs === 0
+                  ? `${days}d`
+                  : `${days}d ${leftoverHrs}h`;
+            return (
+              <div style={{
+                padding: "8px 10px", background: T.slate50, borderRadius: 6,
+                borderLeft: `3px solid ${T.slate200}`, boxSizing: "border-box",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>Response latency</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>
+                    {label}
+                    <span style={{ fontSize: 10, color: T.slate600, fontWeight: 400, marginLeft: 6 }}>
+                      invited → started
+                    </span>
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
           <AssessRow
             label="LSS Math"
             value={detail?.lss_math_accuracy}
