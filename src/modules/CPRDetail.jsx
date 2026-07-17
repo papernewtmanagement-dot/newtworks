@@ -4606,7 +4606,21 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     );
   }
 
-  const canGoNext = !!onNavigateWeek && addDaysISO(weekDate, 7) <= todayISO();
+  // Next week = the most-recent CPR report strictly newer than the current
+  // weekDate. availableWeeks is sorted DESC, so if weekDate is in the list,
+  // idx-1 is the next report. If weekDate isn't in the list (URL hit for a
+  // date with no report), fall through to the oldest week still newer than
+  // weekDate. Not gated by today's date — the week picker shows current-week
+  // CPR to admins per the 2026-07-15 team-visibility rule, and the forward
+  // arrow should reach the same weeks the picker can.
+  const nextWeek = (() => {
+    if (!availableWeeks || availableWeeks.length === 0) return null;
+    const idx = availableWeeks.indexOf(weekDate);
+    if (idx > 0) return availableWeeks[idx - 1];
+    const later = availableWeeks.filter(w => w > weekDate);
+    return later.length > 0 ? later[later.length - 1] : null;
+  })();
+  const canGoNext = !!onNavigateWeek && !!nextWeek;
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -4713,9 +4727,9 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
               }}
             >◀</button>
             <button
-              onClick={() => canGoNext && onNavigateWeek(addDaysISO(weekDate, 7))}
+              onClick={() => canGoNext && onNavigateWeek(nextWeek)}
               disabled={!canGoNext}
-              title={canGoNext ? `Week ending ${addDaysISO(weekDate, 7)}` : "No later week yet"}
+              title={canGoNext ? `Week ending ${nextWeek}` : "No later week yet"}
               aria-label="Next week"
               style={{
                 padding: "5px 9px", fontSize: 12, fontWeight: 700,
