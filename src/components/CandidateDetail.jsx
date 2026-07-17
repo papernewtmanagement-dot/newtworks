@@ -1476,64 +1476,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             ))
           )}
 
-          {/* Trigger-matched sections from Final Interview manual — pulled from
-              the Suggs pool based on this candidate's trait triggers. Rendered
-              inline in the deep-dive so all questions live in one 35-min flow. */}
-          {triggers.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Assessment-Triggered · From Final Interview Manual
-              </div>
-              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 10, lineHeight: 1.6 }}>
-                <strong>{triggers.filter(t => t.severity === "red").length}</strong> red trigger(s) · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch trigger(s). Questions pulled from the Final Interview manual by trait pattern.
-              </div>
-              {!manualMarkdown ? (
-                <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>Loading manual...</div>
-              ) : (
-                triggers.map((t, i) => {
-                  const src = `manual:${t.trait}:${t.severity}`;
-                  const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
-                  const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
-                  const header = triggerToHeader(t.trait, Number(t.value)) || t.label;
-                  const section = extractSection(manualMarkdown, header);
-                  return (
-                    <div key={i} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${t.severity === "red" ? T.red : T.amber}` }}>
-                      {section ? (
-                        renderMarkdown(section)
-                      ) : (
-                        <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
-                          No matching section in the Final Interview manual for &quot;{header}&quot;. (Check the manual page structure.)
-                        </div>
-                      )}
-                      <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 6, marginBottom: 6 }}>{src}</div>
-                      <textarea
-                        value={currentAnswer}
-                        onChange={(e) => updateAnswer(src, e.target.value)}
-                        placeholder="Candidate's response..."
-                        rows={3}
-                        style={{
-                          width: "100%",
-                          fontSize: 12,
-                          padding: 8,
-                          border: `1px solid ${T.slate300}`,
-                          borderRadius: 5,
-                          fontFamily: "inherit",
-                          resize: "vertical",
-                          boxSizing: "border-box",
-                          background: T.slate50,
-                        }}
-                      />
-                      {savedAt && (
-                        <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
-                          Saved {new Date(savedAt).toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
         </div>
 
         {/* Bottom action row — Save answers batch-writes everything above
