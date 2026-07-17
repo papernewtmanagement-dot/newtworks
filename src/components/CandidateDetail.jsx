@@ -331,31 +331,205 @@ const AssessRow = ({ label, value, extra, band, subline }) => {
 // Resume layer expansion body — plain-text extracted resume, scrollable.
 // Falls back to a hint when no extraction exists (usually because
 // document-processor hasn't parsed the file yet).
+// Resume layer expansion body — shows HOW the resume score was arrived at.
+// Renders (when present): composite + verdict pill, Nature/Nurture/Drivers
+// sub-construct rollups, 10 sub-signal cards with score + reasoning (from
+// res_subsignals JSONB), fired resume-tell rule chips (res_rules_fired), and
+// a collapsible extracted-text pane. Falls back to plain text display when
+// no score has been written yet. Score bands match Results matrix conventions:
+// ≥7.5 green / ≥6.0 amber / <6.0 red.
 function renderResumeLayer(detail, T) {
   const text = detail?.resume_extracted_text;
-  if (!text || String(text).trim().length === 0) {
+  const composite = detail?.res_composite;
+  const verdict = detail?.res_verdict;
+  const subsignals = detail?.res_subsignals;
+  const rulesFired = detail?.res_rules_fired;
+  const scoredAt = detail?.res_scored_at;
+  const scoredModel = detail?.res_scored_model;
+  const nature = detail?.res_nature;
+  const nurture = detail?.res_nurture;
+  const drivers = detail?.res_drivers;
+
+  const hasText = text && String(text).trim().length > 0;
+  const hasScore = composite != null || (subsignals && typeof subsignals === "object");
+
+  if (!hasScore && !hasText) {
     return (
       <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
         No extracted resume text on file. If a PDF is attached, the document processor may not have parsed it yet — check the Resume link at the top of the page for the raw file.
       </div>
     );
   }
+
+  const scoreBg = (v) => v == null ? T.slate50 : v >= 7.5 ? T.greenLt : v >= 6.0 ? T.amberLt : T.redLt;
+  const scoreFg = (v) => v == null ? T.slate500 : v >= 7.5 ? T.green   : v >= 6.0 ? T.amber   : T.red;
+
+  // 10 canonical resume sub-signals in display order (Nature → Nurture → Drivers grouping).
+  const SUBSIGNAL_ORDER = [
+    "Honesty", "Hard Work Ethic", "Personal Responsibility", "Concern for Others",
+    "Follow-Through", "Coherent Pursuit", "Trajectory Direction",
+    "Autonomy", "Leadership Emergence", "Interpersonal Substrate",
+  ];
+
+  const verdictColor = verdict === "hire"     ? T.green
+                     : verdict === "consider" ? T.amber
+                     : verdict === "decline"  ? T.red
+                     :                          T.slate500;
+
   return (
-    <div style={{
-      fontSize: 12.5,
-      lineHeight: 1.55,
-      color: T.slate800,
-      background: T.white,
-      border: `1px solid ${T.slate200}`,
-      borderRadius: 6,
-      padding: "12px 14px",
-      maxHeight: 480,
-      overflowY: "auto",
-      whiteSpace: "pre-wrap",
-      wordBreak: "break-word",
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }}>
-      {text}
+    <div>
+      {/* Score header — composite + verdict + sub-construct rollups + scored metadata */}
+      {hasScore ? (
+        <div style={{
+          padding: "12px 14px", background: scoreBg(Number(composite)),
+          borderRadius: 8, borderLeft: `3px solid ${scoreFg(Number(composite))}`,
+          marginBottom: 12,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>
+              {composite != null ? Number(composite).toFixed(2) : "—"}
+              <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+            </span>
+            {verdict && (
+              <span style={{
+                padding: "3px 10px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+                color: T.white, background: verdictColor,
+                textTransform: "uppercase", letterSpacing: 0.5,
+              }}>
+                {verdict}
+              </span>
+            )}
+            <span style={{ fontSize: 10, color: T.slate600 }}>resume-only read</span>
+          </div>
+          {(nature != null || nurture != null || drivers != null) && (
+            <div style={{ display: "flex", gap: 12, fontSize: 11, color: T.slate700, flexWrap: "wrap" }}>
+              {nature  != null && <span>Nature: <strong style={{ color: T.slate900 }}>{Number(nature).toFixed(2)}</strong></span>}
+              {nurture != null && <span>Nurture: <strong style={{ color: T.slate900 }}>{Number(nurture).toFixed(2)}</strong></span>}
+              {drivers != null && <span>Drivers: <strong style={{ color: T.slate900 }}>{Number(drivers).toFixed(2)}</strong></span>}
+            </div>
+          )}
+          {(scoredAt || scoredModel) && (
+            <div style={{ fontSize: 10, color: T.slate500, marginTop: 6, fontFamily: "monospace" }}>
+              {scoredAt && String(scoredAt).slice(0, 10)}
+              {scoredAt && scoredModel && " · "}
+              {scoredModel}
+            </div>
+          )}
+        </div>
+      ) : hasText ? (
+        <div style={{
+          padding: "8px 10px", background: T.slate50,
+          borderRadius: 6, borderLeft: `3px solid ${T.slate300}`,
+          fontSize: 11, color: T.slate600, fontStyle: "italic", marginBottom: 12,
+        }}>
+          Not yet scored. Extracted resume text below awaits resume-rubric or in-chat Opus scoring.
+        </div>
+      ) : null}
+
+      {/* Sub-signal breakdown — the "how we got here" answer. Ten canonical
+          signals, each with 0-10 score + reasoning from res_subsignals JSONB. */}
+      {subsignals && typeof subsignals === "object" && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
+            How we got here — 10 sub-signals
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {SUBSIGNAL_ORDER.filter((k) => subsignals[k]).map((k) => {
+              const sig = subsignals[k];
+              const s = sig?.score;
+              const r = sig?.reasoning;
+              return (
+                <div key={k} style={{
+                  display: "flex", gap: 10, alignItems: "flex-start",
+                  padding: "8px 10px", background: T.white,
+                  borderRadius: 6, border: `1px solid ${T.slate200}`,
+                }}>
+                  <div style={{
+                    minWidth: 44, textAlign: "center", padding: "4px 6px",
+                    background: scoreBg(Number(s)), borderRadius: 4,
+                    fontWeight: 700, fontSize: 14, color: T.slate900,
+                    borderLeft: `3px solid ${scoreFg(Number(s))}`,
+                  }}>
+                    {s != null ? Number(s).toFixed(0) : "—"}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 2 }}>{k}</div>
+                    {r && <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.5 }}>{r}</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Fired resume-tell rules — chips (self-superiority language, buzzword grid,
+          scaffolded career only, career-pivot velocity, metric-perfect-clinical, etc). */}
+      {Array.isArray(rulesFired) && rulesFired.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
+            Resume-tell rules fired ({rulesFired.length})
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {rulesFired.map((r, i) => (
+              <span key={i} style={{
+                padding: "3px 8px", borderRadius: 4, background: T.amberLt,
+                border: `1px solid ${T.amber}`, color: T.amber, fontSize: 11, fontWeight: 600,
+              }}>
+                {String(r)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Extracted resume text — collapsed when a score exists (score is the
+          primary content); expanded inline when no score yet (matches prior UX). */}
+      {hasText && (hasScore ? (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{
+            fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4,
+            fontWeight: 700, color: T.slate600, cursor: "pointer", userSelect: "none",
+            padding: "6px 0",
+          }}>
+            Extracted resume text
+          </summary>
+          <div style={{
+            fontSize: 12.5,
+            lineHeight: 1.55,
+            color: T.slate800,
+            background: T.white,
+            border: `1px solid ${T.slate200}`,
+            borderRadius: 6,
+            padding: "12px 14px",
+            maxHeight: 480,
+            overflowY: "auto",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            marginTop: 8,
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          }}>
+            {text}
+          </div>
+        </details>
+      ) : (
+        <div style={{
+          fontSize: 12.5,
+          lineHeight: 1.55,
+          color: T.slate800,
+          background: T.white,
+          border: `1px solid ${T.slate200}`,
+          borderRadius: 6,
+          padding: "12px 14px",
+          maxHeight: 480,
+          overflowY: "auto",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        }}>
+          {text}
+        </div>
+      ))}
     </div>
   );
 }
@@ -999,30 +1173,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </div>
 
-      {/* Walkthrough — surfaces hiring_candidates.notes, which is where
-          Claude's per-candidate narrative reads live (33 of 42 candidates
-          as of 2026-07-16). Placed at top of the module so the synthesis
-          is what you see first. Preserved-whitespace rendering — content
-          is structured prose with ALL-CAPS section labels, bullets, and
-          divider bars; no markdown parsing needed. */}
-      {detail?.notes && detail.notes.trim().length > 0 && (
-        <Section tone={T.slate50}>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
-            Walkthrough
-          </div>
-          <div style={{
-            fontSize: 12.5,
-            lineHeight: 1.55,
-            color: T.slate800,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          }}>
-            {detail.notes}
-          </div>
-        </Section>
-      )}
-
       {/* Results — Suggs four-layer × three-construct framework read from
           hiregauge_three_construct_verdict. The 4×3 matrix
           (Resume/Assessment/Interview/Reference × Nature/Nurture/Drivers)
@@ -1181,12 +1331,41 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </Section>
 
-      {/* HireGauge Framework Read — auto-computed verdict + every matched
-          rule from hiregauge_evaluate_candidate. Bucketed by verdict impact
-          via hiregauge_composite_recommendation's signal arrays. This is the
-          raw framework read; Customized Interview Probes below is the
-          LLM-crafted, candidate-specific probe list built from this same input. */}
+      {/* HireGauge Framework Read — narrative walkthrough (Claude's synthesis
+          from hiring_candidates.notes) on top, then the auto-computed verdict
+          + every matched rule from hiregauge_evaluate_candidate, bucketed by
+          verdict impact via hiregauge_composite_recommendation's signal arrays.
+          Walkthrough renders independently — may exist even without composite
+          (e.g. former-team retrospective reads pre-CTS). Customized Interview
+          Probes below is the LLM-crafted, candidate-specific probe list built
+          from this same input. */}
       <Section title="HireGauge Framework Read">
+        {/* Walkthrough — Claude's per-candidate narrative synthesis. Preserved-
+            whitespace prose with ALL-CAPS section labels, bullets, dividers.
+            Resume-specific analysis lives in the Resume layer expander in
+            Results (composite + 10 sub-signals + rules fired) — do not
+            duplicate resume prose here going forward. */}
+        {detail?.notes && detail.notes.trim().length > 0 && (
+          <div style={{
+            marginBottom: 14, padding: "12px 14px", background: T.slate50,
+            borderRadius: 8, borderLeft: `3px solid ${T.slate300}`,
+          }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
+              Walkthrough
+            </div>
+            <div style={{
+              fontSize: 12.5,
+              lineHeight: 1.55,
+              color: T.slate800,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>
+              {detail.notes}
+            </div>
+          </div>
+        )}
+
         {!composite ? (
           <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
             {frameworkRules?.length === 0
@@ -1476,6 +1655,64 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             ))
           )}
 
+          {/* Trigger-matched sections from Final Interview manual — pulled from
+              the Suggs pool based on this candidate's trait triggers. Rendered
+              inline in the deep-dive so all questions live in one 35-min flow. */}
+          {triggers.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                Assessment-Triggered · From Final Interview Manual
+              </div>
+              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 10, lineHeight: 1.6 }}>
+                <strong>{triggers.filter(t => t.severity === "red").length}</strong> red trigger(s) · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch trigger(s). Questions pulled from the Final Interview manual by trait pattern.
+              </div>
+              {!manualMarkdown ? (
+                <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>Loading manual...</div>
+              ) : (
+                triggers.map((t, i) => {
+                  const src = `manual:${t.trait}:${t.severity}`;
+                  const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
+                  const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
+                  const header = triggerToHeader(t.trait, Number(t.value)) || t.label;
+                  const section = extractSection(manualMarkdown, header);
+                  return (
+                    <div key={i} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${t.severity === "red" ? T.red : T.amber}` }}>
+                      {section ? (
+                        renderMarkdown(section)
+                      ) : (
+                        <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+                          No matching section in the Final Interview manual for &quot;{header}&quot;. (Check the manual page structure.)
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 6, marginBottom: 6 }}>{src}</div>
+                      <textarea
+                        value={currentAnswer}
+                        onChange={(e) => updateAnswer(src, e.target.value)}
+                        placeholder="Candidate's response..."
+                        rows={3}
+                        style={{
+                          width: "100%",
+                          fontSize: 12,
+                          padding: 8,
+                          border: `1px solid ${T.slate300}`,
+                          borderRadius: 5,
+                          fontFamily: "inherit",
+                          resize: "vertical",
+                          boxSizing: "border-box",
+                          background: T.slate50,
+                        }}
+                      />
+                      {savedAt && (
+                        <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
+                          Saved {new Date(savedAt).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </div>
 
         {/* Bottom action row — Save answers batch-writes everything above
