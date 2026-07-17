@@ -599,7 +599,10 @@ const overallBandColor = (v) => {
 };
 
 const DeclinedTable = ({ declined, onUpdate }) => {
-  const [selected, setSelected] = useState(null);
+  // URL-persisted candidate selection so refresh keeps the same candidate open.
+  // Same param name as RecruitingPipeline uses; the two are conditionally
+  // rendered (gtab picks one) so there's no collision.
+  const [selected, setSelected] = useTabParam("candidate", null);
   const selectedApp = declined.find(a => a.id === selected);
   // sortKey ∈ {name, source, resume, cts, recent}; direction ∈ {asc, desc}
   const [sortKey, setSortKey] = useState("recent");
