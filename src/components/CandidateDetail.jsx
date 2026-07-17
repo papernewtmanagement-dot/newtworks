@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
@@ -327,6 +327,293 @@ const AssessRow = ({ label, value, extra, band, subline }) => {
   );
 };
 
+
+// Resume layer expansion body — plain-text extracted resume, scrollable.
+// Falls back to a hint when no extraction exists (usually because
+// document-processor hasn't parsed the file yet).
+function renderResumeLayer(detail, T) {
+  const text = detail?.resume_extracted_text;
+  if (!text || String(text).trim().length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+        No extracted resume text on file. If a PDF is attached, the document processor may not have parsed it yet — check the Resume link at the top of the page for the raw file.
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      fontSize: 12.5,
+      lineHeight: 1.55,
+      color: T.slate800,
+      background: T.white,
+      border: `1px solid ${T.slate200}`,
+      borderRadius: 6,
+      padding: "12px 14px",
+      maxHeight: 480,
+      overflowY: "auto",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }}>
+      {text}
+    </div>
+  );
+}
+
+// Assessment layer expansion body — the full LSS / validity / drive & empathy
+// / traits view on the left; role-fit selector + competencies for the
+// currently-selected role on the right. Moved here from the standalone
+// top-of-page Assessment section per Peter directive 2026-07-17.
+function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit, selectedRole, setSelectedRole, T }) {
+  return (
+    <div>
+      {/* Profile validity banner (renders only when non-valid). */}
+      {(() => {
+        const v0 = Array.isArray(validity) && validity.length > 0 ? validity[0] : null;
+        if (!v0 || v0.validity_status === "valid") return null;
+        const status = v0.validity_status;
+        const isUnknown = status === "unknown";
+        const bg = isUnknown ? T.slate100 : T.redLt;
+        const fg = isUnknown ? T.slate500 : T.red;
+        const msg = v0.warning
+          || (isUnknown ? "Assessment scores not yet available — validity cannot be evaluated."
+                        : "Profile flagged as questionable. Weigh Reliability + Distortion below before trusting scores.");
+        return (
+          <div style={{
+            marginBottom: 14, padding: "8px 10px", background: bg,
+            borderRadius: 6, borderLeft: `3px solid ${fg}`, boxSizing: "border-box",
+            fontSize: 12, color: T.slate700,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: fg, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 }}>
+              Profile validity — {status}
+            </div>
+            {msg}
+          </div>
+        );
+      })()}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+
+        {/* LEFT COLUMN — timing, LSS, validity meters, traits */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
+            Traits & LSS
+          </div>
+          {timing != null && timing?.overall_flag !== "no_data" && (() => {
+            const flag = String(timing.overall_flag || "green").toLowerCase();
+            const bg = flag === "red" ? T.redLt : flag === "yellow" ? T.amberLt : T.greenLt;
+            const fg = flag === "red" ? T.red   : flag === "yellow" ? T.amber  : T.green;
+            return (
+              <div style={{
+                padding: "8px 10px", background: bg, borderRadius: 6,
+                borderLeft: `3px solid ${fg}`, boxSizing: "border-box",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>Timing</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: fg, whiteSpace: "nowrap" }}>
+                    {timing.total_min}m
+                    <span style={{ fontSize: 10, color: T.slate600, fontWeight: 400, marginLeft: 6 }}>
+                      total · Traits {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
+                    </span>
+                  </span>
+                </div>
+                {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
+                  <div style={{ fontSize: 11, color: T.slate600, marginTop: 4 }}>
+                    {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          <AssessRow
+            label="LSS Math"
+            value={detail?.lss_math_accuracy}
+            extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
+          />
+          <AssessRow
+            label="LSS Verbal"
+            value={detail?.lss_verbal_accuracy}
+            extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
+          />
+          <AssessRow
+            label="LSS Problem Solving"
+            value={detail?.lss_problem_solving_accuracy}
+            extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
+          />
+          <AssessRow
+            label="LSS Total"
+            value={detail?.lss_total_accuracy}
+            extra={detail?.lss_total_accuracy != null ? "/35" : null}
+            band={
+              detail?.lss_total_accuracy == null ? "none"
+              : detail.lss_total_accuracy >= 30 ? "green"
+              : detail.lss_total_accuracy >= 25 ? "yellow"
+              : "red"
+            }
+            subline={(() => {
+              const m = detail?.lss_math_accuracy;
+              const v = detail?.lss_verbal_accuracy;
+              const p = detail?.lss_problem_solving_accuracy;
+              if (m == null && v == null && p == null) return null;
+              return `Math ${m ?? "—"} · Verbal ${v ?? "—"} · PS ${p ?? "—"}`;
+            })()}
+          />
+          <AssessRow
+            label="LSS Speed"
+            value={(() => {
+              const m = Number(detail?.lss_math_speed_seconds);
+              const v = Number(detail?.lss_verbal_speed_seconds);
+              const p = Number(detail?.lss_problem_solving_speed_seconds);
+              if (!Number.isFinite(m) || !Number.isFinite(v) || !Number.isFinite(p)) return null;
+              return Math.round((m + v + p) / 3);
+            })()}
+            extra="s/item avg"
+            band={(() => {
+              const maxSpeed = Math.max(
+                Number(detail?.lss_math_speed_seconds) || 0,
+                Number(detail?.lss_verbal_speed_seconds) || 0,
+                Number(detail?.lss_problem_solving_speed_seconds) || 0
+              );
+              if (!maxSpeed) return "none";
+              return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
+            })()}
+            subline={(() => {
+              const m = detail?.lss_math_speed_seconds;
+              const v = detail?.lss_verbal_speed_seconds;
+              const p = detail?.lss_problem_solving_speed_seconds;
+              if (m == null && v == null && p == null) return null;
+              return `Math ${m ?? "—"}s · Verbal ${v ?? "—"}s · PS ${p ?? "—"}s`;
+            })()}
+          />
+          <AssessRow label="Reliability" value={detail?.reliability} band={RELIABILITY_BAND(detail?.reliability)} />
+          <AssessRow label="Distortion" value={detail?.response_distortion} band={DISTORTION_BAND(detail?.response_distortion)} />
+          <AssessRow label="Drive" value={detail?.ego_drive_score} />
+          <AssessRow label="Empathy" value={detail?.empathy_score} />
+
+          <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+          {Object.entries(TRAIT_LABELS).map(([trait, label]) => {
+            const value = detail?.[trait];
+            const band = TRAIT_BAND[trait](value);
+            return <AssessRow key={trait} label={label} value={value} band={band} />;
+          })}
+        </div>
+
+        {/* RIGHT COLUMN — Role Fit selector (clickable, sorted by OS descending)
+            then Competencies filtered to the selected role. Best Fit box +
+            "OS" label removed per Peter 2026-07-17: sort order already tells
+            you which is best; the number carries no user-facing meaning as
+            "OS" so we just show the number. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
+            Role Fit
+          </div>
+
+          {(() => {
+            const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+            if (!bf) {
+              return (
+                <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                  Best-fit role computes from traits — awaiting assessment.
+                </div>
+              );
+            }
+            const ROLE_LABELS = {
+              sales:         "Sales",
+              service:       "Service",
+              service_sales: "Service Sales",
+              aspirant:      "Aspirant",
+            };
+            const roleRows = [
+              { key: "sales",         os: bf.sales_os },
+              { key: "service",       os: bf.service_os },
+              { key: "service_sales", os: bf.service_sales_os },
+              { key: "aspirant",      os: bf.aspirant_os },
+            ].sort((a, b) => (Number(b.os) || -Infinity) - (Number(a.os) || -Infinity));
+            const bestKey = bf.best_role;
+            const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
+            return (
+              <>
+                {roleRows.map((r) => {
+                  const isSelected = r.key === currentSelected;
+                  const isBest = r.key === bestKey;
+                  const colors = isBest ? bandColor("green") : null;
+                  const baseBg = colors ? colors.bg : T.slate50;
+                  const baseStripe = colors ? colors.fg : T.slate200;
+                  const valueColor = isBest ? colors.fg : T.slate900;
+                  return (
+                    <button
+                      key={r.key}
+                      type="button"
+                      onClick={() => setSelectedRole(r.key)}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "6px 10px", background: baseBg, borderRadius: 6,
+                        borderTop: "none", borderRight: "none", borderBottom: "none",
+                        borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
+                        outline: isSelected ? `1px solid ${T.slate400}` : "none",
+                        boxSizing: "border-box", gap: 8, cursor: "pointer",
+                        fontFamily: "inherit", textAlign: "left", width: "100%",
+                      }}
+                      title={isSelected ? "Selected — competencies below" : "Click to show this role's competencies"}
+                    >
+                      <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
+                        {ROLE_LABELS[r.key] || r.key} Fit
+                      </span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
+                        {r.os ?? "—"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            );
+          })()}
+
+          <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
+            Competencies
+          </div>
+
+          {(() => {
+            const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+            const bestKey = bf?.best_role;
+            const currentSelected = selectedRole || bestKey || "sales";
+            const ROLE_LABELS = {
+              sales:         "Sales",
+              service:       "Service",
+              service_sales: "Service Sales",
+              aspirant:      "Aspirant",
+            };
+            const roleC = (competencies && competencies[currentSelected]) || {};
+            const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
+            const formatCompLabel = (k) =>
+              k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
+            if (entries.length === 0) {
+              return (
+                <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                  {competencies ? `No competencies for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
+                </div>
+              );
+            }
+            return (
+              <>
+                <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
+                  Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit above to swap.
+                </div>
+                {entries.map(([k, v]) => {
+                  const band = competencyBand(v);
+                  return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
+                })}
+              </>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const ScorecardForm = ({ title, prefix, detail, onFieldChange, onSave, saving, tone }) => {
   const charFloorPassed = characterFloorPassed(detail, prefix);
   return (
@@ -413,6 +700,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // Which role fit's competencies to show (null = default to best fit).
   // User clicks a Role Fit row in the right column to swap.
   const [selectedRole, setSelectedRole] = useState(null);
+  // Which Results-matrix layer row is expanded (null = none). Only one
+  // layer expanded at a time. Click chevron in the layer label cell.
+  const [expandedLayer, setExpandedLayer] = useState(null);
   // Three-construct verdict (Nature/Nurture/Drivers) — per-layer verdicts +
   // framework prediction + retrospective observation + calibration status.
   // Fetched via hiregauge_three_construct_verdict RPC.
@@ -646,327 +936,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         </Section>
       )}
 
-      {/* Assessment — top box merging LSS breakdown, validity, drive/empathy,
-          traits (left column) with all competencies + role fit + best fit
-          (right column). Timing flag sits at the TOP of the left column
-          as a fully colored row. Profile-validity banner (when non-valid)
-          spans both columns above the grid — the standalone Analysis
-          section was retired 2026-07-16 as fully redundant with Assessment. */}
-      <Section>
-        {/* Profile validity banner — only renders when validity_status is
-            questionable or unknown. Sits above both columns because it
-            applies to the whole read. Uses the warning text from
-            cts_profile_validity RPC when present. */}
-        {(() => {
-          const v0 = Array.isArray(validity) && validity.length > 0 ? validity[0] : null;
-          if (!v0 || v0.validity_status === "valid") return null;
-          const status = v0.validity_status;
-          const isUnknown = status === "unknown";
-          const bg = isUnknown ? T.slate100 : T.redLt;
-          const fg = isUnknown ? T.slate500 : T.red;
-          const msg = v0.warning
-            || (isUnknown ? "Assessment scores not yet available — validity cannot be evaluated."
-                          : "Profile flagged as questionable. Weigh Reliability + Distortion below before trusting scores.");
-          return (
-            <div style={{
-              marginBottom: 14,
-              padding: "8px 10px",
-              background: bg,
-              borderRadius: 6,
-              borderLeft: `3px solid ${fg}`,
-              boxSizing: "border-box",
-              fontSize: 12,
-              color: T.slate700,
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: fg, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 }}>
-                Profile validity — {status}
-              </div>
-              {msg}
-            </div>
-          );
-        })()}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
-
-          {/* LEFT COLUMN */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-              Assessment
-            </div>
-            {/* Timing flag — row background colored by cts_timing_assessment
-                overall_flag (red / yellow / green). Consolidates former
-                footer chip (label + pill) into a single colored strip. */}
-            {timing != null && timing?.overall_flag !== "no_data" && (() => {
-              const flag = String(timing.overall_flag || "green").toLowerCase();
-              const bg = flag === "red" ? T.redLt : flag === "yellow" ? T.amberLt : T.greenLt;
-              const fg = flag === "red" ? T.red   : flag === "yellow" ? T.amber  : T.green;
-              return (
-                <div style={{
-                  padding: "8px 10px",
-                  background: bg,
-                  borderRadius: 6,
-                  borderLeft: `3px solid ${fg}`,
-                  boxSizing: "border-box",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>Timing</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: fg, whiteSpace: "nowrap" }}>
-                      {timing.total_min}m
-                      <span style={{ fontSize: 10, color: T.slate600, fontWeight: 400, marginLeft: 6 }}>
-                        total · Traits {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
-                      </span>
-                    </span>
-                  </div>
-                  {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
-                    <div style={{ fontSize: 11, color: T.slate600, marginTop: 4 }}>
-                      {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-            <AssessRow
-              label="LSS Math"
-              value={detail?.lss_math_accuracy}
-              extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
-            />
-            <AssessRow
-              label="LSS Verbal"
-              value={detail?.lss_verbal_accuracy}
-              extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
-            />
-            <AssessRow
-              label="LSS Problem Solving"
-              value={detail?.lss_problem_solving_accuracy}
-              extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
-            />
-            <AssessRow
-              label="LSS Total"
-              value={detail?.lss_total_accuracy}
-              extra={detail?.lss_total_accuracy != null ? "/35" : null}
-              band={
-                detail?.lss_total_accuracy == null ? "none"
-                : detail.lss_total_accuracy >= 30 ? "green"
-                : detail.lss_total_accuracy >= 25 ? "yellow"
-                : "red"
-              }
-              subline={(() => {
-                const m = detail?.lss_math_accuracy;
-                const v = detail?.lss_verbal_accuracy;
-                const p = detail?.lss_problem_solving_accuracy;
-                if (m == null && v == null && p == null) return null;
-                return `Math ${m ?? "—"} · Verbal ${v ?? "—"} · PS ${p ?? "—"}`;
-              })()}
-            />
-            <AssessRow
-              label="LSS Speed"
-              value={(() => {
-                const m = Number(detail?.lss_math_speed_seconds);
-                const v = Number(detail?.lss_verbal_speed_seconds);
-                const p = Number(detail?.lss_problem_solving_speed_seconds);
-                if (!Number.isFinite(m) || !Number.isFinite(v) || !Number.isFinite(p)) return null;
-                return Math.round((m + v + p) / 3);
-              })()}
-              extra="s/item avg"
-              band={(() => {
-                const maxSpeed = Math.max(
-                  Number(detail?.lss_math_speed_seconds) || 0,
-                  Number(detail?.lss_verbal_speed_seconds) || 0,
-                  Number(detail?.lss_problem_solving_speed_seconds) || 0
-                );
-                if (!maxSpeed) return "none";
-                return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
-              })()}
-              subline={(() => {
-                const m = detail?.lss_math_speed_seconds;
-                const v = detail?.lss_verbal_speed_seconds;
-                const p = detail?.lss_problem_solving_speed_seconds;
-                if (m == null && v == null && p == null) return null;
-                return `Math ${m ?? "—"}s · Verbal ${v ?? "—"}s · PS ${p ?? "—"}s`;
-              })()}
-            />
-            <AssessRow
-              label="Reliability"
-              value={detail?.reliability}
-              band={RELIABILITY_BAND(detail?.reliability)}
-            />
-            <AssessRow
-              label="Distortion"
-              value={detail?.response_distortion}
-              band={DISTORTION_BAND(detail?.response_distortion)}
-            />
-            <AssessRow label="Drive" value={detail?.ego_drive_score} />
-            <AssessRow label="Empathy" value={detail?.empathy_score} />
-
-            {/* Horizontal divider between validity/drive/empathy block and traits */}
-            <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-            {/* 9 traits, one row each with band coloring */}
-            {Object.entries(TRAIT_LABELS).map(([trait, label]) => {
-              const value = detail?.[trait];
-              const band = TRAIT_BAND[trait](value);
-              return <AssessRow key={trait} label={label} value={value} band={band} />;
-            })}
-          </div>
-
-          {/* RIGHT COLUMN — Role Fit block on top (clickable rows sorted by OS
-              descending, best fit marked with ★, default-selected on load),
-              divider, then Competencies filtered to the currently-selected
-              role. Click any role fit row to swap the competencies view. */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-              Role Fit
-            </div>
-
-            {/* Role fit scores — clickable rows sorted highest OS first. Best
-                fit gets ★ + green band; currently-selected role gets a slate
-                outline + darker left stripe so it reads as active. */}
-            {(() => {
-              const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
-              if (!bf) {
-                return (
-                  <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
-                    Best-fit role computes from traits — awaiting assessment.
-                  </div>
-                );
-              }
-              const ROLE_LABELS = {
-                sales:         "Sales",
-                service:       "Service",
-                service_sales: "Service Sales",
-                aspirant:      "Aspirant",
-              };
-              const roleRows = [
-                { key: "sales",         os: bf.sales_os },
-                { key: "service",       os: bf.service_os },
-                { key: "service_sales", os: bf.service_sales_os },
-                { key: "aspirant",      os: bf.aspirant_os },
-              ].sort((a, b) => (Number(b.os) || -Infinity) - (Number(a.os) || -Infinity));
-              const bestKey = bf.best_role;
-              const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
-              return (
-                <>
-                  {roleRows.map((r) => {
-                    const isSelected = r.key === currentSelected;
-                    const isBest = r.key === bestKey;
-                    const colors = isBest ? bandColor("green") : null;
-                    const baseBg = colors ? colors.bg : T.slate50;
-                    const baseStripe = colors ? colors.fg : T.slate200;
-                    const valueColor = isBest ? colors.fg : T.slate900;
-                    return (
-                      <button
-                        key={r.key}
-                        type="button"
-                        onClick={() => setSelectedRole(r.key)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "6px 10px",
-                          background: baseBg,
-                          borderRadius: 6,
-                          borderTop: "none",
-                          borderRight: "none",
-                          borderBottom: "none",
-                          borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
-                          outline: isSelected ? `1px solid ${T.slate400}` : "none",
-                          boxSizing: "border-box",
-                          gap: 8,
-                          cursor: "pointer",
-                          fontFamily: "inherit",
-                          textAlign: "left",
-                          width: "100%",
-                        }}
-                        title={isSelected ? "Selected — competencies below" : "Click to show this role's competencies"}
-                      >
-                        <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
-                          {isBest && <span style={{ marginRight: 4 }}>★</span>}
-                          {ROLE_LABELS[r.key] || r.key} Fit
-                        </span>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
-                          {r.os ?? "—"}
-                          <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>OS</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                  <div style={{
-                    marginTop: 6,
-                    padding: "8px 10px",
-                    background: T.greenLt,
-                    borderRadius: 6,
-                    borderLeft: `3px solid ${T.green}`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}>
-                    <span style={{ fontSize: 10, textTransform: "uppercase", color: T.slate600, fontWeight: 700, letterSpacing: 0.3 }}>
-                      Best Fit
-                    </span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: T.green }}>
-                      ★ {ROLE_LABELS[bestKey] || bestKey}
-                    </span>
-                  </div>
-                </>
-              );
-            })()}
-
-            {/* Divider between Role Fit block and Competencies */}
-            <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-              Competencies
-            </div>
-
-            {/* Competencies scoped to the currently-selected role fit. Default
-                is the best-fit role. Small caption tells the user which role
-                they're viewing and that they can click above to swap. */}
-            {(() => {
-              const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
-              const bestKey = bf?.best_role;
-              const currentSelected = selectedRole || bestKey || "sales";
-              const ROLE_LABELS = {
-                sales:         "Sales",
-                service:       "Service",
-                service_sales: "Service Sales",
-                aspirant:      "Aspirant",
-              };
-              const roleC = (competencies && competencies[currentSelected]) || {};
-              const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
-              const formatCompLabel = (k) =>
-                k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-              if (entries.length === 0) {
-                return (
-                  <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
-                    {competencies ? `No competencies for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
-                  </div>
-                );
-              }
-              return (
-                <>
-                  <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
-                    Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit above to swap.
-                  </div>
-                  {entries.map(([k, v]) => {
-                    const band = competencyBand(v);
-                    return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
-                  })}
-                </>
-              );
-            })()}
-          </div>
-        </div>
-
-        {/* Timing flag moved to top of left column above (Peter 2026-07-16). */}
-      </Section>
-
       {/* Results — Suggs four-layer × three-construct framework read from
-          hiregauge_three_construct_verdict. Displays the full 4×3 matrix
+          hiregauge_three_construct_verdict. The 4×3 matrix
           (Resume/Assessment/Interview/Reference × Nature/Nurture/Drivers)
-          with each cell showing score + weight applied, the per-construct
-          weighted total row, and the overall Result row with verdict.
-          Post-hire Observation shown below the table — weightless calibration
-          companion (retrospective_verdict_override + calibration_status +
-          character_floor_status + dimensions counter). */}
+          drives the top verdict; each layer row is now clickable to expand
+          layer-specific detail. Resume expansion shows extracted resume
+          text; Assessment expansion holds the full LSS + traits + role-fit
+          + competencies view (formerly a standalone top box); Interview /
+          Reference expansions reserved for follow-up work. Observation
+          strip stays at the bottom of the section (post-hire calibration). */}
       <Section title="Results">
         {!threeConstruct ? (
           <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
@@ -974,9 +952,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </div>
         ) : (
           <>
-            {/* 4×3 matrix table — layers as rows, constructs as columns.
+            {/* 4×3 matrix table — layers as expandable rows, constructs as columns.
                 Each cell shows the (0-10) score plus the weight applied within that construct.
-                Cell background bands by score band (green ≥7.5 / amber ≥6.0 / red <6.0). */}
+                Cell background bands by score band (green ≥7.5 / amber ≥6.0 / red <6.0).
+                Click a layer label to expand its detail row underneath. */}
             {(() => {
               const matrix = threeConstruct.meta?.matrix || {};
               const weights = threeConstruct.meta?.layer_weights_within_construct || {};
@@ -1002,14 +981,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                    : T.red;
               const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
               const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center", borderBottom: `1px solid ${T.slate200}` };
-              const rowLabel = { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
+              const rowLabelBase = { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
+              const clickableRowLabel = { ...rowLabelBase, cursor: "pointer", userSelect: "none" };
 
               return (
                 <div style={{ marginBottom: 14, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
                     <thead>
                       <tr style={{ background: T.slate50 }}>
-                        <th style={{ ...th, width: 110 }}></th>
+                        <th style={{ ...th, width: 130 }}></th>
                         {constructs.map((c) => (
                           <th key={c.key} style={th}>
                             {c.label} <span style={{ color: T.slate500, fontWeight: 500 }}>· {pctFmt(c.weight)}</span>
@@ -1018,28 +998,61 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {layers.map((layer) => (
-                        <tr key={layer.key} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-                          <td style={rowLabel}>{layer.label}</td>
-                          {constructs.map((c) => {
-                            const cell = matrix?.[c.key]?.[layer.key];
-                            const w = weights?.[c.key]?.[layer.key];
-                            return (
-                              <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
-                                  {cell != null ? Number(cell).toFixed(2) : "—"}
-                                </div>
-                                <div style={{ fontSize: 9, color: cell == null ? T.slate500 : scoreFg(cell), fontWeight: 600 }}>
-                                  weight {pctFmt(w)}
-                                </div>
+                      {layers.map((layer) => {
+                        const isOpen = expandedLayer === layer.key;
+                        return (
+                          <Fragment key={layer.key}>
+                            <tr style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                              <td
+                                style={clickableRowLabel}
+                                onClick={() => setExpandedLayer(isOpen ? null : layer.key)}
+                                title={isOpen ? "Click to collapse" : "Click to expand layer detail"}
+                              >
+                                <span style={{ display: "inline-block", width: 12, color: T.slate500, marginRight: 4, transition: "transform 0.15s", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                                {layer.label}
                               </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
+                              {constructs.map((c) => {
+                                const cell = matrix?.[c.key]?.[layer.key];
+                                const w = weights?.[c.key]?.[layer.key];
+                                return (
+                                  <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
+                                      {cell != null ? Number(cell).toFixed(2) : "—"}
+                                    </div>
+                                    <div style={{ fontSize: 9, color: cell == null ? T.slate500 : scoreFg(cell), fontWeight: 600 }}>
+                                      weight {pctFmt(w)}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                            {isOpen && (
+                              <tr style={{ borderBottom: `1px solid ${T.slate200}`, background: T.white }}>
+                                <td colSpan={4} style={{ padding: "14px 16px", background: T.slate50 }}>
+                                  {layer.key === "resume" && renderResumeLayer(detail, T)}
+                                  {layer.key === "assessment" && renderAssessmentLayer({
+                                    detail, timing, validity, competencies, bestFit,
+                                    selectedRole, setSelectedRole, T,
+                                  })}
+                                  {layer.key === "interview" && (
+                                    <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+                                      Interview layer detail — coming next.
+                                    </div>
+                                  )}
+                                  {layer.key === "reference" && (
+                                    <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+                                      Reference layer detail — coming next.
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                       {/* Per-construct weighted subtotal row */}
                       <tr style={{ borderTop: `2px solid ${T.slate200}`, background: T.slate50 }}>
-                        <td style={{ ...rowLabel, background: T.slate100, fontWeight: 700 }}>Subtotal</td>
+                        <td style={{ ...rowLabelBase, background: T.slate100, fontWeight: 700 }}>Subtotal</td>
                         {constructs.map((c) => (
                           <td key={c.key} style={{ padding: "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                             <div style={{ fontSize: 16, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
@@ -1051,7 +1064,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                       </tr>
                       {/* Overall result row — score + verdict + confidence + threshold previews */}
                       <tr>
-                        <td style={{ ...rowLabel, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
+                        <td style={{ ...rowLabelBase, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
                         <td colSpan={3} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
                             <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
