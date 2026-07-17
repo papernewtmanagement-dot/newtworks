@@ -1399,8 +1399,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
       {/* Customized Interview Probes — full 60-min interview flow.
           - 5 min rapport (agent-driven, not scripted)
-          - 5 min warm-up (3 fixed Qs, same every candidate, captured)
-          - 35 min deep-dive: LLM-generated candidate-specific probes.
+          - 10 min warm-up (3 fixed Qs, same every candidate, captured)
+          - 30 min deep-dive: LLM-generated candidate-specific probes.
             generate-custom-probes v9.0+ folds the trigger-matched Final
             Interview manual content INTO the LLM probes as source_tag
             manual:*, so there is no separate raw-manual section.
@@ -1414,16 +1414,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           See op-rule "Interview probe analysis protocol" for the chat workflow. */}
       <Section title="Customized Interview Probes" tone={T.blueLt}>
         <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, fontStyle: "italic" }}>
-          60-min interview: 5 min rapport · 5 min warm-up · 35 min deep-dive · 10 min candidate Qs · 5 min close
+          60-min interview: 5 min rapport · 10 min warm-up · 30 min deep-dive · 10 min candidate Qs · 5 min close
         </div>
 
         {/* Warm-Up — 3 fixed questions, same every candidate. Captured. */}
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>
-            Warm-Up · 5 min · same every candidate
+            Warm-Up · 10 min · same every candidate
           </div>
           {[
-            { key: "warmup:last_role",      n: 1, q: "Walk me through your last role." },
+            { key: "warmup:frogs",          n: 1, q: "Get their FROGS (Family, Recreation, Occupation, Goals, Stress)." },
             { key: "warmup:why_insurance",  n: 2, q: "Why insurance?" },
             { key: "warmup:why_agency",     n: 3, q: "Why our agency?" },
           ].map((w) => {
@@ -1464,110 +1464,123 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         {/* Deep-Dive — LLM probes + trigger-matched manual sections, together. */}
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
-            Deep-Dive · ~{detail?.custom_probes?.time_budget_minutes || 35} min · candidate-specific
+            Deep-Dive · ~{detail?.custom_probes?.time_budget_minutes || 30} min · candidate-specific
           </div>
 
-          {/* Metadata bar — shown only when LLM probes exist. */}
-          {detail?.custom_probes && Array.isArray(detail?.custom_probes?.sections) && detail.custom_probes.sections.length > 0 && (
-            <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, lineHeight: 1.6 }}>
-              {(() => {
-                const cp = detail.custom_probes || {};
-                const bits = [];
-                if (detail?.custom_probes_generated_at) bits.push(`Generated ${new Date(detail.custom_probes_generated_at).toLocaleString()}`);
-                if (cp.version) bits.push(`v${cp.version}`);
-                if (cp.model) bits.push(cp.model);
-                if (cp.probes_total_count != null) {
-                  const tgt = cp.probe_count_target || 10;
-                  const cap = cp.probe_count_hard_max || 12;
-                  bits.push(`${cp.probes_total_count} probes (target ${tgt}, cap ${cap})`);
-                }
-                if (cp.framework_matches_n != null) bits.push(`${cp.framework_matches_n} framework matches`);
-                if (cp.resume_analyzed) {
-                  bits.push(`resume read (${cp.resume_length_chars || 0} chars, ${cp.resume_source || "?"})`);
-                } else if (cp.resume_source) {
-                  bits.push(`resume not read (${cp.resume_source})`);
-                }
-                if (cp.trim_note) bits.push(`trim: ${cp.trim_note}`);
-                if (cp.notes) bits.push(cp.notes);
-                return bits.join(" · ");
-              })()}
-            </div>
-          )}
-
-          {/* LLM-generated probes (candidate-specific: resume + framework + traits). */}
+          {/* LLM-generated probes (candidate-specific: resume + framework + traits).
+              Rendered as a flat list — section subheaders were dropped 2026-07-17
+              per Peter: origin pill on each probe carries the classification and
+              subheaders were adding visual noise. */}
           {(!detail?.custom_probes || !Array.isArray(detail?.custom_probes?.sections) || detail.custom_probes.sections.length === 0) ? (
             <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic", marginBottom: 12 }}>
               No LLM-generated probes yet — use the Generate button below.
             </div>
           ) : (
-            detail.custom_probes.sections.map((sec, si) => (
-              <div key={si} style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>{sec?.focus || "Section"}</div>
-                {(Array.isArray(sec?.probes) ? sec.probes : []).map((p, pi) => {
-                  const src = p?.source || `s${si}p${pi}`;
-                  const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
-                  const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
-                  return (
-                    <div key={pi} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${T.blue}` }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 4 }}>Q: {p?.question}</div>
-                      {p?.listen_for && (
-                        <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
-                          <strong style={{ color: T.green }}>Listen for:</strong> {p.listen_for}
-                        </div>
-                      )}
-                      {p?.concern && (
-                        <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
-                          <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
-                        </div>
-                      )}
-                      {p?.source && (() => {
-                        const origin = parseProbeOrigin(p.source);
-                        if (!origin) return null;
-                        const pc = originPillColors(origin.tone);
-                        return (
-                          <div style={{ marginTop: 4, marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: pc.fg, background: pc.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                              {origin.label}
-                            </span>
-                            <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{origin.detail}</span>
-                            <span style={{ fontSize: 9, color: T.slate400, fontFamily: "monospace", marginLeft: "auto" }}>{p.source}</span>
-                          </div>
-                        );
-                      })()}
-                      <textarea
-                        value={currentAnswer}
-                        onChange={(e) => updateAnswer(src, e.target.value)}
-                        placeholder="Candidate's response..."
-                        rows={3}
-                        style={{
-                          width: "100%",
-                          fontSize: 12,
-                          padding: 8,
-                          border: `1px solid ${T.slate300}`,
-                          borderRadius: 5,
-                          fontFamily: "inherit",
-                          resize: "vertical",
-                          boxSizing: "border-box",
-                          background: T.slate50,
-                        }}
-                      />
-                      {savedAt && (
-                        <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
-                          Saved {new Date(savedAt).toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ))
+            detail.custom_probes.sections.flatMap((sec, si) =>
+              (Array.isArray(sec?.probes) ? sec.probes : []).map((p, pi) => {
+                const src = p?.source || `s${si}p${pi}`;
+                const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
+                const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
+                const origin = p?.source ? parseProbeOrigin(p.source) : null;
+                const pc = origin ? originPillColors(origin.tone) : null;
+                return (
+                  <div key={`${si}-${pi}`} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${T.blue}` }}>
+                    {origin && (
+                      <div style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: pc.fg, background: pc.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                          {origin.label}
+                        </span>
+                        <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{origin.detail}</span>
+                        <span style={{ fontSize: 9, color: T.slate400, fontFamily: "monospace", marginLeft: "auto" }}>{p.source}</span>
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 4 }}>Q: {p?.question}</div>
+                    {p?.listen_for && (
+                      <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
+                        <strong style={{ color: T.green }}>Listen for:</strong> {p.listen_for}
+                      </div>
+                    )}
+                    {p?.concern && (
+                      <div style={{ fontSize: 11, color: T.slate700, marginBottom: 6 }}>
+                        <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
+                      </div>
+                    )}
+                    <textarea
+                      value={currentAnswer}
+                      onChange={(e) => updateAnswer(src, e.target.value)}
+                      placeholder="Candidate's response..."
+                      rows={3}
+                      style={{
+                        width: "100%",
+                        fontSize: 12,
+                        padding: 8,
+                        border: `1px solid ${T.slate300}`,
+                        borderRadius: 5,
+                        fontFamily: "inherit",
+                        resize: "vertical",
+                        boxSizing: "border-box",
+                        background: T.slate50,
+                      }}
+                    />
+                    {savedAt && (
+                      <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
+                        Saved {new Date(savedAt).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )
           )}
 
         </div>
 
+        {/* Candidate Questions — free-form capture of what THEY asked us. Same
+            look/feel as warm-up so review reads consistently. Keyed to
+            'candidate_questions' in interview_answers jsonb. */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            Candidate Questions · 10 min
+          </div>
+          {(() => {
+            const src = "candidate_questions";
+            const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
+            const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
+            return (
+              <div style={{ padding: 10, background: T.white, borderRadius: 7, borderLeft: `3px solid ${T.slate400}` }}>
+                <div style={{ fontSize: 11, color: T.slate600, marginBottom: 6, fontStyle: "italic" }}>
+                  Capture the questions the candidate asks — content and quality of their questions is a signal.
+                </div>
+                <textarea
+                  value={currentAnswer}
+                  onChange={(e) => updateAnswer(src, e.target.value)}
+                  placeholder="Their questions..."
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    fontSize: 12,
+                    padding: 8,
+                    border: `1px solid ${T.slate300}`,
+                    borderRadius: 5,
+                    fontFamily: "inherit",
+                    resize: "vertical",
+                    boxSizing: "border-box",
+                    background: T.slate50,
+                  }}
+                />
+                {savedAt && (
+                  <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
+                    Saved {new Date(savedAt).toLocaleString()}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+
         {/* Bottom action row — Save answers batch-writes everything above
-            (warm-up + LLM probes). Generate/Regenerate re-runs the edge fn;
-            does not touch answers. */}
+            (warm-up + LLM probes + candidate questions). Generate/Regenerate
+            re-runs the edge fn; does not touch answers. */}
         <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <button
             onClick={saveAnswers}
