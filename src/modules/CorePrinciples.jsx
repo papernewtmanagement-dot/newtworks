@@ -125,7 +125,8 @@ function PrinciplesView() {
   const [principles, setPrinciples] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
+  // URL-persisted so refresh keeps the same principle open.
+  const [selectedId, setSelectedId] = useTabParam("principle", null);
   const _vp = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
