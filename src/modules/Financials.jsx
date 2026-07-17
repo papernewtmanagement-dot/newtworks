@@ -1133,8 +1133,25 @@ const PLSection = ({ data }) => {
   // insert a bold section header row above each group with subtotals summed
   // across the group\'s child accounts.
   const renderSectionedRows = (lines, opts) => {
+    // Peter directive 2026-07-17: any row that is blank across the whole
+    // display is not displayed. "Blank" = every visible value column AND
+    // every prior-year comparison rounds to $0 (< half a cent). Filtering
+    // individual lines before grouping means a section whose surviving
+    // children are all blank drops out entirely — header + subtotal row
+    // go with them. Total Income / Total Expenses / Net Income are
+    // computed outside this function against unfiltered incomeRows /
+    // expenseRows, so they still reflect all activity (blank rows
+    // contribute $0 so mathematically nothing shifts).
+    const isBlankAcrossAllCols = (line) =>
+      columns.every(c => {
+        const v = c.getValue(line) || 0;
+        const p = c.getPriorValue ? (c.getPriorValue(line) || 0) : 0;
+        return Math.abs(v) < 0.005 && Math.abs(p) < 0.005;
+      });
+    const visibleLines = lines.filter(l => !isBlankAcrossAllCols(l));
+
     const groups = {};
-    for (const line of lines) {
+    for (const line of visibleLines) {
       const sec = line.section || "Uncategorized";
       if (!groups[sec]) groups[sec] = [];
       groups[sec].push(line);
