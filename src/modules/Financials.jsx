@@ -154,7 +154,7 @@ function useFinancialsData() {
         // Sorted ascending; used by buildLines to init perMonthByYear buckets so the annual
         // grain picker can pick any window of prior years without a re-fetch.
         const historyYears = [...new Set(priorIsData.map(r => r.year))]
-          .filter(y => y < currentYear && y >= currentYear - 10)
+          .filter(y => y < currentYear)
           .sort((a, b) => a - b);
         // buildLines keys on (section, account_name) so QBO parent categories
         // ("0001 ADMINISTRATION", "0002 TEAM", ...) group their accounts, and
@@ -908,7 +908,7 @@ const PLSection = ({ data }) => {
   const [showPct, setShowPct] = useState(false);
   // Annual grain: how many prior years to show as side-by-side columns (plus YTD current).
   // Data goes back to 2019 in the RPC; picker lets Peter widen/narrow the compare window.
-  const [yearsBack, setYearsBack] = useState(3);
+  const [yearsBack, setYearsBack] = useState("3"); // "3" | "10" | "all"
 
   // --- Column value extractors ------------------------------------------------
   // Each extractor takes a line object { perMonth[12], perMonthPrior[12] } and
@@ -999,7 +999,23 @@ const PLSection = ({ data }) => {
   // of prior year.
   const annualCols = () => {
     const cols = [];
-    for (let yr = year - yearsBack; yr <= year - 1; yr++) {
+    let startYear;
+    if (yearsBack === "all") {
+      // Find earliest year with any data across income + expense lines
+      const allYears = new Set();
+      for (const line of [...incomeRows, ...expenseRows]) {
+        if (line.perMonthByYear) {
+          for (const yk of Object.keys(line.perMonthByYear)) {
+            const n = Number(yk);
+            if (Number.isFinite(n) && n < year) allYears.add(n);
+          }
+        }
+      }
+      startYear = allYears.size > 0 ? Math.min(...allYears) : year - 3;
+    } else {
+      startYear = year - Number(yearsBack);
+    }
+    for (let yr = startYear; yr <= year - 1; yr++) {
       cols.push({
         key:      `y${yr}`,
         label:    `${yr}`,
@@ -1254,14 +1270,12 @@ const PLSection = ({ data }) => {
             Show:
             <select
               value={yearsBack}
-              onChange={(e) => setYearsBack(Number(e.target.value))}
+              onChange={(e) => setYearsBack(e.target.value)}
               style={{ padding: "5px 8px", fontSize: 12, background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6, color: T.slate800, cursor: "pointer" }}
             >
-              <option value={1}>Last 1 year + YTD</option>
-              <option value={3}>Last 3 years + YTD</option>
-              <option value={5}>Last 5 years + YTD</option>
-              <option value={7}>Last 7 years + YTD</option>
-              <option value={10}>Last 10 years + YTD</option>
+              <option value="3">Last 3 years + YTD</option>
+              <option value="10">Last 10 years + YTD</option>
+              <option value="all">All years + YTD</option>
             </select>
           </label>
         )}
