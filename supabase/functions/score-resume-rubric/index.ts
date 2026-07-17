@@ -105,7 +105,6 @@ Deno.serve(async (req) => {
   const weights = config.construct_weights as { nature: number; nurture: number; drivers: number };
   const thresholds = config.verdict_thresholds as { pass: string; consider: string; decline: string };
 
-  const validSubsignalLabels = new Set(subsignalRows.map((r: any) => r.short_label as string));
   const validScreenLabels = new Set(screenRules.map((r: any) => r.short_label as string));
 
   // --- 3. Build the Groq prompt ---
@@ -130,6 +129,8 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model,
         temperature: 0.1, // low variance — this is scoring, not creative
+        max_completion_tokens: 3500, // Groq TPM 8000; prompt ~4500 + output 3500 = ~8000. gpt-oss-120b hidden reasoning eats output budget so we need headroom.
+        reasoning_effort: "low", // gpt-oss-120b is a reasoning model; default "medium" burns tokens on internal deliberation and truncates JSON output. Low cuts reasoning burn ~50% without affecting visible scoring.
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
@@ -278,7 +279,7 @@ function json(bodyObj: unknown, status = 200): Response {
 
 const SYSTEM_PROMPT =
   `You are a resume-screening evaluator for a State Farm insurance agency in ` +
-  `San Antonio, TX. You score candidates against a fixed rubric of nine ` +
+  `San Antonio, TX. You score candidates against a fixed rubric of ten ` +
   `sub-signals across three constructs (Nature, Nurture, Drivers) to help ` +
   `decide who advances to formal personality assessment.
 
@@ -286,6 +287,15 @@ Hard constraints:
 - You do NOT make character judgments at this layer. Character floors are ` +
   `evaluated downstream via personality assessment, interview, and reference ` +
   `check. Your job is to score the sub-signals as defined.
+- ANCHOR TO THE PATTERN, NOT THE MIDDLE. Each sub-signal provides three ` +
+  `evidence-pattern anchors: 1-2 (low), 5 (mid), 9-10 (high). Identify which ` +
+  `anchor pattern the resume's evidence most closely matches, START your score ` +
+  `at that anchor, then adjust up or down ONLY for specific gaps or strengths ` +
+  `visible in the resume relative to that anchor. Do not gravitate toward the ` +
+  `middle. A resume matching the 9-10 anchor pattern should score 9 or 10, ` +
+  `not 6 or 7 "because it's not perfect." A resume matching the 1-2 anchor ` +
+  `pattern should score 1 or 2, not 3 or 4 "because it shows some effort." ` +
+  `The anchors ARE the scale.
 - Every reasoning must cite specific evidence from the resume text: a role, ` +
   `tenure length, credential, phrase, or a specific absence of expected ` +
   `evidence. No generic reasoning.
@@ -302,10 +312,10 @@ function buildScoringPrompt(
   const subsigSection = subsignalRows.map((s) => {
     const ts = s.trait_signature;
     return `### ${s.short_label} (${ts.construct})
-Anchor calibration:
-- 1-2 (low): ${ts.anchor_low.evidence} [example candidate: ${ts.anchor_low.candidate}]
-- 5 (mid): ${ts.anchor_mid.evidence} [example candidate: ${ts.anchor_mid.candidate}]
-- 9-10 (high): ${ts.anchor_high.evidence} [example candidate: ${ts.anchor_high.candidate}]
+Anchor calibration (evidence patterns — anchor to the closest match, then adjust for specific gaps/strengths):
+- 1-2 (low): ${ts.anchor_low.evidence}
+- 5 (mid): ${ts.anchor_mid.evidence}
+- 9-10 (high): ${ts.anchor_high.evidence}
 
 Positive markers (raise score):
 ${(ts.markers_positive as string[]).map((m) => `- ${m}`).join("\n")}
@@ -319,13 +329,15 @@ ${(ts.markers_negative as string[]).map((m) => `- ${m}`).join("\n")}`;
   ).join("\n");
 
   const jsonTemplate = subsignalRows.map((s) =>
-    `    "${s.short_label}": { "score": 0, "reasoning": "one sentence citing specific resume evidence" }`
+    `    "${s.short_label}": { "score": 0, "reasoning": "one short sentence (~20 words) citing specific resume evidence" }`
   ).join(",\n");
 
   return `# Candidate: ${candidateName}
 
 ## Task
 Score this candidate against the rubric below using ONLY evidence in the resume text at the bottom. Every sub-signal score is an integer 1–10.
+
+For each sub-signal: first identify which of the three anchor patterns (low, mid, high) the resume's evidence most closely matches, then place the score AT that anchor and adjust up or down ONLY for specific gaps or strengths the resume shows relative to that anchor. Do not default to the middle of the scale.
 
 ## Rubric
 
