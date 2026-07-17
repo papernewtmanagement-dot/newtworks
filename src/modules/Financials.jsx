@@ -32,6 +32,7 @@ const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov
 function useFinancialsData() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     async function load() {
@@ -492,9 +493,9 @@ function useFinancialsData() {
       }
     }
     load();
-  }, []);
+  }, [reloadKey]);
 
-  return { data, loading };
+  return { data, loading, reload: () => setReloadKey(k => k + 1) };
 }
 
 
@@ -890,7 +891,311 @@ const OverviewSection = ({ period, setPeriod, data }) => {
 // % of income checkbox adds a per-cell percentage next to each dollar.
 // Non-completed periods carry a "(partial)" tag. Partial periods compare
 // same-partial slice YoY (e.g. YTD 2026 through Jul vs Jan–Jul 2025).
-const PLSection = ({ data }) => {
+// ─── PLDrillPanel: side panel showing every txn behind a P&L cell/row ────
+// Fetches from RPC public.pnl_drill_transactions. Supports inline edit
+// (reclassify account, edit description, edit date) + delete for both
+// live journal_entries/journal_lines and prior_year_pl imports.
+// RLS admin-write policies on those three tables shipped alongside this
+// component (migration: pnl_drill_editable).
+const _drillDateFmt = (d) => {
+  try {
+    const [y, m, day] = String(d).split("T")[0].split("-");
+    return `${MONTHS[Number(m) - 1]} ${Number(day)}, ${y}`;
+  } catch { return String(d); }
+};
+const _drillBtn = { padding: "4px 10px", fontSize: 11, background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 5, color: T.slate700, cursor: "pointer" };
+const _drillBtnPrimary = { padding: "4px 10px", fontSize: 11, background: T.slate800, border: `1px solid ${T.slate800}`, borderRadius: 5, color: "#fff", cursor: "pointer", fontWeight: 500 };
+const _drillBtnDanger = { padding: "4px 10px", fontSize: 11, background: "#fff", border: `1px solid #fca5a5`, borderRadius: 5, color: "#b91c1c", cursor: "pointer" };
+const _drillLabel = { fontSize: 11, fontWeight: 500, color: T.slate600, display: "flex", flexDirection: "column", gap: 3 };
+const _drillInput = { padding: "6px 8px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 5, color: T.slate800, background: "#fff" };
+
+const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
+  const [rows, setRows]         = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState(null);
+  const [editingKey, setEditingKey] = useState(null);
+  const [editDraft, setEditDraft]   = useState({});
+  const [saving, setSaving]     = useState(false);
+  const [coaOptions, setCoaOptions] = useState([]);
+
+  const rowKey = (r) => `${r.source}-${r.je_id || r.pyp_id || "?"}-${r.line_id || ""}`;
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error } = await supabase.rpc("pnl_drill_transactions", {
+        p_account_name: ctx.accountName,
+        p_section:      ctx.section,
+        p_account_type: ctx.accountType,
+        p_from_date:    ctx.fromDate,
+        p_to_date:      ctx.toDate,
+      });
+      if (error) throw error;
+      setRows(data || []);
+    } catch (e) {
+      console.error("PLDrillPanel load error:", e);
+      setError(e.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCoaOptions = async () => {
+    try {
+      const { data } = await supabase.from("chart_of_accounts")
+        .select("id, account_code, account_name, account_type")
+        .eq("account_type", ctx.accountType)
+        .eq("is_active", true)
+        .order("account_code");
+      setCoaOptions(data || []);
+    } catch (e) {
+      console.error("PLDrillPanel COA load error:", e);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    loadCoaOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.accountName, ctx.section, ctx.accountType, ctx.fromDate, ctx.toDate]);
+
+  // ESC key closes the panel
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const startEdit = (row) => {
+    setEditingKey(rowKey(row));
+    setEditDraft({
+      account_id:   row.account_id,
+      description:  row.description || "",
+      entry_date:   String(row.entry_date).split("T")[0],
+      account_name: row.account_name || "",
+    });
+  };
+
+  const cancelEdit = () => { setEditingKey(null); setEditDraft({}); };
+
+  const saveEdit = async (row) => {
+    setSaving(true);
+    try {
+      if (row.source === "journal") {
+        const jlUpdates = {};
+        if (editDraft.account_id && editDraft.account_id !== row.account_id) {
+          jlUpdates.account_id = editDraft.account_id;
+        }
+        if ((editDraft.description || null) !== (row.description || null)) {
+          jlUpdates.description = editDraft.description || null;
+        }
+        if (Object.keys(jlUpdates).length > 0) {
+          const { data, error } = await supabase.from("journal_lines")
+            .update(jlUpdates).eq("id", row.line_id).select("id");
+          if (error) throw error;
+          if (!data || data.length === 0) throw new Error("Journal line update returned no rows (RLS?)");
+        }
+        const jeUpdates = {};
+        if (editDraft.entry_date && editDraft.entry_date !== String(row.entry_date).split("T")[0]) {
+          jeUpdates.entry_date = editDraft.entry_date;
+        }
+        if (Object.keys(jeUpdates).length > 0) {
+          const { data, error } = await supabase.from("journal_entries")
+            .update(jeUpdates).eq("id", row.je_id).select("id");
+          if (error) throw error;
+          if (!data || data.length === 0) throw new Error("Journal entry update returned no rows (RLS?)");
+        }
+      } else if (row.source === "prior_year_pl") {
+        const pypUpdates = {};
+        if (editDraft.account_name && editDraft.account_name !== row.account_name) {
+          pypUpdates.account_name = editDraft.account_name;
+        }
+        if (editDraft.entry_date && editDraft.entry_date !== String(row.entry_date).split("T")[0]) {
+          const parts = editDraft.entry_date.split("-");
+          pypUpdates.period_year  = Number(parts[0]);
+          pypUpdates.period_month = Number(parts[1]);
+          pypUpdates.period_start = editDraft.entry_date;
+        }
+        if (Object.keys(pypUpdates).length > 0) {
+          const { data, error } = await supabase.from("prior_year_pl")
+            .update(pypUpdates).eq("id", row.pyp_id).select("id");
+          if (error) throw error;
+          if (!data || data.length === 0) throw new Error("Prior_year_pl update returned no rows (RLS?)");
+        }
+      }
+      cancelEdit();
+      await load();
+      onDataChanged && onDataChanged();
+    } catch (e) {
+      console.error("PLDrillPanel save error:", e);
+      alert("Save failed: " + (e.message || String(e)));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteRow = async (row) => {
+    const label = row.description || row.account_name || "(no description)";
+    if (!confirm(`Delete this transaction?\n\n${label}\nAmount: $${Number(row.amount).toLocaleString()}\nDate: ${row.entry_date}\n\nThis cannot be undone.`)) return;
+    setSaving(true);
+    try {
+      if (row.source === "journal") {
+        // Cascade: journal_lines FK is ON DELETE CASCADE, so both sides go.
+        const { data, error } = await supabase.from("journal_entries")
+          .delete().eq("id", row.je_id).select("id");
+        if (error) throw error;
+        if (!data || data.length === 0) throw new Error("Journal entry delete returned no rows (RLS?)");
+      } else if (row.source === "prior_year_pl") {
+        const { data, error } = await supabase.from("prior_year_pl")
+          .delete().eq("id", row.pyp_id).select("id");
+        if (error) throw error;
+        if (!data || data.length === 0) throw new Error("Prior_year_pl delete returned no rows (RLS?)");
+      }
+      await load();
+      onDataChanged && onDataChanged();
+    } catch (e) {
+      console.error("PLDrillPanel delete error:", e);
+      alert("Delete failed: " + (e.message || String(e)));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const total = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.35)", zIndex: 999 }} />
+      <div role="dialog" aria-label="Transaction drill" style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: "min(580px, 95vw)",
+        background: "#fff", boxShadow: "-4px 0 24px rgba(0,0,0,0.15)", zIndex: 1000,
+        display: "flex", flexDirection: "column",
+      }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.slate200}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {ctx.section} · {ctx.accountType}
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginTop: 2, wordBreak: "break-word" }}>{ctx.accountName}</div>
+            <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
+              {_drillDateFmt(ctx.fromDate)} → {_drillDateFmt(ctx.toDate)}
+            </div>
+            <div style={{ fontSize: 13, color: T.slate700, marginTop: 6 }}>
+              {rows.length} transaction{rows.length !== 1 ? "s" : ""} · <span style={{ fontWeight: 600 }}>{fmt(total)}</span>
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: T.slate500, lineHeight: 1, padding: 4 }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {loading && <div style={{ padding: 20, color: T.slate500, fontSize: 13 }}>Loading…</div>}
+          {error && <div style={{ padding: 20, color: "#b91c1c", fontSize: 13 }}>Error: {error}</div>}
+          {!loading && !error && rows.length === 0 && (
+            <div style={{ padding: 20, color: T.slate500, fontSize: 13 }}>No transactions in this range.</div>
+          )}
+          {!loading && rows.map((row) => {
+            const k = rowKey(row);
+            const isEditing = editingKey === k;
+            const isPrior = row.source === "prior_year_pl";
+            return (
+              <div key={k} style={{
+                padding: "10px 16px",
+                borderBottom: `1px solid ${T.slate100}`,
+                background: isEditing ? T.slate50 : "transparent",
+              }}>
+                {!isEditing && (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                      <div style={{ fontSize: 11, color: T.slate500 }}>{String(row.entry_date).split("T")[0]}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>{fmt(row.amount)}</div>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.slate800, marginTop: 2, wordBreak: "break-word" }}>
+                      {row.description || row.account_name || <span style={{ color: T.slate400, fontStyle: "italic" }}>(no description)</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, fontSize: 10, color: T.slate500, flexWrap: "wrap" }}>
+                      {row.account_code && <span style={{ padding: "1px 5px", background: T.slate100, borderRadius: 3 }}>{row.account_code}</span>}
+                      {isPrior && <span style={{ padding: "1px 5px", background: "#fef3c7", color: "#92400e", borderRadius: 3 }}>prior books</span>}
+                      {row.classification_status === "pending_review" && <span style={{ padding: "1px 5px", background: "#fee2e2", color: "#991b1b", borderRadius: 3 }}>suspense</span>}
+                      {row.je_source && <span style={{ opacity: 0.65 }}>{row.je_source}</span>}
+                      {row.reference_number && <span style={{ opacity: 0.65 }}>ref: {row.reference_number}</span>}
+                    </div>
+                    <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                      <button onClick={() => startEdit(row)} disabled={saving} style={_drillBtn}>Edit</button>
+                      <button onClick={() => deleteRow(row)} disabled={saving} style={_drillBtnDanger}>Delete</button>
+                    </div>
+                  </>
+                )}
+                {isEditing && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <div style={{ fontSize: 11, color: T.slate500 }}>Editing txn</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>
+                        {fmt(row.amount)} <span style={{ fontSize: 10, color: T.slate400, fontWeight: 400 }}>(amount not editable)</span>
+                      </div>
+                    </div>
+                    <label style={_drillLabel}>Date
+                      <input type="date" value={editDraft.entry_date || ""} onChange={(e) => setEditDraft({ ...editDraft, entry_date: e.target.value })} style={_drillInput} />
+                    </label>
+                    {!isPrior && (
+                      <label style={_drillLabel}>Account
+                        <select value={editDraft.account_id || ""} onChange={(e) => setEditDraft({ ...editDraft, account_id: e.target.value })} style={_drillInput}>
+                          {coaOptions.map(a => (
+                            <option key={a.id} value={a.id}>{a.account_code} · {a.account_name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {isPrior && (
+                      <label style={_drillLabel}>Account name
+                        <input type="text" value={editDraft.account_name || ""} onChange={(e) => setEditDraft({ ...editDraft, account_name: e.target.value })} style={_drillInput} />
+                      </label>
+                    )}
+                    {!isPrior && (
+                      <label style={_drillLabel}>Description
+                        <input type="text" value={editDraft.description || ""} onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })} style={_drillInput} />
+                      </label>
+                    )}
+                    <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                      <button onClick={() => saveEdit(row)} disabled={saving} style={_drillBtnPrimary}>{saving ? "Saving…" : "Save"}</button>
+                      <button onClick={cancelEdit} disabled={saving} style={_drillBtn}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+};
+
+// ─── Section: P&L ────────────────────────────────────────────
+// Compact P&L. Grain toggle (monthly / quarterly / annual). Each column
+// shows current-period $ paired with a small "same period prior year"
+// delta pill. Monthly = Jan..current; Quarterly = last 3 completed
+// quarters + QTD (partial) + YTD; Annual = last 3 completed years + YTD.
+// Δ colored green (income up / expense down / net up) or red (opposite).
+// Prior-value comes from perMonthByYear on each line and represents the
+// same period one year prior. Single-row header (parent label spans both the
+// $ and Δ cells).
+// % of income checkbox adds a per-cell percentage next to each dollar.
+// Non-completed periods carry a "(partial)" tag. Partial periods compare
+// same-partial slice YoY (e.g. YTD 2026 through Jul vs Jan–Jul 2025).
+//
+// DRILL: Every leaf account CELL is clickable to open a side panel showing
+// every transaction rolling up into that (account × date column) intersection.
+// Every leaf account LABEL is clickable to open the same panel scoped to
+// the full visible date range for that account. See PLDrillPanel above.
+// Section headers, subtotals, Total Income, Total Expenses, and NET INCOME
+// are not clickable (per Peter directive 2026-07-17: individual-account grain).
+const _somDrill = (y, m) => `${y}-${String(m).padStart(2, "0")}-01`;
+const _eomDrill = (y, m) => {
+  const d = new Date(Date.UTC(y, m, 0));
+  return d.toISOString().split("T")[0];
+};
+
+const PLSection = ({ data, onDataChanged }) => {
   const pl = data?.pl || { income: [], expenses: [] };
   const incomeRows  = Array.isArray(pl.income)   ? pl.income   : [];
   const expenseRows = Array.isArray(pl.expenses) ? pl.expenses : [];
@@ -906,22 +1211,26 @@ const PLSection = ({ data }) => {
 
   const [grain, setGrain]     = useState("quarterly"); // monthly | quarterly | annual
   const [showPct, setShowPct] = useState(false);
-  // Annual grain: how many prior years to show as side-by-side columns (plus YTD current).
-  // Data goes back to 2019 in the RPC; picker lets Peter widen/narrow the compare window.
   const [yearsBack, setYearsBack] = useState("3"); // "3" | "10" | "all"
 
+  // Drill state persisted in URL as pldrill=<accountName>::<section>::<type>::<from>::<to>
+  const [drillState, setDrillState] = useTabParam("pldrill", null);
+  const drill = (() => {
+    if (!drillState) return null;
+    const parts = drillState.split("::");
+    if (parts.length < 5) return null;
+    return { accountName: parts[0], section: parts[1], accountType: parts[2], fromDate: parts[3], toDate: parts[4] };
+  })();
+  const openDrill = (accountName, section, accountType, fromDate, toDate) => {
+    setDrillState(`${accountName}::${section}::${accountType}::${fromDate}::${toDate}`);
+  };
+  const closeDrill = () => setDrillState(null);
+
   // --- Column value extractors ------------------------------------------------
-  // Each extractor takes a line object { perMonth[12], perMonthPrior[12] } and
-  // returns a number for the column. Prior-year fields use perMonthPrior.
   const sum = (arr, from, to) => (Array.isArray(arr) ? arr : []).slice(from, to + 1).reduce((s,x) => s + (x || 0), 0);
 
-  // Every non-summary column has a getValue and (optionally) a getPriorValue
-  // for paired YoY delta. getPriorValue returns null → "—" (no comparison
-  // available).
-
-  // Monthly: Jan..current-month + YTD, chronological. Each month has a YoY
-  // sub-column against the same month prior year. YTD paired vs same-YTD-slice
-  // of prior year (Jan..currentMonth).
+  // Each column now also carries fromDate / toDate for drill-down. The
+  // dates match the calendar window the getValue() aggregates over.
   const monthCols = () => {
     const cols = [];
     for (let m = 1; m <= currentMonth; m++) {
@@ -929,6 +1238,8 @@ const PLSection = ({ data }) => {
         key:      `m${m}`,
         label:    `${MONTHS[m - 1]} ${year}`,
         partial:  (m === currentMonth),
+        fromDate: _somDrill(year, m),
+        toDate:   _eomDrill(year, m),
         getValue: (line) => line.perMonth[m - 1] || 0,
         getPriorValue: (line) => (line.perMonthByYear?.[year - 1]?.[m - 1] ?? null),
       });
@@ -937,6 +1248,8 @@ const PLSection = ({ data }) => {
       key:      "ytd",
       label:    `YTD ${year}`,
       partial:  true,
+      fromDate: _somDrill(year, 1),
+      toDate:   _eomDrill(year, currentMonth),
       getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
       getPriorValue: (line) => {
         const arr = line.perMonthByYear?.[year - 1];
@@ -948,10 +1261,6 @@ const PLSection = ({ data }) => {
 
   const sumQ = (arr, qNum) => sum(arr || [], (qNum - 1) * 3, (qNum - 1) * 3 + 2);
 
-  // Quarterly: last 3 completed quarters + current QTD (partial) + YTD.
-  // Each quarter paired vs same-quarter-prior-year. QTD's YoY uses the same
-  // partial slice of the prior year's quarter. YTD's YoY uses Jan..currentMonth
-  // of prior year.
   const quarterCols = () => {
     const seq = [];
     let y = year, q = currentQnum;
@@ -960,21 +1269,28 @@ const PLSection = ({ data }) => {
       if (q === 0) { q = 4; y -= 1; }
       seq.unshift({ year: y, qNum: q });
     }
-    const cols = seq.map(({ year: yr, qNum }) => ({
-      key:      `q${yr}-${qNum}`,
-      label:    `Q${qNum} ${yr}`,
-      partial:  false,
-      getValue: (line) => sumQ(line.perMonthByYear?.[yr], qNum),
-      getPriorValue: (line) => {
-        const arr = line.perMonthByYear?.[yr - 1];
-        return arr ? sumQ(arr, qNum) : null;
-      },
-    }));
-    // Current quarter (partial) — YoY compares same-partial slice of prior year
+    const cols = seq.map(({ year: yr, qNum }) => {
+      const qs = (qNum - 1) * 3 + 1;
+      const qe = qs + 2;
+      return {
+        key:      `q${yr}-${qNum}`,
+        label:    `Q${qNum} ${yr}`,
+        partial:  false,
+        fromDate: _somDrill(yr, qs),
+        toDate:   _eomDrill(yr, qe),
+        getValue: (line) => sumQ(line.perMonthByYear?.[yr], qNum),
+        getPriorValue: (line) => {
+          const arr = line.perMonthByYear?.[yr - 1];
+          return arr ? sumQ(arr, qNum) : null;
+        },
+      };
+    });
     cols.push({
       key:      "qtd",
       label:    `Q${currentQnum} ${year} (through ${MONTHS[currentMonth - 1]})`,
       partial:  true,
+      fromDate: _somDrill(year, qStartMonth),
+      toDate:   _eomDrill(year, currentMonth),
       getValue: (line) => sum(line.perMonth, qStartMonth - 1, currentMonth - 1),
       getPriorValue: (line) => {
         const arr = line.perMonthByYear?.[year - 1];
@@ -985,6 +1301,8 @@ const PLSection = ({ data }) => {
       key:      "ytd",
       label:    `YTD ${year}`,
       partial:  true,
+      fromDate: _somDrill(year, 1),
+      toDate:   _eomDrill(year, currentMonth),
       getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
       getPriorValue: (line) => {
         const arr = line.perMonthByYear?.[year - 1];
@@ -994,14 +1312,10 @@ const PLSection = ({ data }) => {
     return cols;
   };
 
-  // Annual: last 3 completed years + current YTD (partial).
-  // Each year paired vs the immediately prior year. YTD paired vs same-YTD-slice
-  // of prior year.
   const annualCols = () => {
     const cols = [];
     let startYear;
     if (yearsBack === "all") {
-      // Find earliest year with any data across income + expense lines
       const allYears = new Set();
       for (const line of [...incomeRows, ...expenseRows]) {
         if (line.perMonthByYear) {
@@ -1020,6 +1334,8 @@ const PLSection = ({ data }) => {
         key:      `y${yr}`,
         label:    `${yr}`,
         partial:  false,
+        fromDate: _somDrill(yr, 1),
+        toDate:   _eomDrill(yr, 12),
         getValue: (line) => sum(line.perMonthByYear?.[yr], 0, 11),
         getPriorValue: (line) => {
           const arr = line.perMonthByYear?.[yr - 1];
@@ -1031,6 +1347,8 @@ const PLSection = ({ data }) => {
       key:      "ytd",
       label:    `YTD ${year} (through ${MONTHS[currentMonth - 1]})`,
       partial:  true,
+      fromDate: _somDrill(year, 1),
+      toDate:   _eomDrill(year, currentMonth),
       getValue: (line) => sum(line.perMonth, 0, currentMonth - 1),
       getPriorValue: (line) => {
         const arr = line.perMonthByYear?.[year - 1];
@@ -1044,9 +1362,11 @@ const PLSection = ({ data }) => {
                 : grain === "annual"  ? annualCols()
                 :                       quarterCols();
 
+  // Full visible date range (used for row-label click drill scope)
+  const visibleFrom = columns[0]?.fromDate;
+  const visibleTo   = columns[columns.length - 1]?.toDate;
+
   // --- Totals per column ------------------------------------------------------
-  // Current-period totals (used for the totals row + as denominator for % of income).
-  // Prior-period totals mirrored so the paired Δ% on total/net rows is honest.
   const totalIncomeByCol      = columns.map(c => incomeRows.reduce((s, line) => s + c.getValue(line), 0));
   const totalIncomePriorByCol = columns.map(c => {
     if (!c.getPriorValue) return null;
@@ -1071,9 +1391,6 @@ const PLSection = ({ data }) => {
   });
 
   // --- Delta rendering --------------------------------------------------------
-  // Δ = (current - prior) / prior * 100, formatted "+X%" / "−X%".
-  // Returns "—" when prior is null or 0 (division would be Inf/NaN).
-  // Color: good direction (income up, expense down, net up) = green; bad = red.
   const renderDelta = (cur, prior, opts = {}) => {
     if (prior == null || prior === 0) {
       return <span style={{ color: T.slate400 }}>—</span>;
@@ -1088,13 +1405,12 @@ const PLSection = ({ data }) => {
       const { isIncomeLine, isExpenseLine, isNetLine } = opts;
       const goodDirection =
         isExpenseLine ? rounded < 0
-      :                 rounded > 0;   // income, net, and fallback all: up is good
+      :                 rounded > 0;
       color = goodDirection ? T.green : T.red;
     }
     return <span style={{ color }}>{text}</span>;
   };
 
-  // Format a value cell. Adds "· X%" of income when showPct is on.
   const renderValue = (raw, colIdx) => {
     const dollar = fmt(raw);
     if (!showPct) return dollar;
@@ -1104,7 +1420,6 @@ const PLSection = ({ data }) => {
     return <>{dollar}<span style={{ color: T.slate400, fontSize: 10, marginLeft: 4 }}>· {pct.toFixed(1)}%</span></>;
   };
 
-  // Base cell styles
   const cellBase = (isTotal, isDelta) => ({
     padding: "7px 8px",
     fontSize: 12,
@@ -1119,19 +1434,41 @@ const PLSection = ({ data }) => {
     } : {}),
   });
 
-  // A full data row: label + (value, delta) pairs
-  const DataRow = ({ label, indent, bold, isTotal, values, priors, opts }) => (
+  // A full data row: label + (value, delta) pairs. If onCellClick /
+  // onLabelClick are passed, corresponding surfaces render with a
+  // pointer cursor + hover underline. Section headers, subtotals,
+  // and Total/Net rows leave these unset and stay non-clickable.
+  const DataRow = ({ label, indent, bold, isTotal, values, priors, opts, onCellClick, onLabelClick }) => (
     <tr style={{ background: isTotal ? T.slate50 : "transparent" }}>
-      <td style={{
-        padding: "7px 8px",
-        fontSize: 12,
-        color: indent ? T.slate600 : T.slate800,
-        paddingLeft: indent ? 24 : 8,
-        fontWeight: bold ? 600 : 400,
-        whiteSpace: "nowrap",
-      }}>{label}</td>
+      <td
+        onClick={onLabelClick}
+        style={{
+          padding: "7px 8px",
+          fontSize: 12,
+          color: indent ? T.slate600 : T.slate800,
+          paddingLeft: indent ? 24 : 8,
+          fontWeight: bold ? 600 : 400,
+          whiteSpace: "nowrap",
+          cursor: onLabelClick ? "pointer" : "default",
+        }}
+        title={onLabelClick ? `Show all ${label} transactions in visible range` : undefined}
+      >
+        {onLabelClick
+          ? <span style={{ borderBottom: `1px dotted ${T.slate400}` }}>{label}</span>
+          : label}
+      </td>
       {columns.flatMap((c, i) => [
-        <td key={`${c.key}-v`} style={{ ...cellBase(isTotal, false), fontWeight: bold ? 600 : 400, color: bold ? T.slate900 : T.slate700 }}>
+        <td
+          key={`${c.key}-v`}
+          onClick={onCellClick ? () => onCellClick(i) : undefined}
+          style={{
+            ...cellBase(isTotal, false),
+            fontWeight: bold ? 600 : 400,
+            color: bold ? T.slate900 : T.slate700,
+            cursor: onCellClick ? "pointer" : "default",
+          }}
+          title={onCellClick ? `Show ${label} transactions for ${c.label}` : undefined}
+        >
           {renderValue(values[i], i)}
         </td>,
         <td key={`${c.key}-d`} style={cellBase(isTotal, true)}>
@@ -1141,13 +1478,9 @@ const PLSection = ({ data }) => {
     </tr>
   );
 
-  // Compute the values + priors arrays for a given line
   const lineValues = (line) => columns.map(c => c.getValue(line));
   const linePriors = (line) => columns.map(c => (c.getPriorValue ? c.getPriorValue(line) : null));
 
-  // Group lines by section, sort account rows within each section by name,
-  // insert a bold section header row above each group with subtotals summed
-  // across the group\'s child accounts.
   const renderSectionedRows = (lines, opts) => {
     // Peter directive 2026-07-17: any row that is blank across the whole
     // display is not displayed. "Blank" = every visible value column AND
@@ -1172,10 +1505,6 @@ const PLSection = ({ data }) => {
       if (!groups[sec]) groups[sec] = [];
       groups[sec].push(line);
     }
-    // Section ordering. Income has an explicit desired order (Peter directive
-    // 2026-07-17): State Farm at top, SF-Comp partners in the middle, External
-    // at the bottom. Expense sections already sort correctly by their numbered
-    // 0001/0002/0003/... prefix, so alphabetical is right for expense.
     const INCOME_SECTION_RANK = {
       "State Farm":          1,
       "Alliances - SF Comp": 2,
@@ -1193,10 +1522,10 @@ const PLSection = ({ data }) => {
       if (ra !== rb) return ra - rb;
       return a.localeCompare(b);
     });
+    const accountType = opts?.isIncomeLine ? "income" : "expense";
     const nodes = [];
     sectionKeys.forEach((sec) => {
       const grpLines = groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name));
-      // Section subtotals: sum children per column
       const sectionValues = columns.map(c => grpLines.reduce((s, l) => s + c.getValue(l), 0));
       const sectionPriors = columns.map(c => {
         if (!c.getPriorValue) return null;
@@ -1207,6 +1536,7 @@ const PLSection = ({ data }) => {
         }
         return any ? sum : null;
       });
+      // Section header — NOT clickable (individual-account grain only)
       nodes.push(
         <DataRow
           key={`sec-${sec}`}
@@ -1217,6 +1547,7 @@ const PLSection = ({ data }) => {
           opts={opts}
         />
       );
+      // Leaf accounts — CLICKABLE for drill
       grpLines.forEach((line, i) => {
         nodes.push(
           <DataRow
@@ -1226,6 +1557,11 @@ const PLSection = ({ data }) => {
             values={lineValues(line)}
             priors={linePriors(line)}
             opts={opts}
+            onLabelClick={() => openDrill(line.name, sec, accountType, visibleFrom, visibleTo)}
+            onCellClick={(colIdx) => {
+              const c = columns[colIdx];
+              openDrill(line.name, sec, accountType, c.fromDate, c.toDate);
+            }}
           />
         );
       });
@@ -1233,7 +1569,6 @@ const PLSection = ({ data }) => {
     return nodes;
   };
 
-  // Grain toggle button
   const grainBtn = (key, label) => (
     <button
       key={key}
@@ -1251,14 +1586,13 @@ const PLSection = ({ data }) => {
     >{label}</button>
   );
 
-  // Column count including paired deltas + the Account column
   const totalCellCount = 1 + columns.length * 2;
 
   return (
     <Card>
       <CardHeader
         title="Profit & Loss Statement"
-        sub={`Cash basis · Calendar year ${year}`}
+        sub={`Cash basis · Calendar year ${year} · Click any account name or dollar amount to drill in`}
       />
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "0 0 12px 0" }}>
@@ -1351,10 +1685,17 @@ const PLSection = ({ data }) => {
           </tbody>
         </table>
       </div>
+
+      {drill && (
+        <PLDrillPanel
+          ctx={drill}
+          onClose={closeDrill}
+          onDataChanged={onDataChanged}
+        />
+      )}
     </Card>
   );
 };
-
 // ─── Section: Comp Recap ─────────────────────────────────────
 // Grouped by line of business (auto → fire → life → health → ips → bank → pet
 // → state_farm_bonuses → expense_reimbursement → reportable_benefit → other →
@@ -2038,7 +2379,7 @@ const PrintPackage = ({ data, periodLabel }) => {
 export default function Financials() {
   const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","balsheet","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
-  const { data: liveData, loading } = useFinancialsData();
+  const { data: liveData, loading, reload } = useFinancialsData();
   if (liveData) MOCK = liveData;
 
   const viewSections = [
@@ -2111,7 +2452,7 @@ export default function Financials() {
 
       {/* Section Content */}
       {section === "overview" && <OverviewSection period={period} setPeriod={setPeriod} data={MOCK} />}
-      {section === "pl"       && <PLSection data={MOCK} />}
+      {section === "pl"       && <PLSection data={MOCK} onDataChanged={reload} />}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
