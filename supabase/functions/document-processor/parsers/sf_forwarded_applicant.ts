@@ -32,8 +32,7 @@
 import { callComposio } from "../lib/composio.ts";
 import { sb } from "../lib/supabase.ts";
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
-import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
-import { reformatResumeSeparators } from "./resume_reformat.ts";
+import { extractResumeTextFromS3url, writeResumeTextIfEmpty } from "./resume_ingest.ts";
 
 interface SFForwardBody {
   agency_id?: string;
@@ -394,28 +393,7 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
       // hiring_candidates.resume_extracted_text. First-resume-wins if the
       // SF forward somehow includes multiple; unusual case.
       if (role === "resume" && resumeText === null) {
-        try {
-          const r = await fetch(info.s3url);
-          if (r.ok) {
-            const buf = new Uint8Array(await r.arrayBuffer());
-            let raw = "";
-            try {
-              raw = await extractPdfTextColumnAware(buf);
-            } catch (colErr) {
-              console.warn(`resume column-aware extract failed; falling back to plain unpdf: ${colErr instanceof Error ? colErr.message : String(colErr)}`);
-              try { raw = await extractPdfTextPlain(buf); } catch (plainErr) {
-                console.warn(`resume plain unpdf also failed: ${plainErr instanceof Error ? plainErr.message : String(plainErr)}`);
-              }
-            }
-            if (raw && raw.trim().length > 0) {
-              resumeText = reformatResumeSeparators(raw);
-            }
-          } else {
-            console.warn(`resume s3url fetch for text extraction returned HTTP ${r.status}`);
-          }
-        } catch (e) {
-          console.warn("resume text extraction threw (non-fatal):", e);
-        }
+        resumeText = await extractResumeTextFromS3url(info.s3url);
       }
     }
   }
@@ -484,28 +462,16 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
         ? undefined  // preserve existing notes if any; TODO: append instead
         : noteBlock,
     }).eq("id", assessmentId);
-
-    // Backfill resume_extracted_text ONLY when currently NULL or empty. Never
-    // clobber a hand-corrected text on a re-run of the same message.
-    if (resumeText && assessmentId) {
-      try {
-        const { error: rErr } = await sb.from("hiring_candidates")
-          .update({ resume_extracted_text: resumeText })
-          .eq("id", assessmentId)
-          .or("resume_extracted_text.is.null,resume_extracted_text.eq.");
-        if (rErr) console.warn(`resume_extracted_text update for ${assessmentId} failed: ${rErr.message}`);
-      } catch (e) {
-        console.warn(`resume_extracted_text update threw for ${assessmentId}:`, e);
-      }
-    }
   } else {
     rowPayload.notes = noteBlock;
-    if (resumeText) rowPayload.resume_extracted_text = resumeText;
     const { data, error } = await sb.from("hiring_candidates")
       .insert(rowPayload).select("id").single();
     if (error) return { message_id: messageId, status: "error", error: `insert assessment: ${error.message}` };
     assessmentId = data?.id ?? null;
   }
+
+  // Backfill resume_extracted_text — never clobbers existing text.
+  await writeResumeTextIfEmpty(assessmentId, resumeText);
 
   await starAndLabel(ctx, messageId);
 
