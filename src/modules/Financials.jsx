@@ -70,13 +70,13 @@ function useFinancialsData() {
             .order("period_month", { ascending: false })
             .limit(2000),   // 16+ months of twice-monthly recaps ~800 rows; cap well above row count so no period is hidden
 
-          // Bank
+          // Bank — pull institution + last4 + needs_statement so BankSection can render "Institution · ••3977" and flag accounts awaiting statements.
           supabase.from("v_bank_balances")
-            .select("account_name, current_balance:current_balance_derived, needs_review, last_entry_date"),
+            .select("account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, needs_statement, last_entry_date"),
 
-          // Credit
+          // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
-            .select("account_name, current_balance:current_balance_derived, institution, needs_review, last_entry_date"),
+            .select("account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date"),
 
           // GL
           supabase.from("journal_lines")
@@ -262,6 +262,8 @@ function useFinancialsData() {
           balance: parseFloat(c.current_balance || 0),
           asOf:    c.last_entry_date,
           needsReview: c.needs_review,
+          needsLast4:  c.needs_last4,
+          institution: c.institution,
           type:    c.account_type,
           last4:   c.account_number_last4,
           limit:   parseFloat(c.credit_limit || 0) || null,
@@ -436,6 +438,7 @@ function useFinancialsData() {
             balance: parseFloat(b.current_balance||0),
             asOf: b.last_entry_date,
             needsReview: b.needs_review,
+            needsStatement: b.needs_statement,
             type: b.account_type,
             last4: b.account_number_last4,
             institution: b.institution,
