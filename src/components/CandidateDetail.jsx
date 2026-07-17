@@ -60,113 +60,6 @@ const competencyBand = (v) => {
   return "red";
 };
 
-// Maps a detected trigger to the manual section header text for question lookup.
-// direction is "Low" or "High" based on which side of ideal range the score falls.
-const triggerToHeader = (trait, value) => {
-  if (trait === "deadline_motivation" && value < 70) return "Low Deadline Motivation";
-  if (trait === "recognition_drive"   && value < 50) return "Low Recognition Drive";
-  if (trait === "assertiveness"       && value < 50) return "Low Assertiveness";
-  if (trait === "independent_spirit"  && value < 50) return "Low Independent Spirit";
-  if (trait === "analytical"          && value > 60) return "High Analytical";
-  if (trait === "compassion"          && value < 30) return "Low Compassion";
-  if (trait === "compassion"          && value > 70) return "High Compassion";
-  if (trait === "self_promotion"      && value < 10) return "Low Self-Promotion";
-  if (trait === "self_promotion"      && value > 80) return "High Self-Promotion";
-  if (trait === "belief_in_others"    && value < 20) return "Low Belief in Others";
-  if (trait === "belief_in_others"    && value > 80) return "High Belief in Others";
-  if (trait === "optimism"            && value < 20) return "Low Optimism";
-  if (trait === "optimism"            && value > 80) return "High Optimism";
-  if (trait === "lss_speed" || trait === "lss_accuracy") return "LSS Speed";
-  return null;
-};
-
-// Extract a subsection from Final Interview manual markdown by its ### header.
-// Returns the raw markdown text from that header to the next ### or ## (exclusive).
-const extractSection = (markdown, headerText) => {
-  if (!markdown || !headerText) return null;
-  const lines = markdown.split("\n");
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith("### ") && lines[i].includes(headerText)) {
-      start = i;
-      break;
-    }
-  }
-  if (start === -1) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (lines[i].startsWith("### ") || lines[i].startsWith("## ")) {
-      end = i;
-      break;
-    }
-  }
-  return lines.slice(start, end).join("\n");
-};
-
-// Minimal markdown → JSX: **bold**, *italic*, bullets, headers.
-const renderMarkdown = (text) => {
-  if (!text) return null;
-  const lines = text.split("\n");
-  return lines.map((ln, idx) => {
-    if (ln.startsWith("### ")) {
-      return <div key={idx} style={{ fontWeight: 700, fontSize: 14, color: T.slate800, marginTop: 8, marginBottom: 4 }}>{ln.slice(4).replace(/[()<>0-9]/g, m => m).trim()}</div>;
-    }
-    if (ln.startsWith("- ")) {
-      let body = ln.slice(2);
-      // Detect and strip *(optional) ... * pattern common in Final Interview manual
-      const isOptional = /^\*\s*\(optional\)/i.test(body);
-      if (isOptional) {
-        // Strip leading "*(optional) " and trailing "*"
-        body = body.replace(/^\*\s*\(optional\)\s*/i, "").replace(/\*\s*$/, "");
-      }
-      return (
-        <div key={idx} style={{ marginLeft: 12, marginBottom: 3, fontSize: 12, color: isOptional ? T.slate500 : T.slate800, fontStyle: isOptional ? "italic" : "normal", lineHeight: 1.5 }}>
-          <span style={{ marginRight: 4, opacity: 0.6 }}>{isOptional ? "○" : "•"}</span>{renderInline(body)}
-        </div>
-      );
-    }
-    if (ln.startsWith("**") && ln.endsWith("**")) {
-      return <div key={idx} style={{ fontSize: 12, fontWeight: 700, color: T.slate700, marginTop: 6 }}>{ln.replace(/\*\*/g, "")}</div>;
-    }
-    if (ln.trim() === "") {
-      return <div key={idx} style={{ height: 4 }} />;
-    }
-    return <div key={idx} style={{ fontSize: 12, color: T.slate700, marginBottom: 3 }}>{renderInline(ln)}</div>;
-  });
-};
-
-// Inline markdown for a single line: **bold** and *italic*
-const renderInline = (text) => {
-  const parts = [];
-  let remaining = text;
-  let key = 0;
-  while (remaining.length > 0) {
-    // **bold**
-    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
-    if (boldMatch) {
-      parts.push(<strong key={key++}>{boldMatch[1]}</strong>);
-      remaining = remaining.slice(boldMatch[0].length);
-      continue;
-    }
-    // *italic*
-    const italMatch = remaining.match(/^\*([^*]+)\*/);
-    if (italMatch) {
-      parts.push(<em key={key++} style={{ color: T.slate500 }}>{italMatch[1]}</em>);
-      remaining = remaining.slice(italMatch[0].length);
-      continue;
-    }
-    // Plain text up to next markdown marker
-    const next = remaining.search(/\*/);
-    if (next === -1) {
-      parts.push(<span key={key++}>{remaining}</span>);
-      break;
-    }
-    parts.push(<span key={key++}>{remaining.slice(0, next)}</span>);
-    remaining = remaining.slice(next);
-  }
-  return parts;
-};
-
 const STAGE_LABELS = {
   assessed:        "Assessed",
   email_screen:    "Email Screen",
@@ -235,31 +128,52 @@ const bandColor = (band) => {
   return { bg: T.slate100, fg: T.slate500 };
 };
 
-const detectTriggers = (detail) => {
-  const triggers = [];
-  Object.entries(TRAIT_BAND).forEach(([trait, evaluator]) => {
-    const value = detail?.[trait];
-    const band = evaluator(value);
-    if (band === "red" || band === "yellow") {
-      triggers.push({ trait, label: TRAIT_LABELS[trait], value, severity: band });
+// Parse a probe.source string into a colored pill origin. Five origin families
+// observed in generate-custom-probes v9.0+ output:
+//   manual:{Trait Direction}                      — trait-triggered manual injection (red)
+//   trait:{trait}={value}(band)                   — trait-flag-driven LLM probe (red|amber)
+//   character_floor:{Trait}[=failed|=v(low)]      — character floor gate (red)
+//   resume:{keyword}                              — resume-driven (slate, informational)
+//   behavioral_tell:{Tell}=match                  — behavioral tell (amber)
+// tone maps into bandColor for pill colors.
+const parseProbeOrigin = (source) => {
+  if (!source) return null;
+  const s = String(source);
+
+  if (s.startsWith("manual:")) {
+    return { kind: "manual", label: "Trait Trigger", detail: s.slice(7).trim(), tone: "red" };
+  }
+  if (s.startsWith("trait:")) {
+    const m = s.match(/^trait:([a-z_]+)=([0-9.]+)\(([a-z]+)\)/i);
+    if (m) {
+      const traitLabel = TRAIT_LABELS[m[1]] || m[1];
+      const value = m[2];
+      const band = m[3].toLowerCase();
+      const tone = (band === "moderate" || band === "watch") ? "amber" : "red";
+      const dir = band === "low" ? "Low" : band === "high" ? "High" : band[0].toUpperCase() + band.slice(1);
+      return { kind: "trait", label: "Trait Trigger", detail: `${dir} ${traitLabel} (${value})`, tone };
     }
-  });
-  // LSS triggers
-  const maxSpeed = Math.max(
-    Number(detail?.lss_math_speed_seconds) || 0,
-    Number(detail?.lss_verbal_speed_seconds) || 0,
-    Number(detail?.lss_problem_solving_speed_seconds) || 0
-  );
-  if (maxSpeed > 60) {
-    triggers.push({ trait: "lss_speed", label: "LSS Speed", value: `${maxSpeed}s`, severity: "red" });
+    return { kind: "trait", label: "Trait Trigger", detail: s.slice(6), tone: "red" };
   }
-  const acc = detail?.lss_total_accuracy;
-  if (Number.isFinite(acc) && acc < 25) {
-    triggers.push({ trait: "lss_accuracy", label: "LSS Accuracy", value: `${acc}/35`, severity: "red" });
-  } else if (Number.isFinite(acc) && acc < 35) {
-    triggers.push({ trait: "lss_accuracy", label: "LSS Accuracy", value: `${acc}/35`, severity: "yellow" });
+  if (s.startsWith("character_floor:")) {
+    const rest = s.slice(16).replace(/=failed$/, "").replace(/=[0-9.]+\([a-z]+\)$/i, "").trim();
+    return { kind: "character_floor", label: "Character Floor", detail: rest, tone: "red" };
   }
-  return triggers;
+  if (s.startsWith("resume:")) {
+    return { kind: "resume", label: "Resume", detail: s.slice(7).replace(/_/g, " "), tone: "slate" };
+  }
+  if (s.startsWith("behavioral_tell:")) {
+    const rest = s.slice(16);
+    const m = rest.match(/^([^=]+)=(.+)$/);
+    return { kind: "behavioral_tell", label: "Behavioral Tell", detail: m ? m[1] : rest, tone: "amber" };
+  }
+  return { kind: "other", label: "Custom", detail: s, tone: "slate" };
+};
+
+const originPillColors = (tone) => {
+  if (tone === "red")   return { bg: T.redLt,    fg: T.red };
+  if (tone === "amber") return { bg: T.amberLt,  fg: T.amber };
+  return                       { bg: T.slate100, fg: T.slate600 };
 };
 
 const characterFloorPassed = (detail, prefix) => {
@@ -898,7 +812,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [bestFit, setBestFit] = useState(null);
   const [validity, setValidity] = useState(null);
   const [timing, setTiming] = useState(null);
-  const [manualMarkdown, setManualMarkdown] = useState("");
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
   const [composite, setComposite] = useState(null);
@@ -971,24 +884,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       })
       .catch(() => {});
   }, [detail?.id]);
-
-  // Fetch Final Interview manual page for triggered follow-up questions
-  useEffect(() => {
-    if (!supabase) return;
-    let cancelled = false;
-    supabase
-      .from("manuals")
-      .select("content")
-      .eq("id", "d83be3b8-55c9-4d60-9303-13a1f84141a8")  // Final Interview page
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (cancelled || error || !data) return;
-        setManualMarkdown(data.content || "");
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  const triggers = useMemo(() => detectTriggers(detail), [detail]);
 
   // Bucket evaluate_candidate rows by verdict impact using composite's signal
   // arrays as the routing table. Composite's decline_signals annotate unverified
@@ -1505,15 +1400,17 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       {/* Customized Interview Probes — full 60-min interview flow.
           - 5 min rapport (agent-driven, not scripted)
           - 5 min warm-up (3 fixed Qs, same every candidate, captured)
-          - 35 min deep-dive: LLM-generated candidate-specific probes
-            (resume + framework + traits) PLUS trigger-matched sections
-            from the Final Interview manual (Suggs pool, filtered by trait
-            triggers). All captured in the same jsonb blob.
+          - 35 min deep-dive: LLM-generated candidate-specific probes.
+            generate-custom-probes v9.0+ folds the trigger-matched Final
+            Interview manual content INTO the LLM probes as source_tag
+            manual:*, so there is no separate raw-manual section.
           - 10 min candidate Qs (agent-driven, not scripted)
           - 5 min close (agent-driven, not scripted)
 
           Every capturable field writes to hiring_candidates.interview_answers
-          keyed by source: warmup:*, LLM probe.source, manual:{trait}:{severity}.
+          keyed by source: warmup:*, LLM probe.source (manual:*, trait:*,
+          character_floor:*, resume:*, behavioral_tell:*). Each probe carries
+          a colored origin pill so it is obvious which signal drove the Q.
           See op-rule "Interview probe analysis protocol" for the chat workflow. */}
       <Section title="Customized Interview Probes" tone={T.blueLt}>
         <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, fontStyle: "italic" }}>
@@ -1623,9 +1520,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                           <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
                         </div>
                       )}
-                      {p?.source && (
-                        <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 3, marginBottom: 6 }}>{p.source}</div>
-                      )}
+                      {p?.source && (() => {
+                        const origin = parseProbeOrigin(p.source);
+                        if (!origin) return null;
+                        const pc = originPillColors(origin.tone);
+                        return (
+                          <div style={{ marginTop: 4, marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: pc.fg, background: pc.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                              {origin.label}
+                            </span>
+                            <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{origin.detail}</span>
+                            <span style={{ fontSize: 9, color: T.slate400, fontFamily: "monospace", marginLeft: "auto" }}>{p.source}</span>
+                          </div>
+                        );
+                      })()}
                       <textarea
                         value={currentAnswer}
                         onChange={(e) => updateAnswer(src, e.target.value)}
@@ -1655,69 +1563,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             ))
           )}
 
-          {/* Trigger-matched sections from Final Interview manual — pulled from
-              the Suggs pool based on this candidate's trait triggers. Rendered
-              inline in the deep-dive so all questions live in one 35-min flow. */}
-          {triggers.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Assessment-Triggered · From Final Interview Manual
-              </div>
-              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 10, lineHeight: 1.6 }}>
-                <strong>{triggers.filter(t => t.severity === "red").length}</strong> red trigger(s) · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch trigger(s). Questions pulled from the Final Interview manual by trait pattern.
-              </div>
-              {!manualMarkdown ? (
-                <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>Loading manual...</div>
-              ) : (
-                triggers.map((t, i) => {
-                  const src = `manual:${t.trait}:${t.severity}`;
-                  const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
-                  const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
-                  const header = triggerToHeader(t.trait, Number(t.value)) || t.label;
-                  const section = extractSection(manualMarkdown, header);
-                  return (
-                    <div key={i} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${t.severity === "red" ? T.red : T.amber}` }}>
-                      {section ? (
-                        renderMarkdown(section)
-                      ) : (
-                        <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
-                          No matching section in the Final Interview manual for &quot;{header}&quot;. (Check the manual page structure.)
-                        </div>
-                      )}
-                      <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 6, marginBottom: 6 }}>{src}</div>
-                      <textarea
-                        value={currentAnswer}
-                        onChange={(e) => updateAnswer(src, e.target.value)}
-                        placeholder="Candidate's response..."
-                        rows={3}
-                        style={{
-                          width: "100%",
-                          fontSize: 12,
-                          padding: 8,
-                          border: `1px solid ${T.slate300}`,
-                          borderRadius: 5,
-                          fontFamily: "inherit",
-                          resize: "vertical",
-                          boxSizing: "border-box",
-                          background: T.slate50,
-                        }}
-                      />
-                      {savedAt && (
-                        <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
-                          Saved {new Date(savedAt).toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
         </div>
 
         {/* Bottom action row — Save answers batch-writes everything above
-            (warm-up + LLM probes + trigger-matched). Generate/Regenerate
-            re-runs the edge fn; does not touch answers. */}
+            (warm-up + LLM probes). Generate/Regenerate re-runs the edge fn;
+            does not touch answers. */}
         <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <button
             onClick={saveAnswers}
