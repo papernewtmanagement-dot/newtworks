@@ -199,7 +199,7 @@ function useFinancialsData(entity) {
         // historyYears now derived from data (RPC returns all available years back to 2019).
         // Sorted ascending; used by buildLines to init perMonthByYear buckets so the annual
         // grain picker can pick any window of prior years without a re-fetch.
-        const historyYears = [...new Set(priorIsData.map(r => r.year))]
+        const historyYears = [...new Set([...priorIsData, ...fullRows].map(r => r.year))]
           .filter(y => y < currentYear)
           .sort((a, b) => a - b);
         // buildLines keys on (section, account_name) so QBO parent categories
