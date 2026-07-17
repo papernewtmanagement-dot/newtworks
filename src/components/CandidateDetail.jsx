@@ -740,6 +740,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // framework prediction + retrospective observation + calibration status.
   // Fetched via hiregauge_three_construct_verdict RPC.
   const [threeConstruct, setThreeConstruct] = useState(null);
+  // Interview answer capture — local state; Save button batch-writes to
+  // hiring_candidates.interview_answers jsonb (keyed by probe.source →
+  // { answer, saved_at }). See op-rule "Interview probe analysis protocol".
+  const [savingAnswers, setSavingAnswers] = useState(false);
+  const [referenceBankOpen, setReferenceBankOpen] = useState(false);
 
   // Fetch full row on mount
   useEffect(() => {
@@ -850,6 +855,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     [detail?.status]
   );
 
+  // Most recent saved_at across all captured probe answers.
+  const answersLastSavedAt = useMemo(() => {
+    const answers = detail?.interview_answers || {};
+    let latest = null;
+    Object.values(answers).forEach(a => {
+      if (a?.saved_at && (!latest || a.saved_at > latest)) latest = a.saved_at;
+    });
+    return latest;
+  }, [detail?.interview_answers]);
+
   const updateField = (field, value) => {
     setDetail(prev => ({ ...prev, [field]: value }));
   };
@@ -889,6 +904,46 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   );
   const saveRC = () => saveFields(["rc_notes", "ref_nature", "ref_nurture", "ref_drivers"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
+
+  // Update one probe's answer text in local state. Save button batch-writes
+  // to hiring_candidates.interview_answers jsonb.
+  const updateAnswer = (source, answerText) => {
+    if (!source) return;
+    setDetail(prev => ({
+      ...prev,
+      interview_answers: {
+        ...(prev.interview_answers || {}),
+        [source]: {
+          ...((prev.interview_answers || {})[source] || {}),
+          answer: answerText,
+        },
+      },
+    }));
+  };
+
+  const saveAnswers = async () => {
+    if (!detail?.id) return;
+    setSavingAnswers(true);
+    const now = new Date().toISOString();
+    const answers = { ...(detail.interview_answers || {}) };
+    Object.keys(answers).forEach(k => {
+      if (answers[k]?.answer && answers[k].answer.trim()) {
+        answers[k] = { ...answers[k], saved_at: now };
+      }
+    });
+    const { error, data } = await supabase
+      .from("hiring_candidates")
+      .update({ interview_answers: answers })
+      .eq("id", detail.id)
+      .select()
+      .maybeSingle();
+    setSavingAnswers(false);
+    if (error) {
+      alert("Save failed: " + error.message);
+      return;
+    }
+    if (data) setDetail(data);
+  };
 
   // Invoke edge fn generate-custom-probes; refresh the row on success.
   const generateCustomProbes = async () => {
@@ -1269,12 +1324,30 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </Section>
 
-      {/* Customized Interview Probes — LLM-generated per candidate.
-          Complements the Triggered Follow-Up Questions below (which is a raw
-          manual-section pull based on trait triggers). Runs the whole framework
-          picture through the LLM for candidate-specific probes with listen_for
-          and concern annotations. */}
+      {/* Customized Interview Probes — 60-min interview flow.
+          Static warm-up (3 fixed questions) + LLM-generated deep-dive probes
+          with answer capture. Answers persist in hiring_candidates.interview_answers
+          jsonb, keyed by probe.source. Suggs pool retired below to Reference
+          bank toggle. See op-rule "Interview probe analysis protocol" for the
+          "analyze [name]'s interview answers" chat workflow. */}
       <Section title="Customized Interview Probes" tone={T.blueLt}>
+        <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, fontStyle: "italic" }}>
+          60-min interview: 5 min rapport · 5 min warm-up · 35 min deep-dive · 10 min candidate Qs · 5 min close
+        </div>
+
+        {/* Warm-Up — 3 fixed questions, same every candidate. */}
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            Warm-Up · 5 min · same every candidate
+          </div>
+          <div style={{ padding: 10, background: T.white, borderRadius: 7, borderLeft: `3px solid ${T.slate400}`, fontSize: 12, color: T.slate800, lineHeight: 1.7 }}>
+            <div><strong>1.</strong> Walk me through your last role.</div>
+            <div><strong>2.</strong> Why insurance?</div>
+            <div><strong>3.</strong> Why our agency?</div>
+          </div>
+        </div>
+
+        {/* Deep-Dive Probes — LLM-generated per candidate. */}
         {(!detail?.custom_probes || !Array.isArray(detail?.custom_probes?.sections) || detail.custom_probes.sections.length === 0) ? (
           <div style={{ fontSize: 12, color: T.slate700 }}>
             No custom probes generated yet for this candidate.
@@ -1290,45 +1363,99 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </div>
         ) : (
           <>
-            <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12 }}>
-              Generated {detail?.custom_probes_generated_at ? new Date(detail.custom_probes_generated_at).toLocaleString() : "—"}
-              {detail.custom_probes?.model ? ` · ${detail.custom_probes.model}` : ""}
-              {detail.custom_probes?.framework_matches_n != null ? ` · ${detail.custom_probes.framework_matches_n} framework matches` : ""}
-              {detail.custom_probes?.resume_analyzed
-                ? ` · resume read (${detail.custom_probes.resume_length_chars || 0} chars, ${detail.custom_probes.resume_source || "?"})`
-                : detail.custom_probes?.resume_source
-                  ? ` · resume not read (${detail.custom_probes.resume_source})`
-                  : ""}
-              {detail.custom_probes?.notes ? ` · ${detail.custom_probes.notes}` : ""}
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
+              Deep-Dive Probes · ~{detail.custom_probes?.time_budget_minutes || 35} min · candidate-specific
+            </div>
+            <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, lineHeight: 1.6 }}>
+              {(() => {
+                const cp = detail.custom_probes || {};
+                const bits = [];
+                if (detail?.custom_probes_generated_at) bits.push(`Generated ${new Date(detail.custom_probes_generated_at).toLocaleString()}`);
+                if (cp.version) bits.push(`v${cp.version}`);
+                if (cp.model) bits.push(cp.model);
+                if (cp.probes_total_count != null) {
+                  const tgt = cp.probe_count_target || 10;
+                  const cap = cp.probe_count_hard_max || 12;
+                  bits.push(`${cp.probes_total_count} probes (target ${tgt}, cap ${cap})`);
+                }
+                if (cp.framework_matches_n != null) bits.push(`${cp.framework_matches_n} framework matches`);
+                if (cp.resume_analyzed) {
+                  bits.push(`resume read (${cp.resume_length_chars || 0} chars, ${cp.resume_source || "?"})`);
+                } else if (cp.resume_source) {
+                  bits.push(`resume not read (${cp.resume_source})`);
+                }
+                if (cp.trim_note) bits.push(`trim: ${cp.trim_note}`);
+                if (cp.notes) bits.push(cp.notes);
+                return bits.join(" · ");
+              })()}
             </div>
             {detail.custom_probes.sections.map((sec, si) => (
               <div key={si} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>{sec?.focus || "Section"}</div>
-                {(Array.isArray(sec?.probes) ? sec.probes : []).map((p, pi) => (
-                  <div key={pi} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 6, borderLeft: `3px solid ${T.blue}` }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 4 }}>Q: {p?.question}</div>
-                    {p?.listen_for && (
-                      <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
-                        <strong style={{ color: T.green }}>Listen for:</strong> {p.listen_for}
-                      </div>
-                    )}
-                    {p?.concern && (
-                      <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
-                        <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
-                      </div>
-                    )}
-                    {p?.source && (
-                      <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 3 }}>{p.source}</div>
-                    )}
-                  </div>
-                ))}
+                {(Array.isArray(sec?.probes) ? sec.probes : []).map((p, pi) => {
+                  const src = p?.source || `s${si}p${pi}`;
+                  const savedAt = detail?.interview_answers?.[src]?.saved_at || null;
+                  const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
+                  return (
+                    <div key={pi} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${T.blue}` }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 4 }}>Q: {p?.question}</div>
+                      {p?.listen_for && (
+                        <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
+                          <strong style={{ color: T.green }}>Listen for:</strong> {p.listen_for}
+                        </div>
+                      )}
+                      {p?.concern && (
+                        <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
+                          <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
+                        </div>
+                      )}
+                      {p?.source && (
+                        <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 3, marginBottom: 6 }}>{p.source}</div>
+                      )}
+                      <textarea
+                        value={currentAnswer}
+                        onChange={(e) => updateAnswer(src, e.target.value)}
+                        placeholder="Candidate's response..."
+                        rows={3}
+                        style={{
+                          width: "100%",
+                          fontSize: 12,
+                          padding: 8,
+                          border: `1px solid ${T.slate300}`,
+                          borderRadius: 5,
+                          fontFamily: "inherit",
+                          resize: "vertical",
+                          boxSizing: "border-box",
+                          background: T.slate50,
+                        }}
+                      />
+                      {savedAt && (
+                        <div style={{ fontSize: 9, color: T.slate500, marginTop: 3, fontStyle: "italic" }}>
+                          Saved {new Date(savedAt).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ))}
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <button
+                onClick={saveAnswers}
+                disabled={savingAnswers}
+                style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.white, background: T.green, border: "none", borderRadius: 7, cursor: savingAnswers ? "wait" : "pointer" }}
+              >
+                {savingAnswers ? "Saving..." : "💾 Save answers"}
+              </button>
+              {answersLastSavedAt && (
+                <span style={{ fontSize: 11, color: T.slate600 }}>
+                  Last saved {new Date(answersLastSavedAt).toLocaleString()}
+                </span>
+              )}
               <button
                 onClick={generateCustomProbes}
                 disabled={probesGenerating}
-                style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: probesGenerating ? "wait" : "pointer" }}
+                style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: probesGenerating ? "wait" : "pointer", marginLeft: "auto" }}
               >
                 {probesGenerating ? "Regenerating..." : "🔄 Regenerate probes"}
               </button>
@@ -1342,37 +1469,54 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         )}
       </Section>
 
-      {/* Triggered Follow-Up Questions — parsed from Final Interview manual page at runtime */}
-      <Section title="Triggered Follow-Up Questions" tone={T.blueLt}>
-        {triggers.length === 0 ? (
-          <div style={{ fontSize: 12, color: T.slate700 }}>
-            No triggers — all traits in ideal range. Run only the baseline questions in the Final Interview manual page.
-          </div>
-        ) : (
-          <>
-            <div style={{ fontSize: 12, color: T.slate700, marginBottom: 12 }}>
-              <strong>{triggers.filter(t => t.severity === "red").length}</strong> red trigger(s) · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch trigger(s). Ask the core questions for each; use optionals if the picture is still unclear.
-            </div>
-            {!manualMarkdown ? (
-              <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>Loading manual...</div>
+      {/* Reference bank — Suggs pool from Final Interview manual (trait-triggered
+          follow-up questions). Retired from primary interview flow 2026-07-17
+          in favor of LLM-generated Customized Interview Probes above. Kept as
+          reference / fallback material behind a collapse toggle; NOT deleted
+          from the manual. */}
+      <Section title="Reference bank" tone={T.slate100}>
+        <div style={{ fontSize: 11, color: T.slate600, marginBottom: 10, lineHeight: 1.5 }}>
+          Suggs pool — trait-triggered follow-up questions from the Final Interview manual. Retired from the primary interview flow; use <strong>Customized Interview Probes</strong> above instead. Kept available as reference material.
+        </div>
+        <button
+          onClick={() => setReferenceBankOpen(v => !v)}
+          style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.white, border: `1px solid ${T.slate300}`, borderRadius: 7, cursor: "pointer" }}
+        >
+          {referenceBankOpen ? "▲ Hide reference bank" : `▼ Show reference bank (${triggers.length} trigger${triggers.length === 1 ? "" : "s"})`}
+        </button>
+        {referenceBankOpen && (
+          <div style={{ marginTop: 14 }}>
+            {triggers.length === 0 ? (
+              <div style={{ fontSize: 12, color: T.slate700 }}>
+                No triggers — all traits in ideal range. Baseline questions in the Final Interview manual page only.
+              </div>
             ) : (
-              triggers.map((t, i) => {
-                const header = triggerToHeader(t.trait, Number(t.value)) || t.label;
-                const section = extractSection(manualMarkdown, header);
-                return (
-                  <div key={i} style={{ marginBottom: 14, padding: 10, background: T.white, borderRadius: 7, borderLeft: `3px solid ${t.severity === "red" ? T.red : T.amber}` }}>
-                    {section ? (
-                      renderMarkdown(section)
-                    ) : (
-                      <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
-                        No matching section found in the Final Interview manual for &quot;{header}&quot;. (Check the manual page structure.)
+              <>
+                <div style={{ fontSize: 12, color: T.slate700, marginBottom: 12 }}>
+                  <strong>{triggers.filter(t => t.severity === "red").length}</strong> red trigger(s) · <strong>{triggers.filter(t => t.severity === "yellow").length}</strong> watch trigger(s).
+                </div>
+                {!manualMarkdown ? (
+                  <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>Loading manual...</div>
+                ) : (
+                  triggers.map((t, i) => {
+                    const header = triggerToHeader(t.trait, Number(t.value)) || t.label;
+                    const section = extractSection(manualMarkdown, header);
+                    return (
+                      <div key={i} style={{ marginBottom: 14, padding: 10, background: T.white, borderRadius: 7, borderLeft: `3px solid ${t.severity === "red" ? T.red : T.amber}` }}>
+                        {section ? (
+                          renderMarkdown(section)
+                        ) : (
+                          <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+                            No matching section found in the Final Interview manual for &quot;{header}&quot;. (Check the manual page structure.)
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })
+                    );
+                  })
+                )}
+              </>
             )}
-          </>
+          </div>
         )}
       </Section>
 
