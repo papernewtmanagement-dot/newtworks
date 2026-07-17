@@ -295,7 +295,7 @@ const MetricBox = ({ label, value, extra }) => (
 // right-aligned value + optional smaller extra (units, secondary metric, or
 // warning glyph). Optional `band` drives left-border color and value tint
 // via bandColor(); pass "none" for a neutral grey stripe, null for no band.
-const AssessRow = ({ label, value, extra, band }) => {
+const AssessRow = ({ label, value, extra, band, subline }) => {
   const colors = band ? bandColor(band) : null;
   const bg = colors ? colors.bg : T.slate50;
   const stripe = colors ? colors.fg : T.slate200;
@@ -303,22 +303,26 @@ const AssessRow = ({ label, value, extra, band }) => {
   return (
     <div style={{
       display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
+      flexDirection: "column",
       padding: "6px 10px",
       background: bg,
       borderRadius: 6,
       borderLeft: `3px solid ${stripe}`,
       boxSizing: "border-box",
-      gap: 8,
+      gap: 2,
     }}>
-      <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{label}</span>
-      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
-        {value ?? "—"}
-        {extra != null && extra !== "" && (
-          <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>{extra}</span>
-        )}
-      </span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
+          {value ?? "—"}
+          {extra != null && extra !== "" && (
+            <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>{extra}</span>
+          )}
+        </span>
+      </div>
+      {subline && (
+        <div style={{ fontSize: 10, color: T.slate500, fontWeight: 400 }}>{subline}</div>
+      )}
     </div>
   );
 };
@@ -406,6 +410,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
+  // Which role fit's competencies to show (null = default to best fit).
+  // User clicks a Role Fit row in the right column to swap.
+  const [selectedRole, setSelectedRole] = useState(null);
   // Three-construct verdict (Nature/Nurture/Drivers) — per-layer verdicts +
   // framework prediction + retrospective observation + calibration status.
   // Fetched via hiregauge_three_construct_verdict RPC.
@@ -742,6 +749,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 : detail.lss_total_accuracy >= 25 ? "yellow"
                 : "red"
               }
+              subline={(() => {
+                const m = detail?.lss_math_accuracy;
+                const v = detail?.lss_verbal_accuracy;
+                const p = detail?.lss_problem_solving_accuracy;
+                if (m == null && v == null && p == null) return null;
+                return `Math ${m ?? "—"} · Verbal ${v ?? "—"} · PS ${p ?? "—"}`;
+              })()}
             />
             <AssessRow
               label="LSS Speed"
@@ -761,6 +775,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 );
                 if (!maxSpeed) return "none";
                 return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
+              })()}
+              subline={(() => {
+                const m = detail?.lss_math_speed_seconds;
+                const v = detail?.lss_verbal_speed_seconds;
+                const p = detail?.lss_problem_solving_speed_seconds;
+                if (m == null && v == null && p == null) return null;
+                return `Math ${m ?? "—"}s · Verbal ${v ?? "—"}s · PS ${p ?? "—"}s`;
               })()}
             />
             <AssessRow
@@ -787,46 +808,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
             })}
           </div>
 
-          {/* RIGHT COLUMN */}
+          {/* RIGHT COLUMN — Role Fit block on top (clickable rows sorted by OS
+              descending, best fit marked with ★, default-selected on load),
+              divider, then Competencies filtered to the currently-selected
+              role. Click any role fit row to swap the competencies view. */}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-              Competencies
+              Role Fit
             </div>
-            {(() => {
-              // Union of all four role competencies. Shared names have the
-              // same underlying value (formulas produce identical results),
-              // so a simple first-wins merge keeps every distinct competency
-              // once. Sorted alphabetically by canonical snake_case key so
-              // ordering is stable across candidates.
-              const all = {};
-              if (competencies && typeof competencies === "object") {
-                ["sales", "service", "service_sales", "aspirant"].forEach((role) => {
-                  const roleC = competencies[role] || {};
-                  Object.entries(roleC).forEach(([k, v]) => {
-                    if (!(k in all)) all[k] = v;
-                  });
-                });
-              }
-              const entries = Object.entries(all).sort(([a], [b]) => a.localeCompare(b));
-              const formatCompLabel = (k) =>
-                k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-              if (entries.length === 0) {
-                return (
-                  <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
-                    Competencies computed at runtime from traits.
-                  </div>
-                );
-              }
-              return entries.map(([k, v]) => {
-                const band = competencyBand(v);
-                return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
-              });
-            })()}
 
-            {/* Divider before role fit block */}
-            <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-            {/* Role fit scores + best fit indicator */}
+            {/* Role fit scores — clickable rows sorted highest OS first. Best
+                fit gets ★ + green band; currently-selected role gets a slate
+                outline + darker left stripe so it reads as active. */}
             {(() => {
               const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
               if (!bf) {
@@ -847,19 +840,55 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 { key: "service",       os: bf.service_os },
                 { key: "service_sales", os: bf.service_sales_os },
                 { key: "aspirant",      os: bf.aspirant_os },
-              ];
+              ].sort((a, b) => (Number(b.os) || -Infinity) - (Number(a.os) || -Infinity));
               const bestKey = bf.best_role;
+              const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
               return (
                 <>
-                  {roleRows.map((r) => (
-                    <AssessRow
-                      key={r.key}
-                      label={`${ROLE_LABELS[r.key] || r.key} Fit`}
-                      value={r.os}
-                      extra="OS"
-                      band={r.key === bestKey ? "green" : null}
-                    />
-                  ))}
+                  {roleRows.map((r) => {
+                    const isSelected = r.key === currentSelected;
+                    const isBest = r.key === bestKey;
+                    const colors = isBest ? bandColor("green") : null;
+                    const baseBg = colors ? colors.bg : T.slate50;
+                    const baseStripe = colors ? colors.fg : T.slate200;
+                    const valueColor = isBest ? colors.fg : T.slate900;
+                    return (
+                      <button
+                        key={r.key}
+                        type="button"
+                        onClick={() => setSelectedRole(r.key)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "6px 10px",
+                          background: baseBg,
+                          borderRadius: 6,
+                          borderTop: "none",
+                          borderRight: "none",
+                          borderBottom: "none",
+                          borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
+                          outline: isSelected ? `1px solid ${T.slate400}` : "none",
+                          boxSizing: "border-box",
+                          gap: 8,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          textAlign: "left",
+                          width: "100%",
+                        }}
+                        title={isSelected ? "Selected — competencies below" : "Click to show this role's competencies"}
+                      >
+                        <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
+                          {isBest && <span style={{ marginRight: 4 }}>★</span>}
+                          {ROLE_LABELS[r.key] || r.key} Fit
+                        </span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
+                          {r.os ?? "—"}
+                          <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>OS</span>
+                        </span>
+                      </button>
+                    );
+                  })}
                   <div style={{
                     marginTop: 6,
                     padding: "8px 10px",
@@ -877,6 +906,50 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                       ★ {ROLE_LABELS[bestKey] || bestKey}
                     </span>
                   </div>
+                </>
+              );
+            })()}
+
+            {/* Divider between Role Fit block and Competencies */}
+            <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
+              Competencies
+            </div>
+
+            {/* Competencies scoped to the currently-selected role fit. Default
+                is the best-fit role. Small caption tells the user which role
+                they're viewing and that they can click above to swap. */}
+            {(() => {
+              const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+              const bestKey = bf?.best_role;
+              const currentSelected = selectedRole || bestKey || "sales";
+              const ROLE_LABELS = {
+                sales:         "Sales",
+                service:       "Service",
+                service_sales: "Service Sales",
+                aspirant:      "Aspirant",
+              };
+              const roleC = (competencies && competencies[currentSelected]) || {};
+              const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
+              const formatCompLabel = (k) =>
+                k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+              if (entries.length === 0) {
+                return (
+                  <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                    {competencies ? `No competencies for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
+                    Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit above to swap.
+                  </div>
+                  {entries.map(([k, v]) => {
+                    const band = competencyBand(v);
+                    return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
+                  })}
                 </>
               );
             })()}
