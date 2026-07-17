@@ -25,11 +25,31 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, handleModuleLinkClick } from "../lib/routing.jsx";
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+// Entity hierarchy root (Peter Story / personal). Default entity for Financials
+// views before Peter selects a different node. See operational_rule "Financials
+// module scope: hierarchical entity tree, roll-ups at every level".
+const PERSONAL_ROOT_ENTITY_ID = "b3333333-3333-3333-3333-333333333333";
+
+// URL helper — preserve every existing query param, replace only the entity
+// slot. Used by breadcrumb + children-strip anchors so right-click / cmd-click
+// / middle-click open a fresh tab at the target entity view.
+function urlWithEntity(entityId) {
+  if (typeof window === "undefined") return "";
+  const u = new URL(window.location.href);
+  if (entityId && entityId !== PERSONAL_ROOT_ENTITY_ID) {
+    u.searchParams.set("entity", entityId);
+  } else {
+    u.searchParams.delete("entity");
+  }
+  return u.pathname + (u.search ? u.search : "");
+}
+
+
 // ─── Live Supabase Data Hook ─────────────────────────────────
-function useFinancialsData() {
+function useFinancialsData(entity) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
@@ -48,21 +68,24 @@ function useFinancialsData() {
         const s11AsOf = cprLatest?.week_ending_date || new Date().toISOString().split("T")[0];
 
         const [
-          isRows, priorIsRows, compRows, bankRows, ccRows, glRows,
+          pnlOwnRes, pnlFullRes, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
           aippRow, balanceSheetRows,
           growthBudgetRes, growthCeilingRes,
           bookLatestRes, bookYearStartRes, s11Res,
+          childrenRes, allEntitiesRes,
         ] = await Promise.all([
-          // P&L history — ALL years via RPC returning a single JSON blob (one row).
-          // Direct v_income_statement queries hit the project PostgREST db_max_rows cap
-          // (~1000) even with explicit .limit(50000), so 2024/2025 were silently getting
-          // dropped from the annual grain. json_agg wraps the whole result set into a
-          // single row so the row cap can't touch it. Split into isData / priorIsData
-          // in JS below. Aggregated at (year, month, account_name, account_type) —
-          // downstream buildLines math stays unchanged.
-          supabase.rpc("get_pnl_history"),
-          Promise.resolve({ data: null }),
+          // Phase 3 (entity hierarchy) — P&L uses one-line consolidation:
+          //   OWN-ONLY drives incomeLines / expenseLines for this entity.
+          //   FULL-CONSOLIDATION drives Overview aggregate KPIs + monthly chart
+          //   (what the entity "sees" including everything downstream) AND is
+          //   the reconciliation gate: PLSection Grand Net must equal pnlFull
+          //   net at every level.
+          // Both RPCs return a single JSON blob to sidestep the project
+          // PostgREST db_max_rows ~1000 cap that silently dropped older years
+          // when we queried v_income_statement directly.
+          supabase.rpc("get_pnl_history_own_only",   { p_entity_id: entity }),
+          supabase.rpc("get_pnl_history_for_entity", { p_entity_id: entity }),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
@@ -133,17 +156,39 @@ function useFinancialsData() {
 
           // Canonical SF compute — smvc on-time %, applied %, dollar_diff, scorecard points + $ diff
           supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: s11AsOf }),
+
+          // Phase 3 entity nav — direct children drive the subsidiary rows in
+          // PLSection + the children navigation strip below the breadcrumb.
+          // allEntitiesRes drives breadcrumb (walk parent_entity_id up from
+          // current entity to root, all in-memory since only 5 entities).
+          supabase.rpc("get_entity_direct_children", { p_entity_id: entity }),
+          supabase.from("business_entities")
+            .select("id, name, entity_type, parent_entity_id")
+            .eq("agency_id", AGENCY_ID),
         ]);
 
-        const pnlRaw = isRows?.data;
-        const pnlRows = Array.isArray(pnlRaw) ? pnlRaw : [];
+        // Own-only rows feed the P&L line display (incomeLines / expenseLines).
+        // Full-consolidation rows feed Overview KPIs, monthly chart, and Grand
+        // Net reconciliation. See operational_rule "Financials module scope"
+        // for the one-line consolidation shape.
+        const ownRows  = Array.isArray(pnlOwnRes?.data)  ? pnlOwnRes.data  : [];
+        const fullRows = Array.isArray(pnlFullRes?.data) ? pnlFullRes.data : [];
+
+        // pnlRows drives incomeLines / expenseLines (own-only) — variable name
+        // preserved so downstream buildLines / historyYears math stays untouched.
+        const pnlRows = ownRows;
         const isData = pnlRows.filter(r => r.year === currentYear);
 
-        // Monthly chart
+        // Aggregate metrics (monthly chart + revenueYTD/expensesYTD/etc) use
+        // FULL-CONSOLIDATION data — what this entity "sees" including every
+        // descendant subtree. At root (Personal, no own JEs), aggregates come
+        // entirely from subsidiaries; at leaf (Story Agency etc, no children),
+        // aggregates equal own-only.
+        const fullCurrentYear = fullRows.filter(r => r.year === currentYear);
         const monthlyRevenue = MONTHS.map((m, i) => {
           const mo = i + 1;
-          const rev = isData.filter(r => r.month === mo && r.account_type === "income").reduce((s,r) => s + parseFloat(r.amount||0), 0);
-          const exp = isData.filter(r => r.month === mo && r.account_type === "expense").reduce((s,r) => s + parseFloat(r.amount||0), 0);
+          const rev = fullCurrentYear.filter(r => r.month === mo && r.account_type === "income").reduce((s,r) => s + parseFloat(r.amount||0), 0);
+          const exp = fullCurrentYear.filter(r => r.month === mo && r.account_type === "expense").reduce((s,r) => s + parseFloat(r.amount||0), 0);
           return { month: m, revenue: Math.round(rev), expenses: Math.round(exp) };
         });
 
@@ -199,8 +244,75 @@ function useFinancialsData() {
         const incomeLines  = buildLines("income");
         const expenseLines = buildLines("expense");
 
+        // ─── Phase 3: Subsidiaries ─────────────────────────────────────────
+        // For each direct child of the current entity, roll up its full-tree
+        // P&L into a single per-period NET (income − expense) contribution
+        // line. The synthetic line has the same shape as incomeLines /
+        // expenseLines (perMonth[], perMonthByYear{}) so PLSection can reuse
+        // the same columns.getValue / renderDelta machinery unchanged. At
+        // leaf entities (no direct children) subsidiaries is [] and the
+        // PLSection Subsidiaries block silently omits itself.
+        const directChildren = Array.isArray(childrenRes?.data) ? childrenRes.data : [];
+        const childPnls = directChildren.length > 0
+          ? await Promise.all(
+              directChildren.map(c => supabase.rpc("get_pnl_history_for_entity", { p_entity_id: c.id }))
+            )
+          : [];
+        const subsidiaryLines = directChildren.map((c, i) => {
+          const rows = Array.isArray(childPnls[i]?.data) ? childPnls[i].data : [];
+          const perMonthByYear = {};
+          for (const yr of [...historyYears, currentYear]) perMonthByYear[yr] = Array(12).fill(0);
+          for (const r of rows) {
+            if (!perMonthByYear[r.year]) continue;
+            const sign = r.account_type === "income" ? 1 : (r.account_type === "expense" ? -1 : 0);
+            if (sign === 0) continue;
+            perMonthByYear[r.year][(r.month || 1) - 1] += sign * parseFloat(r.amount || 0);
+          }
+          const perMonth = (perMonthByYear[currentYear] || Array(12).fill(0)).map(Math.round);
+          const perMonthPrior = (perMonthByYear[currentYear - 1] || Array(12).fill(0)).map(Math.round);
+          const ytd = perMonth.slice(0, currentMonth).reduce((s,x) => s + x, 0);
+          const mtd = perMonth[currentMonth - 1] || 0;
+          const qtd = perMonth.slice(quarterStart - 1, currentMonth).reduce((s,x) => s + x, 0);
+          return {
+            entityId: c.id,
+            entity_type: c.entity_type,
+            is_leaf: c.is_leaf,
+            name: c.name,
+            section: "Subsidiaries",
+            mtd, qtd, ytd,
+            perMonth,
+            perMonthPrior,
+            perMonthByYear: Object.fromEntries(
+              Object.entries(perMonthByYear).map(([y, arr]) => [y, arr.map(Math.round)])
+            ),
+          };
+        });
+
+        // ─── Phase 3: Entity context (breadcrumb + children strip) ────────
+        // Walk parent_entity_id from the current entity up to the root using
+        // the in-memory allEntities map (only 5 entities agency-wide, one
+        // fetch handles all breadcrumb resolution). Breadcrumb is root-first
+        // so the UI can render "Peter Story → PaperNewt LLC → [current]".
+        const allEntities = Array.isArray(allEntitiesRes?.data) ? allEntitiesRes.data : [];
+        const entitiesById = Object.fromEntries(allEntities.map(e => [e.id, e]));
+        const breadcrumb = [];
+        {
+          let safety = 0;
+          let cur = entitiesById[entity];
+          while (cur && safety < 20) {
+            breadcrumb.unshift({ id: cur.id, name: cur.name, entity_type: cur.entity_type });
+            cur = cur.parent_entity_id ? entitiesById[cur.parent_entity_id] : null;
+            safety += 1;
+          }
+        }
+
+        // Aggregate KPIs (revenueMTD/QTD/YTD, expensesMTD/QTD/YTD) sum against
+        // FULL-CONSOLIDATION so the numbers reflect what this entity sees at
+        // every level. Own-only would zero out at parent nodes with no direct
+        // JEs (e.g. Personal today shows $0 revenue since everything's stamped
+        // on the PaperNewt child).
         const sumByPeriod = (type, predicate) =>
-          isData.filter(r => r.account_type === type && predicate(r))
+          fullCurrentYear.filter(r => r.account_type === type && predicate(r))
                 .reduce((s,r) => s + parseFloat(r.amount||0), 0);
 
         const revYTD = sumByPeriod("income",  () => true);
@@ -441,7 +553,8 @@ function useFinancialsData() {
           },
           ownerProfit,
           monthlyRevenue,
-          pl: { income: incomeLines, expenses: expenseLines },
+          pl: { income: incomeLines, expenses: expenseLines, subsidiaries: subsidiaryLines },
+          entityContext: { currentEntityId: entity, breadcrumb, directChildren },
           compRecaps,
           aipp,
           goalsPace,
@@ -493,7 +606,7 @@ function useFinancialsData() {
       }
     }
     load();
-  }, [reloadKey]);
+  }, [reloadKey, entity]);
 
   return { data, loading, reload: () => setReloadKey(k => k + 1) };
 }
@@ -1196,9 +1309,14 @@ const _eomDrill = (y, m) => {
 };
 
 const PLSection = ({ data, onDataChanged }) => {
-  const pl = data?.pl || { income: [], expenses: [] };
-  const incomeRows  = Array.isArray(pl.income)   ? pl.income   : [];
-  const expenseRows = Array.isArray(pl.expenses) ? pl.expenses : [];
+  const pl = data?.pl || { income: [], expenses: [], subsidiaries: [] };
+  const incomeRows     = Array.isArray(pl.income)       ? pl.income       : [];
+  const expenseRows    = Array.isArray(pl.expenses)     ? pl.expenses     : [];
+  // Phase 3 (entity hierarchy): each subsidiary is one synthetic P&L line
+  // whose perMonth / perMonthByYear values are the child's ROLLED-UP NET
+  // (income − expense) for the period. Rendered as its own section between
+  // Total Expenses and NET INCOME. Empty at leaf entities.
+  const subsidiaryRows = Array.isArray(pl.subsidiaries) ? pl.subsidiaries : [];
 
   const year          = data?.currentYear  || new Date().getFullYear();
   const currentMonth  = data?.currentMonth || (new Date().getMonth() + 1);
@@ -1383,6 +1501,19 @@ const PLSection = ({ data, onDataChanged }) => {
     if (!c.getPriorValue) return null;
     let any = false, sum = 0;
     for (const line of expenseRows) {
+      const v = c.getPriorValue(line);
+      if (v == null) continue;
+      any = true; sum += v;
+    }
+    return any ? sum : null;
+  });
+  // Phase 3 (entity hierarchy): subsidiary totals feed both the Subsidiaries
+  // section footer AND the NET INCOME row (own net + subsidiary net).
+  const totalSubByCol      = columns.map(c => subsidiaryRows.reduce((s, line) => s + c.getValue(line), 0));
+  const totalSubPriorByCol = columns.map(c => {
+    if (!c.getPriorValue) return null;
+    let any = false, sum = 0;
+    for (const line of subsidiaryRows) {
       const v = c.getPriorValue(line);
       if (v == null) continue;
       any = true; sum += v;
@@ -1671,14 +1802,57 @@ const PLSection = ({ data, onDataChanged }) => {
               opts={{ isExpenseLine: true }}
             />
 
+            {/* Phase 3: SUBSIDIARIES — one-line consolidation. Skipped at
+                leaf entities (no direct children) and when every subsidiary
+                rounds to $0 across every visible column (blank-row filter). */}
+            {(() => {
+              if (subsidiaryRows.length === 0) return null;
+              const visibleSubs = subsidiaryRows.filter(line =>
+                columns.some(c => {
+                  const v = c.getValue(line) || 0;
+                  const p = c.getPriorValue ? (c.getPriorValue(line) || 0) : 0;
+                  return Math.abs(v) >= 0.005 || Math.abs(p) >= 0.005;
+                })
+              );
+              if (visibleSubs.length === 0) return null;
+              return (
+                <>
+                  <tr><td colSpan={totalCellCount} style={{ padding: "6px 0" }} /></tr>
+                  <tr>
+                    <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate800 }}>SUBSIDIARIES</td>
+                    <td colSpan={columns.length * 2} />
+                  </tr>
+                  {visibleSubs.map((sub) => (
+                    <DataRow
+                      key={`sub-${sub.entityId || sub.name}`}
+                      label={sub.name}
+                      indent
+                      values={lineValues(sub)}
+                      priors={linePriors(sub)}
+                      opts={{ isIncomeLine: true }}
+                    />
+                  ))}
+                  <DataRow
+                    label="Total Subsidiary Net"
+                    bold isTotal
+                    values={totalSubByCol}
+                    priors={totalSubPriorByCol}
+                    opts={{ isIncomeLine: true }}
+                  />
+                </>
+              );
+            })()}
+
             <tr><td colSpan={totalCellCount} style={{ padding: "2px 0", borderTop: `2px solid ${T.slate800}` }} /></tr>
             <DataRow
               label="NET INCOME"
               bold isTotal
-              values={totalIncomeByCol.map((inc, i) => inc - totalExpByCol[i])}
+              values={totalIncomeByCol.map((inc, i) => inc - totalExpByCol[i] + (totalSubByCol[i] || 0))}
               priors={totalIncomePriorByCol.map((incP, i) => {
                 const expP = totalExpPriorByCol[i];
-                return (incP == null || expP == null) ? null : incP - expP;
+                const subP = totalSubPriorByCol[i];
+                if (incP == null || expP == null) return null;
+                return (incP - expP) + (subP == null ? 0 : subP);
               })}
               opts={{ isNetLine: true }}
             />
@@ -2375,11 +2549,107 @@ const PrintPackage = ({ data, periodLabel }) => {
   );
 };
 
+// ─── Entity Hierarchy Nav (Phase 3) ───────────────────────────
+// Breadcrumb (root → current, each segment right-clickable) + a horizontal
+// strip of direct children as clickable pills that drill INTO a child. Both
+// render as real <a href> anchors so browsers expose native "Open in new
+// tab" affordances per operational_rule "Newtworks nav-target UI elements
+// must be <a href>".
+const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
+  const crumbs = Array.isArray(breadcrumb)     ? breadcrumb     : [];
+  const kids   = Array.isArray(directChildren) ? directChildren : [];
+  if (crumbs.length === 0 && kids.length === 0) return null;
+
+  const goTo = (id) => setEntity(id || PERSONAL_ROOT_ENTITY_ID);
+
+  return (
+    <div style={{
+      background: T.slate50,
+      border: `1px solid ${T.slate200}`,
+      borderRadius: 10,
+      padding: "10px 14px",
+      marginBottom: 14,
+    }}>
+      {/* Breadcrumb — root first, current last (non-clickable) */}
+      {crumbs.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, fontSize: 13 }}>
+          {crumbs.map((c, i) => {
+            const isCurrent = i === crumbs.length - 1;
+            const sep = i > 0 ? (
+              <span key={`sep-${c.id}`} style={{ color: T.slate400, margin: "0 4px" }}>›</span>
+            ) : null;
+            if (isCurrent) {
+              return (
+                <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {sep}
+                  <span style={{ fontWeight: 600, color: T.slate900 }}>{c.name}</span>
+                </span>
+              );
+            }
+            return (
+              <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {sep}
+                <a
+                  href={urlWithEntity(c.id)}
+                  onClick={(e) => handleModuleLinkClick(e, () => goTo(c.id))}
+                  style={{
+                    color: T.blue,
+                    textDecoration: "none",
+                    borderBottom: `1px dotted ${T.blue}`,
+                  }}
+                  title={`Switch Financials scope to ${c.name}`}
+                >{c.name}</a>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Children strip — pills, each drilling INTO a child entity */}
+      {kids.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: crumbs.length > 0 ? 10 : 0 }}>
+          <span style={{ fontSize: 11, color: T.slate500, alignSelf: "center", marginRight: 4 }}>Drill in →</span>
+          {kids.map(k => (
+            <a
+              key={k.id}
+              href={urlWithEntity(k.id)}
+              onClick={(e) => handleModuleLinkClick(e, () => goTo(k.id))}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 10px",
+                fontSize: 12,
+                fontWeight: 500,
+                color: T.slate800,
+                background: T.white,
+                border: `1px solid ${T.slate200}`,
+                borderRadius: 999,
+                textDecoration: "none",
+                cursor: "pointer",
+              }}
+              title={`Drill into ${k.name}`}
+            >
+              <span>{k.name}</span>
+              <span style={{ fontSize: 10, color: T.slate400 }}>{k.entity_type}</span>
+              {!k.is_leaf && <span style={{ fontSize: 10, color: T.slate400 }}>· {k.direct_child_count} sub</span>}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
   const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","balsheet","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
-  const { data: liveData, loading, reload } = useFinancialsData();
+  // Phase 3 (entity hierarchy): which entity the Financials views are scoped
+  // to. Persists in URL so refresh restores; default = Personal (root of tree).
+  // See operational_rule "Financials module scope: hierarchical entity tree".
+  const [entity, setEntity] = useTabParam("entity", PERSONAL_ROOT_ENTITY_ID);
+  const { data: liveData, loading, reload } = useFinancialsData(entity);
   if (liveData) MOCK = liveData;
 
   const viewSections = [
@@ -2425,6 +2695,14 @@ export default function Financials() {
           
         </div>
       </div>
+
+      {/* Entity Hierarchy Nav (Phase 3) — breadcrumb + children strip */}
+      <EntityNav
+        entity={entity}
+        setEntity={setEntity}
+        breadcrumb={MOCK?.entityContext?.breadcrumb || []}
+        directChildren={MOCK?.entityContext?.directChildren || []}
+      />
 
       {/* Section Navigation */}
       <div style={{
