@@ -156,17 +156,20 @@ function useFinancialsData() {
         const historyYears = [...new Set(priorIsData.map(r => r.year))]
           .filter(y => y < currentYear && y >= currentYear - 10)
           .sort((a, b) => a - b);
+        // buildLines keys on (section, account_name) so QBO parent categories
+        // ("0001 ADMINISTRATION", "0002 TEAM", ...) group their accounts, and
+        // post-6/30 journal_entries land in a "Z Post-6/30 ledger" section so
+        // they surface but stay visually separate from historical prior_year_pl.
         const buildLines = (type) => {
-          const allNames = new Set([
-            ...isData.filter(r => r.account_type === type).map(r => r.account_name),
-            ...priorIsData.filter(r => r.account_type === type).map(r => r.account_name),
-          ]);
-          return [...allNames].map(name => {
-            const rows       = isData.filter(r => r.account_name === name && r.account_type === type);
-            const priorRows  = priorIsData.filter(r => r.account_name === name && r.account_type === type);
-            const perMonth      = Array(12).fill(0);
+          const keys = new Set();
+          for (const r of isData)     if (r.account_type === type) keys.add(`${r.section || "Uncategorized"}||${r.account_name}`);
+          for (const r of priorIsData) if (r.account_type === type) keys.add(`${r.section || "Uncategorized"}||${r.account_name}`);
+          return [...keys].map(key => {
+            const [section, name] = key.split("||");
+            const rows      = isData.filter(r => (r.section || "Uncategorized") === section && r.account_name === name && r.account_type === type);
+            const priorRows = priorIsData.filter(r => (r.section || "Uncategorized") === section && r.account_name === name && r.account_type === type);
+            const perMonth = Array(12).fill(0);
             for (const r of rows) perMonth[(r.month || 1) - 1] += parseFloat(r.amount || 0);
-            // perMonthByYear: { 2023:[12], 2024:[12], 2025:[12], 2026:[12] }
             const perMonthByYear = {};
             for (const yr of [...historyYears, currentYear]) perMonthByYear[yr] = Array(12).fill(0);
             for (const r of priorRows) {
@@ -179,6 +182,7 @@ function useFinancialsData() {
             const qtd = rows.filter(r => r.month >= quarterStart && r.month <= currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
             return {
               name,
+              section,
               mtd: Math.round(mtd),
               qtd: Math.round(qtd),
               ytd: Math.round(ytd),
@@ -1125,6 +1129,57 @@ const PLSection = ({ data }) => {
   const lineValues = (line) => columns.map(c => c.getValue(line));
   const linePriors = (line) => columns.map(c => (c.getPriorValue ? c.getPriorValue(line) : null));
 
+  // Group lines by section, sort account rows within each section by name,
+  // insert a bold section header row above each group with subtotals summed
+  // across the group\'s child accounts.
+  const renderSectionedRows = (lines, opts) => {
+    const groups = {};
+    for (const line of lines) {
+      const sec = line.section || "Uncategorized";
+      if (!groups[sec]) groups[sec] = [];
+      groups[sec].push(line);
+    }
+    const sectionKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    const nodes = [];
+    sectionKeys.forEach((sec) => {
+      const grpLines = groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name));
+      // Section subtotals: sum children per column
+      const sectionValues = columns.map(c => grpLines.reduce((s, l) => s + c.getValue(l), 0));
+      const sectionPriors = columns.map(c => {
+        if (!c.getPriorValue) return null;
+        let any = false, sum = 0;
+        for (const l of grpLines) {
+          const v = c.getPriorValue(l);
+          if (v !== null && v !== undefined) { any = true; sum += v; }
+        }
+        return any ? sum : null;
+      });
+      nodes.push(
+        <DataRow
+          key={`sec-${sec}`}
+          label={sec}
+          bold
+          values={sectionValues}
+          priors={sectionPriors}
+          opts={opts}
+        />
+      );
+      grpLines.forEach((line, i) => {
+        nodes.push(
+          <DataRow
+            key={`${sec}-${i}`}
+            label={line.name}
+            indent
+            values={lineValues(line)}
+            priors={linePriors(line)}
+            opts={opts}
+          />
+        );
+      });
+    });
+    return nodes;
+  };
+
   // Grain toggle button
   const grainBtn = (key, label) => (
     <button
@@ -1207,16 +1262,7 @@ const PLSection = ({ data }) => {
               <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate800 }}>INCOME</td>
               <td colSpan={columns.length * 2} />
             </tr>
-            {incomeRows.map((line, i) => (
-              <DataRow
-                key={i}
-                label={line.name}
-                indent
-                values={lineValues(line)}
-                priors={linePriors(line)}
-                opts={{ isIncomeLine: true }}
-              />
-            ))}
+            {renderSectionedRows(incomeRows, { isIncomeLine: true })}
             <DataRow
               label="Total Income"
               bold isTotal
@@ -1231,16 +1277,7 @@ const PLSection = ({ data }) => {
               <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate800 }}>EXPENSES</td>
               <td colSpan={columns.length * 2} />
             </tr>
-            {expenseRows.map((line, i) => (
-              <DataRow
-                key={i}
-                label={line.name}
-                indent
-                values={lineValues(line)}
-                priors={linePriors(line)}
-                opts={{ isExpenseLine: true }}
-              />
-            ))}
+            {renderSectionedRows(expenseRows, { isExpenseLine: true })}
             <DataRow
               label="Total Expenses"
               bold isTotal
