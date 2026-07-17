@@ -35,6 +35,9 @@
 
 // deno-lint-ignore-file no-explicit-any
 
+import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
+import { reformatResumeSeparators } from "./resume_reformat.ts";
+
 interface CareerplugBody {
   agency_id?: string;
   shared_secret?: string;
@@ -206,14 +209,18 @@ async function processCareerplugMessage(
     // Attach a resume PDF if available. When there are exactly N applicants
     // and N PDFs in the message, associate by index; otherwise attach the
     // first PDF only to the first applicant and let others be resume-less.
+    // storeResume() ALSO extracts the resume text (column-aware + reformatted)
+    // for downstream write into hiring_candidates.resume_extracted_text after
+    // the upsert RPC returns the candidate id.
     let resumeDocumentId: string | null = null;
+    let stored: StoreResumeResult | null = null;
     if (pdfAttachments.length > 0) {
       const pdf = pdfAttachments.length === applicants.length
         ? pdfAttachments[idx]
         : (idx === 0 ? pdfAttachments[0] : null);
       if (pdf) {
-        const stored = await storeResume(ctx, messageId, subject, receivedAtISO, pdf, a);
-        if (stored.ok) resumeDocumentId = stored.documentId;
+        stored = await storeResume(ctx, messageId, subject, receivedAtISO, pdf, a);
+        if (stored.ok) resumeDocumentId = stored.documentId ?? null;
       }
     }
 
@@ -258,6 +265,24 @@ async function processCareerplugMessage(
       assessment_id: res.assessment_id,
     });
     if (res.action === "inserted" || res.action === "updated_by_email") upserted++;
+
+    // Write extracted resume text back to hiring_candidates.resume_extracted_text.
+    // ONLY when the column is currently NULL or empty — never clobbers a
+    // hand-corrected text on a re-run of the same message.
+    if (stored?.ok && stored.resumeText && res.assessment_id) {
+      try {
+        const { error: upErr } = await sb
+          .from("hiring_candidates")
+          .update({ resume_extracted_text: stored.resumeText })
+          .eq("id", res.assessment_id)
+          .or("resume_extracted_text.is.null,resume_extracted_text.eq.");
+        if (upErr) {
+          console.warn(`resume_extracted_text update for ${res.assessment_id} failed: ${upErr.message}`);
+        }
+      } catch (e) {
+        console.warn(`resume_extracted_text update threw for ${res.assessment_id}:`, e);
+      }
+    }
   }
 
   // 5. Star + 6. Archive
@@ -431,6 +456,9 @@ async function starMessage(ctx: CareerplugCtx, messageId: string): Promise<void>
 interface StoreResumeResult {
   ok: boolean;
   documentId?: string;
+  /** Column-aware extracted + reformatted resume text. Present only when
+   *  PDF text extraction succeeded and produced non-empty output. */
+  resumeText?: string;
   error?: string;
 }
 
@@ -469,6 +497,34 @@ async function storeResume(
   const nameSlug = [a.first_name, a.last_name].filter(Boolean).join(" ") || "unknown";
   const dateSlug = receivedAtISO.slice(0, 10).replace(/-/g, "");
   const targetName = `Resume - ${nameSlug} - ${dateSlug}.pdf`;
+
+  // 2b. Extract resume text (column-aware, reformatted). Best-effort — a
+  // failure here does not block the Drive upload or the documents insert;
+  // the row can still land with resume_url pointing at the Drive file and
+  // resume_extracted_text NULL, and Peter can re-run extraction later.
+  let resumeText: string | null = null;
+  try {
+    const r = await fetch(s3url);
+    if (r.ok) {
+      const buf = new Uint8Array(await r.arrayBuffer());
+      let raw = "";
+      try {
+        raw = await extractPdfTextColumnAware(buf);
+      } catch (colErr) {
+        console.warn(`resume column-aware extract failed; falling back to plain unpdf: ${colErr instanceof Error ? colErr.message : String(colErr)}`);
+        try { raw = await extractPdfTextPlain(buf); } catch (plainErr) {
+          console.warn(`resume plain unpdf also failed: ${plainErr instanceof Error ? plainErr.message : String(plainErr)}`);
+        }
+      }
+      if (raw && raw.trim().length > 0) {
+        resumeText = reformatResumeSeparators(raw);
+      }
+    } else {
+      console.warn(`resume s3url fetch for text extraction returned HTTP ${r.status}`);
+    }
+  } catch (e) {
+    console.warn("resume text extraction threw (non-fatal):", e);
+  }
 
   // 3. Upload to Drive using the current GOOGLEDRIVE_UPLOAD_FILE schema:
   //    file_to_upload: { name, mimetype, s3key }. Composio's backend copies
@@ -524,7 +580,11 @@ async function storeResume(
   if (docErr || !docRow) {
     return { ok: false, error: `documents insert: ${docErr?.message ?? "unknown"}` };
   }
-  return { ok: true, documentId: docRow.id as string };
+  return {
+    ok: true,
+    documentId: docRow.id as string,
+    resumeText: resumeText ?? undefined,
+  };
 }
 
 // ---------- Mode entry point ----------
