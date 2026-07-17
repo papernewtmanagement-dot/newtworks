@@ -60,66 +60,6 @@ const competencyBand = (v) => {
   return "red";
 };
 
-// Maps a detected trigger to the manual section header text for question lookup.
-// direction is "Low" or "High" based on which side of ideal range the score falls.
-const triggerToHeader = (trait, value) => {
-  if (trait === "deadline_motivation" && value < 70) return "Low Deadline Motivation";
-  if (trait === "recognition_drive"   && value < 50) return "Low Recognition Drive";
-  if (trait === "assertiveness"       && value < 50) return "Low Assertiveness";
-  if (trait === "independent_spirit"  && value < 50) return "Low Independent Spirit";
-  if (trait === "analytical"          && value > 60) return "High Analytical";
-  if (trait === "compassion"          && value < 30) return "Low Compassion";
-  if (trait === "compassion"          && value > 70) return "High Compassion";
-  if (trait === "self_promotion"      && value < 10) return "Low Self-Promotion";
-  if (trait === "self_promotion"      && value > 80) return "High Self-Promotion";
-  if (trait === "belief_in_others"    && value < 20) return "Low Belief in Others";
-  if (trait === "belief_in_others"    && value > 80) return "High Belief in Others";
-  if (trait === "optimism"            && value < 20) return "Low Optimism";
-  if (trait === "optimism"            && value > 80) return "High Optimism";
-  if (trait === "lss_speed" || trait === "lss_accuracy") return "LSS Speed";
-  return null;
-};
-
-// Renders a colored pill for probes whose source is an assessment flag:
-//   manual:<Header>                   → pull from Final Interview Suggs pool
-//   trait:<name>=<value>(low|high)    → fresh LLM trait probe
-// Matches source back to the triggers[] array so the interviewer sees the
-// actual score + severity that caused this question to appear. Returns null
-// for non-assessment sources (resume:*, character_floor:*, framework:*, etc.).
-const AssessmentFlagBadge = ({ source, triggers }) => {
-  if (!source) return null;
-  let sev = "red";
-  let flagLabel = "";
-  let scoreDisplay = "";
-  if (source.startsWith("manual:")) {
-    const header = source.slice(7);
-    flagLabel = header;
-    const matched = (triggers || []).find(
-      (t) => triggerToHeader(t.trait, Number(t.value)) === header
-    );
-    if (matched) {
-      sev = matched.severity;
-      scoreDisplay = ` · ${matched.label}: ${matched.value}`;
-    }
-  } else if (source.startsWith("trait:")) {
-    const m = source.match(/^trait:([a-z_]+)=(-?\d+)\((low|high)\)$/);
-    if (!m) return null;
-    const trait = m[1];
-    const value = Number(m[2]);
-    flagLabel = triggerToHeader(trait, value) || TRAIT_LABELS[trait] || trait;
-    scoreDisplay = ` · ${TRAIT_LABELS[trait] || trait}: ${value}`;
-  } else {
-    return null;
-  }
-  const bg = sev === "red" ? "#fee2e2" : "#fef3c7";
-  const fg = sev === "red" ? "#991b1b" : "#92400e";
-  return (
-    <div style={{ display: "inline-block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, padding: "3px 8px", borderRadius: 4, background: bg, color: fg, marginBottom: 6 }}>
-      🎯 Assessment flag · {flagLabel}{scoreDisplay}
-    </div>
-  );
-};
-
 const STAGE_LABELS = {
   assessed:        "Assessed",
   email_screen:    "Email Screen",
@@ -188,31 +128,52 @@ const bandColor = (band) => {
   return { bg: T.slate100, fg: T.slate500 };
 };
 
-const detectTriggers = (detail) => {
-  const triggers = [];
-  Object.entries(TRAIT_BAND).forEach(([trait, evaluator]) => {
-    const value = detail?.[trait];
-    const band = evaluator(value);
-    if (band === "red" || band === "yellow") {
-      triggers.push({ trait, label: TRAIT_LABELS[trait], value, severity: band });
+// Parse a probe.source string into a colored pill origin. Five origin families
+// observed in generate-custom-probes v9.0+ output:
+//   manual:{Trait Direction}                      — trait-triggered manual injection (red)
+//   trait:{trait}={value}(band)                   — trait-flag-driven LLM probe (red|amber)
+//   character_floor:{Trait}[=failed|=v(low)]      — character floor gate (red)
+//   resume:{keyword}                              — resume-driven (slate, informational)
+//   behavioral_tell:{Tell}=match                  — behavioral tell (amber)
+// tone maps into bandColor for pill colors.
+const parseProbeOrigin = (source) => {
+  if (!source) return null;
+  const s = String(source);
+
+  if (s.startsWith("manual:")) {
+    return { kind: "manual", label: "Trait Trigger", detail: s.slice(7).trim(), tone: "red" };
+  }
+  if (s.startsWith("trait:")) {
+    const m = s.match(/^trait:([a-z_]+)=([0-9.]+)\(([a-z]+)\)/i);
+    if (m) {
+      const traitLabel = TRAIT_LABELS[m[1]] || m[1];
+      const value = m[2];
+      const band = m[3].toLowerCase();
+      const tone = (band === "moderate" || band === "watch") ? "amber" : "red";
+      const dir = band === "low" ? "Low" : band === "high" ? "High" : band[0].toUpperCase() + band.slice(1);
+      return { kind: "trait", label: "Trait Trigger", detail: `${dir} ${traitLabel} (${value})`, tone };
     }
-  });
-  // LSS triggers
-  const maxSpeed = Math.max(
-    Number(detail?.lss_math_speed_seconds) || 0,
-    Number(detail?.lss_verbal_speed_seconds) || 0,
-    Number(detail?.lss_problem_solving_speed_seconds) || 0
-  );
-  if (maxSpeed > 60) {
-    triggers.push({ trait: "lss_speed", label: "LSS Speed", value: `${maxSpeed}s`, severity: "red" });
+    return { kind: "trait", label: "Trait Trigger", detail: s.slice(6), tone: "red" };
   }
-  const acc = detail?.lss_total_accuracy;
-  if (Number.isFinite(acc) && acc < 25) {
-    triggers.push({ trait: "lss_accuracy", label: "LSS Accuracy", value: `${acc}/35`, severity: "red" });
-  } else if (Number.isFinite(acc) && acc < 35) {
-    triggers.push({ trait: "lss_accuracy", label: "LSS Accuracy", value: `${acc}/35`, severity: "yellow" });
+  if (s.startsWith("character_floor:")) {
+    const rest = s.slice(16).replace(/=failed$/, "").replace(/=[0-9.]+\([a-z]+\)$/i, "").trim();
+    return { kind: "character_floor", label: "Character Floor", detail: rest, tone: "red" };
   }
-  return triggers;
+  if (s.startsWith("resume:")) {
+    return { kind: "resume", label: "Resume", detail: s.slice(7).replace(/_/g, " "), tone: "slate" };
+  }
+  if (s.startsWith("behavioral_tell:")) {
+    const rest = s.slice(16);
+    const m = rest.match(/^([^=]+)=(.+)$/);
+    return { kind: "behavioral_tell", label: "Behavioral Tell", detail: m ? m[1] : rest, tone: "amber" };
+  }
+  return { kind: "other", label: "Custom", detail: s, tone: "slate" };
+};
+
+const originPillColors = (tone) => {
+  if (tone === "red")   return { bg: T.redLt,    fg: T.red };
+  if (tone === "amber") return { bg: T.amberLt,  fg: T.amber };
+  return                       { bg: T.slate100, fg: T.slate600 };
 };
 
 const characterFloorPassed = (detail, prefix) => {
@@ -924,8 +885,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .catch(() => {});
   }, [detail?.id]);
 
-  const triggers = useMemo(() => detectTriggers(detail), [detail]);
-
   // Bucket evaluate_candidate rows by verdict impact using composite's signal
   // arrays as the routing table. Composite's decline_signals annotate unverified
   // floors with " (unverified)" suffix — strip before matching. Rules with no
@@ -1441,15 +1400,17 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       {/* Customized Interview Probes — full 60-min interview flow.
           - 5 min rapport (agent-driven, not scripted)
           - 5 min warm-up (3 fixed Qs, same every candidate, captured)
-          - 35 min deep-dive: LLM-generated candidate-specific probes
-            (resume + framework + traits) PLUS trigger-matched sections
-            from the Final Interview manual (Suggs pool, filtered by trait
-            triggers). All captured in the same jsonb blob.
+          - 35 min deep-dive: LLM-generated candidate-specific probes.
+            generate-custom-probes v9.0+ folds the trigger-matched Final
+            Interview manual content INTO the LLM probes as source_tag
+            manual:*, so there is no separate raw-manual section.
           - 10 min candidate Qs (agent-driven, not scripted)
           - 5 min close (agent-driven, not scripted)
 
           Every capturable field writes to hiring_candidates.interview_answers
-          keyed by source: warmup:*, LLM probe.source, manual:{trait}:{severity}.
+          keyed by source: warmup:*, LLM probe.source (manual:*, trait:*,
+          character_floor:*, resume:*, behavioral_tell:*). Each probe carries
+          a colored origin pill so it is obvious which signal drove the Q.
           See op-rule "Interview probe analysis protocol" for the chat workflow. */}
       <Section title="Customized Interview Probes" tone={T.blueLt}>
         <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, fontStyle: "italic" }}>
@@ -1548,7 +1509,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                   const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
                   return (
                     <div key={pi} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${T.blue}` }}>
-                      <AssessmentFlagBadge source={p?.source} triggers={triggers} />
                       <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 4 }}>Q: {p?.question}</div>
                       {p?.listen_for && (
                         <div style={{ fontSize: 11, color: T.slate700, marginBottom: 3 }}>
@@ -1560,9 +1520,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                           <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
                         </div>
                       )}
-                      {p?.source && (
-                        <div style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace", marginTop: 3, marginBottom: 6 }}>{p.source}</div>
-                      )}
+                      {p?.source && (() => {
+                        const origin = parseProbeOrigin(p.source);
+                        if (!origin) return null;
+                        const pc = originPillColors(origin.tone);
+                        return (
+                          <div style={{ marginTop: 4, marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: pc.fg, background: pc.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                              {origin.label}
+                            </span>
+                            <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{origin.detail}</span>
+                            <span style={{ fontSize: 9, color: T.slate400, fontFamily: "monospace", marginLeft: "auto" }}>{p.source}</span>
+                          </div>
+                        );
+                      })()}
                       <textarea
                         value={currentAnswer}
                         onChange={(e) => updateAnswer(src, e.target.value)}
@@ -1595,8 +1566,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         </div>
 
         {/* Bottom action row — Save answers batch-writes everything above
-            (warm-up + LLM probes + trigger-matched). Generate/Regenerate
-            re-runs the edge fn; does not touch answers. */}
+            (warm-up + LLM probes). Generate/Regenerate re-runs the edge fn;
+            does not touch answers. */}
         <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <button
             onClick={saveAnswers}
