@@ -1298,10 +1298,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const weights = threeConstruct.meta?.layer_weights_within_construct || {};
               const cw = threeConstruct.meta?.construct_weights || {};
               const layers = [
-                { key: "resume",     label: "Resume" },
-                { key: "assessment", label: "Assessment" },
-                { key: "interview",  label: "Interview" },
-                { key: "reference",  label: "Reference" },
+                { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
+                { key: "assessment", label: "Assessment", score: threeConstruct.assessment_score, verdict: threeConstruct.assessment_verdict },
+                { key: "interview",  label: "Interview",  score: threeConstruct.interview_score,  verdict: threeConstruct.interview_verdict },
+                { key: "reference",  label: "Reference",  score: threeConstruct.reference_score,  verdict: threeConstruct.reference_verdict },
               ];
               const constructs = [
                 { key: "nature",  label: "Nature",  weight: cw.nature,  score: threeConstruct.nature_score  },
@@ -1316,6 +1316,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                    : v >= 7.5 ? T.green
                                    : v >= 6.0 ? T.amber
                                    : T.red;
+              // Layer-total coloring: Resume row uses 7.0/5.0 rubric thresholds, other rows 7.5/6.0.
+              const layerThresh = (k) => k === "resume" ? { pass: 7.0, consider: 5.0 } : { pass: 7.5, consider: 6.0 };
+              const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
+              const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
+              const verdictLabel = (v) => (v || "not_scored").replace(/_/g, " ");
               const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
               const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center", borderBottom: `1px solid ${T.slate200}` };
               const rowLabelBase = { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
@@ -1332,6 +1337,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             {c.label} <span style={{ color: T.slate500, fontWeight: 500 }}>· {pctFmt(c.weight)}</span>
                           </th>
                         ))}
+                        <th style={{ ...th, width: 110, borderLeft: `2px solid ${T.slate200}` }}>Total</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1362,10 +1368,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                   </td>
                                 );
                               })}
+                              <td style={{ padding: "8px 10px", background: layerBg(layer.score, layer.key), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
+                                <div style={{ fontSize: 15, fontWeight: 800, color: layer.score == null ? T.slate500 : T.slate900 }}>
+                                  {layer.score != null ? Number(layer.score).toFixed(2) : "—"}
+                                </div>
+                                <div style={{ marginTop: 2 }}>
+                                  <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : layerFg(layer.score, layer.key), textTransform: "uppercase", letterSpacing: 0.4 }}>
+                                    {verdictLabel(layer.verdict)}
+                                  </span>
+                                </div>
+                              </td>
                             </tr>
                             {isOpen && (
                               <tr style={{ borderBottom: `1px solid ${T.slate200}`, background: T.white }}>
-                                <td colSpan={4} style={{ padding: "14px 16px", background: T.slate50 }}>
+                                <td colSpan={5} style={{ padding: "14px 16px", background: T.slate50 }}>
                                   {layer.key === "resume" && renderResumeLayer(detail, T)}
                                   {layer.key === "assessment" && renderAssessmentLayer({
                                     detail, timing, validity, competencies, bestFit,
@@ -1398,11 +1414,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             </div>
                           </td>
                         ))}
+                        <td style={{ padding: "10px", background: T.slate100, borderLeft: `2px solid ${T.slate200}` }}></td>
                       </tr>
                       {/* Overall result row — score + verdict + confidence + threshold previews */}
                       <tr>
                         <td style={{ ...rowLabelBase, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
-                        <td colSpan={3} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
+                        <td colSpan={4} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
                             <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
                               {threeConstruct.score_0_10 != null ? Number(threeConstruct.score_0_10).toFixed(2) : "—"}
