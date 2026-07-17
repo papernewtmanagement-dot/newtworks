@@ -4401,17 +4401,49 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
   const nameSlug = candidateName.replace(/\s+/g, " ").trim();
 
   const uploads: { role: string; url: string | null; fileId: string | null; filename: string }[] = [];
+  let resumeText: string | null = null;
   for (const [role, atts] of Object.entries(byRole)) {
     for (const a of atts as any[]) {
       const attId = a.attachmentId ?? a.id;
-      // For the CTS attachment we already have s3key from the earlier fetch.
-      const info = (role === "cts") ? { ok: true as const, s3key: ctsInfo.s3key }
-                                    : await fetchAttachmentInfo(ctx, messageId, attId);
+      // For the CTS attachment we already have s3key+s3url from the earlier fetch;
+      // reuse to avoid a duplicate GMAIL_GET_ATTACHMENT call.
+      const info = (role === "cts")
+        ? ctsInfo  // { ok: true, s3url, s3key }
+        : await fetchAttachmentInfo(ctx, messageId, attId);
       if (!info.ok) { uploads.push({ role, url: null, fileId: null, filename: a.filename }); continue; }
       const roleLabel = role === "resume" ? "Resume" : role === "cts" ? "CTS Profile" : role === "notes" ? "Recruiter Notes" : "Applicant Document";
       const targetName = `${roleLabel} - ${nameSlug} - ${dateSlug}.pdf`;
       const up = await uploadPdfToDrive(ctx, info.s3key, targetName);
       uploads.push({ role, url: up.url, fileId: up.fileId, filename: a.filename });
+
+      // For resume attachments, ALSO extract text (column-aware + reformatted)
+      // and stash into resumeText for downstream write into
+      // hiring_candidates.resume_extracted_text. First-resume-wins if the
+      // SF forward somehow includes multiple; unusual case.
+      if (role === "resume" && resumeText === null) {
+        try {
+          const r = await fetch(info.s3url);
+          if (r.ok) {
+            const buf = new Uint8Array(await r.arrayBuffer());
+            let raw = "";
+            try {
+              raw = await extractPdfTextColumnAware(buf);
+            } catch (colErr) {
+              console.warn(`resume column-aware extract failed; falling back to plain unpdf: ${colErr instanceof Error ? colErr.message : String(colErr)}`);
+              try { raw = await extractPdfTextPlain(buf); } catch (plainErr) {
+                console.warn(`resume plain unpdf also failed: ${plainErr instanceof Error ? plainErr.message : String(plainErr)}`);
+              }
+            }
+            if (raw && raw.trim().length > 0) {
+              resumeText = reformatResumeSeparators(raw);
+            }
+          } else {
+            console.warn(`resume s3url fetch for text extraction returned HTTP ${r.status}`);
+          }
+        } catch (e) {
+          console.warn("resume text extraction threw (non-fatal):", e);
+        }
+      }
     }
   }
   const resumeUrl = uploads.find((u) => u.role === "resume")?.url ?? null;
@@ -4479,8 +4511,23 @@ async function processSFForwardMessage(ctx: SFForwardCtx, messageId: string): Pr
         ? undefined  // preserve existing notes if any; TODO: append instead
         : noteBlock,
     }).eq("id", assessmentId);
+
+    // Backfill resume_extracted_text ONLY when currently NULL or empty. Never
+    // clobber a hand-corrected text on a re-run of the same message.
+    if (resumeText && assessmentId) {
+      try {
+        const { error: rErr } = await sb.from("hiring_candidates")
+          .update({ resume_extracted_text: resumeText })
+          .eq("id", assessmentId)
+          .or("resume_extracted_text.is.null,resume_extracted_text.eq.");
+        if (rErr) console.warn(`resume_extracted_text update for ${assessmentId} failed: ${rErr.message}`);
+      } catch (e) {
+        console.warn(`resume_extracted_text update threw for ${assessmentId}:`, e);
+      }
+    }
   } else {
     rowPayload.notes = noteBlock;
+    if (resumeText) rowPayload.resume_extracted_text = resumeText;
     const { data, error } = await sb.from("hiring_candidates")
       .insert(rowPayload).select("id").single();
     if (error) return { message_id: messageId, status: "error", error: `insert assessment: ${error.message}` };
