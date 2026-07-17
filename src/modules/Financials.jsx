@@ -53,15 +53,19 @@ function useFinancialsData() {
           growthBudgetRes, growthCeilingRes,
           bookLatestRes, bookYearStartRes, s11Res,
         ] = await Promise.all([
-          // Income statement view (current year)
+          // Income statement view (current year). ~250 rows under normal load, well below default cap.
           supabase.from("v_income_statement")
             .select("account_name, account_type, amount, month, year")
-            .eq("year", currentYear).order("month"),
+            .eq("year", currentYear).order("month")
+            .limit(50000),
 
-          // Income statement view (prior 4 years) — powers annual grain (3 completed years side-by-side) and paired YoY deltas on every column (needs one extra year of history so the earliest displayed year has a prior to compare to).
+          // Income statement view (prior 4 years) — powers annual grain + paired YoY deltas.
+          // Historical prior_year_pl rows are one per (year, month, section, account_name). Four full years easily blows past the PostgREST default 1000-row cap (was silently truncating 2024/2025 into empty columns). Explicit high limit + stable ordering fixes it.
           supabase.from("v_income_statement")
             .select("account_name, account_type, amount, month, year")
-            .gte("year", currentYear - 4).lt("year", currentYear).order("year").order("month"),
+            .gte("year", currentYear - 4).lt("year", currentYear)
+            .order("year").order("month")
+            .limit(50000),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
