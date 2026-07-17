@@ -829,7 +829,8 @@ function DimBreakdown({ title, rows, prevRows, vp }) {
 function EverquoteTab() {
   const vp = useViewport();
   const { loading, reviews, metrics, error } = useEverquoteData();
-  const [selectedReviewId, setSelectedReviewId] = useState(null);
+  // URL-persisted so refresh keeps the same review open.
+  const [selectedReviewId, setSelectedReviewId] = useTabParam("review", null);
 
   // Default selection = latest non-YTD review
   useEffect(() => {
