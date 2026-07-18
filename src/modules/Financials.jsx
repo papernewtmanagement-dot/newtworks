@@ -1357,7 +1357,7 @@ const _eomDrill = (y, m) => {
   return d.toISOString().split("T")[0];
 };
 
-const PLSection = ({ data, onDataChanged }) => {
+const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directChildren }) => {
   const pl = data?.pl || { income: [], expenses: [], subsidiaries: [] };
   const incomeRows     = Array.isArray(pl.income)       ? pl.income       : [];
   const expenseRows    = Array.isArray(pl.expenses)     ? pl.expenses     : [];
@@ -1770,9 +1770,18 @@ const PLSection = ({ data, onDataChanged }) => {
 
   return (
     <Card>
-      <CardHeader
-        title="Profit & Loss Statement"
-        sub={`Cash basis · Calendar year ${year} · Click any account name or dollar amount to drill in`}
+      <CardHeader title="Profit & Loss Statement" />
+
+      {/* Entity Hierarchy Nav — breadcrumb + drill-in pills on one line with
+          vertical divider. Placed inside the P&L Card between the header and
+          the grain buttons per Peter direction 2026-07-19: it belongs to P&L
+          specifically since other Financials sections handle entity scoping
+          in their own ways. */}
+      <EntityNav
+        entity={entity}
+        setEntity={setEntity}
+        breadcrumb={breadcrumb}
+        directChildren={directChildren}
       />
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "0 0 12px 0" }}>
@@ -2758,6 +2767,7 @@ const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
   if (crumbs.length === 0 && kids.length === 0) return null;
 
   const goTo = (id) => setEntity(id || PERSONAL_ROOT_ENTITY_ID);
+  const showDivider = crumbs.length > 0 && kids.length > 0;
 
   return (
     <div style={{
@@ -2766,46 +2776,57 @@ const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
       borderRadius: 10,
       padding: "10px 14px",
       marginBottom: 14,
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "center",
+      gap: 8,
+      fontSize: 13,
     }}>
       {/* Breadcrumb — root first, current last (non-clickable) */}
-      {crumbs.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, fontSize: 13 }}>
-          {crumbs.map((c, i) => {
-            const isCurrent = i === crumbs.length - 1;
-            const sep = i > 0 ? (
-              <span key={`sep-${c.id}`} style={{ color: T.slate400, margin: "0 4px" }}>›</span>
-            ) : null;
-            if (isCurrent) {
-              return (
-                <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  {sep}
-                  <span style={{ fontWeight: 600, color: T.slate900 }}>{c.name}</span>
-                </span>
-              );
-            }
-            return (
-              <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {sep}
-                <a
-                  href={urlWithEntity(c.id)}
-                  onClick={(e) => handleModuleLinkClick(e, () => goTo(c.id))}
-                  style={{
-                    color: T.blue,
-                    textDecoration: "none",
-                    borderBottom: `1px dotted ${T.blue}`,
-                  }}
-                  title={`Switch Financials scope to ${c.name}`}
-                >{c.name}</a>
-              </span>
-            );
-          })}
-        </div>
+      {crumbs.map((c, i) => {
+        const isCurrent = i === crumbs.length - 1;
+        const sep = i > 0 ? (
+          <span key={`sep-${c.id}`} style={{ color: T.slate400, margin: "0 4px" }}>›</span>
+        ) : null;
+        if (isCurrent) {
+          return (
+            <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {sep}
+              <span style={{ fontWeight: 600, color: T.slate900 }}>{c.name}</span>
+            </span>
+          );
+        }
+        return (
+          <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {sep}
+            <a
+              href={urlWithEntity(c.id)}
+              onClick={(e) => handleModuleLinkClick(e, () => goTo(c.id))}
+              style={{
+                color: T.blue,
+                textDecoration: "none",
+                borderBottom: `1px dotted ${T.blue}`,
+              }}
+              title={`Switch Financials scope to ${c.name}`}
+            >{c.name}</a>
+          </span>
+        );
+      })}
+
+      {/* Vertical divider — only when both breadcrumb and drill-in are present */}
+      {showDivider && (
+        <div style={{
+          width: 1,
+          alignSelf: "stretch",
+          background: T.slate300,
+          margin: "0 4px",
+        }} />
       )}
 
-      {/* Children strip — pills, each drilling INTO a child entity */}
+      {/* Drill-in pills — each drills INTO a child entity */}
       {kids.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: crumbs.length > 0 ? 10 : 0 }}>
-          <span style={{ fontSize: 11, color: T.slate500, alignSelf: "center", marginRight: 4 }}>Drill in →</span>
+        <>
+          <span style={{ fontSize: 11, color: T.slate500, marginRight: 2 }}>Drill in →</span>
           {kids.map(k => (
             <a
               key={k.id}
@@ -2832,7 +2853,7 @@ const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
               {!k.is_leaf && <span style={{ fontSize: 10, color: T.slate400 }}>· {k.direct_child_count} sub</span>}
             </a>
           ))}
-        </div>
+        </>
       )}
     </div>
   );
@@ -2920,20 +2941,14 @@ export default function Financials() {
       {/* Section Content */}
       {section === "overview" && <OverviewSection period={period} setPeriod={setPeriod} data={MOCK} />}
       {section === "pl"       && (
-        <>
-          {/* Entity Hierarchy Nav (Phase 3) — breadcrumb + children strip.
-              Scoped to P&L only per Peter direction 2026-07-19: other sections
-              (Bank / Credit / Balance Sheet / GL / Comp Recap / Payroll) handle
-              entity scoping in their own way, so the drill-in strip is a P&L
-              concern and shouldn't sit above every tab. */}
-          <EntityNav
-            entity={entity}
-            setEntity={setEntity}
-            breadcrumb={MOCK?.entityContext?.breadcrumb || []}
-            directChildren={MOCK?.entityContext?.directChildren || []}
-          />
-          <PLSection data={MOCK} onDataChanged={reload} />
-        </>
+        <PLSection
+          data={MOCK}
+          onDataChanged={reload}
+          entity={entity}
+          setEntity={setEntity}
+          breadcrumb={MOCK?.entityContext?.breadcrumb || []}
+          directChildren={MOCK?.entityContext?.directChildren || []}
+        />
       )}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
       {section === "payroll"  && <PayrollSection data={MOCK} />}
