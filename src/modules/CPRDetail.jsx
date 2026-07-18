@@ -3028,10 +3028,10 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 </tr>
                 {subRow("HDB (max)", hdb, `$25/wk × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
                 {subRow("WtW", wtw, `$10 × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
-                {subRow("1% Gain", gain, `$10 × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
-                {subRow("Leaderboard", ldr, `($10 × 3 × 4 × ${weeksElapsedQtd}) ÷ 2 — not team-multiplied`)}
-                {subRow("All-Star", asb, `($10 × 4 × Σ tenure_ramp × ${weeksElapsedQtd}) ÷ 2`)}
-                {subRow("Trailblazer", tb, `($10 × 4 × 1 × ${weeksElapsedQtd}) ÷ 2 — not team-multiplied`)}
+                {subRow("1% Gain", gain, `= WtW`)}
+                {subRow("Leaderboard", ldr, `= WtW`)}
+                {subRow("All-Star", asb, `= WtW`)}
+                {subRow("Trailblazer", tb, `= WtW`)}
               </>
             );
           })()}
