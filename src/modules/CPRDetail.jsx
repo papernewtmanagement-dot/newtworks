@@ -490,7 +490,7 @@ function useCPRData(weekDate) {
     mvpThisWeek: null,   // mvp_history row for this week (name + SP + draws)
     quarterPrizeBudget: null, // budget dollars for the quarter containing this week
     priorQuartersAvgSP: {},   // {team_member_id: [{quarter_label, avg_weekly_sp}]} - reference lines
-    marketingPointsThisWeek: {}, // {team_member_id: {points, notes}} for the current week
+    marketingByTeammate: {}, // {team_member_id: {qtd_prior_sum, this_week_points, this_week_notes}}
     prizeCart: [],
   });
 
@@ -869,20 +869,34 @@ function useCPRData(weekDate) {
           }
         } catch (e) { console.warn("priorQuartersAvgSP fetch failed:", e); }
 
-        // Marketing points for THIS week (per-teammate). Feeds Payroll section inline entry.
-        let marketingPointsThisWeek = {};
+        // Marketing points QTD context (per-teammate). Peter enters QTD total in the
+        // Payroll edit UI; save handler stores delta = entered - qtd_prior_sum.
+        // Quarter window matches compute_weekly_marketing_bonus (date_trunc quarter of week_end).
+        let marketingByTeammate = {};
         try {
+          const wd = new Date(weekDate + "T00:00:00Z");
+          const qStartMonth = Math.floor(wd.getUTCMonth() / 3) * 3;
+          const qStart = new Date(Date.UTC(wd.getUTCFullYear(), qStartMonth, 1));
+          const qStartISO = qStart.toISOString().slice(0, 10);
           const { data: mpRows } = await supabase
             .from("marketing_points")
-            .select("team_member_id, points, notes")
+            .select("team_member_id, week_end_date, points, notes")
             .eq("agency_id", AGENCY_ID)
-            .eq("week_end_date", weekDate);
+            .gte("week_end_date", qStartISO)
+            .lte("week_end_date", weekDate);
           if (mpRows) {
             mpRows.forEach(r => {
-              marketingPointsThisWeek[r.team_member_id] = {
-                points: r.points,
-                notes: r.notes,
-              };
+              const tmId = r.team_member_id;
+              if (!marketingByTeammate[tmId]) {
+                marketingByTeammate[tmId] = { qtd_prior_sum: 0, this_week_points: 0, this_week_notes: "" };
+              }
+              const pts = Number(r.points) || 0;
+              if (r.week_end_date === weekDate) {
+                marketingByTeammate[tmId].this_week_points = pts;
+                marketingByTeammate[tmId].this_week_notes = r.notes || "";
+              } else {
+                marketingByTeammate[tmId].qtd_prior_sum += pts;
+              }
             });
           }
         } catch (e) { console.warn("marketing_points fetch failed:", e); }
@@ -914,7 +928,7 @@ function useCPRData(weekDate) {
           mvpThisWeek,
           quarterPrizeBudget,
           priorQuartersAvgSP,
-          marketingPointsThisWeek,
+          marketingByTeammate,
         });
       } catch (err) {
         if (!cancelled) {
@@ -2333,7 +2347,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 // Recompute on save calls write_weekly_comp_v2 which populates base_salary,
 // commission, bonus, marketing_pool_earned_weekly, and manager_bonus from
 // the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {}, onRefresh, canEdit = false, isOwner = false }) {
+function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
   // Commission is now SP delta this week, columns spelled out, Health Goal label,
@@ -2356,19 +2370,21 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
         init[d.team_member_id] = d.payroll_ytd_paid ?? null;
       });
       setDrafts(init);
-      // Seed marketing drafts from any existing marketing_points rows for this week
+      // Seed marketing drafts with QTD total (prior weeks + this week stored).
+      // Peter enters QTD total; save handler computes delta = qtd_entered - qtd_prior_sum.
       const mInit = {};
       details.forEach(d => {
-        const existing = marketingPointsThisWeek?.[d.team_member_id];
+        const ctx = marketingByTeammate?.[d.team_member_id] || { qtd_prior_sum: 0, this_week_points: 0, this_week_notes: "" };
+        const qtdCurrent = Number(ctx.qtd_prior_sum || 0) + Number(ctx.this_week_points || 0);
         mInit[d.team_member_id] = {
-          points: existing?.points != null ? String(existing.points) : "",
-          notes:  existing?.notes ?? "",
+          points: qtdCurrent > 0 ? qtdCurrent.toFixed(2) : "",
+          notes:  ctx.this_week_notes ?? "",
         };
       });
       setMarketingDrafts(mInit);
       setSaveError(null);
     }
-  }, [editMode, details, marketingPointsThisWeek]);
+  }, [editMode, details, marketingByTeammate]);
 
   // If canEdit flips off (historical week, non-owner viewer), force edit mode off.
   useEffect(() => {
@@ -2444,25 +2460,39 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
         if (updErr) throw updErr;
       }
 
-      // Upsert marketing_points for the week (any teammate with a non-empty draft).
-      // These feed write_weekly_marketing_bonus (called internally by write_weekly_comp_v2).
-      const marketingRows = Object.entries(marketingDrafts)
-        .map(([tmId, v]) => {
-          const rawPts = v?.points;
-          if (rawPts === "" || rawPts === null || rawPts === undefined) return null;
-          const pts = Number(rawPts);
-          if (!Number.isFinite(pts)) return null;
-          return {
-            agency_id: AGENCY_ID,
-            team_member_id: tmId,
-            week_end_date: weekDate,
-            points: pts,
-            notes: (v?.notes || "").trim() || null,
-            source: "cpr_inline_input",
-            updated_at: new Date().toISOString(),
-          };
-        })
-        .filter(Boolean);
+      // Peter enters QTD total in the UI; store row = delta from qtd_prior_sum.
+      // marketing_points.points CHECK >= 0 → block negative deltas with a clear error.
+      const marketingRows = [];
+      const negativeDeltas = [];
+      Object.entries(marketingDrafts).forEach(([tmId, v]) => {
+        const rawPts = v?.points;
+        if (rawPts === "" || rawPts === null || rawPts === undefined) return;
+        const qtdEntered = Number(rawPts);
+        if (!Number.isFinite(qtdEntered)) return;
+        const ctx = marketingByTeammate?.[tmId] || { qtd_prior_sum: 0, this_week_points: 0 };
+        const priorSum = Number(ctx.qtd_prior_sum || 0);
+        const delta = Number((qtdEntered - priorSum).toFixed(2));
+        // No-op: no change and no existing this-week row → skip write entirely.
+        if (delta === 0 && !Number(ctx.this_week_points || 0)) return;
+        if (delta < 0) {
+          const member = (team || []).find(t => t.id === tmId);
+          const name = member?.nickname || member?.first_name || "teammate";
+          negativeDeltas.push(`${name}: entered $${qtdEntered.toFixed(2)} < prior weeks already paid $${priorSum.toFixed(2)}`);
+          return;
+        }
+        marketingRows.push({
+          agency_id: AGENCY_ID,
+          team_member_id: tmId,
+          week_end_date: weekDate,
+          points: delta,
+          notes: (v?.notes || "").trim() || null,
+          source: "cpr_inline_input",
+          updated_at: new Date().toISOString(),
+        });
+      });
+      if (negativeDeltas.length > 0) {
+        throw new Error("QTD entered is below what has already been paid for: " + negativeDeltas.join("; ") + ". Adjust prior weeks first if this is a correction.");
+      }
       if (marketingRows.length > 0) {
         const { error: mpErr } = await supabase
           .from("marketing_points")
@@ -2678,15 +2708,17 @@ function PayrollSection({ details, team, weekDate, marketingPointsThisWeek = {},
               {editMode && (
                 <tr style={{ background: T.amber50 || "#fef3c7" }}>
                   <Td style={{ paddingLeft: 14, color: T.slate900, fontStyle: "italic" }}>
-                    Marketing points ($)
+                    Marketing points QTD ($)
                     <div style={{ fontSize: 11, color: T.slate600, fontWeight: 400 }}>
-                      Dollar value of cash marketing spiffs paid this week (feeds Marketing pool share)
+                      Quarter-to-date total cash spiffs earned. System subtracts prior weeks already paid to derive this week's delta.
                     </div>
                   </Td>
                   {sorted.map(d => {
                     const draft = marketingDrafts[d.team_member_id] || { points: "", notes: "" };
-                    const originalPts = marketingPointsThisWeek?.[d.team_member_id]?.points;
-                    const dirty = String(draft.points ?? "") !== (originalPts != null ? String(originalPts) : "");
+                    const ctx = marketingByTeammate?.[d.team_member_id] || { qtd_prior_sum: 0, this_week_points: 0 };
+                    const seededQtd = Number(ctx.qtd_prior_sum || 0) + Number(ctx.this_week_points || 0);
+                    const seededStr = seededQtd > 0 ? seededQtd.toFixed(2) : "";
+                    const dirty = String(draft.points ?? "") !== seededStr;
                     return (
                       <Td key={d.team_member_id} align="right">
                         <input
@@ -5000,7 +5032,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingPointsThisWeek={data.marketingPointsThisWeek} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
 
       {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
