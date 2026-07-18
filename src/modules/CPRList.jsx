@@ -150,6 +150,9 @@ export default function CPRList({ userRole = null }) {
           const currentSat = currentCPRWeekSaturdayCT();
           rows = rows.filter(r => r.week_ending_date < currentSat);
         }
+        // Hide pre-Q3 2026 CPRs from every viewer (Peter 2026-07-18).
+        // Q3 2026 cycle begins with week ending 2026-07-11 per the agency cycle system.
+        rows = rows.filter(r => r.week_ending_date >= "2026-07-11");
         setState({ loading: false, error: null, reports: rows });
       } catch (err) {
         if (!cancelled) {
