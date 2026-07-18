@@ -2979,27 +2979,28 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
-      {/* ───── 2. POOL BUILD (QTD; new math 2026-07-12) ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build (QTD, week {weeksElapsedQtd} of {weeksInQuarter})</div>
+      {/* ───── 2. POOL BUILD — this week's bonus = QTD envelope minus every QTD subtraction below (updated 2026-07-18) ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Pool build — what's available for THIS WEEK's bonus (week {weeksElapsedQtd} of {weeksInQuarter})</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        Burden math (2026-07-12 pm6): WC + team health subtract OUTSIDE the /1.08 wrap (fringe / policy premium — no payroll tax).
-        Base salaries, commissions, Manager Bonus, HDB, MVP Prize Cart, WtQ Trip, goals-bonus carveouts (WtW/Gain/Leaderboard/All-Star/Trailblazer), and the residual bonus pool ALL subtract INSIDE the wrap (they're wages → burdened).
+        Model: QTD envelope minus every QTD subtraction below (including bonuses ALREADY PAID in prior weeks of this cycle) = what's left for this week's team bonus. Each subtractor row shows its data source (payroll actual vs CPR rule vs accrual). Burden math (2026-07-12 pm6): WC + team health subtract OUTSIDE the /1.08 wrap (fringe / policy premium — no payroll tax).
+        Base salaries (payroll actuals), commissions (payroll actuals), Manager Bonus (CPR rule — lumped with other pay in SurePayroll so not cleanly separable from paychecks yet), prior-week team bonuses paid (payroll actuals), HDB, MVP Prize Cart, WtQ Trip, goals-bonus carveouts (WtW/Gain/Leaderboard/All-Star/Trailblazer), and this week's residual bonus pool ALL subtract INSIDE the wrap (they're wages → burdened). Subtractors labeled "payroll actuals" read from payroll_detail (real paycheck line items) with the CPR-computed value as fallback when payroll for that week hasn't transmitted yet.
         Prize Cart + WtQ are QUARTERLY pots; weekly accrual = pot/13. Goals-bonus carveouts accrue at MAX rate by elapsed-week-in-quarter (carve-and-forget: unearned stays with agency). Remaining carveouts (Apparel, Life Ins, CC Reserve) sit outside the pool entirely — see §2c.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
           {row("QTD envelope", qtdEnvelope, `pool_pct × basis / 52 × ${weeksElapsedQtd} weeks`)}
-          {row("− Workers Comp QTD", -qtdWc, `$${wcAnnual}/yr / 52 × ${weeksElapsedQtd} — OUTSIDE burden`)}
+          {row("− Workers Comp QTD", -qtdWc, `source: constant $${wcAnnual}/yr (function constant, not paycheck actuals) / 52 × ${weeksElapsedQtd} — accrual only, OUTSIDE burden`)}
           {row("− Team health benefits QTD", -qtdActualHealth, (() => {
             const twh = Number(diag.team_totals?.team_weekly_health || 0);
             const pph = diag.team_totals?.per_person_health || [];
             const perPerson = (Array.isArray(pph) ? pph : []).filter(p => Number(p.weekly_health) > 0).map(p => `${(p.name||"").split(" ")[0]} $${Number(p.weekly_health).toFixed(2)}`).join(" + ");
-            return `$${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) × ${weeksElapsedQtd} wks — OUTSIDE burden`;
+            return `source: team.weekly_health_benefit_agency_paid × weeks elapsed — accrual only, not paycheck actuals. $${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) × ${weeksElapsedQtd} wks — OUTSIDE burden`;
           })())}
           {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre wages")}
-          {row("− Team base salaries (in pool)", -qtdBaseInPool, "QTD actual paid × tenure_mult")}
-          {row("− Team commissions QTD (SP as $)", -qtdActualComm, "1 SP = $1; eats WHOLE pool")}
-          {row("− Manager Bonus QTD (actual)", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "SUM(wctd.manager_bonus) this cycle")}
+          {row("− Team base salaries (in pool)", -qtdBaseInPool, "source: payroll_detail SALARY+HOURLY+REGULAR lines (real paycheck actuals). Fallback: time_clock × pay_rate for hourly, else config pay_rate × 40 hrs. × tenure_mult.")}
+          {row("− Team commissions QTD", -qtdActualComm, "source: payroll_detail COMMISSION line (real paycheck actuals). Fallback: wctd.commission (CPR-computed value) for current in-flight week before payroll transmits. 1 SP = $1; eats WHOLE pool.")}
+          {row("− Manager Bonus QTD", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "source: SUM(wctd.manager_bonus) this cycle (CPR-computed rule). Not read from paychecks because SurePayroll lumps manager pay into the OTHER earnings category alongside life stipend / service bonus — not cleanly separable yet.")}
+          {row("− Team bonuses paid QTD (prior weeks)", -Number((diag.qtd_subtractions?.qtd_bonus_paid_prior) || 0), "source: payroll_detail BONUS line (real paycheck actuals) for weeks < this one. Fallback: wctd.bonus (CPR-written) for weeks lacking a payroll row. This week's bonus is not subtracted here — it IS what remains at the bottom.")}
           {row("− MVP Prize Cart QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_prize_cart_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
           {row("− Win the Quarter Trip QTD (accrual)", -Number((diag.qtd_subtractions?.qtd_wtq_trip_accrual) || 0), `quarterly pot / 13 × ${weeksElapsedQtd}`)}
           {(() => {
@@ -3036,9 +3037,9 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             );
           })()}
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD bonus pool</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= Bonus pool THIS WEEK</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
-            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>annual pace = {fmtMoneyCents(qtdToAnnualPace(qtdBonusPool))}</Td>
+            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>what remains after every QTD subtraction above (including prior bonuses paid). annual pace = {fmtMoneyCents(qtdToAnnualPace(qtdBonusPool))}</Td>
           </tr>
         </tbody>
       </table>
@@ -3049,11 +3050,11 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row("QTD Retention Pool (1/3)", Number((diag.qtd_pools?.qtd_retention_pool) || 0), "weighted_hours share, this week only")}
-          {row("QTD SP-13wk Pool (1/3)", Number((diag.qtd_pools?.qtd_sp_13wk_pool) || 0), "rolling 13-wk SP avg share")}
-          {row("QTD SP-4wk Pool (1/3)", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
+          {row("Retention Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_retention_pool) || 0), "weighted_hours share")}
+          {row("SP-13wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_13wk_pool) || 0), "rolling 13-wk SP avg share")}
+          {row("SP-4wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
           <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= QTD bonus pool (sum)</Td>
+            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= Bonus pool THIS WEEK (sum)</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
             <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
           </tr>
