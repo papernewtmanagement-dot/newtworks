@@ -1492,10 +1492,14 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       isMoney: true,
       lapseRate: null,
     },
-    // ─── Premium rows ─── new/lost/lapse hidden; YTD editable dollar value.
+    // ─── Premium rows ─── new/lost/lapse hidden; YTD is READ-ONLY.
+    // auto_premium / fire_premium / life_premium are auto-ingested from the SF CRM
+    // Analytics email via the "Weekly Agency Snapshot - Gmail Parse" recipe (parser
+    // sf_crm_analytics_email → agency_snapshot). CPR is not the entry point for
+    // these values — do not flip editable back to true.
     // Rendered with a subtle row-background shade to distinguish from LOB rows above.
     {
-      label: "Auto $", editable: true, rowKind: "premium",
+      label: "Auto $", editable: false, rowKind: "premium",
       ytdKey: "auto_premium", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
@@ -1508,7 +1512,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       lapseRate: null,
     },
     {
-      label: "Fire $", editable: true, rowKind: "premium",
+      label: "Fire $", editable: false, rowKind: "premium",
       ytdKey: "fire_premium", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
@@ -1521,7 +1525,7 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       lapseRate: null,
     },
     {
-      label: "Life $", editable: true, rowKind: "premium",
+      label: "Life $", editable: false, rowKind: "premium",
       ytdKey: "life_premium", target: "snapshot",
       newYtd:  null, newWkD:  null,
       lostYtd: null, lostWkD: null,
