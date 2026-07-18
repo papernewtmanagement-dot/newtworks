@@ -1525,16 +1525,18 @@ const StaffDirectory = ({ staff }) => {
               <label style={labelStyle}>Role</label>
               <select style={inputStyle} value={addForm.role} onChange={e => {
                 const r = e.target.value;
-                const rc = (r === "Acquisition" || r === "Inside Sales") ? "Sales"
-                         : (r === "Reception"   || r === "Escalation")   ? "Retention"
+                const rc = (r === "Outbound" || r === "Inbound" || r === "In-Book") ? "Sales"
+                         : (r === "Reception" || r === "Escalation" || r === "Support") ? "Retention"
                          : addForm.role_category;
                 setAddForm(f => ({ ...f, role: r, role_category: rc }));
               }}>
                 <option value="">—</option>
-                <option value="Acquisition">Acquisition</option>
-                <option value="Inside Sales">Inside Sales</option>
+                <option value="Outbound">Outbound</option>
+                <option value="Inbound">Inbound</option>
+                <option value="In-Book">In-Book</option>
                 <option value="Reception">Reception</option>
                 <option value="Escalation">Escalation</option>
+                <option value="Support">Support</option>
               </select>
             </div>
             <div>
@@ -2208,10 +2210,12 @@ const StaffDirectory = ({ staff }) => {
                   <div><label style={labelStyle}>Role (function)</label>
                     <select style={inputStyle} value={form.role} onChange={e=>setForm({...form, role:e.target.value})}>
                       <option value="">—</option>
-                      <option value="Acquisition">Acquisition</option>
-                      <option value="Inside Sales">Inside Sales</option>
+                      <option value="Outbound">Outbound</option>
+                      <option value="Inbound">Inbound</option>
+                      <option value="In-Book">In-Book</option>
                       <option value="Reception">Reception</option>
                       <option value="Escalation">Escalation</option>
+                      <option value="Support">Support</option>
                     </select>
                   </div>
                   <div><label style={labelStyle}>Role category</label>
