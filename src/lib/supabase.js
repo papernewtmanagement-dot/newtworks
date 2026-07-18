@@ -17,18 +17,37 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
 // Find it with: SELECT id FROM agency LIMIT 1;
 export const AGENCY_ID = import.meta.env.VITE_AGENCY_ID || null
 
-// Business Entity ID — PaperNewt LLC is the S-Corp parent and the entity that
-// consolidates ALL financial records (Story Agency P&L rolls into PaperNewt for
-// S-Corp tax filing). Financials module + all entity-scoped queries filter on this.
-// The individual entities:
-//   PaperNewt LLC:          b1111111-1111-1111-1111-111111111111 (default — this)
-//   Peter Story State Farm: b2222222-2222-2222-2222-222222222222 (operating DBA;
-//                             remains meaningful for team.business_entity_id
-//                             — which employee works for which entity —
-//                             but NOT for financial records)
-export const BUSINESS_ENTITY_ID = import.meta.env.VITE_BUSINESS_ENTITY_ID || 'b1111111-1111-1111-1111-111111111111'
-
-// Legacy alias — same value as BUSINESS_ENTITY_ID now that the whole module
-// is PaperNewt-scoped. Kept as an export for backward compatibility with any
-// components still importing it; safe to remove in a future cleanup.
-export const PAYROLL_ENTITY_ID = BUSINESS_ENTITY_ID
+// PaperNewt LLC entity UUID — the S-Corp parent. Exported under two names for
+// callers to pick the one that reads best at the call site:
+//   PAPERNEWT_ENTITY_ID — canonical. Use when the intent is "PaperNewt specifically."
+//   BUSINESS_ENTITY_ID  — legacy alias. Same value. Kept so pre-hierarchy callers
+//                         still compile; new code should prefer PAPERNEWT_ENTITY_ID.
+//
+// Entity hierarchy context (post-Phase-3, 2026-07-17):
+//   Financials module now drives off an entity URL param via useTabParam("entity")
+//   rooted at Peter Story (personal, b3333333) and recurses through:
+//     Peter Story (personal, root, b3333333)
+//       └── PaperNewt LLC (s_corp, b1111111)
+//           ├── Peter Story State Farm (sole_prop, b2222222)
+//           ├── Story Business Administration (sole_prop, b4444444)
+//           └── Eriosto (llc, b5555555)
+//   P&L / Bank / Credit / Balance Sheet / GL sections all filter to the current
+//   entity's subtree (Option B flat listing for Bank/Credit/BS/GL; one-line
+//   consolidation for P&L). None of those code paths use BUSINESS_ENTITY_ID —
+//   they read entity from the URL param + descendantsOf(currentEntity).
+//
+// Where the constant is STILL used (design-intent hardcodes, not audit gaps):
+//   - payroll_runs / payroll_detail fetches (Financials + Team modules).
+//     PaperNewt is the S-Corp employer of record per the two-entity payroll
+//     convention (see core_principles financial_health rule "two_entity_payroll").
+//   - CashRegister module (bank register + starting balances). Module is
+//     inherently PaperNewt-scoped for now.
+//
+// A row this constant is inserted into does NOT need to also live under
+// tg_default_business_entity_from_agency's PaperNewt fallback — the trigger
+// only fires when business_entity_id is NULL at INSERT time; explicit sets
+// bypass it. The trigger is the ultimate safety net for anything that forgets
+// to set the entity_id at all.
+export const PAPERNEWT_ENTITY_ID = import.meta.env.VITE_BUSINESS_ENTITY_ID || 'b1111111-1111-1111-1111-111111111111'
+export const BUSINESS_ENTITY_ID  = PAPERNEWT_ENTITY_ID
+export const PAYROLL_ENTITY_ID   = PAPERNEWT_ENTITY_ID
