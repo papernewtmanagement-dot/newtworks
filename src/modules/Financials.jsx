@@ -406,6 +406,7 @@ function useFinancialsData(entity) {
           const endStr   = parseLocalDate(run.pay_period_end).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
           const dateStr  = run.pay_date ? parseLocalDate(run.pay_date).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
           return {
+            id:         run.id,
             pay_period: `${startStr} – ${endStr}`,
             pay_date:   dateStr,
             gross:      parseFloat(run.gross_payroll || 0),
@@ -2147,10 +2148,44 @@ const CompRecapSection = ({ data }) => {
 // Enumerates every Sunday–Saturday week from the earliest recorded run through
 // the current week. Recorded runs render normally; expected-but-missing weeks
 // render as blank rows tagged "Missing" so gaps are visually obvious.
+//
+// Click any recorded row to drill in — expands underneath with per-person
+// routing (PaperNewt-direct for Owner/admin/PN-entity; Growth+Team split for
+// everyone else, mirroring payroll_gl_writer exactly) and links to the 3 live
+// JEs. Drill state URL-persists via `openRun` so refresh + shareable links work.
 const PayrollSection = ({ data }) => {
   const rows = Array.isArray(data.payroll) ? data.payroll : [];
   const ytdGross = rows.reduce((s,r) => s + parseFloat(r.gross || 0), 0);
   const ytdTax   = rows.reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
+
+  // URL-persisted drill state. Value = run UUID or null. Refresh survives.
+  const [openRun, setOpenRun] = useTabParam("openRun", null);
+  // Client cache of drilldown responses keyed by run id.
+  const [drillCache, setDrillCache] = useState({});
+  const [drillLoading, setDrillLoading] = useState(false);
+  const [drillError, setDrillError] = useState(null);
+
+  useEffect(() => {
+    if (!openRun) { setDrillError(null); return; }
+    if (drillCache[openRun]) return;
+    let cancelled = false;
+    setDrillLoading(true);
+    setDrillError(null);
+    supabase.rpc("get_payroll_run_drilldown", { p_run_id: openRun })
+      .then(({ data: d, error }) => {
+        if (cancelled) return;
+        if (error) { setDrillError(error.message || "Failed to load drilldown"); setDrillLoading(false); return; }
+        if (!d || d.ok === false) { setDrillError(d?.error || "Drilldown returned no data"); setDrillLoading(false); return; }
+        setDrillCache(prev => ({ ...prev, [openRun]: d }));
+        setDrillLoading(false);
+      })
+      .catch(err => { if (!cancelled) { setDrillError(err?.message || String(err)); setDrillLoading(false); } });
+    return () => { cancelled = true; };
+  }, [openRun, drillCache]);
+
+  const toggleRun = (runId) => {
+    setOpenRun(openRun === runId ? null : runId);
+  };
 
   // Parse "MMM d – MMM d, yyyy" pay_period back to a Date for the period start (Sunday).
   // Payroll data hook doesn't preserve the raw start date, so we reconstruct from the label.
@@ -2230,6 +2265,7 @@ const PayrollSection = ({ data }) => {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
+            <th style={{ padding: "8px", width: 24 }} aria-label="expand"></th>
             {["Pay Period","Pay Date","Gross","Employer Taxes","Net Payroll","Status"].map((h,i) => (
               <th key={i} style={{ padding: "8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: i > 1 ? "right" : "left" }}>{h}</th>
             ))}
@@ -2239,22 +2275,53 @@ const PayrollSection = ({ data }) => {
           {enumerated.map((e,i) => {
             if (e.kind === "row") {
               const r = e.row;
+              const runId = r.id;
+              const isOpen = runId && openRun === runId;
+              const clickable = !!runId;
+              const drill = runId ? drillCache[runId] : null;
               return (
-                <tr key={e.key} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>{r.pay_period||r.period}</td>
-                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate600 }}>{r.pay_date||r.payDate||"-"}</td>
-                  <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(r.gross)}</td>
-                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.taxes||0))}</td>
-                  <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.net||0))}</td>
-                  <td style={{ padding: "9px 8px", textAlign: "right" }}>
-                    <Pill type="success">{r.status}</Pill>
-                  </td>
-                </tr>
+                <Fragment key={e.key}>
+                  <tr
+                    style={{
+                      borderBottom: `1px solid ${T.slate100}`,
+                      cursor: clickable ? "pointer" : "default",
+                      background: isOpen ? T.slate50 : "transparent",
+                    }}
+                    onClick={clickable ? () => toggleRun(runId) : undefined}
+                    title={clickable ? (isOpen ? "Hide breakdown" : "Show per-person routing + JE links") : undefined}
+                  >
+                    <td style={{ padding: "9px 4px 9px 8px", fontSize: 11, color: T.slate500, textAlign: "center", width: 24 }}>
+                      {clickable ? (isOpen ? "▼" : "▶") : ""}
+                    </td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>{r.pay_period||r.period}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate600 }}>{r.pay_date||r.payDate||"-"}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(r.gross)}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.taxes||0))}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.net||0))}</td>
+                    <td style={{ padding: "9px 8px", textAlign: "right" }}>
+                      <Pill type="success">{r.status}</Pill>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr style={{ background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
+                      <td colSpan={7} style={{ padding: "12px 16px 16px 32px" }}>
+                        {drillLoading && !drill && (
+                          <div style={{ fontSize: 12, color: T.slate500, padding: "8px 0" }}>Loading breakdown…</div>
+                        )}
+                        {drillError && !drill && (
+                          <div style={{ fontSize: 12, color: T.rose600 || "#e11d48", padding: "8px 0" }}>Error: {drillError}</div>
+                        )}
+                        {drill && <PayrollRunDrilldown drill={drill} />}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             }
             // Missing week
             return (
               <tr key={e.key} style={{ borderBottom: `1px solid ${T.slate100}`, background: T.amberLt + "40" }}>
+                <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400, textAlign: "center", width: 24 }}></td>
                 <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate500, fontStyle: "italic" }}>{e.label}</td>
                 <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400 }}>{e.payDate}</td>
                 <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate400, textAlign: "right" }}>—</td>
@@ -2270,6 +2337,146 @@ const PayrollSection = ({ data }) => {
       </table>
       </div>
     </Card>
+  );
+};
+
+// ─── Payroll drill-in: per-person routing + JE links ──────────
+// Renders inside the expanded row under PayrollSection. Data comes from
+// public.get_payroll_run_drilldown RPC, which mirrors payroll_gl_writer's
+// key-level classification exactly. Two routing paths:
+//   • papernewt_direct  — Owner OR is_admin_backoffice OR business_entity_id=PN
+//                          → COA-PN-001 expense + COA-PN-002 cash on PaperNewt
+//   • agency_split      — everyone else. Fixed pay × (1 − min(1, weeks_in/52))
+//                          goes to Growth Budget (COA-SUB-086); the rest of
+//                          fixed + all variable + gap + ER taxes goes to Team
+//                          Budget (COA-SUB-087). Reimbursements land in
+//                          COA-SUB-088 pending. All three totals credit the
+//                          intercompany liability (COA-IC-001).
+const PayrollRunDrilldown = ({ drill }) => {
+  const people = Array.isArray(drill?.people) ? drill.people : [];
+  const jes    = Array.isArray(drill?.jes)    ? drill.jes    : [];
+  const pnPeople = people.filter(p => p.route === "papernewt_direct");
+  const agPeople = people.filter(p => p.route === "agency_split");
+  const pnTotal = pnPeople.reduce((s,p) => s + parseFloat(p.pn_expense || 0), 0);
+  const grTotal = agPeople.reduce((s,p) => s + parseFloat(p.growth_share || 0), 0);
+  const tmTotal = agPeople.reduce((s,p) => s + parseFloat(p.team_share || 0), 0);
+  const rbTotal = agPeople.reduce((s,p) => s + parseFloat(p.reimb || 0), 0);
+  const icTotal = grTotal + tmTotal + rbTotal;
+  const jeByLeg = Object.fromEntries(jes.map(j => [j.leg, j]));
+
+  const chip = (bg, fg, text, title) => (
+    <span title={title || ""} style={{
+      display: "inline-block", padding: "2px 7px", fontSize: 10, fontWeight: 600,
+      color: fg, background: bg, border: `1px solid ${fg}22`, borderRadius: 4,
+      whiteSpace: "nowrap",
+    }}>{text}</span>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Per-person table */}
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
+              {["Person","Route","Gross","ER Taxes","Growth","Team","Reimb","Ramp"].map((h,i) => (
+                <th key={i} style={{ padding: "6px 8px", fontSize: 10, fontWeight: 600, color: T.slate500, textAlign: i > 1 ? "right" : "left", textTransform: "uppercase", letterSpacing: "0.03em" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {people.map(p => {
+              const isPN = p.route === "papernewt_direct";
+              const routePill = isPN
+                ? chip("#fef3c7", "#92400e", "PaperNewt-direct", `${p.reason} — books to COA-PN-001 / COA-PN-002`)
+                : chip("#dbeafe", "#1e40af", "Agency-split",     `Growth ramp share + Team remainder (COA-SUB-086 / COA-SUB-087)`);
+              return (
+                <tr key={p.team_member_id} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                  <td style={{ padding: "6px 8px", fontSize: 12, color: T.slate800 }}>
+                    <div style={{ fontWeight: 500 }}>{p.name}</div>
+                    <div style={{ fontSize: 10, color: T.slate500 }}>{p.role_level || (p.is_admin_backoffice ? "Admin" : "—")}{p.team_entity_name ? ` · ${p.team_entity_name}` : ""}</div>
+                  </td>
+                  <td style={{ padding: "6px 8px", fontSize: 11 }}>{routePill}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: 500 }}>{fmt(parseFloat(p.gross_pay || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmt(parseFloat(p.employer_taxes || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate800 }}>{isPN ? "—" : fmt(parseFloat(p.growth_share || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate800 }}>{isPN ? "—" : fmt(parseFloat(p.team_share || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate700 }}>{isPN ? "—" : fmt(parseFloat(p.reimb || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 11, textAlign: "right", color: T.slate500 }}>
+                    {isPN ? "—" : (
+                      p.weeks_in == null ? "no start" :
+                      p.ramp_frac === 0 ? `${p.weeks_in}w · fully ramped` :
+                      `${p.weeks_in}w · ${Math.round(parseFloat(p.ramp_frac || 0) * 100)}%`
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {people.length === 0 && (
+              <tr><td colSpan={8} style={{ padding: "10px 8px", fontSize: 12, color: T.slate500, fontStyle: "italic" }}>No per-person detail on this run.</td></tr>
+            )}
+          </tbody>
+          {people.length > 0 && (
+            <tfoot>
+              <tr style={{ borderTop: `2px solid ${T.slate300}`, background: "#f8fafc" }}>
+                <td style={{ padding: "8px", fontSize: 11, fontWeight: 600, color: T.slate700 }} colSpan={2}>Totals</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", fontWeight: 600, color: T.slate900 }}>{fmt(people.reduce((s,p) => s + parseFloat(p.gross_pay || 0), 0))}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmt(people.reduce((s,p) => s + parseFloat(p.employer_taxes || 0), 0))}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate800, fontWeight: 500 }}>{fmt(grTotal)}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate800, fontWeight: 500 }}>{fmt(tmTotal)}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmt(rbTotal)}</td>
+                <td style={{ padding: "8px", fontSize: 11, textAlign: "right", color: T.slate500 }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      {/* Routing recap + JE links */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+        <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>PaperNewt-direct</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(pnTotal)}</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{pnPeople.length} person{pnPeople.length === 1 ? "" : "s"} · COA-PN-001 / PN-002</div>
+          {jeByLeg["PAPERNEWT"] && (
+            <div style={{ fontSize: 10, color: T.slate600, marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
+              JE: {jeByLeg["PAPERNEWT"].reference_number}
+            </div>
+          )}
+        </div>
+        <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Growth</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(grTotal)}</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Fixed × ramp · COA-SUB-086</div>
+        </div>
+        <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Team</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(tmTotal)}</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Post-ramp fixed + variable + ER taxes · COA-SUB-087</div>
+        </div>
+        <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Intercompany credit</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(icTotal)}</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Agency owes PN · COA-IC-001</div>
+          {jeByLeg["AGENCY"] && (
+            <div style={{ fontSize: 10, color: T.slate600, marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
+              JE: {jeByLeg["AGENCY"].reference_number}
+            </div>
+          )}
+          {jeByLeg["PAPERNEWT-IC-RECON"] && (
+            <div style={{ fontSize: 10, color: T.slate600, marginTop: 2, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
+              Recon: {jeByLeg["PAPERNEWT-IC-RECON"].reference_number}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {jes.length === 0 && (
+        <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+          No posted JEs found for this run (pre-cutover or writer hasn't run yet).
+        </div>
+      )}
+    </div>
   );
 };
 
