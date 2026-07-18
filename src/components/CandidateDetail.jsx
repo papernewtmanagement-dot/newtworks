@@ -639,16 +639,22 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
               );
             }
             const ROLE_LABELS = {
-              sales:         "Sales",
-              service:       "Service",
-              service_sales: "Service Sales",
-              aspirant:      "Aspirant",
+              sales_outbound:       "Sales - Outbound",
+              sales_inbound:        "Sales - Inbound",
+              sales_in_book:        "Sales - In-Book",
+              retention_reception:  "Retention - Reception",
+              retention_escalation: "Retention - Escalation",
+              retention_support:    "Retention - Support",
+              aspirant:             "Aspirant",
             };
             const roleRows = [
-              { key: "sales",         os: bf.sales_os },
-              { key: "service",       os: bf.service_os },
-              { key: "service_sales", os: bf.service_sales_os },
-              { key: "aspirant",      os: bf.aspirant_os },
+              { key: "sales_outbound",       os: bf.sales_outbound_os },
+              { key: "sales_inbound",        os: bf.sales_inbound_os },
+              { key: "sales_in_book",        os: bf.sales_in_book_os },
+              { key: "retention_reception",  os: bf.retention_reception_os },
+              { key: "retention_escalation", os: bf.retention_escalation_os },
+              { key: "retention_support",    os: bf.retention_support_os },
+              { key: "aspirant",             os: bf.aspirant_os },
             ].sort((a, b) => (Number(b.os) || -Infinity) - (Number(a.os) || -Infinity));
             const bestKey = bf.best_role;
             const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
@@ -699,12 +705,15 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
           {(() => {
             const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
             const bestKey = bf?.best_role;
-            const currentSelected = selectedRole || bestKey || "sales";
+            const currentSelected = selectedRole || bestKey || "sales_outbound";
             const ROLE_LABELS = {
-              sales:         "Sales",
-              service:       "Service",
-              service_sales: "Service Sales",
-              aspirant:      "Aspirant",
+              sales_outbound:       "Sales - Outbound",
+              sales_inbound:        "Sales - Inbound",
+              sales_in_book:        "Sales - In-Book",
+              retention_reception:  "Retention - Reception",
+              retention_escalation: "Retention - Escalation",
+              retention_support:    "Retention - Support",
+              aspirant:             "Aspirant",
             };
             const roleC = (competencies && competencies[currentSelected]) || {};
             const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
@@ -1377,6 +1386,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     {verdictLabel(layer.verdict)}
                                   </span>
                                 </div>
+                                {layer.key === "assessment" && threeConstruct.meta?.display_label && (
+                                  <div style={{ marginTop: 3 }}>
+                                    <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                                      {threeConstruct.meta.display_label}
+                                    </span>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                             {isOpen && (
