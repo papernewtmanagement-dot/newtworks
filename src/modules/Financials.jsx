@@ -539,8 +539,12 @@ function useFinancialsData(entity) {
           asOfLabel: monthYearLabel(currentMonth, currentYear),
         };
 
-        // Owner Profit Pace — quarterly margin computation against +1pp/quarter goal
-        const priorYearIS = priorIsRows.data || [];
+        // Owner Profit Pace — quarterly margin computation against +1pp/quarter goal.
+        // priorIsData is the own-only P&L rows for years !== currentYear (defined above
+        // at line 234). Prior code destructured priorIsRows from Promise.all; phase 3
+        // rename to pnlOwnRes/pnlFullRes dropped that binding but this consumer was
+        // missed, causing a ReferenceError that swallowed the whole hook.
+        const priorYearIS = Array.isArray(priorIsData) ? priorIsData : [];
         const quarterMargin = (yr, q) => {
           const rows = yr === currentYear ? isData : priorYearIS;
           const months = [q*3-2, q*3-1, q*3];
