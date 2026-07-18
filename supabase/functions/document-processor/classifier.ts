@@ -140,17 +140,36 @@ export interface DocClassifyInput {
 }
 
 const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean }> = [
-  // ----- SUREPAYROLL (v37 PDF 2026-07-07, v52 +CSV 2026-07-14) —
+  // ----- SUREPAYROLL (v37 PDF 2026-07-07, v52 +CSV 2026-07-14,
+  //       filename-fallback broadened 2026-07-18) —
   //       SF-forwarded SurePayroll summary. Deterministic parsers for both
   //       formats: unpdf regex for PDF, header-mapped column parser for CSV.
-  //       Must be first so it wins over the generic filename-fallback
-  //       "payroll" rule that would otherwise route to adp_payroll. Requires
-  //       .pdf or .csv extension to avoid matching inline images
-  //       (image001.gif etc.) that come with the email. -----
+  //       Requires .pdf or .csv extension to avoid matching inline images
+  //       (image001.gif etc.) that come with the email.
+  //
+  //       Peter does not use ADP; every payroll doc at this agency is
+  //       SurePayroll. The filename fallbacks below catch SurePayroll files
+  //       that arrive without a statefarm sender (Drive uploads, zip
+  //       contents, Alvi's Gmail forwards). The equivalent adp_payroll
+  //       filename fallback was DELETED 2026-07-18 — the "Payroll Summary.pdf"
+  //       from 2026-07-06 hit that landmine and misclassified. -----
   { docType: "surepayroll_payroll",
     test: (i) => /statefarm/i.test(i.fromEmail)
               && /payroll/i.test(i.subject + " " + i.fileName)
               && /\.(pdf|csv)$/i.test(i.fileName) },
+
+  // ----- SUREPAYROLL filename fallbacks (any sender, incl. Drive/zip) -----
+  //       "Payroll Summary.pdf" and "Payroll Summary (N).pdf" — SurePayroll
+  //       portal download naming.
+  { docType: "surepayroll_payroll",
+    test: (i) => /^Payroll Summary(?:\s*\(\d+\))?\.pdf$/i.test(filenameBase(i.fileName)) },
+  //       "YY-MM-DD.csv" — SurePayroll weekly CSV naming (check date).
+  { docType: "surepayroll_payroll",
+    test: (i) => /^\d{2}-\d{2}-\d{2}\.csv$/i.test(filenameBase(i.fileName)) },
+  //       Generic safety net: any *.pdf or *.csv with payroll-keyword in name.
+  { docType: "surepayroll_payroll",
+    test: (i) => /\.(pdf|csv)$/i.test(i.fileName)
+              && /\b(payroll|paystub|pay[\s_-]?run|paycheck)\b/i.test(filenameBase(i.fileName)) },
 
   // ----- SUREPAYROLL non-parseable attachments (inline images) — SKIP silently.
   //       Same sender + subject match but neither pdf nor csv: don't try. -----
@@ -216,12 +235,18 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   { docType: "deduction_statement",
     test: (i) => /Deductions?(\s+Misc)?\.pdf$/i.test(i.fileName) && /\d{2}_\d{2}_\d{2}/.test(i.fileName) },
 
-  // ----- ADP / GUSTO PAYROLL — sender path -----
+  // ----- ADP / GUSTO PAYROLL — sender path ONLY (2026-07-18).
+  //       Filename-only fallback DELETED: previously routed any file with
+  //       "payroll"/"paystub"/etc in the name to adp_payroll when the
+  //       SurePayroll sender rule didn't match. That caused the 7/06
+  //       "Payroll Summary.pdf" misclassification (statefarm sender rule
+  //       hadn't shipped yet → fell to filename fallback → adp_payroll →
+  //       generic LLM parser instead of SurePayroll deterministic parser).
+  //       Peter does not use ADP; every payroll doc at this agency is
+  //       SurePayroll, caught by the sender + filename fallbacks above.
+  //       If ADP/Gusto is ever added, this sender rule catches it. -----
   { docType: "adp_payroll",
     test: (i) => /adp\.com|workforcenow|gusto/i.test(i.fromEmail + " " + i.subject) },
-  // ----- PAYROLL — filename-only fallback for zip contents -----
-  { docType: "adp_payroll",
-    test: (i) => /\b(payroll|paystub|pay[\s_-]?run|paycheck)\b/i.test(filenameBase(i.fileName)) },
 
   // ----- COMMISSION REPORT (specific) -----
   { docType: "commission_report",
