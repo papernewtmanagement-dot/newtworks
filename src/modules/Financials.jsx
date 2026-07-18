@@ -2893,14 +2893,6 @@ export default function Financials() {
         </div>
       </div>
 
-      {/* Entity Hierarchy Nav (Phase 3) — breadcrumb + children strip */}
-      <EntityNav
-        entity={entity}
-        setEntity={setEntity}
-        breadcrumb={MOCK?.entityContext?.breadcrumb || []}
-        directChildren={MOCK?.entityContext?.directChildren || []}
-      />
-
       {/* Section Navigation */}
       <div style={{
         display: "flex", gap: 2, flexWrap: "wrap",
@@ -2927,7 +2919,22 @@ export default function Financials() {
 
       {/* Section Content */}
       {section === "overview" && <OverviewSection period={period} setPeriod={setPeriod} data={MOCK} />}
-      {section === "pl"       && <PLSection data={MOCK} onDataChanged={reload} />}
+      {section === "pl"       && (
+        <>
+          {/* Entity Hierarchy Nav (Phase 3) — breadcrumb + children strip.
+              Scoped to P&L only per Peter direction 2026-07-19: other sections
+              (Bank / Credit / Balance Sheet / GL / Comp Recap / Payroll) handle
+              entity scoping in their own way, so the drill-in strip is a P&L
+              concern and shouldn't sit above every tab. */}
+          <EntityNav
+            entity={entity}
+            setEntity={setEntity}
+            breadcrumb={MOCK?.entityContext?.breadcrumb || []}
+            directChildren={MOCK?.entityContext?.directChildren || []}
+          />
+          <PLSection data={MOCK} onDataChanged={reload} />
+        </>
+      )}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
