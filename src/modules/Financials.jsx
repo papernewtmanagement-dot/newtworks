@@ -132,15 +132,19 @@ function useFinancialsData(entity) {
           supabase.from("v_card_balances")
             .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date"),
 
-          // GL
+          // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
+          // filter; expose business_entity_id so GLSection can filter to the
+          // current entity's subtree (Option B — flat listing across whole
+          // subtree with per-row entity badge, same pattern as Bank/Credit/BS).
+          // Bumped limit 50 → 200 so subtree filter has headroom before
+          // starving the displayed list at 50.
           supabase.from("journal_lines")
             .select(`
-              debit, credit, created_at,
+              debit, credit, created_at, business_entity_id,
               journal_entries!inner ( entry_date, reference_number, description, source ),
               chart_of_accounts!inner ( account_name )
             `)
-            .eq("business_entity_id", BUSINESS_ENTITY_ID)
-            .order("created_at", { ascending: false }).limit(50),
+            .order("created_at", { ascending: false }).limit(200),
 
           // Payroll runs (header) — whole Financials module is PaperNewt-scoped
           supabase.from("payroll_runs")
@@ -617,6 +621,7 @@ function useFinancialsData(entity) {
             account:     g.chart_of_accounts?.account_name,
             debit:       parseFloat(g.debit  || 0),
             credit:      parseFloat(g.credit || 0),
+            businessEntityId: g.business_entity_id,   // Phase 6: subtree filter + entity badge
           })),
           payroll,
           balanceSheet,
@@ -2525,37 +2530,77 @@ const BalanceSheetSection = ({ data }) => {
 };
 
 // ─── Section: General Ledger ──────────────────────────────────
-const GLSection = ({ data }) => (
-  <Card>
-    <CardHeader
-      title="General Ledger — Recent Entries"
-      sub="Last 30 days · All accounts"
-    />
-    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead>
-        <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
-          {["Date","Ref","Description","Account","Debit","Credit"].map((h,i) => (
-            <th key={i} style={{ padding: "8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: i >= 4 ? "right" : "left" }}>{h}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {(Array.isArray(data?.glEntries) ? data.glEntries : []).map((r,i) => (
-          <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-            <td style={{ padding: "8px", fontSize: 11, color: T.slate500 }}>{r.date}</td>
-            <td style={{ padding: "8px", fontSize: 11, color: T.blue, fontFamily: "monospace" }}>{r.ref}</td>
-            <td style={{ padding: "8px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
-            <td style={{ padding: "8px", fontSize: 11, color: T.slate500, fontFamily: "monospace" }}>{r.account}</td>
-            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "—"}</td>
-            <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "—"}</td>
+const GLSection = ({ data }) => {
+  // Phase 6 (entity hierarchy): filter to current entity's subtree — Option B
+  // flat listing across whole subtree with per-row entity badge, same pattern
+  // as Bank / Credit / BalanceSheet sections from Phases 4-5. entitiesById +
+  // descendants derive client-side from the 5-entity map already fetched by
+  // the hook. Fetch pulls 200 most-recent lines to give the subtree filter
+  // headroom; display slices to 50 after filtering so mobile stays tight.
+  const allEntries = Array.isArray(data?.glEntries) ? data.glEntries : [];
+  const ctx = data?.entityContext || {};
+  const allEntities = Array.isArray(ctx.allEntities) ? ctx.allEntities : [];
+  const entitiesById = Object.fromEntries(allEntities.map(e => [e.id, e]));
+  const allow = descendantsOf(ctx.currentEntityId, allEntities);
+  const filtered = allEntities.length === 0
+    ? allEntries
+    : allEntries.filter(r => !r.businessEntityId || allow.has(r.businessEntityId));
+  const entries = filtered.slice(0, 50);
+
+  const subtreeLabel = allEntities.length > 0 && filtered.length !== allEntries.length
+    ? ` · ${entries.length} of ${filtered.length} matched (subtree)`
+    : ` · ${entries.length} most recent`;
+
+  return (
+    <Card>
+      <CardHeader
+        title="General Ledger — Recent Entries"
+        sub={`All accounts${subtreeLabel}`}
+      />
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
+            {["Date","Ref","Description","Account","Entity","Debit","Credit"].map((h,i) => (
+              <th key={i} style={{ padding: "8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: i >= 5 ? "right" : "left" }}>{h}</th>
+            ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
-    </div>
-  </Card>
-);
+        </thead>
+        <tbody>
+          {entries.map((r,i) => {
+            const entName = r.businessEntityId ? entitiesById[r.businessEntityId]?.name : null;
+            return (
+              <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
+                <td style={{ padding: "8px", fontSize: 11, color: T.slate500 }}>{r.date}</td>
+                <td style={{ padding: "8px", fontSize: 11, color: T.blue, fontFamily: "monospace" }}>{r.ref}</td>
+                <td style={{ padding: "8px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
+                <td style={{ padding: "8px", fontSize: 11, color: T.slate500, fontFamily: "monospace" }}>{r.account}</td>
+                <td style={{ padding: "8px", fontSize: 11 }}>
+                  {entName ? (
+                    <span style={{
+                      display: "inline-block",
+                      padding: "1px 6px",
+                      fontSize: 9,
+                      fontWeight: 600,
+                      color: T.slate700,
+                      background: T.slate100,
+                      border: `1px solid ${T.slate200}`,
+                      borderRadius: 999,
+                      letterSpacing: "0.02em",
+                    }}>{entName}</span>
+                  ) : <span style={{ color: T.slate400 }}>—</span>}
+                </td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "—"}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      </div>
+    </Card>
+  );
+};
 
 // ─── CPA-Style Print Package ──────────────────────────────────
 // Browser-native print: hidden on screen, shown only when printing.
