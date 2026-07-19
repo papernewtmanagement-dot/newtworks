@@ -1524,6 +1524,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     <div style={{ fontSize: 9, color: cell == null ? T.slate500 : cellFg, fontWeight: 600 }}>
                                       weight {pctFmt(w)}
                                     </div>
+                                    {layer.key === "assessment" && c.key === "nurture" && (
+                                      <div
+                                        style={{ fontSize: 8, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2 }}
+                                        title="Suggs character subscores: Honesty (from distortion) · Concern for Others (compassion 0.7 + belief 0.3) · Hard Work Ethic (from reliability)"
+                                      >
+                                        H {detail?.assessment_nurture_honesty != null ? Math.round(Number(detail.assessment_nurture_honesty)) : "—"}
+                                        {" · "}
+                                        C {detail?.assessment_nurture_concern != null ? Math.round(Number(detail.assessment_nurture_concern)) : "—"}
+                                        {" · "}
+                                        W {detail?.assessment_nurture_work_ethic != null ? Math.round(Number(detail.assessment_nurture_work_ethic)) : "—"}
+                                      </div>
+                                    )}
                                   </td>
                                 );
                               })}
