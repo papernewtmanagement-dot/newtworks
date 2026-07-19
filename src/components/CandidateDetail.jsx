@@ -247,16 +247,17 @@ const AssessRow = ({ label, value, extra, band, subline }) => {
 // document-processor hasn't parsed the file yet).
 // Resume layer expansion body — shows HOW the resume score was arrived at.
 // Renders (when present): composite + verdict pill, Nature/Nurture/Drivers
-// sub-construct rollups, 10 sub-signal cards with score + reasoning (from
-// res_subsignals JSONB), fired resume-tell rule chips (res_rules_fired), and
-// a collapsible extracted-text pane. Falls back to plain text display when
-// no score has been written yet. Score bands match Results matrix conventions:
-// ≥7.5 green / ≥6.0 amber / <6.0 red.
+// construct rollups with sub-signals grouped underneath (11 total: 3 Nature,
+// 4 Nurture, 4 Drivers), fired resume-tell rule chips (res_rules_fired), and
+// a collapsible extracted-text pane. Sub-signal scores + reasoning read from
+// first-class res_<slug>_score / res_<slug>_reason columns on hiring_candidates
+// (migration 20260718230100 — was res_subsignals JSONB). Falls back to plain
+// text display when no score has been written yet. All scores render on the
+// 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
 function renderResumeLayer(detail, T) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
   const verdict = detail?.res_verdict;
-  const subsignals = detail?.res_subsignals;
   const rulesFired = detail?.res_rules_fired;
   const scoredAt = detail?.res_scored_at;
   const scoredModel = detail?.res_scored_model;
@@ -264,8 +265,38 @@ function renderResumeLayer(detail, T) {
   const nurture = detail?.res_nurture;
   const drivers = detail?.res_drivers;
 
+  // Sub-signal → construct mapping. Canonical from hiregauge_rules.resume_score_rubric.
+  //   Nature  = mean(Autonomy, Leadership Emergence, Interpersonal Substrate)
+  //   Nurture = mean(Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility)
+  //   Drivers = mean(Trajectory Direction, Coherent Pursuit, Follow-Through, Goal Orientation)
+  // Each sub-signal reads from res_<slug>_score + res_<slug>_reason columns on
+  // hiring_candidates (first-class columns as of migration 20260718230100).
+  const CONSTRUCTS = [
+    { key: "nature",  label: "Nature",  score: nature,  signals: [
+      { label: "Autonomy",                scoreKey: "res_autonomy_score",                reasonKey: "res_autonomy_reason" },
+      { label: "Leadership Emergence",    scoreKey: "res_leadership_emergence_score",    reasonKey: "res_leadership_emergence_reason" },
+      { label: "Interpersonal Substrate", scoreKey: "res_interpersonal_substrate_score", reasonKey: "res_interpersonal_substrate_reason" },
+    ]},
+    { key: "nurture", label: "Nurture", score: nurture, signals: [
+      { label: "Honesty",                 scoreKey: "res_honesty_score",                 reasonKey: "res_honesty_reason" },
+      { label: "Concern for Others",      scoreKey: "res_concern_for_others_score",      reasonKey: "res_concern_for_others_reason" },
+      { label: "Hard Work Ethic",         scoreKey: "res_hard_work_ethic_score",         reasonKey: "res_hard_work_ethic_reason" },
+      { label: "Personal Responsibility", scoreKey: "res_personal_responsibility_score", reasonKey: "res_personal_responsibility_reason" },
+    ]},
+    { key: "drivers", label: "Drivers", score: drivers, signals: [
+      { label: "Trajectory Direction",    scoreKey: "res_trajectory_direction_score",    reasonKey: "res_trajectory_direction_reason" },
+      { label: "Coherent Pursuit",        scoreKey: "res_coherent_pursuit_score",        reasonKey: "res_coherent_pursuit_reason" },
+      { label: "Follow-Through",          scoreKey: "res_follow_through_score",          reasonKey: "res_follow_through_reason" },
+      { label: "Goal Orientation",        scoreKey: "res_goal_orientation_score",        reasonKey: "res_goal_orientation_reason" },
+    ]},
+  ];
+
+  const anySubSignalScored = CONSTRUCTS.some((c) =>
+    c.signals.some((s) => detail?.[s.scoreKey] != null || detail?.[s.reasonKey])
+  );
+
   const hasText = text && String(text).trim().length > 0;
-  const hasScore = composite != null || (subsignals && typeof subsignals === "object");
+  const hasScore = composite != null || anySubSignalScored;
 
   if (!hasScore && !hasText) {
     return (
@@ -279,16 +310,6 @@ function renderResumeLayer(detail, T) {
   // 2026-07-18: construct + sub-signal + composite scores all render as whole numbers 0-100.
   const scoreBg = (v) => v == null ? T.slate50 : v >= 75 ? T.greenLt : v >= 60 ? T.amberLt : T.redLt;
   const scoreFg = (v) => v == null ? T.slate500 : v >= 75 ? T.green   : v >= 60 ? T.amber   : T.red;
-
-  // Sub-signal → construct mapping. Canonical from hiregauge_rules.resume_score_rubric.
-  //   Nature  = mean(Autonomy, Leadership Emergence, Interpersonal Substrate)
-  //   Nurture = mean(Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility)
-  //   Drivers = mean(Trajectory Direction, Coherent Pursuit, Follow-Through)
-  const CONSTRUCTS = [
-    { key: "nature",  label: "Nature",  score: nature,  signals: ["Autonomy", "Leadership Emergence", "Interpersonal Substrate"] },
-    { key: "nurture", label: "Nurture", score: nurture, signals: ["Honesty", "Concern for Others", "Hard Work Ethic", "Personal Responsibility"] },
-    { key: "drivers", label: "Drivers", score: drivers, signals: ["Trajectory Direction", "Coherent Pursuit", "Follow-Through"] },
-  ];
 
   // Convert stored 0-10 rubric value to 0-100 whole for display.
   const pct = (v) => v == null ? null : Math.round(Number(v) * 10);
@@ -344,8 +365,10 @@ function renderResumeLayer(detail, T) {
       {/* Construct rollups — what went into Nature / Nurture / Drivers.
           Each construct score is the mean of its sub-signals; sub-signals
           nested under their construct heading with reasoning text.
-          All scores displayed as whole numbers on the 0-100 scale. */}
-      {(nature != null || nurture != null || drivers != null || (subsignals && typeof subsignals === "object")) && (
+          All scores displayed as whole numbers on the 0-100 scale.
+          Sub-signal values read from first-class res_<slug>_score /
+          res_<slug>_reason columns (migration 20260718230100). */}
+      {(nature != null || nurture != null || drivers != null || anySubSignalScored) && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
             How we got here — construct rollups
@@ -353,9 +376,9 @@ function renderResumeLayer(detail, T) {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {CONSTRUCTS.map((c) => {
               const cpct = pct(c.score);
-              const childKeys = subsignals && typeof subsignals === "object"
-                ? c.signals.filter((k) => subsignals[k])
-                : [];
+              const scoredSignals = c.signals.filter(
+                (sig) => detail?.[sig.scoreKey] != null || detail?.[sig.reasonKey]
+              );
               return (
                 <div key={c.key}>
                   <div style={{
@@ -373,15 +396,14 @@ function renderResumeLayer(detail, T) {
                       mean of {c.signals.length} sub-signals
                     </span>
                   </div>
-                  {childKeys.length > 0 && (
+                  {scoredSignals.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginLeft: 6 }}>
-                      {childKeys.map((k) => {
-                        const sig = subsignals[k];
-                        const s = sig?.score;
-                        const r = sig?.reasoning;
+                      {scoredSignals.map((sig) => {
+                        const s = detail[sig.scoreKey];
+                        const r = detail[sig.reasonKey];
                         const spct = pct(s);
                         return (
-                          <div key={k} style={{
+                          <div key={sig.label} style={{
                             display: "flex", gap: 10, alignItems: "flex-start",
                             padding: "8px 10px", background: T.white,
                             borderRadius: 6, border: `1px solid ${T.slate200}`,
@@ -395,7 +417,7 @@ function renderResumeLayer(detail, T) {
                               {spct != null ? spct : "—"}
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 2 }}>{k}</div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 2 }}>{sig.label}</div>
                               {r && <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.5 }}>{r}</div>}
                             </div>
                           </div>
