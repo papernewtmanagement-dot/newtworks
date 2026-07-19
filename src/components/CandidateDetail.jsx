@@ -1399,20 +1399,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                    : v >= 7.5 ? T.green
                                    : v >= 6.0 ? T.amber
                                    : T.red;
-              // Layer-total coloring: Resume row uses 7.0/5.0 rubric thresholds, other rows 7.5/6.0.
-              const layerThresh = (k) => k === "resume" ? { pass: 7.0, consider: 5.0 } : { pass: 7.5, consider: 6.0 };
+              // Layer-total coloring: Resume row uses 70/50 (0-100 scale), other rows 7.5/6.0 (0-10 scale).
+              const layerThresh = (k) => k === "resume" ? { pass: 70, consider: 50 } : { pass: 7.5, consider: 6.0 };
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
-              // Resume layer scores display as whole numbers 0-100 (Peter directive 2026-07-18).
-              // Threshold comparisons still run on the underlying 0-10 storage; display converts at render.
+              // Resume layer scores stored natively 0-100 (view-computed since 2026-07-19). Non-resume layers still 0-10.
               const fmtLayerScore = (v, k) => v == null ? "—"
-                : k === "resume" ? String(Math.round(Number(v) * 10))
+                : k === "resume" ? String(Math.round(Number(v)))
                 : Number(v).toFixed(2);
-              // Resume verdict computed from composite; other layer verdicts come from RPC output.
+              // Resume verdict computed from composite on 0-100 scale (hardcoded 70/50); other layer verdicts come from RPC output.
               const resumeVerdict = (v) => v == null ? null
-                                        : v >= 7.0 ? "pass"
-                                        : v >= 5.0 ? "consider"
-                                        :            "decline";
+                                        : v >= 70 ? "pass"
+                                        : v >= 50 ? "consider"
+                                        :           "decline";
               const layerVerdict = (layer) => layer.key === "resume"
                 ? resumeVerdict(layer.score)
                 : layer.verdict;
@@ -1454,14 +1453,23 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 const cell = matrix?.[c.key]?.[layer.key];
                                 const w = weights?.[c.key]?.[layer.key];
                                 const cellDisplay = cell == null ? "—"
-                                  : layer.key === "resume" ? String(Math.round(Number(cell) * 10))
+                                  : layer.key === "resume" ? String(Math.round(Number(cell)))
                                   : Number(cell).toFixed(2);
+                                // Resume cells are 0-100 (thresh 75/60); non-resume 0-10 (thresh 7.5/6.0).
+                                const cellBg = cell == null ? T.slate50
+                                  : layer.key === "resume"
+                                    ? (cell >= 75 ? T.greenLt : cell >= 60 ? T.amberLt : T.redLt)
+                                    : (cell >= 7.5 ? T.greenLt : cell >= 6.0 ? T.amberLt : T.redLt);
+                                const cellFg = cell == null ? T.slate500
+                                  : layer.key === "resume"
+                                    ? (cell >= 75 ? T.green : cell >= 60 ? T.amber : T.red)
+                                    : (cell >= 7.5 ? T.green : cell >= 6.0 ? T.amber : T.red);
                                 return (
-                                  <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
+                                  <td key={c.key} style={{ padding: "8px 10px", background: cellBg, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                                     <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
                                       {cellDisplay}
                                     </div>
-                                    <div style={{ fontSize: 9, color: cell == null ? T.slate500 : scoreFg(cell), fontWeight: 600 }}>
+                                    <div style={{ fontSize: 9, color: cell == null ? T.slate500 : cellFg, fontWeight: 600 }}>
                                       weight {pctFmt(w)}
                                     </div>
                                   </td>
