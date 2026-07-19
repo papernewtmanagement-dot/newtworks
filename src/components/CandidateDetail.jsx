@@ -257,7 +257,6 @@ const AssessRow = ({ label, value, extra, band, subline }) => {
 function renderResumeLayer(detail, T) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
-  const verdict = detail?.res_verdict;
   const rulesFired = detail?.res_rules_fired;
   const scoredAt = detail?.res_scored_at;
   const scoredModel = detail?.res_scored_model;
@@ -314,7 +313,18 @@ function renderResumeLayer(detail, T) {
   // Convert stored 0-10 rubric value to 0-100 whole for display.
   const pct = (v) => v == null ? null : Math.round(Number(v) * 10);
 
-  const verdictColor = verdict === "hire"     ? T.green
+  // Verdict computed from composite at view time — NOT stored on the row.
+  // Peter directive 2026-07-18: verdict is derived data (drifts from composite when
+  // stored). Bands from hiregauge_rules Composite Config.verdict_thresholds:
+  //   composite >= 7.0 -> pass
+  //   composite 5.0-6.99 -> consider
+  //   composite  < 5.0 -> decline
+  const verdict = composite == null ? null
+                : Number(composite) >= 7.0 ? "pass"
+                : Number(composite) >= 5.0 ? "consider"
+                :                            "decline";
+
+  const verdictColor = verdict === "pass"     ? T.green
                      : verdict === "consider" ? T.amber
                      : verdict === "decline"  ? T.red
                      :                          T.slate500;
@@ -1384,6 +1394,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const layerThresh = (k) => k === "resume" ? { pass: 7.0, consider: 5.0 } : { pass: 7.5, consider: 6.0 };
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
+              // Resume layer scores display as whole numbers 0-100 (Peter directive 2026-07-18).
+              // Threshold comparisons still run on the underlying 0-10 storage; display converts at render.
+              const fmtLayerScore = (v, k) => v == null ? "—"
+                : k === "resume" ? String(Math.round(Number(v) * 10))
+                : Number(v).toFixed(2);
+              // Resume verdict computed from composite; other layer verdicts come from RPC output.
+              const resumeVerdict = (v) => v == null ? null
+                                        : v >= 7.0 ? "pass"
+                                        : v >= 5.0 ? "consider"
+                                        :            "decline";
+              const layerVerdict = (layer) => layer.key === "resume"
+                ? resumeVerdict(layer.score)
+                : layer.verdict;
               const verdictLabel = (v) => (v || "not_scored").replace(/_/g, " ");
               const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
               const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center", borderBottom: `1px solid ${T.slate200}` };
@@ -1421,10 +1444,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                               {constructs.map((c) => {
                                 const cell = matrix?.[c.key]?.[layer.key];
                                 const w = weights?.[c.key]?.[layer.key];
+                                const cellDisplay = cell == null ? "—"
+                                  : layer.key === "resume" ? String(Math.round(Number(cell) * 10))
+                                  : Number(cell).toFixed(2);
                                 return (
                                   <td key={c.key} style={{ padding: "8px 10px", background: scoreBg(cell), borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                                     <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
-                                      {cell != null ? Number(cell).toFixed(2) : "—"}
+                                      {cellDisplay}
                                     </div>
                                     <div style={{ fontSize: 9, color: cell == null ? T.slate500 : scoreFg(cell), fontWeight: 600 }}>
                                       weight {pctFmt(w)}
@@ -1434,11 +1460,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                               })}
                               <td style={{ padding: "8px 10px", background: layerBg(layer.score, layer.key), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
                                 <div style={{ fontSize: 15, fontWeight: 800, color: layer.score == null ? T.slate500 : T.slate900 }}>
-                                  {layer.score != null ? Number(layer.score).toFixed(2) : "—"}
+                                  {fmtLayerScore(layer.score, layer.key)}
+                                  {layer.key === "resume" && layer.score != null && (
+                                    <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 100</span>
+                                  )}
                                 </div>
                                 <div style={{ marginTop: 2 }}>
                                   <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : layerFg(layer.score, layer.key), textTransform: "uppercase", letterSpacing: 0.4 }}>
-                                    {verdictLabel(layer.verdict)}
+                                    {verdictLabel(layerVerdict(layer))}
                                   </span>
                                 </div>
                                 {layer.key === "assessment" && threeConstruct.meta?.display_label && (
