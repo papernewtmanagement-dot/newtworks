@@ -36,6 +36,18 @@ const TRAIT_BAND = {
   optimism:            (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
 };
 
+// Role display labels — shared between Results matrix, Assessment layer expansion,
+// and Competencies section. Keys match hiring_candidates.assessment_target_role CHECK.
+const ROLE_LABELS = {
+  sales_outbound:       "Sales - Outbound",
+  sales_inbound:        "Sales - Inbound",
+  sales_in_book:        "Sales - In-Book",
+  retention_reception:  "Retention - Reception",
+  retention_escalation: "Retention - Escalation",
+  retention_support:    "Retention - Support",
+  aspirant:             "Aspirant",
+};
+
 // Validity bands — reliability higher-is-better, distortion lower-is-better.
 // Values are text: 'very_low' | 'low' | 'moderate' | 'high' | 'very_high'.
 const RELIABILITY_BAND = (v) => {
@@ -1093,9 +1105,31 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
-  // Which role fit's competencies to show (null = default to best fit).
-  // User clicks a Role Fit row in the right column to swap.
-  const [selectedRole, setSelectedRole] = useState(null);
+  // Which role fit is selected. Sourced from hiring_candidates.assessment_target_role
+  // via v_hiring_candidates so it survives page refresh. setSelectedRole persists the
+  // choice + refetches view so assessment_nature/nurture/drivers/composite refresh.
+  const [selectedRole, setSelectedRoleLocal] = useState(null);
+  useEffect(() => {
+    if (detail && detail.assessment_target_role !== undefined) {
+      setSelectedRoleLocal(detail.assessment_target_role);
+    }
+  }, [detail?.assessment_target_role]);
+  const setSelectedRole = async (roleKey) => {
+    const newVal = roleKey || null;
+    setSelectedRoleLocal(newVal);
+    if (!detail?.id) return;
+    const { error } = await supabase
+      .from("hiring_candidates")
+      .update({ assessment_target_role: newVal })
+      .eq("id", detail.id);
+    if (error) { alert("Failed to save role selection: " + error.message); return; }
+    const { data } = await supabase
+      .from("v_hiring_candidates")
+      .select("*")
+      .eq("id", detail.id)
+      .maybeSingle();
+    if (data) setDetail(data);
+  };
   // Which Results-matrix layer row is expanded (null = none). Only one
   // layer expanded at a time. Click chevron in the layer label cell.
   const [expandedLayer, setExpandedLayer] = useState(null);
@@ -1379,7 +1413,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const cw = threeConstruct.meta?.construct_weights || {};
               const layers = [
                 { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
-                { key: "assessment", label: "Assessment", score: threeConstruct.assessment_score, verdict: threeConstruct.assessment_verdict },
+                // Assessment layer sources composite/nature/nurture/drivers from v_hiring_candidates
+                // (populated by role-fit click). Score is 0-100 like Resume. Verdict computed by layerVerdict.
+                { key: "assessment", label: "Assessment", score: detail?.assessment_composite ?? null, verdict: null },
                 { key: "interview",  label: "Interview",  score: threeConstruct.interview_score,  verdict: threeConstruct.interview_verdict },
                 { key: "reference",  label: "Reference",  score: threeConstruct.reference_score,  verdict: threeConstruct.reference_verdict },
               ];
@@ -1397,19 +1433,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                    : v >= 6.0 ? T.amber
                                    : T.red;
               // Layer-total coloring: Resume row uses 70/50 (0-100 scale), other rows 7.5/6.0 (0-10 scale).
-              const layerThresh = (k) => k === "resume" ? { pass: 70, consider: 50 } : { pass: 7.5, consider: 6.0 };
+              const layerThresh = (k) => (k === "resume" || k === "assessment") ? { pass: 70, consider: 50 } : { pass: 7.5, consider: 6.0 };
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
-              // Resume layer scores stored natively 0-100 (view-computed since 2026-07-19). Non-resume layers still 0-10.
+              // Resume + Assessment layer scores now 0-100 (view-computed). Other layers still 0-10.
               const fmtLayerScore = (v, k) => v == null ? "—"
-                : k === "resume" ? String(Math.round(Number(v)))
+                : (k === "resume" || k === "assessment") ? String(Math.round(Number(v)))
                 : Number(v).toFixed(2);
-              // Resume verdict computed from composite on 0-100 scale (hardcoded 70/50); other layer verdicts come from RPC output.
+              // Resume + Assessment verdicts computed from composite on 0-100 scale (hardcoded 70/50); other layer verdicts come from RPC output.
               const resumeVerdict = (v) => v == null ? null
                                         : v >= 70 ? "pass"
                                         : v >= 50 ? "consider"
                                         :           "decline";
-              const layerVerdict = (layer) => layer.key === "resume"
+              const layerVerdict = (layer) => (layer.key === "resume" || layer.key === "assessment")
                 ? resumeVerdict(layer.score)
                 : layer.verdict;
               const verdictLabel = (v) => (v || "not_scored").replace(/_/g, " ");
@@ -1447,18 +1483,23 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 {layer.label}
                               </td>
                               {constructs.map((c) => {
-                                const cell = matrix?.[c.key]?.[layer.key];
+                                // Assessment cells come from v_hiring_candidates assessment_* columns.
+                                const cell = layer.key === "assessment"
+                                  ? (c.key === "nature" ? detail?.assessment_nature
+                                    : c.key === "nurture" ? detail?.assessment_nurture
+                                    : detail?.assessment_drivers)
+                                  : matrix?.[c.key]?.[layer.key];
                                 const w = weights?.[c.key]?.[layer.key];
                                 const cellDisplay = cell == null ? "—"
-                                  : layer.key === "resume" ? String(Math.round(Number(cell)))
+                                  : (layer.key === "resume" || layer.key === "assessment") ? String(Math.round(Number(cell)))
                                   : Number(cell).toFixed(2);
-                                // Resume cells are 0-100 (thresh 75/60); non-resume 0-10 (thresh 7.5/6.0).
+                                // Resume + Assessment cells 0-100 (thresh 75/60); other layers 0-10 (thresh 7.5/6.0).
                                 const cellBg = cell == null ? T.slate50
-                                  : layer.key === "resume"
+                                  : (layer.key === "resume" || layer.key === "assessment")
                                     ? (cell >= 75 ? T.greenLt : cell >= 60 ? T.amberLt : T.redLt)
                                     : (cell >= 7.5 ? T.greenLt : cell >= 6.0 ? T.amberLt : T.redLt);
                                 const cellFg = cell == null ? T.slate500
-                                  : layer.key === "resume"
+                                  : (layer.key === "resume" || layer.key === "assessment")
                                     ? (cell >= 75 ? T.green : cell >= 60 ? T.amber : T.red)
                                     : (cell >= 7.5 ? T.green : cell >= 6.0 ? T.amber : T.red);
                                 return (
@@ -1481,10 +1522,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     {verdictLabel(layerVerdict(layer))}
                                   </span>
                                 </div>
-                                {layer.key === "assessment" && threeConstruct.meta?.display_label && (
+                                {layer.key === "assessment" && (
                                   <div style={{ marginTop: 3 }}>
                                     <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: 0.4 }}>
-                                      {threeConstruct.meta.display_label}
+                                      {detail?.assessment_target_role
+                                        ? (ROLE_LABELS[detail.assessment_target_role] || detail.assessment_target_role)
+                                        : "click a role fit →"}
                                     </span>
                                   </div>
                                 )}
