@@ -1117,7 +1117,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     if (!candidate?.id || !supabase) return;
     let cancelled = false;
     supabase
-      .from("hiring_candidates")
+      .from("v_hiring_candidates")
       .select("*")
       .eq("id", candidate.id)
       .maybeSingle()
@@ -1228,17 +1228,22 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     if (sectionKey === "rc" && detail.rc_notes) updates.rc_completed_at = new Date().toISOString();
     if (sectionKey === "decision" && detail.final_decision) updates.decision_at = new Date().toISOString();
 
-    const { error, data } = await supabase
+    const { error } = await supabase
       .from("hiring_candidates")
       .update(updates)
-      .eq("id", detail.id)
-      .select()
-      .maybeSingle();
-    setSavingSection(null);
+      .eq("id", detail.id);
     if (error) {
+      setSavingSection(null);
       alert("Save failed: " + error.message);
       return;
     }
+    // Refetch from view so computed aggregates (res_nature/nurture/drivers/composite) refresh
+    const { data } = await supabase
+      .from("v_hiring_candidates")
+      .select("*")
+      .eq("id", detail.id)
+      .maybeSingle();
+    setSavingSection(null);
     if (data) setDetail(data);
   };
 
@@ -1279,17 +1284,22 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         answers[k] = { ...answers[k], saved_at: now };
       }
     });
-    const { error, data } = await supabase
+    const { error } = await supabase
       .from("hiring_candidates")
       .update({ interview_answers: answers })
-      .eq("id", detail.id)
-      .select()
-      .maybeSingle();
-    setSavingAnswers(false);
+      .eq("id", detail.id);
     if (error) {
+      setSavingAnswers(false);
       alert("Save failed: " + error.message);
       return;
     }
+    // Refetch from view so computed aggregates stay populated on detail
+    const { data } = await supabase
+      .from("v_hiring_candidates")
+      .select("*")
+      .eq("id", detail.id)
+      .maybeSingle();
+    setSavingAnswers(false);
     if (data) setDetail(data);
   };
 
@@ -1305,7 +1315,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       if (error) throw new Error(error.message || String(error));
       if (data?.error) throw new Error(data.error);
       const { data: refreshed } = await supabase
-        .from("hiring_candidates")
+        .from("v_hiring_candidates")
         .select("*")
         .eq("id", detail.id)
         .maybeSingle();
