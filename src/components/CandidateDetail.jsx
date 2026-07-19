@@ -1195,6 +1195,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .catch(() => {});
   }, [detail?.id]);
 
+  // Auto-default assessment_target_role to best-fit role on first load when unset.
+  // Fires once bestFit resolves; setSelectedRole persists to DB + refetches view so
+  // assessment_nature/nurture/drivers/composite populate without user click.
+  useEffect(() => {
+    if (!detail?.id) return;
+    if (detail.assessment_target_role) return; // already set — respect stored choice
+    const bfBestRole = Array.isArray(bestFit) && bestFit[0]?.best_role;
+    if (!bfBestRole) return; // best fit not loaded yet
+    setSelectedRole(bfBestRole);
+    // setSelectedRole is stable via useCallback? Not currently — but effect only fires when
+    // deps change AND both guards clear, so no infinite loop (target_role becomes non-null
+    // after write → guard trips on next run).
+  }, [detail?.id, detail?.assessment_target_role, bestFit]);
+
   // Bucket evaluate_candidate rows by verdict impact using composite's signal
   // arrays as the routing table. Composite's decline_signals annotate unverified
   // floors with " (unverified)" suffix — strip before matching. Rules with no
