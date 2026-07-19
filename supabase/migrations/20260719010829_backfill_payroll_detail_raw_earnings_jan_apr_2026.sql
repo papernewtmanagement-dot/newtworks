@@ -1,0 +1,68 @@
+-- 20260719010829_backfill_payroll_detail_raw_earnings_jan_apr_2026
+--
+-- APPLIED 2026-07-19 (session that ran out of context, split across "Payroll split 2/3/4").
+-- Backfilled payroll_detail.raw_earnings for 103 rows across 18 SurePayroll runs
+-- with pay_period_end 2026-01-03 through 2026-05-02 (pay_date range 2026-01-16 through 2026-05-08).
+-- Excludes Leslie Jones per standing op-rule (1 row per period NULL, 18 rows total = 121 grand total minus 18 = 103).
+--
+-- WHY BACKFILL WAS NEEDED
+-- The SurePayroll PDF parser (embedded in document-processor edge fn) started producing
+-- itemized raw_earnings starting May 2026. Prior CSV-path ingest lumped everything into
+-- aggregate keys (OTHER/HOURLY/BONUS/COMMISSION). Jan-Apr rows had raw_earnings = NULL
+-- because CSV path wasn't populating that column for older imports. This blocked the
+-- Growth vs. Team payroll split in prior_year_pl for Jan-Apr (all $ fell into Team via
+-- gap-catcher because no items breakdown → fixed_bundle = 0 → grow_share = 0).
+--
+-- BYTE-FOR-BYTE MIRROR DEFERRED
+-- The 103 raw_earnings jsonb values are ~30-50KB of embedded data. Rather than
+-- inline them here, the canonical source is the 18 SurePayroll Summary XLS files
+-- in Google Drive folder 1KCCUl9q2p23cYSjTyZehEjjEfpNBF-uh. To regenerate on a
+-- fresh clone with empty payroll_detail.raw_earnings:
+--
+--   1. Trigger the document-processor edge fn against each XLS file, OR
+--   2. Use the xlrd-based SurePayroll Summary parser pattern documented below.
+--
+-- PARSER STRUCTURE (from Payroll split 2/3 sessions)
+--   Sheet columns: employee name in col 0, hours in col 3, period $ in col 7
+--   Employee block bounded by 'TOTAL:' markers
+--   Summary section rows ("PAYROLL SUMMARY TOTALS") reset current_emp = None
+--   Item-merge uses result[emp]['items'].setdefault(item_key, {}) to preserve nested dicts
+--
+-- OUTPUT SHAPE
+--   raw_earnings jsonb = {
+--     "items": {
+--       "SALARY": {"hours": 40.0, "period": 769.23},
+--       "REGULAR": {"hours": 20.0, "period": 350.0},
+--       "3True": {"period": 154.0},
+--       "2Serve": {"period": 73.0},
+--       "0Advnce": {"period": 125.0},
+--       "1Health": {"period": 25.0},
+--       "4Manage": {"period": 84.0},
+--       "LIFE *": {"period": 21.69},
+--       "5Goals": {"period": 30.0},
+--       "REIMB.": {"period": 238.0}
+--     },
+--     "state": "TX" | "VA",
+--     "period_hours": 40.0,
+--     "period_total": 1482.69
+--   }
+--
+-- VERIFICATION AFTER REGENERATION
+--   SELECT COUNT(*) FROM payroll_detail pd
+--   JOIN payroll_runs pr ON pr.id = pd.payroll_run_id
+--   WHERE pr.pay_period_end BETWEEN '2026-01-03' AND '2026-05-02'
+--     AND pd.raw_earnings IS NOT NULL;
+--   -- Expected: 103
+--
+--   SELECT SUM((pd.raw_earnings->>'period_total')::numeric)
+--   FROM payroll_detail pd
+--   JOIN payroll_runs pr ON pr.id = pd.payroll_run_id
+--   WHERE pr.pay_period_end BETWEEN '2026-01-03' AND '2026-05-02'
+--     AND pd.raw_earnings IS NOT NULL;
+--   -- Expected: matches SUM(pd.gross_pay) for the same rows to $0.01
+--
+-- NO-OP for this file: the applied migration is preserved in
+-- supabase_migrations.schema_migrations (version 20260719010829). Fresh clones
+-- must regenerate via the parser path above.
+
+SELECT 'backfill_payroll_detail_raw_earnings_jan_apr_2026: see comment header for regeneration path' AS migration_notice;
