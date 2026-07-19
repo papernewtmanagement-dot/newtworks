@@ -305,10 +305,9 @@ function renderResumeLayer(detail, T) {
     );
   }
 
-  // Coloring thresholds on 0-100 scale (previously 7.5/6.0 on 0-10). Peter directive
-  // 2026-07-18: construct + sub-signal + composite scores all render as whole numbers 0-100.
-  const scoreBg = (v) => v == null ? T.slate50 : v >= 75 ? T.greenLt : v >= 60 ? T.amberLt : T.redLt;
-  const scoreFg = (v) => v == null ? T.slate500 : v >= 75 ? T.green   : v >= 60 ? T.amber   : T.red;
+  // Coloring thresholds aligned with verdict thresholds (70 pass / 50 consider). 0-100 scale.
+  const scoreBg = (v) => v == null ? T.slate50 : v >= 70 ? T.greenLt : v >= 50 ? T.amberLt : T.redLt;
+  const scoreFg = (v) => v == null ? T.slate500 : v >= 70 ? T.green   : v >= 50 ? T.amber   : T.red;
 
   // Round to whole number for display. Rubric scores stored on 0-100 scale.
   const pct = (v) => v == null ? null : Math.round(Number(v));
@@ -340,7 +339,6 @@ function renderResumeLayer(detail, T) {
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>
               {composite != null ? pct(composite) : "—"}
-              <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 100</span>
             </span>
             {verdict && (
               <span style={{
@@ -399,7 +397,6 @@ function renderResumeLayer(detail, T) {
                     <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{c.label}</span>
                     <span style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>
                       {cpct != null ? cpct : "—"}
-                      <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 100</span>
                     </span>
                     <span style={{ fontSize: 10, color: T.slate600 }}>
                       mean of {c.signals.length} sub-signals
@@ -1478,9 +1475,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                               <td style={{ padding: "8px 10px", background: layerBg(layer.score, layer.key), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
                                 <div style={{ fontSize: 15, fontWeight: 800, color: layer.score == null ? T.slate500 : T.slate900 }}>
                                   {fmtLayerScore(layer.score, layer.key)}
-                                  {layer.key === "resume" && layer.score != null && (
-                                    <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 100</span>
-                                  )}
                                 </div>
                                 <div style={{ marginTop: 2 }}>
                                   <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : layerFg(layer.score, layer.key), textTransform: "uppercase", letterSpacing: 0.4 }}>
