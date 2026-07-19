@@ -275,15 +275,23 @@ function renderResumeLayer(detail, T) {
     );
   }
 
-  const scoreBg = (v) => v == null ? T.slate50 : v >= 7.5 ? T.greenLt : v >= 6.0 ? T.amberLt : T.redLt;
-  const scoreFg = (v) => v == null ? T.slate500 : v >= 7.5 ? T.green   : v >= 6.0 ? T.amber   : T.red;
+  // Coloring thresholds on 0-100 scale (previously 7.5/6.0 on 0-10). Peter directive
+  // 2026-07-18: construct + sub-signal + composite scores all render as whole numbers 0-100.
+  const scoreBg = (v) => v == null ? T.slate50 : v >= 75 ? T.greenLt : v >= 60 ? T.amberLt : T.redLt;
+  const scoreFg = (v) => v == null ? T.slate500 : v >= 75 ? T.green   : v >= 60 ? T.amber   : T.red;
 
-  // 10 canonical resume sub-signals in display order (Nature → Nurture → Drivers grouping).
-  const SUBSIGNAL_ORDER = [
-    "Honesty", "Hard Work Ethic", "Personal Responsibility", "Concern for Others",
-    "Follow-Through", "Coherent Pursuit", "Trajectory Direction",
-    "Autonomy", "Leadership Emergence", "Interpersonal Substrate",
+  // Sub-signal → construct mapping. Canonical from hiregauge_rules.resume_score_rubric.
+  //   Nature  = mean(Autonomy, Leadership Emergence, Interpersonal Substrate)
+  //   Nurture = mean(Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility)
+  //   Drivers = mean(Trajectory Direction, Coherent Pursuit, Follow-Through)
+  const CONSTRUCTS = [
+    { key: "nature",  label: "Nature",  score: nature,  signals: ["Autonomy", "Leadership Emergence", "Interpersonal Substrate"] },
+    { key: "nurture", label: "Nurture", score: nurture, signals: ["Honesty", "Concern for Others", "Hard Work Ethic", "Personal Responsibility"] },
+    { key: "drivers", label: "Drivers", score: drivers, signals: ["Trajectory Direction", "Coherent Pursuit", "Follow-Through"] },
   ];
+
+  // Convert stored 0-10 rubric value to 0-100 whole for display.
+  const pct = (v) => v == null ? null : Math.round(Number(v) * 10);
 
   const verdictColor = verdict === "hire"     ? T.green
                      : verdict === "consider" ? T.amber
@@ -295,14 +303,14 @@ function renderResumeLayer(detail, T) {
       {/* Score header — composite + verdict + sub-construct rollups + scored metadata */}
       {hasScore ? (
         <div style={{
-          padding: "12px 14px", background: scoreBg(Number(composite)),
-          borderRadius: 8, borderLeft: `3px solid ${scoreFg(Number(composite))}`,
+          padding: "12px 14px", background: scoreBg(pct(composite)),
+          borderRadius: 8, borderLeft: `3px solid ${scoreFg(pct(composite))}`,
           marginBottom: 12,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>
-              {composite != null ? Number(composite).toFixed(2) : "—"}
-              <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+              {composite != null ? pct(composite) : "—"}
+              <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 100</span>
             </span>
             {verdict && (
               <span style={{
@@ -315,13 +323,6 @@ function renderResumeLayer(detail, T) {
             )}
             <span style={{ fontSize: 10, color: T.slate600 }}>resume-only read</span>
           </div>
-          {(nature != null || nurture != null || drivers != null) && (
-            <div style={{ display: "flex", gap: 12, fontSize: 11, color: T.slate700, flexWrap: "wrap" }}>
-              {nature  != null && <span>Nature: <strong style={{ color: T.slate900 }}>{Number(nature).toFixed(2)}</strong></span>}
-              {nurture != null && <span>Nurture: <strong style={{ color: T.slate900 }}>{Number(nurture).toFixed(2)}</strong></span>}
-              {drivers != null && <span>Drivers: <strong style={{ color: T.slate900 }}>{Number(drivers).toFixed(2)}</strong></span>}
-            </div>
-          )}
           {(scoredAt || scoredModel) && (
             <div style={{ fontSize: 10, color: T.slate500, marginTop: 6, fontFamily: "monospace" }}>
               {scoredAt && String(scoredAt).slice(0, 10)}
@@ -340,36 +341,68 @@ function renderResumeLayer(detail, T) {
         </div>
       ) : null}
 
-      {/* Sub-signal breakdown — the "how we got here" answer. Ten canonical
-          signals, each with 0-10 score + reasoning from res_subsignals JSONB. */}
-      {subsignals && typeof subsignals === "object" && (
+      {/* Construct rollups — what went into Nature / Nurture / Drivers.
+          Each construct score is the mean of its sub-signals; sub-signals
+          nested under their construct heading with reasoning text.
+          All scores displayed as whole numbers on the 0-100 scale. */}
+      {(nature != null || nurture != null || drivers != null || (subsignals && typeof subsignals === "object")) && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
-            How we got here — 10 sub-signals
+            How we got here — construct rollups
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {SUBSIGNAL_ORDER.filter((k) => subsignals[k]).map((k) => {
-              const sig = subsignals[k];
-              const s = sig?.score;
-              const r = sig?.reasoning;
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {CONSTRUCTS.map((c) => {
+              const cpct = pct(c.score);
+              const childKeys = subsignals && typeof subsignals === "object"
+                ? c.signals.filter((k) => subsignals[k])
+                : [];
               return (
-                <div key={k} style={{
-                  display: "flex", gap: 10, alignItems: "flex-start",
-                  padding: "8px 10px", background: T.white,
-                  borderRadius: 6, border: `1px solid ${T.slate200}`,
-                }}>
+                <div key={c.key}>
                   <div style={{
-                    minWidth: 44, textAlign: "center", padding: "4px 6px",
-                    background: scoreBg(Number(s)), borderRadius: 4,
-                    fontWeight: 700, fontSize: 14, color: T.slate900,
-                    borderLeft: `3px solid ${scoreFg(Number(s))}`,
+                    display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap",
+                    padding: "6px 10px", background: scoreBg(cpct),
+                    borderLeft: `3px solid ${scoreFg(cpct)}`, borderRadius: 4,
+                    marginBottom: 6,
                   }}>
-                    {s != null ? Number(s).toFixed(0) : "—"}
+                    <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{c.label}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>
+                      {cpct != null ? cpct : "—"}
+                      <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 100</span>
+                    </span>
+                    <span style={{ fontSize: 10, color: T.slate600 }}>
+                      mean of {c.signals.length} sub-signals
+                    </span>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 2 }}>{k}</div>
-                    {r && <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.5 }}>{r}</div>}
-                  </div>
+                  {childKeys.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginLeft: 6 }}>
+                      {childKeys.map((k) => {
+                        const sig = subsignals[k];
+                        const s = sig?.score;
+                        const r = sig?.reasoning;
+                        const spct = pct(s);
+                        return (
+                          <div key={k} style={{
+                            display: "flex", gap: 10, alignItems: "flex-start",
+                            padding: "8px 10px", background: T.white,
+                            borderRadius: 6, border: `1px solid ${T.slate200}`,
+                          }}>
+                            <div style={{
+                              minWidth: 52, textAlign: "center", padding: "4px 6px",
+                              background: scoreBg(spct), borderRadius: 4,
+                              fontWeight: 700, fontSize: 14, color: T.slate900,
+                              borderLeft: `3px solid ${scoreFg(spct)}`,
+                            }}>
+                              {spct != null ? spct : "—"}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 2 }}>{k}</div>
+                              {r && <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.5 }}>{r}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
