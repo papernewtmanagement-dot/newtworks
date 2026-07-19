@@ -711,15 +711,6 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
                 </div>
               );
             }
-            const ROLE_LABELS = {
-              sales_outbound:       "Sales - Outbound",
-              sales_inbound:        "Sales - Inbound",
-              sales_in_book:        "Sales - In-Book",
-              retention_reception:  "Retention - Reception",
-              retention_escalation: "Retention - Escalation",
-              retention_support:    "Retention - Support",
-              aspirant:             "Aspirant",
-            };
             const roleRows = [
               { key: "sales_outbound",       os: bf.sales_outbound_os },
               { key: "sales_inbound",        os: bf.sales_inbound_os },
@@ -779,15 +770,6 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
             const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
             const bestKey = bf?.best_role;
             const currentSelected = selectedRole || bestKey || "sales_outbound";
-            const ROLE_LABELS = {
-              sales_outbound:       "Sales - Outbound",
-              sales_inbound:        "Sales - Inbound",
-              sales_in_book:        "Sales - In-Book",
-              retention_reception:  "Retention - Reception",
-              retention_escalation: "Retention - Escalation",
-              retention_support:    "Retention - Support",
-              aspirant:             "Aspirant",
-            };
             const roleC = (competencies && competencies[currentSelected]) || {};
             const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
             const formatCompLabel = (k) =>
@@ -1534,6 +1516,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                         C {detail?.assessment_nurture_concern != null ? Math.round(Number(detail.assessment_nurture_concern)) : "—"}
                                         {" · "}
                                         W {detail?.assessment_nurture_work_ethic != null ? Math.round(Number(detail.assessment_nurture_work_ethic)) : "—"}
+                                      </div>
+                                    )}
+                                    {layer.key === "assessment" && c.key === "drivers" && (
+                                      <div
+                                        style={{ fontSize: 8, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2 }}
+                                        title="Suggs motivation drivers measurable via CTS: Achievement (deadline motivation) · Recognition (recognition drive) · Autonomy (independent spirit). Six other Suggs driver types not measurable via CTS."
+                                      >
+                                        Ach {detail?.deadline_motivation != null ? Math.round(Number(detail.deadline_motivation)) : "—"}
+                                        {" · "}
+                                        Rec {detail?.recognition_drive != null ? Math.round(Number(detail.recognition_drive)) : "—"}
+                                        {" · "}
+                                        Aut {detail?.independent_spirit != null ? Math.round(Number(detail.independent_spirit)) : "—"}
                                       </div>
                                     )}
                                   </td>
