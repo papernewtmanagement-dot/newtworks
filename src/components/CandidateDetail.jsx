@@ -310,19 +310,18 @@ function renderResumeLayer(detail, T) {
   const scoreBg = (v) => v == null ? T.slate50 : v >= 75 ? T.greenLt : v >= 60 ? T.amberLt : T.redLt;
   const scoreFg = (v) => v == null ? T.slate500 : v >= 75 ? T.green   : v >= 60 ? T.amber   : T.red;
 
-  // Convert stored 0-10 rubric value to 0-100 whole for display.
-  const pct = (v) => v == null ? null : Math.round(Number(v) * 10);
+  // Round to whole number for display. Rubric scores stored on 0-100 scale.
+  const pct = (v) => v == null ? null : Math.round(Number(v));
 
-  // Verdict computed from composite at view time — NOT stored on the row.
-  // Peter directive 2026-07-18: verdict is derived data (drifts from composite when
-  // stored). Bands from hiregauge_rules Composite Config.verdict_thresholds:
-  //   composite >= 7.0 -> pass
-  //   composite 5.0-6.99 -> consider
-  //   composite  < 5.0 -> decline
+  // Verdict hardcoded on 0-100 scale. Computed from composite at view time — NOT
+  // stored on the row (per Peter directive 2026-07-18: derived data drifts when stored).
+  //   composite >= 70 -> pass
+  //   composite 50-69 -> consider
+  //   composite  < 50 -> decline
   const verdict = composite == null ? null
-                : Number(composite) >= 7.0 ? "pass"
-                : Number(composite) >= 5.0 ? "consider"
-                :                            "decline";
+                : Number(composite) >= 70 ? "pass"
+                : Number(composite) >= 50 ? "consider"
+                :                           "decline";
 
   const verdictColor = verdict === "pass"     ? T.green
                      : verdict === "consider" ? T.amber
