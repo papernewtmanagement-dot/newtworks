@@ -150,15 +150,18 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
         const attId = a?.attachmentId;
         if (!filename || !attId) continue;
 
-        // Idempotency: skip if already in documents (any upload_source that
-        // starts with "gmail" — outer or inner-from-zip).
+        // Idempotency: (gmail_message_id, gmail_attachment_id) uniquely
+        // identifies a Gmail attachment. Prior filename-based dedupe silently
+        // skipped generic-named repeats (SF sending "Payroll Summary.pdf"
+        // collided with a legacy row from a prior week). No time window
+        // needed — the ID tuple is globally unique.
+        const msgId = m.messageId ?? m.id;
         const { data: existing } = await sb
           .from("documents")
           .select("id")
           .eq("agency_id", ctx.agencyId)
-          .eq("file_name", filename)
-          .like("upload_source", "gmail%")
-          .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString())
+          .eq("gmail_message_id", msgId)
+          .eq("gmail_attachment_id", attId)
           .maybeSingle();
         if (existing?.id) continue;
 
@@ -183,13 +186,14 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
       const attId = p?.body?.attachmentId;
       if (!attId) continue;
 
+      // Idempotency: same as above — (gmail_message_id, gmail_attachment_id).
+      const msgId = m.id;
       const { data: existing } = await sb
         .from("documents")
         .select("id")
         .eq("agency_id", ctx.agencyId)
-        .eq("file_name", filename)
-        .like("upload_source", "gmail%")
-        .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString())
+        .eq("gmail_message_id", msgId)
+        .eq("gmail_attachment_id", attId)
         .maybeSingle();
       if (existing?.id) continue;
 
@@ -374,6 +378,7 @@ async function insertSourceDocument(
       uploaded_at: att.receivedAt,
       gmail_message_id: att.messageId || null,
       gmail_thread_id: att.threadId || null,
+      gmail_attachment_id: att.attachmentId || null,
       notes: `subject: ${att.subject}${att.parentArchive ? ` | extracted_from: ${att.parentArchive}` : ""}`,
     })
     .select("id")
