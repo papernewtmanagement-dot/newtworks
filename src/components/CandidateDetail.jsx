@@ -199,6 +199,51 @@ const characterFloorPassed = (detail, prefix) => {
   return scores.every(s => Number(s) >= 7);
 };
 
+// ─── Interview scoring helpers ─────────────────────────────────────
+// Read per-probe score + verdict from interview_answers[source] and derive
+// construct from source prefix. Mapping per hiregauge_rules
+// rule_type=interview_score_rubric row "Probe source to construct mapping".
+const constructForSource = (source) => {
+  if (!source) return "nature";
+  const s = String(source);
+  if (s.startsWith("warmup:") || s === "candidate_questions" || s.startsWith("motivation:")) return "drivers";
+  if (s.startsWith("character_floor:") || s.startsWith("validity:")) return "nurture";
+  if (s.startsWith("resume:") && /(agent-title|title-float|gap|honesty|misattrib)/i.test(s)) return "nurture";
+  return "nature"; // default: manual:*, resume:*, framework:archetype:*, structure:*, trait:*, behavioral_tell:*
+};
+
+const verdictPillColors = (verdict) => {
+  const v = String(verdict || "").toLowerCase();
+  if (v === "green")               return { bg: T.greenLt, fg: T.green };
+  if (v === "yellow" || v === "amber") return { bg: T.amberLt, fg: T.amber };
+  if (v === "red")                 return { bg: T.redLt, fg: T.red };
+  if (v === "no_answer")           return { bg: T.slate100, fg: T.slate500 };
+  return null;
+};
+
+const renderScorePill = (entry, source) => {
+  const score = entry?.score;
+  const verdict = entry?.verdict;
+  if (score == null && !verdict) return null;
+  const construct = entry?.construct || constructForSource(source);
+  const colors = verdictPillColors(verdict) || { bg: T.slate100, fg: T.slate600 };
+  const scoreDisplay = (verdict === "no_answer" || score == null) ? "—" : `${score}/10`;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
+      {construct} · {scoreDisplay}
+    </span>
+  );
+};
+
+const verdictBandColors = (verdict) => {
+  const v = String(verdict || "").toLowerCase();
+  if (v === "hire")         return { bg: T.greenLt, fg: T.green };
+  if (v === "consider")     return { bg: T.blueLt || T.slate100, fg: T.blue || T.slate700 };
+  if (v === "lean_decline") return { bg: T.amberLt, fg: T.amber };
+  if (v === "decline")      return { bg: T.redLt, fg: T.red };
+  return { bg: T.slate100, fg: T.slate600 };
+};
+
 // ─── Sub-components ────────────────────────────────────────────────
 
 const Section = ({ title, children, tone }) => (
@@ -817,6 +862,37 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
         60-min interview: 5 min rapport · 10 min warm-up · 30 min deep-dive · 10 min candidate Qs · 5 min close
       </div>
 
+      {/* Composite grade header — shows when iv_* scores have been persisted */}
+      {detail?.iv_composite != null && (
+        <div style={{ marginBottom: 16, padding: 12, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>
+              {Number(detail.iv_composite).toFixed(1)}
+            </span>
+            <span style={{ fontSize: 11, color: T.slate500, fontWeight: 600 }}>/ 100 composite</span>
+            {detail?.iv_verdict && (() => {
+              const bc = verdictBandColors(detail.iv_verdict);
+              return (
+                <span style={{ padding: "3px 10px", fontSize: 11, fontWeight: 700, color: bc.fg, background: bc.bg, borderRadius: 12, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  {String(detail.iv_verdict).replace(/_/g, " ")}
+                  {detail?.iv_verdict_reason && ` · ${String(detail.iv_verdict_reason).replace(/_/g, " ")}`}
+                </span>
+              );
+            })()}
+            {detail?.iv_scored_at && (
+              <span style={{ fontSize: 10, color: T.slate400, marginLeft: "auto", fontStyle: "italic" }}>
+                Graded {new Date(detail.iv_scored_at).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 14, fontSize: 11, color: T.slate700, flexWrap: "wrap" }}>
+            <span><strong>Nature</strong> {detail.iv_nature != null ? Number(detail.iv_nature).toFixed(1) : "—"} <span style={{ color: T.slate400 }}>× 14.3%</span></span>
+            <span><strong>Nurture</strong> {detail.iv_nurture != null ? Number(detail.iv_nurture).toFixed(1) : "—"} <span style={{ color: T.slate400 }}>× 42.9%</span></span>
+            <span><strong>Drivers</strong> {detail.iv_drivers != null ? Number(detail.iv_drivers).toFixed(1) : "—"} <span style={{ color: T.slate400 }}>× 42.9%</span></span>
+          </div>
+        </div>
+      )}
+
       {/* Warm-Up — 3 fixed questions, same every candidate. Captured. */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -831,8 +907,11 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
           const currentAnswer = detail?.interview_answers?.[w.key]?.answer || "";
           return (
             <div key={w.key} style={{ padding: 10, background: T.white, borderRadius: 7, marginBottom: 8, borderLeft: `3px solid ${T.slate400}` }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, marginBottom: 6 }}>
-                <strong>{w.n}.</strong> {w.q}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T.slate900, flex: 1 }}>
+                  <strong>{w.n}.</strong> {w.q}
+                </div>
+                {renderScorePill(detail?.interview_answers?.[w.key], w.key)}
               </div>
               <textarea
                 value={currentAnswer}
@@ -887,6 +966,7 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
                         {origin.label}
                       </span>
                       <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{origin.detail}</span>
+                      {renderScorePill(detail?.interview_answers?.[src], src)}
                       <span style={{ fontSize: 9, color: T.slate400, fontFamily: "monospace", marginLeft: "auto" }}>{p.source}</span>
                     </div>
                   )}
@@ -941,8 +1021,11 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
           const currentAnswer = detail?.interview_answers?.[src]?.answer || "";
           return (
             <div style={{ padding: 10, background: T.white, borderRadius: 7, borderLeft: `3px solid ${T.slate400}` }}>
-              <div style={{ fontSize: 11, color: T.slate600, marginBottom: 6, fontStyle: "italic" }}>
-                Capture the questions the candidate asks — content and quality of their questions is a signal.
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ fontSize: 11, color: T.slate600, flex: 1, fontStyle: "italic" }}>
+                  Capture the questions the candidate asks — content and quality of their questions is a signal.
+                </div>
+                {renderScorePill(detail?.interview_answers?.[src], src)}
               </div>
               <textarea
                 value={currentAnswer}
