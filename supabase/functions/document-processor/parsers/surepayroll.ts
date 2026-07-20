@@ -538,7 +538,12 @@ export async function processSurePayrollParsed(opts: {
     }
   }
 
-  const { data: alertsResolved } = await sb.from("alerts").update({ is_resolved: true, resolved_at: new Date().toISOString() }).eq("agency_id", opts.agencyId).eq("module_reference", "payroll_run").eq("is_resolved", false).lte("due_date", parsed.check_date).select("id");
+  // Fix 2026-07-20: module_reference is stored as "payroll_run:<pay_period_end>"
+  // (per payroll_weekly_nag), not the bare literal "payroll_run" this code
+  // previously matched — the .eq comparison never hit anything, so alerts
+  // stayed open silently after every successful import. Match on the exact
+  // pay_period_end this ingest closes.
+  const { data: alertsResolved } = await sb.from("alerts").update({ is_resolved: true, resolved_at: new Date().toISOString() }).eq("agency_id", opts.agencyId).eq("module_reference", `payroll_run:${parsed.pay_period_end}`).eq("is_resolved", false).select("id");
 
   await callComposio({
     apiKey: opts.composioApiKey, userId: opts.composioUserId, connectedAccountId: opts.gmailAccountId,
