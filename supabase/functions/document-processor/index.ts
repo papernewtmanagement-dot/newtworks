@@ -150,18 +150,19 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
         const attId = a?.attachmentId;
         if (!filename || !attId) continue;
 
-        // Idempotency: (gmail_message_id, gmail_attachment_id) uniquely
-        // identifies a Gmail attachment. Prior filename-based dedupe silently
-        // skipped generic-named repeats (SF sending "Payroll Summary.pdf"
-        // collided with a legacy row from a prior week). No time window
-        // needed — the ID tuple is globally unique.
+        // Idempotency: (gmail_message_id, file_name). Message ID is a stable
+        // Gmail identifier; filenames within a single message are unique in
+        // practice. Prior key was file_name alone across all-of-gmail, which
+        // silently skipped generic-named repeats (SF sending "Payroll Summary.pdf"
+        // collided with a legacy row from a prior week). Attachment IDs are
+        // NOT stable across Gmail API calls, so cannot be part of the key.
         const msgId = m.messageId ?? m.id;
         const { data: existing } = await sb
           .from("documents")
           .select("id")
           .eq("agency_id", ctx.agencyId)
           .eq("gmail_message_id", msgId)
-          .eq("gmail_attachment_id", attId)
+          .eq("file_name", filename)
           .maybeSingle();
         if (existing?.id) continue;
 
@@ -186,14 +187,14 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
       const attId = p?.body?.attachmentId;
       if (!attId) continue;
 
-      // Idempotency: same as above — (gmail_message_id, gmail_attachment_id).
+      // Idempotency: same as above — (gmail_message_id, file_name).
       const msgId = m.id;
       const { data: existing } = await sb
         .from("documents")
         .select("id")
         .eq("agency_id", ctx.agencyId)
         .eq("gmail_message_id", msgId)
-        .eq("gmail_attachment_id", attId)
+        .eq("file_name", filename)
         .maybeSingle();
       if (existing?.id) continue;
 
