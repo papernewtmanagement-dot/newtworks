@@ -240,7 +240,7 @@ const renderScorePill = (entry, _source) => {
         const score = s.score;
         const verdict = s.verdict;
         const colors = verdictPillColors(verdict) || { bg: T.slate100, fg: T.slate600 };
-        const scoreDisplay = (verdict === "no_answer" || score == null) ? "—" : `${score}/10`;
+        const scoreDisplay = (verdict === "no_answer" || score == null) ? "—" : String(score * 10);
         return (
           <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
             {c} · {scoreDisplay}
@@ -927,9 +927,8 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
                   <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
                     {r.label} <span style={{ color: T.slate400, fontWeight: 500 }}>· weight {r.weight}</span>
                   </div>
-                  <div style={{ fontSize: 28, fontWeight: 800, color: r.score == null ? T.slate400 : T.slate900, lineHeight: 1.1, marginBottom: 8 }}>
-                    {r.score != null ? Number(r.score).toFixed(1) : "—"}
-                    <span style={{ fontSize: 11, color: T.slate500, fontWeight: 400 }}> / 100</span>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: r.score == null ? T.slate400 : T.slate900, lineHeight: 1.1, marginBottom: 8 }}>
+                    {r.score != null ? Math.round(Number(r.score)) : "—"}
                   </div>
                   <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 6 }}>
                     {r.contribs.length === 0 ? (
@@ -938,7 +937,7 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
                       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                         {r.contribs.map((a) => {
                           const colors = verdictPillColors(a.verdict) || { bg: T.slate100, fg: T.slate600 };
-                          const scoreDisplay = (a.verdict === "no_answer" || a.score == null) ? "—" : `${a.score}/10`;
+                          const scoreDisplay = (a.verdict === "no_answer" || a.score == null) ? "—" : String(a.score * 10);
                           return (
                             <div key={a.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: T.slate700 }}>
                               <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 9, color: T.slate500, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={a.key}>{a.key}</span>
@@ -958,11 +957,10 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
             <div style={{ paddingTop: 10, borderTop: `2px solid ${T.slate300}`, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Composite</span>
               <span style={{ fontSize: 11, color: T.slate600 }}>
-                0.143 × {detail?.iv_nature != null ? Number(detail.iv_nature).toFixed(1) : "—"} + 0.429 × {detail?.iv_nurture != null ? Number(detail.iv_nurture).toFixed(1) : "—"} + 0.429 × {detail?.iv_drivers != null ? Number(detail.iv_drivers).toFixed(1) : "—"} =
+                0.143 × {detail?.iv_nature != null ? Math.round(Number(detail.iv_nature)) : "—"} + 0.429 × {detail?.iv_nurture != null ? Math.round(Number(detail.iv_nurture)) : "—"} + 0.429 × {detail?.iv_drivers != null ? Math.round(Number(detail.iv_drivers)) : "—"} =
               </span>
               <span style={{ marginLeft: "auto", fontSize: 24, fontWeight: 800, color: detail?.iv_composite == null ? T.slate400 : T.slate900 }}>
-                {detail?.iv_composite != null ? Number(detail.iv_composite).toFixed(2) : "—"}
-                <span style={{ fontSize: 11, color: T.slate500, fontWeight: 400 }}> / 100</span>
+                {detail?.iv_composite != null ? Math.round(Number(detail.iv_composite)) : "—"}
               </span>
               {detail?.iv_verdict && (() => {
                 const bc = verdictBandColors(detail.iv_verdict);
