@@ -1491,6 +1491,41 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const saveRC = () => saveFields(["rc_notes", "ref_nature", "ref_nurture", "ref_drivers"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
 
+  const saveDecline = async () => {
+    if (!detail?.id) return;
+    if (!detail.decline_reason) {
+      alert("Please select a decline reason before declining.");
+      return;
+    }
+    if (!window.confirm(`Decline ${detail.first_name || ""} ${detail.last_name || ""}? They will be moved to the Declined view.`)) return;
+    setSavingSection("decline");
+    const updates = {
+      status: "declined",
+      status_updated_at: new Date().toISOString(),
+      decline_reason: detail.decline_reason,
+      final_decision: "no_hire",
+      decision_at: new Date().toISOString(),
+    };
+    if (detail.decision_notes) updates.decision_notes = detail.decision_notes;
+    const { error } = await supabase
+      .from("hiring_candidates")
+      .update(updates)
+      .eq("id", detail.id);
+    if (error) {
+      setSavingSection(null);
+      alert("Decline failed: " + error.message);
+      return;
+    }
+    const { data } = await supabase
+      .from("v_hiring_candidates")
+      .select("*")
+      .eq("id", detail.id)
+      .maybeSingle();
+    setSavingSection(null);
+    if (data) setDetail(data);
+    if (typeof onUpdate === "function") onUpdate(detail.id, "declined");
+  };
+
   // Update one probe's answer text in local state. Save button batch-writes
   // to hiring_candidates.interview_answers jsonb.
   const updateAnswer = (source, answerText) => {
@@ -2139,6 +2174,45 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           )}
         </div>
       </Section>
+
+      {/* Decline Candidate — moves out of active pipeline into Declined view */}
+      {detail?.status !== "declined" && (
+        <Section title="Decline Candidate" tone={T.redLt}>
+          <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8 }}>
+            Moves this candidate out of the active pipeline into the Declined view. Sets Final Decision to No Hire.
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Decline reason</label>
+            <select
+              value={detail?.decline_reason || ""}
+              onChange={(e) => updateField("decline_reason", e.target.value || null)}
+              style={{ padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, minWidth: 220 }}
+            >
+              <option value="">Select a reason...</option>
+              <option value="active_applicant">Active — declined</option>
+              <option value="offer_rescinded">Offer rescinded</option>
+              <option value="calibration_only">Calibration test only</option>
+              <option value="former_team">Former team member</option>
+            </select>
+          </div>
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={saveDecline}
+              disabled={savingSection === "decline" || !detail?.decline_reason}
+              style={{
+                padding: "7px 14px", fontSize: 12, fontWeight: 600,
+                color: T.white,
+                background: detail?.decline_reason ? T.red : T.slate300,
+                border: "none", borderRadius: 7,
+                cursor: (savingSection === "decline" || !detail?.decline_reason) ? "not-allowed" : "pointer",
+              }}
+            >
+              {savingSection === "decline" ? "Declining..." : "Decline Candidate"}
+            </button>
+            <span style={{ fontSize: 10, color: T.slate500 }}>Reasoning uses the notes field above.</span>
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
