@@ -877,9 +877,10 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
         60-min interview: 5 min rapport · 10 min warm-up · 30 min deep-dive · 10 min candidate Qs · 5 min close
       </div>
 
-      {/* Score breakdown — per-construct list of contributing answers, per-construct
-          mean, composite math footer. Shows how detail.iv_composite was assembled
-          from the interview_answers per-construct scores (step 3, 2026-07-20). */}
+      {/* Score breakdown — 3-column grid (Nature | Nurture | Drivers), each column showing
+          the per-construct mean (big) + weight + contributing answers. Grid auto-wraps to
+          fewer columns / stacked rows on narrow viewports. Composite math footer below.
+          Shows how detail.iv_composite was assembled from interview_answers scores. */}
       {(() => {
         const answers = detail?.interview_answers || {};
         const constructOrder = [
@@ -907,7 +908,8 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
         }
         return (
           <div style={{ marginBottom: 16, padding: 12, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4 }}>
                 Score breakdown
               </span>
@@ -917,45 +919,49 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
                 </span>
               )}
             </div>
-            {rows.map((r) => (
-              <div key={r.key} style={{ marginBottom: 10 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, borderBottom: `1px solid ${T.slate200}`, paddingBottom: 3 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: T.slate800 }}>{r.label}</span>
-                  <span style={{ fontSize: 10, color: T.slate500 }}>weight {r.weight}</span>
-                  <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: T.slate900 }}>
-                    {r.score != null ? Number(r.score).toFixed(1) : "—"}
-                    <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400 }}> / 100 mean</span>
-                  </span>
-                </div>
-                {r.contribs.length === 0 ? (
-                  <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", paddingLeft: 6 }}>No answers scored on this construct.</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    {r.contribs.map((a) => {
-                      const colors = verdictPillColors(a.verdict) || { bg: T.slate100, fg: T.slate600 };
-                      const scoreDisplay = (a.verdict === "no_answer" || a.score == null) ? "—" : `${a.score}/10`;
-                      return (
-                        <div key={a.key} style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 6, fontSize: 11, color: T.slate700 }}>
-                          <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 10, color: T.slate500, flex: 1 }}>{a.key}</span>
-                          <span style={{ padding: "1px 6px", fontSize: 9, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                            {scoreDisplay}
-                          </span>
-                        </div>
-                      );
-                    })}
+            {/* 3 columns — auto-fit wraps to stacked rows on narrow viewports */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
+              {rows.map((r) => (
+                <div key={r.key} style={{ padding: 10, background: T.white, borderRadius: 8, border: `1px solid ${T.slate200}` }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
+                    {r.label} <span style={{ color: T.slate400, fontWeight: 500 }}>· weight {r.weight}</span>
                   </div>
-                )}
-              </div>
-            ))}
+                  <div style={{ fontSize: 28, fontWeight: 800, color: r.score == null ? T.slate400 : T.slate900, lineHeight: 1.1, marginBottom: 8 }}>
+                    {r.score != null ? Number(r.score).toFixed(1) : "—"}
+                    <span style={{ fontSize: 11, color: T.slate500, fontWeight: 400 }}> / 100</span>
+                  </div>
+                  <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 6 }}>
+                    {r.contribs.length === 0 ? (
+                      <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic" }}>No answers scored on this construct.</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        {r.contribs.map((a) => {
+                          const colors = verdictPillColors(a.verdict) || { bg: T.slate100, fg: T.slate600 };
+                          const scoreDisplay = (a.verdict === "no_answer" || a.score == null) ? "—" : `${a.score}/10`;
+                          return (
+                            <div key={a.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: T.slate700 }}>
+                              <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 9, color: T.slate500, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={a.key}>{a.key}</span>
+                              <span style={{ padding: "1px 6px", fontSize: 9, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 8 }}>
+                                {scoreDisplay}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
             {/* Composite math footer */}
-            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `2px solid ${T.slate300}`, display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ paddingTop: 10, borderTop: `2px solid ${T.slate300}`, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Composite</span>
-              <span style={{ fontSize: 10, color: T.slate600 }}>
+              <span style={{ fontSize: 11, color: T.slate600 }}>
                 0.143 × {detail?.iv_nature != null ? Number(detail.iv_nature).toFixed(1) : "—"} + 0.429 × {detail?.iv_nurture != null ? Number(detail.iv_nurture).toFixed(1) : "—"} + 0.429 × {detail?.iv_drivers != null ? Number(detail.iv_drivers).toFixed(1) : "—"} =
               </span>
-              <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900, marginLeft: "auto" }}>
+              <span style={{ marginLeft: "auto", fontSize: 24, fontWeight: 800, color: detail?.iv_composite == null ? T.slate400 : T.slate900 }}>
                 {detail?.iv_composite != null ? Number(detail.iv_composite).toFixed(2) : "—"}
-                <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400 }}> / 100</span>
+                <span style={{ fontSize: 11, color: T.slate500, fontWeight: 400 }}> / 100</span>
               </span>
               {detail?.iv_verdict && (() => {
                 const bc = verdictBandColors(detail.iv_verdict);
