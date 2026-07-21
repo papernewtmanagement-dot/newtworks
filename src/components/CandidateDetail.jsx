@@ -1676,6 +1676,17 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const layerThresh = (k) => is100(k) ? { pass: 70, consider: 50 } : { pass: 7.5, consider: 6.0 };
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
+              // Verdict-driven color (used when a stored verdict may override the score-based
+              // read — e.g. interview character-floor decline where composite is above 50 but
+              // verdict is decline. Pill/cell color must follow the verdict text, not the score.
+              const verdictBg = (v) => (v === "pass" || v === "hire") ? T.greenLt
+                                    : (v === "consider" || v === "lean_hire" || v === "lean_decline") ? T.amberLt
+                                    : (v === "decline" || v === "no_hire") ? T.redLt
+                                    : T.slate50;
+              const verdictFg = (v) => (v === "pass" || v === "hire") ? T.green
+                                    : (v === "consider" || v === "lean_hire" || v === "lean_decline") ? T.amber
+                                    : (v === "decline" || v === "no_hire") ? T.red
+                                    : T.slate500;
               // 0-100 layer scores rendered as rounded ints; 0-10 layers as x.xx.
               const fmtLayerScore = (v, k) => v == null ? "—"
                 : is100(k) ? String(Math.round(Number(v)))
@@ -1812,12 +1823,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                   </td>
                                 );
                               })}
-                              <td style={{ padding: cellPad, background: layerBg(layer.score, layer.key), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
+                              <td style={{ padding: cellPad, background: layer.score == null ? T.slate50 : verdictBg(layerVerdict(layer)), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
                                 <div style={{ fontSize: layerTotalFont, fontWeight: 800, color: layer.score == null ? T.slate500 : T.slate900 }}>
                                   {fmtLayerScore(layer.score, layer.key)}
                                 </div>
                                 <div style={{ marginTop: 2 }}>
-                                  <span style={{ display: "inline-block", padding: isPhone ? "1px 4px" : "2px 6px", borderRadius: 3, fontSize: verdictPillFont, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : layerFg(layer.score, layer.key), textTransform: "uppercase", letterSpacing: isPhone ? 0.2 : 0.4 }}>
+                                  <span style={{ display: "inline-block", padding: isPhone ? "1px 4px" : "2px 6px", borderRadius: 3, fontSize: verdictPillFont, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : verdictFg(layerVerdict(layer)), textTransform: "uppercase", letterSpacing: isPhone ? 0.2 : 0.4 }}>
                                     {verdictLabel(layerVerdict(layer))}
                                   </span>
                                 </div>
@@ -1871,12 +1882,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                       {/* Overall result row — score + verdict + confidence + threshold previews */}
                       <tr>
                         <td style={{ ...rowLabelBase, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
-                        <td colSpan={4} style={{ padding: isPhone ? "8px 6px" : "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
+                        <td colSpan={4} style={{ padding: isPhone ? "8px 6px" : "10px 12px", background: threeConstruct.verdict ? verdictBg(threeConstruct.verdict) : scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${threeConstruct.verdict ? verdictFg(threeConstruct.verdict) : scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: isPhone ? 6 : 10, flexWrap: "wrap", marginBottom: 6 }}>
                             <span style={{ fontSize: resultFont, fontWeight: 800, color: T.slate900 }}>
                               {threeConstruct.score_0_10 != null ? Math.round(Number(threeConstruct.score_0_10)) : "—"}
                             </span>
-                            <span style={{ padding: isPhone ? "2px 6px" : "3px 10px", borderRadius: 4, fontSize: isPhone ? 9 : 10, fontWeight: 700, color: T.white, background: scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
+                            <span style={{ padding: isPhone ? "2px 6px" : "3px 10px", borderRadius: 4, fontSize: isPhone ? 9 : 10, fontWeight: 700, color: T.white, background: threeConstruct.verdict ? verdictFg(threeConstruct.verdict) : scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
                               {(threeConstruct.verdict || "insufficient data").replace(/_/g, " ")}
                             </span>
                             <span style={{ fontSize: isPhone ? 10 : 11, color: T.slate600 }}>
