@@ -283,33 +283,49 @@ const MetricBox = ({ label, value, extra }) => (
 // warning glyph). Optional `band` drives left-border color and value tint
 // via bandColor(); pass "none" for a neutral grey stripe, null for no band.
 //
-// Optional `lssDelta` (numeric): when non-trivial (|delta| >= 0.5), turns the
-// row background into a horizontal bar visualization (0..100 scale).
-//   - Score-band-colored section = base score (value - delta)
-//   - Positive delta: blue extension from base to value (LSS boost)
-//   - Negative delta: red extension from value to base (LSS dampen)
-// Base bar's width is proportional to the pre-LSS score; extension's width
-// is proportional to |delta| — so +10 on 50 shows a blue extension = 1/5
-// the width of the base bar. Rest of the row bg is neutral (slate50).
-const AssessRow = ({ label, value, extra, band, subline, lssDelta }) => {
+// Universal gauge bar: the row background renders as a horizontal fill (0-100%)
+// showing the value's magnitude on its scale. Score-band-colored fill up to
+// (value/max)% of the row width, neutral rest to the right.
+//   - `max` (default 100) scales numeric values (e.g. 12 for LSS Math, 35 for LSS Total).
+//   - `noBar` opts out (for time values like LSS Speed where "fill" would mislead).
+//   - Text values with a `band` render a band-inferred fill (green 85 / yellow 55 / red 25).
+//
+// Optional `lssDelta` (numeric, on the same scale as value): adds a colored extension
+// past the base bar — blue if positive (LSS boost), red if negative (LSS dampen).
+// Extension width proportional to |delta|/max, so +10 on 50 (max 100) = 1/5 the
+// width of the base bar.
+const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar }) => {
   const colors = band ? bandColor(band) : null;
   const bandBg = colors ? colors.bg : T.slate50;
   const stripe = colors ? colors.fg : T.slate200;
   const valueColor = colors && (band === "green" || band === "yellow" || band === "red") ? colors.fg : T.slate900;
-  let bg = bandBg;
+  const numMax = typeof max === "number" && max > 0 ? max : 100;
   const numValue = typeof value === "number" ? value : Number(value);
-  const hasBar = lssDelta != null && Number.isFinite(numValue) && numValue >= 0 && numValue <= 100 && Math.abs(lssDelta) >= 0.5;
-  if (hasBar) {
-    const v = Math.max(0, Math.min(100, numValue));
-    const d = Number(lssDelta);
-    const extColor = d > 0 ? "rgba(37, 99, 235, 0.55)" : "rgba(220, 38, 38, 0.55)";
+  let fillPct = null;
+  if (!noBar) {
+    if (Number.isFinite(numValue)) {
+      fillPct = Math.max(0, Math.min(100, (numValue / numMax) * 100));
+    } else if (typeof value === "string" && value !== "" && band && band !== "none") {
+      fillPct = band === "green" ? 85 : band === "yellow" ? 55 : band === "red" ? 25 : null;
+    }
+  }
+  let bg = bandBg;
+  if (fillPct != null) {
     const rest = T.slate50 || "#f8fafc";
-    if (d > 0) {
-      const basePct = Math.max(0, Math.min(100, v - d));
-      bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${basePct}%, ${extColor} ${basePct}%, ${extColor} ${v}%, ${rest} ${v}%, ${rest} 100%)`;
+    const d = Number(lssDelta);
+    const hasLss = Number.isFinite(d) && Math.abs(d) >= 0.5 && Number.isFinite(numValue);
+    if (hasLss) {
+      const deltaPct = Math.max(-100, Math.min(100, (d / numMax) * 100));
+      const extColor = d > 0 ? "rgba(37, 99, 235, 0.55)" : "rgba(220, 38, 38, 0.55)";
+      if (d > 0) {
+        const basePct = Math.max(0, Math.min(100, fillPct - deltaPct));
+        bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${basePct}%, ${extColor} ${basePct}%, ${extColor} ${fillPct}%, ${rest} ${fillPct}%, ${rest} 100%)`;
+      } else {
+        const totalPct = Math.max(0, Math.min(100, fillPct - deltaPct));
+        bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${fillPct}%, ${extColor} ${fillPct}%, ${extColor} ${totalPct}%, ${rest} ${totalPct}%, ${rest} 100%)`;
+      }
     } else {
-      const totalPct = Math.max(0, Math.min(100, v - d));
-      bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${v}%, ${extColor} ${v}%, ${extColor} ${totalPct}%, ${rest} ${totalPct}%, ${rest} 100%)`;
+      bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${fillPct}%, ${rest} ${fillPct}%, ${rest} 100%)`;
     }
   }
   return (
@@ -707,21 +723,25 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
           <AssessRow
             label="LSS Math"
             value={detail?.lss_math_accuracy}
+            max={12}
             extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
           />
           <AssessRow
             label="LSS Verbal"
             value={detail?.lss_verbal_accuracy}
+            max={10}
             extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
           />
           <AssessRow
             label="LSS Problem Solving"
             value={detail?.lss_problem_solving_accuracy}
+            max={9}
             extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
           />
           <AssessRow
             label="LSS Total"
             value={detail?.lss_total_accuracy}
+            max={35}
             extra={detail?.lss_total_accuracy != null ? "/35" : null}
             band={
               detail?.lss_total_accuracy == null ? "none"
@@ -739,6 +759,7 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
           />
           <AssessRow
             label="LSS Speed"
+            noBar
             value={(() => {
               const m = Number(detail?.lss_math_speed_seconds);
               const v = Number(detail?.lss_verbal_speed_seconds);
@@ -814,9 +835,16 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
                   const isSelected = r.key === currentSelected;
                   const isBest = r.key === bestKey;
                   const colors = isBest ? bandColor("green") : null;
-                  const baseBg = colors ? colors.bg : T.slate50;
+                  const baseBg = colors ? colors.bg : (T.slate200 || "#e2e8f0");
                   const baseStripe = colors ? colors.fg : T.slate200;
                   const valueColor = isBest ? colors.fg : T.slate900;
+                  // Gauge fill: OS/100 of row width. Best-fit fills in greenLt, others fill in
+                  // muted slate200 so the gauge is visible without implying "best." Rest is slate50.
+                  const numOs = Number(r.os);
+                  const restBg = T.slate50 || "#f8fafc";
+                  const gaugeBg = Number.isFinite(numOs)
+                    ? `linear-gradient(to right, ${baseBg} 0%, ${baseBg} ${Math.max(0, Math.min(100, numOs))}%, ${restBg} ${Math.max(0, Math.min(100, numOs))}%, ${restBg} 100%)`
+                    : (colors ? baseBg : restBg);
                   return (
                     <button
                       key={r.key}
@@ -824,7 +852,7 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
                       onClick={() => setSelectedRole(r.key)}
                       style={{
                         display: "flex", alignItems: "center", justifyContent: "space-between",
-                        padding: "6px 10px", background: baseBg, borderRadius: 6,
+                        padding: "6px 10px", background: gaugeBg, borderRadius: 6,
                         borderTop: "none", borderRight: "none", borderBottom: "none",
                         borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
                         outline: isSelected ? `1px solid ${T.slate400}` : "none",
