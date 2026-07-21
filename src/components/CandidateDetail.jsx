@@ -1846,8 +1846,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                         {constructs.map((c) => (
                           <td key={c.key} style={{ padding: isPhone ? "6px 3px" : "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                             <div style={{ fontSize: subtotalFont, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
-                              {c.score != null ? Number(c.score).toFixed(2) : "—"}
-                              <span style={{ fontSize: isPhone ? 8 : 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                              {c.score != null ? Math.round(Number(c.score)) : "—"}
                             </div>
                           </td>
                         ))}
@@ -1859,8 +1858,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                         <td colSpan={4} style={{ padding: isPhone ? "8px 6px" : "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: isPhone ? 6 : 10, flexWrap: "wrap", marginBottom: 6 }}>
                             <span style={{ fontSize: resultFont, fontWeight: 800, color: T.slate900 }}>
-                              {threeConstruct.score_0_10 != null ? Number(threeConstruct.score_0_10).toFixed(2) : "—"}
-                              <span style={{ fontSize: isPhone ? 9 : 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                              {threeConstruct.score_0_10 != null ? Math.round(Number(threeConstruct.score_0_10)) : "—"}
                             </span>
                             <span style={{ padding: isPhone ? "2px 6px" : "3px 10px", borderRadius: 4, fontSize: isPhone ? 9 : 10, fontWeight: 700, color: T.white, background: scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
                               {(threeConstruct.verdict || "insufficient data").replace(/_/g, " ")}
