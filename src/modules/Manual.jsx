@@ -344,8 +344,69 @@ function GlossaryList({ manualType, parentId }) {
 }
 
 
+// ─── Team-visibility gate ─────────────────────────────────────
+// Admin users see every row; non-admin users see rows only up to and
+// including the first root with divider_after=true. Everything after
+// that root (in the sorted root list) plus all their descendants is
+// filtered out. Root ordering matches buildTree's comparator so this
+// aligns with what the sidebar would render.
+const ADMIN_ROLES = ["owner", "manager"];
+
+function filterBelowDivider(rows, userRole) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows || [];
+  if (ADMIN_ROLES.includes(userRole)) return rows;
+
+  const byId = new Map(rows.map((r) => [r.confluence_page_id, r]));
+  const roots = rows.filter(
+    (r) => !r.parent_page_id || !byId.has(r.parent_page_id),
+  );
+
+  const cmp = (a, b) => {
+    const ao = a?.sort_order;
+    const bo = b?.sort_order;
+    const aNull = ao == null;
+    const bNull = bo == null;
+    if (aNull && !bNull) return 1;
+    if (!aNull && bNull) return -1;
+    if (!aNull && !bNull && ao !== bo) return ao - bo;
+    return (a?.title || "").localeCompare(b?.title || "");
+  };
+  const sortedRoots = [...roots].sort(cmp);
+
+  const dividerIdx = sortedRoots.findIndex((r) => r?.divider_after);
+  if (dividerIdx === -1) return rows;
+
+  const belowLineRootIds = new Set(
+    sortedRoots.slice(dividerIdx + 1).map((r) => r.confluence_page_id),
+  );
+  if (belowLineRootIds.size === 0) return rows;
+
+  const childrenByParent = new Map();
+  for (const r of rows) {
+    if (!r.parent_page_id) continue;
+    if (!childrenByParent.has(r.parent_page_id)) {
+      childrenByParent.set(r.parent_page_id, []);
+    }
+    childrenByParent.get(r.parent_page_id).push(r.confluence_page_id);
+  }
+  const hiddenIds = new Set(belowLineRootIds);
+  const queue = [...belowLineRootIds];
+  while (queue.length) {
+    const pid = queue.shift();
+    const kids = childrenByParent.get(pid) || [];
+    for (const kid of kids) {
+      if (!hiddenIds.has(kid)) {
+        hiddenIds.add(kid);
+        queue.push(kid);
+      }
+    }
+  }
+
+  return rows.filter((r) => !hiddenIds.has(r.confluence_page_id));
+}
+
 // ─── Module ───────────────────────────────────────────────────
-export default function Manual({ manualType }) {
+export default function Manual({ manualType, userRole }) {
   const cfg = MANUAL_CONFIG[manualType];
   if (!cfg) {
     return (
@@ -417,7 +478,8 @@ export default function Manual({ manualType }) {
         if (cancelled) return;
         if (qErr) { setError(qErr.message); setRows([]); }
         else {
-          const list = Array.isArray(data) ? data : [];
+          const raw = Array.isArray(data) ? data : [];
+          const list = filterBelowDivider(raw, userRole);
           setRows(list);
           // Default selection: root (no parent), or first row if no root
           // Default selection deferred to the auto-default useEffect below,
@@ -431,7 +493,7 @@ export default function Manual({ manualType }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [manualType]);
+  }, [manualType, userRole]);
 
   // Auto-default selection: once rows are loaded and selectedId is still
   // null (i.e. URL was bare /handbook), pick the root page and
