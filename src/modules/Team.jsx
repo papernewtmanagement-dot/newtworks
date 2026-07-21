@@ -225,8 +225,8 @@ function useProducerROI() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
-const scoreColor = (s) => s >= 8 ? T.green : s >= 6 ? T.amber : T.red;
-const scoreBg    = (s) => s >= 8 ? T.greenLt : s >= 6 ? T.amberLt : T.redLt;
+const scoreColor = (s) => s >= 60 ? T.green : s >= 45 ? T.amber : T.red;
+const scoreBg    = (s) => s >= 60 ? T.greenLt : s >= 45 ? T.amberLt : T.redLt;
 const pct = (a, t) => t ? Math.min(100, Math.round((a/t)*100)) : 0;
 const fmt = (n, unit) => unit === "dollars" ? "$"+n.toLocaleString() : unit === "percentage" ? n+"%" : n.toString();
 
@@ -559,9 +559,19 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
                   style={{ background:T.white, border:`1px solid ${selected===app.id?T.blue:T.slate200}`, borderRadius:8, padding:"8px 10px", marginBottom:6, cursor:"pointer" }}
                 >
                   <div style={{ fontSize:11, fontWeight:600, color:T.slate800 }}>{app.first_name} {app.last_name}</div>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
-                    <span style={{ fontSize:9, color:T.slate400 }}>{app.position.split(" ").slice(-1)[0]}</span>
-                    <span style={{ fontSize:11, fontWeight:700, color:scoreColor(app.claude_score) }}>{app.claude_score}/10</span>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4, gap:6 }}>
+                    <span style={{ fontSize:9, color:T.slate400, flexShrink:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{app.position?.split(" ")?.slice(-1)?.[0] || ""}</span>
+                    <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                      {app.resume_avg != null && (
+                        <span style={{ fontSize:10, fontWeight:700, color:scoreColor(Number(app.resume_avg)) }}>R {Math.round(Number(app.resume_avg))}</span>
+                      )}
+                      {app.overall_score != null && (
+                        <span style={{ fontSize:10, fontWeight:700, color:scoreColor(Number(app.overall_score)) }}>A {app.overall_score}</span>
+                      )}
+                      {app.resume_avg == null && app.overall_score == null && (
+                        <span style={{ fontSize:9, color:T.slate400 }}>—</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -619,7 +629,7 @@ const DeclinedTable = ({ declined, onUpdate }) => {
     const num = (v) => (v == null ? -Infinity : v);
     const str = (v) => (v || "").toLowerCase();
     if (sortKey === "cts")         arr.sort((a,b) => (num(a.overall_score) - num(b.overall_score)) * dir);
-    else if (sortKey === "resume") arr.sort((a,b) => (num(a.claude_score)  - num(b.claude_score))  * dir);
+    else if (sortKey === "resume") arr.sort((a,b) => (num(a.resume_avg)    - num(b.resume_avg))    * dir);
     else if (sortKey === "name")   arr.sort((a,b) => str(a.last_name).localeCompare(str(b.last_name)) * dir);
     else if (sortKey === "source") arr.sort((a,b) => str(a.decline_reason).localeCompare(str(b.decline_reason)) * dir);
     else                           arr.sort((a,b) => (new Date(a.created_at) - new Date(b.created_at)) * dir);
@@ -693,8 +703,8 @@ const DeclinedTable = ({ declined, onUpdate }) => {
                     {app.first_name} {app.last_name}
                   </td>
                   <td style={{ ...tdBase, fontSize: 10, color: T.slate600, whiteSpace: "nowrap" }}>{sourceLbl}</td>
-                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: app.claude_score ? scoreColor(app.claude_score) : T.slate400 }}>
-                    {app.claude_score != null ? app.claude_score : "—"}
+                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: app.resume_avg != null ? scoreColor(Number(app.resume_avg)) : T.slate400 }}>
+                    {app.resume_avg != null ? Math.round(Number(app.resume_avg)) : "—"}
                   </td>
                   <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: overallBandColor(app.overall_score) }}>
                     {app.overall_score != null ? app.overall_score : "—"}
@@ -2633,7 +2643,7 @@ export default function Team() {
     let cancelled = false;
     supabase
       .from("hiring_candidates")
-      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_score, claude_summary, interview_focus, notes, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
+      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_score, resume_avg, claude_summary, interview_focus, notes, created_at, is_team_member, team_member_id, overall_score, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
       .eq("agency_id", AGENCY_ID)
       .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
       .order("created_at", { ascending: false })
