@@ -1673,7 +1673,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               // All layers now on 0-100 scale (RPC normalized 2026-07-21). is100() kept for
               // legacy call-site safety but always true; can drop after next cleanup pass.
               const is100 = (k) => true;
-              const layerThresh = (k) => is100(k) ? { pass: 70, consider: 50 } : { pass: 7.5, consider: 6.0 };
+              // Per-layer verdict thresholds mirror hiregauge_three_construct_verdict RPC: resume 70/50; assessment/interview/reference 75/60.
+              const layerThresh = (k) => k === "resume" ? { pass: 70, consider: 50 } : { pass: 75, consider: 60 };
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
               // Verdict-driven color (used when a stored verdict may override the score-based
@@ -1691,17 +1692,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const fmtLayerScore = (v, k) => v == null ? "—"
                 : is100(k) ? String(Math.round(Number(v)))
                 : Number(v).toFixed(2);
-              // 0-100 verdicts computed from composite via 70/50 thresholds; other layer verdicts come from RPC output.
-              const resumeVerdict = (v) => v == null ? null
-                                        : v >= 70 ? "pass"
-                                        : v >= 50 ? "consider"
-                                        :           "decline";
+              // Score→verdict uses the same per-layer thresholds as layerThresh (resume 70/50, others 75/60).
+              const scoreVerdict = (v, k) => {
+                if (v == null) return null;
+                const t = layerThresh(k);
+                return v >= t.pass ? "pass" : v >= t.consider ? "consider" : "decline";
+              };
               const layerVerdict = (layer) => {
-                if (layer.key === "resume" || layer.key === "assessment") return resumeVerdict(layer.score);
+                if (layer.key === "resume" || layer.key === "assessment") return scoreVerdict(layer.score, layer.key);
                 // Interview: honor stored iv_verdict (character-floor overrides, structural mismatch)
-                // when present, else derive from iv_composite on the 0-100 pass/consider/decline scale.
-                if (layer.key === "interview") return layer.verdict || resumeVerdict(layer.score);
-                return layer.verdict;
+                // when present, else derive from composite on the per-layer scale.
+                if (layer.key === "interview") return layer.verdict || scoreVerdict(layer.score, layer.key);
+                // Reference: same pattern — stored verdict wins, else derived per-layer.
+                return layer.verdict || scoreVerdict(layer.score, layer.key);
               };
               const verdictLabel = (v) => (v || "not_scored").replace(/_/g, " ");
               const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
@@ -1779,15 +1782,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 const cellDisplay = cell == null ? "—"
                                   : is100(layer.key) ? String(Math.round(Number(cell)))
                                   : Number(cell).toFixed(2);
-                                // 0-100 cells use 75/60 thresholds; 0-10 cells use 7.5/6.0.
-                                const cellBg = cell == null ? T.slate50
-                                  : is100(layer.key)
-                                    ? (cell >= 75 ? T.greenLt : cell >= 60 ? T.amberLt : T.redLt)
-                                    : (cell >= 7.5 ? T.greenLt : cell >= 6.0 ? T.amberLt : T.redLt);
-                                const cellFg = cell == null ? T.slate500
-                                  : is100(layer.key)
-                                    ? (cell >= 75 ? T.green : cell >= 60 ? T.amber : T.red)
-                                    : (cell >= 7.5 ? T.green : cell >= 6.0 ? T.amber : T.red);
+                                // Cell coloring uses the layer's own verdict thresholds (resume 70/50, others 75/60).
+                                const cellBg = layerBg(cell, layer.key);
+                                const cellFg = layerFg(cell, layer.key);
                                 return (
                                   <td key={c.key} style={{ padding: cellPad, background: cellBg, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                                     <div style={{ fontSize: cellFont, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
