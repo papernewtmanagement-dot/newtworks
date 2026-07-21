@@ -283,22 +283,18 @@ const MetricBox = ({ label, value, extra }) => (
 // warning glyph). Optional `band` drives left-border color and value tint
 // via bandColor(); pass "none" for a neutral grey stripe, null for no band.
 //
-// Optional `lssDelta` (numeric): when non-trivial (|delta| >= 0.5), overrides
-// the row background with a color tint whose intensity reflects |delta|/15.
-// Positive delta => blue tint (LSS boost); negative => red tint (LSS dampen).
-// Score band info is preserved by the left border stripe.
+// Optional `lssDelta` (numeric): when non-trivial (|delta| >= 0.5), renders
+// a colored right-edge strip whose color reflects LSS boost (blue) vs
+// dampen (red) and whose opacity reflects |delta|/15. Score-band coloring
+// (bg + left stripe + value color) is untouched — LSS lives on the right.
 const AssessRow = ({ label, value, extra, band, subline, lssDelta }) => {
   const colors = band ? bandColor(band) : null;
-  const bandBg = colors ? colors.bg : T.slate50;
+  const bg = colors ? colors.bg : T.slate50;
   const stripe = colors ? colors.fg : T.slate200;
   const valueColor = colors && (band === "green" || band === "yellow" || band === "red") ? colors.fg : T.slate900;
-  let bg = bandBg;
-  if (lssDelta != null && Math.abs(lssDelta) >= 0.5) {
-    const magnitude = Math.min(Math.abs(lssDelta) / 15, 1);
-    const opacity = 0.10 + magnitude * 0.45;
-    const rgb = lssDelta > 0 ? "37, 99, 235" : "220, 38, 38";
-    bg = `rgba(${rgb}, ${opacity})`;
-  }
+  const lssShow = lssDelta != null && Math.abs(lssDelta) >= 0.5;
+  const lssOpacity = lssShow ? (0.30 + Math.min(Math.abs(lssDelta) / 15, 1) * 0.55) : 0;
+  const lssColor = lssShow ? (lssDelta > 0 ? `rgba(37, 99, 235, ${lssOpacity})` : `rgba(220, 38, 38, ${lssOpacity})`) : "transparent";
   return (
     <div style={{
       display: "flex",
@@ -307,6 +303,7 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta }) => {
       background: bg,
       borderRadius: 6,
       borderLeft: `3px solid ${stripe}`,
+      borderRight: `5px solid ${lssColor}`,
       boxSizing: "border-box",
       gap: 2,
     }}>
