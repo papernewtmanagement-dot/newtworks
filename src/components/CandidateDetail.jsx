@@ -1647,16 +1647,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 { key: "drivers", label: "Drivers", weight: cw.drivers, score: threeConstruct.drivers_score },
               ];
               const scoreBg = (v) => v == null ? T.slate50
-                                   : v >= 7.5 ? T.greenLt
-                                   : v >= 6.0 ? T.amberLt
+                                   : v >= 75 ? T.greenLt
+                                   : v >= 60 ? T.amberLt
                                    : T.redLt;
               const scoreFg = (v) => v == null ? T.slate500
-                                   : v >= 7.5 ? T.green
-                                   : v >= 6.0 ? T.amber
+                                   : v >= 75 ? T.green
+                                   : v >= 60 ? T.amber
                                    : T.red;
-              // 0-100 layer: resume, assessment, interview (view-computed). Reference still 0-10 (RPC output).
-              const is100 = (k) => k === "resume" || k === "assessment" || k === "interview";
-              // Layer-total coloring: 0-100 layers use 70/50, other rows 7.5/6.0 (0-10 scale).
+              // All layers now on 0-100 scale (RPC normalized 2026-07-21). is100() kept for
+              // legacy call-site safety but always true; can drop after next cleanup pass.
+              const is100 = (k) => true;
               const layerThresh = (k) => is100(k) ? { pass: 70, consider: 50 } : { pass: 7.5, consider: 6.0 };
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
@@ -1736,8 +1736,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 {layer.label}
                               </td>
                               {constructs.map((c) => {
-                                // Assessment cells → view assessment_* cols. Interview cells → view iv_* cols.
-                                // Reference cells still come from RPC matrix (0-10 scale).
+                                // All layers 0-100 (RPC normalized 2026-07-21). Assessment cells read
+                                // from view assessment_* cols, interview from iv_*, resume/reference
+                                // from RPC matrix.
                                 const cell = layer.key === "assessment"
                                   ? (c.key === "nature" ? detail?.assessment_nature
                                     : c.key === "nurture" ? detail?.assessment_nurture
@@ -1869,9 +1870,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             </span>
                           </div>
                           <div style={{ display: "flex", gap: isPhone ? 8 : 12, fontSize: isPhone ? 9 : 10, color: T.slate600, justifyContent: "center", flexWrap: "wrap" }}>
-                            <span>@7.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
-                            <span>@7.5: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
-                            <span>@8.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
+                            <span>@70: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
+                            <span>@75: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
+                            <span>@80: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
                           </div>
                         </td>
                       </tr>
