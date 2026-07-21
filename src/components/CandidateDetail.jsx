@@ -980,7 +980,7 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
               )}
             </div>
             {/* 3 columns — auto-fit wraps to stacked rows on narrow viewports */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
               {rows.map((r) => (
                 <div key={r.key} style={{ padding: 10, background: T.white, borderRadius: 8, border: `1px solid ${T.slate200}` }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
