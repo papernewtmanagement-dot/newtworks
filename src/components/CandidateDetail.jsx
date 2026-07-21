@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
+import { useViewport } from "../lib/hooks.js";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -1244,6 +1245,7 @@ const ScorecardForm = ({ title, prefix, detail, onFieldChange, onSave, saving, t
 // ─── Main component ────────────────────────────────────────────────
 
 export default function CandidateDetail({ candidate, onBack, onUpdate }) {
+  const { isPhone } = useViewport();
   const [detail, setDetail] = useState(candidate || {});
   const [savingSection, setSavingSection] = useState(null);
   const [bestFit, setBestFit] = useState(null);
@@ -1613,22 +1615,47 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 : layer.verdict;
               const verdictLabel = (v) => (v || "not_scored").replace(/_/g, " ");
               const pctFmt = (w) => w == null ? "" : `${Math.round(Number(w) * 100)}%`;
-              const th = { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center", borderBottom: `1px solid ${T.slate200}` };
-              const rowLabelBase = { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
+              // Phone-aware sizing: tighter paddings, smaller fonts, narrower fixed columns
+              // so the 4×3 matrix fits ~370px viewport without header/value overlap.
+              const th = isPhone
+                ? { padding: "5px 3px", fontSize: 9, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0, textAlign: "center", borderBottom: `1px solid ${T.slate200}`, lineHeight: 1.15 }
+                : { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center", borderBottom: `1px solid ${T.slate200}` };
+              const rowLabelBase = isPhone
+                ? { padding: "6px 6px", fontSize: 10.5, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" }
+                : { padding: "8px 10px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate50, borderRight: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
               const clickableRowLabel = { ...rowLabelBase, cursor: "pointer", userSelect: "none" };
+              const labelColW = isPhone ? 92 : 130;
+              const totalColW = isPhone ? 72 : 110;
+              const cellPad = isPhone ? "5px 4px" : "8px 10px";
+              const cellFont = isPhone ? 12 : 14;
+              const layerTotalFont = isPhone ? 13 : 15;
+              const subtotalFont = isPhone ? 13 : 16;
+              const resultFont = isPhone ? 15 : 18;
+              const weightFont = isPhone ? 8 : 9;
+              const verdictPillFont = isPhone ? 8 : 9;
+              const subDetailFont = isPhone ? 7.5 : 8;
 
               return (
                 <div style={{ marginBottom: 14, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
                     <thead>
                       <tr style={{ background: T.slate50 }}>
-                        <th style={{ ...th, width: 130 }}></th>
+                        <th style={{ ...th, width: labelColW }}></th>
                         {constructs.map((c) => (
                           <th key={c.key} style={th}>
-                            {c.label} <span style={{ color: T.slate500, fontWeight: 500 }}>· {pctFmt(c.weight)}</span>
+                            {isPhone ? (
+                              <>
+                                <div>{c.label}</div>
+                                <div style={{ color: T.slate500, fontWeight: 500, fontSize: weightFont, marginTop: 1 }}>{pctFmt(c.weight)}</div>
+                              </>
+                            ) : (
+                              <>
+                                {c.label} <span style={{ color: T.slate500, fontWeight: 500 }}>· {pctFmt(c.weight)}</span>
+                              </>
+                            )}
                           </th>
                         ))}
-                        <th style={{ ...th, width: 110, borderLeft: `2px solid ${T.slate200}` }}>Total</th>
+                        <th style={{ ...th, width: totalColW, borderLeft: `2px solid ${T.slate200}` }}>Total</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1666,16 +1693,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     ? (cell >= 75 ? T.green : cell >= 60 ? T.amber : T.red)
                                     : (cell >= 7.5 ? T.green : cell >= 6.0 ? T.amber : T.red);
                                 return (
-                                  <td key={c.key} style={{ padding: "8px 10px", background: cellBg, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
+                                  <td key={c.key} style={{ padding: cellPad, background: cellBg, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
+                                    <div style={{ fontSize: cellFont, fontWeight: 700, color: cell == null ? T.slate500 : T.slate900 }}>
                                       {cellDisplay}
                                     </div>
-                                    <div style={{ fontSize: 9, color: cell == null ? T.slate500 : cellFg, fontWeight: 600 }}>
+                                    <div style={{ fontSize: weightFont, color: cell == null ? T.slate500 : cellFg, fontWeight: 600 }}>
                                       weight {pctFmt(w)}
                                     </div>
                                     {layer.key === "assessment" && c.key === "nurture" && (
                                       <div
-                                        style={{ fontSize: 8, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2 }}
+                                        style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
                                         title="Suggs character subscores: Honesty (from distortion) · Concern for Others (compassion 0.7 + belief 0.3) · Hard Work Ethic (from reliability)"
                                       >
                                         H {detail?.assessment_nurture_honesty != null ? Math.round(Number(detail.assessment_nurture_honesty)) : "—"}
@@ -1687,7 +1714,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     )}
                                     {layer.key === "assessment" && c.key === "drivers" && (
                                       <div
-                                        style={{ fontSize: 8, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2 }}
+                                        style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
                                         title="Suggs motivation drivers measurable via CTS: Achievement (deadline motivation) · Recognition (recognition drive) · Autonomy (independent spirit). Six other Suggs driver types not measurable via CTS."
                                       >
                                         Ach {detail?.deadline_motivation != null ? Math.round(Number(detail.deadline_motivation)) : "—"}
@@ -1700,21 +1727,21 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                   </td>
                                 );
                               })}
-                              <td style={{ padding: "8px 10px", background: layerBg(layer.score, layer.key), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
-                                <div style={{ fontSize: 15, fontWeight: 800, color: layer.score == null ? T.slate500 : T.slate900 }}>
+                              <td style={{ padding: cellPad, background: layerBg(layer.score, layer.key), borderLeft: `2px solid ${T.slate200}`, textAlign: "center" }}>
+                                <div style={{ fontSize: layerTotalFont, fontWeight: 800, color: layer.score == null ? T.slate500 : T.slate900 }}>
                                   {fmtLayerScore(layer.score, layer.key)}
                                 </div>
                                 <div style={{ marginTop: 2 }}>
-                                  <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : layerFg(layer.score, layer.key), textTransform: "uppercase", letterSpacing: 0.4 }}>
+                                  <span style={{ display: "inline-block", padding: isPhone ? "1px 4px" : "2px 6px", borderRadius: 3, fontSize: verdictPillFont, fontWeight: 700, color: layer.score == null ? T.slate500 : T.white, background: layer.score == null ? T.slate100 : layerFg(layer.score, layer.key), textTransform: "uppercase", letterSpacing: isPhone ? 0.2 : 0.4 }}>
                                     {verdictLabel(layerVerdict(layer))}
                                   </span>
                                 </div>
                                 {layer.key === "assessment" && (
                                   <div style={{ marginTop: 3 }}>
-                                    <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                                    <span style={{ display: "inline-block", padding: isPhone ? "1px 4px" : "2px 6px", borderRadius: 3, fontSize: verdictPillFont, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: isPhone ? 0.2 : 0.4 }}>
                                       {detail?.assessment_target_role
                                         ? (ROLE_LABELS[detail.assessment_target_role] || detail.assessment_target_role)
-                                        : "click a role fit →"}
+                                        : (isPhone ? "role →" : "click a role fit →")}
                                     </span>
                                   </div>
                                 )}
@@ -1748,32 +1775,32 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                       <tr style={{ borderTop: `2px solid ${T.slate200}`, background: T.slate50 }}>
                         <td style={{ ...rowLabelBase, background: T.slate100, fontWeight: 700 }}>Subtotal</td>
                         {constructs.map((c) => (
-                          <td key={c.key} style={{ padding: "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
-                            <div style={{ fontSize: 16, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
+                          <td key={c.key} style={{ padding: isPhone ? "6px 3px" : "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
+                            <div style={{ fontSize: subtotalFont, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
                               {c.score != null ? Number(c.score).toFixed(2) : "—"}
-                              <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                              <span style={{ fontSize: isPhone ? 8 : 9, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
                             </div>
                           </td>
                         ))}
-                        <td style={{ padding: "10px", background: T.slate100, borderLeft: `2px solid ${T.slate200}` }}></td>
+                        <td style={{ padding: isPhone ? "6px 3px" : "10px", background: T.slate100, borderLeft: `2px solid ${T.slate200}` }}></td>
                       </tr>
                       {/* Overall result row — score + verdict + confidence + threshold previews */}
                       <tr>
                         <td style={{ ...rowLabelBase, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
-                        <td colSpan={4} style={{ padding: "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-                            <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>
+                        <td colSpan={4} style={{ padding: isPhone ? "8px 6px" : "10px 12px", background: scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: isPhone ? 6 : 10, flexWrap: "wrap", marginBottom: 6 }}>
+                            <span style={{ fontSize: resultFont, fontWeight: 800, color: T.slate900 }}>
                               {threeConstruct.score_0_10 != null ? Number(threeConstruct.score_0_10).toFixed(2) : "—"}
-                              <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
+                              <span style={{ fontSize: isPhone ? 9 : 10, color: T.slate500, fontWeight: 400, marginLeft: 3 }}>/ 10</span>
                             </span>
-                            <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 10, fontWeight: 700, color: T.white, background: scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
+                            <span style={{ padding: isPhone ? "2px 6px" : "3px 10px", borderRadius: 4, fontSize: isPhone ? 9 : 10, fontWeight: 700, color: T.white, background: scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
                               {(threeConstruct.verdict || "insufficient data").replace(/_/g, " ")}
                             </span>
-                            <span style={{ fontSize: 11, color: T.slate600 }}>
+                            <span style={{ fontSize: isPhone ? 10 : 11, color: T.slate600 }}>
                               confidence: {threeConstruct.confidence || "—"}
                             </span>
                           </div>
-                          <div style={{ display: "flex", gap: 12, fontSize: 10, color: T.slate600, justifyContent: "center", flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", gap: isPhone ? 8 : 12, fontSize: isPhone ? 9 : 10, color: T.slate600, justifyContent: "center", flexWrap: "wrap" }}>
                             <span>@7.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
                             <span>@7.5: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
                             <span>@8.0: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
