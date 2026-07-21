@@ -725,7 +725,8 @@ const StaffDirectory = ({ staff }) => {
   // ── Seat profitability (folded into roster 2026-07-09) ──
   // Fetches compute_warning_trigger + compute_seat_projections_for_agency for the current
   // week, keyed by team_member_id. Scenario toggle re-fetches with p_override_lapse=0.12.
-  const SEAT_SCENARIO_LAPSE = 0.12;
+  const SEAT_SCENARIO_LAPSE_A = 0.15;
+  const SEAT_SCENARIO_LAPSE_B = 0.20;
   const [seatWeekEnd] = useState(() => {
     const t = new Date();
     const daysUntilSat = t.getDay() === 6 ? 0 : (6 - t.getDay());
@@ -734,29 +735,36 @@ const StaffDirectory = ({ staff }) => {
   });
   const [seatRows, setSeatRows] = useState([]);
   const [seatProjections, setSeatProjections] = useState([]);
-  const [seatScenRows, setSeatScenRows] = useState([]);
-  const [seatScenProjections, setSeatScenProjections] = useState([]);
-  const [seatScenarioActive, setSeatScenarioActive] = useState(false);
+  const [seatScenARows, setSeatScenARows] = useState([]);
+  const [seatScenAProjections, setSeatScenAProjections] = useState([]);
+  const [seatScenBRows, setSeatScenBRows] = useState([]);
+  const [seatScenBProjections, setSeatScenBProjections] = useState([]);
+  // 'off' | 'a' (lapse=15%) | 'b' (lapse=20%)
+  const [seatScenarioActive, setSeatScenarioActive] = useState('off');
   const [seatLoading, setSeatLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setSeatLoading(true);
       try {
-        const [wt, pr, wtS, prS] = await Promise.all([
+        const [wt, pr, wtA, prA, wtB, prB] = await Promise.all([
           supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd }),
           supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60 }),
-          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd, p_override_lapse: SEAT_SCENARIO_LAPSE }),
-          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60, p_override_lapse: SEAT_SCENARIO_LAPSE }),
+          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd, p_override_lapse: SEAT_SCENARIO_LAPSE_A }),
+          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60, p_override_lapse: SEAT_SCENARIO_LAPSE_A }),
+          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd, p_override_lapse: SEAT_SCENARIO_LAPSE_B }),
+          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60, p_override_lapse: SEAT_SCENARIO_LAPSE_B }),
         ]);
         if (cancelled) return;
         if (!wt.error) setSeatRows(wt.data || []);
         if (!pr.error) setSeatProjections(pr.data || []);
-        if (!wtS.error) setSeatScenRows(wtS.data || []);
-        if (!prS.error) setSeatScenProjections(prS.data || []);
+        if (!wtA.error) setSeatScenARows(wtA.data || []);
+        if (!prA.error) setSeatScenAProjections(prA.data || []);
+        if (!wtB.error) setSeatScenBRows(wtB.data || []);
+        if (!prB.error) setSeatScenBProjections(prB.data || []);
       } catch (e) {
         console.error('Seat profitability load error:', e);
-        if (!cancelled) { setSeatRows([]); setSeatProjections([]); setSeatScenRows([]); setSeatScenProjections([]); }
+        if (!cancelled) { setSeatRows([]); setSeatProjections([]); setSeatScenARows([]); setSeatScenAProjections([]); setSeatScenBRows([]); setSeatScenBProjections([]); }
       } finally {
         if (!cancelled) setSeatLoading(false);
       }
@@ -1733,7 +1741,7 @@ const StaffDirectory = ({ staff }) => {
 
       {/* ============== AGENCY-WIDE SEAT AGGREGATE + SCENARIO TOGGLE ============== */}
       {view === "active" && (() => {
-        const rows = seatScenarioActive ? seatScenRows : seatRows;
+        const rows = seatScenarioActive === 'a' ? seatScenARows : seatScenarioActive === 'b' ? seatScenBRows : seatRows;
         if (seatLoading) {
           return (
             <Card style={{ padding:"10px 14px" }}>
@@ -1755,20 +1763,28 @@ const StaffDirectory = ({ staff }) => {
         const lapseStatus = first.lapse_status || 'na';
         const agencyRenewalTTM = parseFloat(first.diag?.agency_renewal_ttm) || 0;
         return (
-          <Card style={{ borderLeft:`4px solid ${seatScenarioActive ? T.purple : T.slate900}`, padding:"12px 16px" }}>
+          <Card style={{ borderLeft:`4px solid ${seatScenarioActive !== 'off' ? T.purple : T.slate900}`, padding:"12px 16px" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap", marginBottom:10 }}>
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:T.slate900 }}>Seat profitability — agency-wide</div>
                 <div style={{ fontSize:10, color:T.slate500, marginTop:2 }}>
-                  {seatScenarioActive ? "Scenario: if lapse hit benchmark 12%" : "Actual: current conditions"} · week ending {seatWeekEnd}
+                  {seatScenarioActive === 'a' ? "Scenario: if lapse rose to 15%" : seatScenarioActive === 'b' ? "Scenario: if lapse rose to 20%" : "Actual: current conditions"} · week ending {seatWeekEnd}
                 </div>
               </div>
-              <button
-                onClick={() => setSeatScenarioActive(v => !v)}
-                style={{ padding:"6px 12px", fontSize:11, fontWeight:700, color:seatScenarioActive ? T.white : T.slate700, background:seatScenarioActive ? T.purple : T.white, border:`1px solid ${seatScenarioActive ? T.purple : T.slate200}`, borderRadius:8, cursor:"pointer" }}
-              >
-                {seatScenarioActive ? "✓ Scenario ON" : "What if lapse = 12%?"}
-              </button>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                <button
+                  onClick={() => setSeatScenarioActive(v => v === 'a' ? 'off' : 'a')}
+                  style={{ padding:"6px 12px", fontSize:11, fontWeight:700, color:seatScenarioActive === 'a' ? T.white : T.slate700, background:seatScenarioActive === 'a' ? T.purple : T.white, border:`1px solid ${seatScenarioActive === 'a' ? T.purple : T.slate200}`, borderRadius:8, cursor:"pointer" }}
+                >
+                  {seatScenarioActive === 'a' ? "✓ Lapse = 15%" : "What if lapse = 15%?"}
+                </button>
+                <button
+                  onClick={() => setSeatScenarioActive(v => v === 'b' ? 'off' : 'b')}
+                  style={{ padding:"6px 12px", fontSize:11, fontWeight:700, color:seatScenarioActive === 'b' ? T.white : T.slate700, background:seatScenarioActive === 'b' ? T.purple : T.white, border:`1px solid ${seatScenarioActive === 'b' ? T.purple : T.slate200}`, borderRadius:8, cursor:"pointer" }}
+                >
+                  {seatScenarioActive === 'b' ? "✓ Lapse = 20%" : "What if lapse = 20%?"}
+                </button>
+              </div>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:8 }}>
               <div style={{ background:T.slate50, padding:"8px 10px", borderRadius:8 }}>
@@ -1806,8 +1822,8 @@ const StaffDirectory = ({ staff }) => {
         const isExpanded = expanded === member.id;
         const isEditing = editingId === member.id;
         // Seat profitability lookup for this member (respects scenario toggle).
-        const seatSrcRows = seatScenarioActive ? seatScenRows : seatRows;
-        const seatSrcProj = seatScenarioActive ? seatScenProjections : seatProjections;
+        const seatSrcRows = seatScenarioActive === 'a' ? seatScenARows : seatScenarioActive === 'b' ? seatScenBRows : seatRows;
+        const seatSrcProj = seatScenarioActive === 'a' ? seatScenAProjections : seatScenarioActive === 'b' ? seatScenBProjections : seatProjections;
         const seat = seatSrcRows.find(r => r.team_member_id === member.id) || null;
         const seatProj = seat ? (seatSrcProj.find(p => p.team_member_id === member.id) || null) : null;
         const _showDivider = _firstBottomIdx > 0 && _idx === _firstBottomIdx;
