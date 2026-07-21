@@ -221,16 +221,31 @@ const verdictPillColors = (verdict) => {
   return null;
 };
 
-const renderScorePill = (entry, source) => {
-  const score = entry?.score;
-  const verdict = entry?.verdict;
-  if (score == null && !verdict) return null;
-  const construct = entry?.construct || constructForSource(source);
-  const colors = verdictPillColors(verdict) || { bg: T.slate100, fg: T.slate600 };
-  const scoreDisplay = (verdict === "no_answer" || score == null) ? "—" : `${score}/10`;
+const renderScorePill = (entry, _source) => {
+  // Per-construct pill rendering. An answer may score on 0, 1, 2, or 3 constructs.
+  // Reads entry.scores.<construct>.{score,verdict}. Old single-construct shape
+  // (entry.score / entry.verdict / entry.construct) is not supported here —
+  // Priscilla's row was migrated 2026-07-20 (step 2), no legacy shape remains
+  // in production data. constructForSource() helper is retained for scoring-path
+  // default suggestions but no longer used here.
+  const scores = entry?.scores;
+  if (!scores || typeof scores !== "object") return null;
+  const constructs = ["nature", "nurture", "drivers"].filter((c) => scores[c]);
+  if (constructs.length === 0) return null;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
-      {construct} · {scoreDisplay}
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+      {constructs.map((c) => {
+        const s = scores[c] || {};
+        const score = s.score;
+        const verdict = s.verdict;
+        const colors = verdictPillColors(verdict) || { bg: T.slate100, fg: T.slate600 };
+        const scoreDisplay = (verdict === "no_answer" || score == null) ? "—" : `${score}/10`;
+        return (
+          <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            {c} · {scoreDisplay}
+          </span>
+        );
+      })}
     </span>
   );
 };
@@ -862,36 +877,99 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
         60-min interview: 5 min rapport · 10 min warm-up · 30 min deep-dive · 10 min candidate Qs · 5 min close
       </div>
 
-      {/* Composite grade header — shows when iv_* scores have been persisted */}
-      {detail?.iv_composite != null && (
-        <div style={{ marginBottom: 16, padding: 12, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>
-              {Number(detail.iv_composite).toFixed(1)}
-            </span>
-            <span style={{ fontSize: 11, color: T.slate500, fontWeight: 600 }}>/ 100 composite</span>
-            {detail?.iv_verdict && (() => {
-              const bc = verdictBandColors(detail.iv_verdict);
-              return (
-                <span style={{ padding: "3px 10px", fontSize: 11, fontWeight: 700, color: bc.fg, background: bc.bg, borderRadius: 12, textTransform: "uppercase", letterSpacing: 0.4 }}>
-                  {String(detail.iv_verdict).replace(/_/g, " ")}
-                  {detail?.iv_verdict_reason && ` · ${String(detail.iv_verdict_reason).replace(/_/g, " ")}`}
-                </span>
-              );
-            })()}
-            {detail?.iv_scored_at && (
-              <span style={{ fontSize: 10, color: T.slate400, marginLeft: "auto", fontStyle: "italic" }}>
-                Graded {new Date(detail.iv_scored_at).toLocaleDateString()}
+      {/* Score breakdown — per-construct list of contributing answers, per-construct
+          mean, composite math footer. Shows how detail.iv_composite was assembled
+          from the interview_answers per-construct scores (step 3, 2026-07-20). */}
+      {(() => {
+        const answers = detail?.interview_answers || {};
+        const constructOrder = [
+          { key: "nature",  label: "Nature",  weight: "14.3%", score: detail?.iv_nature },
+          { key: "nurture", label: "Nurture", weight: "42.9%", score: detail?.iv_nurture },
+          { key: "drivers", label: "Drivers", weight: "42.9%", score: detail?.iv_drivers },
+        ];
+        const rows = constructOrder.map((c) => {
+          const contribs = Object.entries(answers)
+            .filter(([, v]) => v && v.scores && v.scores[c.key])
+            .map(([k, v]) => ({
+              key: k,
+              score: v.scores[c.key].score,
+              verdict: v.scores[c.key].verdict,
+            }));
+          return { ...c, contribs };
+        });
+        const hasAny = rows.some((r) => r.contribs.length > 0);
+        if (!hasAny) {
+          return (
+            <div style={{ marginBottom: 16, padding: 10, background: T.slate50, border: `1px dashed ${T.slate300}`, borderRadius: 8, fontSize: 11, color: T.slate500, fontStyle: "italic" }}>
+              No interview answers scored yet. Breakdown appears here as answers are graded.
+            </div>
+          );
+        }
+        return (
+          <div style={{ marginBottom: 16, padding: 12, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                Score breakdown
               </span>
-            )}
+              {detail?.iv_scored_at && (
+                <span style={{ fontSize: 10, color: T.slate400, marginLeft: "auto", fontStyle: "italic" }}>
+                  Graded {new Date(detail.iv_scored_at).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+            {rows.map((r) => (
+              <div key={r.key} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, borderBottom: `1px solid ${T.slate200}`, paddingBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: T.slate800 }}>{r.label}</span>
+                  <span style={{ fontSize: 10, color: T.slate500 }}>weight {r.weight}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: T.slate900 }}>
+                    {r.score != null ? Number(r.score).toFixed(1) : "—"}
+                    <span style={{ fontSize: 9, color: T.slate500, fontWeight: 400 }}> / 100 mean</span>
+                  </span>
+                </div>
+                {r.contribs.length === 0 ? (
+                  <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", paddingLeft: 6 }}>No answers scored on this construct.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {r.contribs.map((a) => {
+                      const colors = verdictPillColors(a.verdict) || { bg: T.slate100, fg: T.slate600 };
+                      const scoreDisplay = (a.verdict === "no_answer" || a.score == null) ? "—" : `${a.score}/10`;
+                      return (
+                        <div key={a.key} style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 6, fontSize: 11, color: T.slate700 }}>
+                          <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 10, color: T.slate500, flex: 1 }}>{a.key}</span>
+                          <span style={{ padding: "1px 6px", fontSize: 9, fontWeight: 700, color: colors.fg, background: colors.bg, borderRadius: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                            {scoreDisplay}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+            {/* Composite math footer */}
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `2px solid ${T.slate300}`, display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Composite</span>
+              <span style={{ fontSize: 10, color: T.slate600 }}>
+                0.143 × {detail?.iv_nature != null ? Number(detail.iv_nature).toFixed(1) : "—"} + 0.429 × {detail?.iv_nurture != null ? Number(detail.iv_nurture).toFixed(1) : "—"} + 0.429 × {detail?.iv_drivers != null ? Number(detail.iv_drivers).toFixed(1) : "—"} =
+              </span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: T.slate900, marginLeft: "auto" }}>
+                {detail?.iv_composite != null ? Number(detail.iv_composite).toFixed(2) : "—"}
+                <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400 }}> / 100</span>
+              </span>
+              {detail?.iv_verdict && (() => {
+                const bc = verdictBandColors(detail.iv_verdict);
+                return (
+                  <span style={{ padding: "3px 10px", fontSize: 10, fontWeight: 700, color: bc.fg, background: bc.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    {String(detail.iv_verdict).replace(/_/g, " ")}
+                    {detail?.iv_verdict_reason && ` · ${String(detail.iv_verdict_reason).replace(/_/g, " ")}`}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 14, fontSize: 11, color: T.slate700, flexWrap: "wrap" }}>
-            <span><strong>Nature</strong> {detail.iv_nature != null ? Number(detail.iv_nature).toFixed(1) : "—"} <span style={{ color: T.slate400 }}>× 14.3%</span></span>
-            <span><strong>Nurture</strong> {detail.iv_nurture != null ? Number(detail.iv_nurture).toFixed(1) : "—"} <span style={{ color: T.slate400 }}>× 42.9%</span></span>
-            <span><strong>Drivers</strong> {detail.iv_drivers != null ? Number(detail.iv_drivers).toFixed(1) : "—"} <span style={{ color: T.slate400 }}>× 42.9%</span></span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Warm-Up — 3 fixed questions, same every candidate. Captured. */}
       <div style={{ marginBottom: 20 }}>
