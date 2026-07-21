@@ -938,9 +938,9 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
       </div>
 
       {/* Score breakdown — 3-column grid (Nature | Nurture | Drivers), each column showing
-          the per-construct mean (big) + weight + contributing answers. Grid auto-wraps to
-          fewer columns / stacked rows on narrow viewports. Composite math footer below.
-          Shows how detail.iv_composite was assembled from interview_answers scores. */}
+          construct name + weight + list of contributing answers with per-construct verdict pills.
+          Construct score number + composite footer intentionally omitted — Results matrix above
+          already surfaces both. Grid auto-wraps to fewer columns on narrow viewports. */}
       {(() => {
         const answers = detail?.interview_answers || {};
         const constructOrder = [
@@ -983,11 +983,11 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
               {rows.map((r) => (
                 <div key={r.key} style={{ padding: 10, background: T.white, borderRadius: 8, border: `1px solid ${T.slate200}` }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
-                    {r.label} <span style={{ color: T.slate400, fontWeight: 500 }}>· weight {r.weight}</span>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {r.label}
                   </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: r.score == null ? T.slate400 : T.slate900, lineHeight: 1.1, marginBottom: 8 }}>
-                    {r.score != null ? Math.round(Number(r.score)) : "—"}
+                  <div style={{ fontSize: 9, fontWeight: 500, color: T.slate400, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 1, marginBottom: 8 }}>
+                    weight {r.weight}
                   </div>
                   <div style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 6 }}>
                     {r.contribs.length === 0 ? (
@@ -1011,25 +1011,6 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
                   </div>
                 </div>
               ))}
-            </div>
-            {/* Composite math footer */}
-            <div style={{ paddingTop: 10, borderTop: `2px solid ${T.slate300}`, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Composite</span>
-              <span style={{ fontSize: 11, color: T.slate600 }}>
-                0.143 × {detail?.iv_nature != null ? Math.round(Number(detail.iv_nature)) : "—"} + 0.429 × {detail?.iv_nurture != null ? Math.round(Number(detail.iv_nurture)) : "—"} + 0.429 × {detail?.iv_drivers != null ? Math.round(Number(detail.iv_drivers)) : "—"} =
-              </span>
-              <span style={{ marginLeft: "auto", fontSize: 24, fontWeight: 800, color: detail?.iv_composite == null ? T.slate400 : T.slate900 }}>
-                {detail?.iv_composite != null ? Math.round(Number(detail.iv_composite)) : "—"}
-              </span>
-              {detail?.iv_verdict && (() => {
-                const bc = verdictBandColors(detail.iv_verdict);
-                return (
-                  <span style={{ padding: "3px 10px", fontSize: 10, fontWeight: 700, color: bc.fg, background: bc.bg, borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.4 }}>
-                    {String(detail.iv_verdict).replace(/_/g, " ")}
-                    {detail?.iv_verdict_reason && ` · ${String(detail.iv_verdict_reason).replace(/_/g, " ")}`}
-                  </span>
-                );
-              })()}
             </div>
           </div>
         );
