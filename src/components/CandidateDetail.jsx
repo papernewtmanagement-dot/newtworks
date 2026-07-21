@@ -299,6 +299,9 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
   const bandBg = colors ? colors.bg : T.slate50;
   const stripe = colors ? colors.fg : T.slate200;
   const valueColor = colors && (band === "green" || band === "yellow" || band === "red") ? colors.fg : T.slate900;
+  // Gauge fill color: banded rows use their bandBg; unbanded rows fall back to a
+  // muted grey so the fill is visible against the neutral slate50 "rest".
+  const gaugeFill = colors ? colors.bg : (T.slate200 || "#e2e8f0");
   const numMax = typeof max === "number" && max > 0 ? max : 100;
   const numValue = typeof value === "number" ? value : Number(value);
   let fillPct = null;
@@ -319,13 +322,13 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
       const extColor = d > 0 ? "rgba(37, 99, 235, 0.55)" : "rgba(220, 38, 38, 0.55)";
       if (d > 0) {
         const basePct = Math.max(0, Math.min(100, fillPct - deltaPct));
-        bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${basePct}%, ${extColor} ${basePct}%, ${extColor} ${fillPct}%, ${rest} ${fillPct}%, ${rest} 100%)`;
+        bg = `linear-gradient(to right, ${gaugeFill} 0%, ${gaugeFill} ${basePct}%, ${extColor} ${basePct}%, ${extColor} ${fillPct}%, ${rest} ${fillPct}%, ${rest} 100%)`;
       } else {
         const totalPct = Math.max(0, Math.min(100, fillPct - deltaPct));
-        bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${fillPct}%, ${extColor} ${fillPct}%, ${extColor} ${totalPct}%, ${rest} ${totalPct}%, ${rest} 100%)`;
+        bg = `linear-gradient(to right, ${gaugeFill} 0%, ${gaugeFill} ${fillPct}%, ${extColor} ${fillPct}%, ${extColor} ${totalPct}%, ${rest} ${totalPct}%, ${rest} 100%)`;
       }
     } else {
-      bg = `linear-gradient(to right, ${bandBg} 0%, ${bandBg} ${fillPct}%, ${rest} ${fillPct}%, ${rest} 100%)`;
+      bg = `linear-gradient(to right, ${gaugeFill} 0%, ${gaugeFill} ${fillPct}%, ${rest} ${fillPct}%, ${rest} 100%)`;
     }
   }
   return (
