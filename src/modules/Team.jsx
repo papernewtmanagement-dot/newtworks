@@ -225,8 +225,8 @@ function useProducerROI() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
-const scoreColor = (s) => s >= 60 ? T.green : s >= 45 ? T.amber : T.red;
-const scoreBg    = (s) => s >= 60 ? T.greenLt : s >= 45 ? T.amberLt : T.redLt;
+const scoreColor = (s) => s >= 70 ? T.green : s >= 50 ? T.amber : T.red;
+const scoreBg    = (s) => s >= 70 ? T.greenLt : s >= 50 ? T.amberLt : T.redLt;
 const pct = (a, t) => t ? Math.min(100, Math.round((a/t)*100)) : 0;
 const fmt = (n, unit) => unit === "dollars" ? "$"+n.toLocaleString() : unit === "percentage" ? n+"%" : n.toString();
 
