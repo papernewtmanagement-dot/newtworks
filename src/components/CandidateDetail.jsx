@@ -282,11 +282,23 @@ const MetricBox = ({ label, value, extra }) => (
 // right-aligned value + optional smaller extra (units, secondary metric, or
 // warning glyph). Optional `band` drives left-border color and value tint
 // via bandColor(); pass "none" for a neutral grey stripe, null for no band.
-const AssessRow = ({ label, value, extra, band, subline }) => {
+//
+// Optional `lssDelta` (numeric): when non-trivial (|delta| >= 0.5), overrides
+// the row background with a color tint whose intensity reflects |delta|/15.
+// Positive delta => blue tint (LSS boost); negative => red tint (LSS dampen).
+// Score band info is preserved by the left border stripe.
+const AssessRow = ({ label, value, extra, band, subline, lssDelta }) => {
   const colors = band ? bandColor(band) : null;
-  const bg = colors ? colors.bg : T.slate50;
+  const bandBg = colors ? colors.bg : T.slate50;
   const stripe = colors ? colors.fg : T.slate200;
   const valueColor = colors && (band === "green" || band === "yellow" || band === "red") ? colors.fg : T.slate900;
+  let bg = bandBg;
+  if (lssDelta != null && Math.abs(lssDelta) >= 0.5) {
+    const magnitude = Math.min(Math.abs(lssDelta) / 15, 1);
+    const opacity = 0.10 + magnitude * 0.45;
+    const rgb = lssDelta > 0 ? "37, 99, 235" : "220, 38, 38";
+    bg = `rgba(${rgb}, ${opacity})`;
+  }
   return (
     <div style={{
       display: "flex",
@@ -832,6 +844,7 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
             const bestKey = bf?.best_role;
             const currentSelected = selectedRole || bestKey || "sales_outbound";
             const roleC = (competencies && competencies[currentSelected]) || {};
+            const roleDeltas = (competencies && competencies._lss_deltas && competencies._lss_deltas[currentSelected]) || {};
             const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
             const formatCompLabel = (k) =>
               k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
@@ -849,7 +862,9 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
                 </div>
                 {entries.map(([k, v]) => {
                   const band = competencyBand(v);
-                  return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} />;
+                  const d = roleDeltas[k];
+                  const lssDelta = typeof d === "number" ? d : (d != null ? Number(d) : null);
+                  return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} lssDelta={lssDelta} />;
                 })}
               </>
             );
