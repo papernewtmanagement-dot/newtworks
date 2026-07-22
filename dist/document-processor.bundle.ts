@@ -4875,7 +4875,7 @@ async function processOneWrapupMessage(
   const receivedAtISO: string = new Date(internalDateMs).toISOString();
   const threadId: string | undefined = msg?.threadId ?? msg?.thread_id;
 
-  const bodyText = extractBestBody(msg);
+  const bodyText = wupExtractBestBody(msg);
   if (!bodyText || bodyText.trim().length < 20) {
     await labelAndArchive(ctx, messageId, threadId);
     return {
@@ -5364,39 +5364,39 @@ async function labelAndArchive(
 
 // ---------- Body extraction ----------
 
-function extractBestBody(msg: any): string {
+function wupExtractBestBody(msg: any): string {
   const direct: string | undefined =
     msg?.messageText ?? msg?.textBody ?? msg?.plaintext_body ?? msg?.body_text ?? msg?.snippet;
   if (typeof direct === "string" && direct.trim().length > 20) return direct;
 
   const parts: any[] = msg?.payload?.parts ?? msg?.parts ?? [];
-  const plain = findPart(parts, "text/plain");
+  const plain = wupFindPart(parts, "text/plain");
   if (plain) {
-    const decoded = decodeBase64Url(plain?.body?.data ?? "");
+    const decoded = wupDecodeBase64Url(plain?.body?.data ?? "");
     if (decoded && decoded.trim().length > 20) return decoded;
   }
-  const html = findPart(parts, "text/html");
+  const html = wupFindPart(parts, "text/html");
   if (html) {
-    const decoded = decodeBase64Url(html?.body?.data ?? "");
-    if (decoded) return stripHtml(decoded);
+    const decoded = wupDecodeBase64Url(html?.body?.data ?? "");
+    if (decoded) return wupStripHtml(decoded);
   }
-  const bodyDirect = decodeBase64Url(msg?.payload?.body?.data ?? "");
+  const bodyDirect = wupDecodeBase64Url(msg?.payload?.body?.data ?? "");
   if (bodyDirect && bodyDirect.trim().length > 20) return bodyDirect;
   return "";
 }
 
-function findPart(parts: any[], mimeType: string): any {
+function wupFindPart(parts: any[], mimeType: string): any {
   for (const p of parts) {
     if (p?.mimeType === mimeType) return p;
     if (p?.parts) {
-      const nested = findPart(p.parts, mimeType);
+      const nested = wupFindPart(p.parts, mimeType);
       if (nested) return nested;
     }
   }
   return null;
 }
 
-function decodeBase64Url(s: string): string {
+function wupDecodeBase64Url(s: string): string {
   if (!s) return "";
   try {
     const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
@@ -5407,7 +5407,7 @@ function decodeBase64Url(s: string): string {
   }
 }
 
-function stripHtml(html: string): string {
+function wupStripHtml(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
