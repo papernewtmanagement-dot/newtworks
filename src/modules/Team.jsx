@@ -64,7 +64,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -895,6 +895,116 @@ const StaffDirectory = ({ staff }) => {
   const [termError, setTermError] = useState("");
   // Track terminated IDs so they disappear from the active list immediately on success.
   const [terminatedIds, setTerminatedIds] = useState(new Set());
+
+  // ── Signature auto-gen: per-member panel state + helpers ──
+  // Photo upload → storage bucket email_signatures under photos/{team_id}.{ext},
+  // then team.photo_storage_path is set. Send dispatched via RPC send_signature_email
+  // which fires the generate-signature edge function via pg_net.
+  const [signatureId, setSignatureId] = useState(null);
+  const [sigForm, setSigForm] = useState({});
+  const [sigSaving, setSigSaving] = useState(false);
+  const [sigSending, setSigSending] = useState(false);
+  const [sigUploading, setSigUploading] = useState(false);
+  const [sigError, setSigError] = useState("");
+  const [sigStatus, setSigStatus] = useState("");
+  const [sigSends, setSigSends] = useState({});
+  const [sigPhotoUrls, setSigPhotoUrls] = useState({});
+
+  const loadSigSends = async (memberId) => {
+    try {
+      const { data: sends } = await supabase.from("email_signature_sends")
+        .select("id, sent_at, status, triggered_by, recipient_email, error_message, gmail_message_id")
+        .eq("team_member_id", memberId).order("sent_at", { ascending: false }).limit(10);
+      setSigSends(prev => ({ ...prev, [memberId]: sends || [] }));
+    } catch (e) { /* soft-fail */ }
+  };
+
+  const loadSigPhotoUrl = async (memberId, storagePath) => {
+    if (!storagePath) return;
+    try {
+      const { data: signed } = await supabase.storage.from("email_signatures")
+        .createSignedUrl(storagePath, 3600);
+      if (signed?.signedUrl) setSigPhotoUrls(prev => ({ ...prev, [memberId]: signed.signedUrl }));
+    } catch (e) { /* soft-fail */ }
+  };
+
+  const openSignature = async (member) => {
+    setSignatureId(member.id);
+    setSigError(""); setSigStatus("");
+    setSigForm({
+      signature_title:    member.signature_title    || "",
+      nmls_number:        member.nmls_number        || "",
+      credentials_line:   member.credentials_line   || "",
+      photo_storage_path: member.photo_storage_path || "",
+    });
+    await loadSigSends(member.id);
+    if (member.photo_storage_path) await loadSigPhotoUrl(member.id, member.photo_storage_path);
+  };
+
+  const closeSignature = () => { setSignatureId(null); setSigForm({}); setSigError(""); setSigStatus(""); };
+
+  const uploadSignaturePhoto = async (member, file) => {
+    if (!file) return;
+    setSigUploading(true); setSigError(""); setSigStatus("");
+    try {
+      const ext = file.type === "image/png" ? "png" : "jpg";
+      const path = `photos/${member.id}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("email_signatures")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { error: dbErr } = await supabase.from("team")
+        .update({ photo_storage_path: path, updated_at: new Date().toISOString() })
+        .eq("id", member.id);
+      if (dbErr) throw dbErr;
+      setSigForm(f => ({ ...f, photo_storage_path: path }));
+      setOverrides(o => ({ ...o, [member.id]: { ...(o[member.id]||{}), photo_storage_path: path } }));
+      await loadSigPhotoUrl(member.id, path);
+      setSigStatus("Photo uploaded.");
+    } catch (e) {
+      setSigError(`Upload failed: ${e?.message || String(e)}`);
+    } finally {
+      setSigUploading(false);
+    }
+  };
+
+  const saveSignatureFields = async (member) => {
+    if (sigSaving) return;
+    setSigSaving(true); setSigError(""); setSigStatus("");
+    try {
+      const payload = {
+        signature_title:  (sigForm.signature_title  || "").trim() || null,
+        nmls_number:      (sigForm.nmls_number      || "").trim() || null,
+        credentials_line: (sigForm.credentials_line || "").trim() || null,
+        updated_at:       new Date().toISOString(),
+      };
+      const { error } = await supabase.from("team").update(payload).eq("id", member.id);
+      if (error) throw error;
+      setOverrides(o => ({ ...o, [member.id]: { ...(o[member.id]||{}), ...payload } }));
+      setSigStatus("Fields saved.");
+    } catch (e) {
+      setSigError(`Save failed: ${e?.message || String(e)}`);
+    } finally {
+      setSigSaving(false);
+    }
+  };
+
+  const sendSignatureNow = async (member) => {
+    if (sigSending) return;
+    setSigSending(true); setSigError(""); setSigStatus("");
+    try {
+      const { data, error } = await supabase.rpc("send_signature_email", {
+        p_team_member_id: member.id, p_triggered_by: "manual", p_force: true,
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || "dispatch failed");
+      setSigStatus("Send dispatched. Log will refresh in ~6 seconds.");
+      setTimeout(() => loadSigSends(member.id), 6000);
+    } catch (e) {
+      setSigError(`Send failed: ${e?.message || String(e)}`);
+    } finally {
+      setSigSending(false);
+    }
+  };
 
   const startTerminate = (member) => {
     setTermError("");
@@ -2158,6 +2268,14 @@ const StaffDirectory = ({ staff }) => {
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>
                     ✏️ Edit
                   </button>
+                  {member.category === "agency" && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openSignature(member); }}
+                      title="Manage this person's State Farm email signature — upload photo, edit signature fields, send/resend the install package."
+                      style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.white, border:`1px solid ${T.slate200}`, borderRadius:7, cursor:"pointer" }}>
+                      📧 Email Signature
+                    </button>
+                  )}
                   <button
                     onClick={(e) => { e.stopPropagation(); startTerminate(member); }}
                     title="Document and execute end of employment. Deactivates linked user login."
@@ -2166,6 +2284,93 @@ const StaffDirectory = ({ staff }) => {
                   </button>
                   
                 </div>
+              </div>
+            )}
+
+            {signatureId === member.id && (
+              <div style={{ marginTop:14, paddingTop:14, borderTop:`2px solid ${T.blue}` }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:T.blue, textTransform:"uppercase", letterSpacing:"0.04em" }}>
+                    📧 State Farm Email Signature — {member.first_name} {member.last_name}
+                  </div>
+                  <button onClick={closeSignature} style={{ padding:"4px 10px", fontSize:11, color:T.slate600, background:T.slate100, border:"none", borderRadius:6, cursor:"pointer" }}>Close</button>
+                </div>
+                <div style={{ fontSize:11, color:T.slate600, marginBottom:12, lineHeight:1.55 }}>
+                  Uploads a headshot photo, applies per-person substitutions to the shared template (name, title, credentials, NMLS), zips template + images, and emails the package to <strong>{member.email_sf || "(no SF email set)"}</strong> from paper.newt.management@gmail.com with Peter CC'd. Recipient installs via the 3-step guide in the email body.
+                </div>
+
+                <div style={{ display:"grid", gridTemplateColumns:"140px 1fr", gap:16, marginBottom:12 }}>
+                  <div>
+                    <label style={labelStyle}>Photo (server-side crop to 120×147)</label>
+                    <div style={{ width:120, height:147, borderRadius:8, background:T.slate50, border:`1px dashed ${T.slate200}`, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", marginBottom:6 }}>
+                      {sigPhotoUrls[member.id] ? (
+                        <img src={sigPhotoUrls[member.id]} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                      ) : (
+                        <span style={{ fontSize:10, color:T.slate400 }}>No photo</span>
+                      )}
+                    </div>
+                    <label style={{ display:"inline-block", padding:"5px 10px", fontSize:11, fontWeight:600, color:T.white, background:sigUploading?T.slate400:T.blue, borderRadius:6, cursor:sigUploading?"not-allowed":"pointer" }}>
+                      {sigUploading ? "Uploading…" : (sigForm.photo_storage_path ? "Replace photo" : "Upload photo")}
+                      <input type="file" accept="image/jpeg,image/png" disabled={sigUploading} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadSignaturePhoto(member, f); e.target.value = ""; }} style={{ display:"none" }} />
+                    </label>
+                  </div>
+
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:10, alignContent:"start" }}>
+                    <div>
+                      <label style={labelStyle}>Signature title (blank uses role level "{member.role_level || "—"}")</label>
+                      <input style={inputStyle} value={sigForm.signature_title || ""} onChange={e=>setSigForm({...sigForm, signature_title:e.target.value})} placeholder={member.role_level || "e.g. Agent"} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Credentials (e.g. "ChFC, CLU" — no leading space)</label>
+                      <input style={inputStyle} value={sigForm.credentials_line || ""} onChange={e=>setSigForm({...sigForm, credentials_line:e.target.value})} placeholder="blank = none" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>NMLS number (blank = omit line entirely)</label>
+                      <input style={inputStyle} value={sigForm.nmls_number || ""} onChange={e=>setSigForm({...sigForm, nmls_number:e.target.value})} placeholder="blank = none" />
+                    </div>
+                  </div>
+                </div>
+
+                {sigError && (
+                  <div style={{ fontSize:11, color:"#991B1B", background:T.redLt, border:`1px solid #FECACA`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
+                    {sigError}
+                  </div>
+                )}
+                {sigStatus && (
+                  <div style={{ fontSize:11, color:"#065F46", background:T.greenLt, border:`1px solid #A7F3D0`, borderRadius:6, padding:"7px 10px", marginBottom:10 }}>
+                    {sigStatus}
+                  </div>
+                )}
+
+                <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+                  <button onClick={() => saveSignatureFields(member)} disabled={sigSaving} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:sigSaving?T.slate200:T.slate100, border:"none", borderRadius:7, cursor:sigSaving?"not-allowed":"pointer" }}>
+                    {sigSaving ? "Saving…" : "Save fields"}
+                  </button>
+                  <button
+                    onClick={() => sendSignatureNow(member)}
+                    disabled={sigSending || !sigForm.photo_storage_path || !member.email_sf}
+                    title={!member.email_sf ? "SF email missing on team record — set via Edit first." : !sigForm.photo_storage_path ? "Upload a photo first." : "Send/resend the signature package"}
+                    style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:(sigSending || !sigForm.photo_storage_path || !member.email_sf)?T.slate400:T.blue, border:"none", borderRadius:7, cursor:(sigSending || !sigForm.photo_storage_path || !member.email_sf)?"not-allowed":"pointer" }}>
+                    {sigSending ? "Sending…" : "📤 Send signature email"}
+                  </button>
+                </div>
+
+                {sigSends[member.id] && sigSends[member.id].length > 0 && (
+                  <div>
+                    <div style={{ fontSize:10, fontWeight:700, color:T.slate500, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>Prior sends</div>
+                    <div style={{ background:T.slate50, borderRadius:8, padding:"6px 10px", fontSize:11 }}>
+                      {sigSends[member.id].map(row => (
+                        <div key={row.id} style={{ display:"flex", gap:12, padding:"3px 0", borderBottom:`1px dashed ${T.slate200}`, alignItems:"center", flexWrap:"wrap" }}>
+                          <span style={{ minWidth:150, color:T.slate600 }}>{new Date(row.sent_at).toLocaleString()}</span>
+                          <span style={{ minWidth:50, fontWeight:600, color: row.status === "sent" ? "#065F46" : "#991B1B" }}>{row.status}</span>
+                          <span style={{ minWidth:55, color:T.slate500 }}>{row.triggered_by}</span>
+                          <span style={{ color:T.slate600, fontSize:10 }}>→ {row.recipient_email}</span>
+                          {row.error_message && <span style={{ color:"#991B1B", fontSize:10, marginLeft:"auto" }}>{row.error_message.slice(0,80)}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
