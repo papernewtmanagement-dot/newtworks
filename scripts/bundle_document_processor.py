@@ -62,6 +62,7 @@ ORDER = [
     "parsers/resume_ingest.ts",
     "parsers/careerplug_applicant.ts",
     "parsers/sf_forwarded_applicant.ts",
+    "parsers/wrapup_ingest.ts",
     "index.ts",
 ]
 
