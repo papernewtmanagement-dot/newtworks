@@ -1640,6 +1640,49 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </div>
         ) : (
           <>
+            {/* LSS auto-pass rule banner — reads threeConstruct.meta.lss_autopass, which is
+                populated by hiregauge_three_construct_verdict RPC via _hiregauge_lss_autopass
+                helper. Rule text: hiregauge_rules row "LSS-under-25 pre-interview auto-pass". */}
+            {(() => {
+              const ap = threeConstruct.meta?.lss_autopass;
+              if (!ap || !ap.status || ap.status === "not_applicable" || ap.status === "not_scored") return null;
+              const isHardPass = ap.status === "auto_pass_no_exceptions" || ap.status === "strong_pass_heavy_evidence_required";
+              const bg = isHardPass ? T.redLt : (ap.status === "exception_applies" ? T.amberLt : T.amberLt);
+              const bar = isHardPass ? T.red : (ap.status === "exception_applies" ? T.green : T.amber);
+              const label = ap.status === "auto_pass_no_exceptions" ? "LSS AUTO-DECLINE — INTERVIEW BLOCKED"
+                          : ap.status === "strong_pass_heavy_evidence_required" ? "LSS STRONG CAUTION — HEAVY EVIDENCE REQUIRED"
+                          : ap.status === "exception_applies" ? "LSS CAUTION — EXCEPTION APPLIES"
+                          : "LSS SOFT CAUTION — VERIFY EXCEPTIONS BEFORE INTERVIEW";
+              const autoExc = Array.isArray(ap.auto_exceptions) ? ap.auto_exceptions : [];
+              const manualExc = Array.isArray(ap.manual_check_exceptions) ? ap.manual_check_exceptions : [];
+              return (
+                <div style={{ background: bg, borderLeft: `4px solid ${bar}`, padding: isPhone ? "10px 12px" : "12px 16px", marginBottom: 12, borderRadius: 6 }}>
+                  <div style={{ fontSize: isPhone ? 11 : 12, fontWeight: 800, color: bar, letterSpacing: 0.5, marginBottom: 6, textTransform: "uppercase" }}>
+                    {label} {ap.tier ? `(${ap.tier})` : ""}
+                  </div>
+                  <div style={{ fontSize: isPhone ? 12 : 13, color: T.slate700, lineHeight: 1.4, marginBottom: (autoExc.length || manualExc.length) ? 8 : 0 }}>
+                    {ap.reason}
+                  </div>
+                  {autoExc.length > 0 && (
+                    <div style={{ marginBottom: manualExc.length ? 6 : 0 }}>
+                      <span style={{ fontSize: isPhone ? 10 : 11, fontWeight: 700, color: T.green, marginRight: 6 }}>AUTO-DETECTED:</span>
+                      {autoExc.map((e) => (
+                        <span key={e} style={{ display: "inline-block", padding: "2px 8px", marginRight: 4, marginBottom: 3, background: T.greenLt, color: T.green, borderRadius: 10, fontSize: isPhone ? 10 : 11, fontWeight: 600 }}>{e.replace(/_/g, " ")}</span>
+                      ))}
+                    </div>
+                  )}
+                  {manualExc.length > 0 && (
+                    <div>
+                      <span style={{ fontSize: isPhone ? 10 : 11, fontWeight: 700, color: T.amber, marginRight: 6 }}>VERIFY AT PRE-SCREEN:</span>
+                      {manualExc.map((e) => (
+                        <span key={e} style={{ display: "inline-block", padding: "2px 8px", marginRight: 4, marginBottom: 3, background: T.amberLt, color: T.amber, borderRadius: 10, fontSize: isPhone ? 10 : 11, fontWeight: 600 }}>{e.replace(/_/g, " ")}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* 4×3 matrix table — layers as expandable rows, constructs as columns.
                 Each cell shows the (0-10) score plus the weight applied within that construct.
                 Cell background bands by score band (green ≥7.5 / amber ≥6.0 / red <6.0).
