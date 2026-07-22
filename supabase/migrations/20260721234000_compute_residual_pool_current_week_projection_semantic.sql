@@ -1,0 +1,242 @@
+-- 2026-07-21: compute_residual_pool — split prior-vs-current semantic per Peter.
+--
+-- Peter directive: "subtract the team actual paid commissions and add on the current
+-- week commissions. Do the same for base pay: actual base pay paid in so far since
+-- the end of last quarter's last payroll, and use the current week's base pay that is
+-- not yet in payroll."
+--
+-- Semantic:
+--   Prior weeks — use payroll_detail actuals (pay_date already passed).
+--   Current week — use SP-based projection (commission) and design rate (base).
+--   Bridge: pr.pay_date <= p_week_end_date filter on payroll joins. Payroll dated in
+--     the future (i.e. current week's own paycheck, dated 6 days later) is excluded.
+--     Fallback to wctd.commission / wctd.manager_bonus / design rate carries the
+--     current-week projection.
+--
+-- Also restores full diag output: qtd_wtw_bonus_accrual, qtd_gain_bonus_accrual,
+-- qtd_leaderboard_bonus_accrual, qtd_all_star_bonus_accrual, qtd_trailblazer_bonus_accrual,
+-- and text source descriptions that were dropped when the diag JSONB was "simplified".
+
+CREATE OR REPLACE FUNCTION public.compute_weekly_comp_residual_pool(p_agency_id uuid, p_week_end_date date)
+ RETURNS TABLE(team_member_id uuid, full_name text, role text, role_category text, role_level text, annual_base_salary numeric, weekly_base_salary numeric, annual_commission_projected numeric, weekly_commission_projected numeric, ytd_sales_points numeric, sales_points_share_pct numeric, weighted_hours_at_40 numeric, retention_hours_share_pct numeric, person_share_pct numeric, annual_bonus numeric, weekly_bonus numeric, weekly_sales_pool_share numeric, weekly_retention_pool_share numeric, annual_total_comp numeric, weekly_total_comp numeric, diagnostics jsonb)
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_cycle_start date; v_cycle_end date; v_week_of_cycle int; v_weeks_in_cycle int := 13;
+  v_year int := EXTRACT(YEAR FROM p_week_end_date)::int; v_quarter int := EXTRACT(QUARTER FROM p_week_end_date)::int;
+  v_pool_result jsonb; v_carveouts_result jsonb;
+  v_annual_basis numeric; v_current_pool_pct numeric; v_qtd_envelope numeric; v_cycle_envelope numeric; v_weekly_envelope numeric;
+  v_burden_mult CONSTANT numeric := 0.08; v_wc_annual CONSTANT numeric := 500.00;
+  v_qtd_wc numeric; v_weekly_apparel numeric; v_weekly_life_ins numeric; v_weekly_cc_reserve numeric;
+  v_weekly_prize_cart numeric; v_weekly_wtq_trip numeric;
+  v_weekly_hdb numeric; v_qtd_hdb_max numeric;
+  v_qtd_apparel numeric; v_qtd_life_ins numeric; v_qtd_cc_reserve numeric;
+  v_weekly_wtw_bonus numeric; v_weekly_gain_bonus numeric; v_weekly_leaderboard_bonus numeric; v_weekly_all_star_bonus numeric; v_weekly_trailblazer_bonus numeric; v_weekly_goals_total numeric;
+BEGIN
+  SELECT cycle_start, cycle_end, week_of_cycle INTO v_cycle_start, v_cycle_end, v_week_of_cycle FROM public.current_cycle_info(p_agency_id, p_week_end_date);
+  IF v_cycle_start IS NULL THEN RETURN; END IF;
+  v_pool_result := public.compute_pool_basis_and_envelope(p_agency_id, p_week_end_date);
+  v_carveouts_result := public.compute_pool_carveouts(p_agency_id, p_week_end_date);
+  v_annual_basis := COALESCE(NULLIF(v_pool_result->'basis'->>'total_basis_annual','')::numeric, 0);
+  v_current_pool_pct := COALESCE(NULLIF(v_pool_result->'schedule'->>'pool_pct','')::numeric, 0);
+  v_weekly_envelope := (v_annual_basis * v_current_pool_pct / 100.0) / 52.0;
+  SELECT COALESCE(SUM((v_annual_basis * pool_pct / 100.0) / 52.0), 0) INTO v_qtd_envelope FROM public.team_comp_pool_schedule WHERE agency_id = p_agency_id AND week_end_date >= v_cycle_start AND week_end_date <= p_week_end_date;
+  SELECT COALESCE(SUM((v_annual_basis * pool_pct / 100.0) / 52.0), 0) INTO v_cycle_envelope FROM public.team_comp_pool_schedule WHERE agency_id = p_agency_id AND week_end_date >= v_cycle_start AND week_end_date <= v_cycle_end;
+  v_weekly_apparel := COALESCE(NULLIF(v_carveouts_result->'apparel'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_life_ins := COALESCE(NULLIF(v_carveouts_result->'life_insurance_stipend'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_cc_reserve := COALESCE(NULLIF(v_carveouts_result->'champions_circle'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_prize_cart := COALESCE(NULLIF(v_carveouts_result->'mvp_prize_cart'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_wtq_trip := COALESCE(NULLIF(v_carveouts_result->'wtq_trip'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_hdb := COALESCE(NULLIF(v_carveouts_result->'health_development_bonus'->>'weekly_dollars','')::numeric, 0);
+  v_qtd_hdb_max := v_weekly_hdb * v_week_of_cycle;
+  v_weekly_wtw_bonus := COALESCE(NULLIF(v_carveouts_result->'wtw_bonus'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_gain_bonus := COALESCE(NULLIF(v_carveouts_result->'gain_bonus'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_leaderboard_bonus := COALESCE(NULLIF(v_carveouts_result->'leaderboard_bonus'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_all_star_bonus := COALESCE(NULLIF(v_carveouts_result->'all_star_bonus'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_trailblazer_bonus := COALESCE(NULLIF(v_carveouts_result->'trailblazer_bonus'->>'weekly_dollars','')::numeric, 0);
+  v_weekly_goals_total := v_weekly_wtw_bonus + v_weekly_gain_bonus + v_weekly_leaderboard_bonus + v_weekly_all_star_bonus + v_weekly_trailblazer_bonus;
+  v_qtd_wc := (v_wc_annual / 52.0) * v_week_of_cycle;
+  v_qtd_apparel := v_weekly_apparel * v_week_of_cycle; v_qtd_life_ins := v_weekly_life_ins * v_week_of_cycle; v_qtd_cc_reserve := v_weekly_cc_reserve * v_week_of_cycle;
+  RETURN QUERY
+  WITH roster AS (SELECT et.team_id AS id, et.first_name, et.last_name, et.role AS r_role, et.role_category AS r_role_category, et.role_level AS r_role_level, COALESCE(dsnap.pay_type, t.pay_type) AS pay_type, COALESCE(dsnap.pay_rate, t.pay_rate) AS pay_rate, COALESCE(dsnap.work_location, t.work_location) AS work_location, et.start_date, COALESCE(dsnap.license_pc, t.license_pc) AS license_pc, COALESCE(dsnap.license_lh, t.license_lh) AS license_lh, COALESCE(dsnap.license_ips, t.license_ips) AS license_ips, COALESCE(dsnap.weekly_health_benefit_agency_paid, t.weekly_health_benefit_agency_paid) AS weekly_health_benefit_agency_paid FROM public.get_expected_teammates(p_agency_id, 'time_off_participant', p_week_end_date) et JOIN public.team t ON t.id = et.team_id LEFT JOIN public.weekly_cpr_reports rr ON rr.agency_id = p_agency_id AND rr.week_ending_date = p_week_end_date LEFT JOIN public.weekly_cpr_team_detail dsnap ON dsnap.weekly_cpr_report_id = rr.id AND dsnap.team_member_id = et.team_id),
+  cycle_weeks AS (SELECT week_end_date FROM public.team_comp_pool_schedule WHERE agency_id = p_agency_id AND week_end_date >= v_cycle_start AND week_end_date <= p_week_end_date),
+  per_week_pay AS (SELECT r.id AS tm_id, cw.week_end_date, COALESCE(dh.pay_type, r.pay_type) AS wk_pay_type, COALESCE(dh.pay_rate, r.pay_rate) AS wk_pay_rate FROM roster r CROSS JOIN cycle_weeks cw LEFT JOIN public.weekly_cpr_reports rh ON rh.agency_id = p_agency_id AND rh.week_ending_date = cw.week_end_date LEFT JOIN public.weekly_cpr_team_detail dh ON dh.weekly_cpr_report_id = rh.id AND dh.team_member_id = r.id),
+  base_by_week AS (SELECT r.id AS tm_id, cw.week_end_date, COALESCE((SELECT COALESCE((pd.raw_earnings->'items'->'SALARY'->>'period')::numeric, 0) + COALESCE((pd.raw_earnings->'items'->'REGULAR'->>'period')::numeric, 0) + COALESCE((pd.raw_earnings->'items'->'HOURLY'->>'period')::numeric, 0) FROM public.payroll_detail pd JOIN public.payroll_runs pr ON pr.id = pd.payroll_run_id WHERE pd.agency_id = p_agency_id AND pd.team_member_id = r.id AND pr.pay_period_end = cw.week_end_date AND pr.pay_date <= p_week_end_date LIMIT 1), CASE WHEN pwp.wk_pay_type = 'HOURLY' AND pwp.wk_pay_rate IS NOT NULL THEN (SELECT ROUND(SUM(daily_hrs) * pwp.wk_pay_rate, 2) FROM (SELECT ROUND(SUM(EXTRACT(EPOCH FROM (tce.clock_out_at - tce.clock_in_at))/3600.0)::numeric, 2) AS daily_hrs FROM public.time_clock_entries tce WHERE tce.agency_id = p_agency_id AND tce.team_member_id = r.id AND tce.clock_out_at IS NOT NULL AND tce.clock_in_at::date >= (cw.week_end_date - 6) AND tce.clock_in_at::date <= cw.week_end_date GROUP BY DATE(tce.clock_in_at AT TIME ZONE 'America/Chicago')) daily) ELSE NULL END, CASE WHEN pwp.wk_pay_type = 'SALARY' AND pwp.wk_pay_rate IS NOT NULL THEN pwp.wk_pay_rate WHEN pwp.wk_pay_type = 'HOURLY' AND pwp.wk_pay_rate IS NOT NULL THEN pwp.wk_pay_rate * 40 ELSE 0 END) AS week_base_paid, LEAST(1.00, GREATEST(0, FLOOR((cw.week_end_date - r.start_date)::numeric / 7.0) / 52.0)) AS week_tenure_mult FROM roster r CROSS JOIN cycle_weeks cw JOIN per_week_pay pwp ON pwp.tm_id = r.id AND pwp.week_end_date = cw.week_end_date),
+  base_qtd AS (SELECT tm_id, SUM(week_base_paid) AS qtd_base_paid, SUM(week_base_paid * week_tenure_mult) AS qtd_base_in_pool, SUM(week_base_paid * (1 - week_tenure_mult)) AS qtd_growth_budget FROM base_by_week GROUP BY tm_id),
+  comm_by_week AS (
+    SELECT r.id AS tm_id, cw.week_end_date,
+      COALESCE(
+        (SELECT SUM((kv.value->>'period')::numeric)
+         FROM public.payroll_detail pd
+         JOIN public.payroll_runs pr ON pr.id = pd.payroll_run_id
+         CROSS JOIN LATERAL jsonb_each(COALESCE(pd.raw_earnings->'items', '{}'::jsonb)) kv
+         WHERE pd.agency_id = p_agency_id
+           AND pd.team_member_id = r.id
+           AND pr.pay_period_end = cw.week_end_date
+           AND pr.pay_date <= p_week_end_date
+           AND kv.key ILIKE '%Comm%'),
+        (SELECT wctd.commission
+                   FROM public.weekly_cpr_team_detail wctd
+                   JOIN public.weekly_cpr_reports wr ON wr.id = wctd.weekly_cpr_report_id
+                   WHERE wr.agency_id = p_agency_id AND wctd.team_member_id = r.id AND wr.week_ending_date = cw.week_end_date
+                   LIMIT 1),
+        0
+      ) AS week_commission_paid
+    FROM roster r CROSS JOIN cycle_weeks cw
+  ),
+  commission_qtd AS (SELECT tm_id, SUM(week_commission_paid) AS qtd_commission_paid FROM comm_by_week GROUP BY tm_id),
+  bonus_paid_by_week AS (
+    SELECT r.id AS tm_id, cw.week_end_date,
+      COALESCE(
+        (SELECT SUM((kv.value->>'period')::numeric)
+         FROM public.payroll_detail pd
+         JOIN public.payroll_runs pr ON pr.id = pd.payroll_run_id
+         CROSS JOIN LATERAL jsonb_each(COALESCE(pd.raw_earnings->'items', '{}'::jsonb)) kv
+         WHERE pd.agency_id = p_agency_id
+           AND pd.team_member_id = r.id
+           AND pr.pay_period_end = cw.week_end_date
+           AND pr.pay_date <= p_week_end_date
+           AND kv.key ILIKE '%Team%'),
+        (SELECT wctd.bonus
+         FROM public.weekly_cpr_team_detail wctd
+         JOIN public.weekly_cpr_reports wr ON wr.id = wctd.weekly_cpr_report_id
+         WHERE wr.agency_id = p_agency_id AND wctd.team_member_id = r.id AND wr.week_ending_date = cw.week_end_date
+         LIMIT 1),
+        0
+      ) AS week_bonus_paid
+    FROM roster r CROSS JOIN cycle_weeks cw
+    WHERE cw.week_end_date < p_week_end_date
+  ),
+  bonus_paid_prior_qtd AS (SELECT tm_id, SUM(week_bonus_paid) AS qtd_bonus_paid_prior FROM bonus_paid_by_week GROUP BY tm_id),
+  mgr_bonus_by_week AS (
+    SELECT r.id AS tm_id, cw.week_end_date,
+      COALESCE(
+        (SELECT SUM((kv.value->>'period')::numeric)
+         FROM public.payroll_detail pd
+         JOIN public.payroll_runs pr ON pr.id = pd.payroll_run_id
+         CROSS JOIN LATERAL jsonb_each(COALESCE(pd.raw_earnings->'items', '{}'::jsonb)) kv
+         WHERE pd.agency_id = p_agency_id
+           AND pd.team_member_id = r.id
+           AND pr.pay_period_end = cw.week_end_date
+           AND pr.pay_date <= p_week_end_date
+           AND kv.key ILIKE '%Manage%'),
+        (SELECT wctd.manager_bonus
+                   FROM public.weekly_cpr_team_detail wctd
+                   JOIN public.weekly_cpr_reports wr ON wr.id = wctd.weekly_cpr_report_id
+                   WHERE wr.agency_id = p_agency_id AND wctd.team_member_id = r.id AND wr.week_ending_date = cw.week_end_date
+                   LIMIT 1),
+        0
+      ) AS week_mgr_paid
+    FROM roster r CROSS JOIN cycle_weeks cw
+  ),
+  mgr_bonus_qtd AS (SELECT tm_id, SUM(week_mgr_paid) AS qtd_mgr_paid FROM mgr_bonus_by_week GROUP BY tm_id),
+  actual_base_this_week AS (SELECT r.id AS tm_id, COALESCE((SELECT COALESCE((pd.raw_earnings->'items'->'SALARY'->>'period')::numeric, 0) + COALESCE((pd.raw_earnings->'items'->'REGULAR'->>'period')::numeric, 0) + COALESCE((pd.raw_earnings->'items'->'HOURLY'->>'period')::numeric, 0) FROM public.payroll_detail pd JOIN public.payroll_runs pr ON pr.id = pd.payroll_run_id WHERE pd.agency_id = p_agency_id AND pd.team_member_id = r.id AND pr.pay_period_end = p_week_end_date AND pr.pay_date <= p_week_end_date LIMIT 1), CASE WHEN r.pay_type = 'HOURLY' AND r.pay_rate IS NOT NULL THEN (SELECT ROUND(SUM(daily_hrs) * r.pay_rate, 2) FROM (SELECT ROUND(SUM(EXTRACT(EPOCH FROM (tce.clock_out_at - tce.clock_in_at))/3600.0)::numeric, 2) AS daily_hrs FROM public.time_clock_entries tce WHERE tce.agency_id = p_agency_id AND tce.team_member_id = r.id AND tce.clock_out_at IS NOT NULL AND tce.clock_in_at::date >= (p_week_end_date - 6) AND tce.clock_in_at::date <= p_week_end_date GROUP BY DATE(tce.clock_in_at AT TIME ZONE 'America/Chicago')) daily) ELSE NULL END, CASE WHEN r.pay_type = 'SALARY' AND r.pay_rate IS NOT NULL THEN r.pay_rate WHEN r.pay_type = 'HOURLY' AND r.pay_rate IS NOT NULL THEN r.pay_rate * 40 ELSE 0 END) AS actual_base_paid FROM roster r),
+  actuals_through_current AS (SELECT r.id AS tm_id, COALESCE(SUM(wctd.health_bonus), 0) AS qtd_hdb, MAX(CASE WHEN wr.week_ending_date = p_week_end_date THEN wctd.sales_points END) AS current_week_qtd_sp, MAX(CASE WHEN wr.week_ending_date = p_week_end_date THEN wctd.commission END) AS current_week_comm FROM roster r LEFT JOIN public.weekly_cpr_reports wr ON wr.agency_id = p_agency_id AND wr.week_ending_date >= v_cycle_start AND wr.week_ending_date <= p_week_end_date LEFT JOIN public.weekly_cpr_team_detail wctd ON wctd.weekly_cpr_report_id = wr.id AND wctd.team_member_id = r.id GROUP BY r.id),
+  prior_paid AS (SELECT r.id AS tm_id, COALESCE(SUM(wctd.bonus), 0) AS prior_qtd_bonus_paid, COALESCE(SUM(wctd.sales_pool_share), 0) AS prior_qtd_sales_paid, COALESCE(SUM(wctd.retention_pool_share), 0) AS prior_qtd_retention_paid FROM roster r LEFT JOIN public.weekly_cpr_reports wr ON wr.agency_id = p_agency_id AND wr.week_ending_date >= v_cycle_start AND wr.week_ending_date < p_week_end_date LEFT JOIN public.weekly_cpr_team_detail wctd ON wctd.weekly_cpr_report_id = wr.id AND wctd.team_member_id = r.id GROUP BY r.id),
+  prize_wtq_qtd AS (SELECT v_weekly_prize_cart * v_week_of_cycle AS qtd_prize_cart, v_weekly_wtq_trip * v_week_of_cycle AS qtd_wtq_trip, v_weekly_goals_total * v_week_of_cycle AS qtd_goals_total, v_weekly_wtw_bonus * v_week_of_cycle AS qtd_wtw_bonus, v_weekly_gain_bonus * v_week_of_cycle AS qtd_gain_bonus, v_weekly_leaderboard_bonus * v_week_of_cycle AS qtd_leaderboard_bonus, v_weekly_all_star_bonus * v_week_of_cycle AS qtd_all_star_bonus, v_weekly_trailblazer_bonus * v_week_of_cycle AS qtd_trailblazer_bonus),
+  weeks_series AS (SELECT (p_week_end_date - (n * 7))::date AS week_ending, n AS lookback_idx FROM generate_series(0, 12) n),
+  last_completed_q_per_person AS (SELECT DISTINCT ON (d.team_member_id) d.team_member_id, d.sales_points AS q_total, r.week_ending_date AS q_end_sat FROM public.weekly_cpr_team_detail d JOIN public.weekly_cpr_reports r ON r.id = d.weekly_cpr_report_id WHERE r.agency_id = p_agency_id AND d.sales_points IS NOT NULL AND date_trunc('quarter', r.week_ending_date::timestamp)::date < date_trunc('quarter', p_week_end_date::timestamp)::date ORDER BY d.team_member_id, r.week_ending_date DESC),
+  weekly_earned AS (SELECT r.id AS tm_id, ws.week_ending, ws.lookback_idx, CASE WHEN r.start_date IS NOT NULL AND ws.week_ending < r.start_date THEN 0 WHEN ws.week_ending >= v_cycle_start THEN COALESCE((SELECT wctd.commission FROM public.weekly_cpr_reports wr JOIN public.weekly_cpr_team_detail wctd ON wctd.weekly_cpr_report_id = wr.id WHERE wr.agency_id = p_agency_id AND wr.week_ending_date = ws.week_ending AND wctd.team_member_id = r.id LIMIT 1), 0) ELSE COALESCE((SELECT q_total / 13.0 FROM last_completed_q_per_person lcq WHERE lcq.team_member_id = r.id), 0) END AS earned_sp FROM roster r CROSS JOIN weeks_series ws),
+  sp_rolling AS (SELECT tm_id, SUM(earned_sp) / 13.0 AS avg_13wk, SUM(CASE WHEN lookback_idx < 4 THEN earned_sp ELSE 0 END) / 4.0 AS avg_4wk FROM weekly_earned GROUP BY tm_id),
+  wh_calc AS (SELECT r.id AS tm_id, 40.0 AS baseline_hours, CASE WHEN r.r_role_category = 'Retention' THEN 1.00 WHEN r.r_role_category = 'Sales' THEN 0.25 ELSE 0 END AS retention_weight_role, CASE WHEN r.work_location = 'in_office' THEN 1.00 WHEN r.work_location = 'remote' THEN 0.50 ELSE 1.00 END AS retention_weight_location, LEAST(1.00, GREATEST(0, FLOOR((p_week_end_date - r.start_date)::numeric / 7.0) / 52.0)) AS retention_weight_tenure, LEAST(1.00, 0.50 + CASE WHEN r.license_pc THEN 0.35 ELSE 0 END + CASE WHEN r.license_lh THEN 0.10 ELSE 0 END + CASE WHEN r.license_ips THEN 0.05 ELSE 0 END) AS retention_weight_license FROM roster r),
+  wh_final AS (SELECT tm_id, baseline_hours * retention_weight_role * retention_weight_location * retention_weight_tenure * retention_weight_license AS weighted_hours, retention_weight_role, retention_weight_location, retention_weight_tenure, retention_weight_license FROM wh_calc),
+  combined AS (SELECT r.id AS tm_id, r.first_name, r.last_name, r.r_role, r.r_role_category, r.r_role_level, r.pay_type, r.pay_rate, r.weekly_health_benefit_agency_paid, COALESCE(b.qtd_base_paid, 0) AS c_qtd_base_paid, COALESCE(b.qtd_base_in_pool, 0) AS c_qtd_base_in_pool, COALESCE(b.qtd_growth_budget, 0) AS c_qtd_growth_budget, COALESCE(abt.actual_base_paid, 0) AS c_actual_base_this_week, COALESCE(mq.qtd_mgr_paid, 0) AS c_qtd_mgr, COALESCE(a.qtd_hdb, 0) AS c_qtd_hdb, COALESCE(cq.qtd_commission_paid, 0) AS c_qtd_comm, COALESCE(bpp.qtd_bonus_paid_prior, 0) AS c_qtd_bonus_paid_prior, COALESCE(a.current_week_qtd_sp, 0) AS c_curr_qtd_sp, COALESCE(a.current_week_comm, 0) AS c_curr_comm, COALESCE(pp.prior_qtd_bonus_paid, 0) AS c_prior_qtd_bonus, COALESCE(pp.prior_qtd_sales_paid, 0) AS c_prior_qtd_sales, COALESCE(pp.prior_qtd_retention_paid,0) AS c_prior_qtd_retention, COALESCE(sr.avg_13wk, 0) AS c_avg_13wk, COALESCE(sr.avg_4wk, 0) AS c_avg_4wk, COALESCE(wf.weighted_hours, 0) AS c_weighted_hours, wf.retention_weight_role, wf.retention_weight_location, wf.retention_weight_tenure, wf.retention_weight_license, r.license_pc FROM roster r LEFT JOIN base_qtd b ON b.tm_id = r.id LEFT JOIN actual_base_this_week abt ON abt.tm_id = r.id LEFT JOIN actuals_through_current a ON a.tm_id = r.id LEFT JOIN commission_qtd cq ON cq.tm_id = r.id LEFT JOIN bonus_paid_prior_qtd bpp ON bpp.tm_id = r.id LEFT JOIN mgr_bonus_qtd mq ON mq.tm_id = r.id LEFT JOIN prior_paid pp ON pp.tm_id = r.id LEFT JOIN sp_rolling sr ON sr.tm_id = r.id LEFT JOIN wh_final wf ON wf.tm_id = r.id),
+  team_totals AS (SELECT SUM(c.c_qtd_base_paid) AS qtd_base_paid_total, SUM(c.c_qtd_base_in_pool) AS qtd_base_in_pool_total, SUM(c.c_qtd_growth_budget) AS qtd_growth_budget_total, SUM(c.c_qtd_mgr) AS qtd_mgr_total, SUM(c.c_qtd_hdb) AS qtd_hdb_total, SUM(c.c_qtd_comm) AS qtd_comm_total, SUM(c.c_qtd_bonus_paid_prior) AS qtd_bonus_paid_prior_total, SUM(c.c_curr_qtd_sp) AS qtd_sp_total, SUM(CASE WHEN c.r_role_category = 'Sales' THEN c.c_curr_qtd_sp ELSE 0 END) AS qtd_sp_sales_only, SUM(c.c_avg_13wk) AS team_avg_13wk, SUM(c.c_avg_4wk) AS team_avg_4wk, SUM(CASE WHEN c.license_pc THEN c.c_avg_13wk ELSE 0 END) AS team_avg_13wk_licensed, SUM(CASE WHEN c.license_pc THEN c.c_avg_4wk ELSE 0 END) AS team_avg_4wk_licensed, SUM(c.c_weighted_hours) AS wh_total, SUM(COALESCE(c.weekly_health_benefit_agency_paid, 0)) AS team_weekly_health, COALESCE(jsonb_agg(jsonb_build_object('team_member_id', c.tm_id, 'name', c.first_name || ' ' || c.last_name, 'weekly_health', COALESCE(c.weekly_health_benefit_agency_paid, 0)) ORDER BY c.first_name), '[]'::jsonb) AS per_person_health_detail FROM combined c),
+  pool_calc AS (SELECT tt.*, pwq.*, v_qtd_envelope AS qtd_envelope, v_qtd_wc AS qtd_wc, tt.team_weekly_health * v_week_of_cycle AS qtd_health_total, GREATEST(0, (v_qtd_envelope - v_qtd_wc - (tt.team_weekly_health * v_week_of_cycle)) / (1.0 + v_burden_mult) - tt.qtd_base_in_pool_total - tt.qtd_comm_total - tt.qtd_mgr_total - v_qtd_hdb_max - pwq.qtd_prize_cart - pwq.qtd_wtq_trip - pwq.qtd_goals_total - tt.qtd_bonus_paid_prior_total) AS qtd_bonus_pool FROM team_totals tt CROSS JOIN prize_wtq_qtd pwq),
+  pool_split AS (SELECT pc.*, pc.qtd_bonus_pool / 3.0 AS qtd_retention_pool, pc.qtd_bonus_pool / 3.0 AS qtd_sp_13wk_pool, pc.qtd_bonus_pool / 3.0 AS qtd_sp_4wk_pool FROM pool_calc pc),
+  distributed AS (SELECT c.*, ps.*, CASE WHEN ps.wh_total > 0 THEN c.c_weighted_hours / ps.wh_total ELSE 0 END AS ret_share_ratio, CASE WHEN c.license_pc AND ps.team_avg_13wk_licensed > 0 THEN c.c_avg_13wk / ps.team_avg_13wk_licensed ELSE 0 END AS sp13_share_ratio, CASE WHEN c.license_pc AND ps.team_avg_4wk_licensed > 0 THEN c.c_avg_4wk / ps.team_avg_4wk_licensed ELSE 0 END AS sp4_share_ratio FROM combined c CROSS JOIN pool_split ps),
+  earned AS (SELECT d.*, d.ret_share_ratio * d.qtd_retention_pool AS qtd_ret_earned, d.sp13_share_ratio * d.qtd_sp_13wk_pool AS qtd_sp13_earned, d.sp4_share_ratio * d.qtd_sp_4wk_pool AS qtd_sp4_earned, (d.ret_share_ratio * d.qtd_retention_pool + d.sp13_share_ratio * d.qtd_sp_13wk_pool + d.sp4_share_ratio * d.qtd_sp_4wk_pool) AS qtd_bonus_earned, (d.sp13_share_ratio * d.qtd_sp_13wk_pool + d.sp4_share_ratio * d.qtd_sp_4wk_pool) AS qtd_sales_share, (d.ret_share_ratio * d.qtd_retention_pool) AS qtd_retention_share FROM distributed d),
+  settled AS (SELECT e.*, GREATEST(0, e.qtd_bonus_earned) AS this_week_bonus, GREATEST(0, e.qtd_sales_share) AS this_week_sales_share, GREATEST(0, e.qtd_retention_share) AS this_week_retention_share FROM earned e),
+  weekly_pool_totals AS (SELECT SUM(this_week_sales_share) AS weekly_sales_pool_sum, SUM(this_week_retention_share) AS weekly_retention_pool_sum, SUM(this_week_bonus) AS weekly_bonus_pool_sum FROM settled)
+  SELECT s.tm_id, (s.first_name || ' ' || s.last_name)::text, s.r_role::text, s.r_role_category::text, s.r_role_level::text,
+    ROUND(CASE WHEN s.pay_type = 'SALARY' AND s.pay_rate IS NOT NULL THEN s.pay_rate * 52 WHEN s.pay_type = 'HOURLY' AND s.pay_rate IS NOT NULL THEN s.pay_rate * 40 * 52 ELSE 0 END, 2),
+    ROUND(s.c_actual_base_this_week, 2),
+    ROUND(s.c_curr_qtd_sp * 4, 2), ROUND(s.c_curr_comm, 2), ROUND(s.c_curr_qtd_sp, 2),
+    ROUND(CASE WHEN (s.team_avg_13wk + s.team_avg_4wk) > 0 THEN (s.c_avg_13wk + s.c_avg_4wk) / (s.team_avg_13wk + s.team_avg_4wk) ELSE 0 END * 100, 4),
+    ROUND(s.c_weighted_hours, 4), ROUND(s.ret_share_ratio * 100, 4),
+    ROUND(CASE WHEN s.qtd_bonus_pool > 0 THEN s.qtd_bonus_earned / s.qtd_bonus_pool ELSE 0 END * 100, 4),
+    ROUND(s.qtd_bonus_earned * 4, 2), ROUND(s.this_week_bonus, 2), ROUND(s.this_week_sales_share, 2), ROUND(s.this_week_retention_share, 2),
+    ROUND(CASE WHEN s.pay_type = 'SALARY' AND s.pay_rate IS NOT NULL THEN s.pay_rate * 52 WHEN s.pay_type = 'HOURLY' AND s.pay_rate IS NOT NULL THEN s.pay_rate * 40 * 52 ELSE 0 END + s.c_curr_qtd_sp * 4 + s.qtd_bonus_earned * 4, 2),
+    ROUND(s.c_actual_base_this_week + s.c_curr_comm + s.this_week_bonus, 2),
+    jsonb_build_object(
+      'commission_semantic', 'qtd_commission from payroll_detail keys ILIKE %Comm% where pay_date <= week_end (prior weeks actually paid), with wctd.commission fallback for current week (SP-based projection). Eats WHOLE pool.',
+      'manager_bonus_semantic', 'qtd_manager_bonus from payroll_detail keys ILIKE %Manage% where pay_date <= week_end, with wctd.manager_bonus fallback for current week.',
+      'base_semantic', 'qtd_actual_base_paid from payroll_detail SALARY+REGULAR+HOURLY where pay_date <= week_end (prior weeks actually paid), with time-clock or design-rate fallback for current week (not yet paid).',
+      'design_note', '2026-07-21: pay_date <= p_week_end_date on payroll joins (base/comm/mgr/current-week-base). wctd fallback ungated so current-week SP-based commission projection carries via wctd.commission. Peter directive: subtract actual paid commissions + add current week SP-based; do the same for base. Freeze guard on write_weekly_comp_v2 prevents post-send drift.',
+      'person_pay_type', s.pay_type, 'person_pay_rate', s.pay_rate, 'actual_base_this_week', ROUND(s.c_actual_base_this_week, 2),
+      'weight_factors', jsonb_build_object('hours_baseline', 40.0, 'role_w', s.retention_weight_role, 'location_w', s.retention_weight_location, 'tenure_w', s.retention_weight_tenure, 'license_w', s.retention_weight_license),
+      'quarter', jsonb_build_object('year', v_year, 'quarter', v_quarter, 'pool_start', v_cycle_start, 'pool_end', v_cycle_end, 'weeks_elapsed_qtd', v_week_of_cycle, 'weeks_in_quarter', v_weeks_in_cycle),
+      'envelope', jsonb_build_object('annual_basis', ROUND(v_annual_basis, 2), 'current_pool_pct', v_current_pool_pct, 'weekly_envelope', ROUND(v_weekly_envelope, 2), 'qtd_envelope', ROUND(s.qtd_envelope, 2), 'quarterly_envelope', ROUND(v_cycle_envelope, 2)),
+      'qtd_subtractions', jsonb_build_object(
+        'qtd_wc', ROUND(s.qtd_wc, 2),
+        'qtd_actual_health', ROUND(s.qtd_health_total, 2),
+        'qtd_manager_bonus_actual', ROUND(s.qtd_mgr_total, 2),
+        'qtd_manager_bonus_source', 'payroll_detail keys ILIKE %Manage% (pay_date <= week_end); wctd.manager_bonus fallback for current week',
+        'qtd_hdb_actual', ROUND(s.qtd_hdb_total, 2),
+        'qtd_hdb_max_accrual', ROUND(v_qtd_hdb_max, 2),
+        'qtd_prize_cart_accrual', ROUND(s.qtd_prize_cart, 2),
+        'qtd_wtq_trip_accrual', ROUND(s.qtd_wtq_trip, 2),
+        'qtd_goals_total_accrual', ROUND(s.qtd_goals_total, 2),
+        'qtd_wtw_bonus_accrual', ROUND(s.qtd_wtw_bonus, 2),
+        'qtd_gain_bonus_accrual', ROUND(s.qtd_gain_bonus, 2),
+        'qtd_leaderboard_bonus_accrual', ROUND(s.qtd_leaderboard_bonus, 2),
+        'qtd_all_star_bonus_accrual', ROUND(s.qtd_all_star_bonus, 2),
+        'qtd_trailblazer_bonus_accrual', ROUND(s.qtd_trailblazer_bonus, 2),
+        'qtd_base_in_pool', ROUND(s.qtd_base_in_pool_total, 2),
+        'qtd_actual_base_paid', ROUND(s.qtd_base_paid_total, 2),
+        'qtd_growth_budget', ROUND(s.qtd_growth_budget_total, 2),
+        'qtd_actual_commission', ROUND(s.qtd_comm_total, 2),
+        'qtd_actual_commission_source', 'payroll_detail keys ILIKE %Comm% (pay_date <= week_end); wctd.commission fallback for current week; eats WHOLE pool',
+        'qtd_bonus_paid_prior', ROUND(s.qtd_bonus_paid_prior_total, 2),
+        'qtd_bonus_paid_prior_source', 'payroll_detail keys ILIKE %Team% (pay_date <= week_end); wctd.bonus fallback per prior week; subtracted at envelope level',
+        'qtd_burden', ROUND((s.qtd_base_in_pool_total + s.qtd_comm_total + s.qtd_mgr_total + v_qtd_hdb_max + s.qtd_prize_cart + s.qtd_wtq_trip + s.qtd_goals_total + s.qtd_bonus_paid_prior_total + s.qtd_bonus_pool) * v_burden_mult, 2)
+      ),
+      'qtd_pools', jsonb_build_object(
+        'qtd_bonus_pool', ROUND(s.qtd_bonus_pool, 2),
+        'qtd_bonus_pool_semantic', 'This-week remaining after prior bonuses subtracted; not full cycle pool',
+        'qtd_retention_pool', ROUND(s.qtd_retention_pool, 2),
+        'qtd_sp_13wk_pool', ROUND(s.qtd_sp_13wk_pool, 2),
+        'qtd_sp_4wk_pool', ROUND(s.qtd_sp_4wk_pool, 2),
+        'split_thirds', true
+      ),
+      'weekly_settlement', jsonb_build_object('weekly_sales_pool', ROUND((SELECT weekly_sales_pool_sum FROM weekly_pool_totals), 2), 'weekly_retention_pool', ROUND((SELECT weekly_retention_pool_sum FROM weekly_pool_totals), 2), 'weekly_bonus_pool', ROUND((SELECT weekly_bonus_pool_sum FROM weekly_pool_totals), 2)),
+      'weekly_sales_pool', ROUND((SELECT weekly_sales_pool_sum FROM weekly_pool_totals), 2),
+      'weekly_retention_pool', ROUND((SELECT weekly_retention_pool_sum FROM weekly_pool_totals), 2),
+      'carveouts_outside_pool', jsonb_build_object(
+        'annual_dollars', ROUND((v_weekly_apparel + v_weekly_life_ins + v_weekly_cc_reserve) * 52, 2),
+        'quarterly_dollars', ROUND((v_weekly_apparel + v_weekly_life_ins + v_weekly_cc_reserve) * 13, 2),
+        'weekly_dollars', ROUND(v_weekly_apparel + v_weekly_life_ins + v_weekly_cc_reserve, 2),
+        'qtd_dollars', ROUND(v_qtd_apparel + v_qtd_life_ins + v_qtd_cc_reserve, 2),
+        'note', 'Agency-funded team benefits outside residual pool.',
+        'items', jsonb_build_object(
+          'apparel', jsonb_build_object('weekly_dollars', ROUND(v_weekly_apparel, 2), 'qtd_dollars', ROUND(v_qtd_apparel, 2), 'annual_dollars', ROUND(v_weekly_apparel * 52, 2)),
+          'life_insurance_stipend', jsonb_build_object('weekly_dollars', ROUND(v_weekly_life_ins, 2), 'qtd_dollars', ROUND(v_qtd_life_ins, 2), 'annual_dollars', ROUND(v_weekly_life_ins * 52, 2)),
+          'champions_circle_reserve', jsonb_build_object('weekly_dollars', ROUND(v_weekly_cc_reserve, 2), 'qtd_dollars', ROUND(v_qtd_cc_reserve, 2), 'annual_dollars', ROUND(v_weekly_cc_reserve * 52, 2))
+        )
+      ),
+      'team_totals', jsonb_build_object(
+        'qtd_actual_base_paid', ROUND(s.qtd_base_paid_total, 2),
+        'qtd_base_in_pool', ROUND(s.qtd_base_in_pool_total, 2),
+        'qtd_growth_budget', ROUND(s.qtd_growth_budget_total, 2),
+        'qtd_actual_health', ROUND(s.qtd_health_total, 2),
+        'team_weekly_health', ROUND(s.team_weekly_health, 2),
+        'per_person_health', s.per_person_health_detail,
+        'qtd_actual_commission', ROUND(s.qtd_comm_total, 2),
+        'qtd_bonus_paid_prior', ROUND(s.qtd_bonus_paid_prior_total, 2),
+        'qtd_manager_bonus', ROUND(s.qtd_mgr_total, 2),
+        'qtd_hdb', ROUND(s.qtd_hdb_total, 2),
+        'qtd_sp_total', ROUND(s.qtd_sp_total, 2),
+        'qtd_sp_sales_only', ROUND(s.qtd_sp_sales_only, 2),
+        'team_avg_13wk', ROUND(s.team_avg_13wk, 2),
+        'team_avg_4wk', ROUND(s.team_avg_4wk, 2),
+        'wh_total', ROUND(s.wh_total, 4)
+      ),
+      'person_qtd', jsonb_build_object('qtd_actual_base_paid', ROUND(s.c_qtd_base_paid, 2), 'qtd_base_in_pool', ROUND(s.c_qtd_base_in_pool, 2), 'qtd_growth_budget', ROUND(s.c_qtd_growth_budget, 2), 'actual_base_this_week', ROUND(s.c_actual_base_this_week, 2), 'qtd_manager_bonus', ROUND(s.c_qtd_mgr, 2), 'qtd_hdb', ROUND(s.c_qtd_hdb, 2), 'qtd_commission', ROUND(s.c_qtd_comm, 2), 'qtd_bonus_paid_prior', ROUND(s.c_qtd_bonus_paid_prior, 2), 'qtd_sp', ROUND(s.c_curr_qtd_sp, 2), 'rolling_13wk_avg_sp', ROUND(s.c_avg_13wk, 2), 'rolling_4wk_avg_sp', ROUND(s.c_avg_4wk, 2), 'qtd_ret_earned', ROUND(s.qtd_ret_earned, 2), 'qtd_sp13_earned', ROUND(s.qtd_sp13_earned, 2), 'qtd_sp4_earned', ROUND(s.qtd_sp4_earned, 2), 'qtd_sales_share', ROUND(s.qtd_sales_share, 2), 'qtd_retention_share', ROUND(s.qtd_retention_share, 2), 'qtd_bonus_earned', ROUND(s.qtd_bonus_earned, 2), 'prior_qtd_bonus_paid', ROUND(s.c_prior_qtd_bonus, 2), 'prior_qtd_sales_paid', ROUND(s.c_prior_qtd_sales, 2), 'prior_qtd_retention_paid', ROUND(s.c_prior_qtd_retention, 2), 'this_week_bonus_settlement', ROUND(s.this_week_bonus, 2), 'this_week_sales_settlement', ROUND(s.this_week_sales_share, 2), 'this_week_retention_settlement', ROUND(s.this_week_retention_share, 2), 'ret_share_ratio_pct', ROUND(s.ret_share_ratio * 100, 4), 'sp13_share_ratio_pct', ROUND(s.sp13_share_ratio * 100, 4), 'sp4_share_ratio_pct', ROUND(s.sp4_share_ratio * 100, 4)),
+      'constants', jsonb_build_object('sales_weight', 0.6667, 'retention_weight', 0.3333, 'burden_multiplier', v_burden_mult, 'wc_annual', v_wc_annual, 'split_thirds', true),
+      'pool_basis', v_pool_result->'basis',
+      'schedule', v_pool_result->'schedule',
+      'carveouts_detail', v_carveouts_result
+    )
+  FROM settled s ORDER BY s.last_name;
+END;
+$function$;
