@@ -56,6 +56,7 @@ import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processSFForwardedApplicantMode } from "./parsers/sf_forwarded_applicant.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
+import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
 import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
 import { createSuspenseTask } from "./suspense.ts";
 
@@ -1138,6 +1139,15 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processWrapupMode(wupCtx, body);
     return jsonResponse({ ok: true, mode: "wrapup", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "no_send_check") {
+    // Wrap-up no-send check (2026-07-22). Fires once per week at Fri 7 PM CT.
+    // Emails each teammate who submitted nothing + one group Telegram to PJS
+    // Agency chat. Pass body.dry_run=true to preview without sending.
+    const nsCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processWrapupNoSendMode(nsCtx, body);
+    return jsonResponse({ ok: true, mode: "no_send_check", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
 
   const ctx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
