@@ -573,6 +573,110 @@ function renderResumeLayer(detail, T, resumeThresh) {
         </div>
       )}
 
+      {/* Qualifications — structured extracts of licensure, language, education,
+          and prior-similar-role fit. Populated from res_licenses/res_languages/
+          res_education/res_prior_similar_role jsonb columns on hiring_candidates
+          (migration 20260722210000). Feeds the LSS auto-pass exception logic in
+          _hiregauge_lss_autopass so tier4 candidates with license or prior
+          insurance experience keep their framework verdict. Always visible when
+          any of the four cols is populated. */}
+      {(detail?.res_licenses || detail?.res_languages || detail?.res_education || detail?.res_prior_similar_role) && (() => {
+        const lic = detail?.res_licenses || {};
+        const lang = detail?.res_languages || {};
+        const edu = detail?.res_education || {};
+        const prior = detail?.res_prior_similar_role || {};
+        const heldLicenses = [
+          lic.pc && "P&C", lic.lh && "L&H", lic.ips && "IPS",
+          lic.series_6 && "Series 6", lic.series_63 && "Series 63",
+          lic.series_7 && "Series 7", lic.series_24 && "Series 24",
+        ].filter(Boolean);
+        const spanish = lang.spanish;
+        const spanishLabel = spanish && spanish !== "none" ? `Spanish · ${spanish}` : null;
+        const otherLangs = Array.isArray(lang.other_languages) ? lang.other_languages : [];
+        const eduLevel = edu.highest_completed;
+        const eduLine = eduLevel && eduLevel !== "unknown"
+          ? [eduLevel.replace(/_/g, " "), edu.institution, edu.field, edu.year_completed].filter(Boolean).join(" · ")
+          : null;
+        const relev = prior.highest_relevance;
+        const insMonths = prior.insurance_tenure_months;
+        const relevLabel = relev && relev !== "none" ? relev.replace(/_/g, " ") : null;
+        const signals = Array.isArray(prior.success_signals) ? prior.success_signals : [];
+
+        // Tile color signals whether the field would fire an LSS auto-pass exception
+        const licColor = heldLicenses.length > 0 ? T.green : T.slate500;
+        const langColor = spanishLabel ? T.green : T.slate500;
+        const eduColor = ["bachelors","masters","doctorate"].includes(eduLevel) && edu.institution ? T.green : T.slate500;
+        const relevColor = ["insurance_direct","insurance_adjacent"].includes(relev) && signals.length > 0 ? T.green : T.slate500;
+
+        const Tile = ({ heading, color, children }) => (
+          <div style={{
+            flex: "1 1 200px", minWidth: 180,
+            padding: "8px 10px",
+            background: T.white, border: `1px solid ${T.slate200}`,
+            borderLeft: `3px solid ${color}`, borderRadius: 6,
+          }}>
+            <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate500, marginBottom: 4 }}>
+              {heading}
+            </div>
+            <div style={{ fontSize: 12, color: T.slate800, lineHeight: 1.4 }}>
+              {children}
+            </div>
+          </div>
+        );
+        return (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
+              Qualifications (structured)
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Tile heading="Licenses" color={licColor}>
+                {heldLicenses.length > 0
+                  ? (
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {heldLicenses.map((L) => (
+                        <span key={L} style={{ padding: "1px 6px", borderRadius: 3, background: T.greenLt, color: T.green, fontSize: 11, fontWeight: 600 }}>{L}</span>
+                      ))}
+                    </div>
+                  )
+                  : <span style={{ color: T.slate500, fontStyle: "italic" }}>None noted</span>}
+                {lic.notes && <div style={{ fontSize: 10, color: T.slate500, marginTop: 4, lineHeight: 1.4 }}>{lic.notes}</div>}
+              </Tile>
+              <Tile heading="Language" color={langColor}>
+                {spanishLabel || (otherLangs.length > 0 ? "" : <span style={{ color: T.slate500, fontStyle: "italic" }}>None noted</span>)}
+                {otherLangs.length > 0 && (
+                  <div style={{ marginTop: spanishLabel ? 4 : 0 }}>
+                    {otherLangs.map((l, i) => (
+                      <div key={i} style={{ fontSize: 11 }}>{l.language} · {l.proficiency}</div>
+                    ))}
+                  </div>
+                )}
+                {lang.notes && <div style={{ fontSize: 10, color: T.slate500, marginTop: 4, lineHeight: 1.4 }}>{lang.notes}</div>}
+              </Tile>
+              <Tile heading="Education" color={eduColor}>
+                {eduLine || <span style={{ color: T.slate500, fontStyle: "italic" }}>Not stated</span>}
+                {edu.notes && <div style={{ fontSize: 10, color: T.slate500, marginTop: 4, lineHeight: 1.4 }}>{edu.notes}</div>}
+              </Tile>
+              <Tile heading="Prior similar role" color={relevColor}>
+                {relevLabel
+                  ? (
+                    <div>
+                      <div><strong style={{ color: T.slate900 }}>{relevLabel}</strong>{insMonths ? ` · ${insMonths} mo insurance` : ""}</div>
+                      {signals.length > 0 && (
+                        <ul style={{ margin: "4px 0 0 0", paddingLeft: 16, fontSize: 11, lineHeight: 1.4 }}>
+                          {signals.slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}
+                          {signals.length > 3 && <li style={{ color: T.slate500, fontStyle: "italic" }}>+{signals.length - 3} more</li>}
+                        </ul>
+                      )}
+                    </div>
+                  )
+                  : <span style={{ color: T.slate500, fontStyle: "italic" }}>None noted</span>}
+                {prior.notes && <div style={{ fontSize: 10, color: T.slate500, marginTop: 4, lineHeight: 1.4 }}>{prior.notes}</div>}
+              </Tile>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Extracted resume text — collapsed when a score exists (score is the
           primary content); expanded inline when no score yet (matches prior UX). */}
       {hasText && (hasScore ? (
@@ -1681,11 +1785,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               // verdict is decline. Pill/cell color must follow the verdict text, not the score.
               const verdictBg = (v) => (v === "pass" || v === "hire") ? T.greenLt
                                     : (v === "consider" || v === "lean_hire" || v === "lean_decline") ? T.amberLt
-                                    : (v === "decline" || v === "no_hire") ? T.redLt
+                                    : (v === "decline" || v === "no_hire" || v === "decline_lss" || v === "decline_character") ? T.redLt
                                     : T.slate50;
               const verdictFg = (v) => (v === "pass" || v === "hire") ? T.green
                                     : (v === "consider" || v === "lean_hire" || v === "lean_decline") ? T.amber
-                                    : (v === "decline" || v === "no_hire") ? T.red
+                                    : (v === "decline" || v === "no_hire" || v === "decline_lss" || v === "decline_character") ? T.red
                                     : T.slate500;
               // 0-100 layer scores rendered as rounded ints; 0-10 layers as x.xx.
               const fmtLayerScore = (v, k) => v == null ? "—"
