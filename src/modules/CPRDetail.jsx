@@ -292,7 +292,7 @@ const EDIT_FIELDS = {
   ],
   detail: [
     "code_reds", "code_yellows",
-    "cpr_reply_done", "wrapup_done", "inbox_done",
+    "wrapup_done", "inbox_done",
     "quotes_discussed", "sales_points",
     "quotes_modified",
   ],
@@ -366,7 +366,6 @@ const OPP_LISTS_KEYS = [
 const TEAM_CHECKLIST_KEYS = [...DAILY_OPS_KEYS, ...OPP_LISTS_KEYS];
 
 const PERSONAL_CHECKLIST_KEYS = [
-  ["cpr_reply_done", "CPR Reply"],
   ["wrapup_done", "Wrap-up"],
   ["inbox_done", "Inbox"],
 ];
@@ -1014,6 +1013,106 @@ function LookingNextWeekSection({ report, editMode, formValue, dirty, onChange }
       </Card>
     </div>
   );
+}
+
+// ── Team Wrap-ups (added 2026-07-21) ─────────────────────────
+// Renders the LLM-organized wrapup_text per teammate for the week. The
+// document-processor wrapup mode fills weekly_cpr_team_detail.wrapup_text
+// each time a wrap-up email or CPR reply lands; wrapup_done flips true when
+// the LLM's coverage check shows all six required items covered.
+//
+// Coverage badge on the frontend uses a lightweight heuristic — counts
+// numbered sections whose body isn't "(none reported)". Matches what the
+// LLM emits when a category has no content across all emails received.
+function WrapupsSection({ details, team }) {
+  if (!details || details.length === 0) {
+    return (
+      <div>
+        <SectionHeader icon="📬" title="Team Wrap-ups" />
+        <Card><Awaiting /></Card>
+      </div>
+    );
+  }
+  const sorted = sortByTenure(details, team);
+  return (
+    <div>
+      <SectionHeader
+        icon="📬"
+        title="Team Wrap-ups"
+        accessory="six-item rubric — Daily Wrap-up manual"
+      />
+      <Card style={{ padding: 12 }}>
+        {sorted.map(d => <WrapupCard key={d.id} row={d} />)}
+      </Card>
+    </div>
+  );
+}
+
+function WrapupCard({ row }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = (row.wrapup_text || "").trim();
+  const hasText = text.length > 0;
+  const { covered } = countWrapupCoverage(text);
+  const done = row.wrapup_done === true;
+
+  const badge = !hasText
+    ? { bg: T.slate100, fg: T.slate500, label: "no wrap-up yet" }
+    : done
+      ? { bg: "#dcfce7", fg: "#166534", label: "6 of 6 ✓" }
+      : { bg: "#fef3c7", fg: "#92400e", label: `${covered} of 6 — nag sent` };
+
+  return (
+    <div style={{
+      marginBottom: 8, border: `1px solid ${T.slate200}`, borderRadius: 8,
+      overflow: "hidden", background: T.white,
+    }}>
+      <button
+        onClick={() => hasText && setExpanded(v => !v)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "10px 14px", background: "transparent", border: "none",
+          cursor: hasText ? "pointer" : "default", fontFamily: "inherit", textAlign: "left",
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 700, color: T.slate800 }}>
+          {firstName(row.__name)}
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span style={{
+            background: badge.bg, color: badge.fg,
+            padding: "2px 10px", borderRadius: 20,
+            fontSize: 11, fontWeight: 600,
+          }}>{badge.label}</span>
+          {hasText && (
+            <span style={{ fontSize: 10, color: T.slate500 }}>
+              {expanded ? "▼" : "▶"}
+            </span>
+          )}
+        </span>
+      </button>
+      {expanded && hasText && (
+        <div style={{
+          padding: "12px 14px", borderTop: `1px solid ${T.slate200}`,
+          background: T.slate50 || "#f8fafc",
+          fontSize: 13, color: T.slate700, whiteSpace: "pre-wrap", lineHeight: 1.6,
+        }}>{text}</div>
+      )}
+    </div>
+  );
+}
+
+// Count how many of the six numbered sections in wrapup_text have real
+// content (not "(none reported)"). Used to render the covered/total badge.
+function countWrapupCoverage(text) {
+  if (!text) return { covered: 0 };
+  const sections = text.split(/\n(?=[1-6]\.\s)/);
+  let covered = 0;
+  for (const s of sections) {
+    if (!/^[1-6]\.\s/.test(s.trim())) continue;
+    const body = s.replace(/^[1-6]\.[^\n]*\n?/, "").trim();
+    if (body.length > 0 && !/^\(none reported\)\.?$/i.test(body)) covered += 1;
+  }
+  return { covered };
 }
 
 // 5 — Code Reds / Yellows
@@ -4878,6 +4977,12 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           dirty={edit.isReportDirty("looking_next_week_text")}
           onChange={edit.setReportField}
         />
+      </Section>
+
+      {/* 4. Team wrap-ups (added 2026-07-21) — LLM-organized per-teammate
+              wrap-up content from Gmail-ingested wrap-up emails + CPR replies. */}
+      <Section>
+        <WrapupsSection details={data.details} team={data.team} />
       </Section>
 
       <Divider />
