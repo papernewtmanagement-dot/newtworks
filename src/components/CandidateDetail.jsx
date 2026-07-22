@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
-import { useViewport } from "../lib/hooks.js";
+import { useViewport, useVerdictThresholds } from "../lib/hooks.js";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -371,7 +371,7 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
 // (migration 20260718230100 — was res_subsignals JSONB). Falls back to plain
 // text display when no score has been written yet. All scores render on the
 // 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
-function renderResumeLayer(detail, T) {
+function renderResumeLayer(detail, T, resumeThresh) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
   const rulesFired = detail?.res_rules_fired;
@@ -422,22 +422,20 @@ function renderResumeLayer(detail, T) {
     );
   }
 
-  // Coloring thresholds aligned with verdict thresholds (70 pass / 50 consider). 0-100 scale.
-  const scoreBg = (v) => v == null ? T.slate50 : v >= 70 ? T.greenLt : v >= 50 ? T.amberLt : T.redLt;
-  const scoreFg = (v) => v == null ? T.slate500 : v >= 70 ? T.green   : v >= 50 ? T.amber   : T.red;
+  // Coloring thresholds pulled from useVerdictThresholds() hook, kept in sync with the scoring RPC.
+  const scoreBg = (v) => v == null ? T.slate50  : v >= resumeThresh.pass ? T.greenLt : v >= resumeThresh.consider ? T.amberLt : T.redLt;
+  const scoreFg = (v) => v == null ? T.slate500 : v >= resumeThresh.pass ? T.green   : v >= resumeThresh.consider ? T.amber   : T.red;
 
   // Round to whole number for display. Rubric scores stored on 0-100 scale.
   const pct = (v) => v == null ? null : Math.round(Number(v));
 
-  // Verdict hardcoded on 0-100 scale. Computed from composite at view time — NOT
-  // stored on the row (per Peter directive 2026-07-18: derived data drifts when stored).
-  //   composite >= 70 -> pass
-  //   composite 50-69 -> consider
-  //   composite  < 50 -> decline
+  // Verdict computed from composite at view time — NOT stored on the row (per
+  // Peter directive 2026-07-18: derived data drifts when stored). Thresholds
+  // come from resumeThresh (fed by useVerdictThresholds hook — same source as RPC).
   const verdict = composite == null ? null
-                : Number(composite) >= 70 ? "pass"
-                : Number(composite) >= 50 ? "consider"
-                :                           "decline";
+                : Number(composite) >= resumeThresh.pass     ? "pass"
+                : Number(composite) >= resumeThresh.consider ? "consider"
+                :                                              "decline";
 
   const verdictColor = verdict === "pass"     ? T.green
                      : verdict === "consider" ? T.amber
@@ -1284,6 +1282,7 @@ const ScorecardForm = ({ title, prefix, detail, onFieldChange, onSave, saving, t
 
 export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const { isPhone } = useViewport();
+  const verdictThresh = useVerdictThresholds();
   const [detail, setDetail] = useState(candidate || {});
   const [savingSection, setSavingSection] = useState(null);
   const [bestFit, setBestFit] = useState(null);
@@ -1673,8 +1672,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               // All layers now on 0-100 scale (RPC normalized 2026-07-21). is100() kept for
               // legacy call-site safety but always true; can drop after next cleanup pass.
               const is100 = (k) => true;
-              // Per-layer verdict thresholds mirror hiregauge_three_construct_verdict RPC: resume 70/50; assessment/interview/reference 75/60.
-              const layerThresh = (k) => k === "resume" ? { pass: 70, consider: 50 } : { pass: 75, consider: 60 };
+              // Per-layer verdict thresholds come from useVerdictThresholds hook (same source the scoring RPC reads).
+              const layerThresh = (k) => verdictThresh[k] || verdictThresh.assessment;
               const layerBg = (v, k) => { if (v == null) return T.slate50; const t = layerThresh(k); return v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt; };
               const layerFg = (v, k) => { if (v == null) return T.slate500; const t = layerThresh(k); return v >= t.pass ? T.green : v >= t.consider ? T.amber : T.red; };
               // Verdict-driven color (used when a stored verdict may override the score-based
@@ -1843,7 +1842,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             {isOpen && (
                               <tr style={{ borderBottom: `1px solid ${T.slate200}`, background: T.white }}>
                                 <td colSpan={5} style={{ padding: "14px 16px", background: T.slate50 }}>
-                                  {layer.key === "resume" && renderResumeLayer(detail, T)}
+                                  {layer.key === "resume" && renderResumeLayer(detail, T, verdictThresh.resume)}
                                   {layer.key === "assessment" && renderAssessmentLayer({
                                     detail, timing, validity, competencies, bestFit,
                                     selectedRole, setSelectedRole, T,
