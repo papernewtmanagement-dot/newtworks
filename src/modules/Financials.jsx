@@ -77,6 +77,38 @@ function descendantsOf(rootId, allEntities) {
   return out;
 }
 
+// Same walk as descendantsOf, but returns entity ids in breadth-first order
+// starting at rootId. Used by BankSection / CreditSection to group accounts
+// under an entity header per direct-owning entity, preserving a stable
+// top-down order (root → direct children → grandchildren).
+function orderedDescendants(rootId, allEntities) {
+  if (!rootId || !Array.isArray(allEntities) || allEntities.length === 0) {
+    return rootId ? [rootId] : [];
+  }
+  const childrenByParent = {};
+  for (const e of allEntities) {
+    if (e.parent_entity_id) {
+      (childrenByParent[e.parent_entity_id] = childrenByParent[e.parent_entity_id] || []).push(e.id);
+    }
+  }
+  const out = [rootId];
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  let safety = 0;
+  while (queue.length && safety < 100) {
+    const cur = queue.shift();
+    for (const child of (childrenByParent[cur] || [])) {
+      if (!seen.has(child)) {
+        seen.add(child);
+        out.push(child);
+        queue.push(child);
+      }
+    }
+    safety += 1;
+  }
+  return out;
+}
+
 
 // ─── Live Supabase Data Hook ─────────────────────────────────
 function useFinancialsData(entity) {
@@ -2481,14 +2513,13 @@ const PayrollRunDrilldown = ({ drill }) => {
 };
 
 // ─── Section: Bank Accounts ───────────────────────────────────
+// Accounts still filter to the current entity's subtree (Option B flat
+// listing), but are now grouped under a header per direct-owning entity
+// (BFS order from currentEntityId → root, direct children, grandchildren).
+// Per-card entity tag preserved so a card scans on its own even when
+// screenshotted / copied out of its group.
 const BankSection = ({ data }) => {
   const allBankAccounts = Array.isArray(data?.bankAccounts) ? data.bankAccounts : [];
-  // Phase 4: filter to accounts stamped anywhere in the current entity's
-  // subtree (Option B — flat listing across whole subtree with per-account
-  // badge). At Personal (root), every account shows regardless of which
-  // subsidiary owns it. At a leaf, only accounts stamped directly on that
-  // leaf show. entitiesById + descendants both derive client-side from the
-  // 5-entity map already fetched by the hook — no extra roundtrip.
   const ctx = data?.entityContext || {};
   const allEntities = Array.isArray(ctx.allEntities) ? ctx.allEntities : [];
   const entitiesById = Object.fromEntries(allEntities.map(e => [e.id, e]));
@@ -2497,67 +2528,127 @@ const BankSection = ({ data }) => {
     ? allBankAccounts                                                              // fallback: pre-Phase 3 shape
     : allBankAccounts.filter(a => !a.businessEntityId || allow.has(a.businessEntityId));
   const totalCash = bankAccounts.reduce((s,r) => s + (r?.balance || 0), 0);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10 }}>
-        {bankAccounts.map((a, i) => {
-          const entName = a.businessEntityId ? entitiesById[a.businessEntityId]?.name : null;
-          return (
-            <Card key={i}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700 }}>{a.name}</div>
-                {a.needsStatement ? (
-                  <Pill type="warning">Awaiting stmt</Pill>
-                ) : a.needsReview ? (
-                  <Pill type="warning">Review</Pill>
-                ) : null}
-              </div>
-              <div style={{ fontSize: 10, color: T.slate500, marginBottom: 6, letterSpacing: "0.02em" }}>
-                {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ") || <span style={{ color: T.amber }}>Add institution / last 4</span>}
-              </div>
-              {entName && (
-                <div style={{ marginBottom: 6 }}>
-                  <span style={{
-                    display: "inline-block",
-                    padding: "2px 7px",
-                    fontSize: 9,
-                    fontWeight: 600,
-                    color: T.slate700,
-                    background: T.slate100,
-                    border: `1px solid ${T.slate200}`,
-                    borderRadius: 999,
-                    letterSpacing: "0.02em",
-                  }}>{entName}</span>
-                </div>
-              )}
-              <div style={{ fontSize: 24, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-                {fmt(a.balance)}
-              </div>
-              <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>
-                {a.needsStatement ? "No balance yet — statement pending" : a.asOf ? `As of ${a.asOf}` : "Ledger-derived balance"}
-              </div>
-            </Card>
-          );
-        })}
+
+  const renderCard = (a, i) => {
+    const entName = a.businessEntityId ? entitiesById[a.businessEntityId]?.name : null;
+    return (
+      <Card key={i}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700 }}>{a.name}</div>
+          {a.needsStatement ? (
+            <Pill type="warning">Awaiting stmt</Pill>
+          ) : a.needsReview ? (
+            <Pill type="warning">Review</Pill>
+          ) : null}
+        </div>
+        <div style={{ fontSize: 10, color: T.slate500, marginBottom: 6, letterSpacing: "0.02em" }}>
+          {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ") || <span style={{ color: T.amber }}>Add institution / last 4</span>}
+        </div>
+        {entName && (
+          <div style={{ marginBottom: 6 }}>
+            <span style={{
+              display: "inline-block",
+              padding: "2px 7px",
+              fontSize: 9,
+              fontWeight: 600,
+              color: T.slate700,
+              background: T.slate100,
+              border: `1px solid ${T.slate200}`,
+              borderRadius: 999,
+              letterSpacing: "0.02em",
+            }}>{entName}</span>
+          </div>
+        )}
+        <div style={{ fontSize: 24, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
+          {fmt(a.balance)}
+        </div>
+        <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>
+          {a.needsStatement ? "No balance yet — statement pending" : a.asOf ? `As of ${a.asOf}` : "Ledger-derived balance"}
+        </div>
+      </Card>
+    );
+  };
+
+  // Fallback: entity map unavailable → render one flat grid (pre-Phase-3 shape).
+  if (allEntities.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10 }}>
+          {bankAccounts.map(renderCard)}
+        </div>
         <Card style={{ background: T.slate900, border: "none" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
           <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmt(totalCash)}</div>
-          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-            {bankAccounts.length === allBankAccounts.length ? "All accounts combined" : `${bankAccounts.length} of ${allBankAccounts.length} accounts (subtree)`}
-          </div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>All accounts combined</div>
         </Card>
       </div>
+    );
+  }
+
+  // Group accounts by owning entity in BFS order from currentEntityId.
+  const order = orderedDescendants(ctx.currentEntityId, allEntities);
+  const groups = new Map();
+  for (const eid of order) groups.set(eid, []);
+  const orphans = [];  // accounts with a stamp we can't resolve (defensive)
+  for (const a of bankAccounts) {
+    if (a.businessEntityId && groups.has(a.businessEntityId)) {
+      groups.get(a.businessEntityId).push(a);
+    } else {
+      orphans.push(a);
+    }
+  }
+  const nonEmpty = Array.from(groups.entries()).filter(([, accts]) => accts.length > 0);
+
+  const GroupHeader = ({ label, count, subtotal }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 2px", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>{label}</div>
+        <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{count} account{count === 1 ? "" : "s"}</div>
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800, letterSpacing: "-0.02em" }}>{fmt(subtotal)}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {nonEmpty.map(([eid, accts]) => {
+        const e = entitiesById[eid];
+        const subtotal = accts.reduce((s, a) => s + (a?.balance || 0), 0);
+        return (
+          <div key={eid} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <GroupHeader label={e?.name || "Unknown entity"} count={accts.length} subtotal={subtotal} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10 }}>
+              {accts.map(renderCard)}
+            </div>
+          </div>
+        );
+      })}
+      {orphans.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <GroupHeader label="Unassigned" count={orphans.length} subtotal={orphans.reduce((s, a) => s + (a?.balance || 0), 0)} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10 }}>
+            {orphans.map(renderCard)}
+          </div>
+        </div>
+      )}
+      <Card style={{ background: T.slate900, border: "none" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
+        <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmt(totalCash)}</div>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+          {bankAccounts.length === allBankAccounts.length ? "All accounts combined" : `${bankAccounts.length} of ${allBankAccounts.length} accounts (subtree)`}
+        </div>
+      </Card>
     </div>
   );
 };
 
 // ─── Section: Credit & Debt ───────────────────────────────────
 // One line per account: on desktop everything fits horizontally, on phones it
-// wraps naturally onto multiple lines via flex-wrap + minmax fields.
+// wraps naturally onto multiple lines via flex-wrap + minmax fields. Accounts
+// group under a header per direct-owning entity (BFS from currentEntityId);
+// per-row entity tag preserved for standalone scan-ability.
 const CreditSection = ({ data }) => {
   const allAccounts = Array.isArray(data.creditAccounts) ? data.creditAccounts : [];
-  // Phase 4: filter to current subtree (Option B — flat listing with per-row
-  // entity badge). Same pattern as BankSection above.
   const ctx = data?.entityContext || {};
   const allEntities = Array.isArray(ctx.allEntities) ? ctx.allEntities : [];
   const entitiesById = Object.fromEntries(allEntities.map(e => [e.id, e]));
@@ -2570,7 +2661,6 @@ const CreditSection = ({ data }) => {
 
   const typeLabel = (t) => t === "credit_card" ? "Credit Card" : t === "loan" ? "Loan" : "Line of Credit";
 
-  // Compact one-line row (flex-wrap fires only when the row runs out of horizontal room, i.e. phones)
   const AccountRow = ({ a }) => {
     const util = a.limit ? pct(a.balance, a.limit) : null;
     const utilColor = util == null ? T.slate400 : util > 30 ? T.amber : T.green;
@@ -2630,14 +2720,67 @@ const CreditSection = ({ data }) => {
     );
   };
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
-        <KPICard label="Total Debt Exposure" value={fmt(totalDebt)} color={T.red} border={T.red} />
-        <KPICard label="Available Credit" value={fmt(totalAvailable)} color={T.green} border={T.green} />
-        <KPICard label="Accounts Tracked" value={String(accounts.length)} sub={accounts.length === allAccounts.length ? "Balances from ledger" : `of ${allAccounts.length} agency-wide`} border={T.amber} />
+  const kpis = (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
+      <KPICard label="Total Debt Exposure" value={fmt(totalDebt)} color={T.red} border={T.red} />
+      <KPICard label="Available Credit" value={fmt(totalAvailable)} color={T.green} border={T.green} />
+      <KPICard label="Accounts Tracked" value={String(accounts.length)} sub={accounts.length === allAccounts.length ? "Balances from ledger" : `of ${allAccounts.length} agency-wide`} border={T.amber} />
+    </div>
+  );
+
+  // Fallback: entity map unavailable → render flat list (pre-Phase-3 shape).
+  if (allEntities.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {kpis}
+        {accounts.map((a, i) => <AccountRow key={i} a={a} />)}
       </div>
-      {accounts.map((a, i) => <AccountRow key={i} a={a} />)}
+    );
+  }
+
+  // Group accounts by owning entity in BFS order from currentEntityId.
+  const order = orderedDescendants(ctx.currentEntityId, allEntities);
+  const groups = new Map();
+  for (const eid of order) groups.set(eid, []);
+  const orphans = [];
+  for (const a of accounts) {
+    if (a.businessEntityId && groups.has(a.businessEntityId)) {
+      groups.get(a.businessEntityId).push(a);
+    } else {
+      orphans.push(a);
+    }
+  }
+  const nonEmpty = Array.from(groups.entries()).filter(([, accts]) => accts.length > 0);
+
+  const GroupHeader = ({ label, count, subtotalDebt }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 2px", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>{label}</div>
+        <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{count} account{count === 1 ? "" : "s"}</div>
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.red, letterSpacing: "-0.02em" }}>{fmt(subtotalDebt)}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {kpis}
+      {nonEmpty.map(([eid, accts]) => {
+        const e = entitiesById[eid];
+        const subDebt = accts.reduce((s, a) => s + (a?.balance || 0), 0);
+        return (
+          <div key={eid} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <GroupHeader label={e?.name || "Unknown entity"} count={accts.length} subtotalDebt={subDebt} />
+            {accts.map((a, i) => <AccountRow key={i} a={a} />)}
+          </div>
+        );
+      })}
+      {orphans.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <GroupHeader label="Unassigned" count={orphans.length} subtotalDebt={orphans.reduce((s, a) => s + (a?.balance || 0), 0)} />
+          {orphans.map((a, i) => <AccountRow key={i} a={a} />)}
+        </div>
+      )}
     </div>
   );
 };
