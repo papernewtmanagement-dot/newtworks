@@ -115,3 +115,60 @@ export function useViewport() {
   }, []);
   return vp;
 }
+
+
+// ─── useVerdictThresholds ─────────────────────────────────────
+// Reads per-layer verdict cutoffs (pass / consider) from
+// public.hiregauge_verdict_thresholds. Single source of truth
+// shared with the hiregauge_three_construct_verdict RPC — updating
+// the table row updates the frontend on next fetch.
+//
+// Module-level cache so multiple hook consumers share one fetch.
+// Falls back to hardcoded values if fetch fails so the UI never
+// breaks; fallback matches table seed values.
+const FALLBACK_THRESHOLDS = {
+  resume:     { pass: 70, consider: 50 },
+  assessment: { pass: 75, consider: 60 },
+  interview:  { pass: 75, consider: 60 },
+  reference:  { pass: 75, consider: 60 },
+  framework:  { pass: 75, consider: 60 },
+};
+
+let _thresholdsCache = null;
+let _thresholdsPromise = null;
+
+async function _loadVerdictThresholds() {
+  if (_thresholdsCache) return _thresholdsCache;
+  if (_thresholdsPromise) return _thresholdsPromise;
+  _thresholdsPromise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from("hiregauge_verdict_thresholds")
+        .select("layer, pass_threshold, consider_threshold");
+      if (error || !data || data.length === 0) return FALLBACK_THRESHOLDS;
+      const m = { ...FALLBACK_THRESHOLDS };
+      for (const r of data) {
+        m[r.layer] = {
+          pass: Number(r.pass_threshold),
+          consider: Number(r.consider_threshold),
+        };
+      }
+      _thresholdsCache = m;
+      return m;
+    } catch (e) {
+      return FALLBACK_THRESHOLDS;
+    }
+  })();
+  return _thresholdsPromise;
+}
+
+export function useVerdictThresholds() {
+  const [t, setT] = useState(_thresholdsCache || FALLBACK_THRESHOLDS);
+  useEffect(() => {
+    if (_thresholdsCache) { setT(_thresholdsCache); return; }
+    let mounted = true;
+    _loadVerdictThresholds().then((v) => { if (mounted) setT(v); });
+    return () => { mounted = false; };
+  }, []);
+  return t;
+}
