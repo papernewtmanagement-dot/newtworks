@@ -5359,38 +5359,29 @@ Rubric refresher (Weekly wrap-up email section of the Daily Wrap-up manual):
 
 // ---------- Label + archive ----------
 
+// Apply the Wrapups label + remove INBOX at the MESSAGE level (not thread
+// level). CPR reply threads contain multiple replies from different
+// teammates; thread-level labeling would archive/hide siblings that still
+// need to be processed. This uses GMAIL_MODIFY_MESSAGE_LABELS which only
+// touches the one message.
 async function labelAndArchive(
   ctx: WrapupCtx,
   messageId: string,
-  threadId: string | undefined,
+  _threadId: string | undefined,
 ): Promise<void> {
   try {
-    if (threadId) {
-      await callComposio({
-        apiKey: ctx.composioApiKey,
-        userId: ctx.composioUserId,
-        connectedAccountId: ctx.gmailAccountId,
-        toolSlug: "GMAIL_MODIFY_THREAD_LABELS",
-        toolArguments: {
-          thread_id: threadId,
-          remove_label_ids: ["INBOX"],
-          add_label_ids: [WRAPUPS_LABEL_ID],
-          user_id: "me",
-        },
-      });
-    } else {
-      await callComposio({
-        apiKey: ctx.composioApiKey,
-        userId: ctx.composioUserId,
-        connectedAccountId: ctx.gmailAccountId,
-        toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
-        toolArguments: {
-          message_id: messageId,
-          label_ids: [WRAPUPS_LABEL_ID],
-          user_id: "me",
-        },
-      });
-    }
+    await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.gmailAccountId,
+      toolSlug: "GMAIL_MODIFY_MESSAGE_LABELS",
+      toolArguments: {
+        message_id: messageId,
+        remove_label_ids: ["INBOX"],
+        add_label_ids: [WRAPUPS_LABEL_ID],
+        user_id: "me",
+      },
+    });
   } catch (e) {
     console.warn("wrapup label+archive threw (non-fatal):", e);
   }
