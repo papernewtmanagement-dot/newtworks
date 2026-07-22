@@ -5155,9 +5155,16 @@ async function resolveTeamMemberByEmail(
   };
 }
 
-// Nearest past Saturday (inclusive) from an ISO timestamp, evaluated in
-// America/Chicago (agency week convention: Sun-Sat).
-function nearestPastSaturdayCT(receivedAtISO: string): string {
+// Given an ISO timestamp, returns the Saturday date (YYYY-MM-DD in
+// America/Chicago) that the wrap-up email is targeting. Assumes:
+//   Fri (idx=5) or Sat (idx=6) → THIS week's Saturday (Sat=today, Fri=+1)
+//     Rationale: team writes their wrap-up on Fri afternoon / Sat morning
+//     for the week that ends that same Saturday.
+//   Sun (idx=0) → last Saturday (yesterday). Wrap-up landing after CPR
+//     for the week that just closed.
+//   Mon-Thu (idx=1..4) → last Saturday. Late wrap-up covering the
+//     just-closed week.
+function wrapupTargetSaturdayCT(receivedAtISO: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Chicago",
     year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
@@ -5168,9 +5175,13 @@ function nearestPastSaturdayCT(receivedAtISO: string): string {
   const wd = parts.find(p => p.type === "weekday")!.value;
   const dayIdx: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   const idx = dayIdx[wd] ?? 0;
-  const daysToSubtract = idx === 6 ? 0 : (idx + 1);  // Sat=0, Sun=1 back to prior Sat, Mon=2, etc.
+  let daysOffset: number;
+  if (idx === 6) daysOffset = 0;                // Sat: today
+  else if (idx === 5) daysOffset = 1;           // Fri: +1 (tomorrow's Sat)
+  else if (idx === 0) daysOffset = -1;          // Sun: yesterday
+  else daysOffset = -(idx + 1);                 // Mon..Thu: back to last Sat
   const base = new Date(`${y}-${m}-${d}T12:00:00Z`);
-  base.setUTCDate(base.getUTCDate() - daysToSubtract);
+  base.setUTCDate(base.getUTCDate() + daysOffset);
   return base.toISOString().slice(0, 10);
 }
 
@@ -5191,7 +5202,7 @@ async function resolveWeekEnding(
       .maybeSingle();
     if (data?.week_ending_date) return data.week_ending_date;
   }
-  return nearestPastSaturdayCT(receivedAtISO);
+  return wrapupTargetSaturdayCT(receivedAtISO);
 }
 
 interface DetailRowLite {
