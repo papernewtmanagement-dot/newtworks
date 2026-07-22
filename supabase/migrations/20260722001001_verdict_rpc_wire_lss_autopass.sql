@@ -1,0 +1,13 @@
+-- hiregauge_three_construct_verdict updated to include lss_autopass in meta jsonb output.
+-- Full RPC body captured in prior migration 20260722000101_hiregauge_three_construct_verdict_reads_thresholds.sql;
+-- this migration adds a single line to the meta jsonb_build_object call:
+--
+--   'lss_autopass', public._hiregauge_lss_autopass(
+--     v_ta.lss_total_accuracy::numeric,
+--     v_ta.reliability,
+--     v_ta.analytical::numeric,
+--     v_ta.assessment_target_role,
+--     v_best_fit_role
+--   )
+--
+-- The rest of the RPC body is unchanged. See supabase pg_get_functiondef output for the live source of truth.
