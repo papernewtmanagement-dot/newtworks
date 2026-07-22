@@ -185,6 +185,10 @@ export async function processWrapupMode(
         error: e instanceof Error ? e.message : String(e),
       });
     }
+    // Small breath between messages so Groq's per-minute quota doesn't
+    // trip during backfill. Steady-state cron only sees 1-2 msgs per tick
+    // so this is negligible in production.
+    await new Promise((r) => setTimeout(r, 1500));
   }
 
   return { ok: true, processed_messages: processed, skipped, errors, message_count: messages.length, results };
@@ -223,8 +227,15 @@ async function processOneWrapupMessage(
   const fromRaw: string = msg?.from ?? msg?.sender ?? hget("From");
   const subject: string = msg?.subject ?? hget("Subject");
   const inReplyTo: string = hget("In-Reply-To") || "";
-  const internalDateMs = msg?.internalDate ? Number(msg.internalDate) : Date.now();
-  const receivedAtISO: string = new Date(internalDateMs).toISOString();
+  // Composio's GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID returns messageTimestamp
+  // (ISO 8601 string) at the top level, and NOT internalDate. Fall back to
+  // Date header parsing, then Date.now() as last resort (which corrupts week
+  // routing — hence the multi-source fallback).
+  const receivedAtISO: string =
+    (typeof msg?.messageTimestamp === "string" && msg.messageTimestamp)
+      || (msg?.internalDate ? new Date(Number(msg.internalDate)).toISOString() : "")
+      || parseDateHeader(headers)
+      || new Date().toISOString();
   const threadId: string | undefined = msg?.threadId ?? msg?.thread_id;
 
   const bodyText = wupExtractBestBody(msg);
@@ -516,6 +527,18 @@ async function resolveTeamMemberByEmail(
 //     for the week that just closed.
 //   Mon-Thu (idx=1..4) → last Saturday. Late wrap-up covering the
 //     just-closed week.
+// Parse RFC 2822 date header (e.g. "Fri, 10 Jul 2026 22:19:31 +0000") into
+// ISO 8601. Returns "" if unparseable.
+function parseDateHeader(headers: any[]): string {
+  const dateHeader = headers?.find((h: any) => h?.name === "Date")?.value;
+  if (!dateHeader || typeof dateHeader !== "string") return "";
+  try {
+    const d = new Date(dateHeader);
+    if (isNaN(d.getTime())) return "";
+    return d.toISOString();
+  } catch { return ""; }
+}
+
 function wrapupTargetSaturdayCT(receivedAtISO: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Chicago",
