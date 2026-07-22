@@ -38,6 +38,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 import { T } from "../lib/theme.js";
 
 import { useTabParam } from "../lib/routing.jsx";
+import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
 const STAGES = {
   applied:         { label:"Applied",        color:T.slate500, bg:T.slate100, order:0 },
@@ -225,10 +226,9 @@ function useProducerROI() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
-// Layer-specific verdict thresholds mirror hiregauge_three_construct_verdict RPC:
-// resume 70/50, assessment/interview/reference 75/60 (pass / consider / decline).
-const RESUME_THRESH = { pass: 70, consider: 50 };
-const ASSESS_THRESH = { pass: 75, consider: 60 };
+// Per-layer verdict thresholds come from useVerdictThresholds() hook (reads
+// public.hiregauge_verdict_thresholds — same source the scoring RPC reads).
+// layerColor and layerBg are pure helpers that take a threshold object as an arg.
 const layerColor = (v, t) => (v == null ? T.slate400 : v >= t.pass ? T.green   : v >= t.consider ? T.amber   : T.red);
 const layerBg    = (v, t) => (v == null ? T.slate50  : v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt);
 const pct = (a, t) => t ? Math.min(100, Math.round((a/t)*100)) : 0;
@@ -525,6 +525,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   // returns to the same detail view. useTabParam without an allowlist just
   // syncs the value bidirectionally with the URL query string.
   const [selected, setSelected] = useTabParam("candidate", null);
+  const verdictThresh = useVerdictThresholds();
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
   const stages = stagesProp || ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
 
@@ -567,10 +568,10 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
                     <span style={{ fontSize:9, color:T.slate400, flexShrink:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{app.position?.split(" ")?.slice(-1)?.[0] || ""}</span>
                     <div style={{ display:"flex", gap:6, flexShrink:0 }}>
                       {app.resume_avg != null && (
-                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.resume_avg), RESUME_THRESH) }}>R {Math.round(Number(app.resume_avg))}</span>
+                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.resume_avg), verdictThresh.resume) }}>R {Math.round(Number(app.resume_avg))}</span>
                       )}
                       {app.assessment_composite != null && (
-                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.assessment_composite), ASSESS_THRESH) }}>A {Math.round(Number(app.assessment_composite))}</span>
+                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.assessment_composite), verdictThresh.assessment) }}>A {Math.round(Number(app.assessment_composite))}</span>
                       )}
                       {app.resume_avg == null && app.assessment_composite == null && (
                         <span style={{ fontSize:9, color:T.slate400 }}>—</span>
@@ -617,6 +618,7 @@ const DeclinedTable = ({ declined, onUpdate }) => {
   // Same param name as RecruitingPipeline uses; the two are conditionally
   // rendered (gtab picks one) so there's no collision.
   const [selected, setSelected] = useTabParam("candidate", null);
+  const verdictThresh = useVerdictThresholds();
   const selectedApp = declined.find(a => a.id === selected);
   // sortKey ∈ {name, source, resume, cts, recent}; direction ∈ {asc, desc}
   const [sortKey, setSortKey] = useState("recent");
@@ -707,10 +709,10 @@ const DeclinedTable = ({ declined, onUpdate }) => {
                     {app.first_name} {app.last_name}
                   </td>
                   <td style={{ ...tdBase, fontSize: 10, color: T.slate600, whiteSpace: "nowrap" }}>{sourceLbl}</td>
-                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.resume_avg), RESUME_THRESH) }}>
+                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.resume_avg), verdictThresh.resume) }}>
                     {app.resume_avg != null ? Math.round(Number(app.resume_avg)) : "—"}
                   </td>
-                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.assessment_composite), ASSESS_THRESH) }}>
+                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.assessment_composite), verdictThresh.assessment) }}>
                     {app.assessment_composite != null ? Math.round(Number(app.assessment_composite)) : "—"}
                   </td>
                   <td style={{ ...tdBase, color: T.slate600, minWidth: 200, lineHeight: 1.35 }}>
