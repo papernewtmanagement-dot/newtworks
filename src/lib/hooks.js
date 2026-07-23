@@ -120,7 +120,7 @@ export function useViewport() {
 // ─── useVerdictThresholds ─────────────────────────────────────
 // Reads per-layer verdict cutoffs (pass / consider) from
 // public.hiregauge_verdict_thresholds. Single source of truth
-// shared with the hiregauge_three_construct_verdict RPC — updating
+// shared with the verdict_overall RPC — updating
 // the table row updates the frontend on next fetch.
 //
 // Module-level cache so multiple hook consumers share one fetch.
