@@ -367,31 +367,27 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
 // construct rollups with sub-signals grouped underneath (11 total: 3 Nature,
 // 4 Nurture, 4 Drivers), fired resume-tell rule chips, and a collapsible
 // extracted-text pane. Sub-signal scores + reasoning read from the resume_analysis
-// jsonb col (migration 20260723080000 step 4a), with fallback to the legacy
-// res_<slug>_score / res_<slug>_reason flat cols on hiring_candidates so
-// candidates scored via the still-flat-col scoring path keep rendering. All
-// scores render on the 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
+// jsonb col (migration 20260723080000 step 4a). Step 4d (migration 20260723225121)
+// removed the flat-col fallback — jsonb is the sole source. All scores render on
+// the 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
 function renderResumeLayer(detail, T, resumeThresh) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
   const nature = detail?.res_nature;
   const nurture = detail?.res_nurture;
   const drivers = detail?.res_drivers;
-  // resume_analysis jsonb (step 4a) is the new source of truth for signals,
-  // rules_fired, scored_at, scored_model, qualifications. Fall back to flat
-  // cols during transition until scoring pipeline writes jsonb directly.
+  // resume_analysis jsonb (step 4a) is the sole source of truth for signals,
+  // rules_fired, scored_at, scored_model, qualifications. Step 4d removed the
+  // flat-col fallback.
   const ra = detail?.resume_analysis;
-  const rulesFired = ra?.rules_fired ?? detail?.res_rules_fired;
-  const scoredAt = ra?.scored_at ?? detail?.res_scored_at;
-  const scoredModel = ra?.scored_model ?? detail?.res_scored_model;
+  const rulesFired = ra?.rules_fired;
+  const scoredAt = ra?.scored_at;
+  const scoredModel = ra?.scored_model;
 
-  // Helper: resolve a sub-signal's {score,reason} — jsonb first, flat-col fallback.
+  // Helper: resolve a sub-signal's {score,reason} from resume_analysis.signals jsonb.
   const sigOf = (slug) => {
     const j = ra?.signals?.[slug];
-    return {
-      score: j?.score ?? detail?.[`res_${slug}_score`],
-      reason: j?.reason ?? detail?.[`res_${slug}_reason`],
-    };
+    return { score: j?.score, reason: j?.reason };
   };
 
   // Sub-signal → construct mapping. Canonical from hiregauge_rules.resume_score_rubric.
@@ -503,8 +499,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
           Each construct score is the mean of its sub-signals; sub-signals
           nested under their construct heading with reasoning text.
           All scores displayed as whole numbers on the 0-100 scale.
-          Sub-signal values resolve via sigOf() — resume_analysis jsonb
-          (step 4a) first, res_<slug>_score/reason flat cols as fallback. */}
+          Sub-signal values resolve via sigOf() from resume_analysis.signals jsonb. */}
       {(nature != null || nurture != null || drivers != null || anySubSignalScored) && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
@@ -587,19 +582,17 @@ function renderResumeLayer(detail, T, resumeThresh) {
       )}
 
       {/* Qualifications — structured extracts of licensure, language, education,
-          and prior-similar-role fit. Reads from resume_analysis.qualifications
-          jsonb (step 4a), falling back to legacy res_licenses/res_languages/
-          res_education/res_prior_similar_role flat jsonb cols on hiring_candidates
-          during the transition. Feeds the LSS auto-pass exception logic in
-          _hiregauge_lss_autopass so tier4 candidates with license or prior
-          insurance experience keep their framework verdict. Always visible when
-          any of the four is populated. */}
-      {(detail?.resume_analysis?.qualifications || detail?.res_licenses || detail?.res_languages || detail?.res_education || detail?.res_prior_similar_role) && (() => {
-        const q = detail?.resume_analysis?.qualifications || {};
-        const lic = q.licenses ?? detail?.res_licenses ?? {};
-        const lang = q.languages ?? detail?.res_languages ?? {};
-        const edu = q.education ?? detail?.res_education ?? {};
-        const prior = q.prior_similar_role ?? detail?.res_prior_similar_role ?? {};
+          and prior-similar-role fit. Reads from resume_analysis.qualifications jsonb
+          (step 4a). Step 4d removed the flat-col fallback (migration 20260723225121).
+          Feeds the LSS auto-pass exception logic in _hiregauge_lss_autopass so tier4
+          candidates with license or prior insurance experience keep their framework
+          verdict. Always visible when qualifications are populated. */}
+      {detail?.resume_analysis?.qualifications && (() => {
+        const q = detail.resume_analysis.qualifications;
+        const lic = q.licenses ?? {};
+        const lang = q.languages ?? {};
+        const edu = q.education ?? {};
+        const prior = q.prior_similar_role ?? {};
         const heldLicenses = [
           lic.pc && "P&C", lic.lh && "L&H", lic.ips && "IPS",
           lic.series_6 && "Series 6", lic.series_63 && "Series 63",
