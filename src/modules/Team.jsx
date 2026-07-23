@@ -552,13 +552,13 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4, gap:6 }}>
                     <span style={{ fontSize:9, color:T.slate400, flexShrink:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{app.position?.split(" ")?.slice(-1)?.[0] || ""}</span>
                     <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                      {app.resume_avg != null && (
-                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.resume_avg), verdictThresh.resume) }}>R {Math.round(Number(app.resume_avg))}</span>
+                      {app.res_composite != null && (
+                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.res_composite), verdictThresh.resume) }}>R {Math.round(Number(app.res_composite))}</span>
                       )}
                       {app.assessment_composite != null && (
                         <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.assessment_composite), verdictThresh.assessment) }}>A {Math.round(Number(app.assessment_composite))}</span>
                       )}
-                      {app.resume_avg == null && app.assessment_composite == null && (
+                      {app.res_composite == null && app.assessment_composite == null && (
                         <span style={{ fontSize:9, color:T.slate400 }}>—</span>
                       )}
                     </div>
@@ -620,7 +620,7 @@ const DeclinedTable = ({ declined, onUpdate }) => {
     const num = (v) => (v == null ? -Infinity : v);
     const str = (v) => (v || "").toLowerCase();
     if (sortKey === "cts")         arr.sort((a,b) => (num(a.assessment_composite) - num(b.assessment_composite)) * dir);
-    else if (sortKey === "resume") arr.sort((a,b) => (num(a.resume_avg)    - num(b.resume_avg))    * dir);
+    else if (sortKey === "resume") arr.sort((a,b) => (num(a.res_composite) - num(b.res_composite)) * dir);
     else if (sortKey === "name")   arr.sort((a,b) => str(a.last_name).localeCompare(str(b.last_name)) * dir);
     else if (sortKey === "source") arr.sort((a,b) => str(a.decline_reason).localeCompare(str(b.decline_reason)) * dir);
     else                           arr.sort((a,b) => (new Date(a.created_at) - new Date(b.created_at)) * dir);
@@ -694,8 +694,8 @@ const DeclinedTable = ({ declined, onUpdate }) => {
                     {app.first_name} {app.last_name}
                   </td>
                   <td style={{ ...tdBase, fontSize: 10, color: T.slate600, whiteSpace: "nowrap" }}>{sourceLbl}</td>
-                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.resume_avg), verdictThresh.resume) }}>
-                    {app.resume_avg != null ? Math.round(Number(app.resume_avg)) : "—"}
+                  <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.res_composite), verdictThresh.resume) }}>
+                    {app.res_composite != null ? Math.round(Number(app.res_composite)) : "—"}
                   </td>
                   <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.assessment_composite), verdictThresh.assessment) }}>
                     {app.assessment_composite != null ? Math.round(Number(app.assessment_composite)) : "—"}
@@ -2837,7 +2837,7 @@ export default function Team() {
     let cancelled = false;
     supabase
       .from("v_hiring_candidates")
-      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
+      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
       .eq("agency_id", AGENCY_ID)
       .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
       .order("created_at", { ascending: false })
