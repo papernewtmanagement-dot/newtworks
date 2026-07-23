@@ -125,7 +125,8 @@ export async function createSuspenseTask(input: SuspenseTaskInput): Promise<{ ta
       created_by: "document_processor",
       priority: priorityForAmount(amount),
       status: "open",
-      module_reference: "financials/suspense",
+      task_category: "finances",
+      task_type: "parse_review",
       related_id: input.journalEntryId,
     })
     .select("id")
