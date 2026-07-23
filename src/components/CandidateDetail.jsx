@@ -728,70 +728,20 @@ function renderResumeLayer(detail, T, resumeThresh) {
   );
 }
 
-// Assessment layer expansion body — the full LSS / validity / drive & empathy
-// / traits view on the left; role-fit selector + competencies for the
-// currently-selected role on the right. Moved here from the standalone
-// top-of-page Assessment section per Peter directive 2026-07-17.
-function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit, selectedRole, setSelectedRole, T }) {
+// Assessment layer expansion body — the LSS + traits view on the left;
+// role-fit selector + competencies for the currently-selected role on the
+// right. Moved here from the standalone top-of-page Assessment section per
+// Peter directive 2026-07-17.
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T }) {
   return (
     <div>
-      {/* Profile validity banner (renders only when non-valid). */}
-      {(() => {
-        const v0 = Array.isArray(validity) && validity.length > 0 ? validity[0] : null;
-        if (!v0 || v0.validity_status === "valid") return null;
-        const status = v0.validity_status;
-        const isUnknown = status === "unknown";
-        const bg = isUnknown ? T.slate100 : T.redLt;
-        const fg = isUnknown ? T.slate500 : T.red;
-        const msg = v0.warning
-          || (isUnknown ? "Assessment scores not yet available — validity cannot be evaluated."
-                        : "Profile flagged as questionable. Weigh Reliability + Distortion below before trusting scores.");
-        return (
-          <div style={{
-            marginBottom: 14, padding: "8px 10px", background: bg,
-            borderRadius: 6, borderLeft: `3px solid ${fg}`, boxSizing: "border-box",
-            fontSize: 12, color: T.slate700,
-          }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: fg, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 }}>
-              Profile validity — {status}
-            </div>
-            {msg}
-          </div>
-        );
-      })()}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
 
-        {/* LEFT COLUMN — timing, LSS, validity meters, traits */}
+        {/* LEFT COLUMN — LSS + traits */}
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
             Traits & LSS
           </div>
-          {timing != null && timing?.overall_flag !== "no_data" && (() => {
-            const flag = String(timing.overall_flag || "green").toLowerCase();
-            const bg = flag === "red" ? T.redLt : flag === "yellow" ? T.amberLt : T.greenLt;
-            const fg = flag === "red" ? T.red   : flag === "yellow" ? T.amber  : T.green;
-            return (
-              <div style={{
-                padding: "8px 10px", background: bg, borderRadius: 6,
-                borderLeft: `3px solid ${fg}`, boxSizing: "border-box",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>Timing</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: fg, whiteSpace: "nowrap" }}>
-                    {timing.total_min}m
-                    <span style={{ fontSize: 10, color: T.slate600, fontWeight: 400, marginLeft: 6 }}>
-                      total · Traits {timing.cts_min}m · LSS {timing.lss_min}m · VCT {timing.vct_min}m
-                    </span>
-                  </span>
-                </div>
-                {Array.isArray(timing.reasons) && timing.reasons.length > 0 && (
-                  <div style={{ fontSize: 11, color: T.slate600, marginTop: 4 }}>
-                    {timing.reasons.map((r, i) => <div key={i}>• {r}</div>)}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
           {detail?.cts_invited_at && detail?.cts_started_at && (() => {
             const invited = new Date(detail.cts_invited_at);
             const started = new Date(detail.cts_started_at);
@@ -892,8 +842,6 @@ function renderAssessmentLayer({ detail, timing, validity, competencies, bestFit
           />
           <AssessRow label="Reliability" value={detail?.reliability} band={RELIABILITY_BAND(detail?.reliability)} />
           <AssessRow label="Distortion" value={detail?.response_distortion} band={DISTORTION_BAND(detail?.response_distortion)} />
-          <AssessRow label="Drive" value={detail?.ego_drive_score} />
-          <AssessRow label="Empathy" value={detail?.empathy_score} />
 
           <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
 
@@ -1390,8 +1338,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [detail, setDetail] = useState(candidate || {});
   const [savingSection, setSavingSection] = useState(null);
   const [bestFit, setBestFit] = useState(null);
-  const [validity, setValidity] = useState(null);
-  const [timing, setTiming] = useState(null);
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
   const [composite, setComposite] = useState(null);
@@ -1450,17 +1396,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     return () => { cancelled = true; };
   }, [candidate?.id]);
 
-  // Best-fit role + validity via RPC (graceful fallback if functions missing)
+  // Best-fit role via RPC (graceful fallback if function missing)
   useEffect(() => {
     if (!detail?.id || !supabase) return;
     supabase.rpc("cts_best_fit_role", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error) setBestFit(data); })
-      .catch(() => {});
-    supabase.rpc("cts_profile_validity", { p_assessment_id: detail.id })
-      .then(({ data, error }) => { if (!error) setValidity(data); })
-      .catch(() => {});
-    supabase.rpc("cts_timing_assessment", { p_assessment_id: detail.id })
-      .then(({ data, error }) => { if (!error) setTiming(data); })
       .catch(() => {});
     // Competencies for all four role fits (single RPC returning JSONB keyed by role)
     supabase.rpc("cts_all_competencies", { p_assessment_id: detail.id })
@@ -1948,7 +1888,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 <td colSpan={5} style={{ padding: "14px 16px", background: T.slate50 }}>
                                   {layer.key === "resume" && renderResumeLayer(detail, T, verdictThresh.resume)}
                                   {layer.key === "assessment" && renderAssessmentLayer({
-                                    detail, timing, validity, competencies, bestFit,
+                                    detail, competencies, bestFit,
                                     selectedRole, setSelectedRole, T,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
