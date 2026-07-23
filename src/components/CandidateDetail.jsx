@@ -365,50 +365,65 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
 // Resume layer expansion body — shows HOW the resume score was arrived at.
 // Renders (when present): composite + verdict pill, Nature/Nurture/Drivers
 // construct rollups with sub-signals grouped underneath (11 total: 3 Nature,
-// 4 Nurture, 4 Drivers), fired resume-tell rule chips (res_rules_fired), and
-// a collapsible extracted-text pane. Sub-signal scores + reasoning read from
-// first-class res_<slug>_score / res_<slug>_reason columns on hiring_candidates
-// (migration 20260718230100 — was res_subsignals JSONB). Falls back to plain
-// text display when no score has been written yet. All scores render on the
-// 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
+// 4 Nurture, 4 Drivers), fired resume-tell rule chips, and a collapsible
+// extracted-text pane. Sub-signal scores + reasoning read from the resume_analysis
+// jsonb col (migration 20260723080000 step 4a), with fallback to the legacy
+// res_<slug>_score / res_<slug>_reason flat cols on hiring_candidates so
+// candidates scored via the still-flat-col scoring path keep rendering. All
+// scores render on the 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
 function renderResumeLayer(detail, T, resumeThresh) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
-  const rulesFired = detail?.res_rules_fired;
-  const scoredAt = detail?.res_scored_at;
-  const scoredModel = detail?.res_scored_model;
   const nature = detail?.res_nature;
   const nurture = detail?.res_nurture;
   const drivers = detail?.res_drivers;
+  // resume_analysis jsonb (step 4a) is the new source of truth for signals,
+  // rules_fired, scored_at, scored_model, qualifications. Fall back to flat
+  // cols during transition until scoring pipeline writes jsonb directly.
+  const ra = detail?.resume_analysis;
+  const rulesFired = ra?.rules_fired ?? detail?.res_rules_fired;
+  const scoredAt = ra?.scored_at ?? detail?.res_scored_at;
+  const scoredModel = ra?.scored_model ?? detail?.res_scored_model;
+
+  // Helper: resolve a sub-signal's {score,reason} — jsonb first, flat-col fallback.
+  const sigOf = (slug) => {
+    const j = ra?.signals?.[slug];
+    return {
+      score: j?.score ?? detail?.[`res_${slug}_score`],
+      reason: j?.reason ?? detail?.[`res_${slug}_reason`],
+    };
+  };
 
   // Sub-signal → construct mapping. Canonical from hiregauge_rules.resume_score_rubric.
   //   Nature  = mean(Autonomy, Leadership Emergence, Interpersonal Substrate)
   //   Nurture = mean(Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility)
   //   Drivers = mean(Trajectory Direction, Coherent Pursuit, Follow-Through, Goal Orientation)
-  // Each sub-signal reads from res_<slug>_score + res_<slug>_reason columns on
-  // hiring_candidates (first-class columns as of migration 20260718230100).
+  // Each sub-signal resolves via sigOf(slug) → jsonb-first, flat-col fallback.
   const CONSTRUCTS = [
     { key: "nature",  label: "Nature",  score: nature,  signals: [
-      { label: "Autonomy",                scoreKey: "res_autonomy_score",                reasonKey: "res_autonomy_reason" },
-      { label: "Leadership Emergence",    scoreKey: "res_leadership_emergence_score",    reasonKey: "res_leadership_emergence_reason" },
-      { label: "Interpersonal Substrate", scoreKey: "res_interpersonal_substrate_score", reasonKey: "res_interpersonal_substrate_reason" },
+      { label: "Autonomy",                slug: "autonomy" },
+      { label: "Leadership Emergence",    slug: "leadership_emergence" },
+      { label: "Interpersonal Substrate", slug: "interpersonal_substrate" },
     ]},
     { key: "nurture", label: "Nurture", score: nurture, signals: [
-      { label: "Honesty",                 scoreKey: "res_honesty_score",                 reasonKey: "res_honesty_reason" },
-      { label: "Concern for Others",      scoreKey: "res_concern_for_others_score",      reasonKey: "res_concern_for_others_reason" },
-      { label: "Hard Work Ethic",         scoreKey: "res_hard_work_ethic_score",         reasonKey: "res_hard_work_ethic_reason" },
-      { label: "Personal Responsibility", scoreKey: "res_personal_responsibility_score", reasonKey: "res_personal_responsibility_reason" },
+      { label: "Honesty",                 slug: "honesty" },
+      { label: "Concern for Others",      slug: "concern_for_others" },
+      { label: "Hard Work Ethic",         slug: "hard_work_ethic" },
+      { label: "Personal Responsibility", slug: "personal_responsibility" },
     ]},
     { key: "drivers", label: "Drivers", score: drivers, signals: [
-      { label: "Trajectory Direction",    scoreKey: "res_trajectory_direction_score",    reasonKey: "res_trajectory_direction_reason" },
-      { label: "Coherent Pursuit",        scoreKey: "res_coherent_pursuit_score",        reasonKey: "res_coherent_pursuit_reason" },
-      { label: "Follow-Through",          scoreKey: "res_follow_through_score",          reasonKey: "res_follow_through_reason" },
-      { label: "Goal Orientation",        scoreKey: "res_goal_orientation_score",        reasonKey: "res_goal_orientation_reason" },
+      { label: "Trajectory Direction",    slug: "trajectory_direction" },
+      { label: "Coherent Pursuit",        slug: "coherent_pursuit" },
+      { label: "Follow-Through",          slug: "follow_through" },
+      { label: "Goal Orientation",        slug: "goal_orientation" },
     ]},
   ];
 
   const anySubSignalScored = CONSTRUCTS.some((c) =>
-    c.signals.some((s) => detail?.[s.scoreKey] != null || detail?.[s.reasonKey])
+    c.signals.some((s) => {
+      const { score, reason } = sigOf(s.slug);
+      return score != null || reason;
+    })
   );
 
   const hasText = text && String(text).trim().length > 0;
@@ -488,8 +503,8 @@ function renderResumeLayer(detail, T, resumeThresh) {
           Each construct score is the mean of its sub-signals; sub-signals
           nested under their construct heading with reasoning text.
           All scores displayed as whole numbers on the 0-100 scale.
-          Sub-signal values read from first-class res_<slug>_score /
-          res_<slug>_reason columns (migration 20260718230100). */}
+          Sub-signal values resolve via sigOf() — resume_analysis jsonb
+          (step 4a) first, res_<slug>_score/reason flat cols as fallback. */}
       {(nature != null || nurture != null || drivers != null || anySubSignalScored) && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
@@ -498,9 +513,9 @@ function renderResumeLayer(detail, T, resumeThresh) {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {CONSTRUCTS.map((c) => {
               const cpct = pct(c.score);
-              const scoredSignals = c.signals.filter(
-                (sig) => detail?.[sig.scoreKey] != null || detail?.[sig.reasonKey]
-              );
+              const scoredSignals = c.signals
+                .map((sig) => ({ ...sig, ...sigOf(sig.slug) }))
+                .filter((sig) => sig.score != null || sig.reason);
               return (
                 <div key={c.key}>
                   <div style={{
@@ -520,9 +535,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
                   {scoredSignals.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginLeft: 6 }}>
                       {scoredSignals.map((sig) => {
-                        const s = detail[sig.scoreKey];
-                        const r = detail[sig.reasonKey];
-                        const spct = pct(s);
+                        const spct = pct(sig.score);
                         return (
                           <div key={sig.label} style={{
                             display: "flex", gap: 10, alignItems: "flex-start",
@@ -539,7 +552,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 2 }}>{sig.label}</div>
-                              {r && <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.5 }}>{r}</div>}
+                              {sig.reason && <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.5 }}>{sig.reason}</div>}
                             </div>
                           </div>
                         );
@@ -574,17 +587,19 @@ function renderResumeLayer(detail, T, resumeThresh) {
       )}
 
       {/* Qualifications — structured extracts of licensure, language, education,
-          and prior-similar-role fit. Populated from res_licenses/res_languages/
-          res_education/res_prior_similar_role jsonb columns on hiring_candidates
-          (migration 20260722210000). Feeds the LSS auto-pass exception logic in
+          and prior-similar-role fit. Reads from resume_analysis.qualifications
+          jsonb (step 4a), falling back to legacy res_licenses/res_languages/
+          res_education/res_prior_similar_role flat jsonb cols on hiring_candidates
+          during the transition. Feeds the LSS auto-pass exception logic in
           _hiregauge_lss_autopass so tier4 candidates with license or prior
           insurance experience keep their framework verdict. Always visible when
-          any of the four cols is populated. */}
-      {(detail?.res_licenses || detail?.res_languages || detail?.res_education || detail?.res_prior_similar_role) && (() => {
-        const lic = detail?.res_licenses || {};
-        const lang = detail?.res_languages || {};
-        const edu = detail?.res_education || {};
-        const prior = detail?.res_prior_similar_role || {};
+          any of the four is populated. */}
+      {(detail?.resume_analysis?.qualifications || detail?.res_licenses || detail?.res_languages || detail?.res_education || detail?.res_prior_similar_role) && (() => {
+        const q = detail?.resume_analysis?.qualifications || {};
+        const lic = q.licenses ?? detail?.res_licenses ?? {};
+        const lang = q.languages ?? detail?.res_languages ?? {};
+        const edu = q.education ?? detail?.res_education ?? {};
+        const prior = q.prior_similar_role ?? detail?.res_prior_similar_role ?? {};
         const heldLicenses = [
           lic.pc && "P&C", lic.lh && "L&H", lic.ips && "IPS",
           lic.series_6 && "Series 6", lic.series_63 && "Series 63",
