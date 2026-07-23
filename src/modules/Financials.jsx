@@ -1120,6 +1120,7 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
     setError(null);
     try {
       const { data, error } = await supabase.rpc("pnl_drill_transactions", {
+        p_entity_id:    ctx.entityId,
         p_account_name: ctx.accountName,
         p_section:      ctx.section,
         p_account_type: ctx.accountType,
@@ -1413,16 +1414,17 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
   const [showPct, setShowPct] = useState(false);
   const [yearsBack, setYearsBack] = useState("3"); // "3" | "10" | "all"
 
-  // Drill state persisted in URL as pldrill=<accountName>::<section>::<type>::<from>::<to>
+  // Drill state persisted in URL as pldrill=<entityId>::<accountName>::<section>::<type>::<from>::<to>
+  // Entity id is part of the URL so a refresh restores the correct entity-scoped drill.
   const [drillState, setDrillState] = useTabParam("pldrill", null);
   const drill = (() => {
     if (!drillState) return null;
     const parts = drillState.split("::");
-    if (parts.length < 5) return null;
-    return { accountName: parts[0], section: parts[1], accountType: parts[2], fromDate: parts[3], toDate: parts[4] };
+    if (parts.length < 6) return null;
+    return { entityId: parts[0], accountName: parts[1], section: parts[2], accountType: parts[3], fromDate: parts[4], toDate: parts[5] };
   })();
   const openDrill = (accountName, section, accountType, fromDate, toDate) => {
-    setDrillState(`${accountName}::${section}::${accountType}::${fromDate}::${toDate}`);
+    setDrillState(`${entity}::${accountName}::${section}::${accountType}::${fromDate}::${toDate}`);
   };
   const closeDrill = () => setDrillState(null);
 
