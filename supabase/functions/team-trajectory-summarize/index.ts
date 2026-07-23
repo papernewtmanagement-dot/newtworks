@@ -190,8 +190,6 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
       response_distortion: asmt.response_distortion,
       notes: asmt.notes,
       traits: {
-        ego_drive_score: asmt.ego_drive_score,
-        empathy_score: asmt.empathy_score,
         analytical: asmt.analytical,
         assertiveness: asmt.assertiveness,
         independent_spirit: asmt.independent_spirit,
