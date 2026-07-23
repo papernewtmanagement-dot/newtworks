@@ -1427,7 +1427,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [expandedLayer, setExpandedLayer] = useState(null);
   // Three-construct verdict (Nature/Nurture/Drivers) — per-layer verdicts +
   // framework prediction + retrospective observation + calibration status.
-  // Fetched via hiregauge_three_construct_verdict RPC.
+  // Fetched via verdict_overall RPC.
   const [threeConstruct, setThreeConstruct] = useState(null);
   // Interview answer capture — local state; Save button batch-writes to
   // hiring_candidates.interview_answers jsonb (keyed by probe.source →
@@ -1480,7 +1480,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .catch(() => {});
     // Three-construct verdict: Nature/Nurture/Drivers per-layer verdicts +
     // pre-hire framework prediction + retrospective observation + calibration.
-    supabase.rpc("hiregauge_three_construct_verdict", { p_assessment_id: detail.id })
+    supabase.rpc("verdict_overall", { p_candidate_id: detail.id })
       .then(({ data, error }) => {
         if (!error && Array.isArray(data) && data[0]) setThreeConstruct(data[0]);
       })
@@ -1730,7 +1730,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       </div>
 
       {/* Results — Suggs four-layer × three-construct framework read from
-          hiregauge_three_construct_verdict. The 4×3 matrix
+          verdict_overall. The 4×3 matrix
           (Resume/Assessment/Interview/Reference × Nature/Nurture/Drivers)
           drives the top verdict; each layer row is now clickable to expand
           layer-specific detail. Resume expansion shows extracted resume
