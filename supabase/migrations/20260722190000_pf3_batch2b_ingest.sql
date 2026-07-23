@@ -237,7 +237,7 @@ WHERE agency_id = '126794dd-25ff-47d2-a436-724499733365'
   );
 
 UPDATE public.llm_parse_queue
-SET status = 'obsolete',
+SET status = 'abandoned',
     completed_at = NOW(),
     last_error = 'Superseded by manual pf3_batch2b_ingest 2026-07-22'
 WHERE document_id IN (
