@@ -319,10 +319,9 @@ BEGIN
   SELECT * INTO v_ref  FROM public.verdict_reference(p_candidate_id);
   SELECT * INTO v_best FROM public.cts_best_fit_role(p_candidate_id);
 
-  -- dimensions_scored count (any non-null cell counts)
-  IF v_r.nature   IS NOT NULL THEN v_dims := v_dims + 1; END IF;
-  IF v_r.nurture  IS NOT NULL THEN v_dims := v_dims + 1; END IF;
-  IF v_r.drivers  IS NOT NULL THEN v_dims := v_dims + 1; END IF;
+  -- Dimensions_scored: match legacy counting exactly.
+  -- Resume: 1 dim if any resume cell populated. Others: 1 dim per populated cell.
+  IF v_r.nature IS NOT NULL OR v_r.nurture IS NOT NULL OR v_r.drivers IS NOT NULL THEN v_dims := v_dims + 1; END IF;
   IF v_a.nature   IS NOT NULL THEN v_dims := v_dims + 1; END IF;
   IF v_a.nurture  IS NOT NULL THEN v_dims := v_dims + 1; END IF;
   IF v_a.drivers  IS NOT NULL THEN v_dims := v_dims + 1; END IF;
