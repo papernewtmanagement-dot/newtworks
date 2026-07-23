@@ -38,7 +38,7 @@ const TRAIT_BAND = {
 };
 
 // Role display labels — shared between Results matrix, Assessment layer expansion,
-// and Competencies section. Keys match hiring_candidates.assessment_target_role CHECK.
+// and Competencies section. Keys are the seven canonical role fits.
 const ROLE_LABELS = {
   sales_outbound:       "Sales - Outbound",
   sales_inbound:        "Sales - Inbound",
@@ -111,7 +111,6 @@ const STAGE_TO_RELEVANT_RULE_STAGES = {
 
 const SCORECARD_FIELDS = [
   { key: "personal_presence",           label: "Personal Presence",           type: "num" },
-  { key: "resume_quality",              label: "Resume Quality",              type: "num" },
   { key: "honesty",                     label: "Honesty",                     type: "num", character: true },
   { key: "hard_work_ethic",             label: "Hard Work Ethic",             type: "num", character: true },
   { key: "personally_responsible",      label: "Personally Responsible",      type: "num", character: true },
@@ -1351,30 +1350,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
-  // Which role fit is selected. Sourced from hiring_candidates.assessment_target_role
-  // via v_hiring_candidates so it survives page refresh. setSelectedRole persists the
-  // choice + refetches view so assessment_nature/nurture/drivers/composite refresh.
+  // Which role fit is selected. Local UI state only — session-scoped, defaults to
+  // bestFit on load. Framework scoring always uses cts_best_fit_role's best_role;
+  // the selector only controls which competency detail displays.
   const [selectedRole, setSelectedRoleLocal] = useState(null);
-  useEffect(() => {
-    if (detail && detail.assessment_target_role !== undefined) {
-      setSelectedRoleLocal(detail.assessment_target_role);
-    }
-  }, [detail?.assessment_target_role]);
-  const setSelectedRole = async (roleKey) => {
-    const newVal = roleKey || null;
-    setSelectedRoleLocal(newVal);
-    if (!detail?.id) return;
-    const { error } = await supabase
-      .from("hiring_candidates")
-      .update({ assessment_target_role: newVal })
-      .eq("id", detail.id);
-    if (error) { alert("Failed to save role selection: " + error.message); return; }
-    const { data } = await supabase
-      .from("v_hiring_candidates")
-      .select("*")
-      .eq("id", detail.id)
-      .maybeSingle();
-    if (data) setDetail(data);
+  const setSelectedRole = (roleKey) => {
+    setSelectedRoleLocal(roleKey || null);
   };
   // Which Results-matrix layer row is expanded (null = none). Only one
   // layer expanded at a time. Click chevron in the layer label cell.
@@ -1435,19 +1416,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .catch(() => {});
   }, [detail?.id]);
 
-  // Auto-default assessment_target_role to best-fit role on first load when unset.
-  // Fires once bestFit resolves; setSelectedRole persists to DB + refetches view so
-  // assessment_nature/nurture/drivers/composite populate without user click.
+  // Default selectedRole to best-fit role once bestFit resolves. Local UI state only —
+  // framework scoring always uses cts_best_fit_role's best_role regardless of selection;
+  // the selector only controls which competency detail displays on this page.
   useEffect(() => {
     if (!detail?.id) return;
-    if (detail.assessment_target_role) return; // already set — respect stored choice
+    if (selectedRole) return; // already picked this session
     const bfBestRole = Array.isArray(bestFit) && bestFit[0]?.best_role;
-    if (!bfBestRole) return; // best fit not loaded yet
-    setSelectedRole(bfBestRole);
-    // setSelectedRole is stable via useCallback? Not currently — but effect only fires when
-    // deps change AND both guards clear, so no infinite loop (target_role becomes non-null
-    // after write → guard trips on next run).
-  }, [detail?.id, detail?.assessment_target_role, bestFit]);
+    if (!bfBestRole) return;
+    setSelectedRoleLocal(bfBestRole);
+  }, [detail?.id, selectedRole, bestFit]);
 
   // Bucket evaluate_candidate rows by verdict impact using composite's signal
   // arrays as the routing table. Composite's decline_signals annotate unverified
@@ -1539,7 +1517,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     SCORECARD_FIELDS.map(f => `fi_${f.key}`).concat(["fi_notes"]),
     "fi"
   );
-  const saveRC = () => saveFields(["rc_notes", "ref_nature", "ref_nurture", "ref_drivers"], "rc");
+  const saveRC = () => saveFields(["rc_notes"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
 
   const saveDecline = async () => {
@@ -1883,8 +1861,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 {layer.key === "assessment" && (
                                   <div style={{ marginTop: 3 }}>
                                     <span style={{ display: "inline-block", padding: isPhone ? "1px 4px" : "2px 6px", borderRadius: 3, fontSize: verdictPillFont, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: isPhone ? 0.2 : 0.4 }}>
-                                      {detail?.assessment_target_role
-                                        ? (ROLE_LABELS[detail.assessment_target_role] || detail.assessment_target_role)
+                                      {selectedRole
+                                        ? (ROLE_LABELS[selectedRole] || selectedRole)
                                         : (isPhone ? "role →" : "click a role fit →")}
                                     </span>
                                   </div>
@@ -2152,39 +2130,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
       {/* Reference Check */}
       <Section title="Reference Check">
-        {/* Reference layer scoring — feeds Results 4×3 matrix Reference row */}
-        <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 7, background: T.slate50, border: `1px solid ${T.slate200}` }}>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
-            Reference Layer Scoring <span style={{ opacity: 0.7, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontStyle: "italic" }}>· 1–10 based on 2–3 reference calls; feeds Result matrix Reference row</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-            {[
-              { key: "ref_nature",  label: "Nature",  hint: "core temperament, drive, honesty" },
-              { key: "ref_nurture", label: "Nurture", hint: "developed skills, resilience, adaptability" },
-              { key: "ref_drivers", label: "Drivers", hint: "motivation quality, ownership, work ethic" },
-            ].map(({ key, label, hint }) => (
-              <div key={key}>
-                <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2, fontWeight: 600 }}>{label}</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  step={1}
-                  value={detail?.[key] ?? ""}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === "") { updateField(key, null); return; }
-                    const n = Math.max(1, Math.min(10, parseInt(raw, 10) || 0));
-                    updateField(key, n);
-                  }}
-                  placeholder="—"
-                  style={{ width: "100%", padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, textAlign: "center" }}
-                />
-                <div style={{ fontSize: 9, color: T.slate500, marginTop: 2 }}>{hint}</div>
-              </div>
-            ))}
-          </div>
-        </div>
         <textarea
           value={detail?.rc_notes || ""}
           onChange={(e) => updateField("rc_notes", e.target.value)}
