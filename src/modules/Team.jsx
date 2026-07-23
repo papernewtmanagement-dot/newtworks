@@ -337,8 +337,6 @@ const generateCoachingHints = (seat, assessment) => {
 
   const anl = parseInt(assessment.analytical);
   const opt = parseInt(assessment.optimism);
-  const ego = parseInt(assessment.ego_drive_score);
-  const emp = parseInt(assessment.empathy_score);
   const asr = parseInt(assessment.assertiveness);
   const ind = parseInt(assessment.independent_spirit);
   const bel = parseInt(assessment.belief_in_others);
@@ -346,7 +344,7 @@ const generateCoachingHints = (seat, assessment) => {
   const rec = parseInt(assessment.recognition_drive);
   const dl  = parseInt(assessment.deadline_motivation);
   const sp  = parseInt(assessment.self_promotion);
-  const traits = [anl, opt, ego, emp, asr, ind, bel, com, rec, dl, sp];
+  const traits = [anl, opt, asr, ind, bel, com, rec, dl, sp];
   const anyTraitPresent = traits.some(v => Number.isFinite(v) && v > 0);
   if (!anyTraitPresent) return [];  // Phase-2 placeholder rows have all traits null
 
@@ -376,12 +374,6 @@ const generateCoachingHints = (seat, assessment) => {
         title:"Complacency archetype",
         detail:`High Optimism (${opt}) + low Analytical (${anl}) = blind spot to own pace drops. Rides good stretches, misses declines. Coaching lever: external mirror (weekly data reviews with witnesses, immediate feedback). Do NOT confront as personality — it's structural.`,
       });
-    } else if (ego >= 60 && covPct != null && covPct >= 100) {
-      hints.push({
-        severity:"positive",
-        title:"Producer archetype",
-        detail:`Ego Drive ${ego} + Coverage ${Math.round(covPct)}%. Protect autonomy, reward with stretch goals not micromanagement. Growth path (Section/Unit Manager) worth exploring.`,
-      });
     }
     if (bel >= 85 && com < 25 && asr < 45 && ind >= 80) {
       hints.push({
@@ -395,13 +387,6 @@ const generateCoachingHints = (seat, assessment) => {
         severity:"action",
         title:"Under-negotiates on close",
         detail:`Assertiveness ${asr} caps ask-strength. Direct coaching move: role-play push-back scenarios and objection-handling. This trait responds measurably to structured reps.`,
-      });
-    }
-    if (rec < 20 && ego >= 30 && ego < 60) {
-      hints.push({
-        severity:"info",
-        title:"Peer-parity is the money lever",
-        detail:`Recognition ${rec} means public leaderboards fall flat. Ego Drive ${ego} activates on peer comparison ("they earn what I earn"). Frame comp math against peer parity, not against absolute targets.`,
       });
     }
     if (ind >= 85) {
@@ -590,9 +575,9 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
 };
 
 // ─── Declined Candidates Table ────────────────────────────────
-// Read-only summary view of every candidate we walked away from (status='archived'
-// AND is_team_member=false). Row tap opens CandidateDetail with full history and
-// the option to re-activate to any pipeline stage.
+// Read-only summary view of every candidate we walked away from (status='archived').
+// Row tap opens CandidateDetail with full history and the option to re-activate to
+// any pipeline stage.
 const DECLINE_REASON_LABEL = {
   active_applicant: "Active — declined",
   offer_rescinded:  "Offer rescinded",
@@ -2038,8 +2023,6 @@ const StaffDirectory = ({ staff }) => {
                   const asmt = asmtByMember[member.id];
                   if (!asmt) return null;
                   const traits = [
-                    ["Ego Drive",           asmt.ego_drive_score],
-                    ["Empathy",             asmt.empathy_score],
                     ["Analytical",          asmt.analytical],
                     ["Assertiveness",       asmt.assertiveness],
                     ["Independent Spirit",  asmt.independent_spirit],
@@ -2854,7 +2837,7 @@ export default function Team() {
     let cancelled = false;
     supabase
       .from("v_hiring_candidates")
-      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_score, resume_avg, claude_summary, interview_focus, notes, created_at, is_team_member, team_member_id, overall_score, assessment_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, va_scored_at, fi_scored_at, resume_document_id, resume_url, reliability, response_distortion, ego_drive_score, empathy_score, leadership_style")
+      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
       .eq("agency_id", AGENCY_ID)
       .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
       .order("created_at", { ascending: false })
