@@ -89,10 +89,13 @@ WHERE hc.agency_id = '126794dd-25ff-47d2-a436-724499733365'
        OR hc.res_education IS NOT NULL
        OR hc.res_prior_similar_role IS NOT NULL);
 
--- 5. Rebuild view. Same shape as prior definition; hc.resume_analysis now resolves to
--- the new jsonb col. Add _legacy_resume_analysis_prose passthrough. Everything else
--- unchanged (23 res_* flat passthroughs, res_nature/nurture/drivers/composite computed
--- from flat cols per step-4 additive-first plan; res_* drops happen later).
+-- 5. Rebuild view. Same column list as Peter's 20260723190000 refactor
+-- (v_hiring_candidates_call_cell_functions). hc.resume_analysis now resolves to the
+-- new jsonb col (was text). Inline math used here (cell functions are created in
+-- later mig 20260723180000); Peter's mig 20260723190000 replaces the inline math
+-- with cell function calls via CREATE OR REPLACE VIEW (same column list, allowed).
+-- _legacy_resume_analysis_prose column stays on the TABLE for backfill preservation
+-- but is intentionally NOT exposed in the view (no consumer reads it from the view).
 CREATE VIEW public.v_hiring_candidates AS
  WITH resume_w AS (
          SELECT max(
@@ -224,7 +227,6 @@ CREATE VIEW public.v_hiring_candidates AS
     hc.ref_drivers,
     hc.resume_extracted_text,
     hc.resume_analysis,
-    hc._legacy_resume_analysis_prose,
     hc.res_rules_fired,
     hc.res_scored_at,
     hc.res_scored_model,
