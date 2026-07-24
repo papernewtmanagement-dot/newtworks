@@ -1386,30 +1386,41 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   // Expanding fetches a 12-month time-series once via
   // get_agency_perf_monthly_series (lazy — first expand triggers the call).
   // Data cached in component state; subsequent expands are instant.
+  // Premium rows support a 12/24/36-month lookback selector which triggers a
+  // refetch with a larger p_months_back window.
   const [expandedRow, setExpandedRow] = useState(null);
   const [monthly, setMonthly] = useState(null);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
   const [monthlyErr, setMonthlyErr] = useState(null);
+  const [monthsBack, setMonthsBack] = useState(12);
+  const fetchMonthly = (n) => {
+    setMonthlyLoading(true);
+    setMonthlyErr(null);
+    supabase.rpc("get_agency_perf_monthly_series", {
+      p_agency_id: AGENCY_ID,
+      p_week_ending_date: weekDate,
+      p_months_back: n,
+    }).then(({ data, error }) => {
+      if (error) {
+        setMonthlyErr(error.message || "load failed");
+        setMonthlyLoading(false);
+        return;
+      }
+      setMonthly(data || null);
+      setMonthlyLoading(false);
+    }).catch(e => {
+      setMonthlyErr(e?.message || String(e));
+      setMonthlyLoading(false);
+    });
+  };
   const toggleRow = (label) => {
     setExpandedRow(prev => (prev === label ? null : label));
-    if (!monthly && !monthlyLoading) {
-      setMonthlyLoading(true);
-      supabase.rpc("get_agency_perf_monthly_series", {
-        p_agency_id: AGENCY_ID,
-        p_week_ending_date: weekDate,
-      }).then(({ data, error }) => {
-        if (error) {
-          setMonthlyErr(error.message || "load failed");
-          setMonthlyLoading(false);
-          return;
-        }
-        setMonthly(data || null);
-        setMonthlyLoading(false);
-      }).catch(e => {
-        setMonthlyErr(e?.message || String(e));
-        setMonthlyLoading(false);
-      });
-    }
+    if (!monthly && !monthlyLoading) fetchMonthly(monthsBack);
+  };
+  const changeLookback = (n) => {
+    if (n === monthsBack) return;
+    setMonthsBack(n);
+    fetchMonthly(n);
   };
 
   // Helper: weekly delta (this snapshot vs prior week's snapshot)
@@ -1511,19 +1522,21 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   // ─── Monthly-grain expansion helpers ─────────────────────────────────
   // Row label → which metric arrays from monthly-series to display.
   // LOB rows show 3 sub-metrics (New / Lost / Gain); everything else is single-metric.
+  // `chartKey` selects which single series feeds the sparkline (Gain for LOB).
+  // `priorKey` is the same-month prior-year series for YoY overlay (premium only).
   const metricSpecFor = (label) => {
     switch (label) {
-      case "Auto":       return [{ k: "auto_new", h: "New" }, { k: "auto_lost", h: "Lost" }, { k: "auto_gain", h: "Gain" }];
-      case "Fire":       return [{ k: "fire_new", h: "New" }, { k: "fire_lost", h: "Lost" }, { k: "fire_gain", h: "Gain" }];
-      case "Life":       return [{ k: "life_new", h: "New" }, { k: "life_lost", h: "Lost" }, { k: "life_gain", h: "Gain" }];
-      case "Life NPF #": return [{ k: "life_npf_count",   h: "Count" }];
-      case "Life NPF $": return [{ k: "life_npf_premium", h: "Premium", money: true }];
-      case "Auto $":     return [{ k: "auto_premium", h: "Book", money: true }];
-      case "Fire $":     return [{ k: "fire_premium", h: "Book", money: true }];
-      case "Life $":     return [{ k: "life_premium", h: "Book", money: true }];
-      case "SMVC %":     return [{ k: "smvc_pct",      h: "On-Time %", pct: true }];
-      case "SMVC $":     return [{ k: "smvc_dollars",  h: "On-Time $", money: true }];
-      case "Scorecard":  return [{ k: "scorecard",     h: "Projected $", money: true }];
+      case "Auto":       return { parts: [{ k: "auto_new", h: "New" }, { k: "auto_lost", h: "Lost", inverse: true }, { k: "auto_gain", h: "Gain" }], chartKey: "auto_gain", family: "gain" };
+      case "Fire":       return { parts: [{ k: "fire_new", h: "New" }, { k: "fire_lost", h: "Lost", inverse: true }, { k: "fire_gain", h: "Gain" }], chartKey: "fire_gain", family: "gain" };
+      case "Life":       return { parts: [{ k: "life_new", h: "New" }, { k: "life_lost", h: "Lost", inverse: true }, { k: "life_gain", h: "Gain" }], chartKey: "life_gain", family: "gain" };
+      case "Life NPF #": return { parts: [{ k: "life_npf_count",   h: "Count" }], chartKey: "life_npf_count", family: "gain" };
+      case "Life NPF $": return { parts: [{ k: "life_npf_premium", h: "Premium", money: true }], chartKey: "life_npf_premium", family: "gain", money: true };
+      case "Auto $":     return { parts: [{ k: "auto_premium", h: "Book", money: true }], chartKey: "auto_premium", priorKey: "auto_premium_prior_year", family: "premium", money: true };
+      case "Fire $":     return { parts: [{ k: "fire_premium", h: "Book", money: true }], chartKey: "fire_premium", priorKey: "fire_premium_prior_year", family: "premium", money: true };
+      case "Life $":     return { parts: [{ k: "life_premium", h: "Book", money: true }], chartKey: "life_premium", priorKey: "life_premium_prior_year", family: "premium", money: true };
+      case "SMVC %":     return { parts: [{ k: "smvc_pct",      h: "On-Time %", pct: true }], chartKey: "smvc_pct",     family: "rate", pct: true };
+      case "SMVC $":     return { parts: [{ k: "smvc_dollars",  h: "On-Time $", money: true }], chartKey: "smvc_dollars", family: "rate", money: true };
+      case "Scorecard":  return { parts: [{ k: "scorecard",     h: "Projected $", money: true }], chartKey: "scorecard",    family: "rate", money: true };
       default: return null;
     }
   };
@@ -1536,12 +1549,207 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     if (spec.money) return fmtMoney(n);
     return fmtInt(n);
   };
+  // Compact money for chart axis (e.g. "$2.4M")
+  const fmtCompactMoney = (n) => {
+    if (n == null || !Number.isFinite(Number(n))) return "";
+    const v = Number(n);
+    const abs = Math.abs(v);
+    const sign = v < 0 ? "-" : "";
+    if (abs >= 1e6) return sign + "$" + (abs / 1e6).toFixed(2) + "M";
+    if (abs >= 1e3) return sign + "$" + (abs / 1e3).toFixed(1) + "k";
+    return sign + "$" + abs.toFixed(0);
+  };
   // "2026-07" → "Jul '26"
   const fmtMonthLabel = (yyyymm) => {
     if (!yyyymm || typeof yyyymm !== "string") return yyyymm || "";
     const [y, m] = yyyymm.split("-");
     const mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m) - 1] || m;
     return `${mo} '${(y || "").slice(-2)}`;
+  };
+  // Compute goal-pace line values per month (row-type-aware).
+  //   Gain rows: horizontal at (annual goal / 12) — flat monthly target.
+  //   Premium rows: rising diagonal from year-start baseline to year-end
+  //     baseline × 1.25 (Peter's 25% growth target). For months outside the
+  //     current year, use the same intra-year ramp centered on that year
+  //     using year-N-start baseline = year-(N-1)-end value.
+  //   Rate rows: horizontal at row.goal.
+  // Returns array of numbers (same length as months) or nulls where undefined.
+  const goalPaceArray = (r, spec, months) => {
+    if (!months || months.length === 0) return [];
+    if (spec.family === "premium") {
+      // Anchor: bookYearStart for current year. Baseline = premium at prior year-end.
+      const yBaseline = r.paceBaseline != null ? Number(r.paceBaseline) : null;
+      if (yBaseline == null) return months.map(() => null);
+      const target = yBaseline * 1.25;
+      return months.map(mLabel => {
+        const [yStr, mStr] = mLabel.split("-");
+        const monthNum = Number(mStr); // 1..12
+        // Only draw ramp within the current year window; else null.
+        const cy = new Date(weekDate + "T00:00:00Z").getUTCFullYear();
+        if (Number(yStr) !== cy) return null;
+        return yBaseline + (target - yBaseline) * (monthNum / 12);
+      });
+    }
+    if (spec.family === "gain") {
+      if (r.goal == null) return months.map(() => null);
+      const monthly = Number(r.goal) / 12;
+      return months.map(() => monthly);
+    }
+    if (spec.family === "rate") {
+      if (r.rowKind !== "rate" || r.goal == null) return months.map(() => null);
+      return months.map(() => Number(r.goal));
+    }
+    return months.map(() => null);
+  };
+  // Trend chip: 1-line summary. Contents depend on row family.
+  const renderTrendChip = (r, spec, series, priorSeries, goalArr) => {
+    const nums = series.map(v => (v == null ? null : Number(v)));
+    const lastIdx = (() => { for (let i = nums.length - 1; i >= 0; i--) if (nums[i] != null) return i; return -1; })();
+    if (lastIdx < 0) return null;
+    const last = nums[lastIdx];
+    const lastLabel = fmtMonthLabel((monthly?.months || [])[lastIdx]);
+    const valFmt = (v) => fmtMonthlyVal(v, spec);
+    let bits = [];
+    let dirColor = T.slate600;
+
+    if (spec.family === "premium") {
+      const priorNums = (priorSeries || []).map(v => (v == null ? null : Number(v)));
+      const priorSame = priorNums[lastIdx];
+      if (priorSame != null && priorSame !== 0) {
+        const pct = ((last - priorSame) / priorSame) * 100;
+        const arrow = pct > 0 ? "▲" : pct < 0 ? "▼" : "▬";
+        dirColor = pct > 0 ? T.green : pct < 0 ? T.red : T.slate500;
+        bits.push(`${lastLabel} · ${valFmt(last)}`);
+        bits.push(`${arrow} ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% YoY`);
+      } else {
+        bits.push(`${lastLabel} · ${valFmt(last)}`);
+      }
+      const target = goalArr[lastIdx];
+      if (target != null) {
+        const gap = last - target;
+        bits.push(`${gap >= 0 ? "▲" : "▼"} ${gap >= 0 ? "+" : ""}${fmtCompactMoney(gap)} vs pace`);
+      }
+    } else if (spec.family === "gain") {
+      // Last month value; 3-month avg (last 3 non-null); vs monthly goal if set.
+      const recent = nums.slice(Math.max(0, lastIdx - 2), lastIdx + 1).filter(v => v != null);
+      const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : null;
+      const arrow = last > 0 ? "▲" : last < 0 ? "▼" : "▬";
+      dirColor = last > 0 ? T.green : last < 0 ? T.red : T.slate500;
+      bits.push(`${lastLabel} · ${arrow} ${last > 0 ? "+" : ""}${valFmt(last)}`);
+      if (avg != null && recent.length >= 2) bits.push(`3-mo avg ${avg >= 0 ? "+" : ""}${valFmt(avg)}`);
+      if (goalArr[lastIdx] != null) {
+        const monthlyTarget = goalArr[lastIdx];
+        const gap = last - monthlyTarget;
+        bits.push(`${gap >= 0 ? "on pace" : "behind pace"} (${gap >= 0 ? "+" : ""}${valFmt(gap)})`);
+      }
+    } else if (spec.family === "rate") {
+      // Vs prior month + vs goal
+      let prev = null;
+      for (let i = lastIdx - 1; i >= 0; i--) if (nums[i] != null) { prev = nums[i]; break; }
+      bits.push(`${lastLabel} · ${valFmt(last)}`);
+      if (prev != null) {
+        const d = last - prev;
+        const arrow = d > 0 ? "▲" : d < 0 ? "▼" : "▬";
+        dirColor = d > 0 ? T.green : d < 0 ? T.red : T.slate500;
+        const dTxt = spec.pct ? (d >= 0 ? "+" : "") + (d * 100).toFixed(2) + "%" : (d >= 0 ? "+" : "") + fmtCompactMoney(d);
+        bits.push(`${arrow} ${dTxt} MoM`);
+      }
+      if (goalArr[lastIdx] != null) {
+        const gap = last - goalArr[lastIdx];
+        const gTxt = spec.pct ? (gap >= 0 ? "+" : "") + (gap * 100).toFixed(2) + "%" : (gap >= 0 ? "+" : "") + fmtCompactMoney(gap);
+        bits.push(`${gap >= 0 ? "▲" : "▼"} ${gTxt} vs goal`);
+      }
+    }
+    return (
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        fontSize: 12, fontWeight: 600, color: dirColor,
+        padding: "4px 10px", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 999,
+      }}>
+        {bits.map((b, i) => (
+          <span key={i} style={{ color: i === 0 ? T.slate800 : dirColor }}>{b}{i < bits.length - 1 ? " · " : ""}</span>
+        ))}
+      </div>
+    );
+  };
+  // Inline SVG sparkline. Supports optional prior-year overlay + optional goal line.
+  const Sparkline = ({ values, priorValues, goalLine, spec, width = 380, height = 100, color = T.blue }) => {
+    const n = values.length;
+    if (n === 0) return null;
+    const nums = values.map(v => (v == null ? null : Number(v)));
+    const priorNums = (priorValues || []).map(v => (v == null ? null : Number(v)));
+    const goalNums  = (goalLine || []).map(v => (v == null ? null : Number(v)));
+    const allVals = [...nums, ...priorNums, ...goalNums].filter(v => v != null && Number.isFinite(v));
+    if (allVals.length === 0) {
+      return (
+        <div style={{ padding: 12, color: T.slate400, fontSize: 11, fontStyle: "italic" }}>
+          No chart data yet — series populates as monthly snapshots arrive.
+        </div>
+      );
+    }
+    let minY = Math.min(...allVals);
+    let maxY = Math.max(...allVals);
+    // Give the chart a small vertical breathing room.
+    const yPad = (maxY - minY) * 0.08 || Math.max(1, Math.abs(maxY) * 0.05);
+    minY -= yPad; maxY += yPad;
+    const yRange = maxY - minY || 1;
+    const padTop = 8, padBottom = 22, padLeft = 44, padRight = 12;
+    const chartH = height - padTop - padBottom;
+    const chartW = Math.max(80, width - padLeft - padRight);
+    const xStep = n > 1 ? chartW / (n - 1) : 0;
+    const yFor = (v) => padTop + chartH - ((v - minY) / yRange) * chartH;
+    const xFor = (i) => padLeft + i * xStep;
+    const pathFor = (arr) => {
+      let out = ""; let inSeg = false;
+      arr.forEach((v, i) => {
+        if (v == null || !Number.isFinite(v)) { inSeg = false; return; }
+        const x = xFor(i), y = yFor(v);
+        out += (inSeg ? " L " : " M ") + x.toFixed(1) + " " + y.toFixed(1);
+        inSeg = true;
+      });
+      return out;
+    };
+    // Y-axis labels: 3 ticks — min, mid, max
+    const yTicks = [minY + yPad, (minY + maxY) / 2, maxY - yPad];
+    const fmtY = (v) => {
+      if (spec?.pct) return (v * 100).toFixed(2) + "%";
+      if (spec?.money) return fmtCompactMoney(v);
+      return String(Math.round(v));
+    };
+    // X-axis labels: first, middle, last
+    const months = monthly?.months || [];
+    const xTickIdx = n <= 3 ? Array.from({length: n}, (_, i) => i) : [0, Math.floor((n - 1) / 2), n - 1];
+    return (
+      <svg width={width} height={height} style={{ display: "block", maxWidth: "100%" }}>
+        {/* Y grid + labels */}
+        {yTicks.map((yt, i) => (
+          <g key={i}>
+            <line x1={padLeft} y1={yFor(yt)} x2={padLeft + chartW} y2={yFor(yt)} stroke={T.slate200} strokeWidth="1" />
+            <text x={padLeft - 4} y={yFor(yt) + 3} textAnchor="end" fontSize="9" fill={T.slate500}>{fmtY(yt)}</text>
+          </g>
+        ))}
+        {/* Goal ramp/line */}
+        {goalNums.some(v => v != null) && (
+          <path d={pathFor(goalNums)} stroke={T.amber} strokeWidth="1.5" fill="none" strokeDasharray="4 3" opacity="0.8" />
+        )}
+        {/* Prior-year overlay */}
+        {priorNums.some(v => v != null) && (
+          <path d={pathFor(priorNums)} stroke={T.slate400} strokeWidth="1.5" fill="none" strokeDasharray="3 3" opacity="0.75" />
+        )}
+        {/* Current series */}
+        <path d={pathFor(nums)} stroke={color} strokeWidth="2" fill="none" />
+        {/* Dots on current */}
+        {nums.map((v, i) => (v == null ? null : (
+          <circle key={i} cx={xFor(i)} cy={yFor(v)} r="2.5" fill={color} />
+        )))}
+        {/* X-axis labels */}
+        {xTickIdx.map(i => (
+          <text key={i} x={xFor(i)} y={height - 6} textAnchor="middle" fontSize="9" fill={T.slate500}>
+            {fmtMonthLabel(months[i])}
+          </text>
+        ))}
+      </svg>
+    );
   };
   // Render the expanded strip for a given row. colSpan matches the outer table (8 cols).
   const renderMonthlyStrip = (r) => {
@@ -1566,44 +1774,109 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     const months = Array.isArray(monthly.months) ? monthly.months : [];
     // Rows = months (most recent first for reading top-down).
     const rowsData = months.map((mLabel, i) => {
-      const cells = spec.map(s => {
+      const cells = spec.parts.map(s => {
         const arr = Array.isArray(monthly[s.k]) ? monthly[s.k] : [];
         return { spec: s, v: arr[i] };
       });
-      return { mLabel, cells };
+      return { mLabel, cells, idx: i, isCurrent: (i === months.length - 1) };
     }).reverse();
+    // Chart series
+    const chartSeries = Array.isArray(monthly[spec.chartKey]) ? monthly[spec.chartKey] : [];
+    const priorSeries = spec.priorKey ? (Array.isArray(monthly[spec.priorKey]) ? monthly[spec.priorKey] : null) : null;
+    const goalArr = goalPaceArray(r, spec, months);
+    const showLookback = spec.family === "premium";
     return (
-      <div style={{ padding: "8px 12px 12px 40px", background: T.slate50, borderTop: `1px solid ${T.slate200}` }}>
-        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: T.slate500, marginBottom: 6 }}>
-          {r.label} — monthly grain (last 12 months)
+      <div style={{ padding: "10px 12px 14px 40px", background: T.slate50, borderTop: `1px solid ${T.slate200}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: T.slate500 }}>
+            {r.label} — monthly grain ({months.length} mo)
+          </div>
+          {renderTrendChip(r, spec, chartSeries, priorSeries, goalArr)}
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "4px 10px 4px 0", color: T.slate500, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>Month</th>
-                {spec.map(s => (
-                  <th key={s.k} style={{ textAlign: "right", padding: "4px 12px", color: T.slate500, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>{s.h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rowsData.map(({ mLabel, cells }) => (
-                <tr key={mLabel}>
-                  <td style={{ padding: "3px 10px 3px 0", color: T.slate700, fontWeight: 500, whiteSpace: "nowrap" }}>{fmtMonthLabel(mLabel)}</td>
-                  {cells.map(({ spec: s, v }) => {
-                    const txt = fmtMonthlyVal(v, s);
-                    const isNeg = (v != null && Number(v) < 0);
-                    return (
-                      <td key={s.k} style={{ padding: "3px 12px", textAlign: "right", color: txt == null ? T.slate300 : (isNeg ? T.red : T.slate900), fontWeight: 500, whiteSpace: "nowrap" }}>
-                        {txt == null ? "–" : txt}
-                      </td>
-                    );
-                  })}
+        <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
+          {/* Left: numbers table */}
+          <div style={{ overflowX: "auto", flex: "0 0 auto" }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "4px 10px 4px 0", color: T.slate500, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>Month</th>
+                  {spec.parts.map(s => (
+                    <th key={s.k} style={{ textAlign: "right", padding: "4px 12px", color: T.slate500, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>{s.h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rowsData.map(({ mLabel, cells, isCurrent }) => (
+                  <tr key={mLabel} style={{ background: isCurrent ? "#EAF3FF" : undefined }}>
+                    <td style={{ padding: "3px 10px 3px 0", color: isCurrent ? T.slate900 : T.slate700, fontWeight: isCurrent ? 700 : 500, whiteSpace: "nowrap" }}>{fmtMonthLabel(mLabel)}</td>
+                    {cells.map(({ spec: s, v }) => {
+                      const txt = fmtMonthlyVal(v, s);
+                      // Inverse-metric coloring: Lost column reads red when up (bad), green when down (good).
+                      // Everything else: neg = red, non-neg = default.
+                      let color = T.slate900;
+                      if (txt == null) color = T.slate300;
+                      else if (s.inverse) color = Number(v) > 0 ? T.slate900 : T.slate900; // neutral; sign is intrinsic
+                      else if (Number(v) < 0) color = T.red;
+                      return (
+                        <td key={s.k} style={{ padding: "3px 12px", textAlign: "right", color, fontWeight: isCurrent ? 700 : 500, whiteSpace: "nowrap" }}>
+                          {txt == null ? "–" : txt}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Right: chart + legend + lookback */}
+          <div style={{ flex: "1 1 320px", minWidth: 300 }}>
+            <Sparkline
+              values={chartSeries}
+              priorValues={priorSeries}
+              goalLine={goalArr}
+              spec={spec}
+              width={Math.min(560, 100 + months.length * 30)}
+              height={110}
+              color={T.blue}
+            />
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6, fontSize: 10, color: T.slate500 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <span style={{ display: "inline-block", width: 14, height: 2, background: T.blue }} />
+                Current
+              </span>
+              {priorSeries && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${T.slate400}` }} />
+                  Prior year
+                </span>
+              )}
+              {goalArr.some(v => v != null) && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${T.amber}` }} />
+                  {spec.family === "premium" ? "25% pace" : spec.family === "gain" ? "Monthly pace" : "Goal"}
+                </span>
+              )}
+            </div>
+            {showLookback && (
+              <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.slate500, marginRight: 4 }}>Lookback</span>
+                {[12, 24, 36].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => changeLookback(n)}
+                    disabled={monthlyLoading}
+                    style={{
+                      padding: "3px 10px", fontSize: 11, fontWeight: 600,
+                      background: n === monthsBack ? T.blue : T.white,
+                      color: n === monthsBack ? T.white : T.slate700,
+                      border: `1px solid ${n === monthsBack ? T.blue : T.slate300}`,
+                      borderRadius: 4, cursor: monthlyLoading ? "wait" : "pointer",
+                    }}
+                  >{n} mo</button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
