@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Fragment } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
@@ -1422,6 +1422,36 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     setMonthsBack(n);
     fetchMonthly(n);
   };
+  // Measure the numbers table so the chart can stretch to match its height.
+  // Also measure the right column so the sparkline can widen to fill the space.
+  // Runs after DOM mutations; refires when expansion opens/data changes/lookback flips.
+  const tableRef = useRef(null);
+  const rightRef = useRef(null);
+  const [chartSize, setChartSize] = useState({ h: 260, w: 520 });
+  useLayoutEffect(() => {
+    if (!expandedRow) return;
+    // Only remeasure once data is loaded, or the table is 1 empty row and dimensions lie.
+    if (!monthly && !monthlyErr) return;
+    const t = tableRef.current;
+    const r = rightRef.current;
+    if (!t && !r) return;
+    const nextH = t ? Math.max(200, t.offsetHeight) : chartSize.h;
+    const nextW = r ? Math.max(300, Math.min(900, r.offsetWidth)) : chartSize.w;
+    if (nextH !== chartSize.h || nextW !== chartSize.w) {
+      setChartSize({ h: nextH, w: nextW });
+    }
+    // Also watch for right-column resize (viewport changes, sidebar toggles, etc.)
+    if (r && typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(entries => {
+        for (const e of entries) {
+          const w2 = Math.max(300, Math.min(900, e.contentRect.width));
+          if (w2 !== chartSize.w) setChartSize(prev => ({ ...prev, w: w2 }));
+        }
+      });
+      ro.observe(r);
+      return () => ro.disconnect();
+    }
+  }, [expandedRow, monthly, monthlyErr, monthsBack]);
 
   // Helper: weekly delta (this snapshot vs prior week's snapshot)
   const wkDelta = (cur, prev) => {
@@ -1793,9 +1823,9 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
           </div>
           {renderTrendChip(r, spec, chartSeries, priorSeries, goalArr)}
         </div>
-        <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 24, alignItems: "stretch", flexWrap: "wrap" }}>
           {/* Left: numbers table */}
-          <div style={{ overflowX: "auto", flex: "0 0 auto" }}>
+          <div ref={tableRef} style={{ overflowX: "auto", flex: "0 0 auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
@@ -1828,54 +1858,60 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
               </tbody>
             </table>
           </div>
-          {/* Right: chart + legend + lookback */}
-          <div style={{ flex: "1 1 320px", minWidth: 300 }}>
-            <Sparkline
-              values={chartSeries}
-              priorValues={priorSeries}
-              goalLine={goalArr}
-              spec={spec}
-              width={Math.min(560, 100 + months.length * 30)}
-              height={110}
-              color={T.blue}
-            />
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6, fontSize: 10, color: T.slate500 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <span style={{ display: "inline-block", width: 14, height: 2, background: T.blue }} />
-                Current
-              </span>
-              {priorSeries && (
+          {/* Right: chart + legend + lookback — stretches to match table height */}
+          <div ref={rightRef} style={{ flex: "1 1 320px", minWidth: 300, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 8 }}>
+            {/* Chart fills remaining vertical space */}
+            <div style={{ flex: "1 1 auto", minHeight: 200 }}>
+              <Sparkline
+                values={chartSeries}
+                priorValues={priorSeries}
+                goalLine={goalArr}
+                spec={spec}
+                width={chartSize.w}
+                height={Math.max(200, chartSize.h - (showLookback ? 66 : 32))}
+                color={T.blue}
+              />
+            </div>
+            {/* Footer group: legend + lookback pinned to bottom */}
+            <div>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 10, color: T.slate500 }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${T.slate400}` }} />
-                  Prior year
+                  <span style={{ display: "inline-block", width: 14, height: 2, background: T.blue }} />
+                  Current
                 </span>
-              )}
-              {goalArr.some(v => v != null) && (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${T.amber}` }} />
-                  {spec.family === "premium" ? "25% pace" : spec.family === "gain" ? "Monthly pace" : "Goal"}
-                </span>
+                {priorSeries && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${T.slate400}` }} />
+                    Prior year
+                  </span>
+                )}
+                {goalArr.some(v => v != null) && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${T.amber}` }} />
+                    {spec.family === "premium" ? "25% pace" : spec.family === "gain" ? "Monthly pace" : "Goal"}
+                  </span>
+                )}
+              </div>
+              {showLookback && (
+                <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.slate500, marginRight: 4 }}>Lookback</span>
+                  {[12, 24, 36].map(n => (
+                    <button
+                      key={n}
+                      onClick={() => changeLookback(n)}
+                      disabled={monthlyLoading}
+                      style={{
+                        padding: "3px 10px", fontSize: 11, fontWeight: 600,
+                        background: n === monthsBack ? T.blue : T.white,
+                        color: n === monthsBack ? T.white : T.slate700,
+                        border: `1px solid ${n === monthsBack ? T.blue : T.slate300}`,
+                        borderRadius: 4, cursor: monthlyLoading ? "wait" : "pointer",
+                      }}
+                    >{n} mo</button>
+                  ))}
+                </div>
               )}
             </div>
-            {showLookback && (
-              <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
-                <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.slate500, marginRight: 4 }}>Lookback</span>
-                {[12, 24, 36].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => changeLookback(n)}
-                    disabled={monthlyLoading}
-                    style={{
-                      padding: "3px 10px", fontSize: 11, fontWeight: 600,
-                      background: n === monthsBack ? T.blue : T.white,
-                      color: n === monthsBack ? T.white : T.slate700,
-                      border: `1px solid ${n === monthsBack ? T.blue : T.slate300}`,
-                      borderRadius: 4, cursor: monthlyLoading ? "wait" : "pointer",
-                    }}
-                  >{n} mo</button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
