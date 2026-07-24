@@ -749,9 +749,9 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
             Traits & LSS
           </div>
-          {detail?.cts_invited_at && detail?.cts_started_at && (() => {
-            const invited = new Date(detail.cts_invited_at);
-            const started = new Date(detail.cts_started_at);
+          {detail?.assessment_timing?.invited_at && detail?.assessment_timing?.cts?.started_at && (() => {
+            const invited = new Date(detail.assessment_timing.invited_at);
+            const started = new Date(detail.assessment_timing.cts.started_at);
             const ms = started - invited;
             if (!Number.isFinite(ms) || ms < 0) return null;
             const totalMin = Math.floor(ms / 60000);
@@ -1030,9 +1030,9 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
               <span style={{ fontSize: 11, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.4 }}>
                 Score breakdown
               </span>
-              {detail?.iv_scored_at && (
+              {detail?.interview_analysis?.analyzed_at && (
                 <span style={{ fontSize: 10, color: T.slate400, marginLeft: "auto", fontStyle: "italic" }}>
-                  Graded {new Date(detail.iv_scored_at).toLocaleDateString()}
+                  Graded {new Date(detail.interview_analysis.analyzed_at).toLocaleDateString()}
                 </span>
               )}
             </div>
@@ -1683,7 +1683,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 // Assessment layer sources composite/nature/nurture/drivers from v_hiring_candidates
                 // (populated by role-fit click). Score is 0-100 like Resume. Verdict computed by layerVerdict.
                 { key: "assessment", label: "Assessment", score: detail?.assessment_composite ?? null, verdict: null },
-                { key: "interview",  label: "Interview",  score: detail?.iv_composite,           verdict: detail?.iv_verdict },
+                { key: "interview",  label: "Interview",  score: detail?.iv_composite,           verdict: detail?.interview_analysis?.verdict },
                 { key: "reference",  label: "Reference",  score: threeConstruct.reference_score,  verdict: threeConstruct.reference_verdict },
               ];
               const constructs = [
