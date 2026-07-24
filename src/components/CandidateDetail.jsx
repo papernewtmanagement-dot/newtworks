@@ -872,14 +872,14 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
               );
             }
             const roleRows = [
-              { key: "sales_outbound",       os: bf.sales_outbound_os },
-              { key: "sales_inbound",        os: bf.sales_inbound_os },
-              { key: "sales_in_book",        os: bf.sales_in_book_os },
-              { key: "retention_reception",  os: bf.retention_reception_os },
-              { key: "retention_escalation", os: bf.retention_escalation_os },
-              { key: "retention_support",    os: bf.retention_support_os },
-              { key: "aspirant",             os: bf.aspirant_os },
-            ].sort((a, b) => (Number(b.os) || -Infinity) - (Number(a.os) || -Infinity));
+              { key: "sales_outbound",       fitScore: bf.sales_outbound_fit_score },
+              { key: "sales_inbound",        fitScore: bf.sales_inbound_fit_score },
+              { key: "sales_in_book",        fitScore: bf.sales_in_book_fit_score },
+              { key: "retention_reception",  fitScore: bf.retention_reception_fit_score },
+              { key: "retention_escalation", fitScore: bf.retention_escalation_fit_score },
+              { key: "retention_support",    fitScore: bf.retention_support_fit_score },
+              { key: "aspirant",             fitScore: bf.aspirant_fit_score },
+            ].sort((a, b) => (Number(b.fitScore) || -Infinity) - (Number(a.fitScore) || -Infinity));
             const bestKey = bf.best_role;
             const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
             return (
@@ -893,10 +893,10 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
                   const valueColor = isBest ? colors.fg : T.slate900;
                   // Gauge fill: OS/100 of row width. Best-fit fills in greenLt, others fill in
                   // muted slate200 so the gauge is visible without implying "best." Rest is slate50.
-                  const numOs = Number(r.os);
+                  const numFit = Number(r.fitScore);
                   const restBg = T.slate50 || "#f8fafc";
-                  const gaugeBg = Number.isFinite(numOs)
-                    ? `linear-gradient(to right, ${baseBg} 0%, ${baseBg} ${Math.max(0, Math.min(100, numOs))}%, ${restBg} ${Math.max(0, Math.min(100, numOs))}%, ${restBg} 100%)`
+                  const gaugeBg = Number.isFinite(numFit)
+                    ? `linear-gradient(to right, ${baseBg} 0%, ${baseBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} 100%)`
                     : (colors ? baseBg : restBg);
                   return (
                     <button
@@ -918,7 +918,7 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
                         {ROLE_LABELS[r.key] || r.key} Fit
                       </span>
                       <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
-                        {r.os ?? "—"}
+                        {r.fitScore ?? "—"}
                       </span>
                     </button>
                   );
