@@ -422,6 +422,9 @@ export default function Manual({ manualType, userRole }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Bumped by ManualPage edit/create/delete handlers to trigger a re-fetch.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const onMutated = useCallback(() => setRefreshTick((t) => t + 1), []);
   // ── URL ↔ selectedId sync ─────────────────────────────────────────
   // Page id is carried in the URL as /handbook/<confluence_page_id>.
   // Refresh keeps you on the same page; back/forward navigates between visits.
@@ -493,7 +496,7 @@ export default function Manual({ manualType, userRole }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [manualType, userRole]);
+  }, [manualType, userRole, refreshTick]);
 
   // Auto-default selection: once rows are loaded and selectedId is still
   // null (i.e. URL was bare /handbook), pick the root page and
@@ -870,7 +873,7 @@ export default function Manual({ manualType, userRole }) {
             </div>
           </div>
         )}
-        {selected ? <ManualPage page={selected} allRows={rows} cfg={cfg} manualType={manualType} /> : (
+        {selected ? <ManualPage page={selected} allRows={rows} cfg={cfg} manualType={manualType} userRole={userRole} onMutated={onMutated} selectPage={selectPage} /> : (
           <div style={{ padding: 40, color: T.slate500, fontSize: 14 }}>
             {_vp.isPhone ? 'Tap "Sections" to choose a page.' : 'Select a page from the sidebar.'}
           </div>
@@ -881,9 +884,180 @@ export default function Manual({ manualType, userRole }) {
 }
 
 // ─── Page detail view ─────────────────────────────────────────
-function ManualPage({ page, allRows, cfg, manualType }) {
+function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
+  const isAdmin = ADMIN_ROLES.includes(userRole);
+
+  // ── Edit mode state ───────────────────────────────────────────
+  // mode: 'view' | 'edit' | 'new-child'
+  //   view       — read-only page render
+  //   edit       — inline form editing THIS page
+  //   new-child  — inline form authoring a new child page under THIS page
+  const [mode, setMode] = useState("view");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [form, setForm] = useState(null);
+
+  // Reset local edit state whenever the selected page changes.
+  useEffect(() => { setMode("view"); setSaveError(null); setForm(null); }, [page?.id]);
+
+  // Populate form from current page on entering edit mode.
+  const enterEdit = useCallback(() => {
+    if (!page) return;
+    setForm({
+      title: page.title || "",
+      content: page.content || "",
+      icon: page.icon || "",
+      sort_order: page.sort_order ?? 0,
+      notes: page.notes || "",
+      divider_after: !!page.divider_after,
+    });
+    setSaveError(null);
+    setMode("edit");
+  }, [page]);
+
+  // Populate form for a new child page.
+  const enterNewChild = useCallback(() => {
+    if (!page) return;
+    // Next sort_order = max among existing siblings + 10 (10-step spacing).
+    const siblings = (allRows || []).filter(
+      (r) => (r.parent_page_id || null) === (page.confluence_page_id || null)
+    );
+    const maxSort = siblings.reduce((m, r) => (r.sort_order > m ? r.sort_order : m), 0);
+    setForm({
+      title: "",
+      content: "",
+      icon: "",
+      sort_order: maxSort + 10,
+      notes: "",
+      divider_after: false,
+    });
+    setSaveError(null);
+    setMode("new-child");
+  }, [page, allRows]);
+
+  const cancelEdit = useCallback(() => { setMode("view"); setForm(null); setSaveError(null); }, []);
+
+  // Save edits to THIS page. Bumps version and updated_at.
+  const saveEdit = useCallback(async () => {
+    if (!page || !form) return;
+    setSaving(true); setSaveError(null);
+    try {
+      const patch = {
+        title: (form.title || "").trim() || "Untitled",
+        content: form.content || "",
+        icon: (form.icon || "").trim() || null,
+        sort_order: Number.isFinite(Number(form.sort_order)) ? Number(form.sort_order) : 0,
+        notes: (form.notes || "").trim() || null,
+        divider_after: !!form.divider_after,
+        version: (page.version || 0) + 1,
+        updated_at: new Date().toISOString(),
+      };
+      // .select("id") makes silent-RLS-no-op visible: if the update is blocked,
+      // Supabase returns [] rather than throwing.
+      const { data, error: e } = await supabase
+        .from("manuals")
+        .update(patch)
+        .eq("id", page.id)
+        .select("id");
+      if (e) throw new Error(e.message);
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("No row updated. Do you still have admin access?");
+      }
+      setMode("view");
+      setForm(null);
+      if (onMutated) onMutated();
+    } catch (err) {
+      setSaveError(err?.message || "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }, [page, form, onMutated]);
+
+  // Create a new child page under THIS page and navigate to it.
+  const createChild = useCallback(async () => {
+    if (!page || !form) return;
+    setSaving(true); setSaveError(null);
+    try {
+      const rand = Math.random().toString(36).slice(2, 8);
+      const newConfluenceId = `newtworks-native-${manualType}-${Date.now()}-${rand}`;
+      const row = {
+        agency_id: AGENCY_ID,
+        manual_type: manualType,
+        tree_root: page.tree_root || manualType,
+        title: (form.title || "").trim() || "Untitled",
+        content: form.content || "",
+        content_format: "markdown",
+        confluence_page_id: newConfluenceId,
+        parent_page_id: page.confluence_page_id || null,
+        icon: (form.icon || "").trim() || null,
+        sort_order: Number.isFinite(Number(form.sort_order)) ? Number(form.sort_order) : 0,
+        notes: (form.notes || "").trim() || null,
+        divider_after: !!form.divider_after,
+        version: 1,
+        is_active: true,
+        fetched_at: new Date().toISOString(),
+      };
+      const { data, error: e } = await supabase
+        .from("manuals")
+        .insert(row)
+        .select("id, confluence_page_id");
+      if (e) throw new Error(e.message);
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("Insert blocked. Do you still have admin access?");
+      }
+      setMode("view");
+      setForm(null);
+      if (onMutated) onMutated();
+      if (selectPage) selectPage(newConfluenceId);
+    } catch (err) {
+      setSaveError(err?.message || "Create failed.");
+    } finally {
+      setSaving(false);
+    }
+  }, [page, form, manualType, onMutated, selectPage]);
+
+  // Hard delete THIS page. Warns about orphaned children (parent_page_id is
+  // text, not FK — children do not cascade).
+  const deletePage = useCallback(async () => {
+    if (!page) return;
+    const children = (allRows || []).filter(
+      (r) => (r.parent_page_id || null) === (page.confluence_page_id || null)
+    );
+    const msg = children.length > 0
+      ? `Delete "${page.title}"? This page has ${children.length} child page${children.length === 1 ? "" : "s"} which will become orphaned (they stay in the DB but drop off the tree). Type YES to confirm.`
+      : `Delete "${page.title}"? This is a hard delete and cannot be undone. Type YES to confirm.`;
+    const ans = window.prompt(msg);
+    if ((ans || "").trim().toUpperCase() !== "YES") return;
+    setSaving(true); setSaveError(null);
+    try {
+      const { data, error: e } = await supabase
+        .from("manuals")
+        .delete()
+        .eq("id", page.id)
+        .select("id");
+      if (e) throw new Error(e.message);
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("Delete blocked. Do you still have admin access?");
+      }
+      // Navigate to parent (or root) after delete.
+      const parentId = page.parent_page_id;
+      if (onMutated) onMutated();
+      if (selectPage) {
+        if (parentId) selectPage(parentId, true);
+        else {
+          const nextRoot = (allRows || []).find(
+            (r) => !r.parent_page_id && r.id !== page.id
+          );
+          if (nextRoot?.confluence_page_id) selectPage(nextRoot.confluence_page_id, true);
+        }
+      }
+    } catch (err) {
+      setSaveError(err?.message || "Delete failed.");
+      setSaving(false);
+    }
+  }, [page, allRows, onMutated, selectPage]);
 
   // Load glossary terms so pages can reference them inline via {{glossary:tag}}.
   // Only fetched when this manual has a glossary (cfg.hasGlossary).
@@ -1081,10 +1255,77 @@ What I\'d like to discuss:
       {/* Accent bar */}
       <div style={{ height: 4, background: T.blue, borderRadius: 2, marginBottom: 24, opacity: 0.85 }} />
 
-      {/* Action row */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
-        
-      </div>
+      {/* Action row — admin-only edit controls */}
+      {isAdmin && mode === "view" && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={enterEdit}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.blue}`,
+              background: T.white, color: T.blue, fontSize: 13, fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            ✎ Edit page
+          </button>
+          <button
+            type="button"
+            onClick={enterNewChild}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.slate300}`,
+              background: T.white, color: T.slate700, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            + New page under this
+          </button>
+          <button
+            type="button"
+            onClick={deletePage}
+            disabled={saving}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.red}55`,
+              background: T.white, color: T.red, fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer",
+              marginLeft: "auto",
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
+      {isAdmin && (mode === "edit" || mode === "new-child") && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={mode === "edit" ? saveEdit : createChild}
+            disabled={saving}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.blue}`,
+              background: T.blue, color: T.white, fontSize: 13, fontWeight: 700,
+              cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Saving…" : (mode === "edit" ? "Save changes" : "Create page")}
+          </button>
+          <button
+            type="button"
+            onClick={cancelEdit}
+            disabled={saving}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.slate300}`,
+              background: T.white, color: T.slate700, fontSize: 13, fontWeight: 600,
+              cursor: saving ? "not-allowed" : "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          {saveError && (
+            <div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{saveError}</div>
+          )}
+          <div style={{ marginLeft: "auto", fontSize: 11, color: T.slate500 }}>
+            {mode === "edit" ? `Editing v${page?.version ?? "—"} → v${(page?.version || 0) + 1}` : "New child page"}
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div style={{
@@ -1094,7 +1335,9 @@ What I\'d like to discuss:
         border: `1px solid ${T.slate200}`,
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
-        {cfg.dynamicPages[page?.confluence_page_id] === "team_roster" ? (
+        {isAdmin && (mode === "edit" || mode === "new-child") && form ? (
+          <ManualEditForm form={form} setForm={setForm} vp={_vp} />
+        ) : cfg.dynamicPages[page?.confluence_page_id] === "team_roster" ? (
           <div className="newtworks-handbook-body">
             <TeamRoster />
           </div>
@@ -1109,6 +1352,58 @@ What I\'d like to discuss:
             This page has no text content.{page?.notes ? ` (${page.notes})` : ""}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Inline edit form ─────────────────────────────────────────
+// Rendered in place of the page content when ManualPage is in edit or
+// new-child mode. Kept as a pure controlled form so parent owns the state
+// and the save/create handlers can inspect `form` directly.
+function ManualEditForm({ form, setForm, vp }) {
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const setBool = (k) => (e) => setForm({ ...form, [k]: !!e.target.checked });
+  const rowStyle = { display: "flex", gap: 12, flexDirection: vp.isPhone ? "column" : "row", marginBottom: 14 };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" };
+  const inputStyle = { width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`, fontSize: 14, fontFamily: "inherit", background: T.white, boxSizing: "border-box" };
+  const taStyle = { ...inputStyle, minHeight: 340, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13, lineHeight: 1.55, resize: "vertical" };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={labelStyle}>Title</label>
+        <input type="text" value={form.title} onChange={set("title")} style={inputStyle} />
+      </div>
+      <div style={rowStyle}>
+        <div style={{ flex: "0 0 120px" }}>
+          <label style={labelStyle}>Icon</label>
+          <input type="text" value={form.icon} onChange={set("icon")} placeholder="📘" style={inputStyle} maxLength={4} />
+        </div>
+        <div style={{ flex: "0 0 140px" }}>
+          <label style={labelStyle}>Sort order</label>
+          <input type="number" value={form.sort_order} onChange={set("sort_order")} style={inputStyle} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={labelStyle}>Notes (small italic caption)</label>
+          <input type="text" value={form.notes} onChange={set("notes")} style={inputStyle} placeholder="Optional — shows under the title" />
+        </div>
+      </div>
+      <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          id="mp-divider"
+          type="checkbox"
+          checked={!!form.divider_after}
+          onChange={setBool("divider_after")}
+          style={{ width: 16, height: 16 }}
+        />
+        <label htmlFor="mp-divider" style={{ fontSize: 13, color: T.slate700, cursor: "pointer" }}>
+          Show a section divider after this page in the sidebar (team-only pages below the divider are hidden from non-admin)
+        </label>
+      </div>
+      <div>
+        <label style={labelStyle}>Content (Markdown; HTML like &lt;details&gt; / &lt;blockquote&gt; passes through)</label>
+        <textarea value={form.content} onChange={set("content")} style={taStyle} spellCheck={true} />
       </div>
     </div>
   );
