@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
@@ -1381,6 +1381,37 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
       </div>
     );
   }
+  // ─── Monthly grain (expand-per-row) ─────────────────────────────────
+  // Each row in this section has an expand chevron on the left of the label.
+  // Expanding fetches a 12-month time-series once via
+  // get_agency_perf_monthly_series (lazy — first expand triggers the call).
+  // Data cached in component state; subsequent expands are instant.
+  const [expandedRow, setExpandedRow] = useState(null);
+  const [monthly, setMonthly] = useState(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyErr, setMonthlyErr] = useState(null);
+  const toggleRow = (label) => {
+    setExpandedRow(prev => (prev === label ? null : label));
+    if (!monthly && !monthlyLoading) {
+      setMonthlyLoading(true);
+      supabase.rpc("get_agency_perf_monthly_series", {
+        p_agency_id: AGENCY_ID,
+        p_week_ending_date: weekDate,
+      }).then(({ data, error }) => {
+        if (error) {
+          setMonthlyErr(error.message || "load failed");
+          setMonthlyLoading(false);
+          return;
+        }
+        setMonthly(data || null);
+        setMonthlyLoading(false);
+      }).catch(e => {
+        setMonthlyErr(e?.message || String(e));
+        setMonthlyLoading(false);
+      });
+    }
+  };
+
   // Helper: weekly delta (this snapshot vs prior week's snapshot)
   const wkDelta = (cur, prev) => {
     if (cur === null || cur === undefined || prev === null || prev === undefined) return null;
@@ -1476,6 +1507,116 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
     const b = wkDelta(curLost, priorLost);
     return (a === null || b === null) ? null : (a - b);
   };
+
+  // ─── Monthly-grain expansion helpers ─────────────────────────────────
+  // Row label → which metric arrays from monthly-series to display.
+  // LOB rows show 3 sub-metrics (New / Lost / Gain); everything else is single-metric.
+  const metricSpecFor = (label) => {
+    switch (label) {
+      case "Auto":       return [{ k: "auto_new", h: "New" }, { k: "auto_lost", h: "Lost" }, { k: "auto_gain", h: "Gain" }];
+      case "Fire":       return [{ k: "fire_new", h: "New" }, { k: "fire_lost", h: "Lost" }, { k: "fire_gain", h: "Gain" }];
+      case "Life":       return [{ k: "life_new", h: "New" }, { k: "life_lost", h: "Lost" }, { k: "life_gain", h: "Gain" }];
+      case "Life NPF #": return [{ k: "life_npf_count",   h: "Count" }];
+      case "Life NPF $": return [{ k: "life_npf_premium", h: "Premium", money: true }];
+      case "Auto $":     return [{ k: "auto_premium", h: "Book", money: true }];
+      case "Fire $":     return [{ k: "fire_premium", h: "Book", money: true }];
+      case "Life $":     return [{ k: "life_premium", h: "Book", money: true }];
+      case "SMVC %":     return [{ k: "smvc_pct",      h: "On-Time %", pct: true }];
+      case "SMVC $":     return [{ k: "smvc_dollars",  h: "On-Time $", money: true }];
+      case "Scorecard":  return [{ k: "scorecard",     h: "Projected $", money: true }];
+      default: return null;
+    }
+  };
+  // Format one cell value based on metric flags.
+  const fmtMonthlyVal = (v, spec) => {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    if (spec.pct)   return (n * 100).toFixed(2) + "%";
+    if (spec.money) return fmtMoney(n);
+    return fmtInt(n);
+  };
+  // "2026-07" → "Jul '26"
+  const fmtMonthLabel = (yyyymm) => {
+    if (!yyyymm || typeof yyyymm !== "string") return yyyymm || "";
+    const [y, m] = yyyymm.split("-");
+    const mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m) - 1] || m;
+    return `${mo} '${(y || "").slice(-2)}`;
+  };
+  // Render the expanded strip for a given row. colSpan matches the outer table (8 cols).
+  const renderMonthlyStrip = (r) => {
+    if (monthlyErr) {
+      return (
+        <div style={{ padding: "10px 14px", color: T.red, fontSize: 12 }}>
+          Failed to load monthly grain: {monthlyErr}
+        </div>
+      );
+    }
+    if (monthlyLoading || !monthly) {
+      return (
+        <div style={{ padding: "10px 14px", color: T.slate500, fontSize: 12 }}>
+          Loading monthly grain…
+        </div>
+      );
+    }
+    const spec = metricSpecFor(r.label);
+    if (!spec) {
+      return <div style={{ padding: "10px 14px", color: T.slate500, fontSize: 12 }}>No monthly grain available for this row.</div>;
+    }
+    const months = Array.isArray(monthly.months) ? monthly.months : [];
+    // Rows = months (most recent first for reading top-down).
+    const rowsData = months.map((mLabel, i) => {
+      const cells = spec.map(s => {
+        const arr = Array.isArray(monthly[s.k]) ? monthly[s.k] : [];
+        return { spec: s, v: arr[i] };
+      });
+      return { mLabel, cells };
+    }).reverse();
+    return (
+      <div style={{ padding: "8px 12px 12px 40px", background: T.slate50, borderTop: `1px solid ${T.slate200}` }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: T.slate500, marginBottom: 6 }}>
+          {r.label} — monthly grain (last 12 months)
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "4px 10px 4px 0", color: T.slate500, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>Month</th>
+                {spec.map(s => (
+                  <th key={s.k} style={{ textAlign: "right", padding: "4px 12px", color: T.slate500, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>{s.h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rowsData.map(({ mLabel, cells }) => (
+                <tr key={mLabel}>
+                  <td style={{ padding: "3px 10px 3px 0", color: T.slate700, fontWeight: 500, whiteSpace: "nowrap" }}>{fmtMonthLabel(mLabel)}</td>
+                  {cells.map(({ spec: s, v }) => {
+                    const txt = fmtMonthlyVal(v, s);
+                    const isNeg = (v != null && Number(v) < 0);
+                    return (
+                      <td key={s.k} style={{ padding: "3px 12px", textAlign: "right", color: txt == null ? T.slate300 : (isNeg ? T.red : T.slate900), fontWeight: 500, whiteSpace: "nowrap" }}>
+                        {txt == null ? "–" : txt}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+  // Chevron button used at the start of every row label cell.
+  const Chevron = ({ open }) => (
+    <span aria-hidden="true" style={{
+      display: "inline-block", width: 12, marginRight: 6,
+      color: T.slate400, fontSize: 10, lineHeight: 1,
+      transform: open ? "rotate(90deg)" : "none",
+      transition: "transform 0.1s ease",
+    }}>▶</span>
+  );
 
   // Row definitions — one row per LOB / metric category.
   // Auto/Fire/Life are editable (new/lost/lapse); Life #/Life $ remain read-only.
@@ -1694,9 +1835,20 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                   const deltaTxt = fmtDeltaLocal(wkD);
                   const goalTxt  = fmtVal(goal);
                   const diffTxt  = fmtDiffLocal(diff);
+                  const isOpenRate = expandedRow === r.label;
                   return (
-                    <tr key={r.label}>
-                      <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600, background: rowBg }}>{r.label}</Td>
+                    <Fragment key={r.label}>
+                    <tr>
+                      <Td style={{ paddingLeft: 6, color: T.slate700, fontWeight: 600, background: rowBg, whiteSpace: "nowrap" }}>
+                        <button
+                          onClick={() => toggleRow(r.label)}
+                          aria-label={isOpenRate ? "Collapse monthly grain" : "Expand monthly grain"}
+                          style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", verticalAlign: "middle" }}
+                        >
+                          <Chevron open={isOpenRate} />
+                        </button>
+                        {r.label}
+                      </Td>
                       <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
                       <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
                       <Td align="right" style={{ background: rowBg }}>{BLANK}</Td>
@@ -1716,6 +1868,12 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                         {diffTxt ?? BLANK}
                       </Td>
                     </tr>
+                    {isOpenRate && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 0 }}>{renderMonthlyStrip(r)}</td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 }
 
@@ -1802,9 +1960,20 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                   : (r.isMoney
                       ? (diff >= 0 ? "+" : "") + fmtMoney(diff)
                       : fmtSigned(Math.round(diff)));
+                const isOpenStd = expandedRow === r.label;
                 return (
-                  <tr key={r.label}>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600, background: rowBg }}>{r.label}</Td>
+                  <Fragment key={r.label}>
+                  <tr>
+                    <Td style={{ paddingLeft: 6, color: T.slate700, fontWeight: 600, background: rowBg, whiteSpace: "nowrap" }}>
+                      <button
+                        onClick={() => toggleRow(r.label)}
+                        aria-label={isOpenStd ? "Collapse monthly grain" : "Expand monthly grain"}
+                        style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", verticalAlign: "middle" }}
+                      >
+                        <Chevron open={isOpenStd} />
+                      </button>
+                      {r.label}
+                    </Td>
                     {renderEditOrVal(r.newKey,  r.newYtd,  r.newWkD,  undefined)}
                     {renderEditOrVal(r.lostKey, r.lostYtd, r.lostWkD, undefined, deltaColorLost)}
                     <Td align="right" style={{ background: rowBg }}>
@@ -1837,6 +2006,12 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
                       {diffTxt ?? BLANK}
                     </Td>
                   </tr>
+                  {isOpenStd && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 0 }}>{renderMonthlyStrip(r)}</td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
