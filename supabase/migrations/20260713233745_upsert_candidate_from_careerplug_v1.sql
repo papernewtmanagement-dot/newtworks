@@ -164,7 +164,7 @@ BEGIN
     v_gmail_msg_id,
     'careerplug',
     v_meta,
-    'other',                              -- CTS not yet complete; refined when Cheetah PDF arrives
+    'other',                              -- assessment not yet complete; refined when HireGauge PDF arrives
     concat_ws(E'\n',
       '═══ APPLIED via CareerPlug (' || to_char(v_applied_at, 'YYYY-MM-DD HH24:MI TZ') || ') ═══',
       CASE WHEN v_meta ? 'source_platform'
