@@ -8,20 +8,32 @@
 //
 // Flow per matched Gmail message:
 //   1. Fetch full message (subject/headers/body).
-//   2. Classify as "wrapup" (subject wrap-up) or "cpr_reply" (In-Reply-To
-//      matches weekly_cpr_reports.gmail_message_id OR subject "CPR RECAP —
-//      WEEK OF …"). Anything else → skip + label.
+//   2. Classify as one of:
+//        - "nag_reply"  (subject "Re: [EXTERNAL] Wrap-up follow-up — X")
+//        - "wrapup"     (subject contains wrap-up / wrapup / wrap up)
+//        - "cpr_reply"  (subject "CPR RECAP — WEEK OF …")
+//        - "unclassified" (skip + label)
+//      Nag reply is checked FIRST because its subject would otherwise match
+//      the generic wrap-up regex and get mis-routed to the reply's-week
+//      Saturday instead of the ORIGINAL nagged week.
 //   3. Resolve sender team_member (handles Fw: forwarding by parsing the
 //      first inner "From:" line when the outer sender is us).
-//   4. Resolve week_ending_date (Saturday) from In-Reply-To parent CPR
-//      row, else nearest past Saturday from received timestamp.
+//   4. Resolve week_ending_date (Saturday):
+//        - nag_reply → look up parent nag via In-Reply-To → RFC Message-ID
+//          in wrapup_nag_log.nag_message_id_rfc; skip if not found.
+//        - cpr_reply → look up parent CPR via In-Reply-To → RFC id in
+//          weekly_cpr_reports.cpr_recap_message_id_rfc, fall back to the
+//          legacy gmail_message_id column, skip if not found.
+//        - wrapup   → nearest past Saturday from received timestamp CT.
 //   5. Pull existing wrapup_text + the six-item rubric from
 //      get_wrapup_checklist_text().
 //   6. LLM merges new email into current text, organized under the six
 //      required sections; returns coverage[6] + missing_item_labels[].
 //   7. Write organized text back; flip wrapup_done if all six covered.
 //   8. If missing items and same missing-set hasn't been nagged this week,
-//      send public nag email (whole team including Peter) + log.
+//      send public nag email (whole team including Peter) + log. On send,
+//      also capture the sent nag's RFC-2822 Message-ID so a future reply
+//      can be routed back to this week via In-Reply-To.
 //   9. Apply Wrapups Gmail label + remove INBOX.
 // =========================================================================
 
@@ -48,7 +60,7 @@ export interface WrapupBody {
 interface OneMessageResult {
   status: "processed" | "skipped" | "error";
   message_id: string;
-  kind: "wrapup" | "cpr_reply" | "unclassified";
+  kind: "wrapup" | "cpr_reply" | "nag_reply" | "unclassified";
   team_member_id: string | null;
   week_ending_date: string | null;
   all_complete: boolean;
@@ -250,7 +262,7 @@ async function processOneWrapupMessage(
   }
 
   // 2. Classify kind (wrapup / cpr_reply / unclassified)
-  const kind: "wrapup" | "cpr_reply" | "unclassified" = await classifyKind(subject, inReplyTo);
+  const kind: "wrapup" | "cpr_reply" | "nag_reply" | "unclassified" = await classifyKind(subject, inReplyTo);
   if (kind === "unclassified") {
     await labelAndArchive(ctx, messageId, threadId);
     return {
@@ -432,8 +444,16 @@ async function loadTeamEmails(agencyId: string): Promise<string[]> {
 async function classifyKind(
   subject: string,
   inReplyTo: string,
-): Promise<"wrapup" | "cpr_reply" | "unclassified"> {
+): Promise<"wrapup" | "cpr_reply" | "nag_reply" | "unclassified"> {
   const subjectLower = (subject || "").toLowerCase();
+  // Nag reply MUST be checked FIRST — the subject "Re: [EXTERNAL] Wrap-up
+  // follow-up — Name" matches the generic wrap-up regex, but it is a REPLY
+  // TO A NAG about a PRIOR week, not a fresh wrap-up for the current week.
+  // Routing it as "wrapup" causes timestamp-fallback to land on the wrong
+  // Saturday and re-nag for pieces the teammate already covered elsewhere.
+  if (/^\s*re:\s*(?:\[external\]\s*)?wrap[\s\-_]?up\s+follow[\s\-_]?up/i.test(subject)) {
+    return "nag_reply";
+  }
   // Explicit wrap-up subject
   if (/(wrap[\s\-_]?up|wrapup)/i.test(subject)) return "wrapup";
   // CPR reply — by subject
@@ -441,18 +461,6 @@ async function classifyKind(
     // If it's the original send (not a reply/forward), it originated from us.
     // Classifier here only sees reply/forward (defaultQuery excludes -in:sent).
     return "cpr_reply";
-  }
-  // CPR reply — by In-Reply-To header pointing at a known CPR send
-  if (inReplyTo) {
-    const cleaned = inReplyTo.replace(/[<>]/g, "").trim();
-    // In-Reply-To is an RFC 2822 Message-ID (e.g. <CADef...@mail.gmail.com>).
-    // Gmail's internal message id (used by weekly_cpr_reports.gmail_message_id)
-    // is different — but we can look up by internal id via a separate fetch
-    // if needed. For now, subject-based match is sufficient (CPR replies
-    // almost always carry the CPR RECAP subject).
-    if (cleaned.length > 0) {
-      // no-op — subject check above handles the primary path
-    }
   }
   return "unclassified";
 }
@@ -562,21 +570,51 @@ function wrapupTargetSaturdayCT(receivedAtISO: string): string {
 
 async function resolveWeekEnding(
   agencyId: string,
-  kind: "wrapup" | "cpr_reply",
+  kind: "wrapup" | "cpr_reply" | "nag_reply",
   inReplyTo: string,
   receivedAtISO: string,
 ): Promise<string | null> {
-  if (kind === "cpr_reply" && inReplyTo) {
-    const cleaned = inReplyTo.replace(/[<>]/g, "").trim();
-    // Try direct match (Gmail sometimes uses its own internal id in In-Reply-To)
+  const cleaned = (inReplyTo || "").replace(/[<>]/g, "").trim();
+
+  // Nag reply: look up the parent nag by its stored RFC Message-ID. That
+  // row's week_ending_date IS the week the nag was about. If we cannot
+  // resolve it, DO NOT fall through to timestamp math — a nag reply about
+  // week 7/11 that lands on 7/22 must not be routed to 7/18 just because
+  // it arrived on a Wednesday. Return null → parser skips the message.
+  if (kind === "nag_reply") {
+    if (!cleaned) return null;
     const { data } = await sb
+      .from("wrapup_nag_log")
+      .select("week_ending_date")
+      .eq("agency_id", agencyId)
+      .eq("nag_message_id_rfc", cleaned)
+      .maybeSingle();
+    return data?.week_ending_date ?? null;
+  }
+
+  // CPR reply: try the new RFC Message-ID column first (canonical going
+  // forward), then fall back to the historical gmail_message_id column for
+  // pre-fix rows. If BOTH fail, return null rather than mis-routing via
+  // timestamp math — same safety principle as nag_reply above.
+  if (kind === "cpr_reply") {
+    if (!cleaned) return null;
+    const { data: rfcRow } = await sb
+      .from("weekly_cpr_reports")
+      .select("week_ending_date")
+      .eq("agency_id", agencyId)
+      .eq("cpr_recap_message_id_rfc", cleaned)
+      .maybeSingle();
+    if (rfcRow?.week_ending_date) return rfcRow.week_ending_date;
+    const { data: gidRow } = await sb
       .from("weekly_cpr_reports")
       .select("week_ending_date")
       .eq("agency_id", agencyId)
       .eq("gmail_message_id", cleaned)
       .maybeSingle();
-    if (data?.week_ending_date) return data.week_ending_date;
+    return gidRow?.week_ending_date ?? null;
   }
+
+  // Fresh wrap-up email: timestamp-based Saturday derivation is correct.
   return wrapupTargetSaturdayCT(receivedAtISO);
 }
 
@@ -694,9 +732,41 @@ Rubric refresher (Weekly wrap-up email section of the Daily Wrap-up manual):
     return false;
   }
 
-  // 5. Log to throttle table (raw send id may be in response)
+  // 5. Capture Gmail internal id AND RFC-2822 Message-ID (headers) from the
+  //    send. The RFC id is what teammates' reply clients put in In-Reply-To,
+  //    so storing it enables reliable reply-to-week routing on the next
+  //    ingest run. Gmail's send-response body typically does NOT include
+  //    the RFC id, so we do a follow-up metadata fetch on the sent message.
   const sentGmailId: string | null =
     sendRes.data?.id ?? sendRes.data?.messageId ?? sendRes.data?.response_data?.id ?? null;
+  let rfcMsgId: string | null = null;
+  if (sentGmailId) {
+    try {
+      const metaRes = await callComposio({
+        apiKey: ctx.composioApiKey,
+        userId: ctx.composioUserId,
+        connectedAccountId: ctx.gmailAccountId,
+        toolSlug: "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+        toolArguments: {
+          message_id: sentGmailId,
+          format: "metadata",
+          user_id: "me",
+        },
+      });
+      if (metaRes.ok) {
+        const meta: any = metaRes.data?.response_data ?? metaRes.data ?? {};
+        const headers: any[] = meta?.payload?.headers ?? [];
+        const raw = headers.find((h: any) =>
+          h?.name === "Message-ID" || h?.name === "Message-Id" || h?.name === "message-id"
+        )?.value;
+        if (raw && typeof raw === "string") {
+          rfcMsgId = raw.replace(/[<>]/g, "").trim() || null;
+        }
+      }
+    } catch (e) {
+      console.warn("wrapup nag RFC Message-ID capture failed (non-fatal):", e);
+    }
+  }
   await sb.from("wrapup_nag_log").insert({
     agency_id: ctx.agencyId,
     team_member_id: teamMember.id,
@@ -704,6 +774,7 @@ Rubric refresher (Weekly wrap-up email section of the Daily Wrap-up manual):
     missing_items_hash: hash,
     missing_items: missingLabels,
     gmail_message_id: sentGmailId,
+    nag_message_id_rfc: rfcMsgId,
     trigger_email_id: triggerMessageId,
   });
   return true;
