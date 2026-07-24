@@ -24,18 +24,10 @@ const TRAIT_LABELS = {
   optimism:            "Optimism",
 };
 
-// Returns "green" (ideal), "yellow" (watch), "red" (trigger), or "none" (missing)
-const TRAIT_BAND = {
-  deadline_motivation: (v) => v == null ? "none" : v >= 70 ? "green" : v >= 50 ? "yellow" : "red",
-  recognition_drive:   (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
-  assertiveness:       (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
-  independent_spirit:  (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
-  analytical:          (v) => v == null ? "none" : v <= 60 ? "green" : v <= 70 ? "yellow" : "red",
-  compassion:          (v) => v == null ? "none" : (v >= 30 && v <= 70) ? "green" : (v >= 20 && v <= 80) ? "yellow" : "red",
-  self_promotion:      (v) => v == null ? "none" : (v >= 10 && v <= 80) ? "green" : (v >= 5 && v <= 89) ? "yellow" : "red",
-  belief_in_others:    (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
-  optimism:            (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
-};
+// TRAIT_BAND removed 2026-07-24 — the nine primary CTS trait tiles now render
+// neutral because their ideal bands are role-dependent, and coloring them
+// against a generic sales-seat band was misleading. Role-aware judgment lives
+// in the Role Fit + Competencies sections on the right of the same expander.
 
 // Role display labels — shared between Results matrix, Assessment layer expansion,
 // and Competencies section. Keys are the seven canonical role fits.
@@ -854,8 +846,9 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
 
           {Object.entries(TRAIT_LABELS).map(([trait, label]) => {
             const value = detail?.[trait];
-            const band = TRAIT_BAND[trait](value);
-            return <AssessRow key={trait} label={label} value={value} band={band} />;
+            // No band: primary CTS traits render neutral. Role-dependent
+            // ideals are surfaced via Role Fit + Competencies (right column).
+            return <AssessRow key={trait} label={label} value={value} />;
           })}
         </div>
 
