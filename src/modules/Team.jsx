@@ -352,7 +352,7 @@ const generateCoachingHints = (seat, assessment) => {
   const rqm    = seat ? (parseFloat(seat.retention_quality_multiplier) || 0) : null;
   // Role category comes from the seat (functional role). The prior fallback to
   // assessment_type was removed when that column was dropped — role fit is now
-  // a function-based projection (see cts_best_fit_role).
+  // a function-based projection (see assessment_best_fit_role).
   const cat    = seat?.role_category || null;
   const reliability = (assessment.reliability || "").toLowerCase();
   const distortion  = (assessment.response_distortion || "").toLowerCase();
@@ -2033,8 +2033,8 @@ const StaffDirectory = ({ staff }) => {
                     ["Belief in Others",    asmt.belief_in_others],
                     ["Compassion",          asmt.compassion],
                   ];
-                  // Competency lookup will be rebuilt against the cts_<role>_competencies
-                  // SQL functions + cts_best_fit_role. Legacy JSONB columns (sales_competencies,
+                  // Competency lookup will be rebuilt against the assessment_<role>_competencies
+                  // SQL functions + assessment_best_fit_role. Legacy JSONB columns (sales_competencies,
                   // service_competencies) don't exist, and assessment_type was dropped.
                   // Panel renders empty for now — replaced when the role-fit UI ships.
                   //
