@@ -49,7 +49,7 @@ const STAGES = {
   offer:           { label:"Offer",          color:T.purple,   bg:T.purpleLt, order:5 },
   hired:           { label:"Hired",          color:T.green,    bg:T.greenLt,  order:6 },
   declined:        { label:"Declined",       color:T.red,      bg:T.redLt,    order:7 },
-  archived:        { label:"Archived",       color:T.slate500, bg:T.slate100, order:8 },
+  former:          { label:"Former",         color:T.slate500, bg:T.slate100, order:8 },
 };
 
 // ─── Producer ROI Hook ───────────────────────────────────────
@@ -512,7 +512,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   const [selected, setSelected] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
-  const stages = stagesProp || ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // archived hidden by default
+  const stages = stagesProp || ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // declined + former hidden by default
 
 
   const selectedApp = applicants.find(a => a.id === selected);
@@ -574,10 +574,10 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   );
 };
 
-// ─── Declined Candidates Table ────────────────────────────────
-// Read-only summary view of every candidate we walked away from (status='archived').
-// Row tap opens CandidateDetail with full history and the option to re-activate to
-// any pipeline stage.
+// ─── Past Candidate Table ─────────────────────────────────────
+// Read-only summary view. Reused for the Declined tab (walked-away applicants) and
+// the Former tab (past team members). Row tap opens CandidateDetail with full
+// history and the option to re-activate to any pipeline stage.
 const DECLINE_REASON_LABEL = {
   active_applicant: "Active — declined",
   offer_rescinded:  "Offer rescinded",
@@ -598,7 +598,7 @@ const overallBandColor = (v) => {
   return T.red;
 };
 
-const DeclinedTable = ({ declined, onUpdate }) => {
+const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidates on file." }) => {
   // URL-persisted candidate selection so refresh keeps the same candidate open.
   // Same param name as RecruitingPipeline uses; the two are conditionally
   // rendered (gtab picks one) so there's no collision.
@@ -640,7 +640,7 @@ const DeclinedTable = ({ declined, onUpdate }) => {
   if (declined.length === 0) {
     return (
       <div style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:8, padding:"18px 14px", textAlign:"center" }}>
-        <div style={{ fontSize:11, color:T.slate500 }}>No declined candidates on file.</div>
+        <div style={{ fontSize:11, color:T.slate500 }}>{emptyLabel}</div>
       </div>
     );
   }
@@ -2767,8 +2767,8 @@ const HypotheticalHireForecast = () => {
 // visible. Sub-nav toggles between Recruiting and Declined. Onboarding
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
-const GrowthTab = ({ applicants, declined, onUpdate }) => {
-  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined"]);
+const GrowthTab = ({ applicants, declined, former, onUpdate }) => {
+  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former"]);
   // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
   const RECRUITING_STAGES = ["applied","assessed","email_screen","interview"];
   const CLOSING_STAGES    = ["reference_check","offer","hired"];
@@ -2778,6 +2778,7 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
     { id:"recruiting", label:`Recruiting (${recruitingApps.length})` },
     { id:"finalists",  label:`Finalists (${closingApps.length})` },
     { id:"declined",   label:`Declined (${declined.length})` },
+    { id:"former",     label:`Former (${former.length})` },
   ];
   return (
     <div>
@@ -2819,6 +2820,7 @@ const GrowthTab = ({ applicants, declined, onUpdate }) => {
         <RecruitingPipeline applicants={closingApps} onUpdate={onUpdate} stages={CLOSING_STAGES} />
       )}
       {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
+      {view === "former"     && <DeclinedTable declined={former}   onUpdate={onUpdate} emptyLabel="No former team members on file." />}
     </div>
   );
 };
@@ -2839,7 +2841,7 @@ export default function Team() {
       .from("v_hiring_candidates")
       .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
       .eq("agency_id", AGENCY_ID)
-      .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","archived"])
+      .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (cancelled || error) return;
@@ -2871,7 +2873,7 @@ export default function Team() {
       // Optionally: revert optimistic update on failure
     }
     // Note: rows keep their place in state after status change. Kanban filters
-    // visible-pipeline stages; DeclinedTable renders status='archived' rows.
+    // visible-pipeline stages; DeclinedTable renders status='declined' and status='former' rows.
   };
 
   const sections = [
@@ -2886,7 +2888,7 @@ export default function Team() {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Team</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","archived","declined"].includes(a.status)).length} in pipeline · {applicants.filter(a=>a.status==="declined").length} declined · Resume scanner active
+            {(roi?.allActiveStaff || []).length} active staff · {applicants.filter(a=>!["hired","former","declined"].includes(a.status)).length} in pipeline · {applicants.filter(a=>a.status==="declined").length} declined · {applicants.filter(a=>a.status==="former").length} former · Resume scanner active
           </div>
         </div>
         
@@ -2905,7 +2907,7 @@ export default function Team() {
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
-      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "archived" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} onUpdate={updateApplicantStage} />}
+      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} />}
     </div>
   );
 }
