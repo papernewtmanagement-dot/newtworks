@@ -474,7 +474,7 @@ export default function Manual({ manualType, userRole }) {
         }
         const { data, error: qErr } = await supabase
           .from("manuals")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, divider_after, fetched_at, updated_at, notes")
+          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, divider_after, fetched_at, updated_at")
           .eq("agency_id", AGENCY_ID)
           .eq("manual_type", manualType)
           .eq("is_active", true);
@@ -910,7 +910,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       content: page.content || "",
       icon: page.icon || "",
       sort_order: page.sort_order ?? 0,
-      notes: page.notes || "",
+      parent_page_id: page.parent_page_id || "",
       divider_after: !!page.divider_after,
     });
     setSaveError(null);
@@ -930,7 +930,6 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       content: "",
       icon: "",
       sort_order: maxSort + 10,
-      notes: "",
       divider_after: false,
     });
     setSaveError(null);
@@ -944,12 +943,32 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     if (!page || !form) return;
     setSaving(true); setSaveError(null);
     try {
+      // Cycle guard: chosen parent must not be self or a descendant of self.
+      const chosenParent = (form.parent_page_id || "").trim() || null;
+      if (chosenParent) {
+        if (chosenParent === page.confluence_page_id) {
+          throw new Error("A page can't be its own parent.");
+        }
+        // Walk up from chosenParent — if we ever hit page.confluence_page_id,
+        // the chosen parent is a descendant of this page (would create a cycle).
+        const byId = {};
+        for (const r of (allRows || [])) { if (r.confluence_page_id) byId[r.confluence_page_id] = r; }
+        let cur = byId[chosenParent];
+        let hops = 0;
+        while (cur && hops < 500) {
+          if (cur.confluence_page_id === page.confluence_page_id) {
+            throw new Error("Can't move a page under one of its own descendants.");
+          }
+          cur = cur.parent_page_id ? byId[cur.parent_page_id] : null;
+          hops += 1;
+        }
+      }
       const patch = {
         title: (form.title || "").trim() || "Untitled",
         content: form.content || "",
         icon: (form.icon || "").trim() || null,
         sort_order: Number.isFinite(Number(form.sort_order)) ? Number(form.sort_order) : 0,
-        notes: (form.notes || "").trim() || null,
+        parent_page_id: chosenParent,
         divider_after: !!form.divider_after,
         version: (page.version || 0) + 1,
         updated_at: new Date().toISOString(),
@@ -973,7 +992,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     } finally {
       setSaving(false);
     }
-  }, [page, form, onMutated]);
+  }, [page, form, allRows, onMutated]);
 
   // Create a new child page under THIS page and navigate to it.
   const createChild = useCallback(async () => {
@@ -993,7 +1012,6 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
         parent_page_id: page.confluence_page_id || null,
         icon: (form.icon || "").trim() || null,
         sort_order: Number.isFinite(Number(form.sort_order)) ? Number(form.sort_order) : 0,
-        notes: (form.notes || "").trim() || null,
         divider_after: !!form.divider_after,
         version: 1,
         is_active: true,
@@ -1240,11 +1258,6 @@ What I\'d like to discuss:
                 • Mirrored {updatedStr}
               </div>
             )}
-            {page?.notes && (
-              <div style={{ fontSize: 11, color: T.amber, fontStyle: "italic" }}>
-                • {page.notes}
-              </div>
-            )}
           </div>
           <h1 style={{ fontSize: 28, fontWeight: 800, color: T.slate900, margin: 0, letterSpacing: "-0.025em", lineHeight: 1.25 }}>
             {page ? withNumber(page) : "Untitled page"}
@@ -1336,7 +1349,7 @@ What I\'d like to discuss:
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
         {isAdmin && (mode === "edit" || mode === "new-child") && form ? (
-          <ManualEditForm form={form} setForm={setForm} vp={_vp} />
+          <ManualEditForm form={form} setForm={setForm} vp={_vp} allRows={allRows} currentPageId={page?.confluence_page_id} mode={mode} />
         ) : cfg.dynamicPages[page?.confluence_page_id] === "team_roster" ? (
           <div className="newtworks-handbook-body">
             <TeamRoster />
@@ -1349,7 +1362,7 @@ What I\'d like to discuss:
           <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
-            This page has no text content.{page?.notes ? ` (${page.notes})` : ""}
+            This page has no text content.
           </div>
         )}
       </div>
@@ -1361,13 +1374,67 @@ What I\'d like to discuss:
 // Rendered in place of the page content when ManualPage is in edit or
 // new-child mode. Kept as a pure controlled form so parent owns the state
 // and the save/create handlers can inspect `form` directly.
-function ManualEditForm({ form, setForm, vp }) {
+//
+// Parent picker renders only in edit mode. In new-child mode, parent is
+// implicit (the current page being viewed) — reparenting a brand-new page
+// isn't useful until it has a title.
+function ManualEditForm({ form, setForm, vp, allRows, currentPageId, mode }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const setBool = (k) => (e) => setForm({ ...form, [k]: !!e.target.checked });
   const rowStyle = { display: "flex", gap: 12, flexDirection: vp.isPhone ? "column" : "row", marginBottom: 14 };
   const labelStyle = { fontSize: 11, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" };
   const inputStyle = { width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`, fontSize: 14, fontFamily: "inherit", background: T.white, boxSizing: "border-box" };
   const taStyle = { ...inputStyle, minHeight: 340, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13, lineHeight: 1.55, resize: "vertical" };
+
+  // Build the parent-picker options: every page in this manual except THIS
+  // page and its descendants (which would create a cycle). Options render
+  // in tree order with an indent prefix so hierarchy is visible.
+  const parentOptions = useMemo(() => {
+    if (mode !== "edit") return [];
+    const rows = allRows || [];
+    // Set of ids to exclude: self + all descendants.
+    const excluded = new Set();
+    if (currentPageId) {
+      excluded.add(currentPageId);
+      let added = true;
+      while (added) {
+        added = false;
+        for (const r of rows) {
+          if (r.parent_page_id && excluded.has(r.parent_page_id) && r.confluence_page_id && !excluded.has(r.confluence_page_id)) {
+            excluded.add(r.confluence_page_id);
+            added = true;
+          }
+        }
+      }
+    }
+    // Build a tree walk for indent-ordered output.
+    const byParent = new Map();
+    for (const r of rows) {
+      const p = r.parent_page_id || "";
+      if (!byParent.has(p)) byParent.set(p, []);
+      byParent.get(p).push(r);
+    }
+    for (const [, list] of byParent) {
+      list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
+    const out = [];
+    const walk = (parentKey, depth) => {
+      const kids = byParent.get(parentKey) || [];
+      for (const k of kids) {
+        if (k.confluence_page_id && !excluded.has(k.confluence_page_id)) {
+          out.push({ id: k.confluence_page_id, label: `${"— ".repeat(depth)}${k.icon ? k.icon + " " : ""}${k.title || "Untitled"}` });
+        }
+        // Descend even if this node was excluded; a descendant of an excluded
+        // node is also excluded, so walking is safe — but for the target-in-
+        // options case we still need to explore children of not-excluded nodes.
+        if (k.confluence_page_id && !excluded.has(k.confluence_page_id)) {
+          walk(k.confluence_page_id, depth + 1);
+        }
+      }
+    };
+    walk("", 0);
+    return out;
+  }, [allRows, currentPageId, mode]);
 
   return (
     <div>
@@ -1384,10 +1451,21 @@ function ManualEditForm({ form, setForm, vp }) {
           <label style={labelStyle}>Sort order</label>
           <input type="number" value={form.sort_order} onChange={set("sort_order")} style={inputStyle} />
         </div>
-        <div style={{ flex: 1 }}>
-          <label style={labelStyle}>Notes (small italic caption)</label>
-          <input type="text" value={form.notes} onChange={set("notes")} style={inputStyle} placeholder="Optional — shows under the title" />
-        </div>
+        {mode === "edit" && (
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Parent (move under…)</label>
+            <select
+              value={form.parent_page_id || ""}
+              onChange={set("parent_page_id")}
+              style={inputStyle}
+            >
+              <option value="">— Top level (root) —</option>
+              {parentOptions.map((o) => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
         <input
