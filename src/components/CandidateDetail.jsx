@@ -1628,16 +1628,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
   return (
     <div>
-      {/* Identity + nav — name on left, Back button + status pill on right */}
+      {/* Identity + nav — name + status pill on left, Back button on right */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <button onClick={onBack} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: "pointer" }}>← Back to Pipeline</button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
             <div style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, borderRadius: 12 }}>
               {STAGE_LABELS[detail?.status] || detail?.status || "—"}
             </div>
           </div>
+          <button onClick={onBack} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: "pointer", flexShrink: 0 }}>← Back to Pipeline</button>
         </div>
         <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>
           {[detail?.position, detail?.email, detail?.phone].filter(Boolean).join(" · ") || "No contact info on file"}
