@@ -1351,7 +1351,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
   // Which role fit is selected. Local UI state only — session-scoped, defaults to
-  // bestFit on load. Framework scoring always uses cts_best_fit_role's best_role;
+  // bestFit on load. Framework scoring always uses assessment_best_fit_role's best_role;
   // the selector only controls which competency detail displays.
   const [selectedRole, setSelectedRoleLocal] = useState(null);
   const setSelectedRole = (roleKey) => {
@@ -1388,11 +1388,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // Best-fit role via RPC (graceful fallback if function missing)
   useEffect(() => {
     if (!detail?.id || !supabase) return;
-    supabase.rpc("cts_best_fit_role", { p_assessment_id: detail.id })
+    supabase.rpc("assessment_best_fit_role", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error) setBestFit(data); })
       .catch(() => {});
     // Competencies for all four role fits (single RPC returning JSONB keyed by role)
-    supabase.rpc("cts_all_competencies", { p_assessment_id: detail.id })
+    supabase.rpc("assessment_all_competencies", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error) setCompetencies(data); })
       .catch(() => {});
     // HireGauge framework read — composite verdict + all matched rules.
@@ -1417,7 +1417,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   }, [detail?.id]);
 
   // Default selectedRole to best-fit role once bestFit resolves. Local UI state only —
-  // framework scoring always uses cts_best_fit_role's best_role regardless of selection;
+  // framework scoring always uses assessment_best_fit_role's best_role regardless of selection;
   // the selector only controls which competency detail displays on this page.
   useEffect(() => {
     if (!detail?.id) return;
@@ -1628,16 +1628,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
   return (
     <div>
-      {/* Identity + nav — name + status pill on left, Back button on right */}
+      {/* Identity + nav — name on left, Back button + status pill on right */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <button onClick={onBack} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: "pointer" }}>← Back to Pipeline</button>
             <div style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, borderRadius: 12 }}>
               {STAGE_LABELS[detail?.status] || detail?.status || "—"}
             </div>
           </div>
-          <button onClick={onBack} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: "pointer", flexShrink: 0 }}>← Back to Pipeline</button>
         </div>
         <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>
           {[detail?.position, detail?.email, detail?.phone].filter(Boolean).join(" · ") || "No contact info on file"}
