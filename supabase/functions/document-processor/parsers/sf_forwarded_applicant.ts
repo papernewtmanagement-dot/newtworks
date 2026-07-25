@@ -272,7 +272,7 @@ async function starAndLabel(ctx: SFForwardCtx, messageId: string): Promise<void>
     await callComposio({
       apiKey: ctx.composioApiKey, userId: ctx.composioUserId,
       connectedAccountId: ctx.gmailAccountId,
-      toolSlug: "GMAIL_MODIFY_LABELS",
+      toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
       toolArguments: {
         message_id: messageId,
         add_label_ids: ["STARRED", APPLICANTS_GMAIL_LABEL_ID],
