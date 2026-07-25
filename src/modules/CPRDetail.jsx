@@ -3085,7 +3085,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     border: `1px solid ${T.slate700}`, background: T.slate700,
                     color: T.white, cursor: saving ? "default" : "pointer",
                   }}>
-                  {saving ? "Saving…" : "Save & recompute"}
+                  {saving ? "Saving…" : "Save"}
                 </button>
               </>
             ) : (
