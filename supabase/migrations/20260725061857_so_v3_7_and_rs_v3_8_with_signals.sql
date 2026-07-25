@@ -1,0 +1,7 @@
+-- SO v3.7 + RS v3.8 with signal integration - see function bodies in Supabase (long).
+-- Changes from prior:
+-- SO v3.6→v3.7: added signal_hwe 0.04, signal_drive_engine 0.06, signal_honesty 0.03, signal_overthinker_penalty -0.03;
+--   trimmed MHA 0.20→0.16, handles_rejection 0.14→0.12, analytical 0.08→0.06, ATD 0.02→0.01, QTD 0.03→0.02.
+-- RS v3.7→v3.8: added signal_concern 0.06, signal_hwe 0.03, signal_drive_engine 0.03, signal_honesty 0.02, signal_overthinker_penalty -0.03;
+--   trimmed ATD 0.20→0.16, MTE 0.18→0.16, WWCS 0.11→0.09, listens 0.11→0.10, coach 0.11→0.10.
+-- See functions in db for authoritative source.
