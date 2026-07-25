@@ -4676,7 +4676,10 @@ export async function processSFForwardedApplicantMode(
 //        - cpr_reply → look up parent CPR via In-Reply-To → RFC id in
 //          weekly_cpr_reports.cpr_recap_message_id_rfc, fall back to the
 //          legacy gmail_message_id column, skip if not found.
-//        - wrapup   → nearest past Saturday from received timestamp CT.
+//        - wrapup   → nearest past Saturday from received timestamp CT,
+//          BUT if that Saturday's CPR has already been sent to the team,
+//          shift forward one week (email is for the current in-progress
+//          week, not the just-closed one).
 //   5. Pull existing wrapup_text + the six-item rubric from
 //      get_wrapup_checklist_text().
 //   6. LLM merges new email into current text, organized under the six
@@ -5263,8 +5266,29 @@ async function resolveWeekEnding(
     return gidRow?.week_ending_date ?? null;
   }
 
-  // Fresh wrap-up email: timestamp-based Saturday derivation is correct.
-  return wrapupTargetSaturdayCT(receivedAtISO);
+  // Fresh wrap-up email: timestamp-based Saturday derivation is the default.
+  // BUT — if the CPR RECAP for that Saturday has already been sent to the
+  // team, the just-closed week is published; a wrap-up landing after that
+  // is FOR THE CURRENT IN-PROGRESS WEEK, not a late submission for the
+  // closed one. Shift forward one Saturday in that case.
+  //
+  // Why: teammates who send wrap-ups Mon-Thu (default rule routes back to
+  // last Sat) can't be writing for a week whose CPR already went out — the
+  // "late wrap-up" interpretation only makes sense while the prior CPR is
+  // still in-draft. Once it's sent, the same email must be for this week.
+  const baseSat = wrapupTargetSaturdayCT(receivedAtISO);
+  const { data: baseCpr } = await sb
+    .from("weekly_cpr_reports")
+    .select("sent_to_team_at")
+    .eq("agency_id", agencyId)
+    .eq("week_ending_date", baseSat)
+    .maybeSingle();
+  if (baseCpr?.sent_to_team_at) {
+    const nextSat = new Date(`${baseSat}T12:00:00Z`);
+    nextSat.setUTCDate(nextSat.getUTCDate() + 7);
+    return nextSat.toISOString().slice(0, 10);
+  }
+  return baseSat;
 }
 
 interface DetailRowLite {
