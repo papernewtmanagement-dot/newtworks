@@ -809,7 +809,9 @@ Rubric refresher (Weekly wrap-up email section of the Daily Wrap-up manual):
 // Apply the Wrapups label + remove INBOX at the MESSAGE level (not thread
 // level). CPR reply threads contain multiple replies from different
 // teammates; thread-level labeling would archive/hide siblings that still
-// need to be processed. This uses GMAIL_MODIFY_MESSAGE_LABELS which only
+// Label the incoming Gmail message with our "Wrapups" label + remove from
+// INBOX. Both signals so future wrapup ingest runs know these messages don't
+// need to be processed. This uses GMAIL_ADD_LABEL_TO_EMAIL which only
 // touches the one message.
 async function labelAndArchive(
   ctx: WrapupCtx,
@@ -821,7 +823,7 @@ async function labelAndArchive(
       apiKey: ctx.composioApiKey,
       userId: ctx.composioUserId,
       connectedAccountId: ctx.gmailAccountId,
-      toolSlug: "GMAIL_MODIFY_MESSAGE_LABELS",
+      toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
       toolArguments: {
         message_id: messageId,
         remove_label_ids: ["INBOX"],
