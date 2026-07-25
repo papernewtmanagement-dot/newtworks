@@ -117,12 +117,22 @@ RULES for organized_text:
 8. Preserve customer first names + last initials as written (e.g. "Delia C.") — cancellation stories often reference customers by name.
 
 RULES for coverage:
-- item_1 covered ONLY if content mentions personal book status, pending applications, upcoming reviews, or similar concrete book-status detail. "(none reported)" does NOT count.
-- item_2 covered ONLY if content names specific cancellations, lapses, trends, OR individual wins (with names/context).
-- item_3 covered ONLY if the sender describes an obstacle AND proposes a solution. Naming an obstacle alone is insufficient.
-- item_4 covered ONLY if the sender describes a concrete plan for next week (activities, focus areas, changes to approach). Vague intent alone is insufficient.
-- item_5 covered ONLY if the sender proposes an efficiency or pain-point recommendation for the whole team.
-- item_6 covered ONLY if the sender brags on ONE OR MORE teammates by name with a specific action or attribute (not generic "great team!").
+GENERAL: coverage is a strict quality gate, not a "did they type anything under this header" check. Content that merely acknowledges the header without substantively answering it — e.g. "None to report", "Nothing this week", "N/A", "TBD", or a single word — does NOT count. Compound items (1, 2, 3) require BOTH halves; naming one half only → coverage false.
+
+- item_1 (Personal life & annuity status updates): covered ONLY if content addresses BOTH (a) personal life updates on prospects, insureds, or the sender's book (specific names, life events, situations affecting business) AND (b) annuity-side status (pending applications, upcoming policy reviews, book progress, or similar concrete detail). One half alone is INSUFFICIENT. Mentioning ONE prospect with no annuity detail → item_1 false.
+- item_2 (Lapse/cancel trends + individual highlights): covered ONLY if content includes BOTH (a) a specific cancellation, lapse, or trend named with detail AND (b) at least one individual highlight or win with context. "Did not take any cancellation calls" alone → item_2 false. Zero-cancellations is fine content but must be paired with a win or highlight.
+- item_3 (Personal obstacles + solutions): covered ONLY if the sender describes an obstacle AND proposes a concrete solution. Naming an obstacle alone is insufficient. "Need to figure out a next step" / "Need to plan better" / "I'll work on it" are RESTATEMENTS of the obstacle, not solutions — item_3 false. A real solution names a specific action, tactic, or change.
+- item_4 (1% sales points plan): covered ONLY if the sender describes a concrete plan for next week with a specific tactic, activity, focus area, or change to approach. Vague intent ("try harder", "make more calls") is INSUFFICIENT.
+- item_5 (Efficiency / pain-point recommendation): covered ONLY if the sender proposes a specific, actionable efficiency or pain-point fix aimed at the whole team. Two-word slogans ("work campaigns", "call more"), or unexplained buzzwords are INSUFFICIENT. A real recommendation names WHAT to change and WHY / HOW.
+- item_6 (Brags on teammates): covered ONLY if the sender brags on at least one teammate by name with a specific action or attribute (not generic "great team!" or single-word compliments).
+
+WORKED EXAMPLE of a wrap-up that should score item_1=false, item_2=false, item_3=false, item_4=true, item_5=false, item_6=true:
+  1. "Life - John Smith - won't return my calls."          ← personal life half only, no annuity → false
+  2. "Did not take any cancellation calls."                 ← zero cancels but no win either → false
+  3. "Obstacle - list productivity slow. Need better plan." ← no concrete solution → false
+  4. "Plan next week: call aged list first thing AM."       ← concrete plan → true
+  5. "Work campaigns!"                                      ← too vague → false
+  6. "Alice - handled 3 escalations with grace."            ← specific brag by name → true
 
 missing_item_labels: for each item where coverage is false, include a short label from this set:
   ["Personal life & annuity updates", "Lapse/cancel trends", "Obstacles + solutions", "1% sales points plan", "Efficiency recommendation", "Brags on teammates"]
