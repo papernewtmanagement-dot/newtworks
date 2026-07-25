@@ -531,15 +531,13 @@ function useCPRData(weekDate) {
           .eq("week_ending_date", weekDate)
           .maybeSingle();
 
-        // 2b. Auto-recompute payroll pool on page load for unfrozen weeks so the
-        // Payroll section reflects the latest sales_points / hours / pay-type
-        // changes without needing a manual "Recalculate Payroll" click. Frozen
-        // weeks (sent_to_team_at IS NOT NULL) are refused by write_weekly_comp_v2's
-        // freeze guard, and historical weeks are skipped up-front. Errors are
-        // swallowed so a transient failure doesn't block the rest of the page load.
-        if (reportRow?.id && !reportRow.sent_to_team_at && !isHistoricalWeek(weekDate)) {
+        // 2b. Auto-recompute the full CPR outcome (won_the_week + MVP + payroll)
+        // on page load so the banner and Payroll section always reflect current
+        // truth. Skipped only for historical weeks (before current calendar
+        // quarter), which stay read-only. Errors swallowed — non-fatal.
+        if (reportRow?.id && !isHistoricalWeek(weekDate)) {
           try {
-            await supabase.rpc("write_weekly_comp_v2", {
+            await supabase.rpc("recompute_cpr_outcome", {
               p_agency_id: AGENCY_ID,
               p_week_end_date: weekDate,
             });
@@ -2877,9 +2875,10 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 // 19 — Payroll v2 (per-person columns, residual-pool components as rows)
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
 // paid year-to-date through SurePayroll, through end of last pay period).
-// Recompute on save calls write_weekly_comp_v2 which populates base_salary,
-// commission, bonus, marketing_pool_earned_weekly, and manager_bonus from
-// the residual pool + carveouts wire.
+// Recompute on save calls recompute_cpr_outcome, which stamps won_the_week
+// + MVP on weekly_cpr_reports then invokes write_weekly_comp_v2 to populate
+// base_salary, commission, bonus, marketing_pool_earned_weekly, and
+// manager_bonus from the residual pool + carveouts wire.
 function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false }) {
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
@@ -3033,8 +3032,9 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
         if (mpErr) throw mpErr;
       }
 
-      // Recompute the residual pool + carveouts + marketing pool for the week
-      const { error: rpcErr } = await supabase.rpc("write_weekly_comp_v2", {
+      // Recompute the full CPR outcome (won_the_week + MVP + payroll) so the
+      // banner and payroll reflect the just-saved edits.
+      const { error: rpcErr } = await supabase.rpc("recompute_cpr_outcome", {
         p_agency_id: AGENCY_ID,
         p_week_end_date: weekDate,
       });
