@@ -109,12 +109,13 @@ RULES for organized_text:
      5. Efficiency / pain-point recommendation
      6. Brags on teammates
 2. Preserve wording from the source emails when possible. Do NOT paraphrase or embellish.
-3. If a category has NO content across current text + new email, keep the header and write "(none reported)" underneath.
+3. If a category has NO content across <CURRENT_WRAPUP_TEXT> + <NEW_EMAIL_BODY>, write EXACTLY the string "(none reported)" under the header. NEVER invent placeholder content. Plausible-sounding phrasings like "No X this week", "Nothing to report", "Did not take any cancellation calls", "No significant updates", "N/A" — if those exact words do not appear in the source, they are FABRICATION and must NOT be written. When in doubt, write "(none reported)".
 4. If the new email adds material to a category that already had content, integrate (append if new, do not duplicate if a paraphrase of what's already there). Do NOT lose prior content.
 5. Do NOT add signatures, disclaimers, closing lines, or content outside the six categories.
 6. Do NOT include email metadata (dates, subjects, greetings) unless the content is materially useful.
 7. Strip email signatures ("Thanks for trusting Peter Story State Farm…", block contact info, forwarded header stubs, etc.) from the source before folding in.
 8. Preserve customer first names + last initials as written (e.g. "Delia C.") — cancellation stories often reference customers by name.
+9. Zero-fabrication test: before writing ANY sentence under a section header, verify that the words either appear in the source OR are the exact literal string "(none reported)". Nothing else. Inventing content that sounds plausible is the most damaging failure mode of this parser — it makes teammates appear to have covered sections they never addressed. Prior real failure: a teammate's email had no section-2 content; the LLM wrote "Did not take any cancellation calls." under section 2. That line was fabricated — the words never appeared in the source. Correct output would have been "(none reported)".
 
 RULES for coverage:
 A section is covered if the teammate addressed it in their email in ANY way — including "N/A", "nothing to report", "no cancels this week", "no obstacles", or any deliberate acknowledgment that they read the section and answered it. Content quality is NOT the bar; presence of a genuine answer is. Do not penalize brief, sparse, or "nothing to report" answers — they count.
