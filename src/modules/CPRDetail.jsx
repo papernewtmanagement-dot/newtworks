@@ -531,6 +531,23 @@ function useCPRData(weekDate) {
           .eq("week_ending_date", weekDate)
           .maybeSingle();
 
+        // 2b. Auto-recompute payroll pool on page load for unfrozen weeks so the
+        // Payroll section reflects the latest sales_points / hours / pay-type
+        // changes without needing a manual "Recalculate Payroll" click. Frozen
+        // weeks (sent_to_team_at IS NOT NULL) are refused by write_weekly_comp_v2's
+        // freeze guard, and historical weeks are skipped up-front. Errors are
+        // swallowed so a transient failure doesn't block the rest of the page load.
+        if (reportRow?.id && !reportRow.sent_to_team_at && !isHistoricalWeek(weekDate)) {
+          try {
+            await supabase.rpc("write_weekly_comp_v2", {
+              p_agency_id: AGENCY_ID,
+              p_week_end_date: weekDate,
+            });
+          } catch (_recomputeErr) {
+            // Non-fatal: fall through with whatever stored values exist.
+          }
+        }
+
         // 3. Detail rows for this week
         let detailRows = [];
         if (reportRow?.id) {
