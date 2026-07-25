@@ -145,6 +145,46 @@ export async function processWrapupNoSendMode(
       continue;
     }
 
+    // Belt-and-suspenders: even if wrapup_text is empty on the current-week
+    // detail row, scan Gmail directly for any wrap-up-shaped email from this
+    // teammate in the last 4 days. If found, the parser may have silently
+    // failed to process/route/label it — nagging would be a false positive.
+    // Skip and log an alert so Peter knows the parser needs attention.
+    const gmailScan = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.gmailAccountId,
+      toolSlug: "GMAIL_FETCH_EMAILS",
+      toolArguments: {
+        query: `from:${tm.email_sf} (subject:wrap-up OR subject:wrapup OR subject:"wrap up" OR subject:"CPR RECAP") -in:sent newer_than:4d`,
+        max_results: 3,
+        user_id: "me",
+        include_payload: false,
+        verbose: false,
+      },
+    });
+    if (gmailScan.ok) {
+      const scanMsgs: any[] = (gmailScan.data as any)?.messages ?? (gmailScan.data as any)?.response_data?.messages ?? [];
+      if (scanMsgs.length > 0) {
+        console.warn(`[no_send_check] ${tm.first_name}: wrapup_text empty on ${targetWeek} row BUT ${scanMsgs.length} wrap-up-shaped email(s) found in Gmail — parser may have silently failed. Skipping nag.`);
+        // Fire an alert so Peter knows to investigate
+        try {
+          await sb.from("alerts").insert({
+            agency_id: ctx.agencyId,
+            module_reference: "wrapup_ingest",
+            severity: "warning",
+            title: `Wrap-up parser possibly stuck — ${tm.first_name}`,
+            body: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
+            is_resolved: false,
+          });
+        } catch (e) {
+          console.warn(`[no_send_check] alert insert failed for ${tm.first_name}:`, e);
+        }
+        emailResults.push({ team_member_id: tm.id, first_name: tm.first_name, skipped: "gmail_shows_wrapup_present", gmail_count: scanMsgs.length });
+        continue;
+      }
+    }
+
     const subject = `Wrap-up — haven't seen yours yet this week`;
     const body =
 `Hey ${tm.first_name},
