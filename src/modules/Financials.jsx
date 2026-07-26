@@ -1725,12 +1725,33 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
       "Alliances - SF Comp": 2,
       "IPS - SF Comp":       3,
       "External":            9,
+      // Orphan leaves — accounts whose parent chain resolves to the
+      // account_type itself (INITCAP fallback in get_pnl_history_*).
+      // Rendered without a section header (see REDUNDANT_SECTIONS below),
+      // sorted to the bottom of the type block.
+      "Income":              10,
     };
+    const EXPENSE_SECTION_RANK = {
+      // Orphan leaves — post-cutover INITCAP fallback ("Expense"),
+      // pre-cutover historical import default ("root"), or NULL section
+      // caught by the "Uncategorized" fallback above. Same treatment as
+      // income orphans: no bold section header, sort to bottom.
+      "Expense":       10,
+      "root":          10,
+      "Uncategorized": 10,
+    };
+    // Section labels that are pure repetition of the outer INCOME /
+    // EXPENSES header — suppress the bold section-header DataRow and
+    // render their leaf accounts flat (no indent) so the P&L doesn't
+    // show a redundant parent-category row that just echoes the header.
+    const REDUNDANT_SECTIONS = new Set([
+      "Income", "Expense", "root", "Uncategorized",
+    ]);
     const rankOf = (sec) => {
       if (opts && opts.isIncomeLine) {
         return INCOME_SECTION_RANK[sec] ?? 5;
       }
-      return 0;
+      return EXPENSE_SECTION_RANK[sec] ?? 5;
     };
     const sectionKeys = Object.keys(groups).sort((a, b) => {
       const ra = rankOf(a), rb = rankOf(b);
@@ -1741,34 +1762,39 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
     const nodes = [];
     sectionKeys.forEach((sec) => {
       const grpLines = groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name));
-      const sectionValues = columns.map(c => grpLines.reduce((s, l) => s + c.getValue(l), 0));
-      const sectionPriors = columns.map(c => {
-        if (!c.getPriorValue) return null;
-        let any = false, sum = 0;
-        for (const l of grpLines) {
-          const v = c.getPriorValue(l);
-          if (v !== null && v !== undefined) { any = true; sum += v; }
-        }
-        return any ? sum : null;
-      });
-      // Section header — NOT clickable (individual-account grain only)
-      nodes.push(
-        <DataRow
-          key={`sec-${sec}`}
-          label={sec}
-          bold
-          values={sectionValues}
-          priors={sectionPriors}
-          opts={opts}
-        />
-      );
-      // Leaf accounts — CLICKABLE for drill
+      const isRedundant = REDUNDANT_SECTIONS.has(sec);
+      if (!isRedundant) {
+        const sectionValues = columns.map(c => grpLines.reduce((s, l) => s + c.getValue(l), 0));
+        const sectionPriors = columns.map(c => {
+          if (!c.getPriorValue) return null;
+          let any = false, sum = 0;
+          for (const l of grpLines) {
+            const v = c.getPriorValue(l);
+            if (v !== null && v !== undefined) { any = true; sum += v; }
+          }
+          return any ? sum : null;
+        });
+        // Section header — NOT clickable (individual-account grain only)
+        nodes.push(
+          <DataRow
+            key={`sec-${sec}`}
+            label={sec}
+            bold
+            values={sectionValues}
+            priors={sectionPriors}
+            opts={opts}
+          />
+        );
+      }
+      // Leaf accounts — CLICKABLE for drill. Indent only when a real
+      // parent section header sits above; orphan leaves (redundant
+      // sections) render flat directly under INCOME / EXPENSES.
       grpLines.forEach((line, i) => {
         nodes.push(
           <DataRow
             key={`${sec}-${i}`}
             label={line.name}
-            indent
+            indent={!isRedundant}
             values={lineValues(line)}
             priors={linePriors(line)}
             opts={opts}
