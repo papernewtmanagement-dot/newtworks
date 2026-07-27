@@ -491,6 +491,7 @@ function useCPRData(weekDate) {
     priorQuartersAvgSP: {},   // {team_member_id: [{quarter_label, avg_weekly_sp}]} - reference lines
     marketingByTeammate: {}, // {team_member_id: {qtd_prior_sum, this_week_points, this_week_notes}}
     prizeCart: [],
+    cycleWeeklyDetails: [],  // [{team_member_id, week_ending_date, commission, sales_points, prod_*}] — drives cycle-view charts in Payroll Commission expander + Team Activity per-person expansion + sparkline
   });
 
   useEffect(() => {
@@ -641,6 +642,38 @@ function useCPRData(weekDate) {
           cycleStartISO = new Date(cycleStartMs).toISOString().slice(0,10);
         } catch (e) {
           console.warn("cycleStart derivation failed:", e);
+        }
+
+        // 8c. Cycle weekly team detail — every team_detail row from cycle start through this week.
+        // Drives Payroll Commission expandable chart, Team Activity per-person weekly production
+        // expansion, and inline sparkline next to each teammate's name.
+        let cycleWeeklyDetails = [];
+        if (cycleStartISO && weekDate) {
+          try {
+            const { data: cdRows } = await supabase
+              .from("weekly_cpr_team_detail")
+              .select("team_member_id, commission, sales_points, prod_total_count, prod_total_premium, prod_auto, prod_fire, prod_life, prod_health, prod_bank, weekly_cpr_reports!inner(week_ending_date)")
+              .eq("agency_id", AGENCY_ID)
+              .gte("weekly_cpr_reports.week_ending_date", cycleStartISO)
+              .lte("weekly_cpr_reports.week_ending_date", weekDate);
+            (cdRows || []).forEach(r => {
+              cycleWeeklyDetails.push({
+                team_member_id: r.team_member_id,
+                week_ending_date: r.weekly_cpr_reports?.week_ending_date,
+                commission: Number(r.commission) || 0,
+                sales_points: Number(r.sales_points) || 0,
+                prod_total_count: Number(r.prod_total_count) || 0,
+                prod_total_premium: Number(r.prod_total_premium) || 0,
+                prod_auto: Number(r.prod_auto) || 0,
+                prod_fire: Number(r.prod_fire) || 0,
+                prod_life: Number(r.prod_life) || 0,
+                prod_health: Number(r.prod_health) || 0,
+                prod_bank: Number(r.prod_bank) || 0,
+              });
+            });
+          } catch (e) {
+            console.warn("cycleWeeklyDetails fetch failed:", e);
+          }
         }
 
         // 8b. Prior-week Sales Points per member — drives WoW delta indicator in Team Activity.
@@ -943,6 +976,7 @@ function useCPRData(weekDate) {
           quarterPrizeBudget,
           priorQuartersAvgSP,
           marketingByTeammate,
+          cycleWeeklyDetails,
         });
       } catch (err) {
         if (!cancelled) {
@@ -963,6 +997,201 @@ function goalFor(goals, lob, metric) {
   if (!goals) return null;
   const row = goals.find(g => g.lob === lob && g.metric === metric);
   return row ? Number(row.target_value) : null;
+}
+
+// ── Cycle-view helpers (charts + weekly-detail grouping) ─────
+// Given cycleStartISO (Sunday-anchored) and thisWeekISO (Saturday), returns
+// the ordered list of Saturday week-ending dates from the first Saturday
+// on/after cycleStart through thisWeek inclusive.
+function computeCycleWeekList(cycleStartISO, thisWeekISO) {
+  if (!cycleStartISO || !thisWeekISO) return [];
+  try {
+    const cycleStart = new Date(cycleStartISO + "T00:00:00Z");
+    const dow = cycleStart.getUTCDay(); // 0=Sun ... 6=Sat
+    const offsetToSat = (6 - dow + 7) % 7; // 0 if start is already a Saturday
+    const firstSat = new Date(cycleStart);
+    firstSat.setUTCDate(firstSat.getUTCDate() + offsetToSat);
+    const thisWeek = new Date(thisWeekISO + "T00:00:00Z");
+    const weeks = [];
+    const cur = new Date(firstSat);
+    while (cur <= thisWeek) {
+      weeks.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 7);
+    }
+    return weeks;
+  } catch { return []; }
+}
+
+// Given cycleWeeklyDetails (flat array) and a team_member_id + field,
+// returns a { [week_ending_date]: value } map for O(1) lookup.
+function pivotCycleField(rows, tmId, field) {
+  const out = {};
+  (rows || []).forEach(r => {
+    if (r.team_member_id === tmId && r.week_ending_date) {
+      out[r.week_ending_date] = Number(r[field]) || 0;
+    }
+  });
+  return out;
+}
+
+// SparkLine — inline SVG next to each teammate's name in Team Activity.
+// values: array of numbers or nulls (null = missing week; line breaks there).
+function SparkLine({ values, width = 64, height = 16, color }) {
+  const pts = Array.isArray(values) ? values : [];
+  if (pts.length < 2) return null;
+  const finite = pts.filter(v => Number.isFinite(v));
+  if (finite.length < 2) return null;
+  const max = Math.max(...finite);
+  const min = Math.min(...finite);
+  const range = max - min || 1;
+  const stepX = pts.length > 1 ? (width - 2) / (pts.length - 1) : (width - 2);
+  const coords = pts.map((v, i) => {
+    if (!Number.isFinite(v)) return null;
+    const x = 1 + i * stepX;
+    const y = (height - 2) - ((v - min) / range) * (height - 4) + 1;
+    return { x, y };
+  });
+  const segments = [];
+  let cur = [];
+  coords.forEach(p => {
+    if (p == null) { if (cur.length > 0) segments.push(cur); cur = []; }
+    else cur.push(p);
+  });
+  if (cur.length > 0) segments.push(cur);
+  const stroke = color || T.blue;
+  const lastPt = coords.filter(Boolean).slice(-1)[0];
+  return (
+    <svg width={width} height={height} style={{ verticalAlign: "middle", display: "inline-block", marginLeft: 6 }}>
+      {segments.map((seg, i) => (
+        <polyline
+          key={i}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={1.4}
+          points={seg.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}
+        />
+      ))}
+      {lastPt ? <circle cx={lastPt.x} cy={lastPt.y} r={1.8} fill={stroke} /> : null}
+    </svg>
+  );
+}
+
+// MiniLineChart — small line chart used inside the Payroll Commission expander
+// (one per teammate; small-multiples layout).
+function MiniLineChart({ weeks, valueByWeek, label, totalLabel, color }) {
+  const W = 240, H = 78;
+  const padL = 22, padR = 6, padT = 8, padB = 14;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const stroke = color || T.blue;
+  const vals = (weeks || []).map(w => Number(valueByWeek?.[w]) || 0);
+  const max = Math.max(1, ...vals);
+  const stepX = weeks.length > 1 ? chartW / (weeks.length - 1) : chartW;
+  const coords = vals.map((v, i) => ({
+    x: padL + i * stepX,
+    y: padT + chartH - (v / max) * chartH,
+    v,
+  }));
+  const dLine = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const dArea = coords.length > 0
+    ? `${dLine} L${coords[coords.length - 1].x.toFixed(1)},${padT + chartH} L${coords[0].x.toFixed(1)},${padT + chartH} Z`
+    : "";
+  const fmtAxis = (n) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`;
+  return (
+    <div style={{ padding: "8px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, boxSizing: "border-box" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: T.slate800 }}>{label}</span>
+        <span style={{ fontSize: 11, color: T.slate600 }}>{totalLabel}</span>
+      </div>
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
+        <line x1={padL} y1={padT + chartH} x2={W - padR} y2={padT + chartH} stroke={T.slate200} strokeWidth={1} />
+        <line x1={padL} y1={padT} x2={W - padR} y2={padT} stroke={T.slate100} strokeWidth={1} strokeDasharray="2 2" />
+        {dArea ? <path d={dArea} fill={stroke} opacity={0.09} /> : null}
+        {dLine ? <path d={dLine} fill="none" stroke={stroke} strokeWidth={1.6} /> : null}
+        {coords.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={1.8} fill={stroke} />)}
+        <text x={2} y={padT + 6} fontSize={9} fill={T.slate500}>{fmtAxis(max)}</text>
+        <text x={2} y={padT + chartH - 1} fontSize={9} fill={T.slate500}>$0</text>
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.slate500, marginTop: 2 }}>
+        <span>{weeks[0] ? fmtMMDD(weeks[0]) : ""}</span>
+        <span>{weeks.length > 1 ? fmtMMDD(weeks[weeks.length - 1]) : ""}</span>
+      </div>
+    </div>
+  );
+}
+
+// TeammateWeeklyProduction — per-week production table shown inside the
+// Team Activity per-person expansion. Rows = weeks in cycle, columns = the
+// count metrics stored in weekly_cpr_team_detail (Total / Auto / Fire / Life /
+// Health / Bank + Premium). Cycle-to-date total row at bottom.
+function TeammateWeeklyProduction({ teammateName, cycleWeeks, cycleWeeklyDetails, teammateId }) {
+  const rows = cycleWeeks.map(w => {
+    const r = (cycleWeeklyDetails || []).find(x => x.team_member_id === teammateId && x.week_ending_date === w);
+    return {
+      week: w,
+      total: r ? Number(r.prod_total_count) || 0 : null,
+      auto: r ? Number(r.prod_auto) || 0 : null,
+      fire: r ? Number(r.prod_fire) || 0 : null,
+      life: r ? Number(r.prod_life) || 0 : null,
+      health: r ? Number(r.prod_health) || 0 : null,
+      bank: r ? Number(r.prod_bank) || 0 : null,
+      premium: r ? Number(r.prod_total_premium) || 0 : null,
+      hasData: !!r,
+    };
+  });
+  const sum = (key) => rows.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+  const anyData = rows.some(r => r.hasData);
+  return (
+    <div style={{ padding: "10px 14px 14px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+        {teammateName} — production this cycle
+      </div>
+      {!anyData ? (
+        <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>No production rows for this cycle yet.</div>
+      ) : (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480, fontSize: 12 }}>
+            <thead>
+              <tr>
+                <Th align="left">Week</Th>
+                <Th align="right">Total</Th>
+                <Th align="right">Auto</Th>
+                <Th align="right">Fire</Th>
+                <Th align="right">Life</Th>
+                <Th align="right">Health</Th>
+                <Th align="right">Bank</Th>
+                <Th align="right">Premium</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.week}>
+                  <Td style={{ paddingLeft: 14, color: T.slate700 }}>{fmtMMDD(r.week)}</Td>
+                  <Td align="right" style={{ fontWeight: 600, color: T.slate800 }}>{r.hasData ? fmtInt(r.total) : "—"}</Td>
+                  <Td align="right" style={{ color: T.slate600 }}>{r.hasData ? fmtInt(r.auto) : "—"}</Td>
+                  <Td align="right" style={{ color: T.slate600 }}>{r.hasData ? fmtInt(r.fire) : "—"}</Td>
+                  <Td align="right" style={{ color: T.slate600 }}>{r.hasData ? fmtInt(r.life) : "—"}</Td>
+                  <Td align="right" style={{ color: T.slate600 }}>{r.hasData ? fmtInt(r.health) : "—"}</Td>
+                  <Td align="right" style={{ color: T.slate600 }}>{r.hasData ? fmtInt(r.bank) : "—"}</Td>
+                  <Td align="right" style={{ color: T.slate600 }}>{r.hasData ? fmtMoney(r.premium) : "—"}</Td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
+                <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Cycle total</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("total"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("auto"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("fire"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("life"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("health"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("bank"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtMoney(sum("premium"))}</Td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2644,7 +2873,11 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
 const _TINT_1PCT = "#eef2ff";  // indigo-50
 const _TINT_HIST = "#f0fdfa";  // teal-50
 
-function TeamActivitySection({ details, team, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP }) {
+function TeamActivitySection({ details, team, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP, cycleWeeklyDetails = [] }) {
+  // Per-person expansion — accordion (one open at a time). Sparkline is inline
+  // in the collapsed row and computed from cycleWeeklyDetails (sales_points trend).
+  const [expandedPersonId, setExpandedPersonId] = useState(null);
+  const cycleWeeks = computeCycleWeekList(cycleStartISO, weekDate);
   if (!details || details.length === 0) {
     return (
       <div>
@@ -2729,9 +2962,27 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 const quotesNow = Number(editMode ? (row.quotes_discussed ?? d.quotes_discussed ?? 0) : (d.quotes_discussed ?? 0));
                 const paidNow = Number(r.paid) || 0;
                 const netPreview = quotesNow - paidNow;
+                // Per-person expansion + sparkline (cycle-view).
+                const totalCols = 5 + quarterList.length;
+                const isExpanded = expandedPersonId === d.team_member_id;
+                const spByWeek = pivotCycleField(cycleWeeklyDetails, d.team_member_id, "sales_points");
+                const spSeries = cycleWeeks.map(w => (spByWeek[w] != null ? Number(spByWeek[w]) : null));
+                const canExpand = !editMode && cycleWeeks.length > 0 && Object.keys(spByWeek).length > 0;
                 return (
-                  <tr key={d.team_member_id}>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
+                  <Fragment key={d.team_member_id}>
+                  <tr
+                    onClick={canExpand ? () => setExpandedPersonId(prev => prev === d.team_member_id ? null : d.team_member_id) : undefined}
+                    style={{ cursor: canExpand ? "pointer" : "default" }}
+                  >
+                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>
+                      {canExpand ? (
+                        <span style={{ color: T.slate400, marginRight: 4, userSelect: "none", fontSize: 10 }}>{isExpanded ? "▾" : "▸"}</span>
+                      ) : null}
+                      {firstName(d.__name)}
+                      {!editMode && spSeries.filter(Number.isFinite).length >= 2 ? (
+                        <SparkLine values={spSeries} color={T.blue} />
+                      ) : null}
+                    </Td>
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
                         <NumberInput
@@ -2812,6 +3063,19 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                       );
                     })}
                   </tr>
+                  {isExpanded ? (
+                    <tr>
+                      <Td colSpan={totalCols} style={{ padding: 0, background: T.slate50 }}>
+                        <TeammateWeeklyProduction
+                          teammateId={d.team_member_id}
+                          teammateName={firstName(d.__name)}
+                          cycleWeeks={cycleWeeks}
+                          cycleWeeklyDetails={cycleWeeklyDetails}
+                        />
+                      </Td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 );
               })}
 
@@ -2879,7 +3143,10 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 // + MVP on weekly_cpr_reports then invokes write_weekly_comp_v2 to populate
 // base_salary, commission, bonus, marketing_pool_earned_weekly, and
 // manager_bonus from the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false }) {
+function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
+  // Commission row expander — shows per-teammate cycle-view commission chart (small multiples).
+  const [commissionExpanded, setCommissionExpanded] = useState(false);
+  const cycleWeeks = computeCycleWeekList(cycleStartISO, weekDate);
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
   // Commission is now SP delta this week, columns spelled out, Health Goal label,
@@ -3146,6 +3413,58 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  perThirdPool),
                     subRow("ret",  "Retention split",   "ret_share_ratio_pct",  perThirdPool),
                   ];
+                }
+                // Commission: expandable row → per-teammate cycle-view chart (small multiples).
+                // Reads cycleWeeklyDetails (weekly commission per person across the cycle so far).
+                if (key === "commission") {
+                  const hasCycleData = cycleWeeks.length > 0 && (cycleWeeklyDetails || []).length > 0;
+                  const commissionMain = (
+                    <tr
+                      key={key}
+                      onClick={hasCycleData ? () => setCommissionExpanded(v => !v) : undefined}
+                      style={{ cursor: hasCycleData ? "pointer" : "default" }}
+                    >
+                      <Td style={{ paddingLeft: 14, color: T.slate700, userSelect: "none" }}>
+                        {hasCycleData ? (commissionExpanded ? "▾ " : "▸ ") : ""}{label}
+                      </Td>
+                      {sorted.map(d => (
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
+                      ))}
+                    </tr>
+                  );
+                  if (!hasCycleData || !commissionExpanded) return [commissionMain];
+                  const chartsRow = (
+                    <tr key={`${key}-charts`}>
+                      <Td colSpan={sorted.length + 1} style={{ padding: 0, background: T.slate50 }}>
+                        <div style={{ padding: "10px 14px 14px" }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                            Commission — cycle to date, per teammate
+                          </div>
+                          <div style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                            gap: 10,
+                          }}>
+                            {sorted.map(d => {
+                              const commByWeek = pivotCycleField(cycleWeeklyDetails, d.team_member_id, "commission");
+                              const commTotal = Object.values(commByWeek).reduce((a, b) => a + (Number(b) || 0), 0);
+                              return (
+                                <MiniLineChart
+                                  key={d.team_member_id}
+                                  weeks={cycleWeeks}
+                                  valueByWeek={commByWeek}
+                                  label={firstName(d.__name)}
+                                  totalLabel={`Cycle: ${fmtMoneyCents(commTotal)}`}
+                                  color={T.blue}
+                                />
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </Td>
+                    </tr>
+                  );
+                  return [commissionMain, chartsRow];
                 }
                 // Health Goal is shown inside the Goals expander (see below).
                 // Skip rendering it as a standalone row. Kept in ROWS array so
@@ -5574,11 +5893,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           isDirty={edit.isDetailDirty}
           onChange={edit.setDetailField}
           weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO}
-          priorQuartersAvgSP={data.priorQuartersAvgSP} />
+          priorQuartersAvgSP={data.priorQuartersAvgSP} cycleWeeklyDetails={data.cycleWeeklyDetails} />
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
 
       {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
