@@ -1885,9 +1885,6 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
                   borderLeft: `1px solid ${T.slate100}`,
                 }}>
                   {c.label}
-                  {c.partial && (
-                    <div style={{ fontSize: 9, fontWeight: 500, color: T.slate400, marginTop: 2 }}>(partial)</div>
-                  )}
                 </th>
               ))}
             </tr>
