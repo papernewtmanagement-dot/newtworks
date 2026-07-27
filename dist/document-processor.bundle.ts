@@ -498,8 +498,21 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
     test: (i) => /usbank|us[\s_-]?bank|usbank\.com/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
   { docType: "bank_statement_secondary",
-    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark)/i.test(i.fromEmail + " " + i.subject) &&
+    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|rbfcu|randolph)/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
+
+  // ----- BANK / CC STATEMENTS — filename-only fallback (Alvi's zip-content
+  //       naming convention). Pattern: "{Institution} {Label} YY-MM.pdf" —
+  //       e.g. "US Bank KidsProfitDisc 26-01.pdf", "RBFCU Saving 26-03.pdf",
+  //       "Discover Tithe CC 26-02.pdf". No "statement" in the filename, no
+  //       usbank sender on the outer email (Alvi forwards from her Gmail).
+  //       Institution match distinguishes primary (US Bank) from secondary
+  //       (everything else). Added 2026-07-27 after the KidsProfitDisc.zip
+  //       intake left 7 inner files unclassified. -----
+  { docType: "bank_statement_primary",
+    test: (i) => /^us[\s_-]?bank\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
+  { docType: "bank_statement_secondary",
+    test: (i) => /^(rbfcu|randolph|chase|bankofamerica|bank[\s_-]?of[\s_-]?america|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover)\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
 
   // ----- STATE FARM COMP RECAP — sender path (live SF emails) -----
   { docType: "comp_recap_1h",
@@ -869,6 +882,8 @@ export interface ParsedBankStatement {
   ok: true;
   statementPeriod: { start: string; end: string };
   accountLast4: string | null;
+  openingBalance: number | null;
+  closingBalance: number | null;
   transactions: Array<{ date: string; txn: BankTxn }>;
 }
 
@@ -886,6 +901,8 @@ prose, no markdown fences, no explanation:
 {
   "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "account_last4": "<4 digits or null>",
+  "opening_balance": <number; the beginning balance for the period, null if not stated>,
+  "closing_balance": <number; the ending balance for the period, null if not stated>,
   "transactions": [
     {
       "date": "YYYY-MM-DD",
@@ -897,7 +914,14 @@ prose, no markdown fences, no explanation:
 }
 
 Rules:
-- Skip beginning balance, ending balance, and "Total" summary lines.
+- Extract the beginning/opening balance and ending/closing balance from the
+  account summary section. Credit card statements may call these "Previous
+  Balance" and "New Balance". Report both as positive numbers for asset
+  accounts; for credit-card statements, report the outstanding balance as
+  a positive number (the amount owed).
+- Skip beginning balance, ending balance, and "Total" summary lines in the
+  transactions array — they belong in opening_balance/closing_balance, not
+  as transactions.
 - Skip non-transactional informational lines.
 - Combine multi-line transaction descriptions into the single payee/memo pair.
 - Use ISO dates only.
@@ -952,10 +976,15 @@ export async function parseBankStatement(opts: {
     });
   }
 
+  const openingBalance = typeof json?.opening_balance === "number" ? json.opening_balance : null;
+  const closingBalance = typeof json?.closing_balance === "number" ? json.closing_balance : null;
+
   return {
     ok: true,
     statementPeriod: { start: period.start, end: period.end },
     accountLast4: json?.account_last4 ?? null,
+    openingBalance,
+    closingBalance,
     transactions,
   };
 }
@@ -6285,6 +6314,24 @@ async function handleBankStatement(
     return { jeCount: 0, suspenseCount: 0, error: parsed.error };
   }
 
+  // Write the statement header (opening/closing balance, period) to
+  // statement_balances first — independent of per-txn GL posting so the
+  // balance snapshot lands even if a downstream JE hiccups. Failures here
+  // are logged but non-fatal; the JE loop still runs.
+  const balWrite = await writeStatementBalance({
+    agencyId: ctx.agencyId,
+    documentId,
+    accountCode: sourceAccountCode,
+    accountLast4: parsed.accountLast4,
+    statementPeriodStart: parsed.statementPeriod.start,
+    statementPeriodEnd: parsed.statementPeriod.end,
+    openingBalance: parsed.openingBalance,
+    closingBalance: parsed.closingBalance,
+  });
+  if (!balWrite.ok) {
+    console.warn(`[document-processor] statement_balance_write_failed doc=${documentId} account=${sourceAccountCode}: ${balWrite.error}`);
+  }
+
   let jeCount = 0;
   let suspenseCount = 0;
   for (const row of parsed.transactions) {
@@ -6316,7 +6363,19 @@ async function handleBankStatement(
 function resolveSourceAccount(fromEmail: string, subject: string, fileName: string): string {
   const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
 
-  // ---- US Bank sub-account routing (order matters — most specific first).
+  // ---- US Bank PERSONAL sub-account routing (Alvi's zip labels, added
+  // 2026-07-27). Order matters — most specific first. These must be checked
+  // BEFORE the generic "us bank" fallback below, or personal statements
+  // silently route to the agency Income account (COA-007) and post to the
+  // wrong entity. Kids Profit Disc account was ingested manually 2026-07-27
+  // as one-off; going forward the labels below auto-route.
+  if (/kids[\s_-]?profit[\s_-]?disc|\b6730\b/.test(blob)) return "COA-PERSONAL-6730";
+  if (/us[\s_-]?bank[\s_-]?personal[\s_-]?checking|personal[\s_-]?checking|\b0353\b/.test(blob)) return "COA-PERSONAL-0353";
+  if (/tithe[\s_-]?tax|\b6755\b/.test(blob)) return "COA-PERSONAL-6755";
+  if (/us[\s_-]?bank[\s_-]?other[\s_-]?income|other[\s_-]?income|\b2545\b/.test(blob)) return "COA-PERSONAL-2545";
+  if (/sf[\s_-]?personal[\s_-]?cc|\b8847\b/.test(blob)) return "COA-PERSONAL-CC-8847";
+
+  // ---- US Bank AGENCY sub-account routing (order matters — most specific first).
   // File naming convention (Marie's spec): "US Bank {Label} {YY-MM}.pdf" where
   // Label is one of Income (3977, COA-007), Expenses (4335, COA-006), CC (3447,
   // COA-025 USBank GN Personal Card). Account numbers also match if statement
@@ -6326,6 +6385,15 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
   if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "COA-025";
   // Generic US Bank fallback — Income (conservative default, matches historic behavior)
   if (/usbank|us[\s_-]?bank/.test(blob)) return "COA-007";
+
+  // ---- Non-US-Bank personal accounts (Alvi's zip labels, added 2026-07-27).
+  // RBFCU savings and Discover Tithe CC both live on Peter's personal entity.
+  if (/rbfcu|randolph[\s_-]?brooks|\b6596\b/.test(blob)) return "COA-PERSONAL-6596";
+  if (/discover[\s_-]?tithe|discover[\s_-]?cc|\b3208\b/.test(blob)) return "COA-PERSONAL-CC-3208";
+
+  // ---- Personal CC catchalls (last-4 hits from statement text) ------------
+  if (/\b1006\b/.test(blob)) return "COA-PERSONAL-CC-1006"; // AMEX Personal
+  if (/\b7435\b/.test(blob)) return "COA-PERSONAL-CC-7435"; // Capital One Personal
 
   // ---- Chase — Mktg 2 (COA-012) holds all post-cutover activity.
   // Mktg 1 (COA-011) is inactive post-cutover; require explicit "mktg 1" match.
@@ -6339,6 +6407,87 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
   if (/citi/.test(blob)) return "COA-028";
   if (/spark/.test(blob)) return "COA-026";
   return "COA-007";
+}
+
+// ---- statement_balances writer --------------------------------------------
+// Called after a bank statement parses successfully. Upserts one row per
+// (agency_id, account_code, statement_period_end) so re-processing the same
+// statement PDF overwrites in place rather than duplicating. Business entity
+// comes from chart_of_accounts; account kind is inferred from the COA code
+// prefix (CC → credit, else bank). Added 2026-07-27 alongside the Alvi zip
+// classifier fallback — this is what makes statement_balances actually populate
+// from ingested statements rather than needing a manual backfill.
+async function writeStatementBalance(opts: {
+  agencyId: string;
+  documentId: string;
+  accountCode: string;
+  accountLast4: string | null;
+  statementPeriodStart: string;
+  statementPeriodEnd: string;
+  openingBalance: number | null;
+  closingBalance: number | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  // Look up the business entity from chart_of_accounts.
+  const { data: coa, error: coaErr } = await sb
+    .from("chart_of_accounts")
+    .select("business_entity_id, account_subtype")
+    .eq("agency_id", opts.agencyId)
+    .eq("account_code", opts.accountCode)
+    .maybeSingle();
+  if (coaErr) {
+    return { ok: false, error: `chart_of_accounts lookup failed: ${coaErr.message}` };
+  }
+  const businessEntityId = coa?.business_entity_id ?? null;
+  if (!businessEntityId) {
+    return { ok: false, error: `no chart_of_accounts row for ${opts.accountCode}` };
+  }
+  // Infer kind: any code with "-CC-" in it is a credit card; everything else
+  // is a bank account. Matches the existing statement_balances.account_kind
+  // convention (values already in the table: "bank", "credit").
+  const accountKind = /-CC-/i.test(opts.accountCode) ? "credit" : "bank";
+
+  // Upsert-by-natural-key: (agency_id, account_code, statement_period_end).
+  // No explicit unique constraint exists, so do it in two steps: try UPDATE
+  // by that key, INSERT if nothing was touched. Both branches use the same
+  // source label so we can tell downstream that this row came from the
+  // document-processor pipeline (vs. manual backfill or gl-cutover).
+  const upd = await sb
+    .from("statement_balances")
+    .update({
+      business_entity_id: businessEntityId,
+      account_last4: opts.accountLast4,
+      account_kind: accountKind,
+      statement_period_start: opts.statementPeriodStart,
+      opening_balance: opts.openingBalance,
+      closing_balance: opts.closingBalance,
+      source_document_id: opts.documentId,
+      source: "document_processor",
+      notes: `auto-ingested via document-processor from statement PDF`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("agency_id", opts.agencyId)
+    .eq("account_code", opts.accountCode)
+    .eq("statement_period_end", opts.statementPeriodEnd)
+    .select("id");
+  if (upd.error) return { ok: false, error: `statement_balances update failed: ${upd.error.message}` };
+  if (upd.data && upd.data.length > 0) return { ok: true };
+
+  const ins = await sb.from("statement_balances").insert({
+    agency_id: opts.agencyId,
+    business_entity_id: businessEntityId,
+    account_code: opts.accountCode,
+    account_last4: opts.accountLast4,
+    account_kind: accountKind,
+    statement_period_start: opts.statementPeriodStart,
+    statement_period_end: opts.statementPeriodEnd,
+    opening_balance: opts.openingBalance,
+    closing_balance: opts.closingBalance,
+    source_document_id: opts.documentId,
+    source: "document_processor",
+    notes: `auto-ingested via document-processor from statement PDF`,
+  });
+  if (ins.error) return { ok: false, error: `statement_balances insert failed: ${ins.error.message}` };
+  return { ok: true };
 }
 
 // ---- Gmail thread archive --------------------------------------------------
