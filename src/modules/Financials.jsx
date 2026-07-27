@@ -158,11 +158,11 @@ function useFinancialsData(entity) {
 
           // Bank — pull institution + last4 + needs_statement so BankSection can render "Institution · ••3977" and flag accounts awaiting statements.
           supabase.from("v_bank_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, needs_statement, last_entry_date"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, needs_statement, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes"),
 
           // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
           // filter; expose business_entity_id so GLSection can filter to the
@@ -464,6 +464,10 @@ function useFinancialsData(entity) {
           payment: parseFloat(c.minimum_payment || 0),
           dueDay:  c.payment_due_day,
           businessEntityId: c.business_entity_id,     // Phase 4: entity badge + subtree filter
+          lastStmtDate:    c.last_statement_close_date || null,
+          lastStmtBalance: c.last_statement_balance != null ? parseFloat(c.last_statement_balance) : null,
+          lastStmtSource:  c.last_statement_source || null,
+          lastStmtNotes:   c.last_statement_notes || null,
         }));
 
         // Goals feed pace computation
@@ -648,6 +652,10 @@ function useFinancialsData(entity) {
             last4: b.account_number_last4,
             institution: b.institution,
             businessEntityId: b.business_entity_id,   // Phase 4: entity badge + subtree filter
+            lastStmtDate:    b.last_statement_close_date || null,
+            lastStmtBalance: b.last_statement_balance != null ? parseFloat(b.last_statement_balance) : null,
+            lastStmtSource:  b.last_statement_source || null,
+            lastStmtNotes:   b.last_statement_notes || null,
           })),
           creditAccounts,
           glEntries: (glRows.data || []).map(g => ({
@@ -2584,12 +2592,40 @@ const BankSection = ({ data }) => {
             }}>{entName}</span>
           </div>
         )}
-        <div style={{ fontSize: 24, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-          {fmt(a.balance)}
-        </div>
-        <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>
-          {a.needsStatement ? "No balance yet — statement pending" : a.asOf ? `As of ${a.asOf}` : "Ledger-derived balance"}
-        </div>
+        {/* Last Statement (bank truth) */}
+        {(() => {
+          const hasStmt = a.lastStmtBalance != null && a.lastStmtDate != null;
+          const stmtIsSnapshot = a.lastStmtSource && a.lastStmtSource.startsWith("gl_cutover");
+          const stmtIsAwaiting = a.lastStmtSource === "awaiting_statement";
+          const stmtDateLabel = a.lastStmtDate
+            ? new Date(a.lastStmtDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+            : null;
+          const delta = hasStmt ? (a.balance - a.lastStmtBalance) : null;
+          const deltaSmall = delta == null ? false : Math.abs(delta) < 0.01;
+          const deltaColor = delta == null || deltaSmall ? T.slate400 : delta > 0 ? T.green : T.red;
+          return (
+            <>
+              <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>Last Statement</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>
+                {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
+              </div>
+              <div style={{ fontSize: 9, color: T.slate400, marginTop: 1 }}>
+                {stmtIsAwaiting ? "Statement not on hand" : hasStmt ? (stmtIsSnapshot ? `${stmtDateLabel} · snapshot` : stmtDateLabel) : "No statement yet"}
+              </div>
+              <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+              <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Register Now</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
+                {fmt(a.balance)}
+              </div>
+              <div style={{ fontSize: 9, color: deltaColor, marginTop: 2 }}>
+                {a.needsStatement ? "No balance yet" :
+                  delta == null ? (a.asOf ? `As of ${a.asOf}` : "Ledger-derived") :
+                  deltaSmall ? "Matches statement" :
+                  `${delta > 0 ? "+" : ""}${fmt(delta)} since statement`}
+              </div>
+            </>
+          );
+        })()}
       </Card>
     );
   };
@@ -2729,7 +2765,26 @@ const CreditSection = ({ data }) => {
             {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 6 }}><Pill type="warning">Review</Pill></span> : null}
           </div>
         </div>
-        <Field label="Balance"   value={fmt(a.balance)} color={T.red} />
+        {(() => {
+          const hasStmt = a.lastStmtBalance != null && a.lastStmtDate != null;
+          const stmtIsSnapshot = a.lastStmtSource && a.lastStmtSource.startsWith("gl_cutover");
+          const stmtIsAwaiting = a.lastStmtSource === "awaiting_statement";
+          const stmtDateLabel = a.lastStmtDate
+            ? new Date(a.lastStmtDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
+            : null;
+          return (
+            <div style={{ minWidth: 105, flex: "0 1 auto" }}>
+              <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Stmt</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>
+                {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
+              </div>
+              <div style={{ fontSize: 9, color: T.slate400 }}>
+                {stmtIsAwaiting ? "Not on hand" : hasStmt ? (stmtIsSnapshot ? `${stmtDateLabel} · snap` : stmtDateLabel) : ""}
+              </div>
+            </div>
+          );
+        })()}
+        <Field label="Register" value={fmt(a.balance)} color={T.red} />
         {a.limit ? <Field label="Available" value={fmt(a.limit - a.balance)} color={T.green} /> : null}
         {a.payment ? <Field label="Min Pmt" value={fmt(a.payment)} color={T.amber} /> : null}
         {a.dueDay ? <Field label="Due" value={`Day ${a.dueDay}`} color={T.slate700} minWidth={60} /> : null}
