@@ -2644,7 +2644,7 @@ const BankSection = ({ data }) => {
           <div style={{ fontSize: 9, color: T.slate500, marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${T.slate200}`, letterSpacing: "0.02em" }}>
             {a.stmtCloseDay ? `Closes ${ord(a.stmtCloseDay)}` : ""}
             {a.stmtCloseDay && a.nextStmtExpected ? " · " : ""}
-            {a.nextStmtExpected ? <span style={{ color: a.stmtOverdue ? T.red : T.slate600 }}>Next: {nextDateLabel}</span> : ""}
+            {a.nextStmtExpected ? <span style={{ color: a.stmtOverdue ? T.red : T.slate600, fontWeight: a.stmtOverdue ? 700 : 400 }}>Next: {nextDateLabel}</span> : ""}
           </div>
         )}
       </Card>
@@ -2800,11 +2800,11 @@ const CreditSection = ({ data }) => {
             {a.needsLast4 ? <span style={{ color: T.amber, marginLeft: 6 }}>· Add last 4</span> : null}
             {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 6 }}><Pill type="warning">Review</Pill></span> : null}
             {(a.stmtCloseDay || a.nextStmtExpected) ? (
-              <span style={{ marginLeft: 6, color: a.stmtOverdue ? T.red : T.slate500 }}>
+              <span style={{ marginLeft: 6, color: T.slate500 }}>
                 {" · "}
                 {a.stmtCloseDay ? `Closes ${ord(a.stmtCloseDay)}` : ""}
                 {a.stmtCloseDay && a.nextStmtExpected ? " · " : ""}
-                {a.nextStmtExpected ? `Next ${nextDateLabel}` : ""}
+                {a.nextStmtExpected ? <span style={{ color: a.stmtOverdue ? T.red : T.slate500, fontWeight: a.stmtOverdue ? 700 : 400 }}>Next {nextDateLabel}</span> : ""}
               </span>
             ) : null}
           </div>
