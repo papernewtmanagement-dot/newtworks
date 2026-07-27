@@ -158,11 +158,11 @@ function useFinancialsData(entity) {
 
           // Bank — pull institution + last4 + needs_statement so BankSection can render "Institution · ••3977" and flag accounts awaiting statements.
           supabase.from("v_bank_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, needs_statement, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, needs_statement, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes, statement_close_day, next_statement_expected_date, statement_overdue"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes, statement_close_day, next_statement_expected_date, statement_overdue"),
 
           // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
           // filter; expose business_entity_id so GLSection can filter to the
@@ -468,6 +468,9 @@ function useFinancialsData(entity) {
           lastStmtBalance: c.last_statement_balance != null ? parseFloat(c.last_statement_balance) : null,
           lastStmtSource:  c.last_statement_source || null,
           lastStmtNotes:   c.last_statement_notes || null,
+          stmtCloseDay:    c.statement_close_day || null,
+          nextStmtExpected: c.next_statement_expected_date || null,
+          stmtOverdue:     c.statement_overdue === true,
         }));
 
         // Goals feed pace computation
@@ -656,6 +659,9 @@ function useFinancialsData(entity) {
             lastStmtBalance: b.last_statement_balance != null ? parseFloat(b.last_statement_balance) : null,
             lastStmtSource:  b.last_statement_source || null,
             lastStmtNotes:   b.last_statement_notes || null,
+            stmtCloseDay:    b.statement_close_day || null,
+            nextStmtExpected: b.next_statement_expected_date || null,
+            stmtOverdue:     b.statement_overdue === true,
           })),
           creditAccounts,
           glEntries: (glRows.data || []).map(g => ({
@@ -2564,14 +2570,36 @@ const BankSection = ({ data }) => {
 
   const renderCard = (a, i) => {
     const entName = a.businessEntityId ? entitiesById[a.businessEntityId]?.name : null;
+    const hasStmt = a.lastStmtBalance != null && a.lastStmtDate != null;
+    const stmtIsEstimate = a.lastStmtSource && (a.lastStmtSource.startsWith("gl_cutover") || a.lastStmtSource.includes("snapshot"));
+    const stmtIsAwaiting = a.lastStmtSource === "awaiting_statement";
+    const stmtDateLabel = a.lastStmtDate
+      ? new Date(a.lastStmtDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : null;
+    const nextDateLabel = a.nextStmtExpected
+      ? new Date(a.nextStmtExpected + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      : null;
+    const delta = hasStmt ? (a.balance - a.lastStmtBalance) : null;
+    const deltaSmall = delta == null ? false : Math.abs(delta) < 0.01;
+    const deltaColor = delta == null || deltaSmall ? T.slate400 : delta > 0 ? T.green : T.red;
+    // Ordinal helper for day-of-month display
+    const ord = (n) => {
+      if (n == null) return null;
+      const s = ["th","st","nd","rd"], v = n % 100;
+      return n + (s[(v-20)%10] || s[v] || s[0]);
+    };
     return (
       <Card key={i}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 6, flexWrap: "wrap" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700 }}>{a.name}</div>
-          {a.needsStatement ? (
-            <Pill type="warning">Awaiting stmt</Pill>
+          {a.stmtOverdue ? (
+            <Pill type="warning">Stmt overdue</Pill>
+          ) : a.needsStatement ? (
+            <Pill type="warning">No stmt yet</Pill>
           ) : a.needsReview ? (
             <Pill type="warning">Review</Pill>
+          ) : stmtIsAwaiting ? (
+            <Pill type="warning">Stmt pending</Pill>
           ) : null}
         </div>
         <div style={{ fontSize: 10, color: T.slate500, marginBottom: 6, letterSpacing: "0.02em" }}>
@@ -2592,40 +2620,33 @@ const BankSection = ({ data }) => {
             }}>{entName}</span>
           </div>
         )}
-        {/* Last Statement (bank truth) */}
-        {(() => {
-          const hasStmt = a.lastStmtBalance != null && a.lastStmtDate != null;
-          const stmtIsSnapshot = a.lastStmtSource && a.lastStmtSource.startsWith("gl_cutover");
-          const stmtIsAwaiting = a.lastStmtSource === "awaiting_statement";
-          const stmtDateLabel = a.lastStmtDate
-            ? new Date(a.lastStmtDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-            : null;
-          const delta = hasStmt ? (a.balance - a.lastStmtBalance) : null;
-          const deltaSmall = delta == null ? false : Math.abs(delta) < 0.01;
-          const deltaColor = delta == null || deltaSmall ? T.slate400 : delta > 0 ? T.green : T.red;
-          return (
-            <>
-              <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>Last Statement</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>
-                {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
-              </div>
-              <div style={{ fontSize: 9, color: T.slate400, marginTop: 1 }}>
-                {stmtIsAwaiting ? "Statement not on hand" : hasStmt ? (stmtIsSnapshot ? `${stmtDateLabel} · snapshot` : stmtDateLabel) : "No statement yet"}
-              </div>
-              <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-              <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Register Now</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-                {fmt(a.balance)}
-              </div>
-              <div style={{ fontSize: 9, color: deltaColor, marginTop: 2 }}>
-                {a.needsStatement ? "No balance yet" :
-                  delta == null ? (a.asOf ? `As of ${a.asOf}` : "Ledger-derived") :
-                  deltaSmall ? "Matches statement" :
-                  `${delta > 0 ? "+" : ""}${fmt(delta)} since statement`}
-              </div>
-            </>
-          );
-        })()}
+        <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>Last Statement</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>
+          {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending upload</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
+        </div>
+        <div style={{ fontSize: 9, color: T.slate400, marginTop: 1 }}>
+          {stmtIsAwaiting ? "Statement not on hand" :
+            hasStmt ? (stmtIsEstimate ? `${stmtDateLabel} · estimated` : stmtDateLabel) :
+            "No statement uploaded yet"}
+        </div>
+        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+        <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Register Now</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
+          {fmt(a.balance)}
+        </div>
+        <div style={{ fontSize: 9, color: deltaColor, marginTop: 2 }}>
+          {a.needsStatement ? "No balance yet" :
+            delta == null ? (a.asOf ? `As of ${a.asOf}` : "Ledger-derived") :
+            deltaSmall ? "Matches statement" :
+            `${delta > 0 ? "+" : ""}${fmt(delta)} since statement`}
+        </div>
+        {(a.stmtCloseDay || a.nextStmtExpected) && (
+          <div style={{ fontSize: 9, color: T.slate500, marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${T.slate200}`, letterSpacing: "0.02em" }}>
+            {a.stmtCloseDay ? `Closes ${ord(a.stmtCloseDay)}` : ""}
+            {a.stmtCloseDay && a.nextStmtExpected ? " · " : ""}
+            {a.nextStmtExpected ? <span style={{ color: a.stmtOverdue ? T.red : T.slate600 }}>Next: {nextDateLabel}</span> : ""}
+          </div>
+        )}
       </Card>
     );
   };
@@ -2726,6 +2747,20 @@ const CreditSection = ({ data }) => {
     const util = a.limit ? pct(a.balance, a.limit) : null;
     const utilColor = util == null ? T.slate400 : util > 30 ? T.amber : T.green;
     const entName = a.businessEntityId ? entitiesById[a.businessEntityId]?.name : null;
+    const hasStmt = a.lastStmtBalance != null && a.lastStmtDate != null;
+    const stmtIsEstimate = a.lastStmtSource && (a.lastStmtSource.startsWith("gl_cutover") || a.lastStmtSource.includes("snapshot"));
+    const stmtIsAwaiting = a.lastStmtSource === "awaiting_statement";
+    const stmtDateLabel = a.lastStmtDate
+      ? new Date(a.lastStmtDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      : null;
+    const nextDateLabel = a.nextStmtExpected
+      ? new Date(a.nextStmtExpected + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      : null;
+    const ord = (n) => {
+      if (n == null) return null;
+      const s = ["th","st","nd","rd"], v = n % 100;
+      return n + (s[(v-20)%10] || s[v] || s[0]);
+    };
     const Field = ({ label, value, color = T.slate900, minWidth = 90 }) => (
       <div style={{ minWidth, flex: "0 1 auto" }}>
         <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
@@ -2756,6 +2791,7 @@ const CreditSection = ({ data }) => {
                 letterSpacing: "0.02em",
               }}>{entName}</span>
             )}
+            {a.stmtOverdue ? <Pill type="warning">Stmt overdue</Pill> : null}
           </div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 1 }}>
             {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ")}
@@ -2763,27 +2799,25 @@ const CreditSection = ({ data }) => {
             {typeLabel(a.type)}{a.rate ? ` · ${a.rate}% APR` : ""}
             {a.needsLast4 ? <span style={{ color: T.amber, marginLeft: 6 }}>· Add last 4</span> : null}
             {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 6 }}><Pill type="warning">Review</Pill></span> : null}
+            {(a.stmtCloseDay || a.nextStmtExpected) ? (
+              <span style={{ marginLeft: 6, color: a.stmtOverdue ? T.red : T.slate500 }}>
+                {" · "}
+                {a.stmtCloseDay ? `Closes ${ord(a.stmtCloseDay)}` : ""}
+                {a.stmtCloseDay && a.nextStmtExpected ? " · " : ""}
+                {a.nextStmtExpected ? `Next ${nextDateLabel}` : ""}
+              </span>
+            ) : null}
           </div>
         </div>
-        {(() => {
-          const hasStmt = a.lastStmtBalance != null && a.lastStmtDate != null;
-          const stmtIsSnapshot = a.lastStmtSource && a.lastStmtSource.startsWith("gl_cutover");
-          const stmtIsAwaiting = a.lastStmtSource === "awaiting_statement";
-          const stmtDateLabel = a.lastStmtDate
-            ? new Date(a.lastStmtDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
-            : null;
-          return (
-            <div style={{ minWidth: 105, flex: "0 1 auto" }}>
-              <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Stmt</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>
-                {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
-              </div>
-              <div style={{ fontSize: 9, color: T.slate400 }}>
-                {stmtIsAwaiting ? "Not on hand" : hasStmt ? (stmtIsSnapshot ? `${stmtDateLabel} · snap` : stmtDateLabel) : ""}
-              </div>
-            </div>
-          );
-        })()}
+        <div style={{ minWidth: 105, flex: "0 1 auto" }}>
+          <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Stmt</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>
+            {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
+          </div>
+          <div style={{ fontSize: 9, color: T.slate400 }}>
+            {stmtIsAwaiting ? "Not on hand" : hasStmt ? (stmtIsEstimate ? `${stmtDateLabel} · est` : stmtDateLabel) : ""}
+          </div>
+        </div>
         <Field label="Register" value={fmt(a.balance)} color={T.red} />
         {a.limit ? <Field label="Available" value={fmt(a.limit - a.balance)} color={T.green} /> : null}
         {a.payment ? <Field label="Min Pmt" value={fmt(a.payment)} color={T.amber} /> : null}
