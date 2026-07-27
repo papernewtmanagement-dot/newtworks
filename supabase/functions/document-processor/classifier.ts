@@ -208,8 +208,21 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
     test: (i) => /usbank|us[\s_-]?bank|usbank\.com/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
   { docType: "bank_statement_secondary",
-    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark)/i.test(i.fromEmail + " " + i.subject) &&
+    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|rbfcu|randolph)/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
+
+  // ----- BANK / CC STATEMENTS — filename-only fallback (Alvi's zip-content
+  //       naming convention). Pattern: "{Institution} {Label} YY-MM.pdf" —
+  //       e.g. "US Bank KidsProfitDisc 26-01.pdf", "RBFCU Saving 26-03.pdf",
+  //       "Discover Tithe CC 26-02.pdf". No "statement" in the filename, no
+  //       usbank sender on the outer email (Alvi forwards from her Gmail).
+  //       Institution match distinguishes primary (US Bank) from secondary
+  //       (everything else). Added 2026-07-27 after the KidsProfitDisc.zip
+  //       intake left 7 inner files unclassified. -----
+  { docType: "bank_statement_primary",
+    test: (i) => /^us[\s_-]?bank\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
+  { docType: "bank_statement_secondary",
+    test: (i) => /^(rbfcu|randolph|chase|bankofamerica|bank[\s_-]?of[\s_-]?america|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover)\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
 
   // ----- STATE FARM COMP RECAP — sender path (live SF emails) -----
   { docType: "comp_recap_1h",
