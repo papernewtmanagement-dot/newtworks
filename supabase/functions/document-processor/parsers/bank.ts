@@ -13,6 +13,8 @@ export interface ParsedBankStatement {
   ok: true;
   statementPeriod: { start: string; end: string };
   accountLast4: string | null;
+  openingBalance: number | null;
+  closingBalance: number | null;
   transactions: Array<{ date: string; txn: BankTxn }>;
 }
 
@@ -30,6 +32,8 @@ prose, no markdown fences, no explanation:
 {
   "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "account_last4": "<4 digits or null>",
+  "opening_balance": <number; the beginning balance for the period, null if not stated>,
+  "closing_balance": <number; the ending balance for the period, null if not stated>,
   "transactions": [
     {
       "date": "YYYY-MM-DD",
@@ -41,7 +45,14 @@ prose, no markdown fences, no explanation:
 }
 
 Rules:
-- Skip beginning balance, ending balance, and "Total" summary lines.
+- Extract the beginning/opening balance and ending/closing balance from the
+  account summary section. Credit card statements may call these "Previous
+  Balance" and "New Balance". Report both as positive numbers for asset
+  accounts; for credit-card statements, report the outstanding balance as
+  a positive number (the amount owed).
+- Skip beginning balance, ending balance, and "Total" summary lines in the
+  transactions array — they belong in opening_balance/closing_balance, not
+  as transactions.
 - Skip non-transactional informational lines.
 - Combine multi-line transaction descriptions into the single payee/memo pair.
 - Use ISO dates only.
@@ -96,10 +107,15 @@ export async function parseBankStatement(opts: {
     });
   }
 
+  const openingBalance = typeof json?.opening_balance === "number" ? json.opening_balance : null;
+  const closingBalance = typeof json?.closing_balance === "number" ? json.closing_balance : null;
+
   return {
     ok: true,
     statementPeriod: { start: period.start, end: period.end },
     accountLast4: json?.account_last4 ?? null,
+    openingBalance,
+    closingBalance,
     transactions,
   };
 }
