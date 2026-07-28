@@ -1,5 +1,6 @@
  import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
+import MemberAvatar from "../lib/MemberAvatar.jsx";
 // eslint-disable-next-line no-unused-vars
 // import { useState } from "react";
 
@@ -301,9 +302,15 @@ const TeamAccess = ({ users }) => {
           return (
             <div key={user.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 0", borderBottom:isLast?"none":`1px solid ${T.slate100}` }}>
               {/* Avatar */}
-              <div style={{ width:36, height:36, borderRadius:10, background:user.is_current?T.slate900:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:user.is_current?T.white:T.slate500, flexShrink:0 }}>
-                {(user.name || "?").toString().split(" ").map(n=>n?.[0] || "").join("").slice(0,2) || "?"}
-              </div>
+              <MemberAvatar
+                photoStoragePath={user.photo_storage_path}
+                initials={(user.name || "?").toString().split(" ").map(n=>n?.[0] || "").join("").slice(0,2) || "?"}
+                size={36}
+                borderRadius={10}
+                bg={user.is_current?T.slate900:T.slate200}
+                color={user.is_current?T.white:T.slate500}
+                fontSize={12}
+              />
 
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -803,7 +810,7 @@ export default function Settings() {
         const [agencyRes, settingsRes, usersRes, runLogRes] = await Promise.all([
           supabase.from("agency").select("*").eq("id", AGENCY_ID).maybeSingle(),
           supabase.from("settings").select("*").eq("agency_id", AGENCY_ID),
-          supabase.from("users").select("*").eq("agency_id", AGENCY_ID),
+          supabase.from("users").select("*, team:team_member_id(photo_storage_path)").eq("agency_id", AGENCY_ID),
           supabase.from("automation_run_log").select("status, run_at").eq("agency_id", AGENCY_ID).order("run_at", { ascending: false }).limit(50),
         ]);
         if (agencyRes.data) setAgencyData(agencyRes.data);
@@ -868,6 +875,7 @@ export default function Settings() {
     is_active:  u.is_active !== false,
     pending:    u.invite_status === "invited" || u.invite_status === "pending" || !u.auth_user_id,
     is_current: false,
+    photo_storage_path: u.team?.photo_storage_path || null,
   }));
 
   // ── Connections: live status ────────────────────────────────────────────
