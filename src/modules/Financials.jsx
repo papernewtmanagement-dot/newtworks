@@ -1425,7 +1425,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
   const priorQStart   = (priorQnum - 1) * 3 + 1;
   const priorQEnd     = priorQStart + 2;
 
-  const [grain, setGrain]     = useState("quarterly"); // monthly | quarterly | annual
+  const [grain, setGrain]     = useTabParam("plgrain", "quarterly", ["monthly", "quarterly", "annual"]);
   const [showPct, setShowPct] = useState(false);
   const [yearsBack, setYearsBack] = useState("3"); // "3" | "10" | "all"
 
