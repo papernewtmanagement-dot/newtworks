@@ -1076,45 +1076,75 @@ function SparkLine({ values, width = 64, height = 16, color }) {
   );
 }
 
-// MiniLineChart — small line chart used inside the Payroll Commission expander
-// (one per teammate; small-multiples layout).
-function MiniLineChart({ weeks, valueByWeek, label, totalLabel, color }) {
-  const W = 240, H = 78;
-  const padL = 22, padR = 6, padT = 8, padB = 14;
+// MultiLineChart — one chart, N teammate lines. Used inside the Payroll
+// Commission expander. Colored line per person + legend below.
+function MultiLineChart({ weeks, seriesList }) {
+  // seriesList: [{ key, label, valueByWeek, color, total }]
+  const W = 640, H = 220;
+  const padL = 40, padR = 12, padT = 12, padB = 36;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
-  const stroke = color || T.blue;
-  const vals = (weeks || []).map(w => Number(valueByWeek?.[w]) || 0);
-  const max = Math.max(1, ...vals);
+  const allVals = [];
+  (seriesList || []).forEach(s => {
+    (weeks || []).forEach(w => {
+      const v = Number(s.valueByWeek?.[w]);
+      if (Number.isFinite(v)) allVals.push(v);
+    });
+  });
+  const max = Math.max(1, ...allVals);
   const stepX = weeks.length > 1 ? chartW / (weeks.length - 1) : chartW;
-  const coords = vals.map((v, i) => ({
-    x: padL + i * stepX,
-    y: padT + chartH - (v / max) * chartH,
-    v,
-  }));
-  const dLine = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  const dArea = coords.length > 0
-    ? `${dLine} L${coords[coords.length - 1].x.toFixed(1)},${padT + chartH} L${coords[0].x.toFixed(1)},${padT + chartH} Z`
-    : "";
+  const yOf = v => padT + chartH - (v / max) * chartH;
+  const xOf = i => padL + i * stepX;
   const fmtAxis = (n) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`;
+  // Y gridlines at 0 / 25% / 50% / 75% / 100%
+  const gridSteps = [0, 0.25, 0.5, 0.75, 1];
+  // X-axis labels: first, middle, last (dense weeks would be unreadable on phone)
+  const xLabelIdx = weeks.length <= 2 ? weeks.map((_, i) => i) : [0, Math.floor((weeks.length - 1) / 2), weeks.length - 1];
   return (
-    <div style={{ padding: "8px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, background: T.white, boxSizing: "border-box" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, gap: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: T.slate800 }}>{label}</span>
-        <span style={{ fontSize: 11, color: T.slate600 }}>{totalLabel}</span>
+    <div>
+      <div style={{ width: "100%", overflow: "hidden" }}>
+        <svg width="100%" height="auto" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block" }}>
+          {/* Gridlines + Y labels */}
+          {gridSteps.map((g, i) => {
+            const y = padT + chartH - g * chartH;
+            return (
+              <g key={i}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke={T.slate100} strokeWidth={1} strokeDasharray={g === 0 ? "0" : "2 2"} />
+                <text x={padL - 4} y={y + 3} fontSize={10} fill={T.slate500} textAnchor="end">{fmtAxis(max * g)}</text>
+              </g>
+            );
+          })}
+          {/* X labels */}
+          {xLabelIdx.map(i => (
+            <text key={i} x={xOf(i)} y={H - padB + 14} fontSize={10} fill={T.slate500} textAnchor="middle">
+              {fmtMMDD(weeks[i])}
+            </text>
+          ))}
+          {/* Lines */}
+          {(seriesList || []).map(s => {
+            const pts = weeks.map((w, i) => ({ x: xOf(i), y: yOf(Number(s.valueByWeek?.[w]) || 0) }));
+            const dLine = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+            return (
+              <g key={s.key}>
+                <path d={dLine} fill="none" stroke={s.color} strokeWidth={2} />
+                {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={2.5} fill={s.color} />)}
+              </g>
+            );
+          })}
+        </svg>
       </div>
-      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
-        <line x1={padL} y1={padT + chartH} x2={W - padR} y2={padT + chartH} stroke={T.slate200} strokeWidth={1} />
-        <line x1={padL} y1={padT} x2={W - padR} y2={padT} stroke={T.slate100} strokeWidth={1} strokeDasharray="2 2" />
-        {dArea ? <path d={dArea} fill={stroke} opacity={0.09} /> : null}
-        {dLine ? <path d={dLine} fill="none" stroke={stroke} strokeWidth={1.6} /> : null}
-        {coords.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={1.8} fill={stroke} />)}
-        <text x={2} y={padT + 6} fontSize={9} fill={T.slate500}>{fmtAxis(max)}</text>
-        <text x={2} y={padT + chartH - 1} fontSize={9} fill={T.slate500}>$0</text>
-      </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.slate500, marginTop: 2 }}>
-        <span>{weeks[0] ? fmtMMDD(weeks[0]) : ""}</span>
-        <span>{weeks.length > 1 ? fmtMMDD(weeks[weeks.length - 1]) : ""}</span>
+      {/* Legend */}
+      <div style={{
+        display: "flex", flexWrap: "wrap", gap: 10,
+        marginTop: 8, fontSize: 12,
+      }}>
+        {(seriesList || []).map(s => (
+          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+            <span style={{ color: T.slate800, fontWeight: 600 }}>{s.label}</span>
+            <span style={{ color: T.slate500 }}>{s.total}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -3414,7 +3444,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     subRow("ret",  "Retention split",   "ret_share_ratio_pct",  perThirdPool),
                   ];
                 }
-                // Commission: expandable row → per-teammate cycle-view chart (small multiples).
+                // Commission: expandable row → combined cycle-view chart (one line per teammate).
                 // Reads cycleWeeklyDetails (weekly commission per person across the cycle so far).
                 if (key === "commission") {
                   const hasCycleData = cycleWeeks.length > 0 && (cycleWeeklyDetails || []).length > 0;
@@ -3433,38 +3463,32 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     </tr>
                   );
                   if (!hasCycleData || !commissionExpanded) return [commissionMain];
-                  const chartsRow = (
-                    <tr key={`${key}-charts`}>
+                  // Color palette (per op-rule "theme tokens must exist" — real tokens only).
+                  const LINE_COLORS = [T.blue, T.green, T.amber, T.purple, T.teal, T.pink, T.gold, T.red];
+                  const seriesList = sorted.map((d, i) => {
+                    const commByWeek = pivotCycleField(cycleWeeklyDetails, d.team_member_id, "commission");
+                    const commTotal = Object.values(commByWeek).reduce((a, b) => a + (Number(b) || 0), 0);
+                    return {
+                      key: d.team_member_id,
+                      label: firstName(d.__name),
+                      valueByWeek: commByWeek,
+                      color: LINE_COLORS[i % LINE_COLORS.length],
+                      total: fmtMoneyCents(commTotal),
+                    };
+                  });
+                  const chartRow = (
+                    <tr key={`${key}-chart`}>
                       <Td colSpan={sorted.length + 1} style={{ padding: 0, background: T.slate50 }}>
                         <div style={{ padding: "10px 14px 14px" }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-                            Commission — cycle to date, per teammate
+                            Commission — cycle to date
                           </div>
-                          <div style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                            gap: 10,
-                          }}>
-                            {sorted.map(d => {
-                              const commByWeek = pivotCycleField(cycleWeeklyDetails, d.team_member_id, "commission");
-                              const commTotal = Object.values(commByWeek).reduce((a, b) => a + (Number(b) || 0), 0);
-                              return (
-                                <MiniLineChart
-                                  key={d.team_member_id}
-                                  weeks={cycleWeeks}
-                                  valueByWeek={commByWeek}
-                                  label={firstName(d.__name)}
-                                  totalLabel={`Cycle: ${fmtMoneyCents(commTotal)}`}
-                                  color={T.blue}
-                                />
-                              );
-                            })}
-                          </div>
+                          <MultiLineChart weeks={cycleWeeks} seriesList={seriesList} />
                         </div>
                       </Td>
                     </tr>
                   );
-                  return [commissionMain, chartsRow];
+                  return [commissionMain, chartRow];
                 }
                 // Health Goal is shown inside the Goals expander (see below).
                 // Skip rendering it as a standalone row. Kept in ROWS array so
