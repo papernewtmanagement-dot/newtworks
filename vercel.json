@@ -1,5 +1,10 @@
 {
   "rewrites": [
+    { "source": "/careers", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/careers-site" },
+    { "source": "/careers/:path*", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/careers-site/:path*" },
+    { "source": "/jobs.xml", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/jobs-xml-feed" },
+    { "source": "/webhooks/indeed", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/indeed-apply-webhook" },
+    { "source": "/webhooks/ziprecruiter", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/zip-apply-webhook" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
