@@ -3023,7 +3023,19 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 const totalCols = 5 + quarterList.length;
                 const isExpanded = expandedPersonId === d.team_member_id;
                 const spByWeek = pivotCycleField(cycleWeeklyDetails, d.team_member_id, "sales_points");
-                const spSeries = cycleWeeks.map(w => (spByWeek[w] != null ? Number(spByWeek[w]) : null));
+                // sales_points is stored as QTD cumulative per Saturday (residual-pool model,
+                // 2026-07-11+). Sparkline plots weekly DELTA — this week's cumulative minus
+                // last week's. First week of cycle uses raw value (delta from 0). Weeks with
+                // no row are null (line breaks). Never emit negative deltas — those indicate
+                // out-of-order rows or manual edits, not real weekly activity.
+                const spSeries = cycleWeeks.map((w, i) => {
+                  const cur = spByWeek[w];
+                  if (cur == null) return null;
+                  if (i === 0) return Math.max(0, Number(cur));
+                  const prev = spByWeek[cycleWeeks[i - 1]];
+                  if (prev == null) return Math.max(0, Number(cur)); // treat gap as reset
+                  return Math.max(0, Number(cur) - Number(prev));
+                });
                 const canExpand = !editMode && cycleWeeks.length > 0 && Object.keys(spByWeek).length > 0;
                 return (
                   <Fragment key={d.team_member_id}>
