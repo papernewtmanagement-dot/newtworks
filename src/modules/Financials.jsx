@@ -162,7 +162,7 @@ function useFinancialsData(entity) {
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes, statement_close_day, next_statement_expected_date, statement_overdue"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, alternate_last4, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes, statement_close_day, next_statement_expected_date, statement_overdue"),
 
           // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
           // filter; expose business_entity_id so GLSection can filter to the
@@ -459,6 +459,7 @@ function useFinancialsData(entity) {
           institution: c.institution,
           type:    c.account_type,
           last4:   c.account_number_last4,
+          alternateLast4: c.alternate_last4,
           limit:   parseFloat(c.credit_limit || 0) || null,
           rate:    parseFloat(c.interest_rate || 0),
           payment: parseFloat(c.minimum_payment || 0),
@@ -2794,7 +2795,7 @@ const CreditSection = ({ data }) => {
             {a.stmtOverdue ? <Pill type="warning">Stmt overdue</Pill> : null}
           </div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 1 }}>
-            {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ")}
+            {[a.institution, a.last4 ? `••${a.last4}${a.alternateLast4 ? ` + ••${a.alternateLast4}` : ""}` : null].filter(Boolean).join(" · ")}
             {(a.institution || a.last4) ? " · " : ""}
             {typeLabel(a.type)}{a.rate ? ` · ${a.rate}% APR` : ""}
             {a.needsLast4 ? <span style={{ color: T.amber, marginLeft: 6 }}>· Add last 4</span> : null}
