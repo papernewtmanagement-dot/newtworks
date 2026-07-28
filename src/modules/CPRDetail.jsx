@@ -1,6 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
-import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
 
 // =============================================================
