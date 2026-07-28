@@ -151,3 +151,36 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
 
   return { ok: false, queued: true, queueId: data.id };
 }
+
+// ---- retry_queued mode helper ---------------------------------------------
+// Same Groq call as parseWithLLM's inline path but WITHOUT the queue-insert
+// side-effect on failure. Used by index.ts processRetryQueuedMode() to drain
+// llm_parse_queue rows: the row already exists, so re-inserting is wrong.
+// Returns raw JSON on success, or a plain error string. Caller is responsible
+// for updating llm_parse_queue.attempts / last_error.
+export async function retryLLMCall(opts: {
+  agencyId: string;
+  systemPrompt: string;
+  userContent: string;
+  model: string;
+  maxTokens?: number;
+}): Promise<{ ok: true; json: any; raw: string } | { ok: false; error: string }> {
+  const groqKey = await getSetting(opts.agencyId, "groq_api_key");
+  if (!groqKey) return { ok: false, error: "groq_api_key not set in settings" };
+
+  const llm = await callGroqDirect({
+    apiKey: groqKey,
+    model: opts.model,
+    systemPrompt: opts.systemPrompt,
+    userContent: opts.userContent,
+    maxTokens: opts.maxTokens ?? 4000,
+  });
+  if (!llm.ok) return { ok: false, error: llm.error ?? "unknown Groq failure" };
+
+  const cleaned = stripFences(llm.raw);
+  try {
+    return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
+  } catch (e) {
+    return { ok: false, error: `JSON parse failed: ${(e as Error).message}` };
+  }
+}
