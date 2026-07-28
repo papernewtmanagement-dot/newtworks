@@ -28,6 +28,7 @@ import Marketing from "./src/modules/Marketing.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
 import Onboarding from "./src/modules/Onboarding.jsx";
+import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -742,6 +743,20 @@ function parseUrl(pathname) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function NewtworksApp() {
+  // ── Public assessment link bypass ─────────────────────────────────────────
+  // /assess/<candidateId>/<token> renders the candidate assessment form
+  // WITHOUT any auth gate. HMAC token (verified server-side by v1-assessment
+  // edge fn) is the sole gate on the data. Plain const, not a hook — computed
+  // once at render. Safe with the hook-order-vs-early-returns rule because the
+  // early return below still lands after every hook in this component.
+  const _assessRoute = (typeof window !== "undefined")
+    ? (() => {
+        const p = (window.location.pathname || "").replace(/\/+$/, "") || "/";
+        const m = /^\/assess\/([a-f0-9-]+)\/([A-Za-z0-9._-]+)$/.exec(p);
+        return m ? { candidateId: m[1], token: m[2] } : null;
+      })()
+    : null;
+
   // ── Auth gate state (Path 1) ──────────────────────────────────────────────
   // authState: "checking" | "out" | "in"
   const [authState, setAuthState] = useState("checking");
@@ -957,6 +972,14 @@ export default function NewtworksApp() {
     }
     setAuthState("out");
   };
+
+  // ── Public assessment link render (bypass auth entirely) ──────────────────
+  // Placed AFTER all hooks (useState/useEffect above) to satisfy the
+  // hook-order-vs-early-returns discipline. Auth-state effects still fire in
+  // the background — harmless, we render the assessment either way.
+  if (_assessRoute) {
+    return <CandidateAssessment candidateId={_assessRoute.candidateId} token={_assessRoute.token} />;
+  }
 
   // ── Auth gate render ───────────────────────────────────────────────────────
   if (authState === "checking") {
