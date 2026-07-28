@@ -1,6 +1,7 @@
 import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CandidateDetail from "../components/CandidateDetail.jsx";
+import MemberAvatar from "../lib/MemberAvatar.jsx";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -1130,7 +1131,7 @@ const StaffDirectory = ({ staff }) => {
     (async () => {
       const { data: teamRows, error: teamErr } = await supabase
         .from("team")
-        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id")
+        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id, photo_storage_path")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", false)
         .order("archived_at", { ascending: false, nullsFirst: false });
@@ -1786,9 +1787,15 @@ const StaffDirectory = ({ staff }) => {
         return (
           <Card key={member.id} style={{ border:`1px solid ${T.slate200}`, background:T.slate50, opacity:0.95 }}>
             <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-              <div style={{ width:48, height:48, borderRadius:12, background:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:T.slate500, flexShrink:0 }}>
-                {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
-              </div>
+              <MemberAvatar
+                photoStoragePath={member.photo_storage_path}
+                initials={`${(member.first_name?.[0] || "?")}${(member.last_name?.[0] || "")}`}
+                size={48}
+                borderRadius={12}
+                bg={T.slate200}
+                color={T.slate500}
+                fontSize={16}
+              />
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
                   <span style={{ fontSize:14, fontWeight:700, color:T.slate900, textDecoration:"line-through" }}>{member.first_name} {member.last_name}</span>
@@ -1948,9 +1955,15 @@ const StaffDirectory = ({ staff }) => {
           <Card style={{ border:`1px solid ${isExpanded?T.blue:T.slate200}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:14, cursor:"pointer" }} onClick={() => { if (!isEditing) setExpanded(isExpanded?null:member.id); }}>
               {/* Avatar */}
-              <div style={{ width:48, height:48, borderRadius:12, background:hasAnyLicense(member)?T.slate900:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:hasAnyLicense(member)?T.white:T.slate500, flexShrink:0 }}>
-                {(member.first_name?.[0] || "?")}{(member.last_name?.[0] || "")}
-              </div>
+              <MemberAvatar
+                photoStoragePath={member.photo_storage_path}
+                initials={`${(member.first_name?.[0] || "?")}${(member.last_name?.[0] || "")}`}
+                size={48}
+                borderRadius={12}
+                bg={hasAnyLicense(member)?T.slate900:T.slate200}
+                color={hasAnyLicense(member)?T.white:T.slate500}
+                fontSize={16}
+              />
 
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
