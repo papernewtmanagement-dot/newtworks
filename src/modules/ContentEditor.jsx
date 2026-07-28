@@ -60,7 +60,6 @@ const BLANK_ROW = () => ({
   manual_type: "handbook",
   content: "",
   content_format: "markdown",
-  notes: null,
   icon: null,
   sort_order: 0,
   parent_page_id: null,
@@ -202,7 +201,7 @@ export default function ContentEditor() {
     try {
       const { data, error: e } = await supabase
         .from("manuals")
-        .select("id, agency_id, manual_type, title, content, content_format, notes, icon, sort_order, parent_page_id, tree_root, source_url, confluence_page_id, is_active, version, archived_at, updated_at")
+        .select("id, agency_id, manual_type, title, content, content_format, icon, sort_order, parent_page_id, tree_root, source_url, confluence_page_id, is_active, version, archived_at, updated_at")
         .eq("agency_id", AGENCY_ID)
         .order("manual_type", { ascending: true })
         .order("sort_order", { ascending: true, nullsFirst: false })
@@ -227,7 +226,7 @@ export default function ContentEditor() {
       if (!showArchived && r.archived_at) return false;
       if (filterType !== "all" && r.manual_type !== filterType) return false;
       if (!q) return true;
-      const hay = `${r.title || ""} ${r.content || ""} ${r.notes || ""}`.toLowerCase();
+      const hay = `${r.title || ""} ${r.content || ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [rows, filterType, searchQ, showArchived]);
@@ -279,7 +278,6 @@ export default function ContentEditor() {
         title: draft.title.trim(),
         content: draft.content ?? "",
         content_format: draft.content_format || "markdown",
-        notes: draft.notes || null,
         icon: draft.icon || null,
         sort_order: Number.isFinite(Number(draft.sort_order)) ? Number(draft.sort_order) : 0,
         parent_page_id: draft.parent_page_id || null,
@@ -435,7 +433,7 @@ export default function ContentEditor() {
 
         <input
           type="text"
-          placeholder="Search title, content, notes…"
+          placeholder="Search title, content…"
           style={s.searchInput}
           value={searchQ}
           onChange={(e) => setSearchQ(e.target.value)}
@@ -656,17 +654,6 @@ function EditorPane({ draft, rows, saving, dirty, saveMsg, onField, onSave, onDi
           value={draft.content || ""}
           onChange={(e) => onField("content", e.target.value)}
           placeholder="Markdown content. Use [Included from: X] to transclude another page, [Embedded excerpt from: X] to pull a named fragment."
-        />
-      </div>
-
-      {/* Notes */}
-      <div style={s.field}>
-        <label style={s.fieldLabel}>Notes (internal, not shown to readers)</label>
-        <textarea
-          style={{ ...s.textarea, minHeight: 60, fontFamily: "inherit" }}
-          value={draft.notes || ""}
-          onChange={(e) => onField("notes", e.target.value)}
-          placeholder="Internal notes about this page — history, deprecation reasons, TODOs."
         />
       </div>
 
