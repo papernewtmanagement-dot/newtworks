@@ -1034,48 +1034,6 @@ function pivotCycleField(rows, tmId, field) {
   return out;
 }
 
-// SparkLine — inline SVG next to each teammate's name in Team Activity.
-// values: array of numbers or nulls (null = missing week; line breaks there).
-function SparkLine({ values, width = 64, height = 16, color }) {
-  const pts = Array.isArray(values) ? values : [];
-  if (pts.length < 2) return null;
-  const finite = pts.filter(v => Number.isFinite(v));
-  if (finite.length < 2) return null;
-  const max = Math.max(...finite);
-  const min = Math.min(...finite);
-  const range = max - min || 1;
-  const stepX = pts.length > 1 ? (width - 2) / (pts.length - 1) : (width - 2);
-  const coords = pts.map((v, i) => {
-    if (!Number.isFinite(v)) return null;
-    const x = 1 + i * stepX;
-    const y = (height - 2) - ((v - min) / range) * (height - 4) + 1;
-    return { x, y };
-  });
-  const segments = [];
-  let cur = [];
-  coords.forEach(p => {
-    if (p == null) { if (cur.length > 0) segments.push(cur); cur = []; }
-    else cur.push(p);
-  });
-  if (cur.length > 0) segments.push(cur);
-  const stroke = color || T.blue;
-  const lastPt = coords.filter(Boolean).slice(-1)[0];
-  return (
-    <svg width={width} height={height} style={{ verticalAlign: "middle", display: "inline-block", marginLeft: 6 }}>
-      {segments.map((seg, i) => (
-        <polyline
-          key={i}
-          fill="none"
-          stroke={stroke}
-          strokeWidth={1.4}
-          points={seg.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}
-        />
-      ))}
-      {lastPt ? <circle cx={lastPt.x} cy={lastPt.y} r={1.8} fill={stroke} /> : null}
-    </svg>
-  );
-}
-
 // MultiLineChart — one chart, N teammate lines. Used inside the Payroll
 // Commission expander. Axis labels + legend live in HTML (fixed pixel sizes,
 // no viewBox scaling). SVG contains lines + gridlines only. Non-scaling
@@ -3019,24 +2977,11 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 const quotesNow = Number(editMode ? (row.quotes_discussed ?? d.quotes_discussed ?? 0) : (d.quotes_discussed ?? 0));
                 const paidNow = Number(r.paid) || 0;
                 const netPreview = quotesNow - paidNow;
-                // Per-person expansion + sparkline (cycle-view).
+                // Per-person expansion (cycle-view weekly production table).
                 const totalCols = 5 + quarterList.length;
                 const isExpanded = expandedPersonId === d.team_member_id;
-                const spByWeek = pivotCycleField(cycleWeeklyDetails, d.team_member_id, "sales_points");
-                // sales_points is stored as QTD cumulative per Saturday (residual-pool model,
-                // 2026-07-11+). Sparkline plots weekly DELTA — this week's cumulative minus
-                // last week's. First week of cycle uses raw value (delta from 0). Weeks with
-                // no row are null (line breaks). Never emit negative deltas — those indicate
-                // out-of-order rows or manual edits, not real weekly activity.
-                const spSeries = cycleWeeks.map((w, i) => {
-                  const cur = spByWeek[w];
-                  if (cur == null) return null;
-                  if (i === 0) return Math.max(0, Number(cur));
-                  const prev = spByWeek[cycleWeeks[i - 1]];
-                  if (prev == null) return Math.max(0, Number(cur)); // treat gap as reset
-                  return Math.max(0, Number(cur) - Number(prev));
-                });
-                const canExpand = !editMode && cycleWeeks.length > 0 && Object.keys(spByWeek).length > 0;
+                const hasCycleData = (cycleWeeklyDetails || []).some(x => x.team_member_id === d.team_member_id);
+                const canExpand = !editMode && cycleWeeks.length > 0 && hasCycleData;
                 return (
                   <Fragment key={d.team_member_id}>
                   <tr
@@ -3048,9 +2993,6 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                         <span style={{ color: T.slate400, marginRight: 4, userSelect: "none", fontSize: 10 }}>{isExpanded ? "▾" : "▸"}</span>
                       ) : null}
                       {firstName(d.__name)}
-                      {!editMode && spSeries.filter(Number.isFinite).length >= 2 ? (
-                        <SparkLine values={spSeries} color={T.blue} />
-                      ) : null}
                     </Td>
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
