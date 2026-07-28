@@ -1077,12 +1077,14 @@ function SparkLine({ values, width = 64, height = 16, color }) {
 }
 
 // MultiLineChart — one chart, N teammate lines. Used inside the Payroll
-// Commission expander. Colored line per person + legend below.
+// Commission expander. Axis labels + legend live in HTML (fixed pixel sizes,
+// no viewBox scaling). SVG contains lines + gridlines only. Non-scaling
+// strokes keep line thickness stable across viewport widths.
 function MultiLineChart({ weeks, seriesList }) {
-  // seriesList: [{ key, label, valueByWeek, color, total }]
-  const W = 640, H = 220;
-  const padL = 40, padR = 12, padT = 12, padB = 36;
-  const chartW = W - padL - padR;
+  const H = 180; // SVG pixel height (also viewBox height for square-ish scaling of x-step)
+  const VBW = 640;
+  const padL = 4, padR = 4, padT = 6, padB = 6;
+  const chartW = VBW - padL - padR;
   const chartH = H - padT - padB;
   const allVals = [];
   (seriesList || []).forEach(s => {
@@ -1096,47 +1098,72 @@ function MultiLineChart({ weeks, seriesList }) {
   const yOf = v => padT + chartH - (v / max) * chartH;
   const xOf = i => padL + i * stepX;
   const fmtAxis = (n) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`;
-  // Y gridlines at 0 / 25% / 50% / 75% / 100%
-  const gridSteps = [0, 0.25, 0.5, 0.75, 1];
-  // X-axis labels: first, middle, last (dense weeks would be unreadable on phone)
+  // Y-axis labels top-to-bottom (100% at top, 0% at bottom).
+  const yLabels = [1, 0.75, 0.5, 0.25, 0].map(g => fmtAxis(max * g));
+  // X-axis labels: first / middle / last (dense weeks would overrun on phone).
   const xLabelIdx = weeks.length <= 2 ? weeks.map((_, i) => i) : [0, Math.floor((weeks.length - 1) / 2), weeks.length - 1];
+  const gridSteps = [0, 0.25, 0.5, 0.75, 1];
   return (
     <div>
-      <div style={{ width: "100%", overflow: "hidden" }}>
-        <svg width="100%" height="auto" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block" }}>
-          {/* Gridlines + Y labels */}
-          {gridSteps.map((g, i) => {
-            const y = padT + chartH - g * chartH;
-            return (
-              <g key={i}>
-                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke={T.slate100} strokeWidth={1} strokeDasharray={g === 0 ? "0" : "2 2"} />
-                <text x={padL - 4} y={y + 3} fontSize={10} fill={T.slate500} textAnchor="end">{fmtAxis(max * g)}</text>
-              </g>
-            );
-          })}
-          {/* X labels */}
-          {xLabelIdx.map(i => (
-            <text key={i} x={xOf(i)} y={H - padB + 14} fontSize={10} fill={T.slate500} textAnchor="middle">
-              {fmtMMDD(weeks[i])}
-            </text>
-          ))}
-          {/* Lines */}
-          {(seriesList || []).map(s => {
-            const pts = weeks.map((w, i) => ({ x: xOf(i), y: yOf(Number(s.valueByWeek?.[w]) || 0) }));
-            const dLine = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-            return (
-              <g key={s.key}>
-                <path d={dLine} fill="none" stroke={s.color} strokeWidth={2} />
-                {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={2.5} fill={s.color} />)}
-              </g>
-            );
-          })}
-        </svg>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 4 }}>
+        {/* Y-axis labels (HTML, fixed 10px) */}
+        <div style={{
+          display: "flex", flexDirection: "column", justifyContent: "space-between",
+          fontSize: 10, color: T.slate500, textAlign: "right",
+          paddingRight: 4, height: H, flexShrink: 0,
+        }}>
+          {yLabels.map((lbl, i) => <span key={i}>{lbl}</span>)}
+        </div>
+        {/* Chart area */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <svg
+            width="100%" height={H}
+            viewBox={`0 0 ${VBW} ${H}`}
+            preserveAspectRatio="none"
+            style={{ display: "block" }}
+          >
+            {gridSteps.map((g, i) => {
+              const y = padT + chartH - g * chartH;
+              return (
+                <line
+                  key={i} x1={padL} y1={y} x2={VBW - padR} y2={y}
+                  stroke={T.slate200}
+                  strokeWidth={g === 0 ? 1 : 1}
+                  strokeDasharray={g === 0 ? "0" : "2 3"}
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })}
+            {(seriesList || []).map(s => {
+              const pts = weeks.map((w, i) => ({ x: xOf(i), y: yOf(Number(s.valueByWeek?.[w]) || 0) }));
+              const dLine = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+              return (
+                <path
+                  key={s.key}
+                  d={dLine}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })}
+          </svg>
+          {/* X-axis labels (HTML, fixed 10px) */}
+          <div style={{
+            display: "flex", justifyContent: "space-between",
+            fontSize: 10, color: T.slate500, marginTop: 4,
+          }}>
+            {xLabelIdx.map(i => <span key={i}>{fmtMMDD(weeks[i])}</span>)}
+          </div>
+        </div>
       </div>
-      {/* Legend */}
+      {/* Legend (HTML, matches title at 11px) */}
       <div style={{
         display: "flex", flexWrap: "wrap", gap: 10,
-        marginTop: 8, fontSize: 12,
+        marginTop: 10, fontSize: 11,
       }}>
         {(seriesList || []).map(s => (
           <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
