@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
+import { fmtMoney } from "../lib/format.jsx";
 
 // ============================================================
 // Newtworks TASKS & GOALS MODULE v1.3
@@ -171,7 +172,7 @@ const MOCK_GOALS = [
 // ─── Helpers ──────────────────────────────────────────────────
 const pct = (curr, target) => Math.min(100, Math.round((curr / target) * 100));
 const fmt = (n, unit) => {
-  if (unit === "dollars") return "$" + n.toLocaleString();
+  if (unit === "dollars") return fmtMoney(n, { decimals: 0, dashOnInvalid: false });
   if (unit === "percentage") return n + "%";
   return n.toString();
 };
