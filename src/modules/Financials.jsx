@@ -1641,13 +1641,29 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
     return <span style={{ color }}>{text}</span>;
   };
 
+  // P&L uses accounting-format for negatives: parentheses instead of a
+  // minus sign, and red color. fmt() handles positives + zero + non-finite
+  // via the module-wide convention; here we override for negatives so a
+  // loss shows as ($1,234) in red, not $-1,234 in slate.
   const renderValue = (raw, colIdx) => {
-    const dollar = fmt(raw);
-    if (!showPct) return dollar;
+    const v = Number(raw);
+    const isNeg = Number.isFinite(v) && v < 0;
+    let dollar;
+    if (!Number.isFinite(v) || v === 0) {
+      dollar = "—";
+    } else if (isNeg) {
+      dollar = `($${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 0 })})`;
+    } else {
+      dollar = fmt(v);
+    }
+    const dollarNode = isNeg
+      ? <span style={{ color: T.red }}>{dollar}</span>
+      : dollar;
+    if (!showPct) return dollarNode;
     const denom = totalIncomeByCol[colIdx] || 0;
-    if (!denom) return dollar;
+    if (!denom) return dollarNode;
     const pct = (raw / denom) * 100;
-    return <>{dollar}<span style={{ color: T.slate400, fontSize: 10, marginLeft: 4 }}>· {pct.toFixed(1)}%</span></>;
+    return <>{dollarNode}<span style={{ color: T.slate400, fontSize: 10, marginLeft: 4 }}>· {pct.toFixed(1)}%</span></>;
   };
 
   const cellBase = (isTotal, isDelta) => ({
