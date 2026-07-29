@@ -289,10 +289,27 @@ async function handleSave(supa: any, cand: any, body: any) {
 }
 
 async function handleFinalize(supa: any, cand: any) {
-  // Peter directive (session_note 2026-07-28 v1 step 10.1): downstream CandidateDetail reads
-  // traits_as_row live per stint, so no write to hiring_candidates here. Just recompute both
-  // stints for observability + return done.
+  // Peter directive 2026-07-29 (path a): write merged v1 trait output into the
+  // flat hiring_candidates columns so existing consumers (v_hiring_candidates,
+  // 7 assessment_role_fit_<role> fns, verdict_overall, CandidateDetail Results
+  // matrix) render v1 candidates without a rewire. Coexistence-safe with CTS
+  // PDF ingest — each candidate is populated by exactly one source. Path (b)
+  // cleanup (rewire consumers to call compute_newtworks_v1_traits_as_row
+  // directly) tracked in open_questions and revisited once CTS retires
+  // (OQ 2317444c).
   try {
+    // Merged read (p_stint = NULL) scores stint 1 + stint 2 items together on
+    // sitting=1. That merged score is what lands in the flat columns.
+    const { data: pm, error: pmErr } = await supa.rpc(
+      "compute_newtworks_v1_traits_as_row",
+      { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
+    );
+    if (pmErr) {
+      return json({ error: "merged_compute_failed", detail: pmErr.message }, 500);
+    }
+    const rm = Array.isArray(pm) ? pm[0] : pm;
+
+    // Per-stint reads kept for the response payload / observability.
     const { data: p1 } = await supa.rpc("compute_newtworks_v1_traits_as_row", {
       p_candidate_id: cand.id,
       p_stint: 1,
@@ -305,9 +322,48 @@ async function handleFinalize(supa: any, cand: any) {
     });
     const r1 = Array.isArray(p1) ? p1[0] : p1;
     const r2 = Array.isArray(p2) ? p2[0] : p2;
+
+    // Guard: only write flat columns when we actually have something scored.
+    // Blocks a premature finalize from wiping existing CTS-source data with
+    // NULLs. Requires both n_items_scored > 0 and overall_score not null.
+    let updated = false;
+    let update_skip_reason: string | null = null;
+    if ((rm?.n_items_scored ?? 0) > 0 && rm?.overall_score != null) {
+      const { error: upErr } = await supa
+        .from("hiring_candidates")
+        .update({
+          assertiveness:       rm.assertiveness       ?? null,
+          independent_spirit:  rm.independent_spirit  ?? null,
+          compassion:          rm.compassion          ?? null,
+          belief_in_others:    rm.belief_in_others    ?? null,
+          optimism:            rm.optimism            ?? null,
+          analytical:          rm.analytical          ?? null,
+          deadline_motivation: rm.deadline_motivation ?? null,
+          self_promotion:      rm.self_promotion      ?? null,
+          recognition_drive:   rm.recognition_drive   ?? null,
+          overall_score:       rm.overall_score       ?? null,
+          assessment_date:     new Date().toISOString().slice(0, 10),
+        })
+        .eq("id", cand.id)
+        .eq("agency_id", AGENCY_ID);
+      if (upErr) {
+        return json({ error: "flat_update_failed", detail: upErr.message }, 500);
+      }
+      updated = true;
+    } else {
+      update_skip_reason =
+        (rm?.n_items_scored ?? 0) === 0 ? "no_items_scored" : "overall_score_null";
+    }
+
     return json({
       ok: true,
       done: true,
+      updated,
+      update_skip_reason,
+      merged: {
+        n_items_scored: rm?.n_items_scored ?? 0,
+        overall_score: rm?.overall_score ?? null,
+      },
       stint_1: {
         n_items_scored: r1?.n_items_scored ?? 0,
         overall_score: r1?.overall_score ?? null,
