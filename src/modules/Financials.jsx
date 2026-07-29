@@ -1729,11 +1729,15 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
     // computed outside this function against unfiltered incomeRows /
     // expenseRows, so they still reflect all activity (blank rows
     // contribute $0 so mathematically nothing shifts).
+    // Peter directive 2026-07-29: hide any row that shows $0 across every
+    // visible period column. Prior-year comparison delta is NOT a reason to
+    // keep a blank row visible — we only care about actual current-period
+    // activity. This diverges from the 2026-07-17 rule which also required
+    // priors to round to $0.
     const isBlankAcrossAllCols = (line) =>
       columns.every(c => {
         const v = c.getValue(line) || 0;
-        const p = c.getPriorValue ? (c.getPriorValue(line) || 0) : 0;
-        return Math.abs(v) < 0.005 && Math.abs(p) < 0.005;
+        return Math.abs(v) < 0.005;
       });
     const visibleLines = lines.filter(l => !isBlankAcrossAllCols(l));
 
@@ -1946,11 +1950,13 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
                 rounds to $0 across every visible column (blank-row filter). */}
             {(() => {
               if (subsidiaryRows.length === 0) return null;
+              // Peter directive 2026-07-29: hide subsidiary rows that show
+              // $0 across every visible period; prior-year delta is not a
+              // reason to keep them.
               const visibleSubs = subsidiaryRows.filter(line =>
                 columns.some(c => {
                   const v = c.getValue(line) || 0;
-                  const p = c.getPriorValue ? (c.getPriorValue(line) || 0) : 0;
-                  return Math.abs(v) >= 0.005 || Math.abs(p) >= 0.005;
+                  return Math.abs(v) >= 0.005;
                 })
               );
               if (visibleSubs.length === 0) return null;
