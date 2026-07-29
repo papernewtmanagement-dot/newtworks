@@ -4,6 +4,7 @@ import { T } from "../lib/theme.js";
 
 
 import { useTabParam } from "../lib/routing.jsx";
+import { fmtMoney } from "../lib/format.jsx";
 // ============================================================
 // Newtworks BOOK MODULE
 // Newtworks — State Farm Agent Edition
@@ -59,12 +60,7 @@ const TabBar = ({ tabs, active, onChange }) => (
   </div>
 );
 
-const fmt = (n) => {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return "—";
-  if (v === 0) return "—";
-  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 });
-};
+const fmt = (n) => fmtMoney(n, { decimals: 0, dashOnZero: true });
 
 // ============================================================
 // TAB 1 — Book Snapshot (agency size + growth, all horizons side-by-side)
