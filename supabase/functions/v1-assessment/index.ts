@@ -355,6 +355,27 @@ async function handleFinalize(supa: any, cand: any) {
         (rm?.n_items_scored ?? 0) === 0 ? "no_items_scored" : "overall_score_null";
     }
 
+    // Status flip on completion (Peter directive 2026-07-29, OQ 26e829ec).
+    // Only advances 'applied' -> 'assessed'. Never touches declined/hired/former
+    // or already-assessed rows. Failure never blocks the finalize response.
+    let status_flipped = false;
+    if (updated) {
+      try {
+        const { data: flipped, error: flipErr } = await supa
+          .from("hiring_candidates")
+          .update({ status: "assessed" })
+          .eq("id", cand.id)
+          .eq("agency_id", AGENCY_ID)
+          .eq("status", "applied")
+          .select("id");
+        if (!flipErr && Array.isArray(flipped) && flipped.length > 0) {
+          status_flipped = true;
+        }
+      } catch (_e) {
+        // Silent — status flip is a convenience, not a blocker.
+      }
+    }
+
     // Completion notification (Peter directive 2026-07-29, OQ 78fc2c06).
     // Fires exactly once per candidate: alert row + Telegram DM to Peter via
     // @paper_newt_bot. Dedup key = alerts row with (alert_type, related_id).
@@ -460,6 +481,7 @@ async function handleFinalize(supa: any, cand: any) {
       done: true,
       updated,
       update_skip_reason,
+      status_flipped,
       notification_fired,
       notification_skip_reason,
       merged: {
