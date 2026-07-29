@@ -112,9 +112,23 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
   };
 }
 
-// Reduce trigger rows to a unique set of (section, trait) targets with combined cap.
+// Expansion target — describes a filtered slice of stint=2 items to serve.
+// Supports the four trigger actions defined in hiregauge_expansion_triggers:
+//   expand_trait_stint_2               — section + trait filter (per-trait borderline)
+//   expand_cognitive                   — section filter only (borderline overall cognitive)
+//   expand_impression_mgmt_and_nonsense — impression-mgmt section AND vct nonsense subset
+//   expand_retest_pairs                — any section, retest_of_item_number NOT NULL
+type ExpansionTarget = {
+  section: string | null;      // null = any section
+  trait: string | null;        // null = any trait
+  nonsense_only: boolean;      // filter is_nonsense = true
+  retest_only: boolean;        // filter retest_of_item_number NOT NULL
+  cap: number | null;          // limit item count, null = all
+};
+
+// Reduce trigger rows to a unique set of expansion targets.
 // null cap means "all matching items" — null always beats any numeric cap.
-async function loadExpansionTargets(supa: any, candidateId: string) {
+async function loadExpansionTargets(supa: any, candidateId: string): Promise<ExpansionTarget[]> {
   const { data, error } = await supa.rpc("compute_newtworks_v1_traits_as_row", {
     p_candidate_id: candidateId,
     p_stint: 1,
@@ -125,21 +139,78 @@ async function loadExpansionTargets(supa: any, candidateId: string) {
   const row = Array.isArray(data) ? data[0] : data;
   const triggers = (row?.expansion_triggers ?? []) as any[];
 
-  const map = new Map<string, { section: string; trait: string; cap: number | null }>();
-  for (const t of triggers) {
-    if (t?.action !== "expand_trait_stint_2") continue;
-    if (!t?.expansion_section || !t?.expansion_trait) continue;
-    const k = `${t.expansion_section}::${t.expansion_trait}`;
-    const cap = t.expansion_count ?? null;
-    const existing = map.get(k);
+  const map = new Map<string, ExpansionTarget>();
+
+  const addTarget = (tgt: ExpansionTarget) => {
+    const key = `${tgt.section ?? "*"}::${tgt.trait ?? "*"}::${tgt.nonsense_only}::${tgt.retest_only}`;
+    const existing = map.get(key);
     if (!existing) {
-      map.set(k, { section: t.expansion_section, trait: t.expansion_trait, cap });
-    } else if (cap === null) {
-      existing.cap = null; // "all" wins over any numeric cap
-    } else if (existing.cap !== null && cap > existing.cap) {
-      existing.cap = cap;
+      map.set(key, tgt);
+    } else if (tgt.cap === null) {
+      existing.cap = null;
+    } else if (existing.cap !== null && tgt.cap > existing.cap) {
+      existing.cap = tgt.cap;
+    }
+  };
+
+  for (const t of triggers) {
+    switch (t?.action) {
+      case "expand_trait_stint_2":
+        if (!t?.expansion_section || !t?.expansion_trait) break;
+        addTarget({
+          section: t.expansion_section,
+          trait: t.expansion_trait,
+          nonsense_only: false,
+          retest_only: false,
+          cap: t.expansion_count ?? null,
+        });
+        break;
+
+      case "expand_cognitive":
+        addTarget({
+          section: t.expansion_section || "cognitive",
+          trait: null,
+          nonsense_only: false,
+          retest_only: false,
+          cap: t.expansion_count ?? null,
+        });
+        break;
+
+      case "expand_impression_mgmt_and_nonsense":
+        // Two-part expansion: impression-management section plus fake-vocab
+        // items from the validity check section. Both fire together.
+        addTarget({
+          section: t.expansion_section || "newtworks_v1_impression_mgmt",
+          trait: null,
+          nonsense_only: false,
+          retest_only: false,
+          cap: t.expansion_count ?? null,
+        });
+        addTarget({
+          section: "newtworks_v1_vct",
+          trait: null,
+          nonsense_only: true,
+          retest_only: false,
+          cap: null,
+        });
+        break;
+
+      case "expand_retest_pairs":
+        // Retest items span sections; only filter by retest flag.
+        // No stint=2 retest content authored yet — serves 0 until content lands.
+        addTarget({
+          section: null,
+          trait: null,
+          nonsense_only: false,
+          retest_only: true,
+          cap: t.expansion_count ?? null,
+        });
+        break;
+
+      // Unknown action — ignore silently.
     }
   }
+
   return Array.from(map.values());
 }
 
@@ -215,10 +286,12 @@ async function handleServe(supa: any, cand: any) {
           "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait"
         )
         .eq("stint", 2)
-        .eq("is_active", true)
-        .eq("section", tgt.section)
-        .eq("hypothesized_trait", tgt.trait)
-        .order("item_number", { ascending: true });
+        .eq("is_active", true);
+      if (tgt.section) q = q.eq("section", tgt.section);
+      if (tgt.trait) q = q.eq("hypothesized_trait", tgt.trait);
+      if (tgt.nonsense_only) q = q.eq("is_nonsense", true);
+      if (tgt.retest_only) q = q.not("retest_of_item_number", "is", null);
+      q = q.order("item_number", { ascending: true });
       if (tgt.cap != null) q = q.limit(tgt.cap);
       const { data: batch, error: bErr } = await q;
       if (bErr) return json({ error: "expansion_fetch_failed", detail: bErr.message }, 500);
