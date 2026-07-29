@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
+import { fmtMoney } from "../lib/format.jsx";
 
 // ============================================================
 // Newtworks CASH REGISTER MODULE v1.0
@@ -20,7 +21,7 @@ import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
 import { useTabParam } from "../lib/routing.jsx";
-const fmt = (n) => new Intl.NumberFormat("en-US", { style:"currency", currency:"USD" }).format(n ?? 0);
+const fmt = (n) => fmtMoney(n ?? 0, { decimals: 2, dashOnInvalid: false });
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) : "—";
 
 // ─── Status Badge ─────────────────────────────────────────────
