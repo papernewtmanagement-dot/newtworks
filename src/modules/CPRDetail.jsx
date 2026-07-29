@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
+import { fmtMoney as _fmtMoney } from "../lib/format.jsx";
 
 // =============================================================
 // CPR DETAIL PAGE — Full weekly report
@@ -62,18 +63,8 @@ function fmtMMDD(iso) {
 }
 
 // ── Formatters ───────────────────────────────────────────────
-const fmtMoney = (n) => {
-  if (n === null || n === undefined || n === "") return "—";
-  const v = Number(n);
-  if (!isFinite(v)) return "—";
-  return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-};
-const fmtMoneyCents = (n) => {
-  if (n === null || n === undefined || n === "") return "—";
-  const v = Number(n);
-  if (!isFinite(v) || v === 0) return "—";
-  return v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
+const fmtMoney      = (n) => _fmtMoney(n, { decimals: 0 });
+const fmtMoneyCents = (n) => _fmtMoney(n, { decimals: 2, dashOnZero: true });
 const fmtInt = (n) => {
   if (n === null || n === undefined || n === "") return "—";
   const v = Number(n);
