@@ -898,13 +898,13 @@ const OwnerProfitPaceCard = ({ data }) => {
         <div>
           <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600, marginBottom: 4, letterSpacing: "0.04em" }}>LATEST CLOSED QUARTER</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: latest.margin >= 0 ? T.green : T.red }}>{latest.margin.toFixed(1)}%</div>
-          <div style={{ fontSize: 10, color: T.slate500 }}>Q{latest.quarter} {latest.year} · {fmt(Math.round(latest.revenue))} rev</div>
+          <div style={{ fontSize: 10, color: T.slate500 }}>Q{latest.quarter} {latest.year} · {fmtMoneyR(Math.round(latest.revenue))} rev</div>
         </div>
         {prior && (
           <div>
             <div style={{ fontSize: 10, color: T.slate500, fontWeight: 600, marginBottom: 4, letterSpacing: "0.04em" }}>PRIOR QUARTER</div>
             <div style={{ fontSize: 26, fontWeight: 800, color: prior.margin >= 0 ? T.green : T.red }}>{prior.margin.toFixed(1)}%</div>
-            <div style={{ fontSize: 10, color: T.slate500 }}>Q{prior.quarter} {prior.year} · {fmt(Math.round(prior.revenue))} rev</div>
+            <div style={{ fontSize: 10, color: T.slate500 }}>Q{prior.quarter} {prior.year} · {fmtMoneyR(Math.round(prior.revenue))} rev</div>
           </div>
         )}
         <div>
@@ -1017,9 +1017,9 @@ const OverviewSection = ({ period, setPeriod, data }) => {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
-        <KPICard label="Revenue" value={fmt(revenue)} sub={period==="ytd"?`↑ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
-        <KPICard label="Expenses" value={fmt(expenses)} sub="Cash basis" border={T.amber} />
-        <KPICard label="Net Income" value={fmt(netIncome)} color={netIncome >= 0 ? T.green : T.red} border={netIncome >= 0 ? T.green : T.red} />
+        <KPICard label="Revenue" value={fmtMoneyR(revenue)} sub={period==="ytd"?`↑ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
+        <KPICard label="Expenses" value={fmtMoneyR(expenses)} sub="Cash basis" border={T.amber} />
+        <KPICard label="Net Income" value={fmtMoneyR(netIncome)} color={netIncome >= 0 ? T.green : T.red} border={netIncome >= 0 ? T.green : T.red} />
         <KPICard label="Expense Ratio" value={expRatio} sub="Target: <45%" border={T.slate200} />
       </div>
 
@@ -1035,7 +1035,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
             <div key={i} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
                 <span style={{ color: T.slate600 }}>{item.name}</span>
-                <span style={{ fontWeight: 600, color: T.slate900 }}>{fmt(item.mtd)}</span>
+                <span style={{ fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(item.mtd)}</span>
               </div>
               <ProgressBar value={item.mtd || 0} max={data?.summary?.revenueMTD || 1} color={T.blue} />
             </div>
@@ -1055,11 +1055,11 @@ const OverviewSection = ({ period, setPeriod, data }) => {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Spent YTD</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmt(data.growthBudget.total_ytd)}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.total_ytd)}</div>
               </div>
               <div>
                 <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Annual Ceiling</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmt(data.growthBudget.ceiling_annual)}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.ceiling_annual)}</div>
               </div>
             </div>
             <div style={{ marginBottom: 10 }}>
@@ -1078,12 +1078,12 @@ const OverviewSection = ({ period, setPeriod, data }) => {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11, color: T.slate600 }}>
               <div>
                 <div style={{ color: T.slate500, marginBottom: 2 }}>Salary Ramp</div>
-                <div style={{ fontWeight: 600, color: T.slate900 }}>{fmt(data.growthBudget.salary_ramp_ytd)}</div>
+                <div style={{ fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.salary_ramp_ytd)}</div>
                 <div style={{ fontSize: 10, color: T.slate400 }}>{data.growthBudget.new_hires_ramping} ramping · {data.growthBudget.weeks_ramping_ytd} weeks</div>
               </div>
               <div>
                 <div style={{ color: T.slate500, marginBottom: 2 }}>Licensing (6715)</div>
-                <div style={{ fontWeight: 600, color: T.slate900 }}>{fmt(data.growthBudget.licensing_ytd)}</div>
+                <div style={{ fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.licensing_ytd)}</div>
                 <div style={{ fontSize: 10, color: T.slate400 }}>{data.growthBudget.licensing_entries} entries</div>
               </div>
             </div>
@@ -1297,7 +1297,7 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
               {_drillDateFmt(ctx.fromDate)} → {_drillDateFmt(ctx.toDate)}
             </div>
             <div style={{ fontSize: 13, color: T.slate700, marginTop: 6 }}>
-              {rows.length} transaction{rows.length !== 1 ? "s" : ""} · <span style={{ fontWeight: 600 }}>{fmt(total)}</span>
+              {rows.length} transaction{rows.length !== 1 ? "s" : ""} · <span style={{ fontWeight: 600 }}>{fmtMoneyR(total)}</span>
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: T.slate500, lineHeight: 1, padding: 4 }}>×</button>
@@ -1322,7 +1322,7 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
                   <>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
                       <div style={{ fontSize: 11, color: T.slate500 }}>{String(row.entry_date).split("T")[0]}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>{fmt(row.amount)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(row.amount)}</div>
                     </div>
                     <div style={{ fontSize: 13, color: T.slate800, marginTop: 2, wordBreak: "break-word" }}>
                       {row.description || row.account_name || <span style={{ color: T.slate400, fontStyle: "italic" }}>(no description)</span>}
@@ -1345,7 +1345,7 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                       <div style={{ fontSize: 11, color: T.slate500 }}>Editing txn</div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>
-                        {fmt(row.amount)} <span style={{ fontSize: 10, color: T.slate400, fontWeight: 400 }}>(amount not editable)</span>
+                        {fmtMoneyR(row.amount)} <span style={{ fontSize: 10, color: T.slate400, fontWeight: 400 }}>(amount not editable)</span>
                       </div>
                     </div>
                     <label style={_drillLabel}>Date
@@ -2212,7 +2212,7 @@ const CompRecapSection = ({ data }) => {
         <tfoot>
           <tr style={{ borderTop: `2px solid ${T.slate800}` }}>
             <td style={{ padding: "10px 8px 10px 20px", fontSize: 12, fontWeight: 700, color: T.slate900 }}>Grand total</td>
-            <td style={{ padding: "10px 8px", fontSize: 11, textAlign: "center", color: T.slate500 }}>AIPP: {fmt(grandAippTot)}</td>
+            <td style={{ padding: "10px 8px", fontSize: 11, textAlign: "center", color: T.slate500 }}>AIPP: {fmtMoneyR(grandAippTot)}</td>
             <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(grandH1)}</td>
             <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(grandH2)}</td>
             <td style={{ padding: "10px 8px", fontSize: 13, fontWeight: 700, color: T.blue, textAlign: "right" }}>{money(grandTotal)}</td>
@@ -2375,9 +2375,9 @@ const PayrollSection = ({ data }) => {
                     </td>
                     <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>{r.pay_period||r.period}</td>
                     <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate600 }}>{r.pay_date||r.payDate||"-"}</td>
-                    <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(r.gross)}</td>
-                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.taxes||0))}</td>
-                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.net||0))}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmtMoneyR(r.gross)}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmtMoneyR(parseFloat(r.taxes||0))}</td>
+                    <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmtMoneyR(parseFloat(r.net||0))}</td>
                     <td style={{ padding: "9px 8px", textAlign: "right" }}>
                       <Pill type="success">{r.status}</Pill>
                     </td>
@@ -2477,11 +2477,11 @@ const PayrollRunDrilldown = ({ drill }) => {
                     <div style={{ fontSize: 10, color: T.slate500 }}>{p.role_level || (p.is_admin_backoffice ? "Admin" : "—")}{p.team_entity_name ? ` · ${p.team_entity_name}` : ""}</div>
                   </td>
                   <td style={{ padding: "6px 8px", fontSize: 11 }}>{routePill}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: 500 }}>{fmt(parseFloat(p.gross_pay || 0))}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmt(parseFloat(p.employer_taxes || 0))}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate800 }}>{isPN ? "—" : fmt(parseFloat(p.growth_share || 0))}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate800 }}>{isPN ? "—" : fmt(parseFloat(p.team_share || 0))}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate700 }}>{isPN ? "—" : fmt(parseFloat(p.reimb || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: 500 }}>{fmtMoneyR(parseFloat(p.gross_pay || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmtMoneyR(parseFloat(p.employer_taxes || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate800 }}>{isPN ? "—" : fmtMoneyR(parseFloat(p.growth_share || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate800 }}>{isPN ? "—" : fmtMoneyR(parseFloat(p.team_share || 0))}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right", color: isPN ? T.slate300 : T.slate700 }}>{isPN ? "—" : fmtMoneyR(parseFloat(p.reimb || 0))}</td>
                   <td style={{ padding: "6px 8px", fontSize: 11, textAlign: "right", color: T.slate500 }}>
                     {isPN ? "—" : (
                       p.weeks_in == null ? "no start" :
@@ -2500,11 +2500,11 @@ const PayrollRunDrilldown = ({ drill }) => {
             <tfoot>
               <tr style={{ borderTop: `2px solid ${T.slate300}`, background: "#f8fafc" }}>
                 <td style={{ padding: "8px", fontSize: 11, fontWeight: 600, color: T.slate700 }} colSpan={2}>Totals</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", fontWeight: 600, color: T.slate900 }}>{fmt(people.reduce((s,p) => s + parseFloat(p.gross_pay || 0), 0))}</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmt(people.reduce((s,p) => s + parseFloat(p.employer_taxes || 0), 0))}</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate800, fontWeight: 500 }}>{fmt(grTotal)}</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate800, fontWeight: 500 }}>{fmt(tmTotal)}</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmt(rbTotal)}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(people.reduce((s,p) => s + parseFloat(p.gross_pay || 0), 0))}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmtMoneyR(people.reduce((s,p) => s + parseFloat(p.employer_taxes || 0), 0))}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate800, fontWeight: 500 }}>{fmtMoneyR(grTotal)}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate800, fontWeight: 500 }}>{fmtMoneyR(tmTotal)}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate700 }}>{fmtMoneyR(rbTotal)}</td>
                 <td style={{ padding: "8px", fontSize: 11, textAlign: "right", color: T.slate500 }}></td>
               </tr>
             </tfoot>
@@ -2516,7 +2516,7 @@ const PayrollRunDrilldown = ({ drill }) => {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
           <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>PaperNewt-direct</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(pnTotal)}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(pnTotal)}</div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{pnPeople.length} person{pnPeople.length === 1 ? "" : "s"} · COA-PN-001 / PN-002</div>
           {jeByLeg["PAPERNEWT"] && (
             <div style={{ fontSize: 10, color: T.slate600, marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
@@ -2526,17 +2526,17 @@ const PayrollRunDrilldown = ({ drill }) => {
         </div>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
           <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Growth</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(grTotal)}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(grTotal)}</div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Fixed × ramp · COA-SUB-086</div>
         </div>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
           <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Team</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(tmTotal)}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(tmTotal)}</div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Post-ramp fixed + variable + ER taxes · COA-SUB-087</div>
         </div>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
           <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Intercompany credit</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmt(icTotal)}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(icTotal)}</div>
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Agency owes PN · COA-IC-001</div>
           {jeByLeg["AGENCY"] && (
             <div style={{ fontSize: 10, color: T.slate600, marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
@@ -2631,7 +2631,7 @@ const BankSection = ({ data }) => {
         )}
         <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>Last Statement</div>
         <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>
-          {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending upload</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
+          {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending upload</span> : hasStmt ? fmtMoneyR(a.lastStmtBalance) : "—"}
         </div>
         <div style={{ fontSize: 9, color: T.slate400, marginTop: 1 }}>
           {stmtIsAwaiting ? "Statement not on hand" :
@@ -2641,7 +2641,7 @@ const BankSection = ({ data }) => {
         <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
         <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Register Now</div>
         <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-          {fmt(a.balance)}
+          {fmtMoneyR(a.balance)}
         </div>
         <div style={{ fontSize: 9, color: deltaColor, marginTop: 2 }}>
           {a.needsStatement ? "No balance yet" :
@@ -2669,7 +2669,7 @@ const BankSection = ({ data }) => {
         </div>
         <Card style={{ background: T.slate900, border: "none" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
-          <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmt(totalCash)}</div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmtMoneyR(totalCash)}</div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>All accounts combined</div>
         </Card>
       </div>
@@ -2696,7 +2696,7 @@ const BankSection = ({ data }) => {
         <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>{label}</div>
         <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{count} account{count === 1 ? "" : "s"}</div>
       </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800, letterSpacing: "-0.02em" }}>{fmt(subtotal)}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotal)}</div>
     </div>
   );
 
@@ -2724,7 +2724,7 @@ const BankSection = ({ data }) => {
       )}
       <Card style={{ background: T.slate900, border: "none" }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
-        <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmt(totalCash)}</div>
+        <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmtMoneyR(totalCash)}</div>
         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
           {bankAccounts.length === allBankAccounts.length ? "All accounts combined" : `${bankAccounts.length} of ${allBankAccounts.length} accounts (subtree)`}
         </div>
@@ -2821,15 +2821,15 @@ const CreditSection = ({ data }) => {
         <div style={{ minWidth: 105, flex: "0 1 auto" }}>
           <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Stmt</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>
-            {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmt(a.lastStmtBalance) : "—"}
+            {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmtMoneyR(a.lastStmtBalance) : "—"}
           </div>
           <div style={{ fontSize: 9, color: T.slate400 }}>
             {stmtIsAwaiting ? "Not on hand" : hasStmt ? (stmtIsEstimate ? `${stmtDateLabel} · est` : stmtDateLabel) : ""}
           </div>
         </div>
-        <Field label="Register" value={fmt(a.balance)} color={T.red} />
-        {a.limit ? <Field label="Available" value={fmt(a.limit - a.balance)} color={T.green} /> : null}
-        {a.payment ? <Field label="Min Pmt" value={fmt(a.payment)} color={T.amber} /> : null}
+        <Field label="Register" value={fmtMoneyR(a.balance)} color={T.red} />
+        {a.limit ? <Field label="Available" value={fmtMoneyR(a.limit - a.balance)} color={T.green} /> : null}
+        {a.payment ? <Field label="Min Pmt" value={fmtMoneyR(a.payment)} color={T.amber} /> : null}
         {a.dueDay ? <Field label="Due" value={`Day ${a.dueDay}`} color={T.slate700} minWidth={60} /> : null}
         {a.limit ? (
           <div style={{ minWidth: 110, flex: "0 1 auto" }}>
@@ -2845,8 +2845,8 @@ const CreditSection = ({ data }) => {
 
   const kpis = (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
-      <KPICard label="Total Debt Exposure" value={fmt(totalDebt)} color={T.red} border={T.red} />
-      <KPICard label="Available Credit" value={fmt(totalAvailable)} color={T.green} border={T.green} />
+      <KPICard label="Total Debt Exposure" value={fmtMoneyR(totalDebt)} color={T.red} border={T.red} />
+      <KPICard label="Available Credit" value={fmtMoneyR(totalAvailable)} color={T.green} border={T.green} />
       <KPICard label="Accounts Tracked" value={String(accounts.length)} sub={accounts.length === allAccounts.length ? "Balances from ledger" : `of ${allAccounts.length} agency-wide`} border={T.amber} />
     </div>
   );
@@ -2881,7 +2881,7 @@ const CreditSection = ({ data }) => {
         <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>{label}</div>
         <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{count} account{count === 1 ? "" : "s"}</div>
       </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: T.red, letterSpacing: "-0.02em" }}>{fmt(subtotalDebt)}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.red, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotalDebt)}</div>
     </div>
   );
 
@@ -2970,7 +2970,7 @@ const BalanceSheetSection = ({ data }) => {
         {name}
         {!bold && entityId && <EntityPill id={entityId} />}
       </td>
-      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 700 : 400, color: amount < 0 ? T.red : bold ? T.slate900 : T.slate700 }}>{fmt(Math.round(amount))}</td>
+      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 700 : 400, color: amount < 0 ? T.red : bold ? T.slate900 : T.slate700 }}>{fmtMoneyR(Math.round(amount))}</td>
     </tr>
   );
 
@@ -3076,8 +3076,8 @@ const GLSection = ({ data }) => {
                     }}>{entName}</span>
                   ) : <span style={{ color: T.slate400 }}>—</span>}
                 </td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmt(r.debit) : "—"}</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmt(r.credit) : "—"}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmtMoneyR(r.debit) : "—"}</td>
+                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmtMoneyR(r.credit) : "—"}</td>
               </tr>
             );
           })}
@@ -3121,7 +3121,7 @@ const PrintTable = ({ title, sub, rows, cols }) => (
           <tr key={i} style={{ borderBottom: "1px solid #E2E8F0", background: r.bold ? "#F8FAFC" : "transparent" }}>
             {r.cells.map((cell,j) => (
               <td key={j} style={{ padding: "5px 6px", textAlign: j === 0 ? "left" : "right", fontWeight: r.bold ? 700 : 400, paddingLeft: (j === 0 && r.indent) ? 20 : 6, color: (typeof cell === "number" && cell < 0) ? "#EF4444" : "#1E293B" }}>
-                {typeof cell === "number" ? fmt(Math.round(cell)) : cell}
+                {typeof cell === "number" ? fmtMoneyR(Math.round(cell)) : cell}
               </td>
             ))}
           </tr>
