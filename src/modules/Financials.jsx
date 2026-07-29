@@ -1,5 +1,6 @@
  import { useState, useEffect, Fragment } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
+import { fmtMoney, fmtMoneyR } from "../lib/format.jsx";
 import CashRegister from "./CashRegister.jsx";
 import Documents from "./Documents.jsx";
 import MonthlyClose from "./MonthlyClose.jsx";
@@ -710,7 +711,10 @@ function useFinancialsData(entity) {
 
 
 // ─── Helpers ─────────────────────────────────────────────────
-const fmt = (n) => { const v = Number(n); if (!Number.isFinite(v)) return "—"; if (v === 0) return "—"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 0 }); };
+// Module-wide money formatter. Routes through the shared fmtMoney so
+// negatives render as ($1,234) instead of $-1,234. Preserves the
+// dash-on-zero behavior this module has always used.
+const fmt = (n) => fmtMoney(n, { decimals: 0, dashOnZero: true });
 const pct  = (n, t) => t ? Math.round((n / t) * 100) : 0;
 const yoy  = (curr, prior) => prior ? (((curr - prior) / prior) * 100).toFixed(1) : null;
 const monthYearLabel = (monthIdx1, year) => {
@@ -1641,24 +1645,12 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
     return <span style={{ color }}>{text}</span>;
   };
 
-  // P&L uses accounting-format for negatives: parentheses instead of a
-  // minus sign, and red color. fmt() handles positives + zero + non-finite
-  // via the module-wide convention; here we override for negatives so a
-  // loss shows as ($1,234) in red, not $-1,234 in slate.
+  // P&L accounting-format: fmtMoneyR renders negatives as red ($1,234)
+  // spans and positives / zero / non-finite as plain fmt strings. Same
+  // shape as before, now sourced from the shared helper so bank tab,
+  // payroll, dashboard, etc. can adopt the identical convention.
   const renderValue = (raw, colIdx) => {
-    const v = Number(raw);
-    const isNeg = Number.isFinite(v) && v < 0;
-    let dollar;
-    if (!Number.isFinite(v) || v === 0) {
-      dollar = "—";
-    } else if (isNeg) {
-      dollar = `($${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 0 })})`;
-    } else {
-      dollar = fmt(v);
-    }
-    const dollarNode = isNeg
-      ? <span style={{ color: T.red }}>{dollar}</span>
-      : dollar;
+    const dollarNode = fmtMoneyR(raw, { decimals: 0, dashOnZero: true });
     if (!showPct) return dollarNode;
     const denom = totalIncomeByCol[colIdx] || 0;
     if (!denom) return dollarNode;
