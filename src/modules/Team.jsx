@@ -2,6 +2,7 @@ import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CandidateDetail from "../components/CandidateDetail.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
+import { fmtMoney } from "../lib/format.jsx";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -233,10 +234,12 @@ function useProducerROI() {
 const layerColor = (v, t) => (v == null ? T.slate400 : v >= t.pass ? T.green   : v >= t.consider ? T.amber   : T.red);
 const layerBg    = (v, t) => (v == null ? T.slate50  : v >= t.pass ? T.greenLt : v >= t.consider ? T.amberLt : T.redLt);
 const pct = (a, t) => t ? Math.min(100, Math.round((a/t)*100)) : 0;
-const fmt = (n, unit) => unit === "dollars" ? "$"+n.toLocaleString() : unit === "percentage" ? n+"%" : n.toString();
+const fmt = (n, unit) => unit === "dollars"
+  ? fmtMoney(n, { decimals: 0, dashOnInvalid: false })
+  : unit === "percentage" ? n+"%" : n.toString();
 
 // ─── Seat Profitability helpers (folded in from SeatProfitabilitySection 2026-07-09) ──
-const fmt$ = (n) => "$" + Math.round(parseFloat(n) || 0).toLocaleString();
+const fmt$ = (n) => fmtMoney(n, { decimals: 0, dashOnInvalid: false });
 const profStatusColor = (s) => {
   if (s === 'green')  return { bg: T.greenLt, fg: '#065F46' };
   if (s === 'yellow') return { bg: T.amberLt, fg: '#92400E' };
