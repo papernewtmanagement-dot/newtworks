@@ -6498,16 +6498,16 @@ async function writeStatementBalance(opts: {
 // Gmail label routing per docType. Created 2026-07-14. Update this map when
 // adding a new docType. Nulls skip label-add (still removes INBOX).
 const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
-  bank_statement_primary:   "Label_22", // "Bank Statements"
-  bank_statement_secondary: "Label_22",
-  bank_statement_pfa:       "Label_28", // "PFA"
+  bank_statement_primary:   null, // deleted 2026-07-29 in Gmail-label reorg
+  bank_statement_secondary: null,
+  bank_statement_pfa:       null, // deleted 2026-07-29
   comp_recap_1h:            "Label_24", // "SF Compensation"
   comp_recap_daily:         "Label_24",
   deduction_statement:      "Label_25", // "SF Deductions"
   surepayroll_payroll:      "Label_26", // "Payroll"
   adp_payroll:              "Label_26",
-  commission_report:        "Label_27", // "Production"
-  team_production:          "Label_27",
+  commission_report:        null, // deleted 2026-07-29
+  team_production:          null,
   careerplug_applicant:     "Label_20", // "Applicants" (attachment pipeline)
 };
 
