@@ -171,11 +171,13 @@ function useFinancialsData(entity) {
           // subtree with per-row entity badge, same pattern as Bank/Credit/BS).
           // Bumped limit 50 → 200 so subtree filter has headroom before
           // starving the displayed list at 50.
+          // Entity now sourced from chart_of_accounts.business_entity_id (single
+          // source of truth), NOT from the redundant journal_lines column.
           supabase.from("journal_lines")
             .select(`
-              debit, credit, created_at, business_entity_id,
+              debit, credit, created_at,
               journal_entries!inner ( entry_date, reference_number, description, source ),
-              chart_of_accounts!inner ( account_name )
+              chart_of_accounts!inner ( account_name, business_entity_id )
             `)
             .order("created_at", { ascending: false }).limit(200),
 
@@ -674,7 +676,7 @@ function useFinancialsData(entity) {
             account:     g.chart_of_accounts?.account_name,
             debit:       parseFloat(g.debit  || 0),
             credit:      parseFloat(g.credit || 0),
-            businessEntityId: g.business_entity_id,   // Phase 6: subtree filter + entity badge
+            businessEntityId: g.chart_of_accounts?.business_entity_id,   // Phase 6: subtree filter + entity badge — entity flows through the account, not the line
           })),
           payroll,
           balanceSheet,
