@@ -2,8 +2,11 @@
 // generate-signature edge function
 // =========================================================================
 // Generates a per-team-member State Farm email signature package and emails
-// it to the team member's SF alias from paper.newt.management@gmail.com via
-// Composio Gmail. Peter is CC'd on every send.
+// it to the team member's SF alias from paper.newt.management@gmail.com.
+// Uses Composio only to fetch the connected account's OAuth access token;
+// the send itself is a direct Gmail API call (required because Composio's
+// GMAIL_SEND_EMAIL only accepts S3-hosted attachments). Peter is CC'd on
+// every send.
 //
 // Called two ways:
 //   1. RPC send_signature_email(team_member_id, force) → shared_secret +
@@ -37,7 +40,6 @@ const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 const PETER_CC = "storypeterj@gmail.com";
 const PHOTO_W = 120;
 const PHOTO_H = 147;
@@ -80,31 +82,127 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 // =========================================================================
-// Composio Gmail send
+// Gmail API direct send
+// -------------------------------------------------------------------------
+// Composio's GMAIL_SEND_EMAIL requires attachments as FileUploadable
+// {name, mimetype, s3key} pointers to Composio-hosted S3 objects. Edge
+// functions cannot mint arbitrary s3keys, so we bypass Composio Gmail for
+// the send path: fetch the connected account's live OAuth access token
+// from Composio, then POST a raw MIME message to the Gmail API directly.
+// The connected account itself is still Composio-managed (paper.newt.
+// management@gmail.com) — only the send call is direct.
 // =========================================================================
-async function callComposio(opts: {
-  apiKey: string;
-  userId: string;
-  connectedAccountId: string;
-  toolSlug: string;
-  toolArguments: Record<string, unknown>;
-}) {
-  const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
+const COMPOSIO_CONNECTED_ACCOUNTS_BASE = "https://backend.composio.dev/api/v3/connected_accounts";
+const GMAIL_API_SEND = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+
+async function getGmailAccessToken(apiKey: string, gmailAccountId: string): Promise<{
+  ok: boolean; accessToken: string | null; error: string | null;
+}> {
+  const res = await fetch(`${COMPOSIO_CONNECTED_ACCOUNTS_BASE}/${gmailAccountId}`, {
+    method: "GET",
+    headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    return { ok: false, accessToken: null, error: `composio ${res.status}: ${text.slice(0, 300)}` };
+  }
+  let parsed: any;
+  try { parsed = JSON.parse(text); }
+  catch { return { ok: false, accessToken: null, error: `invalid JSON from composio: ${text.slice(0, 200)}` }; }
+  const token = parsed?.data?.access_token ?? null;
+  if (!token || typeof token !== "string") {
+    return { ok: false, accessToken: null, error: "no access_token in composio response" };
+  }
+  return { ok: true, accessToken: token, error: null };
+}
+
+// Base64url = base64 with URL-safe alphabet, no padding — Gmail API requires
+// this for the `raw` field on messages/send.
+function base64UrlEncode(bytes: Uint8Array): string {
+  return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// Wrap a base64 string at 76 chars per line for RFC 2045 attachment bodies.
+function chunkBase64(b64: string): string {
+  const lines: string[] = [];
+  for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
+  return lines.join("\r\n");
+}
+
+// RFC 2047 encoded-word for header values containing non-ASCII (e.g. em-dash).
+function encodeMimeHeaderIfNeeded(s: string): string {
+  if (!/[^\x20-\x7E]/.test(s)) return s;
+  const bytes = new TextEncoder().encode(s);
+  return `=?UTF-8?B?${bytesToBase64(bytes)}?=`;
+}
+
+async function sendViaGmailApi(opts: {
+  accessToken: string;
+  to: string;
+  cc: string[];
+  subject: string;
+  textBody: string;
+  attachmentFilename: string;
+  attachmentMimeType: string;
+  attachmentBytes: Uint8Array;
+}): Promise<{ ok: boolean; messageId: string | null; error: string | null; httpStatus: number }> {
+  const boundary = `----NewtworksSignatureBoundary_${crypto.randomUUID()}`;
+  const ccHeader = opts.cc.length > 0 ? `Cc: ${opts.cc.join(", ")}\r\n` : "";
+  const encodedSubject = encodeMimeHeaderIfNeeded(opts.subject);
+
+  // Body part: encode entire body as base64 to survive any UTF-8 in the text
+  // (em-dash, smart quotes, etc.) without depending on 8bit transport.
+  const bodyBytes = new TextEncoder().encode(opts.textBody);
+  const bodyB64 = chunkBase64(bytesToBase64(bodyBytes));
+
+  const attachmentB64 = chunkBase64(bytesToBase64(opts.attachmentBytes));
+
+  // Filename in Content-Disposition: quote the ASCII value; for exotic
+  // characters we'd need RFC 2231 encoding, but the signature filename is
+  // ASCII ("State Farm Signature - <Full Name>.zip") so quoting is enough.
+  const mime =
+    `To: ${opts.to}\r\n` +
+    ccHeader +
+    `Subject: ${encodedSubject}\r\n` +
+    `MIME-Version: 1.0\r\n` +
+    `Content-Type: multipart/mixed; boundary="${boundary}"\r\n` +
+    `\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: text/plain; charset="UTF-8"\r\n` +
+    `Content-Transfer-Encoding: base64\r\n` +
+    `\r\n` +
+    bodyB64 + `\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: ${opts.attachmentMimeType}; name="${opts.attachmentFilename}"\r\n` +
+    `Content-Disposition: attachment; filename="${opts.attachmentFilename}"\r\n` +
+    `Content-Transfer-Encoding: base64\r\n` +
+    `\r\n` +
+    attachmentB64 + `\r\n` +
+    `--${boundary}--\r\n`;
+
+  const raw = base64UrlEncode(new TextEncoder().encode(mime));
+
+  const res = await fetch(GMAIL_API_SEND, {
     method: "POST",
-    headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: opts.userId,
-      connected_account_id: opts.connectedAccountId,
-      arguments: opts.toolArguments,
-    }),
+    headers: {
+      "Authorization": `Bearer ${opts.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw }),
   });
   const text = await res.text();
   let parsed: any = {};
   try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = res.ok && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok ? null : (parsed?.error?.message || parsed?.error || text.slice(0, 400));
-  return { ok, data, error, httpStatus: res.status };
+  if (!res.ok) {
+    return {
+      ok: false, messageId: null,
+      error: `gmail api ${res.status}: ${text.slice(0, 400)}`,
+      httpStatus: res.status,
+    };
+  }
+  return {
+    ok: true, messageId: parsed?.id ?? null, error: null, httpStatus: res.status,
+  };
 }
 
 // =========================================================================
@@ -327,7 +425,6 @@ async function run(req: Request): Promise<Response> {
     return jsonResponse({ ok: false, error: `zip build failed: ${e instanceof Error ? e.message : String(e)}` }, 500);
   }
 
-  const zipB64 = bytesToBase64(zipBytes);
   const zipFileName = `State Farm Signature - ${fullName}.zip`;
 
   if (dryRun) {
@@ -343,33 +440,39 @@ async function run(req: Request): Promise<Response> {
     });
   }
 
-  // 9) Send email via Composio Gmail
+  // 9) Send email via Gmail API direct (see helper block for rationale)
   const firstName = member.first_name!;
   const emailBody = buildEmailBody(firstName);
   const subject = `Your State Farm Email Signature — ${fullName}`;
 
-  const sendRes = await callComposio({
-    apiKey: composioApiKey,
-    userId: composioUserId,
-    connectedAccountId: gmailAccountId,
-    toolSlug: "GMAIL_SEND_EMAIL",
-    toolArguments: {
+  const tokenRes = await getGmailAccessToken(composioApiKey, gmailAccountId);
+  if (!tokenRes.ok || !tokenRes.accessToken) {
+    await sb.from("email_signature_sends").insert({
+      agency_id: agencyId,
+      team_member_id: teamMemberId,
       recipient_email: member.email_sf,
-      cc: [PETER_CC],
-      subject,
-      body: emailBody,
-      is_html: false,
-      attachments: [
-        { filename: zipFileName, mimetype: "application/zip", content: zipB64 },
-      ],
-      user_id: "me",
-    },
+      triggered_by: triggeredBy,
+      status: "failed",
+      error_message: `token fetch failed: ${tokenRes.error}`.slice(0, 1000),
+      zip_size_bytes: zipBytes.length,
+    });
+    return jsonResponse({ ok: false, status: "token_failed", error: tokenRes.error }, 502);
+  }
+
+  const sendRes = await sendViaGmailApi({
+    accessToken: tokenRes.accessToken,
+    to: member.email_sf!,
+    cc: [PETER_CC],
+    subject,
+    textBody: emailBody,
+    attachmentFilename: zipFileName,
+    attachmentMimeType: "application/zip",
+    attachmentBytes: zipBytes,
   });
 
   const nowIso = new Date().toISOString();
 
   if (!sendRes.ok) {
-    // Log failure
     await sb.from("email_signature_sends").insert({
       agency_id: agencyId,
       team_member_id: teamMemberId,
@@ -379,13 +482,8 @@ async function run(req: Request): Promise<Response> {
       error_message: String(sendRes.error).slice(0, 1000),
       zip_size_bytes: zipBytes.length,
     });
-    return jsonResponse({ ok: false, status: "send_failed", error: sendRes.error }, 502);
+    return jsonResponse({ ok: false, status: "send_failed", error: sendRes.error, http_status: sendRes.httpStatus }, 502);
   }
-
-  const messageId = (sendRes.data as any)?.id
-                  ?? (sendRes.data as any)?.message_id
-                  ?? (sendRes.data as any)?.response_data?.id
-                  ?? null;
 
   // 10) Log success
   const { data: sendRow } = await sb.from("email_signature_sends").insert({
@@ -394,7 +492,7 @@ async function run(req: Request): Promise<Response> {
     recipient_email: member.email_sf,
     triggered_by: triggeredBy,
     status: "sent",
-    gmail_message_id: messageId,
+    gmail_message_id: sendRes.messageId,
     zip_size_bytes: zipBytes.length,
     sent_at: nowIso,
   }).select("id").single();
@@ -404,7 +502,7 @@ async function run(req: Request): Promise<Response> {
     recipient: member.email_sf,
     cc: PETER_CC,
     subject,
-    message_id: messageId,
+    message_id: sendRes.messageId,
     zip_size: zipBytes.length,
     log_id: sendRow?.id ?? null,
   });
