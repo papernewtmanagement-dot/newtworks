@@ -112,6 +112,18 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
   };
 }
 
+// Fisher-Yates in-place shuffle (returns new array).
+// Randomizes served-item order so candidates can't infer what section is being probed
+// by grouping (impression-management items appearing back-to-back, etc.).
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 // Expansion target — describes a filtered slice of stint=2 items to serve.
 // Supports the four trigger actions defined in hiregauge_expansion_triggers:
 //   expand_trait_stint_2               — section + trait filter (per-trait borderline)
@@ -267,7 +279,7 @@ async function handleServe(supa: any, cand: any) {
       return json({
         stint: 1,
         done: unanswered.length === 0,
-        items: unanswered,
+        items: shuffle(unanswered),
         progress: { answered: prog.answered, total: prog.total },
       });
     }
@@ -306,7 +318,7 @@ async function handleServe(supa: any, cand: any) {
     return json({
       stint: 2,
       done: unanswered.length === 0,
-      items: unanswered,
+      items: shuffle(unanswered),
       progress: {
         answered: stint2All.length - unanswered.length,
         total: stint2All.length,
@@ -371,6 +383,77 @@ async function handleFinalize(supa: any, cand: any) {
   // directly) tracked in open_questions and revisited once CTS retires
   // (OQ 2317444c).
   try {
+    // Completion gate (Peter directive 2026-07-29, soundness review): block
+    // finalize when the assessment isn't actually done. Prevents a client-side
+    // early "submit" from producing an incomplete profile.
+    //   - Stint 1 must be fully answered.
+    //   - If any expansion trigger fired, every expected stint=2 item must be
+    //     answered too. Response 409 tells the client to keep serving.
+    const prog = await loadPrimaryProgress(supa, cand.id);
+    if (!prog.primaryAnswered) {
+      return json(
+        {
+          error: "assessment_incomplete",
+          stage: "stint_1",
+          answered: prog.answered,
+          total: prog.total,
+        },
+        409
+      );
+    }
+
+    const expTargets = await loadExpansionTargets(supa, cand.id);
+    if (expTargets.length > 0) {
+      // Build the set of item ids that stint 2 should have served for this
+      // candidate. Mirrors handleServe's stint 2 fetch logic exactly.
+      const expected: Record<string, boolean> = {};
+      for (const tgt of expTargets) {
+        let q = supa
+          .from("hiregauge_instrument_items")
+          .select("id")
+          .eq("stint", 2)
+          .eq("is_active", true);
+        if (tgt.section) q = q.eq("section", tgt.section);
+        if (tgt.trait) q = q.eq("hypothesized_trait", tgt.trait);
+        if (tgt.nonsense_only) q = q.eq("is_nonsense", true);
+        if (tgt.retest_only) q = q.not("retest_of_item_number", "is", null);
+        q = q.order("item_number", { ascending: true });
+        if (tgt.cap != null) q = q.limit(tgt.cap);
+        const { data: batch, error: bErr } = await q;
+        if (bErr) {
+          return json(
+            { error: "expansion_gate_fetch_failed", detail: bErr.message },
+            500
+          );
+        }
+        for (const it of batch || []) expected[it.id] = true;
+      }
+      const expectedIds = Object.keys(expected);
+      if (expectedIds.length > 0) {
+        const { data: expResp } = await supa
+          .from("hiregauge_candidate_responses")
+          .select("item_id")
+          .eq("candidate_id", cand.id)
+          .eq("sitting", 1)
+          .in("item_id", expectedIds);
+        const answeredSet = new Set(
+          (expResp || []).map((r: any) => r.item_id)
+        );
+        const missing = expectedIds.length - answeredSet.size;
+        if (missing > 0) {
+          return json(
+            {
+              error: "assessment_incomplete",
+              stage: "expansion",
+              answered: expectedIds.length - missing,
+              total: expectedIds.length,
+            },
+            409
+          );
+        }
+      }
+    }
+
     // Merged read (p_stint = NULL) scores stint 1 + stint 2 items together on
     // sitting=1. That merged score is what lands in the flat columns.
     const { data: pm, error: pmErr } = await supa.rpc(
