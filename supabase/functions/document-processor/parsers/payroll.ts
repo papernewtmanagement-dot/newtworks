@@ -121,6 +121,7 @@ export async function parsePayrollRun(opts: {
     .from("payroll_runs")
     .insert({
       agency_id: opts.agencyId,
+      business_entity_id: "b1111111-1111-1111-1111-111111111111",
       pay_period_start: run.pay_period_start,
       pay_period_end: run.pay_period_end,
       pay_date: run.pay_date,
@@ -152,6 +153,7 @@ export async function parsePayrollRun(opts: {
     detailRows.push({
       payroll_run_id: runRow.id,
       agency_id: opts.agencyId,
+      business_entity_id: "b1111111-1111-1111-1111-111111111111",
       team_member_id: staffId,
       gross_pay: Number(d?.gross_pay ?? 0),
       federal_tax: Number(d?.federal_tax ?? 0),
