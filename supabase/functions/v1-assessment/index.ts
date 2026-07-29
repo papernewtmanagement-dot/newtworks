@@ -355,11 +355,113 @@ async function handleFinalize(supa: any, cand: any) {
         (rm?.n_items_scored ?? 0) === 0 ? "no_items_scored" : "overall_score_null";
     }
 
+    // Completion notification (Peter directive 2026-07-29, OQ 78fc2c06).
+    // Fires exactly once per candidate: alert row + Telegram DM to Peter via
+    // @paper_newt_bot. Dedup key = alerts row with (alert_type, related_id).
+    // Failures here never fail the finalize response — DM/alert are downstream
+    // of the score write, which is what the candidate's flow depends on.
+    let notification_fired = false;
+    let notification_skip_reason: string | null = null;
+    if (updated) {
+      try {
+        const { data: existing } = await supa
+          .from("alerts")
+          .select("id")
+          .eq("agency_id", AGENCY_ID)
+          .eq("alert_type", "v1_assessment_complete")
+          .eq("related_id", cand.id)
+          .limit(1)
+          .maybeSingle();
+
+        if (existing) {
+          notification_skip_reason = "already_notified";
+        } else {
+          // Pull last_name + position for the notification body.
+          const { data: fullCand } = await supa
+            .from("hiring_candidates")
+            .select("first_name, last_name, position")
+            .eq("id", cand.id)
+            .maybeSingle();
+          const candName =
+            [fullCand?.first_name, fullCand?.last_name].filter(Boolean).join(" ") ||
+            "Unknown candidate";
+          const position = fullCand?.position || "unspecified role";
+
+          // Top 3 expansion triggers, if any.
+          const triggers = ((rm?.expansion_triggers ?? []) as any[])
+            .filter((t) => t?.action === "expand_trait_stint_2");
+          const triggerLines = triggers
+            .slice(0, 3)
+            .map((t) => `${t.expansion_section}/${t.expansion_trait}`)
+            .join(", ");
+          const triggerSuffix = triggerLines
+            ? triggers.length > 3
+              ? ` (expansions: ${triggerLines}, +${triggers.length - 3} more)`
+              : ` (expansions: ${triggerLines})`
+            : "";
+
+          const link = `https://newtworks.vercel.app/?module=team&candidate=${cand.id}`;
+          const title = `Assessment complete: ${candName}`;
+          const message =
+            `${candName} finished the Newtworks v1 assessment for ` +
+            `${position}. Overall score ${rm.overall_score} / 100 across ` +
+            `${rm.n_items_scored} items${triggerSuffix}. View: ${link}`;
+
+          const { error: alertErr } = await supa.from("alerts").insert({
+            agency_id: AGENCY_ID,
+            alert_type: "v1_assessment_complete",
+            severity: "info",
+            title,
+            message,
+            module_reference: "hiring",
+            related_id: cand.id,
+            is_read: false,
+            is_resolved: false,
+          });
+          if (alertErr) throw new Error(`alert_insert_failed: ${alertErr.message}`);
+
+          // Owner chat_id lookup — narrow query. is_admin_backoffice guard
+          // matches the team-table exclusion pattern.
+          const { data: owner } = await supa
+            .from("team")
+            .select("telegram_user_id")
+            .eq("agency_id", AGENCY_ID)
+            .eq("role_level", "Owner")
+            .eq("is_admin_backoffice", false)
+            .is("archived_at", null)
+            .maybeSingle();
+          const peterChatId = owner?.telegram_user_id ?? null;
+
+          if (peterChatId) {
+            const dmText =
+              `\u{1F4DD} Assessment complete: ${candName} (${position})\n` +
+              `Overall: ${rm.overall_score} / 100 \u00B7 ${rm.n_items_scored} items${triggerSuffix}\n` +
+              `${link}`;
+            const { error: dmErr } = await supa.rpc("paper_newt_send_message", {
+              p_chat_id: peterChatId,
+              p_text: dmText,
+            });
+            if (dmErr) {
+              notification_skip_reason = `dm_failed: ${dmErr.message}`;
+            } else {
+              notification_fired = true;
+            }
+          } else {
+            notification_skip_reason = "owner_chat_id_missing";
+          }
+        }
+      } catch (notifyErr: any) {
+        notification_skip_reason = `notify_error: ${notifyErr?.message ?? "unknown"}`;
+      }
+    }
+
     return json({
       ok: true,
       done: true,
       updated,
       update_skip_reason,
+      notification_fired,
+      notification_skip_reason,
       merged: {
         n_items_scored: rm?.n_items_scored ?? 0,
         overall_score: rm?.overall_score ?? null,
