@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
-import { fmtMoney as _fmtMoney } from "../lib/format.jsx";
+import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 
 // =============================================================
 // CPR DETAIL PAGE — Full weekly report
@@ -63,8 +63,14 @@ function fmtMMDD(iso) {
 }
 
 // ── Formatters ───────────────────────────────────────────────
-const fmtMoney      = (n) => _fmtMoney(n, { decimals: 0 });
-const fmtMoneyCents = (n) => _fmtMoney(n, { decimals: 2, dashOnZero: true });
+const fmtMoney       = (n) => _fmtMoney(n,  { decimals: 0 });
+const fmtMoneyCents  = (n) => _fmtMoney(n,  { decimals: 2, dashOnZero: true });
+// JSX variants — return red-colored <span> for negatives, plain string otherwise.
+// Use in JSX-child positions ({fmtMoneyR(x)} or ternaries) so accounting negatives
+// render as red ($X). Keep the plain string versions above for template literals,
+// object properties, config fns, and any + concatenation.
+const fmtMoneyR      = (n) => _fmtMoneyR(n, { decimals: 0 });
+const fmtMoneyCentsR = (n) => _fmtMoneyR(n, { decimals: 2, dashOnZero: true });
 const fmtInt = (n) => {
   if (n === null || n === undefined || n === "") return "—";
   const v = Number(n);
@@ -1189,7 +1195,7 @@ function TeammateWeeklyProduction({ teammateName, cycleWeeks, cycleWeeklyDetails
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("life"))}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("health"))}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(sum("bank"))}</Td>
-                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtMoney(sum("premium"))}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtMoneyR(sum("premium"))}</Td>
               </tr>
             </tbody>
           </table>
@@ -3060,7 +3066,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                       if (!row) return <Td key={q} align="right" style={{ background: _TINT_HIST, color: T.slate400 }}>—</Td>;
                       const avg = Number(row.avg_weekly_sp) || 0;
                       return (
-                        <Td key={q} align="right" style={{ background: _TINT_HIST, color: T.slate900 }}>{fmtMoneyCents(avg)}</Td>
+                        <Td key={q} align="right" style={{ background: _TINT_HIST, color: T.slate900 }}>{fmtMoneyCentsR(avg)}</Td>
                       );
                     })}
                   </tr>
@@ -3389,7 +3395,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                         {teamBonusExpanded ? "▾" : "▸"} {label}
                       </Td>
                       {sorted.map(d => (
-                        <Td key={d.team_member_id} align="right">{fmtMoneyCents(d.bonus)}</Td>
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d.bonus)}</Td>
                       ))}
                     </tr>
                   );
@@ -3402,7 +3408,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                         const ratio = Number(pq[ratioKey] || 0) / 100;
                         return (
                           <Td key={d.team_member_id} align="right" style={{ color: T.slate500, fontSize: 12 }}>
-                            {fmtMoneyCents(ratio * poolAmount)}
+                            {fmtMoneyCentsR(ratio * poolAmount)}
                           </Td>
                         );
                       })}
@@ -3429,7 +3435,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                         {hasCycleData ? (commissionExpanded ? "▾ " : "▸ ") : ""}{label}
                       </Td>
                       {sorted.map(d => (
-                        <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d[key])}</Td>
                       ))}
                     </tr>
                   );
@@ -3477,7 +3483,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                       </Td>
                       {sorted.map(d => (
                         <Td key={d.team_member_id} align="right">
-                          {fmtMoneyCents((Number(d.goals_bonus) || 0) + (Number(d.health_bonus) || 0))}
+                          {fmtMoneyCentsR((Number(d.goals_bonus) || 0) + (Number(d.health_bonus) || 0))}
                         </Td>
                       ))}
                     </tr>
@@ -3490,7 +3496,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                         const gd = d.residual_pool_diag?.goals_detail || {};
                         return (
                           <Td key={d.team_member_id} align="right" style={{ color: T.slate500, fontSize: 12 }}>
-                            {fmtMoneyCents(valueFn(gd, d))}
+                            {fmtMoneyCentsR(valueFn(gd, d))}
                           </Td>
                         );
                       })}
@@ -3510,7 +3516,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   <tr key={key}>
                     <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
                     {sorted.map(d => (
-                      <Td key={d.team_member_id} align="right">{fmtMoneyCents(d[key])}</Td>
+                      <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d[key])}</Td>
                     ))}
                   </tr>
                 ];
@@ -3524,7 +3530,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
                   return (
-                    <Td key={d.team_member_id} align="right">{fmtMoneyCents(weeklyBenefits)}</Td>
+                    <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(weeklyBenefits)}</Td>
                   );
                 })}
               </tr>
@@ -3602,7 +3608,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   const total = compsTotal + weeklyBenefits;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>
-                      {fmtMoneyCents(total)}
+                      {fmtMoneyCentsR(total)}
                     </Td>
                   );
                 })}
@@ -3611,7 +3617,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                 <Td style={{ paddingLeft: 14, color: T.slate600 }}>YTD Paid</Td>
                 {sorted.map(d => (
                   <Td key={d.team_member_id} align="right" style={{ color: T.slate600 }}>
-                    {d.payroll_ytd_paid == null ? "—" : fmtMoneyCents(d.payroll_ytd_paid)}
+                    {d.payroll_ytd_paid == null ? "—" : fmtMoneyCentsR(d.payroll_ytd_paid)}
                   </Td>
                 ))}
               </tr>
@@ -3640,7 +3646,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   const onTimeAnnual = ytdWithThisWeek === null ? null : ((ytdWithThisWeek * 365) / daysEmployedThisYear) + annualBenefits;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
-                      {onTimeAnnual === null ? "—" : fmtMoneyCents(onTimeAnnual)}
+                      {onTimeAnnual === null ? "—" : fmtMoneyCentsR(onTimeAnnual)}
                     </Td>
                   );
                 })}
@@ -3779,7 +3785,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
   const row = (label, value, hint) => (
     <tr>
       <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
-      <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{fmtMoneyCents(value)}</Td>
+      <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{fmtMoneyCentsR(value)}</Td>
       <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{hint || ""}</Td>
     </tr>
   );
@@ -3790,8 +3796,8 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
     return (
       <tr>
         <Td style={{ paddingLeft: 14, color: T.slate700 }}>{name}</Td>
-        <Td align="right">{fmtMoneyCents(ann)}</Td>
-        <Td align="right">{fmtMoneyCents(ann / 52)}</Td>
+        <Td align="right">{fmtMoneyCentsR(ann)}</Td>
+        <Td align="right">{fmtMoneyCentsR(ann / 52)}</Td>
         <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{obj.formula || ""}</Td>
       </tr>
     );
@@ -3818,42 +3824,42 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         <tbody>
           <tr>
             <Td style={{ paddingLeft: 14 }}>P&amp;C gross (auto/fire new+renewal)</Td>
-            <Td align="right">{fmtMoneyCents(pcYtd)}</Td>
+            <Td align="right">{fmtMoneyCentsR(pcYtd)}</Td>
             <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{compAnnualization.toFixed(3)} → ×{stripFactor.toFixed(4)}</Td>
-            <Td align="right">{fmtMoneyCents(pcStripped)}</Td>
+            <Td align="right">{fmtMoneyCentsR(pcStripped)}</Td>
           </tr>
           <tr>
             <Td style={{ paddingLeft: 14 }}>L&amp;H (life/health new+renewal)</Td>
-            <Td align="right">{fmtMoneyCents(lhYtd)}</Td>
+            <Td align="right">{fmtMoneyCentsR(lhYtd)}</Td>
             <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{compAnnualization.toFixed(3)}</Td>
-            <Td align="right">{fmtMoneyCents(lhAnnualized)}</Td>
+            <Td align="right">{fmtMoneyCentsR(lhAnnualized)}</Td>
           </tr>
           <tr>
             <Td style={{ paddingLeft: 14 }}>On-time SMVC $</Td>
             <Td align="right">{(smvcPct * 100).toFixed(3)}%</Td>
-            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>× book prem {fmtMoneyCents(bookPremium)}</Td>
-            <Td align="right">{fmtMoneyCents(smvcDollars)}</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>× book prem {fmtMoneyCentsR(bookPremium)}</Td>
+            <Td align="right">{fmtMoneyCentsR(smvcDollars)}</Td>
           </tr>
           <tr>
             <Td style={{ paddingLeft: 14 }}>On-time Scorecard $</Td>
             <Td align="right" style={{ color: T.slate500, fontSize: 11 }}>projection</Td>
             <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>compute_scorecard_bonus</Td>
-            <Td align="right">{fmtMoneyCents(scorecardDollars)}</Td>
+            <Td align="right">{fmtMoneyCentsR(scorecardDollars)}</Td>
           </tr>
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>Total basis (annual)</Td>
             <Td colSpan={2} style={{ borderTop: `1px solid ${T.slate300}` }}></Td>
-            <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(totalBasis)}</Td>
+            <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(totalBasis)}</Td>
           </tr>
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700 }}>× pool_pct {poolPctRaw.toFixed(2)}% {schedulePhase && (<span style={{ color: T.slate500, fontWeight: 400 }}>({schedulePhase})</span>)}</Td>
             <Td colSpan={2}></Td>
-            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= Weekly envelope {fmtMoneyCents(weeklyEnvelope)}</Td>
+            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= Weekly envelope {fmtMoneyCentsR(weeklyEnvelope)}</Td>
           </tr>
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate700 }}>Weeks elapsed in quarter × weekly envelope (ramp-adjusted)</Td>
             <Td colSpan={2} align="right" style={{ color: T.slate500, fontSize: 11 }}>{weeksElapsedQtd} of {weeksInQuarter} weeks</Td>
-            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= QTD envelope {fmtMoneyCents(qtdEnvelope)}</Td>
+            <Td align="right" style={{ fontWeight: 800, color: T.slate900 }}>= QTD envelope {fmtMoneyCentsR(qtdEnvelope)}</Td>
           </tr>
         </tbody>
       </table>
@@ -3895,7 +3901,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             const subRow = (label, val, hint) => (
               <tr key={label}>
                 <Td style={{ paddingLeft: 28, color: T.slate600 }}>{label}</Td>
-                <Td align="right" style={{ color: T.slate700 }}>{fmtMoneyCents(-val)}</Td>
+                <Td align="right" style={{ color: T.slate700 }}>{fmtMoneyCentsR(-val)}</Td>
                 <Td style={{ color: T.slate500, fontSize: 11, paddingLeft: 10 }}>{hint}</Td>
               </tr>
             );
@@ -3903,7 +3909,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
               <>
                 <tr>
                   <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700 }}>− Team goals-bonus carveouts QTD (max, tenure-ramped)</Td>
-                  <Td align="right" style={{ color: T.slate900, fontWeight: 700 }}>{fmtMoneyCents(-grpTotal)}</Td>
+                  <Td align="right" style={{ color: T.slate900, fontWeight: 700 }}>{fmtMoneyCentsR(-grpTotal)}</Td>
                   <Td style={{ color: T.slate500, fontSize: 11, paddingLeft: 10 }}>{`Σ tenure_ramp = ${rampSum.toFixed(4)} (vs raw team = ${teamCt})`}</Td>
                 </tr>
                 {subRow("HDB (max)", hdb, `$25/wk × Σ tenure_ramp × ${weeksElapsedQtd} wks`)}
@@ -3917,8 +3923,8 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
           })()}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= Bonus pool THIS WEEK</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
-            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>what remains after every QTD subtraction above (including prior bonuses paid). annual pace = {fmtMoneyCents(qtdToAnnualPace(qtdBonusPool))}</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCentsR(qtdBonusPool)}</Td>
+            <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>what remains after every QTD subtraction above (including prior bonuses paid). annual pace = {fmtMoneyCentsR(qtdToAnnualPace(qtdBonusPool))}</Td>
           </tr>
         </tbody>
       </table>
@@ -3934,7 +3940,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
           {row("SP-4wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= Bonus pool THIS WEEK (sum)</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(qtdBonusPool)}</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(qtdBonusPool)}</Td>
             <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
           </tr>
         </tbody>
@@ -3964,9 +3970,9 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
               return (
                 <tr key={label}>
                   <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
-                  <Td align="right">{fmtMoneyCents(wk)}</Td>
-                  <Td align="right">{fmtMoneyCents(qtd)}</Td>
-                  <Td align="right">{fmtMoneyCents(ann)}</Td>
+                  <Td align="right">{fmtMoneyCentsR(wk)}</Td>
+                  <Td align="right">{fmtMoneyCentsR(qtd)}</Td>
+                  <Td align="right">{fmtMoneyCentsR(ann)}</Td>
                 </tr>
               );
             };
@@ -3977,9 +3983,9 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 {itemRow("Champions Circle Reserve", items.champions_circle_reserve)}
                 <tr>
                   <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>Total outside-pool carveouts</Td>
-                  <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(weeklyCarveouts)}</Td>
-                  <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(Number((diag.carveouts_outside_pool && diag.carveouts_outside_pool.qtd_dollars) || 0))}</Td>
-                  <Td align="right" style={{ fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(annualCarveouts)}</Td>
+                  <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(weeklyCarveouts)}</Td>
+                  <Td align="right" style={{ fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(Number((diag.carveouts_outside_pool && diag.carveouts_outside_pool.qtd_dollars) || 0))}</Td>
+                  <Td align="right" style={{ fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(annualCarveouts)}</Td>
                 </tr>
               </>
             );
@@ -4017,12 +4023,12 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
               <tr key={d.team_member_id}>
                 <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
                 <Td align="right">{payType} ${payRate.toFixed(2)}</Td>
-                <Td align="right">{fmtMoneyCents(Number(d.base_salary || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(pq.qtd_actual_base_paid || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(pq.qtd_base_in_pool || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(pq.qtd_growth_budget || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(d.base_salary || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(pq.qtd_actual_base_paid || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(pq.qtd_base_in_pool || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(pq.qtd_growth_budget || 0))}</Td>
                 <Td align="right">{Number(pq.qtd_sp || 0).toFixed(0)}</Td>
-                <Td align="right">{fmtMoneyCents(Number(d.commission || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(d.commission || 0))}</Td>
               </tr>
             );
           })}
@@ -4059,8 +4065,8 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 <Td align="right">{Number(pq.rolling_4wk_avg_sp || 0).toFixed(2)}</Td>
                 <Td align="right">{`${Number(pq.sp13_share_ratio_pct || 0).toFixed(2)}%`}</Td>
                 <Td align="right">{`${Number(pq.sp4_share_ratio_pct || 0).toFixed(2)}%`}</Td>
-                <Td align="right">{fmtMoneyCents(Number(pq.qtd_sp13_earned || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(pq.qtd_sp4_earned || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(pq.qtd_sp13_earned || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(pq.qtd_sp4_earned || 0))}</Td>
               </tr>
             );
           })}
@@ -4100,8 +4106,8 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 <Td align="right">{Number(wf.license_w || 0).toFixed(2)}</Td>
                 <Td align="right">{Number(dd.weighted_hours_at_40 || 0).toFixed(2)}</Td>
                 <Td align="right">{`${Number(dd.retention_hours_share_pct || 0).toFixed(2)}%`}</Td>
-                <Td align="right">{fmtMoneyCents(Number(pq.qtd_ret_earned || 0))}</Td>
-                <Td align="right">{fmtMoneyCents(Number(d.retention_pool_share || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(pq.qtd_ret_earned || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(d.retention_pool_share || 0))}</Td>
               </tr>
             );
           })}
@@ -4109,7 +4115,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       </table>
 
       <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
-        QTD burden accrual (8% × [QTD base + comm + mgr + hdb + prize + wtq + bonus_pool]) = {fmtMoneyCents(qtdBurden)}. Baked into pool math via /(1+burden) wrap.
+        QTD burden accrual (8% × [QTD base + comm + mgr + hdb + prize + wtq + bonus_pool]) = {fmtMoneyCentsR(qtdBurden)}. Baked into pool math via /(1+burden) wrap.
         Commissions eat the WHOLE POOL. Base + comm + Manager Bonus + HDB + MVP Prize Cart + WtQ Trip + bonus_pool are ALL burdened (wages).
         WC + team health benefits stay outside burden (fringe / policy premium). Apparel, Life Ins Stipend, CC Reserve stay entirely outside the pool as agency-funded benefits.
       </div>
@@ -4180,7 +4186,7 @@ function MarketingBonusBreakdown({ weekDate }) {
   const row = (label, value, hint) => (
     <tr>
       <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
-      <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{fmtMoneyCents(value)}</Td>
+      <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{fmtMoneyCentsR(value)}</Td>
       <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{hint || ""}</Td>
     </tr>
   );
@@ -4200,8 +4206,8 @@ function MarketingBonusBreakdown({ weekDate }) {
           {row(`× ${(pctOfBasis * 100).toFixed(1)}% envelope rate`, annualEnv, `annual marketing envelope`)}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate700 }}>Quarterly envelope (annual / 4)</Td>
-            <Td align="right">{fmtMoneyCents(quarterlyEnv)}</Td>
-            <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>weeks-in-qtd target = {fmtMoneyCents(qtdTarget)}</Td>
+            <Td align="right">{fmtMoneyCentsR(quarterlyEnv)}</Td>
+            <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>weeks-in-qtd target = {fmtMoneyCentsR(qtdTarget)}</Td>
           </tr>
         </tbody>
       </table>
@@ -4217,13 +4223,13 @@ function MarketingBonusBreakdown({ weekDate }) {
           {row("− QTD actual marketing spend", -spendQtd, "GL — 0003 MARKETING envelope + descendants")}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= QTD raw underspend</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(underspendQtd)}</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(underspendQtd)}</Td>
             <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
           </tr>
           {row("− Bare-minimum spiffs (already paid)", -(underspendQtd - adjUnderspend), "reviews, referrals, quotes — cash already out")}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Adjusted underspend</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCents(adjUnderspend)}</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(adjUnderspend)}</Td>
             <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
           </tr>
         </tbody>
@@ -4236,7 +4242,7 @@ function MarketingBonusBreakdown({ weekDate }) {
           {row(`× ${(teamSharePct * 100).toFixed(0)}% team share of underspend`, poolQtd, "50% to team, 50% stays with agency")}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD Marketing bonus pool</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(poolQtd)}</Td>
+            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCentsR(poolQtd)}</Td>
             <Td style={{ borderTop: `2px solid ${T.slate300}`, color: T.slate500, fontSize: 11, paddingLeft: 10 }}>points_qtd = {totalPointsQtd.toFixed(0)}</Td>
           </tr>
         </tbody>
@@ -4265,22 +4271,22 @@ function MarketingBonusBreakdown({ weekDate }) {
           {people.map(p => (
             <tr key={p.team_member_id}>
               <Td style={{ paddingLeft: 14 }}>{firstName(p.name)}</Td>
-              <Td align="right">{fmtMoneyCents(Number(p.points_qtd || 0))}</Td>
+              <Td align="right">{fmtMoneyCentsR(Number(p.points_qtd || 0))}</Td>
               <Td align="right">{Number(p.reviews_qtd || 0).toFixed(0)}</Td>
               <Td align="right">{Number(p.quoted_qtd || 0).toFixed(0)}</Td>
               <Td align="right">{Number(p.sold_qtd || 0).toFixed(0)}</Td>
               <Td align="right">{`${Number(p.share_pct || 0).toFixed(2)}%`}</Td>
-              <Td align="right">{fmtMoneyCents(Number(p.bonus_share_qtd || 0))}</Td>
-              <Td align="right" style={{ fontWeight: 700 }}>{fmtMoneyCents(Number(p.total_marketing_qtd || 0))}</Td>
+              <Td align="right">{fmtMoneyCentsR(Number(p.bonus_share_qtd || 0))}</Td>
+              <Td align="right" style={{ fontWeight: 700 }}>{fmtMoneyCentsR(Number(p.total_marketing_qtd || 0))}</Td>
             </tr>
           ))}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Totals</Td>
-            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(totalPointsQtd)}</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCentsR(totalPointsQtd)}</Td>
             <Td colSpan={3} style={{ borderTop: `2px solid ${T.slate300}` }} />
             <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>100%</Td>
-            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(poolQtd)}</Td>
-            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCents(totalPointsQtd + poolQtd)}</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCentsR(poolQtd)}</Td>
+            <Td align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCentsR(totalPointsQtd + poolQtd)}</Td>
           </tr>
         </tbody>
       </table>
@@ -5158,19 +5164,19 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
 
             <div style={{ padding: 8, background: halted ? "#fee2e2" : "#ecfdf5", borderRadius: 6, borderLeft: `3px solid ${halted ? T.red : "#10b981"}` }}>
               <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46", fontWeight: 700 }}>Trip pot / Prize cart restock</div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCents(annualPot)}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: halted ? "#991b1b" : "#064e3b" }}>{halted ? "$0" : fmtMoneyCentsR(annualPot)}</div>
               <div style={{ fontSize: 10, color: halted ? "#991b1b" : "#065f46" }}>{halted ? "HALTED" : `Quarterly pot: 1% OT × ${Number(wtq.projected_wins ?? 13)}/13 wins`}</div>
             </div>
 
             <div style={{ padding: 8, background: "#fef3c7", borderRadius: 6 }}>
               <div style={{ fontSize: 10, color: "#78350f", fontWeight: 700 }}>Quarter MVP ({mvpPctLabel})</div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCents(quarterMVPCut)}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#78350f" }}>{fmtMoneyCentsR(quarterMVPCut)}</div>
               <div style={{ fontSize: 10, color: "#78350f" }}>Top Sales</div>
             </div>
 
             <div style={{ padding: 8, background: "#e0f2fe", borderRadius: 6 }}>
               <div style={{ fontSize: 10, color: "#075985", fontWeight: 700 }}>Rest of team ({restPctLabel})</div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCents(teamCut)}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#075985" }}>{fmtMoneyCentsR(teamCut)}</div>
               <div style={{ fontSize: 10, color: "#075985" }}>{restCount > 0 ? `Split evenly · ${fmtMoneyCents(restPerPerson)}/each` : "Split evenly"}</div>
             </div>
           </div>
