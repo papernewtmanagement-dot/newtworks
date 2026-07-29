@@ -4,8 +4,12 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // ── Design Tokens ──────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 import { ModuleLink } from "../lib/routing.jsx";
+import { fmtMoney } from "../lib/format.jsx";
 
-const fmt = v => { const n=parseFloat(v); return isNaN(n)?"$0.00":"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); };
+// fmt was silently stripping the sign via Math.abs — negatives rendered
+// as positives. Routed through the shared fmtMoney so negatives render
+// as ($1,234.56), matching accounting convention across the app.
+const fmt = v => fmtMoney(v, { decimals: 2, dashOnInvalid: false });
 const pct = (v,m) => (((parseFloat(v)||0)/(parseFloat(m)||1))*100).toFixed(1);
 
 // ── Mini Components ────────────────────────────────────────────
