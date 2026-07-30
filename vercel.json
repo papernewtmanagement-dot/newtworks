@@ -5,6 +5,7 @@
     { "source": "/jobs.xml", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/jobs-xml-feed" },
     { "source": "/webhooks/indeed", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/indeed-apply-webhook" },
     { "source": "/webhooks/ziprecruiter", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/zip-apply-webhook" },
+    { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
