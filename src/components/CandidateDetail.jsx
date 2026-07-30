@@ -1847,10 +1847,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
   return (
     <div>
-      {/* Identity + nav — name on left, Back button + status pill on right */}
+      {/* Identity + nav — name + status pill on left, action buttons on right */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
+            <div style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, borderRadius: 12 }}>
+              {STAGE_LABELS[detail?.status] || detail?.status || "—"}
+            </div>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <button
               onClick={copyAssessmentLink}
@@ -1870,9 +1875,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               {copyLinkStatus === "copying" ? "Copying…" : copyLinkStatus === "copied" ? "✓ Copied!" : copyLinkStatus === "error" ? "Copy failed" : "Copy assessment link"}
             </button>
             <button onClick={onBack} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: "pointer" }}>← Back to Pipeline</button>
-            <div style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, borderRadius: 12 }}>
-              {STAGE_LABELS[detail?.status] || detail?.status || "—"}
-            </div>
           </div>
         </div>
         <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>
