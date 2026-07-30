@@ -6,7 +6,7 @@
 // Feed shape follows docs.indeed.com/job-sync-xml/xml-feed and is
 // compatible with ZipRecruiter's XML Feed Import (standard <url> + <job>).
 // Indeed Apply metadata (indeed-apply-data) is conditionally emitted only
-// when settings row indeed_apply_api_token is present; until then Indeed
+// when settings row indeed_apply_client_id is present; until then Indeed
 // falls back to plain URL routing to the careers detail page, which is
 // still fully valid.
 
@@ -161,7 +161,7 @@ async function buildFeed(): Promise<string> {
     .from("settings")
     .select("setting_value")
     .eq("agency_id", AGENCY_ID)
-    .eq("setting_key", "indeed_apply_api_token")
+    .eq("setting_key", "indeed_apply_client_id")
     .maybeSingle();
   const indeedApplyToken = tokenRow?.setting_value?.trim() || null;
 
