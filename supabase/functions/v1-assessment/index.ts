@@ -124,6 +124,19 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+// Attach a served_at timestamp to each item before returning to the client.
+// Frontend echoes it back on save_response; handleSave persists it alongside
+// answered_at. Together they feed per-item response-time signals in
+// compute_newtworks_v1_distortion_signals (mean_response_ms, min_response_ms,
+// straight_through_flag). All items in a batch share the same timestamp — that
+// is deliberate: the candidate sees them one at a time in shuffled order, and
+// what matters for straight-through detection is the delta between the moment
+// this batch reached them and the moment each answer came back.
+function attachServedAt(items: any[]): any[] {
+  const now = new Date().toISOString();
+  return items.map((it: any) => ({ ...it, served_at: now }));
+}
+
 // Expansion target — describes a filtered slice of stint=2 items to serve.
 // Supports the four trigger actions defined in hiregauge_expansion_triggers:
 //   expand_trait_stint_2               — section + trait filter (per-trait borderline)
@@ -279,7 +292,7 @@ async function handleServe(supa: any, cand: any) {
       return json({
         stint: 1,
         done: unanswered.length === 0,
-        items: shuffle(unanswered),
+        items: attachServedAt(shuffle(unanswered)),
         progress: { answered: prog.answered, total: prog.total },
       });
     }
@@ -318,7 +331,7 @@ async function handleServe(supa: any, cand: any) {
     return json({
       stint: 2,
       done: unanswered.length === 0,
-      items: shuffle(unanswered),
+      items: attachServedAt(shuffle(unanswered)),
       progress: {
         answered: stint2All.length - unanswered.length,
         total: stint2All.length,
@@ -330,7 +343,7 @@ async function handleServe(supa: any, cand: any) {
 }
 
 async function handleSave(supa: any, cand: any, body: any) {
-  const { item_id, response_value, response_label } = body ?? {};
+  const { item_id, response_value, response_label, served_at } = body ?? {};
   if (!item_id) return json({ error: "missing_item_id" }, 400);
   if (response_value == null && response_label == null) {
     return json({ error: "missing_response" }, 400);
@@ -354,6 +367,19 @@ async function handleSave(supa: any, cand: any, body: any) {
     is_correct = String(response_label).trim() === String(item.answer_key).trim();
   }
 
+  // Timing capture (Step A / Item 4). served_at was emitted by handleServe when
+  // it handed this item to the candidate; frontend echoes it back on save.
+  // answered_at is server-clock at write time. Parse defensively — bad or
+  // missing served_at drops through to NULL so the row still writes.
+  const answered_at_iso = new Date().toISOString();
+  let served_at_iso: string | null = null;
+  if (typeof served_at === "string" && served_at.length > 0) {
+    const parsed = new Date(served_at);
+    if (!Number.isNaN(parsed.getTime())) {
+      served_at_iso = parsed.toISOString();
+    }
+  }
+
   const { error: upErr } = await supa
     .from("hiregauge_candidate_responses")
     .upsert(
@@ -365,10 +391,28 @@ async function handleSave(supa: any, cand: any, body: any) {
         response_label: response_label ?? null,
         is_correct,
         sitting: 1,
+        served_at: served_at_iso,
+        answered_at: answered_at_iso,
       },
       { onConflict: "candidate_id,item_id" }
     );
   if (upErr) return json({ error: "save_failed", detail: upErr.message }, 500);
+
+  // Stamp hiring_candidates.assessment_started_at on the first successful save
+  // for this candidate. Set-once semantics: the .is("assessment_started_at", null)
+  // clause makes the UPDATE a no-op on subsequent saves without needing a
+  // separate SELECT-then-UPDATE round-trip. Failure here never blocks the save
+  // response — timing capture is a diagnostic layer, not a correctness gate.
+  try {
+    await supa
+      .from("hiring_candidates")
+      .update({ assessment_started_at: answered_at_iso })
+      .eq("id", cand.id)
+      .eq("agency_id", AGENCY_ID)
+      .is("assessment_started_at", null);
+  } catch (_e) {
+    // Silent — see note above.
+  }
 
   return json({ ok: true });
 }
@@ -485,20 +529,26 @@ async function handleFinalize(supa: any, cand: any) {
     let updated = false;
     let update_skip_reason: string | null = null;
     if ((rm?.n_items_scored ?? 0) > 0 && rm?.overall_score != null) {
+      // Timing (Step A / Item 4): stamp assessment_completed_at at the same
+      // moment the flat trait columns land. Only fires when the guard above
+      // decided the row is real and complete enough to write — no premature
+      // completion stamps.
+      const finalized_at_iso = new Date().toISOString();
       const { error: upErr } = await supa
         .from("hiring_candidates")
         .update({
-          assertiveness:       rm.assertiveness       ?? null,
-          independent_spirit:  rm.independent_spirit  ?? null,
-          compassion:          rm.compassion          ?? null,
-          belief_in_others:    rm.belief_in_others    ?? null,
-          optimism:            rm.optimism            ?? null,
-          analytical:          rm.analytical          ?? null,
-          deadline_motivation: rm.deadline_motivation ?? null,
-          self_promotion:      rm.self_promotion      ?? null,
-          recognition_drive:   rm.recognition_drive   ?? null,
-          overall_score:       rm.overall_score       ?? null,
-          assessment_date:     new Date().toISOString().slice(0, 10),
+          assertiveness:           rm.assertiveness       ?? null,
+          independent_spirit:      rm.independent_spirit  ?? null,
+          compassion:              rm.compassion          ?? null,
+          belief_in_others:        rm.belief_in_others    ?? null,
+          optimism:                rm.optimism            ?? null,
+          analytical:              rm.analytical          ?? null,
+          deadline_motivation:     rm.deadline_motivation ?? null,
+          self_promotion:          rm.self_promotion      ?? null,
+          recognition_drive:       rm.recognition_drive   ?? null,
+          overall_score:           rm.overall_score       ?? null,
+          assessment_date:         finalized_at_iso.slice(0, 10),
+          assessment_completed_at: finalized_at_iso,
         })
         .eq("id", cand.id)
         .eq("agency_id", AGENCY_ID);
