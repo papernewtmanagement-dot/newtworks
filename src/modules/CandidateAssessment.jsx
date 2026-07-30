@@ -54,6 +54,22 @@ function orderChoices(choices) {
   return out;
 }
 
+// Personality and impression-management items are stored as IPIP fragments
+// ("Enjoy silence.", "Am the life of the party.", "Believe there is never an
+// excuse for lying."). Render them to the candidate as first-person statements
+// so it's obvious they're being asked to reflect on themselves. Cognitive and
+// validity items are already full sentences — pass them through untouched.
+function formatItemText(item) {
+  if (!item) return "";
+  const text = item.item_text || "";
+  if (!text) return text;
+  const isSelfDescriptive =
+    item.section === "newtworks_v1_personality" ||
+    item.section === "newtworks_v1_impression_mgmt";
+  if (!isSelfDescriptive) return text;
+  return "I " + text.charAt(0).toLowerCase() + text.slice(1);
+}
+
 export default function CandidateAssessment({ candidateId, token }) {
   const vp = useViewport();
 
@@ -92,7 +108,20 @@ export default function CandidateAssessment({ candidateId, token }) {
     setBatchProgress(data.progress || { answered: 0, total: 0 });
     setCurrentIdx(0);
     setSaveError(null);
-    setScreen(data.stint === 2 ? "expansion" : "primary");
+    // On first entry into stint 2, show an informational intro screen with a
+    // Continue button so the candidate understands why extra questions appeared.
+    // Resumed mid-stint-2 sessions (progress.answered > 0) skip straight to
+    // the questions.
+    if (
+      data.stint === 2 &&
+      Array.isArray(data.items) &&
+      data.items.length > 0 &&
+      (data.progress?.answered ?? 0) === 0
+    ) {
+      setScreen("expansion_intro");
+    } else {
+      setScreen(data.stint === 2 ? "expansion" : "primary");
+    }
   }, [candidateId, token]);
 
   // Initial verify + branch.
@@ -162,8 +191,10 @@ export default function CandidateAssessment({ candidateId, token }) {
       }
       // Batch complete.
       if (stint === 1) {
-        setScreen("expansion_transition");
-        await new Promise((r) => setTimeout(r, 900));
+        // Directly fetch the next batch — runServe routes to expansion_intro
+        // (informational screen with a Continue button) when stint 2 items
+        // exist, or to thanks when no expansion was triggered.
+        setScreen("loading");
         await runServe();
       } else {
         // Stint 2 batch done → finalize.
@@ -304,6 +335,19 @@ export default function CandidateAssessment({ candidateId, token }) {
             style={{
               color: T.slate700,
               lineHeight: 1.6,
+              marginBottom: 16,
+              fontSize: 15,
+            }}
+          >
+            This works both ways. It's a chance for me to learn how you
+            naturally think and work — and a chance for you to see whether this
+            role suits the way you like to work. The best hires I've made have
+            felt like the right fit for both sides.
+          </div>
+          <div
+            style={{
+              color: T.slate700,
+              lineHeight: 1.6,
               marginBottom: 28,
               fontSize: 15,
             }}
@@ -321,23 +365,64 @@ export default function CandidateAssessment({ candidateId, token }) {
     );
   }
 
-  if (screen === "expansion_transition") {
+  if (screen === "expansion_intro") {
+    const remaining = items?.length ?? 0;
     return (
       <div style={container}>
-        <div style={{ ...card, textAlign: "center", padding: 40 }}>
+        <div style={card}>
           <div
             style={{
-              fontSize: 18,
+              fontSize: 12,
               fontWeight: 700,
-              color: T.slate900,
-              marginBottom: 12,
+              color: T.blue,
+              letterSpacing: 1,
+              textTransform: "uppercase",
+              marginBottom: 8,
             }}
           >
-            Great — one moment.
+            Follow-up section
           </div>
-          <div style={{ color: T.slate600, fontSize: 15 }}>
-            Loading a few follow-up questions…
+          <h1
+            style={{
+              fontSize: vp.isPhone ? 22 : 26,
+              fontWeight: 700,
+              margin: "0 0 20px 0",
+              color: T.slate900,
+              lineHeight: 1.2,
+            }}
+          >
+            Nice work — one more short section.
+          </h1>
+          <div
+            style={{
+              color: T.slate700,
+              lineHeight: 1.6,
+              marginBottom: 16,
+              fontSize: 15,
+            }}
+          >
+            Based on how you answered the first section, I'd like to ask a few
+            follow-up questions on a couple of areas where a clearer read would
+            help. This is normal — the assessment adds questions when it needs
+            more signal, not because anything is wrong.
           </div>
+          <div
+            style={{
+              color: T.slate700,
+              lineHeight: 1.6,
+              marginBottom: 28,
+              fontSize: 15,
+            }}
+          >
+            {remaining > 0
+              ? `About ${remaining} more question${
+                  remaining === 1 ? "" : "s"
+                } to go. Same format as the first section.`
+              : "Just a few more questions in the same format as the first section."}
+          </div>
+          <button style={btnPrimary} onClick={() => setScreen("expansion")}>
+            Continue
+          </button>
         </div>
       </div>
     );
@@ -469,7 +554,7 @@ export default function CandidateAssessment({ candidateId, token }) {
             fontWeight: 500,
           }}
         >
-          {item.item_text}
+          {formatItemText(item)}
         </div>
 
         {/* Save error (inline, non-blocking) */}
