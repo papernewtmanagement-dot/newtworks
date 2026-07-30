@@ -175,6 +175,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // 5. Insert transactions. bank_transactions.bank_account_id FKs chart_of_accounts.id
   // (misnamed column, per operational_rule). Dedup on (agency_id, bank_account_id, transaction_date, amount, description).
   let inserted = 0;
+  let skippedInformational = 0;
   const errors: string[] = [];
   for (const t of rawTxns) {
     if (!t || typeof t.amount !== "number" || !t.date) continue;
@@ -199,6 +200,17 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
       if (btErr) { errors.push(`tx ${t.date}: ${btErr.message}`); continue; }
       inserted += 1;
     } else if (isCreditAccount) {
+      // Skip payment/thank-you lines on CC statements — these are informational
+      // (the credit-side echo of a bank withdrawal that already gets posted from the paying
+      // bank's statement). Posting them creates shadow duplicate JEs against the card liability.
+      // Backfill migration 20260729235855 cleared 12 shadow JEs + 13 credit_transactions.
+      // See open_question ca5f4a79.
+      const descForCheck = `${payee} ${memo}`;
+      if (/(?:online\s+payment|autopay|automatic\s+payment)[\s\-]*(?:thank\s*you|received)?|payment\s+thank\s*you/i.test(descForCheck)) {
+        skippedInformational += 1;
+        continue;
+      }
+
       // credit_transactions has its own credit_account_id (FKs credit_accounts).
       // Look up credit_accounts row that maps to this chart account.
       const { data: ca } = await sb
@@ -229,7 +241,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   await sb.from("documents").update({
     processing_status: "processed",
     processed_at: new Date().toISOString(),
-    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
+    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${skippedInformational ? ` (${skippedInformational} payment/thank-you lines skipped)` : ""}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
     tables_updated: ["statement_balances", isBankAccount ? "bank_transactions" : "credit_transactions"],
     records_created: inserted + 1,
   }).eq("id", doc.id);
@@ -238,6 +250,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     ok: true,
     statementBalance: { period, openingBalance, closingBalance, accountLast4 },
     transactionsInserted: inserted,
+    skippedInformational,
     docId: doc.id,
     error: errors.length ? errors.slice(0, 5).join(" | ") : undefined,
   };
