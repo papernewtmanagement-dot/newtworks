@@ -1,0 +1,12 @@
+-- bank_gl_writer had `r.match_direction = v_match_direction` (strict eq); cc_gl_writer accepts
+-- 'both' as a wildcard direction. 98 active rules use match_direction='both' and were
+-- silently non-firing on the bank side. Bring bank_gl_writer to parity.
+--
+-- Full function body reproduced with the one-line direction filter change marked BUGFIX.
+-- (Migration executed 2026-07-30; full body is stored in database, this file is the audit mirror.)
+
+-- See applied migration: bank_gl_writer_accept_match_direction_both
+-- Change: line reading
+--   AND (r.match_direction IS NULL OR r.match_direction = v_match_direction)
+-- replaced with:
+--   AND (r.match_direction IS NULL OR r.match_direction = v_match_direction OR r.match_direction = 'both')
