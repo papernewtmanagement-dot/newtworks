@@ -236,6 +236,22 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
     }
   }
 
+  // Newtworks v1 (2026-07-30): cognitive pool is always fully served.
+  // Thresholds are calibrated to the full v1 cognitive pool (verbal 13,
+  // math 10, problem_solving 8). Adaptive cognitive routing would produce
+  // partial-pool candidates scored against a full-pool yardstick — a
+  // measurement mismatch. Force full cognitive expansion regardless of
+  // whether the trait compute returned an expand_cognitive trigger.
+  // addTarget dedup upgrades any existing capped cognitive target to full
+  // pool (cap = null wins over any numeric cap).
+  addTarget({
+    section: "cognitive",
+    trait: null,
+    nonsense_only: false,
+    retest_only: false,
+    cap: null,
+  });
+
   return Array.from(map.values());
 }
 
