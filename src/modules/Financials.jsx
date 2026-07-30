@@ -2433,13 +2433,14 @@ const PayrollSection = ({ data }) => {
 // public.get_payroll_run_drilldown RPC, which mirrors payroll_gl_writer's
 // key-level classification exactly. Two routing paths:
 //   • papernewt_direct  — Owner OR is_admin_backoffice OR business_entity_id=PN
-//                          → COA-PN-001 expense + COA-PN-002 cash on PaperNewt
+//                          → 6020 Owner W-2 Wages + 1050 US Bank Checking on PaperNewt
 //   • agency_split      — everyone else. Fixed pay × (1 − min(1, weeks_in/52))
-//                          goes to Growth Budget (COA-SUB-086); the rest of
-//                          fixed + all variable + gap + ER taxes goes to Team
-//                          Budget (COA-SUB-087). Reimbursements land in
-//                          COA-SUB-088 pending. All three totals credit the
-//                          intercompany liability (COA-IC-001).
+//                          goes to Growth wages (6010 · budget_category=growth);
+//                          post-ramp fixed + variable + gap goes to Team wages
+//                          (6010 · budget_category=team). Employer payroll taxes
+//                          split pro-rata to 6030 with matching growth/team tags.
+//                          Reimbursements land in 0003 Unclassified. All debits
+//                          credit the intercompany liability (2902 Due to PaperNewt).
 const PayrollRunDrilldown = ({ drill }) => {
   const people = Array.isArray(drill?.people) ? drill.people : [];
   const jes    = Array.isArray(drill?.jes)    ? drill.jes    : [];
@@ -2448,8 +2449,9 @@ const PayrollRunDrilldown = ({ drill }) => {
   const pnTotal = pnPeople.reduce((s,p) => s + parseFloat(p.pn_expense || 0), 0);
   const grTotal = agPeople.reduce((s,p) => s + parseFloat(p.growth_share || 0), 0);
   const tmTotal = agPeople.reduce((s,p) => s + parseFloat(p.team_share || 0), 0);
+  const erTotal = agPeople.reduce((s,p) => s + parseFloat(p.employer_taxes || 0), 0);
   const rbTotal = agPeople.reduce((s,p) => s + parseFloat(p.reimb || 0), 0);
-  const icTotal = grTotal + tmTotal + rbTotal;
+  const icTotal = grTotal + tmTotal + erTotal + rbTotal;
   const jeByLeg = Object.fromEntries(jes.map(j => [j.leg, j]));
 
   const chip = (bg, fg, text, title) => (
@@ -2476,8 +2478,8 @@ const PayrollRunDrilldown = ({ drill }) => {
             {people.map(p => {
               const isPN = p.route === "papernewt_direct";
               const routePill = isPN
-                ? chip("#fef3c7", "#92400e", "PaperNewt-direct", `${p.reason} — books to COA-PN-001 / COA-PN-002`)
-                : chip("#dbeafe", "#1e40af", "Agency-split",     `Growth ramp share + Team remainder (COA-SUB-086 / COA-SUB-087)`);
+                ? chip("#fef3c7", "#92400e", "PaperNewt-direct", `${p.reason} — books to 6020 Owner W-2 Wages + 1050 US Bank Checking on PaperNewt`)
+                : chip("#dbeafe", "#1e40af", "Agency-split",     `Growth ramp share + Team remainder on 6010 Staff Wages (budget_category tags); ER taxes on 6030`);
               return (
                 <tr key={p.team_member_id} style={{ borderBottom: `1px solid ${T.slate100}` }}>
                   <td style={{ padding: "6px 8px", fontSize: 12, color: T.slate800 }}>
@@ -2525,7 +2527,7 @@ const PayrollRunDrilldown = ({ drill }) => {
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
           <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>PaperNewt-direct</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(pnTotal)}</div>
-          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{pnPeople.length} person{pnPeople.length === 1 ? "" : "s"} · COA-PN-001 / PN-002</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{pnPeople.length} person{pnPeople.length === 1 ? "" : "s"} · 6020 · 1050 (PaperNewt)</div>
           {jeByLeg["PAPERNEWT"] && (
             <div style={{ fontSize: 10, color: T.slate600, marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
               JE: {jeByLeg["PAPERNEWT"].reference_number}
@@ -2533,19 +2535,24 @@ const PayrollRunDrilldown = ({ drill }) => {
           )}
         </div>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
-          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Growth</div>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Growth wages</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(grTotal)}</div>
-          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Fixed × ramp · COA-SUB-086</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Fixed × ramp · 6010 · budget_category=growth</div>
         </div>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
-          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Team</div>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agency-split · Team wages</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(tmTotal)}</div>
-          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Post-ramp fixed + variable + ER taxes · COA-SUB-087</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Post-ramp fixed + variable + gap · 6010 · budget_category=team</div>
+        </div>
+        <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Employer payroll taxes</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(erTotal)}</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Agency-split ER (FICA/FUTA/SUTA/WC) · 6030 · split growth/team pro-rata</div>
         </div>
         <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 6 }}>
           <div style={{ fontSize: 10, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Intercompany credit</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{fmtMoneyR(icTotal)}</div>
-          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Agency owes PN · COA-IC-001</div>
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>Agency owes PN · 2902 Due to PaperNewt LLC</div>
           {jeByLeg["AGENCY"] && (
             <div style={{ fontSize: 10, color: T.slate600, marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, monospace", wordBreak: "break-all" }}>
               JE: {jeByLeg["AGENCY"].reference_number}
