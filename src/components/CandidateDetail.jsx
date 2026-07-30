@@ -2210,6 +2210,21 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               ? "No trait data yet — framework read waits for assessment scores."
               : "Loading framework read..."}
           </div>
+        ) : (detail?.assessment_composite == null && detail?.overall_score == null) ? (
+          // Pre-assessment: composite may fire "unverified" floor signals off the resume
+          // alone, but rendering those as "Floors failed" reads as a scoring failure
+          // when the candidate hasn't answered anything yet. Clean pill instead of the
+          // misleading chip cascade — framework read waits for real assessment scores.
+          <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: T.slate100, borderLeft: `4px solid ${T.slate500}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: T.slate500, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Assessment not started
+              </span>
+              <span style={{ fontSize: 12, color: T.slate700 }}>
+                HireGauge scores will populate here once the candidate completes the assessment.
+              </span>
+            </div>
+          </div>
         ) : (
           <>
             {/* Verdict banner */}
