@@ -813,42 +813,45 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
                     : detail.lss_total_accuracy >= yellowT ? "yellow"
                     : "red"
                   }
-            subline={(() => {
-              const m = detail?.lss_math_accuracy;
-              const v = detail?.lss_verbal_accuracy;
-              const p = detail?.lss_problem_solving_accuracy;
-              if (m == null && v == null && p == null) return null;
-              return `Math ${m ?? "—"} · Verbal ${v ?? "—"} · PS ${p ?? "—"}`;
-            })()}
-          />
-          <AssessRow
-            label="LSS Speed"
-            noBar
-            value={(() => {
-              const m = Number(detail?.lss_math_speed_seconds);
-              const v = Number(detail?.lss_verbal_speed_seconds);
-              const p = Number(detail?.lss_problem_solving_speed_seconds);
-              if (!Number.isFinite(m) || !Number.isFinite(v) || !Number.isFinite(p)) return null;
-              return Math.round((m + v + p) / 3);
-            })()}
-            extra="s/item avg"
-            band={(() => {
-              const maxSpeed = Math.max(
-                Number(detail?.lss_math_speed_seconds) || 0,
-                Number(detail?.lss_verbal_speed_seconds) || 0,
-                Number(detail?.lss_problem_solving_speed_seconds) || 0
-              );
-              if (!maxSpeed) return "none";
-              return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
-            })()}
-            subline={(() => {
-              const m = detail?.lss_math_speed_seconds;
-              const v = detail?.lss_verbal_speed_seconds;
-              const p = detail?.lss_problem_solving_speed_seconds;
-              if (m == null && v == null && p == null) return null;
-              return `Math ${m ?? "—"}s · Verbal ${v ?? "—"}s · PS ${p ?? "—"}s`;
-            })()}
-          />
+                  subline={(() => {
+                    const m = detail?.lss_math_accuracy;
+                    const v = detail?.lss_verbal_accuracy;
+                    const p = detail?.lss_problem_solving_accuracy;
+                    if (m == null && v == null && p == null) return null;
+                    return `Math ${m ?? "—"} · Verbal ${v ?? "—"} · PS ${p ?? "—"}`;
+                  })()}
+                />
+                <AssessRow
+                  label="LSS Speed"
+                  noBar
+                  value={(() => {
+                    const m = Number(detail?.lss_math_speed_seconds);
+                    const v = Number(detail?.lss_verbal_speed_seconds);
+                    const p = Number(detail?.lss_problem_solving_speed_seconds);
+                    if (!Number.isFinite(m) || !Number.isFinite(v) || !Number.isFinite(p)) return null;
+                    return Math.round((m + v + p) / 3);
+                  })()}
+                  extra="s/item avg"
+                  band={(() => {
+                    const maxSpeed = Math.max(
+                      Number(detail?.lss_math_speed_seconds) || 0,
+                      Number(detail?.lss_verbal_speed_seconds) || 0,
+                      Number(detail?.lss_problem_solving_speed_seconds) || 0
+                    );
+                    if (!maxSpeed) return "none";
+                    return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
+                  })()}
+                  subline={(() => {
+                    const m = detail?.lss_math_speed_seconds;
+                    const v = detail?.lss_verbal_speed_seconds;
+                    const p = detail?.lss_problem_solving_speed_seconds;
+                    if (m == null && v == null && p == null) return null;
+                    return `Math ${m ?? "—"}s · Verbal ${v ?? "—"}s · PS ${p ?? "—"}s`;
+                  })()}
+                />
+              </>
+            );
+          })()}
           <AssessRow label="Reliability" value={detail?.reliability} band={RELIABILITY_BAND(detail?.reliability)} />
           <AssessRow label="Distortion" value={detail?.response_distortion} band={DISTORTION_BAND(detail?.response_distortion)} />
 
