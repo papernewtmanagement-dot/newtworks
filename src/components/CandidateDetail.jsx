@@ -774,35 +774,45 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
               </div>
             );
           })()}
-          <AssessRow
-            label="LSS Math"
-            value={detail?.lss_math_accuracy}
-            max={12}
-            extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
-          />
-          <AssessRow
-            label="LSS Verbal"
-            value={detail?.lss_verbal_accuracy}
-            max={10}
-            extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
-          />
-          <AssessRow
-            label="LSS Problem Solving"
-            value={detail?.lss_problem_solving_accuracy}
-            max={9}
-            extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
-          />
-          <AssessRow
-            label="LSS Total"
-            value={detail?.lss_total_accuracy}
-            max={35}
-            extra={detail?.lss_total_accuracy != null ? "/35" : null}
-            band={
-              detail?.lss_total_accuracy == null ? "none"
-              : detail.lss_total_accuracy >= 30 ? "green"
-              : detail.lss_total_accuracy >= 25 ? "yellow"
-              : "red"
-            }
+          {(() => {
+            const isV1 = detail?.assessment_source === "v1";
+            const maxMath = isV1 ? 10 : 12;
+            const maxVerbal = isV1 ? 13 : 10;
+            const maxPs = isV1 ? 2 : 9;
+            const maxTotal = isV1 ? 25 : 35;
+            const greenT = isV1 ? 22 : 30;
+            const yellowT = isV1 ? 18 : 25;
+            return (
+              <>
+                <AssessRow
+                  label="LSS Math"
+                  value={detail?.lss_math_accuracy}
+                  max={maxMath}
+                  extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
+                />
+                <AssessRow
+                  label="LSS Verbal"
+                  value={detail?.lss_verbal_accuracy}
+                  max={maxVerbal}
+                  extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
+                />
+                <AssessRow
+                  label="LSS Problem Solving"
+                  value={detail?.lss_problem_solving_accuracy}
+                  max={maxPs}
+                  extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
+                />
+                <AssessRow
+                  label="LSS Total"
+                  value={detail?.lss_total_accuracy}
+                  max={maxTotal}
+                  extra={detail?.lss_total_accuracy != null ? `/${maxTotal}` : null}
+                  band={
+                    detail?.lss_total_accuracy == null ? "none"
+                    : detail.lss_total_accuracy >= greenT ? "green"
+                    : detail.lss_total_accuracy >= yellowT ? "yellow"
+                    : "red"
+                  }
             subline={(() => {
               const m = detail?.lss_math_accuracy;
               const v = detail?.lss_verbal_accuracy;
