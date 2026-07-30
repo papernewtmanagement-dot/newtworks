@@ -439,7 +439,7 @@ async function extractText(
 async function handleBankStatement(
   ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
-): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string }> {
+): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string; held?: boolean }> {
   // Reset per-doc reference counter so identical-fingerprint txns across
   // different documents don't leak :N suffixes to each other.
   resetReferenceCounters();
@@ -460,6 +460,74 @@ async function handleBankStatement(
     if (parsed.queued) return { jeCount: 0, suspenseCount: 0, queueId: parsed.queueId };
     return { jeCount: 0, suspenseCount: 0, error: parsed.error };
   }
+
+  // ---- Reconciliation guard (Step 6 of reconciliation guard build) ----
+  // Same identity as llm-queue-drainer v5: closing == opening +
+  // sum(txn.signedAmount) +/- RECON_EPSILON. Mismatch OR missing balances ->
+  // hold: no statement_balances write, no JE posts. Handler internally
+  // flips documents.processing_status to 'held_reconciliation_mismatch',
+  // stashes parsed JSON in documents.notes, records reconciliation_delta,
+  // and emits a high-severity alert. Successful parses also record the
+  // near-zero delta for audit trail.
+  const RECON_EPSILON = 0.01;
+  const openBal = parsed.openingBalance;
+  const closeBal = parsed.closingBalance;
+  let reconDelta: number | null = null;
+  let reconHeldReason: string | null = null;
+
+  if (openBal === null || closeBal === null) {
+    reconHeldReason = `missing balance from parser: opening=${openBal === null ? "null" : openBal}, closing=${closeBal === null ? "null" : closeBal}`;
+  } else {
+    const txnSum = parsed.transactions.reduce((acc, r) => acc + r.txn.signedAmount, 0);
+    const expected = openBal + txnSum;
+    reconDelta = Math.round((closeBal - expected) * 100) / 100;
+    if (Math.abs(reconDelta) > RECON_EPSILON) {
+      reconHeldReason = `delta=$${reconDelta.toFixed(2)} exceeds epsilon $${RECON_EPSILON.toFixed(2)} (opening=$${openBal.toFixed(2)}, sum_txns=$${txnSum.toFixed(2)}, expected_close=$${expected.toFixed(2)}, actual_close=$${closeBal.toFixed(2)}, ${parsed.transactions.length} txns)`;
+    }
+  }
+
+  if (reconHeldReason !== null) {
+    const heldNotes = JSON.stringify({
+      held: "reconciliation_mismatch",
+      reason: reconHeldReason,
+      reconciliation_delta: reconDelta,
+      source_account_code: sourceAccountCode,
+      account_last4: parsed.accountLast4,
+      statement_period: parsed.statementPeriod,
+      opening_balance: openBal,
+      closing_balance: closeBal,
+      txn_count: parsed.transactions.length,
+      parsed_transactions: parsed.transactions.map((r) => ({
+        date: r.date,
+        payee: r.txn.payee,
+        memo: r.txn.memo,
+        amount: r.txn.signedAmount,
+      })),
+    });
+    await sb.from("documents").update({
+      processing_status: "held_reconciliation_mismatch",
+      reconciliation_delta: reconDelta,
+      notes: heldNotes,
+      processed_at: new Date().toISOString(),
+    }).eq("id", documentId);
+    await sb.from("alerts").insert({
+      agency_id: ctx.agencyId,
+      alert_type: "reconciliation_mismatch",
+      severity: "high",
+      title: `Statement reconciliation mismatch — ${att.fileName}`,
+      message: `Parsed ${att.fileName} for account ${sourceAccountCode} does not tie to the printed statement summary. ${reconHeldReason}. Held for review — no journal entries posted, no statement_balances written.`,
+      module_reference: "document-processor",
+      related_id: documentId,
+      is_read: false,
+      is_resolved: false,
+      created_at: new Date().toISOString(),
+    });
+    console.warn(`[document-processor] reconciliation_mismatch doc=${documentId} account=${sourceAccountCode}: ${reconHeldReason}`);
+    return { jeCount: 0, suspenseCount: 0, held: true, error: `held_reconciliation_mismatch: ${reconHeldReason}` };
+  }
+
+  // Success path: record near-zero delta for audit trail.
+  await sb.from("documents").update({ reconciliation_delta: reconDelta }).eq("id", documentId);
 
   // Write the statement header (opening/closing balance, period) to
   // statement_balances first — independent of per-txn GL posting so the
@@ -880,6 +948,17 @@ async function processOneAttachment(
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "queued", jeCount: 0, suspenseCount: 0,
             queueId: r.queueId, sourceLabel: uploadSource,
+          });
+        } else if (r.held) {
+          // Reconciliation guard held the parse. Handler already wrote
+          // documents.processing_status='held_reconciliation_mismatch',
+          // reconciliation_delta, notes payload, and emitted the alert.
+          // Do NOT call markDocument here — it would overwrite those writes.
+          // Do NOT archive the Gmail thread — the document needs human review.
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
           });
         } else if (r.error) {
           await markDocument(documentId, "error", 0, [], r.error);
