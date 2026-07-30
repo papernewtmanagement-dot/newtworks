@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 // NOTE: This module intentionally does NOT import from ../lib/supabase.js.
@@ -83,6 +83,25 @@ export default function CandidateAssessment({ candidateId, token }) {
   const [batchProgress, setBatchProgress] = useState({ answered: 0, total: 0 });
   const [stint, setStint] = useState(1);
   const [saving, setSaving] = useState(false);
+
+  // Per-item shown-at timestamp captured on the FRONTEND at the moment the
+  // candidate actually sees a new question. Sent as served_at on save_response.
+  // Fixes the pre-v10 bug where a single batch-level served_at (set when the
+  // whole batch was fetched) produced nonsense per-item response times — a
+  // candidate reading through 100 items over 10 minutes was previously
+  // credited with 600 s on the last item and ~0 s on the first, when the real
+  // per-item read/answer time is 4-10 s. Ref (not state) because we don't need
+  // a re-render on capture; the value is only read inside handleAnswer.
+  const shownAtRef = useRef(null);
+  useEffect(() => {
+    if (
+      (screen === "primary" || screen === "expansion") &&
+      items.length > 0 &&
+      currentIdx < items.length
+    ) {
+      shownAtRef.current = new Date().toISOString();
+    }
+  }, [currentIdx, items, screen]);
 
   // Fetch + render items for whichever stint is next; if server says done, finalize.
   const runServe = useCallback(async () => {
@@ -172,9 +191,11 @@ export default function CandidateAssessment({ candidateId, token }) {
       const body = { item_id: item.id };
       if (payload.value != null) body.response_value = payload.value;
       if (payload.label != null) body.response_label = payload.label;
-      // Echo served_at back so the edge fn can compute per-item response time.
-      // Legacy items (before v7 deploy) won't have this field; edge fn tolerates missing.
-      if (item.served_at != null) body.served_at = item.served_at;
+      // Send the per-item shown-at time captured by the effect above. That is
+      // the moment the candidate actually saw this specific question, so
+      // (answered_at - served_at) is real per-item response time. Edge fn
+      // tolerates missing served_at (drops to NULL) if this ever fails.
+      if (shownAtRef.current != null) body.served_at = shownAtRef.current;
       const { ok, data } = await callV1(candidateId, token, "save_response", body);
       setSaving(false);
       if (!ok) {
