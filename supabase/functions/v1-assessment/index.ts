@@ -112,29 +112,67 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
   };
 }
 
-// Fisher-Yates in-place shuffle (returns new array).
-// Randomizes served-item order so candidates can't infer what section is being probed
-// by grouping (impression-management items appearing back-to-back, etc.).
-function shuffle<T>(arr: T[]): T[] {
+// Constrained shuffle for served-item ordering.
+//   Step 1 — Fisher-Yates baseline (unbiased random permutation).
+//   Step 2 — Walk-and-swap pass enforcing spacing constraints:
+//     * min 8-item gap between items sharing hypothesized_trait
+//       (personality items on the same trait can't cluster)
+//     * min 4-item gap between items sharing cognitive_domain
+//       (math items can't cluster together)
+//     * min 8-item gap between items sharing item_text
+//       (defense-in-depth against future duplicates even after retest deactivation)
+// Bounded to 20 passes. If constraints stay infeasible past that (batch too
+// small or too many items sharing an attribute), accept the best partial
+// ordering and return.
+function constrainedShuffle<T extends {
+  hypothesized_trait?: string | null;
+  cognitive_domain?: string | null;
+  item_text?: string | null;
+}>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
-  return a;
-}
+  if (a.length < 2) return a;
 
-// Attach a served_at timestamp to each item before returning to the client.
-// Frontend echoes it back on save_response; handleSave persists it alongside
-// answered_at. Together they feed per-item response-time signals in
-// compute_newtworks_v1_distortion_signals (mean_response_ms, min_response_ms,
-// straight_through_flag). All items in a batch share the same timestamp — that
-// is deliberate: the candidate sees them one at a time in shuffled order, and
-// what matters for straight-through detection is the delta between the moment
-// this batch reached them and the moment each answer came back.
-function attachServedAt(items: any[]): any[] {
-  const now = new Date().toISOString();
-  return items.map((it: any) => ({ ...it, served_at: now }));
+  const MIN_GAP_TRAIT = 8;
+  const MIN_GAP_DOMAIN = 4;
+  const MIN_GAP_TEXT = 8;
+  const MAX_LOOKBACK = Math.max(MIN_GAP_TRAIT, MIN_GAP_DOMAIN, MIN_GAP_TEXT);
+
+  const violatesAt = (idx: number, item: T): boolean => {
+    const trait = item.hypothesized_trait ?? null;
+    const domain = item.cognitive_domain ?? null;
+    const text = item.item_text ?? null;
+    const back = Math.max(0, idx - MAX_LOOKBACK);
+    for (let k = back; k < idx; k++) {
+      const other = a[k];
+      const gap = idx - k;
+      if (trait && (other.hypothesized_trait ?? null) === trait && gap < MIN_GAP_TRAIT) return true;
+      if (domain && (other.cognitive_domain ?? null) === domain && gap < MIN_GAP_DOMAIN) return true;
+      if (text && (other.item_text ?? null) === text && gap < MIN_GAP_TEXT) return true;
+    }
+    return false;
+  };
+
+  for (let pass = 0; pass < 20; pass++) {
+    let violations = 0;
+    for (let i = 1; i < a.length; i++) {
+      if (!violatesAt(i, a[i])) continue;
+      violations++;
+      // Look forward for a candidate that fits at i.
+      for (let j = i + 1; j < a.length; j++) {
+        if (!violatesAt(i, a[j])) {
+          [a[i], a[j]] = [a[j], a[i]];
+          break;
+        }
+      }
+    }
+    if (violations === 0) break;
+  }
+
+  return a;
 }
 
 // Expansion target — describes a filtered slice of stint=2 items to serve.
@@ -192,13 +230,10 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
         break;
 
       case "expand_cognitive":
-        addTarget({
-          section: t.expansion_section || "cognitive",
-          trait: null,
-          nonsense_only: false,
-          retest_only: false,
-          cap: t.expansion_count ?? null,
-        });
+        // Newtworks v1 (2026-07-31): cognitive lives fully in stint 1. All
+        // active v1 cognitive items are stint=1 after the pool trim/retag;
+        // no stint=2 cognitive pathway exists. Any expand_cognitive trigger
+        // row is legacy and ignored here.
         break;
 
       case "expand_impression_mgmt_and_nonsense":
@@ -235,22 +270,6 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
       // Unknown action — ignore silently.
     }
   }
-
-  // Newtworks v1 (2026-07-30): cognitive pool is always fully served.
-  // Thresholds are calibrated to the full v1 cognitive pool (verbal 13,
-  // math 10, problem_solving 8). Adaptive cognitive routing would produce
-  // partial-pool candidates scored against a full-pool yardstick — a
-  // measurement mismatch. Force full cognitive expansion regardless of
-  // whether the trait compute returned an expand_cognitive trigger.
-  // addTarget dedup upgrades any existing capped cognitive target to full
-  // pool (cap = null wins over any numeric cap).
-  addTarget({
-    section: "cognitive",
-    trait: null,
-    nonsense_only: false,
-    retest_only: false,
-    cap: null,
-  });
 
   return Array.from(map.values());
 }
@@ -295,7 +314,7 @@ async function handleServe(supa: any, cand: any) {
       const { data: items, error: iErr } = await supa
         .from("hiregauge_instrument_items")
         .select(
-          "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait"
+          "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain"
         )
         .eq("stint", 1)
         .eq("is_active", true)
@@ -308,7 +327,7 @@ async function handleServe(supa: any, cand: any) {
       return json({
         stint: 1,
         done: unanswered.length === 0,
-        items: attachServedAt(shuffle(unanswered)),
+        items: constrainedShuffle(unanswered),
         progress: { answered: prog.answered, total: prog.total },
       });
     }
@@ -324,7 +343,7 @@ async function handleServe(supa: any, cand: any) {
       let q = supa
         .from("hiregauge_instrument_items")
         .select(
-          "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait"
+          "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain"
         )
         .eq("stint", 2)
         .eq("is_active", true);
@@ -347,7 +366,7 @@ async function handleServe(supa: any, cand: any) {
     return json({
       stint: 2,
       done: unanswered.length === 0,
-      items: attachServedAt(shuffle(unanswered)),
+      items: constrainedShuffle(unanswered),
       progress: {
         answered: stint2All.length - unanswered.length,
         total: stint2All.length,
