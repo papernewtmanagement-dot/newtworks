@@ -549,6 +549,7 @@ async function handleFinalize(supa: any, cand: any) {
           overall_score:           rm.overall_score       ?? null,
           assessment_date:         finalized_at_iso.slice(0, 10),
           assessment_completed_at: finalized_at_iso,
+          assessment_source:       "v1",
         })
         .eq("id", cand.id)
         .eq("agency_id", AGENCY_ID);
@@ -556,6 +557,17 @@ async function handleFinalize(supa: any, cand: any) {
         return json({ error: "flat_update_failed", detail: upErr.message }, 500);
       }
       updated = true;
+
+      // Step B / Item 3: populate per-subtest LSS flat columns from responses.
+      // Non-blocking — LSS surfacing is a diagnostic layer; a helper failure
+      // must not block the finalize response the candidate flow depends on.
+      try {
+        await supa.rpc("apply_newtworks_v1_lss_to_candidate", {
+          p_candidate_id: cand.id,
+        });
+      } catch (_lssErr) {
+        // Silent — see note above.
+      }
     } else {
       update_skip_reason =
         (rm?.n_items_scored ?? 0) === 0 ? "no_items_scored" : "overall_score_null";
