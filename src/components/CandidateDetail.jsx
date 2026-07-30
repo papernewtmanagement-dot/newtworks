@@ -731,7 +731,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // role-fit selector + competencies for the currently-selected role on the
 // right. Moved here from the standalone top-of-page Assessment section per
 // Peter directive 2026-07-17.
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt }) {
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
@@ -965,6 +965,165 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
           })()}
         </div>
       </div>
+
+      {/* Newtworks v1 diagnostics — timing, reliability by trait, distortion
+          signals. Panel hides silently when the candidate has no v1 scoring
+          data (n_items_scored == 0 or v1Extras missing). Legacy CTS-source
+          candidates never trigger this section. */}
+      {v1Extras && (v1Extras.n_items_scored || 0) > 0 && (() => {
+        const started = detail?.assessment_started_at ? new Date(detail.assessment_started_at) : null;
+        const completed = detail?.assessment_completed_at ? new Date(detail.assessment_completed_at) : null;
+        const invited = v1InvitedAt ? new Date(v1InvitedAt) : null;
+
+        const fmtDuration = (ms) => {
+          if (!Number.isFinite(ms) || ms < 0) return null;
+          const totalMin = Math.floor(ms / 60000);
+          const totalHrs = Math.floor(ms / 3600000);
+          const days = Math.floor(ms / 86400000);
+          const leftoverHrs = totalHrs - days * 24;
+          if (totalMin < 60) return `${totalMin}m`;
+          if (totalHrs < 24) return `${totalHrs}h ${totalMin - totalHrs * 60}m`;
+          return leftoverHrs === 0 ? `${days}d` : `${days}d ${leftoverHrs}h`;
+        };
+        const inviteLag = invited && started ? fmtDuration(started - invited) : null;
+        const takingDur = started && completed ? fmtDuration(completed - started) : null;
+
+        const reliabilityMap = v1Extras.reliability_by_trait || {};
+        const traitOrder = [
+          ["assertiveness", "Assertiveness"],
+          ["independent_spirit", "Independent Spirit"],
+          ["compassion", "Compassion"],
+          ["belief_in_others", "Belief in Others"],
+          ["optimism", "Optimism"],
+          ["analytical", "Analytical"],
+          ["deadline_motivation", "Deadline Motivation"],
+          ["self_promotion", "Self Promotion"],
+          ["recognition_drive", "Recognition Drive"],
+        ];
+
+        const flagBadge = (fires, label) => (
+          <span style={{
+            display: "inline-block",
+            padding: "2px 8px",
+            fontSize: 10,
+            fontWeight: 700,
+            borderRadius: 999,
+            background: fires ? "#fee2e2" : "#dcfce7",
+            color: fires ? "#991b1b" : "#166534",
+          }}>{fires ? label : `${label} OK`}</span>
+        );
+
+        const strLine = v1Extras.distortion_straight_line_flag;
+        const acq = v1Extras.distortion_acquiescence_flag;
+        const strThrough = v1Extras.distortion_straight_through_flag;
+        const nTimed = v1Extras.distortion_n_timed_items ?? 0;
+        const meanMs = v1Extras.distortion_mean_response_ms;
+        const minMs = v1Extras.distortion_min_response_ms;
+
+        return (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
+              V1 Diagnostics
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+
+              {/* Timing */}
+              <div style={{ padding: "10px 12px", background: T.slate50, borderRadius: 6, borderLeft: `3px solid ${T.slate200}` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>Timing</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: T.slate600 }}>Invite → start</span>
+                    <span style={{ fontWeight: 600, color: T.slate900 }}>{inviteLag ?? "—"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: T.slate600 }}>Start → complete</span>
+                    <span style={{ fontWeight: 600, color: T.slate900 }}>{takingDur ?? "—"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: T.slate600 }}>Mean per item</span>
+                    <span style={{ fontWeight: 600, color: T.slate900 }}>{meanMs != null ? `${(Number(meanMs) / 1000).toFixed(1)}s` : "—"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: T.slate600 }}>Fastest item</span>
+                    <span style={{ fontWeight: 600, color: T.slate900 }}>{minMs != null ? `${(Number(minMs) / 1000).toFixed(1)}s` : "—"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: T.slate600 }}>Timed items</span>
+                    <span style={{ fontWeight: 600, color: T.slate900 }}>{nTimed}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Distortion signals */}
+              <div style={{ padding: "10px 12px", background: T.slate50, borderRadius: 6, borderLeft: `3px solid ${T.slate200}` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>Response quality</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <span style={{ color: T.slate900, fontWeight: 600 }}>Straight-line</span>
+                      <span style={{ fontSize: 10, color: T.slate500 }}>max run {v1Extras.distortion_max_consecutive_run ?? "—"} · sd {v1Extras.distortion_overall_sd ?? "—"}</span>
+                    </div>
+                    {flagBadge(strLine, "Flag")}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <span style={{ color: T.slate900, fontWeight: 600 }}>Acquiescence</span>
+                      <span style={{ fontSize: 10, color: T.slate500 }}>mean {v1Extras.distortion_acquiescence_mean ?? "—"} · bias {v1Extras.distortion_acquiescence_bias ?? "—"}</span>
+                    </div>
+                    {flagBadge(acq, "Flag")}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <span style={{ color: T.slate900, fontWeight: 600 }}>Straight-through</span>
+                      <span style={{ fontSize: 10, color: T.slate500 }}>{nTimed >= 5 && meanMs != null ? `mean ${(Number(meanMs) / 1000).toFixed(1)}s · <2s = flag` : "n < 5 timed items"}</span>
+                    </div>
+                    {nTimed >= 5 ? flagBadge(strThrough, "Flag") : (
+                      <span style={{ fontSize: 10, color: T.slate400, fontStyle: "italic" }}>—</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Reliability by trait */}
+              <div style={{ padding: "10px 12px", background: T.slate50, borderRadius: 6, borderLeft: `3px solid ${T.slate200}`, gridColumn: "span 1" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>Reliability by trait</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
+                  {traitOrder.map(([k, label]) => {
+                    const r = reliabilityMap[k];
+                    if (!r) {
+                      return (
+                        <div key={k} style={{ display: "flex", justifyContent: "space-between", color: T.slate500 }}>
+                          <span>{label}</span>
+                          <span style={{ fontStyle: "italic" }}>—</span>
+                        </div>
+                      );
+                    }
+                    const nItems = r.n_items ?? 0;
+                    const sd = r.within_trait_sd;
+                    const rd = r.retest_divergence;
+                    const nPairs = r.n_retest_pairs ?? 0;
+                    return (
+                      <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <span style={{ color: T.slate700 }}>{label}</span>
+                        <span style={{ color: T.slate900, fontVariantNumeric: "tabular-nums" }}>
+                          <span title="within-trait SD">sd {sd ?? "—"}</span>
+                          <span style={{ color: T.slate400, margin: "0 4px" }}>·</span>
+                          <span title="items scored">n {nItems}</span>
+                          <span style={{ color: T.slate400, margin: "0 4px" }}>·</span>
+                          <span title="retest divergence" style={{ color: nPairs > 0 && rd != null ? (Number(rd) > 1.5 ? "#991b1b" : T.slate900) : T.slate400 }}>
+                            {nPairs > 0 && rd != null ? `Δ ${rd}` : "no retest"}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1343,6 +1502,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
+  // Newtworks v1 assessment extras: reliability_by_trait + distortion signals +
+  // timing come from compute_newtworks_v1_traits_as_row RPC (not stored on the
+  // v_hiring_candidates view). Populated even for legacy CTS-source candidates
+  // if they happen to have v1 responses; otherwise n_items_scored is 0 and the
+  // panel hides. See op-rule "HireGauge trait interpretation" for the
+  // trait-label vs psychometric-construct mismatch caveats.
+  const [v1Extras, setV1Extras] = useState(null);
+  const [v1InvitedAt, setV1InvitedAt] = useState(null);
   // Which role fit is selected. Local UI state only — session-scoped, defaults to
   // bestFit on load. Framework scoring always uses assessment_best_fit_role's best_role;
   // the selector only controls which competency detail displays.
@@ -1409,6 +1576,29 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         if (!error && Array.isArray(data) && data[0]) setThreeConstruct(data[0]);
       })
       .catch(() => {});
+    // Newtworks v1 assessment extras (reliability + distortion + timing signals).
+    // Merged read (p_stint = NULL) scores stint 1 + stint 2 items together on
+    // sitting=1 — same call the finalize path uses to write flat trait cols.
+    supabase.rpc("compute_newtworks_v1_traits_as_row", {
+      p_candidate_id: detail.id, p_stint: null, p_sitting: 1,
+    })
+      .then(({ data, error }) => {
+        if (!error && Array.isArray(data) && data[0]) setV1Extras(data[0]);
+      })
+      .catch(() => {});
+    // Earliest invitation sent_at drives invite→start lag calculation for v1
+    // candidates. Multiple invites (initial + reminders) → take MIN so the lag
+    // reflects the earliest outreach, not the last nudge.
+    supabase
+      .from("assessment_invitations")
+      .select("sent_at")
+      .eq("candidate_id", detail.id)
+      .order("sent_at", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && data?.sent_at) setV1InvitedAt(data.sent_at);
+      });
   }, [detail?.id]);
 
   // Default selectedRole to best-fit role once bestFit resolves. Local UI state only —
@@ -1904,6 +2094,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                   {layer.key === "assessment" && renderAssessmentLayer({
                                     detail, competencies, bestFit,
                                     selectedRole, setSelectedRole, T,
+                                    v1Extras, v1InvitedAt,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
                                     detail, T,
