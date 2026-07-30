@@ -522,7 +522,7 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {choices.map((choice, i) => (
           <button
-            key={i}
+            key={`${item?.id ?? "x"}-${i}`}
             disabled={saving}
             onClick={() => onAnswer({ label: String(choice) })}
             style={{
@@ -537,16 +537,6 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
               transition: "background 0.15s, border-color 0.15s",
               lineHeight: 1.4,
               boxSizing: "border-box",
-            }}
-            onMouseEnter={(e) => {
-              if (!saving) {
-                e.currentTarget.style.background = T.blueLt;
-                e.currentTarget.style.borderColor = T.blue;
-              }
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = T.white;
-              e.currentTarget.style.borderColor = T.slate200;
             }}
           >
             {String(choice)}
@@ -572,7 +562,7 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {labels.map((opt) => (
           <button
-            key={opt.value}
+            key={`${item?.id ?? "x"}-${opt.value}`}
             disabled={saving}
             onClick={() => onAnswer({ value: opt.value })}
             style={{
@@ -617,7 +607,7 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
     >
       {labels.map((opt) => (
         <button
-          key={opt.value}
+          key={`${item?.id ?? "x"}-${opt.value}`}
           disabled={saving}
           onClick={() => onAnswer({ value: opt.value })}
           style={{
@@ -638,16 +628,6 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
             lineHeight: 1.3,
             transition: "background 0.15s, border-color 0.15s",
             boxSizing: "border-box",
-          }}
-          onMouseEnter={(e) => {
-            if (!saving) {
-              e.currentTarget.style.background = T.blueLt;
-              e.currentTarget.style.borderColor = T.blue;
-            }
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = T.white;
-            e.currentTarget.style.borderColor = T.slate200;
           }}
         >
           <span
