@@ -172,6 +172,9 @@ export default function CandidateAssessment({ candidateId, token }) {
       const body = { item_id: item.id };
       if (payload.value != null) body.response_value = payload.value;
       if (payload.label != null) body.response_label = payload.label;
+      // Echo served_at back so the edge fn can compute per-item response time.
+      // Legacy items (before v7 deploy) won't have this field; edge fn tolerates missing.
+      if (item.served_at != null) body.served_at = item.served_at;
       const { ok, data } = await callV1(candidateId, token, "save_response", body);
       setSaving(false);
       if (!ok) {
