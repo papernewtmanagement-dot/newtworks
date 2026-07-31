@@ -1917,11 +1917,11 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
         </label>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
+      <div style={{ overflowX: "auto", overflowY: "clip" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
           <thead>
-            <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left", whiteSpace: "nowrap" }}>Account</th>
+            <tr>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left", whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2, background: T.white, boxShadow: `inset 0 -2px 0 ${T.slate200}` }}>Account</th>
               {columns.map((c) => (
                 <th key={c.key} colSpan={2} style={{
                   padding: "8px 8px",
@@ -1931,6 +1931,11 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
                   textAlign: "center",
                   whiteSpace: "nowrap",
                   borderLeft: `1px solid ${T.slate100}`,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                  background: T.white,
+                  boxShadow: `inset 0 -2px 0 ${T.slate200}`,
                 }}>
                   {c.label}
                 </th>
