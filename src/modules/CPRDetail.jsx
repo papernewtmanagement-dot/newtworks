@@ -288,7 +288,7 @@ const EDIT_FIELDS = {
   ],
   detail: [
     "code_reds", "code_yellows",
-    "wrapup_done", "inbox_done",
+    "wrapup_done", "inbox_done", "scorecard_done",
     "quotes_discussed", "sales_points",
     "quotes_modified",
   ],
@@ -364,6 +364,7 @@ const TEAM_CHECKLIST_KEYS = [...DAILY_OPS_KEYS, ...OPP_LISTS_KEYS];
 const PERSONAL_CHECKLIST_KEYS = [
   ["wrapup_done", "Wrap-up"],
   ["inbox_done", "Inbox"],
+  ["scorecard_done", "Scorecard"],
 ];
 
 // ── Edit form hook ──────────────────────────────────────────
@@ -552,6 +553,40 @@ function useCPRData(weekDate) {
             .eq("agency_id", AGENCY_ID)
             .eq("weekly_cpr_report_id", reportRow.id);
           detailRows = dr || [];
+        }
+
+        // 3b. Scorecard completion auto-verify — cross-check fit_scorecards
+        // against each detail row for the CPR week (Sun→Sat). scorecard_done
+        // := has ≥1 fit_scorecards entry with scorecard_date in that window.
+        // Runs on every load; manual edits persist until the next load.
+        // Non-fatal: verify failure falls through with stored values.
+        if (detailRows.length > 0) {
+          try {
+            const weekStartISO = addDaysISO(weekDate, -6);
+            const { data: scRows } = await supabase
+              .from("fit_scorecards")
+              .select("team_member_id")
+              .eq("agency_id", AGENCY_ID)
+              .gte("scorecard_date", weekStartISO)
+              .lte("scorecard_date", weekDate);
+            const doneSet = new Set((scRows || []).map(r => r.team_member_id));
+            const toUpdate = [];
+            for (const d of detailRows) {
+              const computed = doneSet.has(d.team_member_id);
+              if (Boolean(d.scorecard_done) !== computed) {
+                toUpdate.push({ id: d.id, computed });
+                d.scorecard_done = computed;
+              }
+            }
+            for (const u of toUpdate) {
+              await supabase
+                .from("weekly_cpr_team_detail")
+                .update({ scorecard_done: u.computed })
+                .eq("id", u.id);
+            }
+          } catch (_scorecardVerifyErr) {
+            // Non-fatal: fall through with whatever stored values exist.
+          }
         }
 
         // 4. agency_snapshot — most recent row WITH YTD data on/before week end
