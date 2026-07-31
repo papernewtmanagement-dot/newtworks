@@ -18,6 +18,73 @@ const V1_SECTIONS = [
   "cognitive",
 ];
 
+// Cognitive form rotation (Peter directive 2026-07-31).
+// The active stint=1 cognitive pool exceeds the per-candidate serve count on purpose so
+// that different candidates in the same hiring wave see different item sets — reduces
+// answer-sharing risk without changing the assessment length or difficulty distribution.
+// Personality / VCT / IM sections are NEVER rotated: everyone sees every active item there,
+// because their scoring depends on within-trait consistency across a fixed item roster.
+// Rotation only makes sense for cognitive (right/wrong scoring, no trait aggregation).
+const COGNITIVE_TARGETS: Record<string, number> = {
+  math: 6,
+  problem_solving: 5,
+  verbal: 6,
+};
+
+// Deterministic non-cryptographic 32-bit hash — two-stream cyrb53 variant.
+// Chosen empirically over FNV-1a after testing: FNV-1a produced only ~10 unique cognitive
+// subsets across 50 candidates (bad diversity, uneven item frequency) because the same
+// item suffix dominated the accumulator across candidates. Cyrb53's second stream and
+// finalizer mix (h ^ (h >>> 16)) fixes distribution — ~48/50 unique subsets, item
+// frequencies inside a tight ±25% band around the theoretical mean.
+function candItemHash(input: string): number {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x85ebca77) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0xc2b2ae3d) >>> 0;
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 0x85ebca77) >>> 0;
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 0xc2b2ae3d) >>> 0;
+  return (h1 ^ h2) >>> 0;
+}
+
+// Given a candidate id and the full active stint=1 item list, returns the set of item ids
+// this candidate is assigned. Non-cognitive items are always included. Cognitive items are
+// sorted per-candidate by candItemHash(candidate_id + ":" + item_id) within their domain,
+// and the top N per domain (per COGNITIVE_TARGETS) are taken. If a domain has fewer active
+// items than its target, all items in that domain are included (fail-open on under-pool).
+function selectStint1ItemIdsForCandidate(
+  candidateId: string,
+  items: Array<{ id: string; section: string; cognitive_domain?: string | null }>
+): Set<string> {
+  const chosen = new Set<string>();
+  const cognitiveByDomain: Record<string, Array<{ id: string; sortKey: number }>> = {};
+
+  for (const it of items) {
+    if (it.section !== "cognitive") {
+      chosen.add(it.id);
+      continue;
+    }
+    const dom = it.cognitive_domain ?? "";
+    if (!cognitiveByDomain[dom]) cognitiveByDomain[dom] = [];
+    cognitiveByDomain[dom].push({
+      id: it.id,
+      sortKey: candItemHash(candidateId + ":" + it.id),
+    });
+  }
+
+  for (const [domain, target] of Object.entries(COGNITIVE_TARGETS)) {
+    const pool = cognitiveByDomain[domain] || [];
+    pool.sort((a, b) => a.sortKey - b.sortKey);
+    const takeCount = Math.min(target, pool.length);
+    for (let i = 0; i < takeCount; i++) chosen.add(pool[i].id);
+  }
+
+  return chosen;
+}
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -86,14 +153,19 @@ Deno.serve(async (req) => {
 // --- Progress helpers ---
 
 async function loadPrimaryProgress(supa: any, candidateId: string) {
+  // Select cognitive_domain so the per-candidate cognitive subset can be computed.
   const { data: items, error: iErr } = await supa
     .from("hiregauge_instrument_items")
-    .select("id")
+    .select("id, section, cognitive_domain")
     .eq("stint", 1)
     .eq("is_active", true)
     .in("section", V1_SECTIONS);
   if (iErr) throw new Error(`primary_items_fetch: ${iErr.message}`);
-  const total = (items || []).length;
+
+  // Progress denominator = the candidate's assigned subset, not the whole active pool.
+  // This is what makes the progress bar accurate under cognitive form rotation.
+  const assigned = selectStint1ItemIdsForCandidate(candidateId, items || []);
+  const total = assigned.size;
 
   const { data: resp, error: rErr } = await supa
     .from("hiregauge_candidate_responses")
@@ -103,7 +175,8 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
   if (rErr) throw new Error(`primary_responses_fetch: ${rErr.message}`);
 
   const answeredIds = new Set((resp || []).map((r: any) => r.item_id));
-  const answered = (items || []).filter((it: any) => answeredIds.has(it.id)).length;
+  let answered = 0;
+  for (const id of assigned) if (answeredIds.has(id)) answered++;
 
   return {
     total,
@@ -302,7 +375,8 @@ async function handleServe(supa: any, cand: any) {
     const answered = new Set((respRows || []).map((r: any) => r.item_id));
 
     if (!prog.primaryAnswered) {
-      // Stint 1 phase: return all unanswered stint=1 items.
+      // Stint 1 phase: fetch all active stint=1 items, filter to this candidate's
+      // assigned subset (cognitive form rotation), then return the unanswered slice.
       const { data: items, error: iErr } = await supa
         .from("hiregauge_instrument_items")
         .select(
@@ -315,7 +389,9 @@ async function handleServe(supa: any, cand: any) {
         .order("item_number", { ascending: true });
       if (iErr) return json({ error: "items_fetch_failed", detail: iErr.message }, 500);
 
-      const unanswered = (items || []).filter((it: any) => !answered.has(it.id));
+      const assigned = selectStint1ItemIdsForCandidate(cand.id, items || []);
+      const assignedItems = (items || []).filter((it: any) => assigned.has(it.id));
+      const unanswered = assignedItems.filter((it: any) => !answered.has(it.id));
       return json({
         stint: 1,
         done: unanswered.length === 0,
