@@ -1769,9 +1769,12 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
       "Team":          3,
       "Marketing":     4,
       "Personal":      5,
-      // Aged suspense — visible only when 0003/0004 have activity.
-      // Rendered ahead of orphan fallbacks so Peter sees it before scrolling past.
-      "Suspense":      6,
+      // Suspense — the "*Unclassified Expense — Business" account
+      // (subtype=suspense, no section_label_override on agency entity)
+      // floats loose at top of expenses with no section header. Asterisk
+      // in the account name then sorts it above lettered leaves inside
+      // the flat block. Peter directive 2026-07-31.
+      "Suspense":      0,
       // Orphan leaves — post-cutover INITCAP fallback ("Expense"),
       // pre-cutover historical import default ("root"), or NULL section
       // caught by the "Uncategorized" fallback above. Same treatment as
@@ -1780,13 +1783,18 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
       "root":          10,
       "Uncategorized": 10,
     };
-    // Section labels that are pure repetition of the outer INCOME /
-    // EXPENSES header — suppress the bold section-header DataRow and
-    // render their leaf accounts flat (no indent) so the P&L doesn't
-    // show a redundant parent-category row that just echoes the header.
-    const REDUNDANT_SECTIONS = new Set([
-      "Income", "Expense", "root", "Uncategorized",
-    ]);
+    // Section labels that render without a section-header row and whose
+    // leaves render flat (no indent). Split by account type:
+    //   Income:  strips the redundant "Income" wrapper that just echoes
+    //            the outer INCOME header, plus root/Uncategorized orphan
+    //            fallbacks.
+    //   Expense: same treatment for "Expense" wrapper + orphans, PLUS
+    //            "Suspense" — the "*Unclassified Expense — Business"
+    //            account floats loose at top of expenses so the
+    //            asterisk-prefixed name sorts above lettered leaves.
+    //            Peter directive 2026-07-31.
+    const REDUNDANT_SECTIONS_INCOME  = new Set(["Income",  "root", "Uncategorized"]);
+    const REDUNDANT_SECTIONS_EXPENSE = new Set(["Expense", "root", "Uncategorized", "Suspense"]);
     const rankOf = (sec) => {
       if (opts && opts.isIncomeLine) {
         return INCOME_SECTION_RANK[sec] ?? 5;
@@ -1802,7 +1810,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
     const nodes = [];
     sectionKeys.forEach((sec) => {
       const grpLines = groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name));
-      const isRedundant = REDUNDANT_SECTIONS.has(sec);
+      const isRedundant = (opts?.isIncomeLine ? REDUNDANT_SECTIONS_INCOME : REDUNDANT_SECTIONS_EXPENSE).has(sec);
       if (!isRedundant) {
         const sectionValues = columns.map(c => grpLines.reduce((s, l) => s + c.getValue(l), 0));
         const sectionPriors = columns.map(c => {
