@@ -1917,7 +1917,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
         </label>
       </div>
 
-      <div style={{ overflowX: "auto", overflowY: "clip" }}>
+      <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 120px)", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
           <thead>
             <tr>
