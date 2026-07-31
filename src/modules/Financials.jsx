@@ -1761,6 +1761,17 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
       "Income":              10,
     };
     const EXPENSE_SECTION_RANK = {
+      // Peter directive 2026-07-31: five named expense sections in order.
+      // Growth = budget_category=growth tag routed in get_pnl_history_* fns.
+      // Others = section_label_override on chart_of_accounts.
+      "Admin":         1,
+      "Growth":        2,
+      "Team":          3,
+      "Marketing":     4,
+      "Personal":      5,
+      // Aged suspense — visible only when 0003/0004 have activity.
+      // Rendered ahead of orphan fallbacks so Peter sees it before scrolling past.
+      "Suspense":      6,
       // Orphan leaves — post-cutover INITCAP fallback ("Expense"),
       // pre-cutover historical import default ("root"), or NULL section
       // caught by the "Uncategorized" fallback above. Same treatment as
