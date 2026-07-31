@@ -626,6 +626,30 @@ async function handleFinalize(supa: any, cand: any) {
     const r1 = Array.isArray(p1) ? p1[0] : p1;
     const r2 = Array.isArray(p2) ? p2[0] : p2;
 
+    // Reliability + response_distortion bands (Peter directive 2026-07-31).
+    // Rollup of the four existing v1 signal functions. Merged read (p_stint=null)
+    // — same slice as the trait scores above. Failure never blocks the finalize
+    // response; ratings remain null on error and the frontend renders "—".
+    let bandsRow: { reliability: string | null; response_distortion: string | null } = {
+      reliability: null,
+      response_distortion: null,
+    };
+    try {
+      const { data: bandsData, error: bandsErr } = await supa.rpc(
+        "compute_newtworks_v1_bands",
+        { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
+      );
+      if (!bandsErr) {
+        const b = Array.isArray(bandsData) ? bandsData[0] : bandsData;
+        bandsRow = {
+          reliability: b?.reliability ?? null,
+          response_distortion: b?.response_distortion ?? null,
+        };
+      }
+    } catch (_bandsExc) {
+      // Silent — see note above.
+    }
+
     // Guard: only write flat columns when we actually have something scored.
     // Blocks a premature finalize from wiping existing CTS-source data with
     // NULLs. Requires both n_items_scored > 0 and overall_score not null.
@@ -650,6 +674,8 @@ async function handleFinalize(supa: any, cand: any) {
           self_promotion:          rm.self_promotion      ?? null,
           recognition_drive:       rm.recognition_drive   ?? null,
           overall_score:           rm.overall_score       ?? null,
+          reliability:             bandsRow.reliability,
+          response_distortion:     bandsRow.response_distortion,
           assessment_date:         finalized_at_iso.slice(0, 10),
           assessment_completed_at: finalized_at_iso,
           assessment_source:       "v1",
