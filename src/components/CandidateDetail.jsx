@@ -101,28 +101,6 @@ const STAGE_TO_RELEVANT_RULE_STAGES = {
   archived:        [],
 };
 
-const SCORECARD_FIELDS = [
-  { key: "personal_presence",           label: "Personal Presence",           type: "num" },
-  { key: "honesty",                     label: "Honesty",                     type: "num", character: true },
-  { key: "hard_work_ethic",             label: "Hard Work Ethic",             type: "num", character: true },
-  { key: "personally_responsible",      label: "Personally Responsible",      type: "num", character: true },
-  { key: "concern_for_others",          label: "Concern for Others",          type: "num", character: true },
-  { key: "attitude_toward_sales",       label: "Attitude Toward Sales",       type: "num" },
-  { key: "willingness_to_own_products", label: "Willingness to Own Products", type: "num" },
-  { key: "motivation_type",             label: "Motivation Type",             type: "enum", options: [
-    { v: "competitive", l: "Competitive" },
-    { v: "income",      l: "Income" },
-    { v: "duty",        l: "Duty" },
-    { v: "recognition", l: "Recognition" },
-  ]},
-  { key: "motivation_level",            label: "Motivation Level",            type: "num" },
-  { key: "recommendation",              label: "Overall Recommendation",      type: "enum", options: [
-    { v: "great_fit",  l: "Great Fit" },
-    { v: "good_fit",   l: "Good Fit" },
-    { v: "not_a_fit",  l: "Not a Fit" },
-  ]},
-];
-
 // ─── Helpers ───────────────────────────────────────────────────────
 
 const bandColor = (band) => {
@@ -178,17 +156,6 @@ const originPillColors = (tone) => {
   if (tone === "red")   return { bg: T.redLt,    fg: T.red };
   if (tone === "amber") return { bg: T.amberLt,  fg: T.amber };
   return                       { bg: T.slate100, fg: T.slate600 };
-};
-
-const characterFloorPassed = (detail, prefix) => {
-  const scores = [
-    detail?.[`${prefix}honesty`],
-    detail?.[`${prefix}hard_work_ethic`],
-    detail?.[`${prefix}personally_responsible`],
-    detail?.[`${prefix}concern_for_others`],
-  ];
-  if (scores.some(s => s == null)) return null; // incomplete
-  return scores.every(s => Number(s) >= 7);
 };
 
 // ─── Interview scoring helpers ─────────────────────────────────────
@@ -1433,75 +1400,6 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
   );
 }
 
-const ScorecardForm = ({ title, prefix, detail, onFieldChange, onSave, saving, tone }) => {
-  const charFloorPassed = characterFloorPassed(detail, prefix);
-  return (
-    <Section title={title} tone={tone}>
-      {charFloorPassed !== null && (
-        <div style={{ fontSize: 11, marginBottom: 10, color: charFloorPassed ? T.green : T.red, fontWeight: 600 }}>
-          Character floor (≥7 across all 4 traits): {charFloorPassed ? "✓ Passed" : "✗ FAILED"}
-        </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-        {SCORECARD_FIELDS.map(f => {
-          const fieldKey = `${prefix}${f.key}`;
-          const val = detail?.[fieldKey] ?? "";
-          if (f.type === "num") {
-            return (
-              <div key={f.key}>
-                <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>{f.label} {f.character && <span style={{ color: T.red }}>*</span>}</label>
-                <input
-                  type="number" min={1} max={10}
-                  value={val}
-                  onChange={(e) => {
-                    const n = e.target.value === "" ? null : Number(e.target.value);
-                    onFieldChange(fieldKey, n);
-                  }}
-                  style={{ width: "100%", padding: 6, fontSize: 12, borderRadius: 5, border: `1px solid ${T.slate200}` }}
-                  placeholder="1-10"
-                />
-              </div>
-            );
-          }
-          if (f.type === "enum") {
-            return (
-              <div key={f.key}>
-                <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>{f.label}</label>
-                <select
-                  value={val || ""}
-                  onChange={(e) => onFieldChange(fieldKey, e.target.value || null)}
-                  style={{ width: "100%", padding: 6, fontSize: 12, borderRadius: 5, border: `1px solid ${T.slate200}` }}
-                >
-                  <option value="">—</option>
-                  {f.options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-                </select>
-              </div>
-            );
-          }
-          return null;
-        })}
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Notes</label>
-        <textarea
-          value={detail?.[`${prefix}notes`] || ""}
-          onChange={(e) => onFieldChange(`${prefix}notes`, e.target.value)}
-          rows={3}
-          style={{ width: "100%", padding: 6, fontSize: 12, borderRadius: 5, border: `1px solid ${T.slate200}` }}
-        />
-      </div>
-      <button onClick={onSave} disabled={saving} style={{ marginTop: 10, padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.white, background: T.blue, border: "none", borderRadius: 7, cursor: saving ? "wait" : "pointer" }}>
-        {saving ? "Saving..." : `Save ${title}`}
-      </button>
-      {detail?.[`${prefix}scored_at`] && (
-        <span style={{ marginLeft: 10, fontSize: 10, color: T.slate500 }}>
-          Last saved {new Date(detail[`${prefix}scored_at`]).toLocaleString()}
-        </span>
-      )}
-    </Section>
-  );
-};
-
 // ─── Main component ────────────────────────────────────────────────
 
 export default function CandidateDetail({ candidate, onBack, onUpdate }) {
@@ -1683,8 +1581,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     const updates = {};
     fields.forEach(f => { updates[f] = detail[f] ?? null; });
     // Timestamp bookkeeping
-    if (sectionKey === "va") updates.va_scored_at = new Date().toISOString();
-    if (sectionKey === "fi") updates.fi_scored_at = new Date().toISOString();
     if (sectionKey === "rc" && detail.rc_notes) updates.rc_completed_at = new Date().toISOString();
     if (sectionKey === "decision" && detail.final_decision) updates.decision_at = new Date().toISOString();
 
@@ -1707,14 +1603,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     if (data) setDetail(data);
   };
 
-  const saveVA = () => saveFields(
-    SCORECARD_FIELDS.map(f => `va_${f.key}`).concat(["va_notes"]),
-    "va"
-  );
-  const saveFI = () => saveFields(
-    SCORECARD_FIELDS.map(f => `fi_${f.key}`).concat(["fi_notes"]),
-    "fi"
-  );
   const saveRC = () => saveFields(["rc_notes"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
 
@@ -2356,26 +2244,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </>
         )}
       </Section>
-
-      {/* Video AMA Scorecard */}
-      <ScorecardForm
-        title="Video AMA Scorecard"
-        prefix="va_"
-        detail={detail}
-        onFieldChange={updateField}
-        onSave={saveVA}
-        saving={savingSection === "va"}
-      />
-
-      {/* Final Interview Scorecard */}
-      <ScorecardForm
-        title="Final Interview Scorecard"
-        prefix="fi_"
-        detail={detail}
-        onFieldChange={updateField}
-        onSave={saveFI}
-        saving={savingSection === "fi"}
-      />
 
       {/* Reference Check */}
       <Section title="Reference Check">
