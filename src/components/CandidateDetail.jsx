@@ -776,12 +776,12 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
           })()}
           {(() => {
             const isV1 = detail?.assessment_source === "v1";
-            const maxMath = isV1 ? 10 : 12;
-            const maxVerbal = isV1 ? 13 : 10;
-            const maxPs = isV1 ? 2 : 9;
-            const maxTotal = isV1 ? 25 : 35;
-            const greenT = isV1 ? 22 : 30;
-            const yellowT = isV1 ? 18 : 25;
+            const maxMath = isV1 ? 6 : 12;
+            const maxVerbal = isV1 ? 6 : 10;
+            const maxPs = isV1 ? 5 : 9;
+            const maxTotal = isV1 ? 17 : 35;
+            const greenT = isV1 ? 12 : 30;
+            const yellowT = isV1 ? 10 : 25;
             return (
               <>
                 <AssessRow
