@@ -178,7 +178,6 @@ function constrainedShuffle<T extends {
 // Expansion target — describes a filtered slice of stint=2 items to serve.
 // Supports the four trigger actions defined in hiregauge_expansion_triggers:
 //   expand_trait_stint_2               — section + trait filter (per-trait borderline)
-//   expand_cognitive                   — section filter only (borderline overall cognitive)
 //   expand_impression_mgmt_and_nonsense — impression-mgmt section AND vct nonsense subset
 //   expand_retest_pairs                — any section, retest_of_item_number NOT NULL
 type ExpansionTarget = {
@@ -227,13 +226,6 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
           retest_only: false,
           cap: t.expansion_count ?? null,
         });
-        break;
-
-      case "expand_cognitive":
-        // Newtworks v1 (2026-07-31): cognitive lives fully in stint 1. All
-        // active v1 cognitive items are stint=1 after the pool trim/retag;
-        // no stint=2 cognitive pathway exists. Any expand_cognitive trigger
-        // row is legacy and ignored here.
         break;
 
       case "expand_impression_mgmt_and_nonsense":
