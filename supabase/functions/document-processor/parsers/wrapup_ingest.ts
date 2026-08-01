@@ -160,7 +160,7 @@ export async function processWrapupMode(
   }
   const fromClause = teamEmails.map((e) => `from:${e}`).join(" OR ");
   const subjectMatch = `(subject:wrap-up OR subject:wrapup OR subject:"wrap up" OR subject:"CPR RECAP")`;
-  const defaultQuery = `(${fromClause}) ${subjectMatch} -label:Wrapups -in:sent newer_than:21d`;
+  const defaultQuery = `(${fromClause}) ${subjectMatch} -label:Team-Wrapups -in:sent newer_than:21d`;
 
   const query = body.gmail_query ?? defaultQuery;
   const maxResults = body.max_results ?? 30;
