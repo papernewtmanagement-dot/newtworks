@@ -316,6 +316,55 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
   );
 };
 
+// Intelligence headline — the top-of-column signal for the Assessment layer.
+// Composite (0-100 scale, mean ~50 / SD ~15) comes from hiregauge_lss_delta_v2
+// via the assessment_intelligence_composite RPC wrapper. Band is role-specific,
+// pulled live from hiregauge_role_ideal_ranges (floor/ceiling for the currently
+// selected role) — NOT a hardcoded threshold. Below floor = red (2c comp-side
+// penalty engages). Within range = green. Above ceiling = amber — not a penalty
+// on the candidate, a fit note per Ganzach 1998 / Maltarich et al. 2010
+// (cognitively over-qualified for this specific seat, may fit a higher-ceiling
+// role better). Replaces the old hardcoded greenT=15/yellowT=12 raw-item-count
+// bands (Step 6, 2026-08-01).
+const IntelligenceHeadline = ({ composite, floor, ceiling, roleLabel, T }) => {
+  const c = composite == null ? null : Number(composite);
+  const hasRange = floor != null && ceiling != null;
+  const band = c == null || !hasRange ? "none"
+    : c < floor ? "red"
+    : c > ceiling ? "yellow"
+    : "green";
+  const colors = bandColor(band);
+  const fillPct = c == null ? 0 : Math.max(0, Math.min(100, c));
+  const fitNote = band === "red" ? "Below role floor"
+    : band === "yellow" ? "Above role ceiling — over-qualified for this seat"
+    : band === "green" ? "Within ideal range"
+    : null;
+  const rangeNote = hasRange
+    ? `Ideal range for ${roleLabel || "this role"}: ${floor}\u2013${ceiling}`
+    : roleLabel ? `No calibrated range yet for ${roleLabel}` : null;
+  return (
+    <div style={{
+      padding: "14px 16px", background: colors.bg, borderRadius: 8,
+      borderLeft: `4px solid ${colors.fg}`, boxSizing: "border-box",
+      display: "flex", flexDirection: "column", gap: 6, marginBottom: 4,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600 }}>
+          Intelligence
+        </span>
+        <span style={{ fontSize: 26, fontWeight: 800, color: band === "none" ? T.slate500 : colors.fg }}>
+          {c != null ? Math.round(c) : "—"}
+        </span>
+      </div>
+      <div style={{ height: 6, background: T.slate200, borderRadius: 3, overflow: "hidden", boxSizing: "border-box" }}>
+        <div style={{ height: "100%", width: `${fillPct}%`, background: band === "none" ? T.slate300 : colors.fg, borderRadius: 3 }} />
+      </div>
+      {fitNote && <div style={{ fontSize: 11, fontWeight: 600, color: colors.fg }}>{fitNote}</div>}
+      {rangeNote && <div style={{ fontSize: 10, color: T.slate500 }}>{rangeNote}</div>}
+    </div>
+  );
+};
+
 
 // Resume layer expansion body — plain-text extracted resume, scrollable.
 // Falls back to a hint when no extraction exists (usually because
@@ -698,13 +747,20 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // role-fit selector + competencies for the currently-selected role on the
 // right. Moved here from the standalone top-of-page Assessment section per
 // Peter directive 2026-07-17.
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange }) {
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
 
         {/* LEFT COLUMN — LSS + traits */}
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <IntelligenceHeadline
+            composite={intelligence?.intelligence_composite}
+            floor={roleIdealRange?.intelligence_ideal_min}
+            ceiling={roleIdealRange?.intelligence_ideal_max}
+            roleLabel={ROLE_LABELS[roleIdealRange?.role_category] || roleIdealRange?.role_category}
+            T={T}
+          />
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
             Traits & LSS
           </div>
@@ -747,8 +803,6 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
             const maxVerbal = isV1 ? 6 : 10;
             const maxPs = isV1 ? 5 : 9;
             const maxTotal = isV1 ? 17 : 35;
-            const greenT = isV1 ? 15 : 30;
-            const yellowT = isV1 ? 12 : 25;
             return (
               <>
                 <AssessRow
@@ -774,12 +828,7 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
                   value={detail?.lss_total_accuracy}
                   max={maxTotal}
                   extra={detail?.lss_total_accuracy != null ? `/${maxTotal}` : null}
-                  band={
-                    detail?.lss_total_accuracy == null ? "none"
-                    : detail.lss_total_accuracy >= greenT ? "green"
-                    : detail.lss_total_accuracy >= yellowT ? "yellow"
-                    : "red"
-                  }
+                  band="none"
                   subline={(() => {
                     const m = detail?.lss_math_accuracy;
                     const v = detail?.lss_verbal_accuracy;
@@ -1413,6 +1462,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
+  // Intelligence composite (0-100, from hiregauge_lss_delta_v2) + the currently
+  // selected role's ideal range (floor/ceiling from hiregauge_role_ideal_ranges).
+  // Both feed the IntelligenceHeadline at the top of the Assessment layer. See
+  // Step 6, 2026-08-01.
+  const [intelligence, setIntelligence] = useState(null);
+  const [roleIdealRange, setRoleIdealRange] = useState(null);
   // Newtworks v1 assessment extras: reliability_by_trait + distortion signals +
   // timing come from compute_newtworks_v1_traits_as_row RPC (not stored on the
   // v_hiring_candidates view). Populated even for legacy CTS-source candidates
@@ -1480,6 +1535,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         if (!error && Array.isArray(data)) setFrameworkRules(data);
       })
       .catch(() => {});
+    // Intelligence composite for the headline signal — thin wrapper around
+    // hiregauge_lss_delta_v2 so the frontend keeps the p_assessment_id calling
+    // convention used by every other RPC on this page.
+    supabase.rpc("assessment_intelligence_composite", { p_assessment_id: detail.id })
+      .then(({ data, error }) => { if (!error && data) setIntelligence(data); })
+      .catch(() => {});
     // Three-construct verdict: Nature/Nurture/Drivers per-layer verdicts +
     // pre-hire framework prediction + retrospective observation + calibration.
     supabase.rpc("verdict_overall", { p_candidate_id: detail.id })
@@ -1522,6 +1583,28 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     if (!bfBestRole) return;
     setSelectedRoleLocal(bfBestRole);
   }, [detail?.id, selectedRole, bestFit]);
+
+  // Role-specific intelligence ideal range for the IntelligenceHeadline band.
+  // Live from hiregauge_role_ideal_ranges — never hardcoded. Refetches whenever
+  // the selected role changes (selector click) or best-fit resolves for the
+  // first time. role_level is always 'default' — no per-agent variants exist yet.
+  useEffect(() => {
+    const bfBestRole = Array.isArray(bestFit) && bestFit[0]?.best_role;
+    const roleKey = selectedRole || bfBestRole;
+    if (!roleKey) { setRoleIdealRange(null); return; }
+    let cancelled = false;
+    supabase
+      .from("hiregauge_role_ideal_ranges")
+      .select("role_category, intelligence_ideal_min, intelligence_ideal_max")
+      .eq("agency_id", AGENCY_ID)
+      .eq("role_category", roleKey)
+      .eq("role_level", "default")
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!cancelled && !error) setRoleIdealRange(data);
+      });
+    return () => { cancelled = true; };
+  }, [selectedRole, bestFit]);
 
   // Bucket evaluate_candidate rows by verdict impact using composite's signal
   // arrays as the routing table. Composite's decline_signals annotate unverified
@@ -1998,6 +2081,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     detail, competencies, bestFit,
                                     selectedRole, setSelectedRole, T,
                                     v1Extras, v1InvitedAt,
+                                    intelligence, roleIdealRange,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
                                     detail, T,
