@@ -597,7 +597,7 @@ export async function processCareerplugMode(
   error?: string;
 }> {
   const query = body.gmail_query ??
-    `(from:careerplug.com OR from:careerplug OR subject:"new applicant" OR subject:"applicant digest") -label:Applicants newer_than:14d`;
+    `(from:careerplug.com OR from:careerplug OR subject:"new applicant" OR subject:"applicant digest") -label:Team-Hiring-Applicants newer_than:14d`;
   const maxResults = body.max_results ?? 20;
 
   const listRes = await callComposio({
