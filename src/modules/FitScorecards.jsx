@@ -42,7 +42,12 @@ const TIER_LABELS = {
 };
 
 // Cadence per handbook "Your Path" §Scorecarding Cadence. Not user-editable.
-// Also enforced server-side by tg_fit_scorecards_enforce_entry_type trigger.
+//
+// CANONICAL SOURCE: public.fit_scorecard_entry_type_for_tenure(text) — this JS
+// map is a UX mirror used to prefill the entry_type field in the modal. The
+// tg_fit_scorecards_enforce_entry_type trigger overwrites entry_type on
+// INSERT/UPDATE from the canonical SQL function, so this constant is display-
+// only; if the SQL source changes, update this map to match.
 const ENTRY_TYPE_BY_TIER = {
   weeks_1_8:     "conversation",
   weeks_9_13:    "quote_review",
