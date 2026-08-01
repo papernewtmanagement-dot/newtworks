@@ -9,37 +9,40 @@
 //
 // v2 branch added 2026-08-01 to unblock v2 assessment delivery (nothing
 // served v2 content before this — see operational_rule "v2 assessment
-// delivery gap found + fixed 2026-08-01"). Three stints, corrected same day
-// after an initial 2-stint build wrongly treated the 22 retest items as
-// unconditional core content (fixed same session):
+// delivery gap found + fixed 2026-08-01"). Three stints, per the ORIGINAL
+// Ass Fix 5 design (which later ingest sessions drifted from without a
+// documented decision to change it — corrected same day, 2026-08-01):
 //   - Stint 1 (33 items) = HEXACO Honesty-Humility integrity gate
 //     (sincerity, fairness, greed_avoidance). Served in full, no rotation.
-//   - Stint 2 (189 items) = the fixed core battery for every other facet.
-//     Served in full once Stint 1 is complete.
-//   - Stint 3 (up to 22 items, 1 per facet) = conditional retest round.
-//     Computed only after Stint 2 is fully answered (compute_newtworks_v2_
-//     stint3_triggers reads the merged stint 1+2 score). A facet's retest
-//     item is served only if that facet's score lands in the ambiguous
-//     45-55 band — same starting convention as v1's borderline-trait
-//     expansion. This threshold is a reasonable default, NOT a calibrated
-//     one — see OQ 52220bd5, which also wants within-facet variance and
-//     retest-divergence signals added once real candidate data exists.
-//     Known gap: OQ 52220bd5 targets 2-4 expansion items per triggered
-//     facet; only 1 retest item per facet currently exists.
+//   - Stint 2 (6-item baseline per facet, ~140 items) = every other facet
+//     at reliable baseline depth. Served in full once Stint 1 is complete.
+//   - Stint 3 (up to 4 items per triggered facet) = the REMAINING items
+//     from that same already-published, already-cited scale — NOT new
+//     content, NOT the retest item. Computed only after Stint 2 is fully
+//     answered (compute_newtworks_v2_stint3_triggers reads the merged
+//     stint 1+2 score). A facet's leftover pool is served only if that
+//     facet's score lands in the ambiguous 45-55 band — same starting
+//     convention as v1's borderline-trait expansion. Threshold is a
+//     reasonable default, NOT calibrated — see OQ 52220bd5, which also
+//     wants within-facet variance and retest-divergence signals added
+//     once real candidate data exists.
+//   - Retest items (1 per facet, all 22) are separate from Stint 3 —
+//     they check within-sitting answer consistency (Meade & Craig 2012),
+//     NOT ambiguity-triggered expansion. They live in Stint 1 or 2
+//     alongside their facet's baseline items and are always served.
+//   - Facets with a fixed/short published scale (no surplus items to
+//     hold back) have no Stint 3 pool: dispositional_optimism (6, full
+//     LOT-R scored set), assured_dominance (4, full IPIP-IPC PA octant),
+//     political_skill_networking (6, full PSI Networking subscale).
 //   - Scoring: compute_newtworks_v2_facets_as_row (facet-level only — the
 //     competency/role-fit layer is deferred, OQ f979e377). Written to the 21
 //     parallel v2 facet columns on hiring_candidates (already shipped,
 //     migration 20260731194800). v1's flat trait columns are never touched
 //     for a v2 candidate.
-//   - Scope: GMA (cognitive, all 4 subtests -- pattern/numerical/deductive/
-//     verbal, 75 items) and SJT (40 items) joined V2_SECTIONS 2026-08-02,
-//     both set to stint=2 (ride the fixed core battery alongside
-//     personality, no new stint or routing logic needed). Facet scoring
-//     stays personality-only (hardcoded section filter in
-//     compute_newtworks_v2_facets_as_row) -- GMA/SJT responses are served,
-//     saved, and scored correct/incorrect via answer_key at save time, but
-//     no rollup/competency function reads them yet (separate outstanding
-//     work).
+//   - Scope: GMA (cognitive) and SJT sections are owned by a separate build
+//     thread and are NOT included in V2_SECTIONS here. They stay stint=0
+//     (inert) until that thread wires them in — adding them later is a
+//     V2_SECTIONS + stint update, not a rewrite of this function.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -55,9 +58,10 @@ const V1_SECTIONS = [
   "cognitive",
 ];
 
-// Newtworks v2 sections. GMA (all 4 subtests) and SJT joined 2026-08-02 --
-// see header note for scoring-scope caveat.
-const V2_SECTIONS = ["newtworks_v2_personality", "newtworks_v2_cognitive_gma", "newtworks_v2_sjt"];
+// Newtworks v2 sections. Personality only for now — GMA/SJT excluded, see
+// header note. Extend this array (not the function structure) when that
+// thread's sections are ready to go live.
+const V2_SECTIONS = ["newtworks_v2_personality"];
 
 // Cognitive form rotation (Peter directive 2026-07-31). v1 only — v2 has no
 // cognitive section wired in yet.
@@ -816,10 +820,10 @@ async function handleFinalize(supa: any, cand: any) {
 // ============================================================================
 // --- v2 handlers ---
 // v2 stint 1 = integrity gate (33 items, all served, no rotation).
-// v2 stint 2 = fixed core battery (189 items, all served).
-// v2 stint 3 = conditional retest round (up to 22 items, only for facets
-// whose merged stint 1+2 score is ambiguous — see compute_newtworks_v2_
-// stint3_triggers and header comment for threshold caveats).
+// v2 stint 2 = 6-item baseline per facet (~140 items, all served).
+// v2 stint 3 = conditional expansion (up to 4 items per triggered facet,
+// pulled from the already-published items held back from Stint 2 — see
+// compute_newtworks_v2_stint3_triggers and header comment).
 // ============================================================================
 
 async function loadStintItemsV2(supa: any, stint: number) {
