@@ -865,7 +865,18 @@ async function loadStint3TargetsV2(supa: any, candidateId: string) {
     .in("hypothesized_trait", Array.from(traits))
     .order("item_number", { ascending: true });
   if (iErr) throw new Error(`v2_stint3_items_fetch: ${iErr.message}`);
-  return items || [];
+
+  // Cap at 4 items per triggered facet, per spec ("2-4 items per triggered
+  // facet" -- some facets' leftover pool has more than 4 items, e.g.
+  // compassion has 6; only the first 4 by item_number get served).
+  const perTraitCount: Record<string, number> = {};
+  const capped: any[] = [];
+  for (const it of items || []) {
+    const trait = it.hypothesized_trait ?? "";
+    perTraitCount[trait] = (perTraitCount[trait] || 0) + 1;
+    if (perTraitCount[trait] <= 4) capped.push(it);
+  }
+  return capped;
 }
 
 async function loadProgressV2(supa: any, candidateId: string) {
