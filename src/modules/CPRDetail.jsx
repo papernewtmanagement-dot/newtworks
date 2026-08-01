@@ -555,24 +555,70 @@ function useCPRData(weekDate) {
           detailRows = dr || [];
         }
 
-        // 3b. Scorecard completion auto-verify — cross-check fit_scorecards
-        // against each detail row for the CPR week (Sun→Sat). scorecard_done
-        // := has ≥1 fit_scorecards entry with scorecard_date in that window.
+        // 3b. Scorecard completion auto-verify — tenure-aware, per handbook
+        // "Your Path" §Scorecarding Cadence. Mirrors public.fit_scorecard_tenure_tier
+        // + FitScorecards.jsx ENTRY_TYPE_BY_TIER; keep in sync.
+        //
+        //   weeks_1_8     → entry_type=conversation, threshold=quotes_discussed
+        //                   (floor: every quote at minimum gets scorecarded;
+        //                    "every conversation" bar is unmeasurable without a
+        //                    conversation count, so quote count is a defensible floor)
+        //   weeks_9_13    → entry_type=quote_review, threshold=quotes_discussed
+        //   weeks_14_plus → entry_type=end_of_day,   threshold=Mon-Fri days elapsed
+        //                   in the CPR week (max 5; scales down for current week views)
+        //
         // Runs on every load; manual edits persist until the next load.
         // Non-fatal: verify failure falls through with stored values.
         if (detailRows.length > 0) {
           try {
-            const weekStartISO = addDaysISO(weekDate, -6);
+            const weekStartISO = addDaysISO(weekDate, -6); // Sunday
+            const todayCT = todayISO();
+            const effectiveEndISO = todayCT < weekDate ? todayCT : weekDate;
+            let workingDaysElapsed = 0;
+            for (let c = weekStartISO; c && c <= effectiveEndISO; c = addDaysISO(c, 1)) {
+              const dow = new Date(c + "T00:00:00").getDay();
+              if (dow >= 1 && dow <= 5) workingDaysElapsed++;
+            }
+
             const { data: scRows } = await supabase
               .from("fit_scorecards")
-              .select("team_member_id")
+              .select("team_member_id, entry_type")
               .eq("agency_id", AGENCY_ID)
               .gte("scorecard_date", weekStartISO)
               .lte("scorecard_date", weekDate);
-            const doneSet = new Set((scRows || []).map(r => r.team_member_id));
+            const countByTmType = new Map();
+            for (const r of (scRows || [])) {
+              const k = `${r.team_member_id}|${r.entry_type}`;
+              countByTmType.set(k, (countByTmType.get(k) || 0) + 1);
+            }
+
+            const teamById = new Map(teamRows.map(t => [t.id, t]));
+            const REQ_ENTRY_TYPE = {
+              weeks_1_8:     "conversation",
+              weeks_9_13:    "quote_review",
+              weeks_14_plus: "end_of_day",
+            };
+            function tierFor(tm) {
+              const anchor = tm?.hire_date || tm?.start_date;
+              if (!anchor) return "weeks_14_plus";
+              const anchorMs = Date.parse(anchor + "T00:00:00");
+              const asOfMs   = Date.parse(weekDate + "T00:00:00");
+              if (!Number.isFinite(anchorMs) || !Number.isFinite(asOfMs)) return "weeks_14_plus";
+              const weeks = Math.floor((asOfMs - anchorMs) / (7 * 24 * 3600 * 1000));
+              if (weeks < 9)  return "weeks_1_8";
+              if (weeks < 14) return "weeks_9_13";
+              return "weeks_14_plus";
+            }
+
             const toUpdate = [];
             for (const d of detailRows) {
-              const computed = doneSet.has(d.team_member_id);
+              const tm = teamById.get(d.team_member_id);
+              const tier = tierFor(tm);
+              const entryType = REQ_ENTRY_TYPE[tier];
+              const count = countByTmType.get(`${d.team_member_id}|${entryType}`) || 0;
+              const quotesDiscussed = Number(d.quotes_discussed) || 0;
+              const threshold = tier === "weeks_14_plus" ? workingDaysElapsed : quotesDiscussed;
+              const computed = count >= threshold;
               if (Boolean(d.scorecard_done) !== computed) {
                 toUpdate.push({ id: d.id, computed });
                 d.scorecard_done = computed;
