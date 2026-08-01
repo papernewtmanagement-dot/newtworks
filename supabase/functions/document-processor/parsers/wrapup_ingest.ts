@@ -372,6 +372,13 @@ async function processOneWrapupMessage(
     maxTokens: 2500,
   });
   if (!parseRes.ok) {
+    // Archive so the wrapup email exits the fetch pool. Without this, the
+    // 30-min Weekly Wrapup cron re-fetches the same emails (John, Cassie,
+    // Stephanie) all afternoon on Fridays and re-hammers Groq, which
+    // amplifies quota drain and multiplies queue rows for the same message.
+    // Queue item is the durable record; drainer picks it up when quota
+    // recovers.
+    await labelAndArchive(ctx, messageId, threadId);
     const err = "queued" in parseRes && parseRes.queued
       ? `LLM queued: ${parseRes.queueId}`
       : `LLM: ${("error" in parseRes) ? parseRes.error : "unknown"}`;
