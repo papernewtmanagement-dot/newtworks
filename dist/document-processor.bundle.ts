@@ -4109,7 +4109,7 @@ export async function processCareerplugMode(
   error?: string;
 }> {
   const query = body.gmail_query ??
-    `(from:careerplug.com OR from:careerplug OR subject:"new applicant" OR subject:"applicant digest") -label:Applicants newer_than:14d`;
+    `(from:careerplug.com OR from:careerplug OR subject:"new applicant" OR subject:"applicant digest") -label:Team-Hiring-Applicants newer_than:14d`;
   const maxResults = body.max_results ?? 20;
 
   const listRes = await callComposio({
@@ -4867,7 +4867,7 @@ export async function processWrapupMode(
   }
   const fromClause = teamEmails.map((e) => `from:${e}`).join(" OR ");
   const subjectMatch = `(subject:wrap-up OR subject:wrapup OR subject:"wrap up" OR subject:"CPR RECAP")`;
-  const defaultQuery = `(${fromClause}) ${subjectMatch} -label:Wrapups -in:sent newer_than:21d`;
+  const defaultQuery = `(${fromClause}) ${subjectMatch} -label:Team-Wrapups -in:sent newer_than:21d`;
 
   const query = body.gmail_query ?? defaultQuery;
   const maxResults = body.max_results ?? 30;
