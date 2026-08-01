@@ -72,7 +72,8 @@ function formatItemText(item) {
   if (!text) return text;
   const isSelfDescriptive =
     item.section === "newtworks_v1_personality" ||
-    item.section === "newtworks_v1_impression_mgmt";
+    item.section === "newtworks_v1_impression_mgmt" ||
+    item.section === "newtworks_v2_personality";
   if (!isSelfDescriptive) return text;
   return "I " + text.charAt(0).toLowerCase() + text.slice(1);
 }
