@@ -7,36 +7,16 @@
 -- what should be computed live) — the real minimum now varies by role and
 -- can change without this column ever being touched. Peter directive
 -- 2026-08-01: hard delete, not soft-archive/deprecate-in-place.
+--
+-- NOTE: this mirror reflects the SQL actually run. First attempt used
+-- CREATE OR REPLACE VIEW and failed (Postgres error 42P16 — CREATE OR
+-- REPLACE cannot drop a column from an existing view). Retried with
+-- DROP VIEW + CREATE VIEW, which succeeded. No dependent views/functions
+-- on v_hiring_candidates were found via pg_depend before dropping.
 
--- 1. Remove the dead branch from the generic trait-value getter first
---    (references the column directly; must go before the DROP COLUMN).
---    No live hiregauge_rules row has trait_signature containing
---    'lss_total_ideal_min' — branch was unreachable in practice.
-CREATE OR REPLACE FUNCTION public._hiregauge_get_trait_value(p_ta hiring_candidates, p_trait text)
- RETURNS numeric
- LANGUAGE sql
- IMMUTABLE
-AS $function$
-  SELECT CASE p_trait
-    WHEN 'deadline_motivation'     THEN p_ta.deadline_motivation::numeric
-    WHEN 'recognition_drive'       THEN p_ta.recognition_drive::numeric
-    WHEN 'assertiveness'           THEN p_ta.assertiveness::numeric
-    WHEN 'independent_spirit'      THEN p_ta.independent_spirit::numeric
-    WHEN 'analytical'              THEN p_ta.analytical::numeric
-    WHEN 'compassion'              THEN p_ta.compassion::numeric
-    WHEN 'self_promotion'          THEN p_ta.self_promotion::numeric
-    WHEN 'belief_in_others'        THEN p_ta.belief_in_others::numeric
-    WHEN 'optimism'                THEN p_ta.optimism::numeric
-    WHEN 'overall_score'           THEN p_ta.overall_score::numeric
-    WHEN 'lss_total_accuracy'      THEN p_ta.lss_total_accuracy::numeric
-    WHEN 'maintains_high_activity' THEN
-      (public.assessment_competency_maintains_high_activity(p_ta) ->> 'base')::numeric
-    ELSE NULL
-  END;
-$function$;
+DROP VIEW public.v_hiring_candidates;
 
--- 2. Rebuild v_hiring_candidates without hc.lss_total_ideal_min.
-CREATE OR REPLACE VIEW public.v_hiring_candidates AS
+CREATE VIEW public.v_hiring_candidates AS
  WITH resume_w AS (
          SELECT max(
                 CASE
@@ -195,5 +175,32 @@ CREATE OR REPLACE VIEW public.v_hiring_candidates AS
                     ELSE NULL::integer
                 END::numeric AS work_ethic) ns ON true;
 
--- 3. Hard delete the column itself.
+-- Remove the dead branch from the generic trait-value getter (references the
+-- column directly; must go before the DROP COLUMN). No live hiregauge_rules
+-- row has trait_signature containing 'lss_total_ideal_min' — branch was
+-- unreachable in practice.
+CREATE OR REPLACE FUNCTION public._hiregauge_get_trait_value(p_ta hiring_candidates, p_trait text)
+ RETURNS numeric
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  SELECT CASE p_trait
+    WHEN 'deadline_motivation'     THEN p_ta.deadline_motivation::numeric
+    WHEN 'recognition_drive'       THEN p_ta.recognition_drive::numeric
+    WHEN 'assertiveness'           THEN p_ta.assertiveness::numeric
+    WHEN 'independent_spirit'      THEN p_ta.independent_spirit::numeric
+    WHEN 'analytical'              THEN p_ta.analytical::numeric
+    WHEN 'compassion'              THEN p_ta.compassion::numeric
+    WHEN 'self_promotion'          THEN p_ta.self_promotion::numeric
+    WHEN 'belief_in_others'        THEN p_ta.belief_in_others::numeric
+    WHEN 'optimism'                THEN p_ta.optimism::numeric
+    WHEN 'overall_score'           THEN p_ta.overall_score::numeric
+    WHEN 'lss_total_accuracy'      THEN p_ta.lss_total_accuracy::numeric
+    WHEN 'maintains_high_activity' THEN
+      (public.assessment_competency_maintains_high_activity(p_ta) ->> 'base')::numeric
+    ELSE NULL
+  END;
+$function$;
+
+-- Hard delete the column itself.
 ALTER TABLE public.hiring_candidates DROP COLUMN IF EXISTS lss_total_ideal_min;
