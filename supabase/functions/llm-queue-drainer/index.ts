@@ -2,20 +2,17 @@
 //
 // Purpose: Drains pending items in public.llm_parse_queue that document-processor
 // couldn't complete synchronously (transient Groq failures, JSON parse issues,
-// max_tokens truncations). Focused on purpose='parse_bank_statement' — the biggest
-// backlog and the one that matters most for the P&L.
+// max_tokens truncations, daily TPD exhaustion).
+//
+// Supported purposes:
+//   - parse_bank_statement         → drainBankStatementItem  (statement_balances + bank_transactions)
+//   - careerplug_applicant_extract → drainCareerplugItem     (hiring_candidates via upsert RPC)
 //
 // Flow per item:
 //   1. Call Groq direct with stored system_prompt + user_content
-//   2. Parse JSON
-//   3. Look up chart_of_accounts by source_account_code
-//   4. Upsert statement_balances row
-//   5. Insert bank_transactions rows (dedup index handles idempotency)
-//   6. Update documents.processing_status = 'processed'
-//   7. Mark queue item completed
-//
-// The daily bank_gl_writer cron picks up bank_transactions and creates JEs — this
-// drainer intentionally stops at bank_transactions to keep responsibilities narrow.
+//   2. Parse JSON per purpose-specific shape
+//   3. Purpose-specific write path
+//   4. Mark queue item succeeded (or bump attempts on failure; 429 = don't burn)
 //
 // Invocation: POST { agency_id, shared_secret, [max_items=10, dry_run=false] }
 
@@ -28,8 +25,16 @@ const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
 // Bank statements run 11-13K tokens which exceeds gpt-oss-120b's 8000 TPM limit.
 // Force a model with higher throughput for the drainer regardless of stored model.
 const BANK_STATEMENT_MODEL = "llama-3.3-70b-versatile";
+// Careerplug items are small (~1-2K tokens) but gpt-oss-120b is often the daily-cap
+// victim (200K TPD). Draining on a different model spreads TPD load so we can drain
+// backlog even when gpt-oss-120b is exhausted.
+const CAREERPLUG_MODEL = "llama-3.3-70b-versatile";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+// Purposes this drainer currently handles. Adding a new purpose = adding a
+// handler function below AND appending its key here.
+const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extract"];
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
@@ -91,13 +96,20 @@ interface QueueItem {
   attempts: number;
 }
 
-async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<{
+interface DrainResult {
   ok: boolean;
   error?: string;
-  statementBalance?: any;
-  transactionsInserted?: number;
-  docId?: string | null;
-}> {
+  // Optional purpose-specific fields:
+  statementBalance?: any;         // bank statements
+  transactionsInserted?: number;  // bank statements
+  skippedInformational?: number;  // bank statements
+  docId?: string | null;          // bank statements
+  applicantsUpserted?: number;    // careerplug
+  applicantActions?: any[];       // careerplug
+  note?: string;
+}
+
+async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
   // 1. Call Groq (force higher-TPM model for bank statements — see rate limit note above).
   // Cap max_tokens at 4000 to stay under 12K TPM even for the biggest statements.
   const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, 4000);
@@ -256,6 +268,106 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   };
 }
 
+// -------------------------------------------------------------------------
+// CareerPlug applicant drainer
+// -------------------------------------------------------------------------
+// Mirrors what processCareerplugMessage() does after a successful Groq call:
+// parse applicants[] out of the JSON and call upsert_candidate_from_careerplug
+// per applicant. Skips the resume-PDF path (queue items don't carry attachments);
+// the RPC's email-based dedup layer will merge in resume data if the same
+// applicant arrives cleanly later.
+//
+// Uses CAREERPLUG_MODEL (llama-3.3-70b-versatile) instead of the queued
+// model (usually gpt-oss-120b) to spread TPD load — gpt-oss-120b is the model
+// that hits 200K TPD daily and drops these to the queue in the first place,
+// so retrying on the same model recreates the problem.
+async function drainCareerplugItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
+  // 1. Call Groq. Careerplug messages are small; 1500 max_tokens covers the
+  // biggest daily digest we've observed.
+  const llm = await callGroq(groqKey, CAREERPLUG_MODEL, item.system_prompt, item.user_content, 1500);
+  if (!llm.ok) return { ok: false, error: llm.error };
+
+  // 2. Parse JSON. Expect { "applicants": [ {...}, ... ] }
+  let json: any;
+  try { json = JSON.parse(stripFences(llm.raw)); }
+  catch (e) { return { ok: false, error: `JSON parse failed: ${e}. Head: ${llm.raw.slice(0, 200)}` }; }
+
+  const applicants: any[] = Array.isArray(json?.applicants) ? json.applicants : [];
+  if (applicants.length === 0) {
+    // LLM decided this isn't an applicant notification. Treat as success — no
+    // work to do, don't need to retry.
+    return { ok: true, applicantsUpserted: 0, applicantActions: [], note: "LLM returned zero applicants" };
+  }
+
+  // 3. Reconstruct source-message metadata from the user_content header lines
+  // (parseWithLLM stores exactly what processCareerplugMessage passed in).
+  const subject = item.user_content.match(/^SUBJECT:\s*(.+)$/m)?.[1]?.trim() ?? "";
+  const fromEmail = item.user_content.match(/^FROM:\s*(.+)$/m)?.[1]?.trim() ?? "";
+  const receivedAtISO = item.user_content.match(/^RECEIVED_AT \(ISO\):\s*(.+)$/m)?.[1]?.trim() ?? "";
+
+  if (dryRun) {
+    return { ok: true, applicantsUpserted: applicants.length, applicantActions: [], note: "dry_run" };
+  }
+
+  // 4. Upsert each applicant via the same RPC processCareerplugMessage uses.
+  // Idempotency: RPC dedups by ingestion_metadata.source_message.gmail_message_id
+  // first (we don't have that; queue doesn't preserve it), then falls back to
+  // lower(email). So a same-email applicant already ingested via any path gets
+  // matched and updated instead of duplicated.
+  const actions: any[] = [];
+  let upserted = 0;
+  for (let idx = 0; idx < applicants.length; idx++) {
+    const a = applicants[idx];
+    const payload: Record<string, unknown> = {
+      first_name: a.first_name ?? null,
+      last_name:  a.last_name ?? null,
+      email:      a.email ?? null,
+      phone:      a.phone ?? null,
+      position:   a.position ?? null,
+      applied_at: a.applied_at ?? (receivedAtISO || new Date().toISOString()),
+      resume_url: a.resume_url ?? null,
+      resume_document_id: null,  // drainer path has no Gmail attachment access
+      gmail_message_id: null,    // not preserved in llm_parse_queue schema
+      careerplug_metadata: {
+        prescreen_score: a.prescreen_score,
+        is_fast_track:   a.is_fast_track,
+        source_platform: a.source_platform,
+        careerplug_applicant_id: a.careerplug_applicant_id,
+        raw_line: a.raw_line,
+        gmail_source_message_id: null,
+        gmail_from: fromEmail,
+        gmail_subject: subject,
+        drained_from_queue: true,
+        drainer_queue_id: item.id,
+        drainer_drained_at: new Date().toISOString(),
+      },
+    };
+
+    const { data: rpcData, error: rpcErr } = await sb.rpc("upsert_candidate_from_careerplug", {
+      p_agency_id: item.agency_id,
+      p_payload:   payload,
+    });
+    if (rpcErr) {
+      actions.push({
+        email: a.email,
+        name: [a.first_name, a.last_name].filter(Boolean).join(" ") || null,
+        action: `rpc_error: ${rpcErr.message}`,
+      });
+      continue;
+    }
+    const res = (rpcData ?? {}) as { assessment_id?: string; action?: string };
+    actions.push({
+      email: a.email,
+      name: [a.first_name, a.last_name].filter(Boolean).join(" ") || null,
+      action: res.action ?? "unknown",
+      assessment_id: res.assessment_id,
+    });
+    if (res.action === "inserted" || res.action === "updated_by_email") upserted++;
+  }
+
+  return { ok: true, applicantsUpserted: upserted, applicantActions: actions };
+}
+
 Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); }
@@ -276,13 +388,14 @@ Deno.serve(async (req) => {
   const maxItems = Math.min(Math.max(parseInt(body?.max_items ?? "10", 10) || 10, 1), 50);
   const dryRun = body?.dry_run === true;
 
-  // Pull pending bank statement items for this agency
+  // Pull pending items for any supported purpose. Order by created_at so
+  // oldest backlog drains first (fair-queue behavior across purposes).
   const { data: items, error: qErr } = await sb
     .from("llm_parse_queue")
     .select("id, agency_id, document_id, purpose, system_prompt, user_content, model, attempts")
     .eq("agency_id", agencyId)
     .eq("status", "pending")
-    .eq("purpose", "parse_bank_statement")
+    .in("purpose", SUPPORTED_PURPOSES)
     .lt("attempts", 3)
     .order("created_at", { ascending: true })
     .limit(maxItems);
@@ -294,11 +407,24 @@ Deno.serve(async (req) => {
 
   const results: any[] = [];
   let totalTxns = 0;
+  let totalApplicants = 0;
   let successes = 0;
   let failures = 0;
+  let byPurpose: Record<string, { drained: number; ok: number; err: number }> = {};
 
   for (const item of items as QueueItem[]) {
-    const r = await drainBankStatementItem(item, groqKey, dryRun);
+    const purposeStats = byPurpose[item.purpose] ??= { drained: 0, ok: 0, err: 0 };
+    purposeStats.drained += 1;
+
+    let r: DrainResult;
+    if (item.purpose === "parse_bank_statement") {
+      r = await drainBankStatementItem(item, groqKey, dryRun);
+    } else if (item.purpose === "careerplug_applicant_extract") {
+      r = await drainCareerplugItem(item, groqKey, dryRun);
+    } else {
+      // Shouldn't happen — SUPPORTED_PURPOSES filter guards this. Skip defensively.
+      r = { ok: false, error: `unsupported purpose: ${item.purpose}` };
+    }
 
     if (!dryRun) {
       // Bump attempts + record result. Rate limit (429) = transient, don't count as an attempt.
@@ -330,15 +456,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (r.ok) { successes += 1; totalTxns += r.transactionsInserted ?? 0; }
-    else failures += 1;
+    if (r.ok) {
+      successes += 1;
+      purposeStats.ok += 1;
+      totalTxns += r.transactionsInserted ?? 0;
+      totalApplicants += r.applicantsUpserted ?? 0;
+    } else {
+      failures += 1;
+      purposeStats.err += 1;
+    }
 
     results.push({
       queue_id: item.id,
+      purpose: item.purpose,
       document_id: item.document_id,
       ok: r.ok,
-      transactions_inserted: r.transactionsInserted ?? 0,
+      // Bank statement fields (undefined for careerplug):
+      transactions_inserted: r.transactionsInserted,
       statement_balance: r.statementBalance,
+      // Careerplug fields (undefined for bank statements):
+      applicants_upserted: r.applicantsUpserted,
+      applicant_actions: r.applicantActions,
+      note: r.note,
       error: r.error,
     });
   }
@@ -349,6 +488,8 @@ Deno.serve(async (req) => {
     successes,
     failures,
     total_transactions_inserted: totalTxns,
+    total_applicants_upserted: totalApplicants,
+    by_purpose: byPurpose,
     dry_run: dryRun,
     items: results,
   });
