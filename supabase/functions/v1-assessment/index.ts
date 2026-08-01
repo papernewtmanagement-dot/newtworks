@@ -197,6 +197,21 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
 // Bounded to 20 passes. If constraints stay infeasible past that (batch too
 // small or too many items sharing an attribute), accept the best partial
 // ordering and return.
+//
+// Feasibility-aware gap targets (fix 2026-08-01, Peter directive — "stint-2
+// clustering"). A value that appears c times in an n-slot array cannot be
+// spaced further apart than floor(n / c) on average — pigeonhole, not a
+// tunable. Stint-2 expansion batches are frequently trait-concentrated BY
+// DESIGN: expand_trait_stint_2 targets pull almost entirely one trait (that's
+// the point of a trait-targeted follow-up). Against a flat MIN_GAP_TRAIT=8,
+// a batch where e.g. 8 of 10 items share a trait made the constraint globally
+// infeasible — the walk-and-swap pass burned all 20 passes on unwinnable
+// swaps and fell back to close-to-raw Fisher-Yates order, i.e. exactly the
+// clustering this function exists to prevent. Fix: cap each value's
+// effective gap requirement at what's actually achievable given its count in
+// THIS batch, per dimension. Stint-1's diverse item mix rarely hits the cap
+// (plenty of headroom), so this changes nothing there — it only relaxes the
+// constraint where it was mathematically impossible to satisfy anyway.
 function constrainedShuffle<T extends {
   hypothesized_trait?: string | null;
   cognitive_domain?: string | null;
@@ -209,22 +224,46 @@ function constrainedShuffle<T extends {
   }
   if (a.length < 2) return a;
 
+  const n = a.length;
   const MIN_GAP_TRAIT = 8;
   const MIN_GAP_DOMAIN = 4;
   const MIN_GAP_TEXT = 8;
   const MAX_LOOKBACK = Math.max(MIN_GAP_TRAIT, MIN_GAP_DOMAIN, MIN_GAP_TEXT);
 
+  const countBy = (key: "hypothesized_trait" | "cognitive_domain" | "item_text") => {
+    const counts: Record<string, number> = {};
+    for (const it of a) {
+      const v = it[key];
+      if (v == null) continue;
+      counts[v] = (counts[v] || 0) + 1;
+    }
+    return counts;
+  };
+  const traitCounts = countBy("hypothesized_trait");
+  const domainCounts = countBy("cognitive_domain");
+  const textCounts = countBy("item_text");
+
+  // Effective gap for a value that occurs `count` times in this n-slot batch:
+  // the smaller of the base target and what pigeonhole allows. floor(n/count)
+  // is the best achievable even spacing; anything above that is unwinnable
+  // no matter how many passes run.
+  const effectiveGap = (base: number, count: number): number =>
+    count > 0 ? Math.max(1, Math.min(base, Math.floor(n / count))) : base;
+
   const violatesAt = (idx: number, item: T): boolean => {
     const trait = item.hypothesized_trait ?? null;
     const domain = item.cognitive_domain ?? null;
     const text = item.item_text ?? null;
+    const traitGap = trait ? effectiveGap(MIN_GAP_TRAIT, traitCounts[trait] || 0) : MIN_GAP_TRAIT;
+    const domainGap = domain ? effectiveGap(MIN_GAP_DOMAIN, domainCounts[domain] || 0) : MIN_GAP_DOMAIN;
+    const textGap = text ? effectiveGap(MIN_GAP_TEXT, textCounts[text] || 0) : MIN_GAP_TEXT;
     const back = Math.max(0, idx - MAX_LOOKBACK);
     for (let k = back; k < idx; k++) {
       const other = a[k];
       const gap = idx - k;
-      if (trait && (other.hypothesized_trait ?? null) === trait && gap < MIN_GAP_TRAIT) return true;
-      if (domain && (other.cognitive_domain ?? null) === domain && gap < MIN_GAP_DOMAIN) return true;
-      if (text && (other.item_text ?? null) === text && gap < MIN_GAP_TEXT) return true;
+      if (trait && (other.hypothesized_trait ?? null) === trait && gap < traitGap) return true;
+      if (domain && (other.cognitive_domain ?? null) === domain && gap < domainGap) return true;
+      if (text && (other.item_text ?? null) === text && gap < textGap) return true;
     }
     return false;
   };
