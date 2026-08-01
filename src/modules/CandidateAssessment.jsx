@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
+import GmaPatternItem, { isGmaPatternItem } from "../components/GmaPatternItem.jsx";
 // NOTE: This module intentionally does NOT import from ../lib/supabase.js.
 // Per Newtworks v1 access model (session_note 2026-07-28 step 10.1), the
 // public /assess/* route never instantiates a Supabase client — the edge
@@ -61,6 +62,12 @@ function orderChoices(choices) {
 // validity items are already full sentences — pass them through untouched.
 function formatItemText(item) {
   if (!item) return "";
+  // GMA pattern items store their generator's internal rule description in
+  // item_text (e.g. "Shape steps circle->square->triangle left to right").
+  // That is QA/authoring metadata, not candidate-facing copy — it names the
+  // solving rule outright. GmaPatternItem renders its own fixed instruction
+  // instead; never surface item_text for this item type.
+  if (isGmaPatternItem(item)) return "";
   const text = item.item_text || "";
   if (!text) return text;
   const isSelfDescriptive =
@@ -568,18 +575,22 @@ export default function CandidateAssessment({ candidateId, token }) {
           </div>
         </div>
 
-        {/* Item text */}
-        <div
-          style={{
-            fontSize: vp.isPhone ? 17 : 19,
-            lineHeight: 1.5,
-            color: T.slate900,
-            marginBottom: 24,
-            fontWeight: 500,
-          }}
-        >
-          {formatItemText(item)}
-        </div>
+        {/* Item text — GMA pattern items render their own instruction text
+            inside GmaPatternItem below, since item_text for this item type
+            is internal rule-authoring metadata, not candidate-facing copy. */}
+        {!isGmaPatternItem(item) ? (
+          <div
+            style={{
+              fontSize: vp.isPhone ? 17 : 19,
+              lineHeight: 1.5,
+              color: T.slate900,
+              marginBottom: 24,
+              fontWeight: 500,
+            }}
+          >
+            {formatItemText(item)}
+          </div>
+        ) : null}
 
         {/* Save error (inline, non-blocking) */}
         {saveError ? (
@@ -624,6 +635,14 @@ export default function CandidateAssessment({ candidateId, token }) {
 }
 
 function ResponseControls({ item, onAnswer, saving, vp }) {
+  // GMA pattern-matching item. choices is an OBJECT ({ grid, options }), not
+  // an array of text strings, so this must be checked before the multi-choice
+  // Array.isArray branch below — otherwise it silently falls through to the
+  // Likert-scale renderer instead of the shape grid.
+  if (isGmaPatternItem(item)) {
+    return <GmaPatternItem item={item} onAnswer={onAnswer} saving={saving} vp={vp} />;
+  }
+
   // Multi-choice item (choices is a JSONB array).
   if (Array.isArray(item?.choices) && item.choices.length > 0) {
     const choices = orderChoices(item.choices);
