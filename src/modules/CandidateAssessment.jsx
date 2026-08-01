@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import GmaPatternItem, { isGmaPatternItem } from "../components/GmaPatternItem.jsx";
+import GmaNumericalItem, { isGmaNumericalItem } from "../components/GmaNumericalItem.jsx";
 // NOTE: This module intentionally does NOT import from ../lib/supabase.js.
 // Per Newtworks v1 access model (session_note 2026-07-28 step 10.1), the
 // public /assess/* route never instantiates a Supabase client — the edge
@@ -68,6 +69,11 @@ function formatItemText(item) {
   // solving rule outright. GmaPatternItem renders its own fixed instruction
   // instead; never surface item_text for this item type.
   if (isGmaPatternItem(item)) return "";
+  // GMA numerical items ask a plain instruction ("figure out the rule") that
+  // is safe to show, but GmaNumericalItem renders its own fixed instruction
+  // for consistency with the pattern-matching item type -- skip item_text
+  // here too so the two GMA subtests behave identically.
+  if (isGmaNumericalItem(item)) return "";
   const text = item.item_text || "";
   if (!text) return text;
   const isSelfDescriptive =
@@ -579,7 +585,7 @@ export default function CandidateAssessment({ candidateId, token }) {
         {/* Item text — GMA pattern items render their own instruction text
             inside GmaPatternItem below, since item_text for this item type
             is internal rule-authoring metadata, not candidate-facing copy. */}
-        {!isGmaPatternItem(item) ? (
+        {!isGmaPatternItem(item) && !isGmaNumericalItem(item) ? (
           <div
             style={{
               fontSize: vp.isPhone ? 17 : 19,
@@ -642,6 +648,13 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
   // Likert-scale renderer instead of the shape grid.
   if (isGmaPatternItem(item)) {
     return <GmaPatternItem item={item} onAnswer={onAnswer} saving={saving} vp={vp} />;
+  }
+
+  // GMA numerical-reasoning item. choices is an OBJECT ({ sequence, options
+  // }), not an array -- same reason this must be checked before the
+  // Array.isArray multi-choice branch below as the pattern-matching check.
+  if (isGmaNumericalItem(item)) {
+    return <GmaNumericalItem item={item} onAnswer={onAnswer} saving={saving} vp={vp} />;
   }
 
   // Multi-choice item (choices is a JSONB array).
