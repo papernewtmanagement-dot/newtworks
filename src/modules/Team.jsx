@@ -364,7 +364,11 @@ const generateCoachingHints = (seat, assessment) => {
   const lssVerb = parseInt(assessment.lss_verbal_speed_seconds);
   const lssPS   = parseInt(assessment.lss_problem_solving_speed_seconds);
   const lssAcc  = parseInt(assessment.lss_total_accuracy);
-  const lssIdeal= parseInt(assessment.lss_total_ideal_min);
+  // intelligence_composite / intelligence_floor come from assessment_intelligence_fit
+  // (role-specific, live from hiregauge_role_ideal_ranges). Replaces the dropped
+  // lss_total_ideal_min flat raw-item-count column — Step 7, 2026-08-01.
+  const intelComposite = Number(assessment.intelligence_composite);
+  const intelFloor     = Number(assessment.intelligence_floor);
   // recommended_coaching_hours_min/max were dropped — coaching guidance is now
   // provided contextually per candidate rather than as a static hrs/mo band.
 
@@ -459,11 +463,11 @@ const generateCoachingHints = (seat, assessment) => {
       detail:`LSS speeds slow across math (${lssMath}s), verbal (${lssVerb}s), problem-solving (${lssPS}s). Per-day throughput is constrained regardless of coaching. Match to deep-detail work with fewer per-day transactions.`,
     });
   }
-  if (Number.isFinite(lssAcc) && Number.isFinite(lssIdeal) && lssAcc <= lssIdeal + 2) {
+  if (Number.isFinite(intelComposite) && Number.isFinite(intelFloor) && intelComposite <= intelFloor + 5) {
     hints.push({
       severity:"concern",
       title:"Cognitive baseline",
-      detail:`LSS total accuracy ${lssAcc} just clears ideal min ${lssIdeal}. Multi-step compound tasks (complex policy work) will be error-prone. Break work into smaller, checkable steps.`,
+      detail:`Intelligence composite ${Math.round(intelComposite)} is just above the floor (${intelFloor}) for this seat${assessment.role_label ? ` (${assessment.role_label})` : ""}. Multi-step compound tasks (complex policy work) will be error-prone. Break work into smaller, checkable steps.`,
     });
   }
 
@@ -802,6 +806,36 @@ const StaffDirectory = ({ staff }) => {
         const aMap = {};
         (asRes.data || []).forEach(row => { if (!aMap[row.team_member_id]) aMap[row.team_member_id] = row; });
         setAsmtByMember(aMap);
+        // Intelligence composite + best-fit role's live floor/ceiling — fetched
+        // separately (non-blocking) since it's an RPC per assessment, not a
+        // plain select. Merges into asmtByMember once resolved so generateCoachingHints
+        // and the assessment panel can read asmt.intelligence_composite /
+        // asmt.intelligence_floor / asmt.intelligence_ceiling / asmt.role_label.
+        // Replaces the dropped lss_total_ideal_min column (Step 7, 2026-08-01) —
+        // that was a flat raw-item-count threshold; this is role-specific and live.
+        Promise.all(
+          Object.values(aMap).map(row =>
+            supabase.rpc("assessment_intelligence_fit", { p_assessment_id: row.id })
+              .then(({ data, error }) => ({ memberId: row.team_member_id, fit: !error ? data : null }))
+              .catch(() => ({ memberId: row.team_member_id, fit: null }))
+          )
+        ).then(results => {
+          if (cancelled) return;
+          setAsmtByMember(prev => {
+            const next = { ...prev };
+            results.forEach(({ memberId, fit }) => {
+              if (!next[memberId] || !fit) return;
+              next[memberId] = {
+                ...next[memberId],
+                intelligence_composite: fit.intelligence_composite,
+                intelligence_floor: fit.intelligence_floor,
+                intelligence_ceiling: fit.intelligence_ceiling,
+                role_label: fit.role_label,
+              };
+            });
+            return next;
+          });
+        });
         // Behavioral notes grouped, cap 5 shown later
         const bMap = {};
         (bnRes.data || []).forEach(row => { (bMap[row.team_member_id] = bMap[row.team_member_id] || []).push(row); });
@@ -2158,7 +2192,8 @@ const StaffDirectory = ({ staff }) => {
                       {(asmt.lss_total_accuracy != null || asmt.lss_math_speed_seconds != null) && (
                         <div style={{ fontSize:11, color:T.slate600, marginBottom:8 }}>
                           <strong style={{ color:T.slate900 }}>LSS:</strong>
-                          {asmt.lss_total_accuracy != null && <span> Accuracy <strong style={{ color:T.slate900 }}>{asmt.lss_total_accuracy}{asmt.lss_total_ideal_min ? " (ideal ≥"+asmt.lss_total_ideal_min+")" : ""}</strong></span>}
+                          {asmt.lss_total_accuracy != null && <span> Accuracy <strong style={{ color:T.slate900 }}>{asmt.lss_total_accuracy}</strong></span>}
+                          {asmt.intelligence_composite != null && <span> · Intelligence <strong style={{ color:T.slate900 }}>{Math.round(asmt.intelligence_composite)}{(asmt.intelligence_floor != null && asmt.intelligence_ceiling != null) ? ` (${asmt.role_label || "role"} range ${asmt.intelligence_floor}\u2013${asmt.intelligence_ceiling})` : ""}</strong></span>}
                           {asmt.lss_math_speed_seconds != null && <span> · Math <strong style={{ color:T.slate900 }}>{asmt.lss_math_speed_seconds}s</strong></span>}
                           {asmt.lss_verbal_speed_seconds != null && <span> · Verbal <strong style={{ color:T.slate900 }}>{asmt.lss_verbal_speed_seconds}s</strong></span>}
                           {asmt.lss_problem_solving_speed_seconds != null && <span> · Problem-solving <strong style={{ color:T.slate900 }}>{asmt.lss_problem_solving_speed_seconds}s</strong></span>}
