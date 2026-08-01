@@ -248,7 +248,6 @@ Deno.serve(async (req) => {
         .from("hiring_candidates")
         .insert({
           agency_id: AGENCY_ID,
-          assessment_date: nowIso.slice(0, 10),
           first_name: firstName,
           last_name: lastName,
           candidate_name: [firstName, lastName].filter(Boolean).join(" ") || null,
