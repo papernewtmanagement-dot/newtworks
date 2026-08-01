@@ -555,76 +555,23 @@ function useCPRData(weekDate) {
           detailRows = dr || [];
         }
 
-        // 3b. Scorecard completion auto-verify — tenure-aware, per handbook
-        // "Your Path" §Scorecarding Cadence. Mirrors public.fit_scorecard_tenure_tier
-        // + FitScorecards.jsx ENTRY_TYPE_BY_TIER; keep in sync.
-        //
-        //   weeks_1_8     → entry_type=conversation,
-        //                   threshold = max(quotes_discussed, Mon-Fri days elapsed).
-        //                   Handbook bar is "every conversation," which is
-        //                   unmeasurable without a conversation count, so this
-        //                   holds two floors together: (a) every quote gets a
-        //                   scorecard, and (b) at least one scorecard per working
-        //                   day. Whichever is larger is the requirement.
-        //   weeks_9_13    → entry_type=quote_review, threshold=quotes_discussed
-        //   weeks_14_plus → entry_type=end_of_day,   threshold=Mon-Fri days elapsed
-        //                   in the CPR week (max 5; scales down for current week views)
-        //
+        // 3b. Scorecard completion auto-verify — tenure-aware.
+        // All tier math, entry-type mapping, and threshold rules live in the
+        // server-side function public.compute_scorecard_done_for_cpr_week
+        // (single source of truth; same helpers the fit_scorecards insert
+        // trigger uses). We just call it and write the deltas.
         // Runs on every load; manual edits persist until the next load.
         // Non-fatal: verify failure falls through with stored values.
         if (detailRows.length > 0) {
           try {
-            const weekStartISO = addDaysISO(weekDate, -6); // Sunday
-            const todayCT = todayISO();
-            const effectiveEndISO = todayCT < weekDate ? todayCT : weekDate;
-            let workingDaysElapsed = 0;
-            for (let c = weekStartISO; c && c <= effectiveEndISO; c = addDaysISO(c, 1)) {
-              const dow = new Date(c + "T00:00:00").getDay();
-              if (dow >= 1 && dow <= 5) workingDaysElapsed++;
-            }
-
-            const { data: scRows } = await supabase
-              .from("fit_scorecards")
-              .select("team_member_id, entry_type")
-              .eq("agency_id", AGENCY_ID)
-              .gte("scorecard_date", weekStartISO)
-              .lte("scorecard_date", weekDate);
-            const countByTmType = new Map();
-            for (const r of (scRows || [])) {
-              const k = `${r.team_member_id}|${r.entry_type}`;
-              countByTmType.set(k, (countByTmType.get(k) || 0) + 1);
-            }
-
-            const teamById = new Map(teamRows.map(t => [t.id, t]));
-            const REQ_ENTRY_TYPE = {
-              weeks_1_8:     "conversation",
-              weeks_9_13:    "quote_review",
-              weeks_14_plus: "end_of_day",
-            };
-            function tierFor(tm) {
-              const anchor = tm?.hire_date || tm?.start_date;
-              if (!anchor) return "weeks_14_plus";
-              const anchorMs = Date.parse(anchor + "T00:00:00");
-              const asOfMs   = Date.parse(weekDate + "T00:00:00");
-              if (!Number.isFinite(anchorMs) || !Number.isFinite(asOfMs)) return "weeks_14_plus";
-              const weeks = Math.floor((asOfMs - anchorMs) / (7 * 24 * 3600 * 1000));
-              if (weeks < 9)  return "weeks_1_8";
-              if (weeks < 14) return "weeks_9_13";
-              return "weeks_14_plus";
-            }
-
+            const { data: doneRows } = await supabase.rpc(
+              "compute_scorecard_done_for_cpr_week",
+              { p_agency_id: AGENCY_ID, p_week_ending_date: weekDate },
+            );
+            const doneByTm = new Map((doneRows || []).map(r => [r.team_member_id, Boolean(r.done)]));
             const toUpdate = [];
             for (const d of detailRows) {
-              const tm = teamById.get(d.team_member_id);
-              const tier = tierFor(tm);
-              const entryType = REQ_ENTRY_TYPE[tier];
-              const count = countByTmType.get(`${d.team_member_id}|${entryType}`) || 0;
-              const quotesDiscussed = Number(d.quotes_discussed) || 0;
-              let threshold;
-              if (tier === "weeks_14_plus")      threshold = workingDaysElapsed;
-              else if (tier === "weeks_9_13")    threshold = quotesDiscussed;
-              else /* weeks_1_8 */               threshold = Math.max(quotesDiscussed, workingDaysElapsed);
-              const computed = count >= threshold;
+              const computed = Boolean(doneByTm.get(d.team_member_id));
               if (Boolean(d.scorecard_done) !== computed) {
                 toUpdate.push({ id: d.id, computed });
                 d.scorecard_done = computed;
