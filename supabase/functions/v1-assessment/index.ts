@@ -1,8 +1,29 @@
 // supabase/functions/v1-assessment/index.ts
-// Newtworks v1 assessment — public candidate endpoint.
+// Newtworks assessment — public candidate endpoint. Despite the folder name
+// (kept as-is to avoid a frontend URL/route change), this function now
+// serves BOTH the v1 and v2 assessment, branching on hiring_candidates.v2.
 // Called from /assess/<candidate_id>/<token> route by CandidateAssessment.jsx.
-// Frontend never touches Supabase client on the public route; this fn is the sole gateway.
-// HMAC token verified on every call. Service-role client bypasses RLS.
+// Frontend never touches Supabase client on the public route; this fn is the
+// sole gateway. HMAC token verified on every call. Service-role client
+// bypasses RLS.
+//
+// v2 branch added 2026-08-01 to unblock v2 assessment delivery (nothing
+// served v2 content before this — see operational_rule "v2 assessment
+// delivery gap found + fixed 2026-08-01"). v2 architecture differs from v1:
+//   - Stint 1 (33 items) = HEXACO Honesty-Humility integrity gate
+//     (sincerity, fairness, greed_avoidance). Served in full, no rotation.
+//   - Stint 2 (211 items) = every other facet. Served in full once Stint 1
+//     is complete — NOT per-trait adaptive expansion like v1. No expansion
+//     trigger computation needed for v2.
+//   - Scoring: compute_newtworks_v2_facets_as_row (facet-level only — the
+//     competency/role-fit layer is deferred, OQ f979e377). Written to the 21
+//     parallel v2 facet columns on hiring_candidates (already shipped,
+//     migration 20260731194800). v1's flat trait columns are never touched
+//     for a v2 candidate.
+//   - Scope: GMA (cognitive) and SJT sections are owned by a separate build
+//     thread and are NOT included in V2_SECTIONS here. They stay stint=0
+//     (inert) until that thread wires them in — adding them later is a
+//     V2_SECTIONS + stint update, not a rewrite of this function.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -18,13 +39,13 @@ const V1_SECTIONS = [
   "cognitive",
 ];
 
-// Cognitive form rotation (Peter directive 2026-07-31).
-// The active stint=1 cognitive pool exceeds the per-candidate serve count on purpose so
-// that different candidates in the same hiring wave see different item sets — reduces
-// answer-sharing risk without changing the assessment length or difficulty distribution.
-// Personality / VCT / IM sections are NEVER rotated: everyone sees every active item there,
-// because their scoring depends on within-trait consistency across a fixed item roster.
-// Rotation only makes sense for cognitive (right/wrong scoring, no trait aggregation).
+// Newtworks v2 sections. Personality only for now — GMA/SJT excluded, see
+// header note. Extend this array (not the function structure) when that
+// thread's sections are ready to go live.
+const V2_SECTIONS = ["newtworks_v2_personality"];
+
+// Cognitive form rotation (Peter directive 2026-07-31). v1 only — v2 has no
+// cognitive section wired in yet.
 const COGNITIVE_TARGETS: Record<string, number> = {
   math: 6,
   problem_solving: 5,
@@ -32,11 +53,6 @@ const COGNITIVE_TARGETS: Record<string, number> = {
 };
 
 // Deterministic non-cryptographic 32-bit hash — two-stream cyrb53 variant.
-// Chosen empirically over FNV-1a after testing: FNV-1a produced only ~10 unique cognitive
-// subsets across 50 candidates (bad diversity, uneven item frequency) because the same
-// item suffix dominated the accumulator across candidates. Cyrb53's second stream and
-// finalizer mix (h ^ (h >>> 16)) fixes distribution — ~48/50 unique subsets, item
-// frequencies inside a tight ±25% band around the theoretical mean.
 function candItemHash(input: string): number {
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
@@ -50,11 +66,10 @@ function candItemHash(input: string): number {
   return (h1 ^ h2) >>> 0;
 }
 
-// Given a candidate id and the full active stint=1 item list, returns the set of item ids
-// this candidate is assigned. Non-cognitive items are always included. Cognitive items are
-// sorted per-candidate by candItemHash(candidate_id + ":" + item_id) within their domain,
-// and the top N per domain (per COGNITIVE_TARGETS) are taken. If a domain has fewer active
-// items than its target, all items in that domain are included (fail-open on under-pool).
+// v1-only: given a candidate id and the full active stint=1 item list,
+// returns the set of item ids this candidate is assigned (cognitive form
+// rotation). v2 stint 1 has no cognitive items and no rotation — every v2
+// candidate sees every active v2 item in their stint.
 function selectStint1ItemIdsForCandidate(
   candidateId: string,
   items: Array<{ id: string; section: string; cognitive_domain?: string | null }>
@@ -118,7 +133,8 @@ Deno.serve(async (req) => {
     return json({ error: "missing_required_field" }, 400);
   }
 
-  // Every call: verify HMAC token first.
+  // Every call: verify HMAC token first. Token scheme is candidate-id-only
+  // (agency-scoped secret), so it's shared across v1 and v2 without change.
   const { data: verifyOk, error: verifyErr } = await supa.rpc(
     "verify_v1_assessment_token",
     { p_candidate_id: candidate_id, p_token: token }
@@ -126,34 +142,37 @@ Deno.serve(async (req) => {
   if (verifyErr) return json({ error: "verify_failed", detail: verifyErr.message }, 500);
   if (verifyOk !== true) return json({ error: "invalid_token" }, 403);
 
-  // Load candidate greeting context (agency-scoped).
+  // Load candidate greeting context + version flag (agency-scoped).
   const { data: cand, error: candErr } = await supa
     .from("hiring_candidates")
-    .select("id, first_name, position")
+    .select("id, first_name, position, v2")
     .eq("id", candidate_id)
     .eq("agency_id", AGENCY_ID)
     .maybeSingle();
   if (candErr) return json({ error: "candidate_fetch_failed", detail: candErr.message }, 500);
   if (!cand) return json({ error: "candidate_not_found" }, 404);
 
+  const isV2 = cand.v2 === true;
+
   switch (action) {
     case "verify":
-      return await handleVerify(supa, cand);
+      return isV2 ? await handleVerifyV2(supa, cand) : await handleVerify(supa, cand);
     case "serve":
-      return await handleServe(supa, cand);
+      return isV2 ? await handleServeV2(supa, cand) : await handleServe(supa, cand);
     case "save_response":
-      return await handleSave(supa, cand, body);
+      return isV2 ? await handleSaveV2(supa, cand, body) : await handleSave(supa, cand, body);
     case "finalize":
-      return await handleFinalize(supa, cand);
+      return isV2 ? await handleFinalizeV2(supa, cand) : await handleFinalize(supa, cand);
     default:
       return json({ error: "unknown_action", action }, 400);
   }
 });
 
-// --- Progress helpers ---
+// ============================================================================
+// --- v1 handlers (unchanged from prior version) ---
+// ============================================================================
 
 async function loadPrimaryProgress(supa: any, candidateId: string) {
-  // Select cognitive_domain so the per-candidate cognitive subset can be computed.
   const { data: items, error: iErr } = await supa
     .from("hiregauge_instrument_items")
     .select("id, section, cognitive_domain")
@@ -162,8 +181,6 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
     .in("section", V1_SECTIONS);
   if (iErr) throw new Error(`primary_items_fetch: ${iErr.message}`);
 
-  // Progress denominator = the candidate's assigned subset, not the whole active pool.
-  // This is what makes the progress bar accurate under cognitive form rotation.
   const assigned = selectStint1ItemIdsForCandidate(candidateId, items || []);
   const total = assigned.size;
 
@@ -185,33 +202,6 @@ async function loadPrimaryProgress(supa: any, candidateId: string) {
   };
 }
 
-// Constrained shuffle for served-item ordering.
-//   Step 1 — Fisher-Yates baseline (unbiased random permutation).
-//   Step 2 — Walk-and-swap pass enforcing spacing constraints:
-//     * min 8-item gap between items sharing hypothesized_trait
-//       (personality items on the same trait can't cluster)
-//     * min 4-item gap between items sharing cognitive_domain
-//       (math items can't cluster together)
-//     * min 8-item gap between items sharing item_text
-//       (defense-in-depth against future duplicates even after retest deactivation)
-// Bounded to 20 passes. If constraints stay infeasible past that (batch too
-// small or too many items sharing an attribute), accept the best partial
-// ordering and return.
-//
-// Feasibility-aware gap targets (fix 2026-08-01, Peter directive — "stint-2
-// clustering"). A value that appears c times in an n-slot array cannot be
-// spaced further apart than floor(n / c) on average — pigeonhole, not a
-// tunable. Stint-2 expansion batches are frequently trait-concentrated BY
-// DESIGN: expand_trait_stint_2 targets pull almost entirely one trait (that's
-// the point of a trait-targeted follow-up). Against a flat MIN_GAP_TRAIT=8,
-// a batch where e.g. 8 of 10 items share a trait made the constraint globally
-// infeasible — the walk-and-swap pass burned all 20 passes on unwinnable
-// swaps and fell back to close-to-raw Fisher-Yates order, i.e. exactly the
-// clustering this function exists to prevent. Fix: cap each value's
-// effective gap requirement at what's actually achievable given its count in
-// THIS batch, per dimension. Stint-1's diverse item mix rarely hits the cap
-// (plenty of headroom), so this changes nothing there — it only relaxes the
-// constraint where it was mathematically impossible to satisfy anyway.
 function constrainedShuffle<T extends {
   hypothesized_trait?: string | null;
   cognitive_domain?: string | null;
@@ -243,10 +233,6 @@ function constrainedShuffle<T extends {
   const domainCounts = countBy("cognitive_domain");
   const textCounts = countBy("item_text");
 
-  // Effective gap for a value that occurs `count` times in this n-slot batch:
-  // the smaller of the base target and what pigeonhole allows. floor(n/count)
-  // is the best achievable even spacing; anything above that is unwinnable
-  // no matter how many passes run.
   const effectiveGap = (base: number, count: number): number =>
     count > 0 ? Math.max(1, Math.min(base, Math.floor(n / count))) : base;
 
@@ -273,7 +259,6 @@ function constrainedShuffle<T extends {
     for (let i = 1; i < a.length; i++) {
       if (!violatesAt(i, a[i])) continue;
       violations++;
-      // Look forward for a candidate that fits at i.
       for (let j = i + 1; j < a.length; j++) {
         if (!violatesAt(i, a[j])) {
           [a[i], a[j]] = [a[j], a[i]];
@@ -287,21 +272,14 @@ function constrainedShuffle<T extends {
   return a;
 }
 
-// Expansion target — describes a filtered slice of stint=2 items to serve.
-// Supports the four trigger actions defined in hiregauge_expansion_triggers:
-//   expand_trait_stint_2               — section + trait filter (per-trait borderline)
-//   expand_impression_mgmt_and_nonsense — impression-mgmt section AND vct nonsense subset
-//   expand_retest_pairs                — any section, retest_of_item_number NOT NULL
 type ExpansionTarget = {
-  section: string | null;      // null = any section
-  trait: string | null;        // null = any trait
-  nonsense_only: boolean;      // filter is_nonsense = true
-  retest_only: boolean;        // filter retest_of_item_number NOT NULL
-  cap: number | null;          // limit item count, null = all
+  section: string | null;
+  trait: string | null;
+  nonsense_only: boolean;
+  retest_only: boolean;
+  cap: number | null;
 };
 
-// Reduce trigger rows to a unique set of expansion targets.
-// null cap means "all matching items" — null always beats any numeric cap.
 async function loadExpansionTargets(supa: any, candidateId: string): Promise<ExpansionTarget[]> {
   const { data, error } = await supa.rpc("compute_newtworks_v1_traits_as_row", {
     p_candidate_id: candidateId,
@@ -341,8 +319,6 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
         break;
 
       case "expand_impression_mgmt_and_nonsense":
-        // Two-part expansion: impression-management section plus fake-vocab
-        // items from the validity check section. Both fire together.
         addTarget({
           section: t.expansion_section || "newtworks_v1_impression_mgmt",
           trait: null,
@@ -360,8 +336,6 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
         break;
 
       case "expand_retest_pairs":
-        // Retest items span sections; only filter by retest flag.
-        // No stint=2 retest content authored yet — serves 0 until content lands.
         addTarget({
           section: null,
           trait: null,
@@ -370,15 +344,11 @@ async function loadExpansionTargets(supa: any, candidateId: string): Promise<Exp
           cap: t.expansion_count ?? null,
         });
         break;
-
-      // Unknown action — ignore silently.
     }
   }
 
   return Array.from(map.values());
 }
-
-// --- Action handlers ---
 
 async function handleVerify(supa: any, cand: any) {
   try {
@@ -404,7 +374,6 @@ async function handleServe(supa: any, cand: any) {
   try {
     const prog = await loadPrimaryProgress(supa, cand.id);
 
-    // Load answered set (shared between stints since sitting=1 covers both).
     const { data: respRows, error: rErr } = await supa
       .from("hiregauge_candidate_responses")
       .select("item_id")
@@ -414,8 +383,6 @@ async function handleServe(supa: any, cand: any) {
     const answered = new Set((respRows || []).map((r: any) => r.item_id));
 
     if (!prog.primaryAnswered) {
-      // Stint 1 phase: fetch all active stint=1 items, filter to this candidate's
-      // assigned subset (cognitive form rotation), then return the unanswered slice.
       const { data: items, error: iErr } = await supa
         .from("hiregauge_instrument_items")
         .select(
@@ -439,7 +406,6 @@ async function handleServe(supa: any, cand: any) {
       });
     }
 
-    // Stint 2 phase: compute triggers → collect targeted stint=2 items.
     const targets = await loadExpansionTargets(supa, cand.id);
     if (targets.length === 0) {
       return json({ stint: 2, done: true, items: [], progress: { answered: 0, total: 0 } });
@@ -491,7 +457,6 @@ async function handleSave(supa: any, cand: any, body: any) {
     return json({ error: "missing_response" }, 400);
   }
 
-  // Defense-in-depth: confirm item is a live v1 item.
   const { data: item, error: iErr } = await supa
     .from("hiregauge_instrument_items")
     .select("id, section, stint, is_active, answer_key")
@@ -503,16 +468,11 @@ async function handleSave(supa: any, cand: any, body: any) {
     return json({ error: "item_not_v1_active" }, 400);
   }
 
-  // Auto-score answer_key items (VCT / cognitive) when a label is provided.
   let is_correct: boolean | null = null;
   if (item.answer_key != null && response_label != null) {
     is_correct = String(response_label).trim() === String(item.answer_key).trim();
   }
 
-  // Timing capture (Step A / Item 4). served_at was emitted by handleServe when
-  // it handed this item to the candidate; frontend echoes it back on save.
-  // answered_at is server-clock at write time. Parse defensively — bad or
-  // missing served_at drops through to NULL so the row still writes.
   const answered_at_iso = new Date().toISOString();
   let served_at_iso: string | null = null;
   if (typeof served_at === "string" && served_at.length > 0) {
@@ -540,11 +500,6 @@ async function handleSave(supa: any, cand: any, body: any) {
     );
   if (upErr) return json({ error: "save_failed", detail: upErr.message }, 500);
 
-  // Stamp hiring_candidates.assessment_started_at on the first successful save
-  // for this candidate. Set-once semantics: the .is("assessment_started_at", null)
-  // clause makes the UPDATE a no-op on subsequent saves without needing a
-  // separate SELECT-then-UPDATE round-trip. Failure here never blocks the save
-  // response — timing capture is a diagnostic layer, not a correctness gate.
   try {
     await supa
       .from("hiring_candidates")
@@ -560,21 +515,7 @@ async function handleSave(supa: any, cand: any, body: any) {
 }
 
 async function handleFinalize(supa: any, cand: any) {
-  // Peter directive 2026-07-29 (path a): write merged v1 trait output into the
-  // flat hiring_candidates columns so existing consumers (v_hiring_candidates,
-  // 7 assessment_role_fit_<role> fns, verdict_overall, CandidateDetail Results
-  // matrix) render v1 candidates without a rewire. Coexistence-safe with CTS
-  // PDF ingest — each candidate is populated by exactly one source. Path (b)
-  // cleanup (rewire consumers to call compute_newtworks_v1_traits_as_row
-  // directly) tracked in open_questions and revisited once CTS retires
-  // (OQ 2317444c).
   try {
-    // Completion gate (Peter directive 2026-07-29, soundness review): block
-    // finalize when the assessment isn't actually done. Prevents a client-side
-    // early "submit" from producing an incomplete profile.
-    //   - Stint 1 must be fully answered.
-    //   - If any expansion trigger fired, every expected stint=2 item must be
-    //     answered too. Response 409 tells the client to keep serving.
     const prog = await loadPrimaryProgress(supa, cand.id);
     if (!prog.primaryAnswered) {
       return json(
@@ -590,8 +531,6 @@ async function handleFinalize(supa: any, cand: any) {
 
     const expTargets = await loadExpansionTargets(supa, cand.id);
     if (expTargets.length > 0) {
-      // Build the set of item ids that stint 2 should have served for this
-      // candidate. Mirrors handleServe's stint 2 fetch logic exactly.
       const expected: Record<string, boolean> = {};
       for (const tgt of expTargets) {
         let q = supa
@@ -640,8 +579,6 @@ async function handleFinalize(supa: any, cand: any) {
       }
     }
 
-    // Merged read (p_stint = NULL) scores stint 1 + stint 2 items together on
-    // sitting=1. That merged score is what lands in the flat columns.
     const { data: pm, error: pmErr } = await supa.rpc(
       "compute_newtworks_v1_traits_as_row",
       { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
@@ -651,7 +588,6 @@ async function handleFinalize(supa: any, cand: any) {
     }
     const rm = Array.isArray(pm) ? pm[0] : pm;
 
-    // Per-stint reads kept for the response payload / observability.
     const { data: p1 } = await supa.rpc("compute_newtworks_v1_traits_as_row", {
       p_candidate_id: cand.id,
       p_stint: 1,
@@ -665,10 +601,6 @@ async function handleFinalize(supa: any, cand: any) {
     const r1 = Array.isArray(p1) ? p1[0] : p1;
     const r2 = Array.isArray(p2) ? p2[0] : p2;
 
-    // Reliability + response_distortion bands (Peter directive 2026-07-31).
-    // Rollup of the four existing v1 signal functions. Merged read (p_stint=null)
-    // — same slice as the trait scores above. Failure never blocks the finalize
-    // response; ratings remain null on error and the frontend renders "—".
     let bandsRow: { reliability: string | null; response_distortion: string | null } = {
       reliability: null,
       response_distortion: null,
@@ -689,16 +621,9 @@ async function handleFinalize(supa: any, cand: any) {
       // Silent — see note above.
     }
 
-    // Guard: only write flat columns when we actually have something scored.
-    // Blocks a premature finalize from wiping existing CTS-source data with
-    // NULLs. Requires both n_items_scored > 0 and overall_score not null.
     let updated = false;
     let update_skip_reason: string | null = null;
     if ((rm?.n_items_scored ?? 0) > 0 && rm?.overall_score != null) {
-      // Timing (Step A / Item 4): stamp assessment_completed_at at the same
-      // moment the flat trait columns land. Only fires when the guard above
-      // decided the row is real and complete enough to write — no premature
-      // completion stamps.
       const finalized_at_iso = new Date().toISOString();
       const { error: upErr } = await supa
         .from("hiring_candidates")
@@ -726,9 +651,6 @@ async function handleFinalize(supa: any, cand: any) {
       }
       updated = true;
 
-      // Step B / Item 3: populate per-subtest LSS flat columns from responses.
-      // Non-blocking — LSS surfacing is a diagnostic layer; a helper failure
-      // must not block the finalize response the candidate flow depends on.
       try {
         await supa.rpc("apply_newtworks_v1_lss_to_candidate", {
           p_candidate_id: cand.id,
@@ -741,9 +663,6 @@ async function handleFinalize(supa: any, cand: any) {
         (rm?.n_items_scored ?? 0) === 0 ? "no_items_scored" : "overall_score_null";
     }
 
-    // Status flip on completion (Peter directive 2026-07-29, OQ 26e829ec).
-    // Only advances 'applied' -> 'assessed'. Never touches declined/hired/former
-    // or already-assessed rows. Failure never blocks the finalize response.
     let status_flipped = false;
     if (updated) {
       try {
@@ -762,11 +681,6 @@ async function handleFinalize(supa: any, cand: any) {
       }
     }
 
-    // Completion notification (Peter directive 2026-07-29, OQ 78fc2c06).
-    // Fires exactly once per candidate: alert row + Telegram DM to Peter via
-    // @paper_newt_bot. Dedup key = alerts row with (alert_type, related_id).
-    // Failures here never fail the finalize response — DM/alert are downstream
-    // of the score write, which is what the candidate's flow depends on.
     let notification_fired = false;
     let notification_skip_reason: string | null = null;
     if (updated) {
@@ -783,7 +697,6 @@ async function handleFinalize(supa: any, cand: any) {
         if (existing) {
           notification_skip_reason = "already_notified";
         } else {
-          // Pull last_name + position for the notification body.
           const { data: fullCand } = await supa
             .from("hiring_candidates")
             .select("first_name, last_name, position")
@@ -794,7 +707,6 @@ async function handleFinalize(supa: any, cand: any) {
             "Unknown candidate";
           const position = fullCand?.position || "unspecified role";
 
-          // Top 3 expansion triggers, if any.
           const triggers = ((rm?.expansion_triggers ?? []) as any[])
             .filter((t) => t?.action === "expand_trait_stint_2");
           const triggerLines = triggers
@@ -827,8 +739,6 @@ async function handleFinalize(supa: any, cand: any) {
           });
           if (alertErr) throw new Error(`alert_insert_failed: ${alertErr.message}`);
 
-          // Owner chat_id lookup — narrow query. is_admin_backoffice guard
-          // matches the team-table exclusion pattern.
           const { data: owner } = await supa
             .from("team")
             .select("telegram_user_id")
@@ -882,6 +792,386 @@ async function handleFinalize(supa: any, cand: any) {
         n_items_scored: r2?.n_items_scored ?? 0,
         overall_score: r2?.overall_score ?? null,
       },
+    });
+  } catch (e: any) {
+    return json({ error: "finalize_action_failed", detail: e.message }, 500);
+  }
+}
+
+// ============================================================================
+// --- v2 handlers ---
+// v2 stint 1 = integrity gate (33 items, all served, no rotation).
+// v2 stint 2 = everything else (211 items, all served, no adaptive trigger).
+// ============================================================================
+
+async function loadStintItemsV2(supa: any, stint: number) {
+  const { data, error } = await supa
+    .from("hiregauge_instrument_items")
+    .select(
+      "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded"
+    )
+    .eq("stint", stint)
+    .eq("is_active", true)
+    .in("section", V2_SECTIONS)
+    .order("section", { ascending: true })
+    .order("item_number", { ascending: true });
+  if (error) throw new Error(`v2_stint_${stint}_items_fetch: ${error.message}`);
+  return data || [];
+}
+
+async function loadAnsweredV2(supa: any, candidateId: string): Promise<Set<string>> {
+  const { data, error } = await supa
+    .from("hiregauge_candidate_responses")
+    .select("item_id")
+    .eq("candidate_id", candidateId)
+    .eq("sitting", 1);
+  if (error) throw new Error(`v2_responses_fetch: ${error.message}`);
+  return new Set((data || []).map((r: any) => r.item_id));
+}
+
+async function loadProgressV2(supa: any, candidateId: string) {
+  const stint1Items = await loadStintItemsV2(supa, 1);
+  const stint2Items = await loadStintItemsV2(supa, 2);
+  const answered = await loadAnsweredV2(supa, candidateId);
+
+  const stint1Answered = stint1Items.filter((it: any) => answered.has(it.id)).length;
+  const stint1Done = stint1Items.length > 0 && stint1Answered >= stint1Items.length;
+
+  const stint2Answered = stint2Items.filter((it: any) => answered.has(it.id)).length;
+  const stint2Done = stint1Done && stint2Items.length > 0 && stint2Answered >= stint2Items.length;
+
+  return {
+    stint1Items,
+    stint2Items,
+    answered,
+    stint1Total: stint1Items.length,
+    stint1Answered,
+    stint1Done,
+    stint2Total: stint2Items.length,
+    stint2Answered,
+    stint2Done,
+  };
+}
+
+async function handleVerifyV2(supa: any, cand: any) {
+  try {
+    const prog = await loadProgressV2(supa, cand.id);
+    return json({
+      ok: true,
+      candidate: { first_name: cand.first_name, position: cand.position },
+      primary_answered: prog.stint1Done,
+      expansion_ready: prog.stint1Done && prog.stint2Total > 0,
+      progress: prog.stint1Done
+        ? { answered: prog.stint2Answered, total: prog.stint2Total }
+        : { answered: prog.stint1Answered, total: prog.stint1Total },
+    });
+  } catch (e: any) {
+    return json({ error: "verify_action_failed", detail: e.message }, 500);
+  }
+}
+
+async function handleServeV2(supa: any, cand: any) {
+  try {
+    const prog = await loadProgressV2(supa, cand.id);
+
+    if (!prog.stint1Done) {
+      const unanswered = prog.stint1Items.filter((it: any) => !prog.answered.has(it.id));
+      return json({
+        stint: 1,
+        done: unanswered.length === 0,
+        items: constrainedShuffle(unanswered),
+        progress: { answered: prog.stint1Answered, total: prog.stint1Total },
+      });
+    }
+
+    if (prog.stint2Total === 0) {
+      return json({ stint: 2, done: true, items: [], progress: { answered: 0, total: 0 } });
+    }
+
+    const unanswered = prog.stint2Items.filter((it: any) => !prog.answered.has(it.id));
+    return json({
+      stint: 2,
+      done: unanswered.length === 0,
+      items: constrainedShuffle(unanswered),
+      progress: { answered: prog.stint2Answered, total: prog.stint2Total },
+    });
+  } catch (e: any) {
+    return json({ error: "serve_action_failed", detail: e.message }, 500);
+  }
+}
+
+async function handleSaveV2(supa: any, cand: any, body: any) {
+  const { item_id, response_value, response_label, served_at } = body ?? {};
+  if (!item_id) return json({ error: "missing_item_id" }, 400);
+  if (response_value == null && response_label == null) {
+    return json({ error: "missing_response" }, 400);
+  }
+
+  const { data: item, error: iErr } = await supa
+    .from("hiregauge_instrument_items")
+    .select("id, section, stint, is_active, answer_key")
+    .eq("id", item_id)
+    .maybeSingle();
+  if (iErr) return json({ error: "item_fetch_failed", detail: iErr.message }, 500);
+  if (!item) return json({ error: "item_not_found" }, 404);
+  if (!V2_SECTIONS.includes(item.section) || item.stint == null || !item.is_active) {
+    return json({ error: "item_not_v2_active" }, 400);
+  }
+
+  let is_correct: boolean | null = null;
+  if (item.answer_key != null && response_label != null) {
+    is_correct = String(response_label).trim() === String(item.answer_key).trim();
+  }
+
+  const answered_at_iso = new Date().toISOString();
+  let served_at_iso: string | null = null;
+  if (typeof served_at === "string" && served_at.length > 0) {
+    const parsed = new Date(served_at);
+    if (!Number.isNaN(parsed.getTime())) {
+      served_at_iso = parsed.toISOString();
+    }
+  }
+
+  const { error: upErr } = await supa
+    .from("hiregauge_candidate_responses")
+    .upsert(
+      {
+        agency_id: AGENCY_ID,
+        candidate_id: cand.id,
+        item_id,
+        response_value: response_value ?? null,
+        response_label: response_label ?? null,
+        is_correct,
+        sitting: 1,
+        served_at: served_at_iso,
+        answered_at: answered_at_iso,
+      },
+      { onConflict: "candidate_id,item_id" }
+    );
+  if (upErr) return json({ error: "save_failed", detail: upErr.message }, 500);
+
+  try {
+    await supa
+      .from("hiring_candidates")
+      .update({ assessment_started_at: answered_at_iso })
+      .eq("id", cand.id)
+      .eq("agency_id", AGENCY_ID)
+      .is("assessment_started_at", null);
+  } catch (_e) {
+    // Silent — timing capture is diagnostic, not a correctness gate.
+  }
+
+  return json({ ok: true });
+}
+
+// Maps hypothesized_trait -> hiring_candidates column name for the v2 facet
+// write-back. 1:1 with migration 20260731194800's 21 parallel columns.
+const V2_FACET_COLUMNS: Record<string, string> = {
+  achievement_striving: "achievement_striving",
+  self_discipline: "self_discipline",
+  emotional_stability: "emotional_stability",
+  perseverance: "perseverance",
+  dutifulness: "dutifulness",
+  customer_orientation: "customer_orientation",
+  self_efficacy: "self_efficacy",
+  proactive_personality: "proactive_personality",
+  cautiousness: "cautiousness",
+  anxiety: "anxiety",
+  friendliness: "friendliness",
+  anger: "anger",
+  cooperation: "cooperation",
+  trust: "trust",
+  assured_dominance: "assured_dominance",
+  dispositional_optimism: "dispositional_optimism",
+  political_skill_networking: "political_skill_networking",
+  enterprising: "enterprising",
+  sincerity: "sincerity",
+  fairness: "fairness",
+  greed_avoidance: "greed_avoidance",
+};
+
+async function handleFinalizeV2(supa: any, cand: any) {
+  try {
+    const prog = await loadProgressV2(supa, cand.id);
+    if (!prog.stint1Done) {
+      return json(
+        {
+          error: "assessment_incomplete",
+          stage: "stint_1",
+          answered: prog.stint1Answered,
+          total: prog.stint1Total,
+        },
+        409
+      );
+    }
+    if (prog.stint2Total > 0 && !prog.stint2Done) {
+      return json(
+        {
+          error: "assessment_incomplete",
+          stage: "stint_2",
+          answered: prog.stint2Answered,
+          total: prog.stint2Total,
+        },
+        409
+      );
+    }
+
+    // Merged (both stints) facet scores — the raw psychometric profile.
+    // Competency/role-fit derivation from these facets is NOT done here
+    // (deferred, OQ f979e377).
+    const { data: facetRows, error: facetErr } = await supa.rpc(
+      "compute_newtworks_v2_facets_as_row",
+      { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
+    );
+    if (facetErr) {
+      return json({ error: "facet_compute_failed", detail: facetErr.message }, 500);
+    }
+
+    const rows = (facetRows || []) as Array<{
+      hypothesized_trait: string;
+      facet_score: number;
+      n_items_scored: number;
+    }>;
+
+    const updatePayload: Record<string, any> = {};
+    let totalItemsScored = 0;
+    for (const row of rows) {
+      const col = V2_FACET_COLUMNS[row.hypothesized_trait];
+      if (!col) continue; // unmapped trait — skip rather than guess a column
+      updatePayload[col] = row.facet_score;
+      totalItemsScored += row.n_items_scored;
+    }
+
+    let updated = false;
+    let update_skip_reason: string | null = null;
+    if (Object.keys(updatePayload).length > 0) {
+      const finalized_at_iso = new Date().toISOString();
+      updatePayload.v2 = true;
+      updatePayload.assessment_source = "v2";
+      updatePayload.assessment_date = finalized_at_iso.slice(0, 10);
+      updatePayload.assessment_completed_at = finalized_at_iso;
+
+      const { error: upErr } = await supa
+        .from("hiring_candidates")
+        .update(updatePayload)
+        .eq("id", cand.id)
+        .eq("agency_id", AGENCY_ID);
+      if (upErr) {
+        return json({ error: "flat_update_failed", detail: upErr.message }, 500);
+      }
+      updated = true;
+    } else {
+      update_skip_reason = "no_facets_scored";
+    }
+
+    let status_flipped = false;
+    if (updated) {
+      try {
+        const { data: flipped, error: flipErr } = await supa
+          .from("hiring_candidates")
+          .update({ status: "assessed" })
+          .eq("id", cand.id)
+          .eq("agency_id", AGENCY_ID)
+          .eq("status", "applied")
+          .select("id");
+        if (!flipErr && Array.isArray(flipped) && flipped.length > 0) {
+          status_flipped = true;
+        }
+      } catch (_e) {
+        // Silent — status flip is a convenience, not a blocker.
+      }
+    }
+
+    let notification_fired = false;
+    let notification_skip_reason: string | null = null;
+    if (updated) {
+      try {
+        const { data: existing } = await supa
+          .from("alerts")
+          .select("id")
+          .eq("agency_id", AGENCY_ID)
+          .eq("alert_type", "v2_assessment_complete")
+          .eq("related_id", cand.id)
+          .limit(1)
+          .maybeSingle();
+
+        if (existing) {
+          notification_skip_reason = "already_notified";
+        } else {
+          const { data: fullCand } = await supa
+            .from("hiring_candidates")
+            .select("first_name, last_name, position")
+            .eq("id", cand.id)
+            .maybeSingle();
+          const candName =
+            [fullCand?.first_name, fullCand?.last_name].filter(Boolean).join(" ") ||
+            "Unknown candidate";
+          const position = fullCand?.position || "unspecified role";
+
+          const link = `https://newtworks.vercel.app/?module=team&candidate=${cand.id}`;
+          const title = `v2 assessment complete: ${candName}`;
+          const message =
+            `${candName} finished the Newtworks v2 assessment for ${position}. ` +
+            `${rows.length} facets scored, ${totalItemsScored} items total. ` +
+            `Competency/role-fit scoring not yet available for v2 (in progress) — ` +
+            `raw facet profile only. View: ${link}`;
+
+          const { error: alertErr } = await supa.from("alerts").insert({
+            agency_id: AGENCY_ID,
+            alert_type: "v2_assessment_complete",
+            severity: "info",
+            title,
+            message,
+            module_reference: "hiring",
+            related_id: cand.id,
+            is_read: false,
+            is_resolved: false,
+          });
+          if (alertErr) throw new Error(`alert_insert_failed: ${alertErr.message}`);
+
+          const { data: owner } = await supa
+            .from("team")
+            .select("telegram_user_id")
+            .eq("agency_id", AGENCY_ID)
+            .eq("role_level", "Owner")
+            .eq("is_admin_backoffice", false)
+            .is("archived_at", null)
+            .maybeSingle();
+          const peterChatId = owner?.telegram_user_id ?? null;
+
+          if (peterChatId) {
+            const dmText =
+              `\u{1F4DD} v2 assessment complete: ${candName} (${position})\n` +
+              `${rows.length} facets scored \u00B7 ${totalItemsScored} items \u00B7 raw profile only (competency scoring pending)\n` +
+              `${link}`;
+            const { error: dmErr } = await supa.rpc("paper_newt_send_message", {
+              p_chat_id: peterChatId,
+              p_text: dmText,
+            });
+            if (dmErr) {
+              notification_skip_reason = `dm_failed: ${dmErr.message}`;
+            } else {
+              notification_fired = true;
+            }
+          } else {
+            notification_skip_reason = "owner_chat_id_missing";
+          }
+        }
+      } catch (notifyErr: any) {
+        notification_skip_reason = `notify_error: ${notifyErr?.message ?? "unknown"}`;
+      }
+    }
+
+    return json({
+      ok: true,
+      done: true,
+      updated,
+      update_skip_reason,
+      status_flipped,
+      notification_fired,
+      notification_skip_reason,
+      facets_scored: rows.length,
+      total_items_scored: totalItemsScored,
     });
   } catch (e: any) {
     return json({ error: "finalize_action_failed", detail: e.message }, 500);
