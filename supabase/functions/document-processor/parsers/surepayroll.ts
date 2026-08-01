@@ -531,10 +531,13 @@ export async function processSurePayrollParsed(opts: {
   if (cprReport?.id) {
     for (const [teamMemberId, breakdown] of Object.entries(cprBreakdownByTeamId)) {
       const ytdGross = (breakdown as any).ytd_total;
-      await sb.from("weekly_cpr_team_detail").update({
+      await sb.from("weekly_cpr_team_detail").upsert({
+        agency_id: opts.agencyId,
+        weekly_cpr_report_id: cprReport.id,
+        team_member_id: teamMemberId,
         payroll_ytd_paid: ytdGross,
         payroll_ytd_breakdown: breakdown,
-      }).eq("agency_id", opts.agencyId).eq("weekly_cpr_report_id", cprReport.id).eq("team_member_id", teamMemberId);
+      }, { onConflict: "weekly_cpr_report_id,team_member_id" });
     }
   }
 
