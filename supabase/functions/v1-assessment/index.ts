@@ -31,10 +31,15 @@
 //     parallel v2 facet columns on hiring_candidates (already shipped,
 //     migration 20260731194800). v1's flat trait columns are never touched
 //     for a v2 candidate.
-//   - Scope: GMA (cognitive) and SJT sections are owned by a separate build
-//     thread and are NOT included in V2_SECTIONS here. They stay stint=0
-//     (inert) until that thread wires them in — adding them later is a
-//     V2_SECTIONS + stint update, not a rewrite of this function.
+//   - Scope: GMA (cognitive, all 4 subtests -- pattern/numerical/deductive/
+//     verbal, 75 items) and SJT (40 items) joined V2_SECTIONS 2026-08-02,
+//     both set to stint=2 (ride the fixed core battery alongside
+//     personality, no new stint or routing logic needed). Facet scoring
+//     stays personality-only (hardcoded section filter in
+//     compute_newtworks_v2_facets_as_row) -- GMA/SJT responses are served,
+//     saved, and scored correct/incorrect via answer_key at save time, but
+//     no rollup/competency function reads them yet (separate outstanding
+//     work).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -50,10 +55,9 @@ const V1_SECTIONS = [
   "cognitive",
 ];
 
-// Newtworks v2 sections. Personality only for now — GMA/SJT excluded, see
-// header note. Extend this array (not the function structure) when that
-// thread's sections are ready to go live.
-const V2_SECTIONS = ["newtworks_v2_personality"];
+// Newtworks v2 sections. GMA (all 4 subtests) and SJT joined 2026-08-02 --
+// see header note for scoring-scope caveat.
+const V2_SECTIONS = ["newtworks_v2_personality", "newtworks_v2_cognitive_gma", "newtworks_v2_sjt"];
 
 // Cognitive form rotation (Peter directive 2026-07-31). v1 only — v2 has no
 // cognitive section wired in yet.
