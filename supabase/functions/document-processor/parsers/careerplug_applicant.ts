@@ -179,6 +179,33 @@ async function processCareerplugMessage(
   });
 
   if (!parseRes.ok) {
+    // Star + apply Applicants label so the message exits the fetch pool.
+    // Without this, a Groq failure (rate-limit, transient, JSON parse, etc.)
+    // leaves the email unfiled — and the next 15-min cron fires the fetch
+    // query again and re-hammers Groq with the same body. That amplification
+    // (37 real applicants × 96 fetches/day × 5K tokens) previously exhausted
+    // the daily 200K TPD budget by ~8am. Queue item + drainer coverage is
+    // the durable path; the raw email doesn't need to sit in INBOX.
+    await starMessage(ctx, messageId);
+    const failThreadId: string | null = msg?.threadId ?? msg?.thread_id ?? null;
+    if (failThreadId) {
+      try {
+        await callComposio({
+          apiKey: ctx.composioApiKey,
+          userId: ctx.composioUserId,
+          connectedAccountId: ctx.gmailAccountId,
+          toolSlug: "GMAIL_MODIFY_THREAD_LABELS",
+          toolArguments: {
+            thread_id: failThreadId,
+            remove_label_ids: ["INBOX"],
+            add_label_ids: [APPLICANTS_GMAIL_LABEL_ID],
+            user_id: "me",
+          },
+        });
+      } catch (e) {
+        console.warn("careerplug archive-on-queue threw (non-fatal):", e);
+      }
+    }
     if ("queued" in parseRes && parseRes.queued) {
       return { status: "error", applicants_upserted: 0, applicants_seen: 0, message_id: messageId, error: `LLM queued: ${parseRes.queueId}` };
     }
