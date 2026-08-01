@@ -9,12 +9,23 @@
 //
 // v2 branch added 2026-08-01 to unblock v2 assessment delivery (nothing
 // served v2 content before this — see operational_rule "v2 assessment
-// delivery gap found + fixed 2026-08-01"). v2 architecture differs from v1:
+// delivery gap found + fixed 2026-08-01"). Three stints, corrected same day
+// after an initial 2-stint build wrongly treated the 22 retest items as
+// unconditional core content (fixed same session):
 //   - Stint 1 (33 items) = HEXACO Honesty-Humility integrity gate
 //     (sincerity, fairness, greed_avoidance). Served in full, no rotation.
-//   - Stint 2 (211 items) = every other facet. Served in full once Stint 1
-//     is complete — NOT per-trait adaptive expansion like v1. No expansion
-//     trigger computation needed for v2.
+//   - Stint 2 (189 items) = the fixed core battery for every other facet.
+//     Served in full once Stint 1 is complete.
+//   - Stint 3 (up to 22 items, 1 per facet) = conditional retest round.
+//     Computed only after Stint 2 is fully answered (compute_newtworks_v2_
+//     stint3_triggers reads the merged stint 1+2 score). A facet's retest
+//     item is served only if that facet's score lands in the ambiguous
+//     45-55 band — same starting convention as v1's borderline-trait
+//     expansion. This threshold is a reasonable default, NOT a calibrated
+//     one — see OQ 52220bd5, which also wants within-facet variance and
+//     retest-divergence signals added once real candidate data exists.
+//     Known gap: OQ 52220bd5 targets 2-4 expansion items per triggered
+//     facet; only 1 retest item per facet currently exists.
 //   - Scoring: compute_newtworks_v2_facets_as_row (facet-level only — the
 //     competency/role-fit layer is deferred, OQ f979e377). Written to the 21
 //     parallel v2 facet columns on hiring_candidates (already shipped,
@@ -801,7 +812,10 @@ async function handleFinalize(supa: any, cand: any) {
 // ============================================================================
 // --- v2 handlers ---
 // v2 stint 1 = integrity gate (33 items, all served, no rotation).
-// v2 stint 2 = everything else (211 items, all served, no adaptive trigger).
+// v2 stint 2 = fixed core battery (189 items, all served).
+// v2 stint 3 = conditional retest round (up to 22 items, only for facets
+// whose merged stint 1+2 score is ambiguous — see compute_newtworks_v2_
+// stint3_triggers and header comment for threshold caveats).
 // ============================================================================
 
 async function loadStintItemsV2(supa: any, stint: number) {
@@ -829,6 +843,31 @@ async function loadAnsweredV2(supa: any, candidateId: string): Promise<Set<strin
   return new Set((data || []).map((r: any) => r.item_id));
 }
 
+// Stint 3 targets: the ambiguous-facet retest items, computed only once
+// Stint 1 + Stint 2 are both fully answered (the trigger reads the merged
+// score, so it can't fire early).
+async function loadStint3TargetsV2(supa: any, candidateId: string) {
+  const { data, error } = await supa.rpc("compute_newtworks_v2_stint3_triggers", {
+    p_candidate_id: candidateId,
+  });
+  if (error) throw new Error(`v2_stint3_triggers_fetch: ${error.message}`);
+  const traits = new Set(((data || []) as any[]).map((r) => r.hypothesized_trait));
+  if (traits.size === 0) return [];
+
+  const { data: items, error: iErr } = await supa
+    .from("hiregauge_instrument_items")
+    .select(
+      "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded"
+    )
+    .eq("stint", 3)
+    .eq("is_active", true)
+    .in("section", V2_SECTIONS)
+    .in("hypothesized_trait", Array.from(traits))
+    .order("item_number", { ascending: true });
+  if (iErr) throw new Error(`v2_stint3_items_fetch: ${iErr.message}`);
+  return items || [];
+}
+
 async function loadProgressV2(supa: any, candidateId: string) {
   const stint1Items = await loadStintItemsV2(supa, 1);
   const stint2Items = await loadStintItemsV2(supa, 2);
@@ -840,9 +879,21 @@ async function loadProgressV2(supa: any, candidateId: string) {
   const stint2Answered = stint2Items.filter((it: any) => answered.has(it.id)).length;
   const stint2Done = stint1Done && stint2Items.length > 0 && stint2Answered >= stint2Items.length;
 
+  // Stint 3 is only computable once stint 1+2 are both done (trigger reads
+  // the merged score). Before that, treat it as "not yet known."
+  let stint3Items: any[] = [];
+  let stint3Answered = 0;
+  let stint3Done = false;
+  if (stint2Done) {
+    stint3Items = await loadStint3TargetsV2(supa, candidateId);
+    stint3Answered = stint3Items.filter((it: any) => answered.has(it.id)).length;
+    stint3Done = stint3Items.length === 0 || stint3Answered >= stint3Items.length;
+  }
+
   return {
     stint1Items,
     stint2Items,
+    stint3Items,
     answered,
     stint1Total: stint1Items.length,
     stint1Answered,
@@ -850,20 +901,28 @@ async function loadProgressV2(supa: any, candidateId: string) {
     stint2Total: stint2Items.length,
     stint2Answered,
     stint2Done,
+    stint3Total: stint3Items.length,
+    stint3Answered,
+    stint3Done,
   };
 }
 
 async function handleVerifyV2(supa: any, cand: any) {
   try {
     const prog = await loadProgressV2(supa, cand.id);
+    const allDone = prog.stint1Done && prog.stint2Done && prog.stint3Done;
+    const currentProgress = !prog.stint1Done
+      ? { answered: prog.stint1Answered, total: prog.stint1Total }
+      : !prog.stint2Done
+      ? { answered: prog.stint2Answered, total: prog.stint2Total }
+      : { answered: prog.stint3Answered, total: prog.stint3Total };
     return json({
       ok: true,
       candidate: { first_name: cand.first_name, position: cand.position },
       primary_answered: prog.stint1Done,
-      expansion_ready: prog.stint1Done && prog.stint2Total > 0,
-      progress: prog.stint1Done
-        ? { answered: prog.stint2Answered, total: prog.stint2Total }
-        : { answered: prog.stint1Answered, total: prog.stint1Total },
+      expansion_ready: prog.stint2Done && prog.stint3Total > 0,
+      done: allDone,
+      progress: currentProgress,
     });
   } catch (e: any) {
     return json({ error: "verify_action_failed", detail: e.message }, 500);
@@ -884,16 +943,26 @@ async function handleServeV2(supa: any, cand: any) {
       });
     }
 
-    if (prog.stint2Total === 0) {
-      return json({ stint: 2, done: true, items: [], progress: { answered: 0, total: 0 } });
+    if (!prog.stint2Done) {
+      const unanswered = prog.stint2Items.filter((it: any) => !prog.answered.has(it.id));
+      return json({
+        stint: 2,
+        done: unanswered.length === 0,
+        items: constrainedShuffle(unanswered),
+        progress: { answered: prog.stint2Answered, total: prog.stint2Total },
+      });
     }
 
-    const unanswered = prog.stint2Items.filter((it: any) => !prog.answered.has(it.id));
+    // Stint 3: only the ambiguous facets' retest items, or none at all.
+    if (prog.stint3Total === 0) {
+      return json({ stint: 3, done: true, items: [], progress: { answered: 0, total: 0 } });
+    }
+    const unanswered = prog.stint3Items.filter((it: any) => !prog.answered.has(it.id));
     return json({
-      stint: 2,
+      stint: 3,
       done: unanswered.length === 0,
       items: constrainedShuffle(unanswered),
-      progress: { answered: prog.stint2Answered, total: prog.stint2Total },
+      progress: { answered: prog.stint3Answered, total: prog.stint3Total },
     });
   } catch (e: any) {
     return json({ error: "serve_action_failed", detail: e.message }, 500);
@@ -1011,6 +1080,17 @@ async function handleFinalizeV2(supa: any, cand: any) {
           stage: "stint_2",
           answered: prog.stint2Answered,
           total: prog.stint2Total,
+        },
+        409
+      );
+    }
+    if (prog.stint3Total > 0 && !prog.stint3Done) {
+      return json(
+        {
+          error: "assessment_incomplete",
+          stage: "stint_3",
+          answered: prog.stint3Answered,
+          total: prog.stint3Total,
         },
         409
       );
