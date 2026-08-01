@@ -559,10 +559,13 @@ function useCPRData(weekDate) {
         // "Your Path" §Scorecarding Cadence. Mirrors public.fit_scorecard_tenure_tier
         // + FitScorecards.jsx ENTRY_TYPE_BY_TIER; keep in sync.
         //
-        //   weeks_1_8     → entry_type=conversation, threshold=quotes_discussed
-        //                   (floor: every quote at minimum gets scorecarded;
-        //                    "every conversation" bar is unmeasurable without a
-        //                    conversation count, so quote count is a defensible floor)
+        //   weeks_1_8     → entry_type=conversation,
+        //                   threshold = max(quotes_discussed, Mon-Fri days elapsed).
+        //                   Handbook bar is "every conversation," which is
+        //                   unmeasurable without a conversation count, so this
+        //                   holds two floors together: (a) every quote gets a
+        //                   scorecard, and (b) at least one scorecard per working
+        //                   day. Whichever is larger is the requirement.
         //   weeks_9_13    → entry_type=quote_review, threshold=quotes_discussed
         //   weeks_14_plus → entry_type=end_of_day,   threshold=Mon-Fri days elapsed
         //                   in the CPR week (max 5; scales down for current week views)
@@ -617,7 +620,10 @@ function useCPRData(weekDate) {
               const entryType = REQ_ENTRY_TYPE[tier];
               const count = countByTmType.get(`${d.team_member_id}|${entryType}`) || 0;
               const quotesDiscussed = Number(d.quotes_discussed) || 0;
-              const threshold = tier === "weeks_14_plus" ? workingDaysElapsed : quotesDiscussed;
+              let threshold;
+              if (tier === "weeks_14_plus")      threshold = workingDaysElapsed;
+              else if (tier === "weeks_9_13")    threshold = quotesDiscussed;
+              else /* weeks_1_8 */               threshold = Math.max(quotesDiscussed, workingDaysElapsed);
               const computed = count >= threshold;
               if (Boolean(d.scorecard_done) !== computed) {
                 toUpdate.push({ id: d.id, computed });
