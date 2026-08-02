@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
 
   const { data: cand, error: candErr } = await supa
     .from("hiring_candidates")
-    .select("id, first_name, position")
+    .select("id, first_name, position, assessment_exit_gate")
     .eq("id", candidate_id)
     .eq("agency_id", AGENCY_ID)
     .maybeSingle();
@@ -401,8 +401,51 @@ async function loadProgress(supa: any, candidateId: string) {
   };
 }
 
+// --- Stint 1 exit gate ------------------------------------------------------
+// Runs once Stint 1 is complete, immediately before Stint 2 would be served.
+// The candidate is never told that a gate fired: they get the same neutral
+// completion screen as anyone who finishes. The reason goes to the owner only,
+// via an alerts row and a Telegram message. Every response already collected
+// is kept. Thresholds and their rationale live in the SQL function docstring
+// (hiregauge_v2_stint1_exit_gate).
+async function exitGateFired(supa: any, cand: any): Promise<boolean> {
+  if (cand.assessment_exit_gate) return true;
+  try {
+    const { data, error } = await supa.rpc("apply_hiregauge_v2_stint1_exit_gate", {
+      p_candidate_id: cand.id,
+      p_sitting: 1,
+    });
+    // Never block a candidate because the gate itself errored.
+    if (error) return false;
+    return Boolean(data?.gate_fired);
+  } catch (_e) {
+    return false;
+  }
+}
+
+function exitedResponse() {
+  return json({
+    stint: 1,
+    done: true,
+    exited: true,
+    items: [],
+    progress: { answered: 0, total: 0 },
+  });
+}
+
 async function handleVerify(supa: any, cand: any) {
   try {
+    if (cand.assessment_exit_gate) {
+      return json({
+        ok: true,
+        candidate: { first_name: cand.first_name, position: cand.position },
+        primary_answered: true,
+        expansion_ready: false,
+        done: true,
+        exited: true,
+        progress: { answered: 0, total: 0 },
+      });
+    }
     const prog = await loadProgress(supa, cand.id);
     const allDone = prog.stint1Done && prog.stint2Done && prog.stint3Done && prog.stint4Done;
     const currentProgress = !prog.stint1Done
@@ -427,6 +470,8 @@ async function handleVerify(supa: any, cand: any) {
 
 async function handleServe(supa: any, cand: any) {
   try {
+    if (cand.assessment_exit_gate) return exitedResponse();
+
     const prog = await loadProgress(supa, cand.id);
 
     if (!prog.stint1Done) {
@@ -438,6 +483,8 @@ async function handleServe(supa: any, cand: any) {
         progress: { answered: prog.stint1Answered, total: prog.stint1Total },
       });
     }
+
+    if (await exitGateFired(supa, cand)) return exitedResponse();
 
     if (!prog.stint2Done) {
       const unanswered = prog.stint2Items.filter((it: any) => !prog.answered.has(it.id));
@@ -567,6 +614,9 @@ const FACET_COLUMNS: Record<string, string> = {
 
 async function handleFinalize(supa: any, cand: any) {
   try {
+    if (cand.assessment_exit_gate) {
+      return json({ ok: true, done: true, exited: true });
+    }
     const prog = await loadProgress(supa, cand.id);
     if (!prog.stint1Done) {
       return json({ error: "assessment_incomplete", stage: "stint_1", answered: prog.stint1Answered, total: prog.stint1Total }, 409);
