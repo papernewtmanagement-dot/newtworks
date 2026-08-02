@@ -1,3 +1,8 @@
+// NOTE (2026-08-01): GET page rendering here is superseded by the Vercel Edge
+// Function at api/careers.js. Supabase Edge Functions cannot serve HTML — any
+// text/html GET response is rewritten to text/plain — so the render paths below
+// are retained only as the source of truth for the markup, and are no longer
+// reachable in production. Only POST /<slug>/apply is live on this function.
 // careers-site edge function
 // Serves the public careers surface for Peter Story State Farm agency:
 //   GET  /careers                → listing of active postings
@@ -15,6 +20,7 @@ const AGENCY_NAME = "Peter Story State Farm";
 const AGENCY_ADDRESS_LINES = ["28120 US Hwy 281 N, Suite 125", "San Antonio, TX 78260"];
 const AGENCY_PHONE = "830-980-8100";
 const AGENCY_CONTACT_EMAIL = "paper.newt.management@gmail.com";
+const SITE_ORIGIN = "https://newtworks.vercel.app";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -384,7 +390,9 @@ async function handleApply(slug: string, req: Request): Promise<Response> {
     }
   }
 
-  return Response.redirect(new URL(req.url).origin + "/careers/apply-received", 303);
+  // Pages are served from Vercel, so redirect to the public site origin.
+  // req.url here is the supabase.co URL and would send applicants nowhere.
+  return Response.redirect(SITE_ORIGIN + "/careers/apply-received", 303);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
