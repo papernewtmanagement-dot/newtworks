@@ -225,6 +225,8 @@ function constrainedShuffle<T extends {
   hypothesized_trait?: string | null;
   cognitive_domain?: string | null;
   item_text?: string | null;
+  item_number?: number | null;
+  retest_of_item_number?: number | null;
 }>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -237,7 +239,11 @@ function constrainedShuffle<T extends {
   const MIN_GAP_TRAIT = 8;
   const MIN_GAP_DOMAIN = 4;
   const MIN_GAP_TEXT = 8;
-  const MAX_LOOKBACK = Math.max(MIN_GAP_TRAIT, MIN_GAP_DOMAIN, MIN_GAP_TEXT);
+  // Meade & Craig 2012 within-sitting consistency check: a retest item must
+  // sit far enough from its original that the candidate can't remember and
+  // match their own prior response. 15-item floor of the 15-20 spacing spec.
+  const MIN_GAP_RETEST = 15;
+  const MAX_LOOKBACK = Math.max(MIN_GAP_TRAIT, MIN_GAP_DOMAIN, MIN_GAP_TEXT, MIN_GAP_RETEST);
 
   const countBy = (key: "hypothesized_trait" | "cognitive_domain" | "item_text") => {
     const counts: Record<string, number> = {};
@@ -252,6 +258,16 @@ function constrainedShuffle<T extends {
   const domainCounts = countBy("cognitive_domain");
   const textCounts = countBy("item_text");
 
+  // item_number -> partner item_number for retest pairs present in this
+  // served batch (bidirectional: original -> retest and retest -> original).
+  const pairPartner: Record<number, number> = {};
+  for (const it of a) {
+    if (it.item_number != null && it.retest_of_item_number != null) {
+      pairPartner[it.item_number] = it.retest_of_item_number;
+      pairPartner[it.retest_of_item_number] = it.item_number;
+    }
+  }
+
   const effectiveGap = (base: number, count: number): number =>
     count > 0 ? Math.max(1, Math.min(base, Math.floor(n / count))) : base;
 
@@ -259,6 +275,7 @@ function constrainedShuffle<T extends {
     const trait = item.hypothesized_trait ?? null;
     const domain = item.cognitive_domain ?? null;
     const text = item.item_text ?? null;
+    const partnerNumber = item.item_number != null ? pairPartner[item.item_number] : undefined;
     const traitGap = trait ? effectiveGap(MIN_GAP_TRAIT, traitCounts[trait] || 0) : MIN_GAP_TRAIT;
     const domainGap = domain ? effectiveGap(MIN_GAP_DOMAIN, domainCounts[domain] || 0) : MIN_GAP_DOMAIN;
     const textGap = text ? effectiveGap(MIN_GAP_TEXT, textCounts[text] || 0) : MIN_GAP_TEXT;
@@ -269,11 +286,12 @@ function constrainedShuffle<T extends {
       if (trait && (other.hypothesized_trait ?? null) === trait && gap < traitGap) return true;
       if (domain && (other.cognitive_domain ?? null) === domain && gap < domainGap) return true;
       if (text && (other.item_text ?? null) === text && gap < textGap) return true;
+      if (partnerNumber != null && other.item_number === partnerNumber && gap < MIN_GAP_RETEST) return true;
     }
     return false;
   };
 
-  for (let pass = 0; pass < 20; pass++) {
+  for (let pass = 0; pass < 30; pass++) {
     let violations = 0;
     for (let i = 1; i < a.length; i++) {
       if (!violatesAt(i, a[i])) continue;
@@ -830,7 +848,7 @@ async function loadStintItemsV2(supa: any, stint: number) {
   const { data, error } = await supa
     .from("hiregauge_instrument_items")
     .select(
-      "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded"
+      "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded, retest_of_item_number"
     )
     .eq("stint", stint)
     .eq("is_active", true)
@@ -865,7 +883,7 @@ async function loadStint3TargetsV2(supa: any, candidateId: string) {
   const { data: items, error: iErr } = await supa
     .from("hiregauge_instrument_items")
     .select(
-      "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded"
+      "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded, retest_of_item_number"
     )
     .eq("stint", 3)
     .eq("is_active", true)
