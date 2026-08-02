@@ -456,6 +456,17 @@ export default function CandidateAssessment({ candidateId, token }) {
                 } to go. Same format as the first section.`
               : "Just a few more questions in the same format as the first section."}
           </div>
+          <div
+            style={{
+              color: T.slate500,
+              lineHeight: 1.5,
+              marginBottom: 20,
+              fontSize: 14,
+              fontStyle: "italic",
+            }}
+          >
+            Take a moment. When ready, continue.
+          </div>
           <button style={btnPrimary} onClick={() => setScreen("expansion")}>
             Continue
           </button>
@@ -554,7 +565,7 @@ export default function CandidateAssessment({ candidateId, token }) {
                 color: T.blue,
               }}
             >
-              {stint === 2 ? "Follow-up section" : "Section 1"}
+              {stint > 1 ? "Follow-up section" : "Section 1"}
             </span>
             <span>
               {Math.min(currentIdx + 1, items.length)} of {items.length}
