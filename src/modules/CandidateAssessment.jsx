@@ -145,15 +145,20 @@ export default function CandidateAssessment({ candidateId, token }) {
     // Continue button so the candidate understands why extra questions appeared.
     // Resumed mid-stint-2 sessions (progress.answered > 0) skip straight to
     // the questions.
+    // Break screen fires before EVERY stint beyond the first (stint 2 or 3,
+    // v2 can have both), not just stint 2 — v2 assessment Step 5 (Ass Fix 5
+    // break-screen spec: rest suggestion, no countdown timer, one per stint
+    // boundary). Resumed mid-stint sessions (progress.answered > 0) skip the
+    // break and go straight to the questions.
     if (
-      data.stint === 2 &&
+      data.stint > 1 &&
       Array.isArray(data.items) &&
       data.items.length > 0 &&
       (data.progress?.answered ?? 0) === 0
     ) {
       setScreen("expansion_intro");
     } else {
-      setScreen(data.stint === 2 ? "expansion" : "primary");
+      setScreen(data.stint > 1 ? "expansion" : "primary");
     }
   }, [candidateId, token]);
 
@@ -227,24 +232,17 @@ export default function CandidateAssessment({ candidateId, token }) {
         setCurrentIdx(currentIdx + 1);
         return;
       }
-      // Batch complete.
-      if (stint === 1) {
-        // Directly fetch the next batch — runServe routes to expansion_intro
-        // (informational screen with a Continue button) when stint 2 items
-        // exist, or to thanks when no expansion was triggered.
-        setScreen("loading");
-        await runServe();
-      } else {
-        // Stint 2 batch done → finalize.
-        setScreen("loading");
-        const fin = await callV1(candidateId, token, "finalize");
-        if (!fin.ok) {
-          setFatalError(fin.data?.error || "Failed to finalize.");
-          setScreen("error");
-          return;
-        }
-        setScreen("thanks");
-      }
+      // Batch complete. ALWAYS re-serve rather than finalizing directly —
+      // v2 can have a Stint 3 after Stint 2 (ambiguous-facet expansion), and
+      // only the server knows whether another stint is pending. runServe()
+      // itself calls finalize once the server reports done:true. (Fixed
+      // 2026-08-01 v2 assessment Step 5: the old stint===1-only branch
+      // finalized right after Stint 2 for every candidate, which meant any
+      // v2 candidate who triggered a Stint 3 expansion got silently cut off
+      // and hit a hard error, since the backend finalize gate rejects an
+      // incomplete Stint 3.)
+      setScreen("loading");
+      await runServe();
     },
     [saving, items, currentIdx, candidateId, token, stint, runServe]
   );
