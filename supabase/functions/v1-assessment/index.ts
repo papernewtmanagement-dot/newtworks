@@ -1177,6 +1177,14 @@ async function handleFinalizeV2(supa: any, cand: any) {
         return json({ error: "flat_update_failed", detail: upErr.message }, 500);
       }
       updated = true;
+
+      try {
+        await supa.rpc("apply_newtworks_v2_reliability_to_candidate", {
+          p_candidate_id: cand.id,
+        });
+      } catch (_relErr) {
+        // Silent — reliability composite is diagnostic, not a correctness gate.
+      }
     } else {
       update_skip_reason = "no_facets_scored";
     }
