@@ -1129,6 +1129,32 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                   Gates fired: {roleDetail.gates_fired.join(", ")}
                 </div>
               )}
+              {/* Integrity gate shadow result — SHADOW MODE, not yet active
+                  (Peter directive 2026-08-03). The gate never declines a
+                  candidate; this only shows what the conjunctive 4-condition
+                  test WOULD have done, for review once 25-30 real candidates
+                  have been scored. Role-agnostic — same value regardless of
+                  which role is selected above. */}
+              {roleDetail?.gate_detail?.integrity_decline && (() => {
+                const ig = roleDetail.gate_detail.integrity_decline;
+                const cond = ig.conditions || {};
+                const metCount = Object.values(cond).filter((c) => c?.met).length;
+                return (
+                  <div style={{
+                    padding: "6px 10px", background: T.slate50, borderRadius: 6,
+                    border: `1px dashed ${T.slate300 || T.slate200}`, marginBottom: 4,
+                  }}>
+                    <div style={{ fontSize: 9.5, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 700, color: T.slate500 }}>
+                      Integrity gate — shadow mode, not yet active
+                    </div>
+                    <div style={{ fontSize: 11, color: T.slate700, marginTop: 2 }}>
+                      Would {ig.shadow_would_decline ? "flag for decline" : "pass"} — {metCount}/4 conditions met
+                      {cond.raw_composite_low?.value != null && ` · raw self-report ${cond.raw_composite_low.value}`}
+                      {cond.sjt_honesty_low?.value != null && ` · SJT honesty ${cond.sjt_honesty_low.value}%`}
+                    </div>
+                  </div>
+                );
+              })()}
               {entries.map(([k, c]) => {
                 const v = c?.adjusted;
                 const band = competencyBand(v);
