@@ -502,8 +502,19 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       2026 statement silently never got parsed — found 2026-08-03,
   //       ingested by hand. "PFA" in the subject alone is specific
   //       enough at this agency to route correctly regardless of sender.
+  //       Guards, each load-bearing: require "statement" wording so our OWN
+  //       outgoing "PFA Reconciliation — <Month>" emails never match (the
+  //       Gmail fetch query has no -in:sent, so sent mail IS scanned, and
+  //       processPfaStatement's idempotency step would un-clear transactions
+  //       and delete the real statement row for that period); exclude
+  //       "reconciliation" explicitly as a second belt; and require .pdf so
+  //       the 7 inline signature images on every forward don't each get
+  //       classified as a statement and error out.
   { docType: "bank_statement_pfa",
-    test: (i) => /\bpfa\b/i.test(i.subject) },
+    test: (i) => /\bpfa\b/i.test(i.subject) &&
+                 /statement/i.test(i.subject + " " + i.fileName) &&
+                 !/reconciliation/i.test(i.subject) &&
+                 /\.pdf$/i.test(i.fileName) },
 
   // ----- BANK / CC STATEMENTS — sender drives classification -----
   { docType: "bank_statement_primary",
