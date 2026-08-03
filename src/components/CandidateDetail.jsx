@@ -1005,6 +1005,154 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
           </div>
         )}
       </div>
+
+      <div style={{ height: 1, background: T.slate200 }} />
+
+      {/* Role Fit + Competencies — Newtworks competency layer (12 competencies
+          x 7 roles, confirmed 2026-08-02, live 2026-08-03). Role buttons sorted
+          by fit_score descending, best-fit highlighted (mirrors the v1/CTS
+          selector in the legacy renderAssessmentLayer below). Selecting a role
+          swaps which role's 12 competencies + gates display underneath. */}
+      <div>
+        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+          Role Fit
+        </div>
+        {(() => {
+          const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+          if (!bf || bf.best_role == null) {
+            return (
+              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                Best-fit role computes from traits — awaiting assessment.
+              </div>
+            );
+          }
+          const roleRows = [
+            { key: "sales_outbound",       fitScore: bf.sales_outbound_fit_score },
+            { key: "sales_inbound",        fitScore: bf.sales_inbound_fit_score },
+            { key: "sales_in_book",        fitScore: bf.sales_in_book_fit_score },
+            { key: "retention_reception",  fitScore: bf.retention_reception_fit_score },
+            { key: "retention_escalation", fitScore: bf.retention_escalation_fit_score },
+            { key: "retention_support",    fitScore: bf.retention_support_fit_score },
+            { key: "aspirant",             fitScore: bf.aspirant_fit_score },
+          ].sort((a, b) => (Number(b.fitScore) || -Infinity) - (Number(a.fitScore) || -Infinity));
+          const bestKey = bf.best_role;
+          const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
+          return (
+            <>
+              {bf.best_hard_decline && (
+                <div style={{ padding: "6px 10px", background: T.redLt, borderRadius: 6, marginBottom: 4, fontSize: 11, fontWeight: 700, color: T.red }}>
+                  Hard decline — integrity gate fired on best-fit role
+                </div>
+              )}
+              {!bf.best_hard_decline && bf.best_verdict_cap === "consider" && (
+                <div style={{ padding: "6px 10px", background: T.amberLt, borderRadius: 6, marginBottom: 4, fontSize: 11, fontWeight: 700, color: T.amber }}>
+                  Verdict capped at "consider" — a critical competency or reasoning floor missed on best-fit role
+                </div>
+              )}
+              {bf.best_churn_risk && (
+                <div style={{ padding: "6px 10px", background: T.slate100, borderRadius: 6, marginBottom: 4, fontSize: 11, fontWeight: 600, color: T.slate700 }}>
+                  Churn-risk flag on best-fit role — reasoning ceiling exceeded, performance unaffected
+                </div>
+              )}
+              {roleRows.map((r) => {
+                const isSelected = r.key === currentSelected;
+                const isBest = r.key === bestKey;
+                const colors = isBest ? bandColor("green") : null;
+                const baseBg = colors ? colors.bg : (T.slate200 || "#e2e8f0");
+                const baseStripe = colors ? colors.fg : T.slate200;
+                const valueColor = isBest ? colors.fg : T.slate900;
+                const numFit = Number(r.fitScore);
+                const restBg = T.slate50 || "#f8fafc";
+                const gaugeBg = Number.isFinite(numFit)
+                  ? `linear-gradient(to right, ${baseBg} 0%, ${baseBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} 100%)`
+                  : (colors ? baseBg : restBg);
+                return (
+                  <button
+                    key={r.key}
+                    type="button"
+                    onClick={() => setSelectedRole(r.key)}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "6px 10px", background: gaugeBg, borderRadius: 6,
+                      borderTop: "none", borderRight: "none", borderBottom: "none",
+                      borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
+                      outline: isSelected ? `1px solid ${T.slate400}` : "none",
+                      boxSizing: "border-box", gap: 8, cursor: "pointer",
+                      fontFamily: "inherit", textAlign: "left", width: "100%",
+                      marginBottom: 2,
+                    }}
+                    title={isSelected ? "Selected — competencies below" : "Click to show this role's competencies"}
+                  >
+                    <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
+                      {ROLE_LABELS[r.key] || r.key} Fit
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
+                      {r.fitScore ?? "—"}
+                    </span>
+                  </button>
+                );
+              })}
+            </>
+          );
+        })()}
+
+        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+          Competencies
+        </div>
+
+        {(() => {
+          const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+          const bestKey = bf?.best_role;
+          const currentSelected = selectedRole || bestKey || "sales_outbound";
+          const roleDetail = v2RoleFits ? v2RoleFits[currentSelected] : null;
+          const comps = roleDetail?.competencies || {};
+          const entries = Object.entries(comps);
+          const formatCompLabel = (k) =>
+            k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
+          const TIER_LABEL = { critical: "critical · hard floor", important: "important", supporting: "supporting" };
+          if (entries.length === 0) {
+            return (
+              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                {v2RoleFits ? `No competency data for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
+              </div>
+            );
+          }
+          return (
+            <>
+              <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
+                Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit above to swap.
+              </div>
+              {roleDetail?.gates_fired?.length > 0 && (
+                <div style={{ fontSize: 10, color: T.red, fontWeight: 600, marginBottom: 2, padding: "0 10px" }}>
+                  Gates fired: {roleDetail.gates_fired.join(", ")}
+                </div>
+              )}
+              {entries.map(([k, c]) => {
+                const v = c?.adjusted;
+                const band = competencyBand(v);
+                const floor = c?.floor;
+                const tier = c?.tier;
+                const breached = tier === "critical" && floor != null && v != null && Number(v) < Number(floor);
+                const sublineBits = [];
+                if (floor != null) sublineBits.push(breached ? `Below critical floor (${floor})` : `Floor ${floor}`);
+                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
+                return (
+                  <AssessRow
+                    key={k}
+                    label={formatCompLabel(k)}
+                    value={v}
+                    band={v == null ? "none" : band}
+                    extra={tier ? TIER_LABEL[tier] || tier : null}
+                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
+                  />
+                );
+              })}
+            </>
+          );
+        })()}
+      </div>
     </div>
   );
 }
