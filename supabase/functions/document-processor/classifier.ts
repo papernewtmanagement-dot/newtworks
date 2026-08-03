@@ -130,6 +130,7 @@ export type DocType =
   | "commission_report"
   | "team_production"
   | "careerplug_applicant"
+  | "resume_manual_batch"
   | "archive_bundle"
   | "skip";
 
@@ -193,6 +194,35 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
     test: (i) => /careerplug/i.test(i.fromEmail) &&
                  /\.pdf$/i.test(i.fileName) &&
                  /resume|cv|applicant/i.test(i.fileName + " " + i.subject) },
+
+  // ----- HAND-FORWARDED RESUME BATCH (2026-08-03) — a bare resume PDF
+  //       attached to an email a PERSON forwarded, with no job-board sender
+  //       and usually an empty body. Marie forwards these from her own Gmail
+  //       in batches ("Applicants - Career Plug 3", "Applicants - Indeed
+  //       08/01"); Stephanie forwards them from her State Farm mailbox under
+  //       the subject "Resumes".
+  //
+  //       Deliberately sender-agnostic. Every prior resume route was gated on
+  //       the sender, so a forward from anyone else fell through to "skip" —
+  //       no documents row, no candidate row, no error. About 80 resumes piled
+  //       up that way before it was noticed 2026-08-03.
+  //
+  //       Ordering is load-bearing: this sits AFTER the CareerPlug rule above
+  //       so genuine CareerPlug mail keeps its own route.
+  //
+  //       The one carve-out is the State-Farm-forward path. Those emails carry
+  //       a resume AND a CTS profile PDF, and only the dedicated
+  //       mode=sf_forwarded_applicant parser reads the CTS scores. If this
+  //       rule grabbed the resume first, the thread would get archived and
+  //       Applicants-labeled, and that parser's own query (which excludes
+  //       Applicants-labeled mail) would then never see it — losing the
+  //       scores silently. There is no cron for that mode; Peter runs it by
+  //       hand, so the carve-out is what keeps the door open. -----
+  { docType: "resume_manual_batch",
+    test: (i) => /\.pdf$/i.test(i.fileName) &&
+                 /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) &&
+                 !(/peter\.story\.yrru@statefarm\.com/i.test(i.fromEmail) &&
+                   /\bapplicant\b/i.test(i.subject)) },
 
   // ----- FROST PFA STATEMENT (2026-07-09) — must come BEFORE the generic
   //       bank statement rules. Sender = Frost Bank; subject/filename mentions
