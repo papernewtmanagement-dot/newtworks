@@ -401,6 +401,122 @@ async function loadProgress(supa: any, candidateId: string) {
   };
 }
 
+// --- answer-order randomisation --------------------------------------------
+// Every scored section shipped with its correct answer in a fixed position: the
+// 2nd option on all 20 scenarios, the last option on every shape item, the 1st
+// option on every word item. A candidate picking one position throughout could
+// score well without reading anything, which made the reasoning and scenario
+// scores meaningless. Order is now permuted per candidate per item.
+//
+// The permutation is DETERMINISTIC on (candidate id, item id): a refresh
+// re-serves the same order, and the save path can undo it to score the
+// letter-keyed items. Never use Math.random here -- a fresh random order on
+// every serve would make letter answers unscoreable.
+//
+// Any "none of these" option is pushed back to last after shuffling. It is the
+// over-claiming escape hatch and it has to sit in a predictable place, or the
+// made-up-word items stop measuring what they measure.
+function seedFrom(a: string, b: string): number {
+  const s = `${a}:${b}`;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function makeRng(seed: number): () => number {
+  let t = seed >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let x = Math.imul(t ^ (t >>> 15), 1 | t);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seededShuffle<T>(arr: T[], seed: number): T[] {
+  const rand = makeRng(seed);
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const OPTION_LETTERS = ["A", "B", "C", "D", "E", "F"];
+
+function isNoneOption(v: unknown): boolean {
+  return typeof v === "string" && v.toLowerCase().includes("none of these");
+}
+
+function optionLetters(options: Record<string, unknown>): string[] {
+  return OPTION_LETTERS.filter((L) => options[L] !== undefined);
+}
+
+// Display slot i shows whatever was originally stored under permutation[i].
+function letterPermutation(candidateId: string, itemId: string, letters: string[]): string[] {
+  return seededShuffle(letters, seedFrom(candidateId, itemId));
+}
+
+function prepareItem(item: any, candidateId: string): any {
+  const out = { ...item };
+
+  // The shape and number items keep their generator's solving rule in
+  // item_text as authoring notes. The candidate page already hides it, but it
+  // was still being shipped to the browser, where anyone could read the answer
+  // rule straight out of the network tab.
+  if (out.cognitive_domain === "gma_pattern" || out.cognitive_domain === "gma_numerical") {
+    out.item_text = "";
+  }
+
+  const ch = out.choices;
+
+  if (Array.isArray(ch) && ch.length > 1) {
+    const shuffled = seededShuffle(ch, seedFrom(candidateId, out.id));
+    const idx = shuffled.findIndex(isNoneOption);
+    if (idx !== -1 && idx !== shuffled.length - 1) {
+      const [none] = shuffled.splice(idx, 1);
+      shuffled.push(none);
+    }
+    out.choices = shuffled;
+    return out;
+  }
+
+  if (ch && typeof ch === "object" && !Array.isArray(ch) && ch.options && typeof ch.options === "object") {
+    const letters = optionLetters(ch.options);
+    if (letters.length > 1) {
+      const perm = letterPermutation(candidateId, out.id, letters);
+      const remapped: Record<string, unknown> = {};
+      letters.forEach((displayLetter, i) => {
+        remapped[displayLetter] = ch.options[perm[i]];
+      });
+      out.choices = { ...ch, options: remapped };
+    }
+    return out;
+  }
+
+  return out;
+}
+
+function prepareItems(items: any[], candidateId: string): any[] {
+  return items.map((it) => prepareItem(it, candidateId));
+}
+
+// Turn the letter the candidate clicked back into the letter the answer key is
+// written against. Exact inverse of the permutation applied at serve time.
+function canonicalLetter(reported: string, item: any, candidateId: string): string {
+  const ch = item?.choices;
+  if (!ch || Array.isArray(ch) || typeof ch !== "object") return reported;
+  if (!ch.options || typeof ch.options !== "object") return reported;
+  const letters = optionLetters(ch.options);
+  const slot = letters.indexOf(reported);
+  if (slot === -1) return reported;
+  return letterPermutation(candidateId, item.id, letters)[slot];
+}
+
 // --- Stint 1 exit gate ------------------------------------------------------
 // Runs once Stint 1 is complete, immediately before Stint 2 would be served.
 // The candidate is never told that a gate fired: they get the same neutral
@@ -479,7 +595,7 @@ async function handleServe(supa: any, cand: any) {
       return json({
         stint: 1,
         done: unanswered.length === 0,
-        items: constrainedShuffle(unanswered),
+        items: prepareItems(constrainedShuffle(unanswered), cand.id),
         progress: { answered: prog.stint1Answered, total: prog.stint1Total },
       });
     }
@@ -491,7 +607,7 @@ async function handleServe(supa: any, cand: any) {
       return json({
         stint: 2,
         done: unanswered.length === 0,
-        items: constrainedShuffle(unanswered),
+        items: prepareItems(constrainedShuffle(unanswered), cand.id),
         progress: { answered: prog.stint2Answered, total: prog.stint2Total },
       });
     }
@@ -501,7 +617,7 @@ async function handleServe(supa: any, cand: any) {
       return json({
         stint: 3,
         done: unanswered.length === 0,
-        items: constrainedShuffle(unanswered),
+        items: prepareItems(constrainedShuffle(unanswered), cand.id),
         progress: { answered: prog.stint3Answered, total: prog.stint3Total },
       });
     }
@@ -513,7 +629,7 @@ async function handleServe(supa: any, cand: any) {
     return json({
       stint: 4,
       done: unanswered.length === 0,
-      items: constrainedShuffle(unanswered),
+      items: prepareItems(constrainedShuffle(unanswered), cand.id),
       progress: { answered: prog.stint4Answered, total: prog.stint4Total },
     });
   } catch (e: any) {
@@ -530,7 +646,7 @@ async function handleSave(supa: any, cand: any, body: any) {
 
   const { data: item, error: iErr } = await supa
     .from("hiregauge_instrument_items")
-    .select("id, section, stint, is_active, answer_key")
+    .select("id, section, stint, is_active, answer_key, choices")
     .eq("id", item_id)
     .maybeSingle();
   if (iErr) return json({ error: "item_fetch_failed", detail: iErr.message }, 500);
@@ -539,9 +655,19 @@ async function handleSave(supa: any, cand: any, body: any) {
     return json({ error: "item_not_active" }, 400);
   }
 
+  // Letter-keyed items were served with their options permuted, so the letter
+  // the candidate clicked is a display slot, not the stored letter. Translate it
+  // back before scoring, and store the canonical letter so a saved response
+  // stays interpretable without replaying the permutation.
+  let canonical_label: string | null =
+    response_label == null ? null : String(response_label).trim();
+  if (canonical_label != null) {
+    canonical_label = canonicalLetter(canonical_label, item, cand.id);
+  }
+
   let is_correct: boolean | null = null;
-  if (item.answer_key != null && response_label != null) {
-    is_correct = String(response_label).trim() === String(item.answer_key).trim();
+  if (item.answer_key != null && canonical_label != null) {
+    is_correct = canonical_label === String(item.answer_key).trim();
   }
 
   const answered_at_iso = new Date().toISOString();
@@ -561,7 +687,7 @@ async function handleSave(supa: any, cand: any, body: any) {
         candidate_id: cand.id,
         item_id,
         response_value: response_value ?? null,
-        response_label: response_label ?? null,
+        response_label: canonical_label ?? null,
         is_correct,
         sitting: 1,
         served_at: served_at_iso,
@@ -696,6 +822,17 @@ async function handleFinalize(supa: any, cand: any) {
       sjt_result = { error: e?.message ?? "unknown" };
     }
 
+    let im_result: any = null;
+    try {
+      const { data, error } = await supa.rpc(
+        "apply_newtworks_v2_impression_management_to_candidate",
+        { p_candidate_id: cand.id }
+      );
+      im_result = error ? { error: error.message } : data;
+    } catch (e: any) {
+      im_result = { error: e?.message ?? "unknown" };
+    }
+
     if (updated) {
       try {
         await supa.rpc("apply_newtworks_v2_reliability_to_candidate", { p_candidate_id: cand.id });
@@ -814,6 +951,7 @@ async function handleFinalize(supa: any, cand: any) {
       total_items_scored: totalItemsScored,
       gma: gma_result,
       sjt: sjt_result,
+      impression_management: im_result,
     });
   } catch (e: any) {
     return json({ error: "finalize_action_failed", detail: e.message }, 500);
