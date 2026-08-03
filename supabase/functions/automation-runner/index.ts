@@ -1,6 +1,26 @@
 // =========================================================================
-// automation-runner  (BCC Master Template)
+// automation-runner  (Newtworks)
 // =========================================================================
+// v45 (2026-08-03): writeOutput() now resolves business_entity_id for
+// bank_register_preliminary rows before insert. The 2026-07-29 migration
+// (drop_entity_default_trigger_and_set_not_null_on_13_tables) removed the
+// auto-populate trigger and made the column NOT NULL, but this generic
+// writer only ever picked columns present on the parsed record — Groq's
+// bank-alert parser has no concept of business_entity_id, so every insert
+// started failing with a not-null violation once a real transaction showed
+// up (silent while records_processed stayed 0, so it went unnoticed for a
+// day and a half). Resolution: look up account_last4 against
+// chart_of_accounts (checking/primary accounts) then credit_accounts
+// (cards, including alternate_last4s for reissued numbers) — same sources
+// document-processor's writeStatementBalance() already trusts.
+//
+// v43 (2026-07-10): After a successful sf_crm_analytics_email parse, stamp
+// crm_analytics_ingested=true + crm_analytics_ingested_at=now on the
+// affected agency_snapshot rows, then DM Peter via paper_newt_bot with the
+// book snapshot summary. The stamp is needed because the row is pre-created
+// by the Telegram check-in flow (source=cpr_weekly_manual), so fill_nulls_only
+// alone can't flip a boolean that's already defaulted to false.
+//
 // v42 (2026-07-10): pg_net polling architecture retired again per the
 // 2026-06-19 rule. INTERNAL branch splits on internal_handler prefix:
 //   dispatch_<name>  -> direct fetch to /functions/v1/<name>
@@ -22,6 +42,7 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
+const PETER_TELEGRAM_ID_FALLBACK = 7778113542;
 
 async function getDefaultModel(agencyId: string): Promise<string> {
   try { const v = await getSetting(agencyId, "groq_model_default"); return (v && v.trim()) || LLM_MODEL_FALLBACK; }
@@ -42,6 +63,32 @@ async function telegram(agencyId: string | null, text: string): Promise<void> {
   const chatId = await getSetting(agencyId, "telegram_chat_id");
   if (!botToken || !chatId) return;
   try {
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+  } catch (_e) { /* non-fatal */ }
+}
+
+// Personal DM to Peter via paper_newt_bot. Non-fatal on error — the parse
+// still succeeded, DM is icing not core work.
+async function telegramPeterDm(agencyId: string, text: string): Promise<void> {
+  try {
+    const botToken = await getSetting(agencyId, "chatbot_bot_token");
+    if (!botToken) return;
+    // Prefer live team_telegram_map entry, fall back to hardcoded ID that has
+    // historically worked for paper_newt_bot DMs (payroll_weekly_nag pattern).
+    let chatId: number | null = null;
+    try {
+      const { data } = await sb
+        .from("team_telegram_map")
+        .select("telegram_user_id, team!inner(first_name,last_name)")
+        .eq("team.first_name", "Peter")
+        .eq("team.last_name", "Story")
+        .maybeSingle();
+      if (data?.telegram_user_id) chatId = Number(data.telegram_user_id);
+    } catch (_e) { /* fall through to fallback */ }
+    if (!chatId) chatId = PETER_TELEGRAM_ID_FALLBACK;
     await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
@@ -172,6 +219,71 @@ function parseSfCrmAnalyticsEmailOne(message: any): ParsedSfCrmAnalytics | null 
 function parseSfCrmAnalyticsEmail(messages: any[]): any[] { if (!Array.isArray(messages)) return []; const out: any[] = []; for (const m of messages) { const p = parseSfCrmAnalyticsEmailOne(m); if (p && p.week_ending_date && p.household_count !== null) out.push(p); } return out; }
 const INTERNAL_PARSERS: Record<string, (input: any) => any[]> = { sf_crm_analytics_email: (i: any) => parseSfCrmAnalyticsEmail(i?.messages ?? []) };
 
+function _fmtMoneyShort(n: number | null): string {
+  if (n == null || !isFinite(n)) return "—";
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
+}
+function _fmtMoneyExact(n: number | null): string {
+  if (n == null || !isFinite(n)) return "—";
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function _fmtInt(n: number | null): string {
+  if (n == null || !isFinite(n)) return "—";
+  return n.toLocaleString("en-US");
+}
+function _fmtDateLong(iso: string | null): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map((x) => parseInt(x, 10));
+  if (!y || !m || !d) return iso;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[m-1]} ${d}, ${y}`;
+}
+
+// Post-parse hook for sf_crm_analytics_email: (1) stamp the ingestion flag
+// on the row (fill_nulls_only can't flip a boolean that already defaulted to
+// false), (2) DM Peter a compact snapshot summary via paper_newt_bot.
+async function afterCrmAnalyticsIngest(opts: { agencyId: string; records: any[] }): Promise<void> {
+  const { agencyId, records } = opts;
+  if (!Array.isArray(records) || records.length === 0) return;
+  const stampAt = new Date().toISOString();
+  for (const rec of records) {
+    if (!rec?.week_ending_date) continue;
+    try {
+      await sb
+        .from("agency_snapshot")
+        .update({ crm_analytics_ingested: true, crm_analytics_ingested_at: stampAt })
+        .eq("agency_id", agencyId)
+        .eq("snapshot_date", rec.week_ending_date)
+        .eq("cadence", "weekly");
+    } catch (_e) { /* non-fatal — flag missing is not worse than the old world */ }
+  }
+  // Compose DM from the first record (the parser typically returns one row per email).
+  const r = records[0];
+  const lines: string[] = [];
+  lines.push(`📊 <b>Book snapshot ingested</b>`);
+  lines.push(`Week ending ${_fmtDateLong(r.week_ending_date)}`);
+  lines.push("");
+  lines.push(`HH ${_fmtInt(r.household_count)}`);
+  lines.push(`Auto ${_fmtInt(r.auto_pif)} / ${_fmtMoneyShort(r.auto_premium)}`);
+  lines.push(`Fire ${_fmtInt(r.fire_pif)} / ${_fmtMoneyShort(r.fire_premium)}`);
+  lines.push(`Life ${_fmtInt(r.life_pif)} / ${_fmtMoneyShort(r.life_premium)}`);
+  const ls: Array<{ source: string; won_households: number | null; won_premium: number | null }> = Array.isArray(r.lead_sources) ? r.lead_sources : [];
+  if (ls.length > 0) {
+    lines.push("");
+    lines.push(`<b>Lead sources QTD</b>`);
+    for (const s of ls) {
+      const hh = s.won_households; const dol = s.won_premium;
+      const hasAny = (hh != null) || (dol != null);
+      lines.push(`• ${s.source}: ${hasAny ? `${_fmtInt(hh)} / ${_fmtMoneyExact(dol)}` : "—"}`);
+    }
+  }
+  lines.push("");
+  lines.push(`CPR is ready.`);
+  await telegramPeterDm(agencyId, lines.join("\n"));
+}
+
 const _tableColumnsCache = new Map<string, Set<string>>();
 async function getTableColumns(table: string): Promise<Set<string>> {
   const hit = _tableColumnsCache.get(table); if (hit) return hit;
@@ -182,6 +294,47 @@ async function getTableColumns(table: string): Promise<Set<string>> {
 }
 function pickKnownCols(rec: Record<string, any>, cols: Set<string>): Record<string, any> { const o: Record<string, any> = {}; for (const [k, v] of Object.entries(rec)) if (cols.has(k)) o[k] = v; return o; }
 
+// -------------------------------------------------------------------------
+// business_entity_id resolver for bank_register_preliminary (added v45,
+// 2026-08-03). Mirrors document-processor's writeStatementBalance()
+// resolution order: chart_of_accounts first (checking/primary accounts,
+// matched by "(last4)" in the account name), then credit_accounts (cards,
+// including alternate_last4s for reissued numbers). Cached per-agency for
+// the life of the invocation since a recipe run never touches more than a
+// handful of distinct last-4s.
+// -------------------------------------------------------------------------
+const _entityByLast4Cache = new Map<string, string | null>();
+async function resolveBusinessEntityIdByLast4(agencyId: string, last4: string | null | undefined): Promise<string | null> {
+  if (!last4) return null;
+  const cacheKey = `${agencyId}:${last4}`;
+  if (_entityByLast4Cache.has(cacheKey)) return _entityByLast4Cache.get(cacheKey)!;
+
+  let resolved: string | null = null;
+
+  const { data: coaRow } = await sb
+    .from("chart_of_accounts")
+    .select("business_entity_id")
+    .eq("agency_id", agencyId)
+    .ilike("account_name", `%(${last4})%`)
+    .not("business_entity_id", "is", null)
+    .maybeSingle();
+  if (coaRow?.business_entity_id) resolved = coaRow.business_entity_id as string;
+
+  if (!resolved) {
+    const { data: ccRow } = await sb
+      .from("credit_accounts")
+      .select("business_entity_id")
+      .eq("agency_id", agencyId)
+      .or(`account_number_last4.eq.${last4},alternate_last4s.cs.{${last4}}`)
+      .not("business_entity_id", "is", null)
+      .maybeSingle();
+    if (ccRow?.business_entity_id) resolved = ccRow.business_entity_id as string;
+  }
+
+  _entityByLast4Cache.set(cacheKey, resolved);
+  return resolved;
+}
+
 async function writeOutput(opts: { outputTable: string; outputConfig: any; records: any[]; agencyId: string | null; }): Promise<{ inserted: number; updated: number; secondary?: { table: string; inserted: number } }> {
   if (!Array.isArray(opts.records) || opts.records.length === 0) return { inserted: 0, updated: 0 };
   const cfg = opts.outputConfig || {};
@@ -190,7 +343,20 @@ async function writeOutput(opts: { outputTable: string; outputConfig: any; recor
   const mergeStrategy: string = cfg.merge_strategy ? cfg.merge_strategy : (cfg.on_conflict === "update" ? "overwrite" : "ignore");
   const secondaryWrite: any = cfg.secondary_write;
   const secondaryRowsByIndex: any[][] = opts.records.map((r) => { if (secondaryWrite?.rows_from) { const v = (r as any)[secondaryWrite.rows_from]; return Array.isArray(v) ? v : []; } return []; });
-  const primaryRecords: any[] = opts.records.map((r) => { const o: any = pickKnownCols(r, primaryCols); if (opts.agencyId && primaryCols.has("agency_id")) o.agency_id = opts.agencyId; if (cfg.source && primaryCols.has("source")) o.source = cfg.source; if (cfg.cadence && primaryCols.has("cadence")) o.cadence = cfg.cadence; if (cfg.snapshot_date_field && primaryCols.has("snapshot_date")) { const sd = (r as any)[cfg.snapshot_date_field]; if (sd !== undefined && sd !== null) o.snapshot_date = sd; } return o; });
+  const needsBusinessEntityId = opts.agencyId && primaryCols.has("business_entity_id") && opts.outputTable === "bank_register_preliminary";
+  const primaryRecords: any[] = [];
+  for (const r of opts.records) {
+    const o: any = pickKnownCols(r, primaryCols);
+    if (opts.agencyId && primaryCols.has("agency_id")) o.agency_id = opts.agencyId;
+    if (cfg.source && primaryCols.has("source")) o.source = cfg.source;
+    if (cfg.cadence && primaryCols.has("cadence")) o.cadence = cfg.cadence;
+    if (cfg.snapshot_date_field && primaryCols.has("snapshot_date")) { const sd = (r as any)[cfg.snapshot_date_field]; if (sd !== undefined && sd !== null) o.snapshot_date = sd; }
+    if (needsBusinessEntityId && !o.business_entity_id) {
+      const resolved = await resolveBusinessEntityIdByLast4(opts.agencyId as string, (r as any).account_last4);
+      if (resolved) o.business_entity_id = resolved;
+    }
+    primaryRecords.push(o);
+  }
   let primaryInserted = 0;
   if (uniqueOn && uniqueOn.length > 0) {
     if (mergeStrategy === "fill_nulls_only") {
@@ -362,6 +528,17 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
       recordsProcessed = wr.inserted + wr.updated;
       outputSummary = `${recordsProcessed} records written to ${recipe.output_table}`;
       if (wr.secondary) outputSummary += ` (+ ${wr.secondary.inserted} rows to ${wr.secondary.table})`;
+
+      // Post-write hook for sf_crm_analytics_email: stamp the ingestion flag
+      // on the affected agency_snapshot rows + DM Peter a compact summary.
+      if (recipe.internal_parser === "sf_crm_analytics_email") {
+        try { await afterCrmAnalyticsIngest({ agencyId, records: parsedRecords }); }
+        catch (hookErr) {
+          const hm = hookErr instanceof Error ? hookErr.message : String(hookErr);
+          outputSummary += ` — ⚠️ post-ingest hook error: ${hm.slice(0, 200)}`;
+        }
+      }
+
       if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
         const newIds = parsedRecords.map((r: any) => r.source_message_id as string | undefined).filter((x): x is string => typeof x === "string" && x.length > 0);
         const allIds = Array.from(new Set([...newIds, ...alreadyKnownMessageIds]));
