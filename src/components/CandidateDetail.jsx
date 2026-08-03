@@ -1996,25 +1996,34 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // Best-fit role via RPC (graceful fallback if function missing)
   useEffect(() => {
     if (!detail?.id || !supabase) return;
+    // v2 candidates: assessment_best_fit_role was rewired onto the v2
+    // architecture (*Ass Comp Build 2) and stays live for both paths. The
+    // other three legacy RPCs below (assessment_all_competencies,
+    // hiregauge_composite_recommendation, hiregauge_evaluate_candidate) read
+    // the old rules-narrative engine and retired trait columns — gated to
+    // v1/CTS only so they never fire against a v2 candidate.
+    const isV2 = detail?.assessment_source === "v2";
     supabase.rpc("assessment_best_fit_role", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error) setBestFit(data); })
       .catch(() => {});
-    // Competencies for all four role fits (single RPC returning JSONB keyed by role)
-    supabase.rpc("assessment_all_competencies", { p_assessment_id: detail.id })
-      .then(({ data, error }) => { if (!error) setCompetencies(data); })
-      .catch(() => {});
-    // HireGauge framework read — composite verdict + all matched rules.
-    // Both RPCs are read-only, IMMUTABLE per candidate, safe to call every mount.
-    supabase.rpc("hiregauge_composite_recommendation", { p_assessment_id: detail.id })
-      .then(({ data, error }) => {
-        if (!error && Array.isArray(data) && data[0]) setComposite(data[0]);
-      })
-      .catch(() => {});
-    supabase.rpc("hiregauge_evaluate_candidate", { p_assessment_id: detail.id })
-      .then(({ data, error }) => {
-        if (!error && Array.isArray(data)) setFrameworkRules(data);
-      })
-      .catch(() => {});
+    if (!isV2) {
+      // Competencies for all four role fits (single RPC returning JSONB keyed by role)
+      supabase.rpc("assessment_all_competencies", { p_assessment_id: detail.id })
+        .then(({ data, error }) => { if (!error) setCompetencies(data); })
+        .catch(() => {});
+      // HireGauge framework read — composite verdict + all matched rules.
+      // Both RPCs are read-only, IMMUTABLE per candidate, safe to call every mount.
+      supabase.rpc("hiregauge_composite_recommendation", { p_assessment_id: detail.id })
+        .then(({ data, error }) => {
+          if (!error && Array.isArray(data) && data[0]) setComposite(data[0]);
+        })
+        .catch(() => {});
+      supabase.rpc("hiregauge_evaluate_candidate", { p_assessment_id: detail.id })
+        .then(({ data, error }) => {
+          if (!error && Array.isArray(data)) setFrameworkRules(data);
+        })
+        .catch(() => {});
+    }
     // Intelligence composite for the headline signal — thin wrapper around
     // hiregauge_lss_delta_v2 so the frontend keeps the p_assessment_id calling
     // convention used by every other RPC on this page.
@@ -2051,7 +2060,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .then(({ data, error }) => {
         if (!error && data?.sent_at) setV1InvitedAt(data.sent_at);
       });
-  }, [detail?.id]);
+  }, [detail?.id, detail?.assessment_source]);
 
   // Default selectedRole to best-fit role once bestFit resolves. Local UI state only —
   // framework scoring always uses assessment_best_fit_role's best_role regardless of selection;
@@ -2362,11 +2371,22 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const matrix = threeConstruct.meta?.matrix || {};
               const weights = threeConstruct.meta?.layer_weights_within_construct || {};
               const cw = threeConstruct.meta?.construct_weights || {};
+              // The old "composite" column this layer used to read does not exist on
+              // hiring_candidates (verified against information_schema) — dropped
+              // entirely. v2 candidates source the Assessment layer score from the
+              // selected role's fit_score in v2RoleFits. v1/CTS falls back to
+              // overall_score, same as it always did.
+              const isV2Matrix = detail?.assessment_source === "v2";
+              const matrixBf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+              const matrixCurrentRole = selectedRole || matrixBf?.best_role || "sales_outbound";
+              const assessmentLayerScore = isV2Matrix
+                ? (v2RoleFits ? v2RoleFits[matrixCurrentRole]?.fit_score ?? null : null)
+                : (detail?.overall_score ?? null);
               const layers = [
                 { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
                 // Assessment layer sources composite/nature/nurture/drivers from v_hiring_candidates
                 // (populated by role-fit click). Score is 0-100 like Resume. Verdict computed by layerVerdict.
-                { key: "assessment", label: "Assessment", score: detail?.assessment_composite ?? null, verdict: null },
+                { key: "assessment", label: "Assessment", score: assessmentLayerScore, verdict: null },
                 { key: "interview",  label: "Interview",  score: detail?.iv_composite,           verdict: detail?.interview_analysis?.verdict },
                 { key: "reference",  label: "Reference",  score: threeConstruct.reference_score,  verdict: threeConstruct.reference_verdict },
               ];
@@ -2632,6 +2652,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           (e.g. former-team retrospective reads pre-CTS). Customized Interview
           Probes below is the LLM-crafted, candidate-specific probe list built
           from this same input. */}
+      {/* v1/CTS only. This panel is fed by the legacy rules-narrative engine
+          (hiregauge_composite_recommendation + hiregauge_evaluate_candidate),
+          which reads retired trait columns (recognition_drive,
+          deadline_motivation) that v2 never fills. Deliberately not rebuilt
+          for v2 — mechanical combination beats configural judgment (Kuncel
+          et al. 2013). The v2 role-fit + gate display is the verdict
+          surface for v2 candidates. */}
+      {detail?.assessment_source !== "v2" && (
       <Section title="HireGauge Framework Read">
         {/* Walkthrough — Claude's per-candidate narrative synthesis. Preserved-
             whitespace prose with ALL-CAPS section labels, bullets, dividers.
@@ -2665,7 +2693,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               ? "No trait data yet — framework read waits for assessment scores."
               : "Loading framework read..."}
           </div>
-        ) : (detail?.assessment_composite == null && detail?.overall_score == null) ? (
+        ) : (detail?.overall_score == null) ? (
           // Pre-assessment: composite may fire "unverified" floor signals off the resume
           // alone, but rendering those as "Floors failed" reads as a scoring failure
           // when the candidate hasn't answered anything yet. Clean pill instead of the
@@ -2809,6 +2837,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
           </>
         )}
       </Section>
+      )}
 
       {/* Reference Check */}
       <Section title="Reference Check">
