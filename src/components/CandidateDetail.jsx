@@ -2388,7 +2388,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     selectedRole, setSelectedRole, T,
                                     v1Extras, v1InvitedAt,
                                     intelligence, roleIdealRange,
-                                    v2Facets, gmaOpen, setGmaOpen,
+                                    v2Facets, v2RoleFits, gmaOpen, setGmaOpen,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
                                     detail, T,
