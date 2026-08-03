@@ -36,7 +36,8 @@
 //     They live in Stint 1 or 2 alongside their facet's baseline items and
 //     are always served.
 //   - Scoring on finalize: compute_newtworks_v2_facets_as_row (personality
-//     facets — competency/role-fit layer deferred, OQ f979e377),
+//     facets — no competency/role-fit derivation; the assessment reports
+//     raw trait, GMA, and SJT scores only, per Peter directive 2026-08-03),
 //     apply_newtworks_gma_to_candidate (GMA accuracy + speed per domain),
 //     apply_newtworks_v2_sjt_to_candidate (SJT % correct per construct),
 //     apply_newtworks_v2_reliability_to_candidate (careless-response
@@ -890,8 +891,7 @@ async function handleFinalize(supa: any, cand: any) {
           const message =
             `${candName} finished the Newtworks assessment for ${position}. ` +
             `${rows.length} personality facets scored, ${totalItemsScored} items. ` +
-            `GMA + SJT scored alongside. Competency/role-fit scoring not yet ` +
-            `available (in progress) — raw profile only. View: ${link}`;
+            `GMA + SJT scored alongside — raw trait profile only. View: ${link}`;
 
           const { error: alertErr } = await supa.from("alerts").insert({
             agency_id: AGENCY_ID,
@@ -919,7 +919,7 @@ async function handleFinalize(supa: any, cand: any) {
           if (peterChatId) {
             const dmText =
               `\u{1F4DD} Assessment complete: ${candName} (${position})\n` +
-              `${rows.length} facets \u00B7 ${totalItemsScored} items \u00B7 GMA + SJT scored \u00B7 raw profile only (competency scoring pending)\n` +
+              `${rows.length} facets \u00B7 ${totalItemsScored} items \u00B7 GMA + SJT scored \u00B7 raw trait profile only\n` +
               `${link}`;
             const { error: dmErr } = await supa.rpc("paper_newt_send_message", {
               p_chat_id: peterChatId,
