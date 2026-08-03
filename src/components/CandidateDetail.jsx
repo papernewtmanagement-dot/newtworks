@@ -25,9 +25,12 @@ const TRAIT_LABELS = {
 };
 
 // Newtworks v2 assessment — the 21 live personality facets, strategic labels
-// pulled from hiregauge_trait_documentation.strategic_label. No competency or
-// role-fit layer sits on top of these (Peter directive 2026-08-03) — this is
-// the full set of trait output for a v2 candidate.
+// pulled from hiregauge_trait_documentation.strategic_label. Feeds the 12
+// competencies + 7 role-fit functions below (Newtworks competency layer,
+// confirmed 2026-08-02, live 2026-08-03 — the earlier "no competency layer"
+// note reflected a different, since-superseded thread; see op-rule
+// "CORRECTION 2026-08-03: competency/role-fit descope directive was
+// thread-specific, not agency-wide").
 const V2_FACET_LABELS = {
   achievement_striving:       "Achievement Striving",
   self_discipline:            "Self-Discipline",
@@ -811,13 +814,15 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // role-fit selector + competencies for the currently-selected role on the
 // right. Moved here from the standalone top-of-page Assessment section per
 // Peter directive 2026-07-17.
-// Newtworks v2 assessment layer — trait/GMA/SJT results only. No competency
-// or role-fit derivation (Peter directive 2026-08-03, see build spec "Newtworks
-// trait scoring layer"): the assessment reports raw psychometric output and
-// leaves fit judgment to the interview + reference layers. v1/CTS candidates
-// keep the legacy renderAssessmentLayer (LSS + Role Fit + Competencies) below —
-// this function only renders when detail.assessment_source === "v2".
-function renderAssessmentLayerV2({ detail, v2Facets, T, gmaOpen, setGmaOpen }) {
+// Newtworks v2 assessment layer — trait/GMA/SJT results, plus Role Fit +
+// Competencies from the Newtworks competency layer (12 competencies x 7
+// roles, confirmed 2026-08-02, live 2026-08-03). bestFit comes from
+// assessment_best_fit_role (uuid RPC, already gated); v2RoleFits comes from
+// newtworks_all_role_fits (uuid RPC) and carries the full per-role competency
+// detail (tier/floor/adjusted) the selector below drills into. v1/CTS
+// candidates keep the legacy renderAssessmentLayer below — this function only
+// renders when detail.assessment_source === "v2".
+function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen }) {
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
@@ -1004,9 +1009,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, T, gmaOpen, setGmaOpen }) {
   );
 }
 
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, gmaOpen, setGmaOpen }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2RoleFits, gmaOpen, setGmaOpen }) {
   if (detail?.assessment_source === "v2") {
-    return renderAssessmentLayerV2({ detail, v2Facets, T, gmaOpen, setGmaOpen });
+    return renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen });
   }
   return (
     <div>
