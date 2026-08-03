@@ -529,6 +529,14 @@ export async function processSurePayrollParsed(opts: {
   const cprWeekEnd = spTargetCprWeekEnding(parsed.check_date);
   const { data: cprReport } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
   if (cprReport?.id) {
+    // upsert, not update: if a team member's weekly_cpr_team_detail row for this
+    // report hasn't been created yet (it's created on-demand as each teammate's
+    // CPR form gets touched during the week, sometimes after payroll lands),
+    // a plain .update() matches zero rows and silently drops the payroll YTD
+    // data for that member with no error. onConflict targets the existing
+    // (weekly_cpr_report_id, team_member_id) unique constraint; the
+    // trg_snapshot_team_on_weekly_cpr_team_detail_insert BEFORE INSERT trigger
+    // backfills the rest of the row's team-snapshot fields on the insert path.
     for (const [teamMemberId, breakdown] of Object.entries(cprBreakdownByTeamId)) {
       const ytdGross = (breakdown as any).ytd_total;
       await sb.from("weekly_cpr_team_detail").upsert({
