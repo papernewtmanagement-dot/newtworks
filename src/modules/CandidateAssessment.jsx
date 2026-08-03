@@ -188,7 +188,16 @@ export default function CandidateAssessment({ candidateId, token }) {
       setOverall(data?.progress || { answered: 0, total: 0 });
 
       const answered = data?.progress?.answered ?? 0;
-      if (answered === 0) {
+      // An exit-gated candidate is reported by the server as done with a zero
+      // progress count, so branching on the count alone dropped them onto the
+      // "begin your assessment" screen — they clicked start and were thanked a
+      // second later. Honour the server's done flag first: the neutral
+      // completion screen is the intended treatment for a silent exit, same as
+      // for anyone who genuinely finished (see the exit-gate note in the
+      // v1-assessment edge function).
+      if (data?.done) {
+        setScreen("thanks");
+      } else if (answered === 0) {
         setScreen("welcome");
       } else {
         // Resume mid-flow (primary partial, primary→expansion, or wrapping up).
