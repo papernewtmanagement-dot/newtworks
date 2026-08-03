@@ -24,6 +24,70 @@ const TRAIT_LABELS = {
   optimism:            "Optimism",
 };
 
+// Newtworks v2 assessment — the 21 live personality facets, strategic labels
+// pulled from hiregauge_trait_documentation.strategic_label. No competency or
+// role-fit layer sits on top of these (Peter directive 2026-08-03) — this is
+// the full set of trait output for a v2 candidate.
+const V2_FACET_LABELS = {
+  achievement_striving:       "Achievement Striving",
+  self_discipline:            "Self-Discipline",
+  emotional_stability:        "Emotional Stability",
+  dutifulness:                "Dutifulness",
+  customer_orientation:       "Customer Orientation",
+  self_efficacy:              "Self-Efficacy",
+  proactive_personality:      "Proactive Personality",
+  cautiousness:                "Cautiousness",
+  anxiety:                    "Anxiety",
+  friendliness:               "Friendliness",
+  anger:                      "Anger",
+  cooperation:                "Cooperation",
+  trust:                      "Trust",
+  dispositional_optimism:     "Dispositional Optimism",
+  political_skill_networking: "Political Skill (Networking)",
+  enterprising:                "Enterprising",
+  sincerity:                  "Sincerity",
+  fairness:                   "Fairness",
+  greed_avoidance:            "Greed-Avoidance",
+};
+
+// SJT (situational judgement test) topics — hypothesized_trait values on
+// newtworks_v2_sjt items, keys into sjt_topic_detail jsonb.
+const SJT_TOPIC_LABELS = {
+  sjt_compliance_licensing_boundary: "Compliance — Licensing Boundary",
+  sjt_compliance_outbound_consent:   "Compliance — Outbound Consent",
+  sjt_composure_under_load:          "Composure Under Load",
+  sjt_escalation_judgment:           "Escalation Judgment",
+  sjt_honesty_integrity:             "Honesty & Integrity",
+};
+
+// Reliability (careless-response) composite — six detection methods, per
+// hiregauge_v2_reliability_composite. 'fired' = flagged as a concern.
+const RELIABILITY_METHOD_LABELS = {
+  response_time_fast:  "Too-fast responding",
+  disengagement_slow:  "Disengagement (too slow)",
+  straightlining:      "Straight-lining",
+  retest_divergence:   "Retest divergence",
+  evenodd_consistency: "Even/odd consistency",
+  bogus_items:         "Bogus/attention items",
+};
+
+// v2 reliability band is high/medium/low (fired-count based) — distinct from
+// the v1 RELIABILITY_BAND's five-value text scale. Higher fired_count = worse.
+const V2_RELIABILITY_BAND = (v) => {
+  if (v === "high") return "green";
+  if (v === "medium") return "yellow";
+  if (v === "low") return "red";
+  return "none";
+};
+
+// Faking-good (impression management) band — typical/elevated/very_elevated.
+const IM_BAND_COLOR = (band) => {
+  if (band === "typical") return "green";
+  if (band === "elevated") return "yellow";
+  if (band === "very_elevated") return "red";
+  return "none";
+};
+
 // TRAIT_BAND removed 2026-07-24 — the nine primary CTS trait tiles now render
 // neutral because their ideal bands are role-dependent, and coloring them
 // against a generic sales-seat band was misleading. Role-aware judgment lives
@@ -747,7 +811,203 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // role-fit selector + competencies for the currently-selected role on the
 // right. Moved here from the standalone top-of-page Assessment section per
 // Peter directive 2026-07-17.
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange }) {
+// Newtworks v2 assessment layer — trait/GMA/SJT results only. No competency
+// or role-fit derivation (Peter directive 2026-08-03, see build spec "Newtworks
+// trait scoring layer"): the assessment reports raw psychometric output and
+// leaves fit judgment to the interview + reference layers. v1/CTS candidates
+// keep the legacy renderAssessmentLayer (LSS + Role Fit + Competencies) below —
+// this function only renders when detail.assessment_source === "v2".
+function renderAssessmentLayerV2({ detail, v2Facets, T, gmaOpen, setGmaOpen }) {
+  const exitGate = detail?.assessment_exit_gate;
+  const exitDetail = detail?.assessment_exit_detail || {};
+  const exitedAt = detail?.assessment_exited_at;
+
+  const reliability = detail?.reliability; // 'high' | 'medium' | 'low'
+  const reliabilityDetail = detail?.reliability_detail || {};
+  const reliabilityMethods = Object.keys(RELIABILITY_METHOD_LABELS);
+
+  const imScore = detail?.impression_management;
+  const imBand = detail?.impression_management_band;
+  const imDetail = detail?.impression_management_detail || {};
+
+  const gmaTotal = detail?.gma_total_accuracy; // raw correct count, max 16
+  const gmaPct = gmaTotal != null ? Math.round((Number(gmaTotal) / 16) * 100) : null;
+
+  const sjtScore = detail?.sjt_score; // 0-100
+  const sjtTopics = detail?.sjt_topic_detail || {};
+
+  const facetRows = Array.isArray(v2Facets) ? v2Facets : null;
+  const facetByTrait = {};
+  if (facetRows) {
+    for (const r of facetRows) facetByTrait[r.hypothesized_trait] = r;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {exitGate && (
+        <div style={{
+          padding: "10px 12px", background: T.redLt, borderRadius: 6,
+          borderLeft: `4px solid ${T.red}`, boxSizing: "border-box",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.red }}>
+            Stint 1 exit gate fired — {exitGate}
+          </div>
+          {exitDetail?.reason && (
+            <div style={{ fontSize: 11, color: T.slate700, marginTop: 3 }}>{exitDetail.reason}</div>
+          )}
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 3 }}>
+            Assessment stopped early on this stint. Candidate was shown a neutral completion screen and told nothing.
+            {exitedAt ? ` · ${new Date(exitedAt).toLocaleString()}` : ""}
+          </div>
+        </div>
+      )}
+
+      {/* Reliability + Faking-good — validity indices, not personality traits */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+            Reliability
+          </div>
+          <AssessRow
+            label="Data quality"
+            value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+            band={V2_RELIABILITY_BAND(reliability)}
+            subline={reliabilityDetail?.fired_count != null ? `${reliabilityDetail.fired_count} of 6 checks fired` : null}
+          />
+          {reliability && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4, padding: "0 4px" }}>
+              {reliabilityMethods.map((k) => {
+                const m = reliabilityDetail[k];
+                const fired = m?.fired;
+                return (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
+                    <span style={{ color: T.slate600 }}>{RELIABILITY_METHOD_LABELS[k]}</span>
+                    <span style={{ color: fired ? T.red : T.slate400, fontWeight: fired ? 700 : 400 }}>
+                      {fired == null ? "—" : fired ? "flagged" : "ok"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+            Faking-good (Impression Management)
+          </div>
+          <AssessRow
+            label="Score"
+            value={imScore}
+            extra={imBand ? imBand.replace(/_/g, " ") : null}
+            band={IM_BAND_COLOR(imBand)}
+          />
+          {imDetail?.interpretation && (
+            <div style={{ fontSize: 10.5, color: T.slate600, marginTop: 4, padding: "0 4px", lineHeight: 1.4 }}>
+              {imDetail.interpretation}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: T.slate200 }} />
+
+      {/* GMA — total only is a decision input; subtests are diagnostics */}
+      <div>
+        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+          GMA (General Mental Ability)
+        </div>
+        <AssessRow
+          label="Total"
+          value={gmaTotal}
+          extra={gmaTotal != null ? `/16 (${gmaPct}%)` : null}
+          max={16}
+        />
+        <button
+          type="button"
+          onClick={() => setGmaOpen((o) => !o)}
+          style={{
+            marginTop: 4, background: "none", border: "none", padding: "2px 4px",
+            fontSize: 10.5, color: T.blue, cursor: "pointer", fontFamily: "inherit",
+          }}
+        >
+          {gmaOpen ? "Hide subtest diagnostics" : "Show subtest diagnostics"}
+        </button>
+        {gmaOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+            <AssessRow label="Pattern" value={detail?.gma_pattern_accuracy} extra="/4" max={4}
+              subline={detail?.gma_pattern_speed_seconds != null ? `${detail.gma_pattern_speed_seconds}s/item` : null} />
+            <AssessRow label="Deductive" value={detail?.gma_deductive_accuracy} extra="/4" max={4}
+              subline={detail?.gma_deductive_speed_seconds != null ? `${detail.gma_deductive_speed_seconds}s/item` : null} />
+            <AssessRow label="Numerical" value={detail?.gma_numerical_accuracy} extra="/4" max={4}
+              subline={detail?.gma_numerical_speed_seconds != null ? `${detail.gma_numerical_speed_seconds}s/item` : null} />
+            <AssessRow label="Verbal" value={detail?.gma_verbal_accuracy} extra="/4" max={4}
+              subline={detail?.gma_verbal_speed_seconds != null ? `${detail.gma_verbal_speed_seconds}s/item` : null} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ height: 1, background: T.slate200 }} />
+
+      {/* SJT — total + 5 topic rows */}
+      <div>
+        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+          SJT (Situational Judgement Test)
+        </div>
+        <AssessRow label="Total" value={sjtScore} extra={sjtScore != null ? "%" : null} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+          {Object.entries(SJT_TOPIC_LABELS).map(([k, label]) => {
+            const t = sjtTopics[k];
+            const pct = t && t.n > 0 ? Math.round((100 * t.correct) / t.n) : null;
+            return (
+              <AssessRow
+                key={k}
+                label={label}
+                value={pct}
+                extra={t ? `${t.correct}/${t.n}` : null}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: T.slate200 }} />
+
+      {/* 21 personality facets */}
+      <div>
+        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+          Personality Facets
+        </div>
+        {facetRows == null ? (
+          <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+            Loading facet detail…
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 6 }}>
+            {Object.entries(V2_FACET_LABELS).map(([trait, label]) => {
+              const row = facetByTrait[trait];
+              const nItems = row?.n_items_scored;
+              const insufficient = nItems != null && nItems < 5;
+              return (
+                <AssessRow
+                  key={trait}
+                  label={label}
+                  value={insufficient ? "insufficient data" : row?.facet_score}
+                  extra={row && !insufficient ? `n=${nItems}` : null}
+                  band={insufficient ? "none" : null}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, gmaOpen, setGmaOpen }) {
+  if (detail?.assessment_source === "v2") {
+    return renderAssessmentLayerV2({ detail, v2Facets, T, gmaOpen, setGmaOpen });
+  }
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
@@ -1476,6 +1736,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // trait-label vs psychometric-construct mismatch caveats.
   const [v1Extras, setV1Extras] = useState(null);
   const [v1InvitedAt, setV1InvitedAt] = useState(null);
+  // Newtworks v2 facet detail — {hypothesized_trait, facet_score, n_items_scored}
+  // per facet, fetched fresh via RPC (item counts aren't stored on the flat
+  // hiring_candidates columns). Only fetched for v2 candidates. Used to grey out
+  // any facet with n_items_scored < 5 per op-rule "Hardcoded functions: never
+  // prefer simpler over more accurate" / P9 in the trait scoring build spec.
+  const [v2Facets, setV2Facets] = useState(null);
+  // v2 GMA subtest diagnostics disclosure — ephemeral UI toggle, not URL-persisted
+  // (per frontend coding rule 24: disclosure state stays useState, not a tab).
+  const [gmaOpen, setGmaOpen] = useState(false);
   // Which role fit is selected. Local UI state only — session-scoped, defaults to
   // bestFit on load. Framework scoring always uses assessment_best_fit_role's best_role;
   // the selector only controls which competency detail displays.
@@ -1512,6 +1781,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       });
     return () => { cancelled = true; };
   }, [candidate?.id]);
+
+  // v2 facet detail (item counts) — only for v2 candidates.
+  useEffect(() => {
+    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    let cancelled = false;
+    supabase
+      .rpc("compute_newtworks_v2_facets_as_row", { p_candidate_id: detail.id, p_stint: null, p_sitting: 1 })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        setV2Facets(Array.isArray(data) ? data : []);
+      });
+    return () => { cancelled = true; };
+  }, [detail?.id, detail?.assessment_source]);
 
   // Best-fit role via RPC (graceful fallback if function missing)
   useEffect(() => {
@@ -2082,6 +2364,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     selectedRole, setSelectedRole, T,
                                     v1Extras, v1InvitedAt,
                                     intelligence, roleIdealRange,
+                                    v2Facets, gmaOpen, setGmaOpen,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
                                     detail, T,
