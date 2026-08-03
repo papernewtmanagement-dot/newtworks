@@ -284,6 +284,46 @@ async function afterCrmAnalyticsIngest(opts: { agencyId: string; records: any[] 
   await telegramPeterDm(agencyId, lines.join("\n"));
 }
 
+// Post-commit hook for pfa_monthly_reconciliation (added 2026-08-04). Fires
+// AFTER the run_internal_recipe RPC has returned — i.e. after the SQL
+// function's transaction has committed — so the send function can actually
+// see the reconciliation row it's asked to look up. Handles two kinds of
+// results[] entries the SQL function emits, both { reconciliation_id,
+// clean: true, auto_sent: false }: freshly-computed clean reconciliations
+// from this run, and a retry pass over any older clean-but-never-sent rows
+// (e.g. the July 2026 reconciliation, stuck by the pre-fix synchronous-send
+// bug). Both get the same treatment here.
+async function afterPfaReconciliation(opts: { agencyId: string; results: any[] | undefined }): Promise<void> {
+  const results = Array.isArray(opts.results) ? opts.results : [];
+  const toSend = results.filter((r) => r?.clean === true && r?.auto_sent === false && r?.reconciliation_id);
+  if (toSend.length === 0) return;
+  const sharedSecret = await getSetting(opts.agencyId, "automation_runner_cron_secret");
+  if (!sharedSecret) {
+    await telegram(opts.agencyId, `🟡 PFA reconciliation send skipped — automation_runner_cron_secret missing for agency ${opts.agencyId}`);
+    return;
+  }
+  const url = `${SUPABASE_URL}/functions/v1/pfa-reconciliation-send`;
+  for (const r of toSend) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agency_id: opts.agencyId, shared_secret: sharedSecret, reconciliation_id: r.reconciliation_id, force: false }),
+      });
+      const text = await res.text();
+      let body: any = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+      if (!res.ok || !body?.ok || body?.status !== "sent") {
+        const err = body?.error ?? body?.status ?? `HTTP ${res.status}`;
+        await telegram(opts.agencyId, `🟡 PFA reconciliation ${r.reconciliation_id} send failed (post-commit retry): ${String(err).slice(0, 300)}`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await telegram(opts.agencyId, `🟡 PFA reconciliation ${r.reconciliation_id} send threw: ${msg.slice(0, 300)}`);
+    }
+  }
+}
+
 const _tableColumnsCache = new Map<string, Set<string>>();
 async function getTableColumns(table: string): Promise<Set<string>> {
   const hit = _tableColumnsCache.get(table); if (hit) return hit;
@@ -458,6 +498,25 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         if (internalErr) throw new Error(`run_internal_recipe failed: ${internalErr.message}`);
         recordsProcessed = (internalResult?.records_processed as number) ?? 0;
         outputSummary = (internalResult?.output_summary as string) ?? `INTERNAL recipe completed (no summary returned)`;
+
+        // Post-commit hook for pfa_monthly_reconciliation (added 2026-08-04).
+        // The SQL function used to email the reconciliation PDF via a
+        // synchronous http_post to pfa-reconciliation-send from INSIDE its
+        // own still-open transaction. The row it had just inserted was not
+        // yet visible to the second connection the edge function opens to
+        // look it up, so the send always failed ("reconciliation lookup
+        // failed: undefined" — a swallowed zero-rows case, not a real error).
+        // Fix: the SQL function no longer attempts the send at all — it just
+        // computes and returns results[]. This hook fires AFTER the RPC call
+        // has returned, i.e. after the transaction has committed, so the row
+        // is genuinely visible. Mirrors afterCrmAnalyticsIngest() above.
+        if (recipe.internal_handler === "pfa_monthly_reconciliation") {
+          try { await afterPfaReconciliation({ agencyId, results: (internalResult as any)?.results }); }
+          catch (hookErr) {
+            const hm = hookErr instanceof Error ? hookErr.message : String(hookErr);
+            outputSummary += ` — ⚠️ PFA send hook error: ${hm.slice(0, 200)}`;
+          }
+        }
       }
       const durationSec = Math.round((Date.now() - started) / 1000);
       await sb.from("automation_run_log").insert({ agency_id: agencyId, recipe_id: recipeId, status: "success", records_processed: recordsProcessed, error_message: null, duration_seconds: durationSec, output_summary: outputSummary });
