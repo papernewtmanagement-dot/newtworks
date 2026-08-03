@@ -54,6 +54,7 @@ import { processSurePayrollParsed, parseSurePayrollText, parseSurePayrollCsvText
 import { processPfaStatement } from "./parsers/pfa_statement.ts";
 import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
+import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
 import { processSFForwardedApplicantMode } from "./parsers/sf_forwarded_applicant.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
 import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
@@ -324,6 +325,11 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   surepayroll_payroll: "payroll",
   commission_report: "commission-reports",
   team_production: "team-production",
+  // careerplug_applicant had no entry, so its resumes were filed under a
+  // folder literally named "undefined". Fixed 2026-08-03 alongside adding
+  // resume_manual_batch, which would have hit the same hole.
+  careerplug_applicant: "applicant-resumes",
+  resume_manual_batch: "applicant-resumes",
   archive_bundle: "_archive-bundles",
   skip: "unsorted",
 };
@@ -724,6 +730,7 @@ const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
   commission_report:        null, // deleted 2026-07-29
   team_production:          null,
   careerplug_applicant:     "Label_20", // "Applicants" (attachment pipeline)
+  resume_manual_batch:      "Label_20", // "Applicants" (hand-forwarded batches)
 };
 
 async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefined, docType?: string): Promise<void> {
@@ -1238,6 +1245,43 @@ async function processOneAttachment(
             queueId: r.queueId, sourceLabel: uploadSource,
           });
         } else {
+          await markDocument(documentId, "error", 0, [], r.error);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: r.error, sourceLabel: uploadSource,
+          });
+        }
+        break;
+      }
+      case "resume_manual_batch": {
+        // Hand-forwarded resume PDF (see parsers/resume_manual_batch.ts).
+        // Identity comes out of the resume text, then the candidate is
+        // upserted through the shared CareerPlug routine.
+        const r = await processResumeManualBatch({
+          agencyId: ctx.agencyId,
+          documentId,
+          messageId: att.messageId,
+          fromEmail: att.fromEmail,
+          subject: att.subject,
+          receivedAt: att.receivedAt,
+          fileName: att.fileName,
+          bytesB64,
+          resumeUrl: drive?.driveUrl ?? null,
+        });
+        if (r.ok) {
+          await markDocument(documentId, "processed", 1, ["hiring_candidates"],
+            `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}); candidate ${r.candidateId ?? "unknown"}`);
+          await maybeArchiveThread(ctx, att.threadId, docType);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+        } else {
+          // Leave the thread in the inbox on failure — an alert was already
+          // raised inside the parser, and the thread staying visible is the
+          // backstop against a resume disappearing quietly.
           await markDocument(documentId, "error", 0, [], r.error);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
