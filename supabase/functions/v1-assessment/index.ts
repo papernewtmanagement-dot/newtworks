@@ -36,13 +36,16 @@
 //     They live in Stint 1 or 2 alongside their facet's baseline items and
 //     are always served.
 //   - Scoring on finalize: compute_newtworks_v2_facets_as_row (personality
-//     facets — no competency/role-fit derivation; the assessment reports
-//     raw trait, GMA, and SJT scores only, per Peter directive 2026-08-03),
-//     apply_newtworks_gma_to_candidate (GMA accuracy + speed per domain),
-//     apply_newtworks_v2_sjt_to_candidate (SJT % correct per construct),
-//     apply_newtworks_v2_reliability_to_candidate (careless-response
-//     composite). All four are independent and best-effort at finalize —
-//     one failing does not block the others or the core facet write.
+//     facets), apply_newtworks_gma_to_candidate (GMA accuracy + speed per
+//     domain), apply_newtworks_v2_sjt_to_candidate (SJT % correct per
+//     construct), apply_newtworks_v2_reliability_to_candidate
+//     (careless-response composite), apply_newtworks_v2_competency_gates_to_
+//     candidate (Newtworks competency layer — 12 competencies x 7 roles,
+//     confirmed 2026-08-02, live 2026-08-03: determines best-fit role, then
+//     persists which gates fired — integrity decline / critical-floor /
+//     reasoning-floor — plus the churn-risk flag, wired in Step 9). All five
+//     are independent and best-effort at finalize — one failing does not
+//     block the others or the core facet write.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -758,9 +761,11 @@ async function handleFinalize(supa: any, cand: any) {
       return json({ error: "assessment_incomplete", stage: "stint_4", answered: prog.stint4Answered, total: prog.stint4Total }, 409);
     }
 
-    // Personality facet scores — the raw psychometric profile. Competency /
-    // role-fit derivation from these facets is NOT done here (deferred, OQ
-    // f979e377).
+    // Personality facet scores — the raw psychometric profile. Competency
+    // and role-fit derivation happen downstream (newtworks_competency_*,
+    // newtworks_role_fit_*, assessment_best_fit_role) reading these columns
+    // live at request time — nothing about competencies gets written here
+    // except the gate-fired/churn-risk summary a few blocks below.
     const { data: facetRows, error: facetErr } = await supa.rpc(
       "compute_newtworks_v2_facets_as_row",
       { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
@@ -834,6 +839,25 @@ async function handleFinalize(supa: any, cand: any) {
       im_result = { error: e?.message ?? "unknown" };
     }
 
+    // Competency gates — determines best-fit role, then persists whichever
+    // gate fired (integrity decline / critical-floor / reasoning-floor) plus
+    // the churn-risk flag to hiring_candidates.competency_gate_fired /
+    // competency_gate_detail / churn_risk. Runs only once the core facet
+    // write succeeded (achievement_striving etc. must be populated, which is
+    // the same gate _newtworks_role_fit_core checks).
+    let competency_gates_result: any = null;
+    if (updated) {
+      try {
+        const { data, error } = await supa.rpc(
+          "apply_newtworks_v2_competency_gates_to_candidate",
+          { p_candidate_id: cand.id }
+        );
+        competency_gates_result = error ? { error: error.message } : data;
+      } catch (e: any) {
+        competency_gates_result = { error: e?.message ?? "unknown" };
+      }
+    }
+
     if (updated) {
       try {
         await supa.rpc("apply_newtworks_v2_reliability_to_candidate", { p_candidate_id: cand.id });
@@ -891,7 +915,7 @@ async function handleFinalize(supa: any, cand: any) {
           const message =
             `${candName} finished the Newtworks assessment for ${position}. ` +
             `${rows.length} personality facets scored, ${totalItemsScored} items. ` +
-            `GMA + SJT scored alongside — raw trait profile only. View: ${link}`;
+            `GMA + SJT + competency gates scored alongside. View: ${link}`;
 
           const { error: alertErr } = await supa.from("alerts").insert({
             agency_id: AGENCY_ID,
@@ -919,7 +943,7 @@ async function handleFinalize(supa: any, cand: any) {
           if (peterChatId) {
             const dmText =
               `\u{1F4DD} Assessment complete: ${candName} (${position})\n` +
-              `${rows.length} facets \u00B7 ${totalItemsScored} items \u00B7 GMA + SJT scored \u00B7 raw trait profile only\n` +
+              `${rows.length} facets \u00B7 ${totalItemsScored} items \u00B7 GMA + SJT + competency gates scored\n` +
               `${link}`;
             const { error: dmErr } = await supa.rpc("paper_newt_send_message", {
               p_chat_id: peterChatId,
@@ -952,6 +976,7 @@ async function handleFinalize(supa: any, cand: any) {
       gma: gma_result,
       sjt: sjt_result,
       impression_management: im_result,
+      competency_gates: competency_gates_result,
     });
   } catch (e: any) {
     return json({ error: "finalize_action_failed", detail: e.message }, 500);
