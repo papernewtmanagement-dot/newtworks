@@ -202,6 +202,18 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
                  /(pfa|premium\s?fund|020715816)/i.test(i.subject + " " + i.fileName) },
   { docType: "bank_statement_pfa",
     test: (i) => /020715816/.test(i.subject + " " + i.fileName) },
+  // ----- FROST PFA STATEMENT — subject-only fallback (2026-08-03).
+  //       Peter forwards his own "PFA Statement MM-YY" emails from his
+  //       State Farm mailbox rather than receiving them straight from
+  //       Frost, so the sender rule above never matches (fromEmail is
+  //       peter.story.yrru@statefarm.com, not Frost) and the filename
+  //       ("MM_YY Statement.pdf") carries no PFA/account-number marker
+  //       either. That combination fell through to "skip" and the July
+  //       2026 statement silently never got parsed — found 2026-08-03,
+  //       ingested by hand. "PFA" in the subject alone is specific
+  //       enough at this agency to route correctly regardless of sender.
+  { docType: "bank_statement_pfa",
+    test: (i) => /\bpfa\b/i.test(i.subject) },
 
   // ----- BANK / CC STATEMENTS — sender drives classification -----
   { docType: "bank_statement_primary",
