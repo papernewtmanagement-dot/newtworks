@@ -61,6 +61,7 @@ ORDER = [
     "parsers/resume_reformat.ts",
     "parsers/resume_ingest.ts",
     "parsers/careerplug_applicant.ts",
+    "parsers/resume_manual_batch.ts",
     "parsers/sf_forwarded_applicant.ts",
     "parsers/wrapup_ingest.ts",
     "parsers/wrapup_no_send.ts",
