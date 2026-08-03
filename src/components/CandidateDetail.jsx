@@ -1747,6 +1747,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // any facet with n_items_scored < 5 per op-rule "Hardcoded functions: never
   // prefer simpler over more accurate" / P9 in the trait scoring build spec.
   const [v2Facets, setV2Facets] = useState(null);
+  // Newtworks v2 competency layer — full per-role detail (12 competencies with
+  // tier/floor/adjusted + gates_fired/verdict_cap/hard_decline/churn_risk),
+  // keyed by role_category. Only fetched for v2 candidates; replaces the old
+  // assessment_all_competencies orchestrator for the v2 path (Step 8, 2026-08-03).
+  const [v2RoleFits, setV2RoleFits] = useState(null);
   // v2 GMA subtest diagnostics disclosure — ephemeral UI toggle, not URL-persisted
   // (per frontend coding rule 24: disclosure state stays useState, not a tab).
   const [gmaOpen, setGmaOpen] = useState(false);
@@ -1796,6 +1801,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .then(({ data, error }) => {
         if (cancelled || error) return;
         setV2Facets(Array.isArray(data) ? data : []);
+      });
+    return () => { cancelled = true; };
+  }, [detail?.id, detail?.assessment_source]);
+
+  // v2 role fit + competency detail — only for v2 candidates. Replaces
+  // assessment_all_competencies for the v2 path (Step 8, 2026-08-03).
+  useEffect(() => {
+    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    let cancelled = false;
+    supabase
+      .rpc("newtworks_all_role_fits", { p_assessment_id: detail.id })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        setV2RoleFits(data || {});
       });
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
