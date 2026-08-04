@@ -67,6 +67,9 @@ interface RunCtx {
   composioUserId: string;
   gmailAccountId: string;
   driveAccountId: string | null;
+  // Drive folder that recovered scanned files get filed into. Null puts them
+  // in the Drive root.
+  driveParentFolderId?: string | null;
 }
 
 interface ProcessedAttachment {
@@ -1355,10 +1358,26 @@ async function processOneAttachment(
           fileName: att.fileName,
           bytesB64,
           resumeUrl: drive?.driveUrl ?? null,
+          gmailAttachmentId: att.attachmentId,
+          recovery: {
+            composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId,
+            gmailAccountId: ctx.gmailAccountId,
+            driveAccountId: ctx.driveAccountId,
+            driveParentFolderId: ctx.driveParentFolderId ?? null,
+          },
         });
         if (r.ok) {
+          // Text recognition produced a Drive copy. Keep it on the row — these
+          // resumes have otherwise never had one, because the normal Drive
+          // upload returns quietly when it fails.
+          if (r.recoveredDriveFileId && !drive?.driveFileId) {
+            await sb.from("documents")
+              .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
+              .eq("id", documentId);
+          }
           await markDocument(documentId, "processed", 1, ["hiring_candidates"],
-            `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}); candidate ${r.candidateId ?? "unknown"}`);
+            `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}, text via ${r.textSource ?? "pdf"}); candidate ${r.candidateId ?? "unknown"}`);
           await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
@@ -1416,6 +1435,142 @@ async function processOneAttachment(
   return results;
 }
 
+// ---- mode: resume_text_recovery --------------------------------------------
+// Deliberate re-run for forwarded resumes that failed because the file was a
+// scan or a photo with no text in it.
+//
+// WHY A SEPARATE DOOR: those rows sit at processing_status "error", and "error"
+// is in the do-not-retry set, so the mid-flight retry guard treats them as
+// finished and the mail fetcher will never offer them again. Nothing reopens
+// them on its own. This is the door.
+//
+// It does NOT re-download the original bytes. By definition these files have no
+// text to extract, so handing the parser an empty body lets its own recovery
+// step fetch the original from Gmail and run Drive text recognition — one fewer
+// round trip per file, and one code path instead of two.
+//
+// Body: { agency_id, shared_secret, mode: "resume_text_recovery",
+//         document_ids?: string[], limit?: number, dry_run?: boolean }
+// With no document_ids it picks up every forwarded resume still failing for
+// this reason, oldest first.
+interface TextRecoveryOutcome {
+  documentId: string;
+  fileName: string;
+  status: "recovered" | "still_failing" | "unrecoverable" | "would_run";
+  candidateId?: string | null;
+  candidateName?: string | null;
+  error?: string;
+}
+
+async function processResumeTextRecoveryMode(
+  ctx: RunCtx, body: any,
+): Promise<{
+  considered: number; recovered: number; stillFailing: number;
+  unrecoverable: number; dryRun: boolean; outcomes: TextRecoveryOutcome[];
+}> {
+  const documentIds: string[] = Array.isArray(body?.document_ids)
+    ? body.document_ids.filter((x: unknown) => typeof x === "string")
+    : [];
+  const limit = Math.min(Math.max(Number(body?.limit) || 40, 1), 100);
+  const dryRun = body?.dry_run === true;
+
+  let q = sb
+    .from("documents")
+    .select("id, file_name, gmail_message_id, gmail_attachment_id, uploaded_by, uploaded_at")
+    .eq("agency_id", ctx.agencyId)
+    .eq("groq_classification", "resume_manual_batch")
+    .eq("processing_status", "error");
+
+  if (documentIds.length > 0) {
+    q = q.in("id", documentIds);
+  } else {
+    // Only the rows that failed for lack of readable text. Leaves alone the
+    // ones that failed for any other reason, which need a different fix.
+    q = q.ilike("notes", "%image-only PDF%");
+  }
+
+  const { data: rows, error: selErr } = await q
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (selErr) {
+    return { considered: 0, recovered: 0, stillFailing: 0, unrecoverable: 0, dryRun, outcomes: [] };
+  }
+
+  const outcomes: TextRecoveryOutcome[] = [];
+  let recovered = 0, stillFailing = 0, unrecoverable = 0;
+
+  for (const row of rows ?? []) {
+    const fileName = (row as any).file_name ?? "(unnamed)";
+    const messageId = (row as any).gmail_message_id as string | null;
+    const attachmentId = (row as any).gmail_attachment_id as string | null;
+
+    // No way back to the original file. Say so rather than failing vaguely.
+    if (!messageId || !attachmentId) {
+      unrecoverable++;
+      outcomes.push({
+        documentId: (row as any).id, fileName, status: "unrecoverable",
+        error: "no Gmail message id or attachment id on this row, so the original file cannot be fetched again",
+      });
+      continue;
+    }
+
+    if (dryRun) {
+      outcomes.push({ documentId: (row as any).id, fileName, status: "would_run" });
+      continue;
+    }
+
+    const r = await processResumeManualBatch({
+      agencyId: ctx.agencyId,
+      documentId: (row as any).id,
+      messageId,
+      fromEmail: (row as any).uploaded_by ?? "",
+      // The original subject line was overwritten by the failure message when
+      // the row first errored, so it is genuinely gone. Left blank rather than
+      // invented.
+      subject: "",
+      receivedAt: (row as any).uploaded_at ?? new Date().toISOString(),
+      fileName,
+      bytesB64: "",   // deliberate — see the note above
+      resumeUrl: null,
+      gmailAttachmentId: attachmentId,
+      recovery: {
+        composioApiKey: ctx.composioApiKey,
+        composioUserId: ctx.composioUserId,
+        gmailAccountId: ctx.gmailAccountId,
+        driveAccountId: ctx.driveAccountId,
+        driveParentFolderId: ctx.driveParentFolderId ?? null,
+      },
+    });
+
+    if (r.ok) {
+      if (r.recoveredDriveFileId) {
+        await sb.from("documents")
+          .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
+          .eq("id", (row as any).id);
+      }
+      await markDocument((row as any).id, "processed", 1, ["hiring_candidates"],
+        `Resume recovered by text recognition for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}); candidate ${r.candidateId ?? "unknown"}`);
+      recovered++;
+      outcomes.push({
+        documentId: (row as any).id, fileName, status: "recovered",
+        candidateId: r.candidateId, candidateName: r.candidateName,
+      });
+    } else {
+      await markDocument((row as any).id, "error", 0, [], r.error);
+      stillFailing++;
+      outcomes.push({
+        documentId: (row as any).id, fileName, status: "still_failing", error: r.error,
+      });
+    }
+  }
+
+  return {
+    considered: (rows ?? []).length,
+    recovered, stillFailing, unrecoverable, dryRun, outcomes,
+  };
+}
+
 // ---- Main handler ----------------------------------------------------------
 
 async function run(req: Request): Promise<Response> {
@@ -1434,6 +1589,7 @@ async function run(req: Request): Promise<Response> {
   const composioUserId = await getSetting(agencyId, "composio_user_id");
   const gmailAccountId = await getSetting(agencyId, "composio_gmail_account_id");
   const driveAccountId = await getSetting(agencyId, "composio_googledrive_account_id");
+  const driveFolderId = await getSetting(agencyId, "drive_newtworks_root_folder_id");
   if (!composioApiKey || !composioUserId || !gmailAccountId) {
     return jsonResponse({
       ok: false,
@@ -1470,6 +1626,17 @@ async function run(req: Request): Promise<Response> {
     const result = await processWrapupMode(wupCtx, body);
     return jsonResponse({ ok: true, mode: "wrapup", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
+  if (mode === "resume_text_recovery") {
+    // Re-run forwarded resumes that failed for lack of readable text, pushing
+    // each one through Drive text recognition. See the note on the function.
+    const trCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      driveParentFolderId: driveFolderId,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processResumeTextRecoveryMode(trCtx, body);
+    return jsonResponse({ ok: true, mode: "resume_text_recovery", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
   if (mode === "no_send_check") {
     // Wrap-up no-send check (2026-07-22). Fires once per week at Fri 7 PM CT.
     // Emails each teammate who submitted nothing + one group Telegram to PJS
@@ -1480,7 +1647,10 @@ async function run(req: Request): Promise<Response> {
     return jsonResponse({ ok: true, mode: "no_send_check", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
 
-  const ctx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
+  const ctx: RunCtx = {
+    agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+    driveParentFolderId: driveFolderId,
+  };
   const startedAt = new Date().toISOString();
   const allResults: ProcessedAttachment[] = [];
 
