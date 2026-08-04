@@ -7624,18 +7624,21 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
   if (/\b1006\b/.test(blob)) return "2170"; // AMEX Personal
   if (/\b7435\b/.test(blob)) return "2172"; // Capital One Personal
 
-  // ---- Chase — Marketing 1 (acct 2110) is the only Chase account that exists
-  // in the current numeric chart. A generic Chase match previously routed to a
-  // "Marketing 2" account that has no numeric equivalent, so it is unmapped.
+  // ---- Chase — Marketing 1 is the only Chase card on file (credit_accounts
+  // last4 7762, alternate 7770 -> acct 2110). No "Marketing 2" card or account
+  // exists, so a generic Chase match is Marketing 1.
   if (/chase[\s\-_]*(mktg|marketing)[\s\-_]*1/.test(blob)) return "2110";
-  if (/chase/.test(blob)) return UNMAPPED + "CHASE-GENERIC";
+  if (/chase/.test(blob)) return "2110";
 
-  if (/truist|trb/.test(blob)) return UNMAPPED + "TRUIST";
-  if (/statefarm|sf[\s.-]?ach/.test(blob)) return UNMAPPED + "SF-ACH";
-  if (/amex|american[\s_-]?express/.test(blob)) return "2141"; // AMEX Discretionary (PaperNewt)
-  if (/capital[\s_-]?one/.test(blob)) return UNMAPPED + "CAPITALONE-AMBIGUOUS";
-  if (/citi/.test(blob)) return UNMAPPED + "CITI-AMBIGUOUS";
-  if (/spark/.test(blob)) return UNMAPPED + "SPARK";
+  // Truist/TRB (4 accounts), State Farm Bank checking 2353, and Capital One
+  // Spark are all is_active=false in bank_accounts / credit_accounts. Retired.
+  // A statement from one of these is a surprise and must stop, not route.
+  if (/truist|trb/.test(blob)) return UNMAPPED + "TRB-RETIRED";
+  if (/statefarm|sf[\s.-]?ach/.test(blob)) return UNMAPPED + "SF-BANK-RETIRED";
+  if (/amex|american[\s_-]?express/.test(blob)) return "2141"; // AMEX Discretionary (PaperNewt, last4 1003)
+  if (/capital[\s_-]?one/.test(blob)) return "2172"; // only active Cap One card is Personal 7435
+  if (/citi/.test(blob)) return "2140"; // credit_accounts: Citi 1247 -> 2140 PaperNewt printing card
+  if (/spark/.test(blob)) return UNMAPPED + "SPARK-RETIRED";
   // No silent default. Returning an account here guesses whose money this is;
   // an unrecognised statement must stop and be looked at instead.
   return UNMAPPED + "UNRECOGNISED";
