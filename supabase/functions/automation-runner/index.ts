@@ -293,14 +293,20 @@ async function afterCrmAnalyticsIngest(opts: { agencyId: string; records: any[] 
 // from this run, and a retry pass over any older clean-but-never-sent rows
 // (e.g. the July 2026 reconciliation, stuck by the pre-fix synchronous-send
 // bug). Both get the same treatment here.
-async function afterPfaReconciliation(opts: { agencyId: string; results: any[] | undefined }): Promise<void> {
+async function afterPfaReconciliation(opts: { agencyId: string; results: any[] | undefined }): Promise<string[]> {
+  // Returns a list of send failures so the caller can log the run as failed.
+  // Previously this returned void and the run was logged "success" regardless,
+  // which is how a month of never-sent PFA filings went unnoticed. Notices go
+  // to Peter's DM, never the team group -- PFA is compliance detail.
+  const failures: string[] = [];
   const results = Array.isArray(opts.results) ? opts.results : [];
   const toSend = results.filter((r) => r?.clean === true && r?.auto_sent === false && r?.reconciliation_id);
-  if (toSend.length === 0) return;
+  if (toSend.length === 0) return failures;
   const sharedSecret = await getSetting(opts.agencyId, "automation_runner_cron_secret");
   if (!sharedSecret) {
-    await telegram(opts.agencyId, `🟡 PFA reconciliation send skipped — automation_runner_cron_secret missing for agency ${opts.agencyId}`);
-    return;
+    failures.push(`automation_runner_cron_secret missing for agency ${opts.agencyId}`);
+    await telegramPeterDm(opts.agencyId, `🟡 PFA reconciliation send skipped — automation_runner_cron_secret missing for agency ${opts.agencyId}`);
+    return failures;
   }
   const url = `${SUPABASE_URL}/functions/v1/pfa-reconciliation-send`;
   for (const r of toSend) {
@@ -315,13 +321,16 @@ async function afterPfaReconciliation(opts: { agencyId: string; results: any[] |
       try { body = text ? JSON.parse(text) : null; } catch { body = null; }
       if (!res.ok || !body?.ok || body?.status !== "sent") {
         const err = body?.error ?? body?.status ?? `HTTP ${res.status}`;
-        await telegram(opts.agencyId, `🟡 PFA reconciliation ${r.reconciliation_id} send failed (post-commit retry): ${String(err).slice(0, 300)}`);
+        failures.push(`${r.reconciliation_id}: ${String(err).slice(0, 300)}`);
+        await telegramPeterDm(opts.agencyId, `🟡 PFA reconciliation ${r.reconciliation_id} send failed (post-commit retry): ${String(err).slice(0, 300)}`);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      await telegram(opts.agencyId, `🟡 PFA reconciliation ${r.reconciliation_id} send threw: ${msg.slice(0, 300)}`);
+      failures.push(`${r.reconciliation_id}: threw ${msg.slice(0, 300)}`);
+      await telegramPeterDm(opts.agencyId, `🟡 PFA reconciliation ${r.reconciliation_id} send threw: ${msg.slice(0, 300)}`);
     }
   }
+  return failures;
 }
 
 const _tableColumnsCache = new Map<string, Set<string>>();
@@ -511,17 +520,26 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         // has returned, i.e. after the transaction has committed, so the row
         // is genuinely visible. Mirrors afterCrmAnalyticsIngest() above.
         if (recipe.internal_handler === "pfa_monthly_reconciliation") {
-          try { await afterPfaReconciliation({ agencyId, results: (internalResult as any)?.results }); }
+          try {
+            const sendFailures = await afterPfaReconciliation({ agencyId, results: (internalResult as any)?.results });
+            if (sendFailures.length > 0) {
+              runStatus = "failed";
+              errorMessage = `PFA reconciliation email did not send — ${sendFailures.join("; ")}`.slice(0, 1000);
+              outputSummary += ` — ⚠️ ${sendFailures.length} PFA send failure(s)`;
+            }
+          }
           catch (hookErr) {
             const hm = hookErr instanceof Error ? hookErr.message : String(hookErr);
+            runStatus = "failed";
+            errorMessage = `PFA send hook threw: ${hm}`.slice(0, 1000);
             outputSummary += ` — ⚠️ PFA send hook error: ${hm.slice(0, 200)}`;
           }
         }
       }
       const durationSec = Math.round((Date.now() - started) / 1000);
-      await sb.from("automation_run_log").insert({ agency_id: agencyId, recipe_id: recipeId, status: "success", records_processed: recordsProcessed, error_message: null, duration_seconds: durationSec, output_summary: outputSummary });
-      await sb.from("automation_recipes").update({ last_run_status: "success" }).eq("id", recipeId);
-      return { recipe_id: recipeId, recipe_name: recipe.recipe_name, status: "success", records_processed: recordsProcessed, duration_seconds: durationSec, triggered_by: triggeredBy, error: null };
+      await sb.from("automation_run_log").insert({ agency_id: agencyId, recipe_id: recipeId, status: runStatus, records_processed: recordsProcessed, error_message: errorMessage, duration_seconds: durationSec, output_summary: outputSummary });
+      await sb.from("automation_recipes").update({ last_run_status: runStatus }).eq("id", recipeId);
+      return { recipe_id: recipeId, recipe_name: recipe.recipe_name, status: runStatus, records_processed: recordsProcessed, duration_seconds: durationSec, triggered_by: triggeredBy, error: errorMessage };
     }
 
     // --- Composio-driven branch ---
