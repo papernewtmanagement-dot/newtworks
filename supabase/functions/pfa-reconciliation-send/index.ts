@@ -373,8 +373,8 @@ function buildPdfBytes(data: ReconData): Promise<Uint8Array> {
       y -= rowH + 2;
     };
     blockRow("Agent's Personal Funds from previous month:", "", data.prior_personal_funds, COLOR_LT_BLUE);
-    blockRow("Current bank service fees:",                  "(+)", data.current_bank_service_fees, COLOR_LT_BLUE);
-    blockRow("Adjusted:",                                    "(=)", data.prior_personal_funds + data.current_bank_service_fees, COLOR_PL_YELLOW);
+    blockRow("Current bank service fees:",                  "(-)", data.current_bank_service_fees, COLOR_LT_BLUE);
+    blockRow("Adjusted:",                                    "(=)", data.prior_personal_funds - data.current_bank_service_fees, COLOR_PL_YELLOW);
     blockRow("DIFFERENCE TO RECONCILE (list action taken to resolve below):",
              "(=)", data.difference_to_reconcile, COLOR_PL_ORANGE, true);
     y -= 8;
