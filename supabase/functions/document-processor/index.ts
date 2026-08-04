@@ -173,17 +173,28 @@ function retryableDocumentId(
   return existing.id;
 }
 
-async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]> {
+async function fetchNewGmailAttachments(
+  ctx: RunCtx,
+  opts?: { query?: string; maxResults?: number },
+): Promise<AttachmentInput[]> {
   // Look back 7 days to catch anything we missed between cron ticks.
   // Idempotency is enforced per-file inside the loop.
-  const lookback = "newer_than:7d has:attachment";
+  //
+  // OVERRIDE (body.gmail_query / body.max_results): this fetcher is the only
+  // door into ingestion, so a 7-day-only window means an email missed for any
+  // reason becomes permanently unreachable and has to be hand-entered. Passing
+  // a Gmail search string pushes a specific stuck message through the REAL
+  // pipeline — same classify, same parsers, same reconcile — instead of
+  // someone typing statement figures in by hand. Default behaviour unchanged.
+  const lookback = opts?.query ?? "newer_than:7d has:attachment";
+  const maxResults = opts?.maxResults ?? 50;
 
   const listRes = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
     connectedAccountId: ctx.gmailAccountId,
     toolSlug: "GMAIL_FETCH_EMAILS",
-    toolArguments: { query: lookback, max_results: 50 },
+    toolArguments: { query: lookback, max_results: maxResults },
   });
 
   if (!listRes.ok) throw new Error(`Gmail fetch failed: ${listRes.error}`);
@@ -2204,7 +2215,10 @@ async function run(req: Request): Promise<Response> {
 
   let attachments: AttachmentInput[];
   try {
-    attachments = await fetchNewGmailAttachments(ctx);
+    attachments = await fetchNewGmailAttachments(ctx, {
+      query: typeof body?.gmail_query === "string" ? body.gmail_query : undefined,
+      maxResults: typeof body?.max_results === "number" ? body.max_results : undefined,
+    });
   } catch (e) {
     return jsonResponse({
       ok: false,
