@@ -1244,6 +1244,12 @@ async function generateBestGuesses(input: SuspenseTaskInput): Promise<string> {
     documentId: null,
     purpose: "suspense_guesses",
     maxTokens: 800,
+    // No queue row: this call is enrichment with a working lexical fallback
+    // below, and createSuspenseTask writes the task immediately either way.
+    // Nothing records WHICH task a queued guess belonged to, so a drained
+    // result could never be applied — it would strand forever. Same reason
+    // resume_identity_extract opted out (2026-08-04).
+    skipQueueOnFailure: true,
   });
 
   if (result.ok) {
