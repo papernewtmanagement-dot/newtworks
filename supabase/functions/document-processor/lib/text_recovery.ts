@@ -72,6 +72,31 @@ function stripExtension(fileName: string): string {
 }
 
 /**
+ * Pull the storage key out of a Composio download link. The link is a signed
+ * URL whose path IS the key, e.g. ".../486473/gmail/GMAIL_GET_ATTACHMENT/
+ * response/abc123?X-Amz-...". The upload tool wants exactly that path.
+ */
+function storageKeyFromUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname.replace(/^\/+/, "");
+    return path.length > 0 ? decodeURIComponent(path) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best guess at the original file's type, from its extension. */
+function guessSourceMime(fileName: string): string {
+  const ext = fileName.toLowerCase().match(/\.([a-z0-9]{1,6})$/)?.[1] ?? "";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "gif") return "image/gif";
+  if (ext === "tif" || ext === "tiff") return "image/tiff";
+  if (ext === "webp") return "image/webp";
+  return "application/pdf";
+}
+
+/**
  * Pull the temporary signed link out of a Composio response, tolerating the
  * two nesting shapes the wrapper can hand back.
  */
@@ -130,74 +155,66 @@ export async function recoverTextFromScannedFile(opts: {
     return { ok: false, stage: "gmail", error: "Gmail returned no download link for the attachment" };
   }
 
-  // ---- 2. Bring it into Drive AS a Google Doc --------------------------
-  // Not every Drive tool is reachable from this function's Composio key: the
-  // first choice below answered "Tool not found" on 2026-08-04 even though it
-  // works from an interactive session, so more than one shape is attempted and
-  // the winner is reported. Whichever runs, the point is the same — naming the
-  // Google Docs type as the target is what makes Drive read the page images.
-  const attempts: Array<{ slug: string; args: Record<string, unknown> }> = [
-    {
-      slug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
-      args: {
-        source_url: sourceUrl,
-        name: stripExtension(fileName),
-        mime_type: DRIVE_DOC_MIME,
-        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
-      },
-    },
-    {
-      slug: "GOOGLEDRIVE_CREATE_FILE_FROM_URL",
-      args: {
-        file_url: sourceUrl,
-        file_name: stripExtension(fileName),
-        mime_type: DRIVE_DOC_MIME,
-        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
-      },
-    },
-    {
-      slug: "GOOGLEDRIVE_UPLOAD_FILE",
-      args: {
-        file_name: stripExtension(fileName),
-        file_path: sourceUrl,
-        mime_type: DRIVE_DOC_MIME,
-        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
-      },
-    },
-  ];
-
-  let driveFileId = "";
-  let driveUrl = "";
-  let usedSlug = "";
-  const convertErrors: string[] = [];
-
-  for (const attempt of attempts) {
-    const up = await callComposio({
-      apiKey: deps.composioApiKey,
-      userId: deps.composioUserId,
-      connectedAccountId: deps.driveAccountId,
-      toolSlug: attempt.slug,
-      toolArguments: attempt.args,
-    });
-    if (!up.ok) {
-      convertErrors.push(`${attempt.slug}: ${up.error}`);
-      continue;
-    }
-    const id: string = up.data?.id ?? up.data?.data?.id ?? up.data?.file_id ?? "";
-    if (!id) {
-      convertErrors.push(`${attempt.slug}: succeeded but returned no file id`);
-      continue;
-    }
-    driveFileId = id;
-    driveUrl = up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
-    usedSlug = attempt.slug;
-    break;
+  // ---- 2. Bring it into Drive, then convert with text recognition ------
+  // Confirmed by probing the live function on 2026-08-04: this Composio key
+  // cannot reach either URL-based upload tool, and the one it CAN reach wants a
+  // storage key rather than a URL or raw bytes. Gmail already hands back such a
+  // key inside its download link, so it is reused here instead of re-fetching.
+  //
+  // Two steps rather than one, on purpose. The upload keeps a faithful copy of
+  // the original file; the copy is what carries the text recognition. That also
+  // gives these resumes the Drive copy they have never had.
+  const s3Key = storageKeyFromUrl(sourceUrl);
+  if (!s3Key) {
+    return { ok: false, stage: "convert", error: "could not read a storage key out of the Gmail download link" };
   }
 
+  const up = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
+    toolArguments: {
+      file_to_upload: {
+        name: fileName,
+        mimetype: guessSourceMime(fileName),
+        s3key: s3Key,
+      },
+      ...(deps.driveParentFolderId ? { folder_to_upload_to: deps.driveParentFolderId } : {}),
+    },
+  });
+  if (!up.ok) {
+    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_UPLOAD_FILE failed: ${up.error}` };
+  }
+  const driveFileId: string = up.data?.id ?? up.data?.data?.id ?? up.data?.file_id ?? "";
+  const driveUrl: string =
+    up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
   if (!driveFileId) {
-    return { ok: false, stage: "convert", error: `no Drive upload tool worked — ${convertErrors.join(" | ")}` };
+    return { ok: false, stage: "convert", error: "Drive accepted the upload but returned no file id" };
   }
-  console.log(`[text_recovery] ${fileName}: converted in Drive via ${usedSlug}`);
+
+  // Copy it AS a Google Doc. Naming the Doc type as the target is what makes
+  // Drive read the page images; the language hint improves that reading.
+  const conv = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_COPY_FILE_ADVANCED",
+    toolArguments: {
+      fileId: driveFileId,
+      name: `${stripExtension(fileName)} (text)`,
+      mimeType: DRIVE_DOC_MIME,
+      ocrLanguage: "en",
+      ...(deps.driveParentFolderId ? { parents: [deps.driveParentFolderId] } : {}),
+    },
+  });
+  if (!conv.ok) {
+    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_COPY_FILE_ADVANCED failed: ${conv.error}` };
+  }
+  const textDocId: string = conv.data?.id ?? conv.data?.data?.id ?? "";
+  if (!textDocId) {
+    return { ok: false, stage: "convert", error: "Drive copied the file but returned no document id" };
+  }
 
   // ---- 3. Read the recovered text back --------------------------------
   const dl = await callComposio({
@@ -205,7 +222,7 @@ export async function recoverTextFromScannedFile(opts: {
     userId: deps.composioUserId,
     connectedAccountId: deps.driveAccountId,
     toolSlug: "GOOGLEDRIVE_DOWNLOAD_FILE",
-    toolArguments: { fileId: driveFileId, mime_type: "text/plain" },
+    toolArguments: { fileId: textDocId, mime_type: "text/plain" },
   });
   if (!dl.ok) {
     return { ok: false, stage: "read", error: `GOOGLEDRIVE_DOWNLOAD_FILE failed: ${dl.error}` };
