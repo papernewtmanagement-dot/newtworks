@@ -82,6 +82,25 @@ export async function callComposio(opts: {
   connectedAccountId: string;
   toolSlug: string;
   toolArguments: Record<string, any>;
+  /**
+   * Which published set of tools to use. LEAVE THIS UNSET unless you have a
+   * reason not to.
+   *
+   * Composio publishes its tools in dated sets. A request that does not name a
+   * set gets the oldest one, which holds far fewer tools than the account
+   * actually has — 51 Google Drive tools instead of 90. Anything missing from
+   * that oldest set answers "Tool ... not found", which reads exactly like a
+   * permission problem and is not one. Two months of Drive filing and every
+   * scanned resume were lost to this, and four rounds of fixing went at the
+   * wrong layer, because a tool tested by hand goes through a connection that
+   * DOES name a set and therefore always worked.
+   *
+   * It is set per request on purpose. Naming a newer set changes the shape of
+   * what comes back, and the payroll, bank statement and comp parsers all read
+   * those shapes. So each caller opts in where it has been checked, rather than
+   * one flip changing everything at once.
+   */
+  toolkitVersion?: string;
 }): Promise<ComposioCallResult> {
   const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
     method: "POST",
@@ -93,6 +112,7 @@ export async function callComposio(opts: {
       user_id: opts.userId,
       connected_account_id: opts.connectedAccountId,
       arguments: opts.toolArguments,
+      ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
     }),
   });
   const text = await res.text();
@@ -378,6 +398,22 @@ export type TextRecoveryResult =
 /** The Drive type that makes Drive read the page images of a scan. */
 const DRIVE_DOC_MIME = "application/vnd.google-apps.document";
 
+/**
+ * Which published set of Google Drive tools to ask for.
+ *
+ * THIS LINE IS THE FIX. Without it, Composio hands back its oldest set of Drive
+ * tools, which has 51 of the account's 90 and none of the three that can turn a
+ * scanned page into readable text. Those three then answer "Tool ... not found",
+ * which looks exactly like the account lacking permission. It is not. Checked
+ * live 2026-08-04: name a set and the same account, same key, reaches all three.
+ *
+ * A dated set rather than "latest" on purpose. "Latest" moves when Composio
+ * publishes, and a change in the shape of a reply would break this quietly.
+ * Raise this deliberately after checking, the same way any other pinned
+ * dependency gets raised.
+ */
+const DRIVE_TOOLKIT_VERSION = "20260721_00";
+
 /** Shortest recovered text we will treat as a real result. */
 const MIN_USEFUL_CHARS = 40;
 
@@ -456,6 +492,7 @@ export async function recoverTextFromScannedFile(opts: {
       connectedAccountId: deps.driveAccountId as string,
       toolSlug: slug,
       toolArguments,
+      toolkitVersion: DRIVE_TOOLKIT_VERSION,
     });
   };
 
