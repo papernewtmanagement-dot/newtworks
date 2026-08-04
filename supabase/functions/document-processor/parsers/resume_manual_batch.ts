@@ -87,6 +87,14 @@ export interface RmbArgs {
   // Credentials for the scanned-file text recovery step. Omit to switch that
   // step off entirely — the parser then behaves exactly as it did before.
   recovery?: TextRecoveryDeps;
+
+  // Text already read out of this scan somewhere else and handed in with the
+  // request. When present the parser skips its own recovery step and uses this
+  // instead. See the note on the resume_text_recovery mode in index.ts for why
+  // that door exists.
+  preRecoveredText?: string | null;
+  preRecoveredDriveFileId?: string | null;
+  preRecoveredDriveUrl?: string | null;
 }
 
 export interface RmbResult {
@@ -219,6 +227,18 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
   let recoveredDriveFileId: string | null = null;
   let recoveredDriveUrl: string | null = null;
   let recoveryFailure: string | null = null;
+
+  // Text handed in with the request, used in place of the file's own text layer
+  // — which, these files being scans, they do not have. This is the same text
+  // the recovery step below would have produced, so everything after this point
+  // behaves identically whichever way the text arrived.
+  const handedInText = (args.preRecoveredText ?? "").trim();
+  if (!resumeText && handedInText.length >= 40) {
+    resumeText = reformatResumeSeparators(handedInText);
+    textSource = "text_recognition";
+    recoveredDriveFileId = args.preRecoveredDriveFileId ?? null;
+    recoveredDriveUrl = args.preRecoveredDriveUrl ?? null;
+  }
 
   // Nothing extractable means the file is a scan or a phone photo — page
   // images with no text layer. About one in five of these resumes is. Rather
