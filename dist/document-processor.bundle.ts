@@ -940,7 +940,7 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
     test: (i) => /usbank|us[\s_-]?bank|usbank\.com/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
   { docType: "bank_statement_secondary",
-    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|rbfcu|randolph)/i.test(i.fromEmail + " " + i.subject) &&
+    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|rbfcu|randolph|fidelity)/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
 
   // ----- BANK / CC STATEMENTS — filename-only fallback (Alvi's zip-content
@@ -953,8 +953,11 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       intake left 7 inner files unclassified. -----
   { docType: "bank_statement_primary",
     test: (i) => /^us[\s_-]?bank\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
+  // Date shape allows "26-04.pdf", "26_04.pdf" and a multi-month range like
+  // "26_01-03.pdf" — Fidelity sends one PDF covering several months, and Alvi
+  // labels those with underscores. Superset of the old \d{2}-\d{2} pattern.
   { docType: "bank_statement_secondary",
-    test: (i) => /^(rbfcu|randolph|chase|bankofamerica|bank[\s_-]?of[\s_-]?america|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover)\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
+    test: (i) => /^(rbfcu|randolph|chase|bankofamerica|bank[\s_-]?of[\s_-]?america|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|fidelity)\b.*\d{2}[-_]\d{2}(?:[-_]\d{2})?\.pdf$/i.test(filenameBase(i.fileName)) },
 
   // ----- STATE FARM COMP RECAP — sender path (live SF emails) -----
   { docType: "comp_recap_1h",
@@ -7627,6 +7630,10 @@ type AccountEntry = {
   last4s: string[];
   code: string | null;
   name: string;
+  // Lower-cased "institution accountname", used when a statement carries no
+  // account number we know yet (Fidelity HSA). Still resolved from the tables,
+  // so the account-to-chart mapping stays in one place.
+  haystack: string;
   active: boolean;
 };
 
@@ -7640,7 +7647,7 @@ async function loadAccountIndex(agencyId: string): Promise<AccountEntry[]> {
 
   const { data: cards, error: cardErr } = await sb
     .from("credit_accounts")
-    .select("account_name, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
+    .select("account_name, institution, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
     .eq("agency_id", agencyId);
   if (cardErr) throw new Error(`credit_accounts read failed: ${cardErr.message}`);
   for (const c of cards ?? []) {
@@ -7651,21 +7658,24 @@ async function loadAccountIndex(agencyId: string): Promise<AccountEntry[]> {
       last4s,
       code: (c as any).chart_of_accounts?.account_code ?? null,
       name: c.account_name ?? "credit account",
+      haystack: `${c.institution ?? ""} ${c.account_name ?? ""}`.toLowerCase(),
       active: c.is_active !== false,
     });
   }
 
   const { data: banks, error: bankErr } = await sb
     .from("bank_accounts")
-    .select("account_name, account_number_last4, is_active, chart_of_accounts(account_code)")
+    .select("account_name, institution, account_number_last4, is_active, chart_of_accounts(account_code)")
     .eq("agency_id", agencyId);
   if (bankErr) throw new Error(`bank_accounts read failed: ${bankErr.message}`);
   for (const b of banks ?? []) {
-    if (!b.account_number_last4) continue;
+    // A missing account number is fine — the row can still be matched by
+    // institution name. Do NOT invent a last-4 to make a row look complete.
     entries.push({
-      last4s: [b.account_number_last4],
+      last4s: b.account_number_last4 ? [b.account_number_last4] : [],
       code: (b as any).chart_of_accounts?.account_code ?? null,
       name: b.account_name ?? "bank account",
+      haystack: `${b.institution ?? ""} ${b.account_name ?? ""}`.toLowerCase(),
       active: b.is_active !== false,
     });
   }
@@ -7697,6 +7707,15 @@ const LABEL_TO_LAST4: Array<[RegExp, string]> = [
   [/amex|american[\s_-]?express/, "1003"],
   // Generic US Bank fallback — Income. Must stay LAST of the US Bank rules.
   [/usbank|us[\s_-]?bank/, "3977"],
+];
+
+// Labels resolved by INSTITUTION NAME rather than by account number, for
+// accounts whose number we do not hold yet. Matched against the institution
+// and account name on the bank_accounts / credit_accounts row, so the mapping
+// still comes from the tables. Fidelity sends HSA statements that never show a
+// number we have on file.
+const LABEL_TO_NAME: Array<[RegExp, string]> = [
+  [/fidelity/, "fidelity"],
 ];
 
 // Accounts that are gone. Named explicitly so the failure message says why.
@@ -7764,7 +7783,17 @@ async function resolveSourceAccount(
     }
   }
 
-  // 3. Known-dead institutions get a named failure rather than a generic one.
+  // 3. Accounts identified by institution name rather than a number.
+  for (const [re, needle] of LABEL_TO_NAME) {
+    if (!re.test(blob)) continue;
+    const live = entries.filter((e) => e.active && e.haystack.includes(needle));
+    const codes = [...new Set(live.map((e) => e.code).filter((c): c is string => !!c))];
+    if (codes.length === 1) return codes[0];
+    if (codes.length > 1) return UNMAPPED + `AMBIGUOUS-NAME-${needle}`;
+    return UNMAPPED + `NAME-${needle}-NOT-IN-TABLES`;
+  }
+
+  // 4. Known-dead institutions get a named failure rather than a generic one.
   for (const [re, hint] of RETIRED_HINTS) {
     if (re.test(blob)) return UNMAPPED + hint;
   }
