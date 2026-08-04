@@ -427,7 +427,7 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
  * shapes. The plain upload below deliberately does NOT name a set: it works on
  * the oldest one, and there is nothing to gain by moving it.
  */
-const DRIVE_TOOLKIT_VERSION = "20260721_00";
+const DRIVE_FOLDER_TOOLKIT_VERSION = "20260721_00";
 
 /** Folder ids worked out during this run. Keyed "<parent id>/<folder name>". */
 const driveFolderCache = new Map<string, string>();
@@ -451,7 +451,7 @@ async function resolveDriveFolder(
     connectedAccountId: ctx.driveAccountId,
     toolSlug: "GOOGLEDRIVE_FIND_FOLDER",
     toolArguments: { name_exact: name, parent_folder_id: parentId },
-    toolkitVersion: DRIVE_TOOLKIT_VERSION,
+    toolkitVersion: DRIVE_FOLDER_TOOLKIT_VERSION,
   });
   const files = find.ok ? (find.data?.files ?? find.data?.data?.files ?? []) : [];
   let id: string = Array.isArray(files) && files.length > 0 ? (files[0]?.id ?? "") : "";
@@ -463,7 +463,7 @@ async function resolveDriveFolder(
       connectedAccountId: ctx.driveAccountId,
       toolSlug: "GOOGLEDRIVE_CREATE_FOLDER",
       toolArguments: { name, parent_id: parentId },
-      toolkitVersion: DRIVE_TOOLKIT_VERSION,
+      toolkitVersion: DRIVE_FOLDER_TOOLKIT_VERSION,
     });
     id = made.ok ? (made.data?.id ?? made.data?.data?.id ?? "") : "";
     if (!id) {
