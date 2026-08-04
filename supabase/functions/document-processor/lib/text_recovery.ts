@@ -131,27 +131,73 @@ export async function recoverTextFromScannedFile(opts: {
   }
 
   // ---- 2. Bring it into Drive AS a Google Doc --------------------------
-  const up = await callComposio({
-    apiKey: deps.composioApiKey,
-    userId: deps.composioUserId,
-    connectedAccountId: deps.driveAccountId,
-    toolSlug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
-    toolArguments: {
-      source_url: sourceUrl,
-      name: stripExtension(fileName),
-      mime_type: DRIVE_DOC_MIME,
-      ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
+  // Not every Drive tool is reachable from this function's Composio key: the
+  // first choice below answered "Tool not found" on 2026-08-04 even though it
+  // works from an interactive session, so more than one shape is attempted and
+  // the winner is reported. Whichever runs, the point is the same — naming the
+  // Google Docs type as the target is what makes Drive read the page images.
+  const attempts: Array<{ slug: string; args: Record<string, unknown> }> = [
+    {
+      slug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
+      args: {
+        source_url: sourceUrl,
+        name: stripExtension(fileName),
+        mime_type: DRIVE_DOC_MIME,
+        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
+      },
     },
-  });
-  if (!up.ok) {
-    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_UPLOAD_FROM_URL failed: ${up.error}` };
+    {
+      slug: "GOOGLEDRIVE_CREATE_FILE_FROM_URL",
+      args: {
+        file_url: sourceUrl,
+        file_name: stripExtension(fileName),
+        mime_type: DRIVE_DOC_MIME,
+        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
+      },
+    },
+    {
+      slug: "GOOGLEDRIVE_UPLOAD_FILE",
+      args: {
+        file_name: stripExtension(fileName),
+        file_path: sourceUrl,
+        mime_type: DRIVE_DOC_MIME,
+        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
+      },
+    },
+  ];
+
+  let driveFileId = "";
+  let driveUrl = "";
+  let usedSlug = "";
+  const convertErrors: string[] = [];
+
+  for (const attempt of attempts) {
+    const up = await callComposio({
+      apiKey: deps.composioApiKey,
+      userId: deps.composioUserId,
+      connectedAccountId: deps.driveAccountId,
+      toolSlug: attempt.slug,
+      toolArguments: attempt.args,
+    });
+    if (!up.ok) {
+      convertErrors.push(`${attempt.slug}: ${up.error}`);
+      continue;
+    }
+    const id: string = up.data?.id ?? up.data?.data?.id ?? up.data?.file_id ?? "";
+    if (!id) {
+      convertErrors.push(`${attempt.slug}: succeeded but returned no file id`);
+      continue;
+    }
+    driveFileId = id;
+    driveUrl = up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
+    usedSlug = attempt.slug;
+    break;
   }
-  const driveFileId: string = up.data?.id ?? up.data?.data?.id ?? "";
-  const driveUrl: string =
-    up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
+
   if (!driveFileId) {
-    return { ok: false, stage: "convert", error: "Drive accepted the upload but returned no file id" };
+    return { ok: false, stage: "convert", error: `no Drive upload tool worked — ${convertErrors.join(" | ")}` };
   }
+  console.log(`[text_recovery] ${fileName}: converted in Drive via ${usedSlug}`);
 
   // ---- 3. Read the recovered text back --------------------------------
   const dl = await callComposio({
