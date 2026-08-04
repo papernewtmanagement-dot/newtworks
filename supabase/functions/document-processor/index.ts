@@ -112,6 +112,62 @@ interface AttachmentInput {
 
   // For inner files only — name of the containing zip, for source labeling.
   parentArchive?: string;
+
+  // Set when a documents row already exists for this attachment but was left
+  // mid-flight, and the file is being offered again. The handler updates that
+  // row instead of inserting a second one. See retryableDocumentId().
+  retryDocumentId?: string | null;
+  retryCount?: number;
+}
+
+// Statuses that mean a documents row is finished, deliberately parked, or owned
+// by another process. A row in any of these is never offered again:
+//   processed / filed / archived / skipped / duplicate  finished
+//   error                        finished; an alert was already raised
+//   unpacked                     zip container, already expanded
+//   archive_failed               document handled; only the Gmail archive failed
+//   queued_for_llm               llm-queue-drainer owns it
+//   stored_pending_walkthrough   deliberately held for review
+//   held_reconciliation_mismatch deliberately held for review
+const DOC_STATUS_NO_RETRY = new Set([
+  "processed", "filed", "archived", "skipped", "duplicate", "error",
+  "unpacked", "archive_failed", "queued_for_llm",
+  "stored_pending_walkthrough", "held_reconciliation_mismatch",
+]);
+
+const DOC_MAX_RETRIES = 3;
+
+/**
+ * A documents row already exists for this attachment. Decide whether it
+ * represents finished work (skip the file) or a run that died partway through
+ * (offer the file again).
+ *
+ * Found 2026-08-04: in a 143-file resume backlog run, four files had their
+ * documents row inserted and then the run ended — wall clock, most likely —
+ * before the handler reached a terminal status. They sat at "received"
+ * indefinitely, because the duplicate check above skipped any existing row
+ * regardless of its status, so the file was never offered again. That is silent,
+ * permanent loss of a real applicant. Three older rows were stranded the same
+ * way, two of them credit-card statement bundles.
+ *
+ * Returns the document id to reuse when the row should be retried, else null.
+ * The attempt counter keeps a document that dies every single time from being
+ * picked up on every tick forever.
+ */
+function retryableDocumentId(
+  existing: { id?: string; processing_status?: string; retry_count?: number } | null | undefined,
+  fileName: string,
+): string | null {
+  if (!existing?.id) return null;
+  const status = existing.processing_status ?? "";
+  if (DOC_STATUS_NO_RETRY.has(status)) return null;
+  const tries = existing.retry_count ?? 0;
+  if (tries >= DOC_MAX_RETRIES) {
+    console.warn(`[fetch] ${fileName}: document ${existing.id} still at "${status}" after ${tries} attempts — giving up, not offering again`);
+    return null;
+  }
+  console.log(`[fetch] ${fileName}: offering document ${existing.id} again, stuck at "${status}" (attempt ${tries + 1} of ${DOC_MAX_RETRIES})`);
+  return existing.id;
 }
 
 async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]> {
@@ -162,14 +218,17 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
         const msgId = m.messageId ?? m.id;
         const { data: existing } = await sb
           .from("documents")
-          .select("id")
+          .select("id, processing_status, retry_count")
           .eq("agency_id", ctx.agencyId)
           .eq("gmail_message_id", msgId)
           .eq("file_name", filename)
           .maybeSingle();
-        if (existing?.id) continue;
+        const retryId = retryableDocumentId(existing, filename);
+        if (existing?.id && !retryId) continue;
 
         attachments.push({
+          retryDocumentId: retryId,
+          retryCount: existing?.retry_count ?? 0,
           messageId: m.messageId ?? m.id,
           threadId: m.threadId ?? m.thread_id ?? m.messageId ?? m.id,
           fromEmail, subject, receivedAt,
@@ -194,14 +253,17 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
       const msgId = m.id;
       const { data: existing } = await sb
         .from("documents")
-        .select("id")
+        .select("id, processing_status, retry_count")
         .eq("agency_id", ctx.agencyId)
         .eq("gmail_message_id", msgId)
         .eq("file_name", filename)
         .maybeSingle();
-      if (existing?.id) continue;
+      const retryId = retryableDocumentId(existing, filename);
+      if (existing?.id && !retryId) continue;
 
       attachments.push({
+        retryDocumentId: retryId,
+        retryCount: existing?.retry_count ?? 0,
         messageId: m.id,
         threadId: m.threadId ?? m.thread_id ?? m.id,
         fromEmail, subject, receivedAt,
@@ -370,26 +432,51 @@ async function insertSourceDocument(
   sourceAccountCode: string | null,
   uploadSource: string,
 ): Promise<string> {
+  const row = {
+    agency_id: ctx.agencyId,
+    file_name: att.fileName,
+    file_type: att.mimeType,
+    upload_source: uploadSource,
+    drive_file_id: drive?.driveFileId ?? null,
+    drive_url: drive?.driveUrl ?? null,
+    processing_status: "received",
+    processing_type: "document_processor",
+    groq_classification: docType,
+    source_account_code: sourceAccountCode,
+    uploaded_by: att.fromEmail,
+    uploaded_at: att.receivedAt,
+    gmail_message_id: att.messageId || null,
+    gmail_thread_id: att.threadId || null,
+    gmail_attachment_id: att.attachmentId || null,
+    notes: `subject: ${att.subject}${att.parentArchive ? ` | extracted_from: ${att.parentArchive}` : ""}`,
+  };
+
+  // This attachment is being offered again because its previous row was left
+  // mid-flight. Update that row in place rather than inserting a second one, so
+  // a retry never turns into a duplicate document. The attempt counter is what
+  // eventually stops a file that fails every time. See retryableDocumentId().
+  if (att.retryDocumentId) {
+    const { data: retried, error: retryErr } = await sb
+      .from("documents")
+      .update({
+        ...row,
+        retry_count: (att.retryCount ?? 0) + 1,
+        processed_at: null,
+        records_created: 0,
+        tables_updated: [],
+      })
+      .eq("id", att.retryDocumentId)
+      .select("id")
+      .single();
+    if (retryErr || !retried) {
+      throw new Error(`document retry update failed: ${retryErr?.message ?? "unknown"}`);
+    }
+    return retried.id;
+  }
+
   const { data, error } = await sb
     .from("documents")
-    .insert({
-      agency_id: ctx.agencyId,
-      file_name: att.fileName,
-      file_type: att.mimeType,
-      upload_source: uploadSource,
-      drive_file_id: drive?.driveFileId ?? null,
-      drive_url: drive?.driveUrl ?? null,
-      processing_status: "received",
-      processing_type: "document_processor",
-      groq_classification: docType,
-      source_account_code: sourceAccountCode,
-      uploaded_by: att.fromEmail,
-      uploaded_at: att.receivedAt,
-      gmail_message_id: att.messageId || null,
-      gmail_thread_id: att.threadId || null,
-      gmail_attachment_id: att.attachmentId || null,
-      notes: `subject: ${att.subject}${att.parentArchive ? ` | extracted_from: ${att.parentArchive}` : ""}`,
-    })
+    .insert(row)
     .select("id")
     .single();
   if (error || !data) throw new Error(`document insert failed: ${error?.message ?? "unknown"}`);
