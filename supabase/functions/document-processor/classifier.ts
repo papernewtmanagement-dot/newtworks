@@ -261,7 +261,7 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
     test: (i) => /usbank|us[\s_-]?bank|usbank\.com/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
   { docType: "bank_statement_secondary",
-    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|rbfcu|randolph)/i.test(i.fromEmail + " " + i.subject) &&
+    test: (i) => /(chase|bankofamerica|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|rbfcu|randolph|fidelity)/i.test(i.fromEmail + " " + i.subject) &&
                  /statement|estatement/i.test(i.fileName + " " + i.subject) },
 
   // ----- BANK / CC STATEMENTS — filename-only fallback (Alvi's zip-content
@@ -274,8 +274,11 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       intake left 7 inner files unclassified. -----
   { docType: "bank_statement_primary",
     test: (i) => /^us[\s_-]?bank\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
+  // Date shape allows "26-04.pdf", "26_04.pdf" and a multi-month range like
+  // "26_01-03.pdf" — Fidelity sends one PDF covering several months, and Alvi
+  // labels those with underscores. Superset of the old \d{2}-\d{2} pattern.
   { docType: "bank_statement_secondary",
-    test: (i) => /^(rbfcu|randolph|chase|bankofamerica|bank[\s_-]?of[\s_-]?america|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover)\b.*\d{2}-\d{2}\.pdf$/i.test(filenameBase(i.fileName)) },
+    test: (i) => /^(rbfcu|randolph|chase|bankofamerica|bank[\s_-]?of[\s_-]?america|trb|truist|wells\s?fargo|amex|american[\s_-]?express|capital[\s_-]?one|citi|spark|discover|fidelity)\b.*\d{2}[-_]\d{2}(?:[-_]\d{2})?\.pdf$/i.test(filenameBase(i.fileName)) },
 
   // ----- STATE FARM COMP RECAP — sender path (live SF emails) -----
   { docType: "comp_recap_1h",
