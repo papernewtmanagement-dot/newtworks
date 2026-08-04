@@ -41,6 +41,11 @@ export interface ParseLLMOpts {
   purpose: string;
   model?: string;
   maxTokens?: number;
+  // When true, a failed Groq call returns { ok:false, queued:false } instead of
+  // parking a row in llm_parse_queue. For callers that already have their own
+  // fallback and would otherwise leave rows nobody drains — see the note on
+  // Step 3 below.
+  skipQueueOnFailure?: boolean;
 }
 
 export type ParseLLMResult =
@@ -127,6 +132,21 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
   }
 
   // Step 3: queue for workbench-side processing (true last resort)
+  //
+  // Opt-out: llm-queue-drainer only handles the purposes it has handlers for.
+  // A caller whose purpose the drainer does not know would leave rows pending
+  // forever, inflating the queue with work nobody will ever pick up. Callers
+  // that carry their own fallback set skipQueueOnFailure and take the plain
+  // failure instead. (Found 2026-08-04: 69 stranded resume_identity_extract
+  // rows from the first full resume backlog run.)
+  if (opts.skipQueueOnFailure) {
+    return {
+      ok: false,
+      queued: false,
+      error: "Groq direct call failed; queue skipped at caller's request",
+    };
+  }
+
   const { data, error } = await sb
     .from("llm_parse_queue")
     .insert({
