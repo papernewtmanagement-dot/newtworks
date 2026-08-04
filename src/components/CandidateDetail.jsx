@@ -2529,13 +2529,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     {layer.key === "assessment" && c.key === "character" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
-                                        title="Suggs character subscores: Honesty (from distortion) · Concern for Others (compassion 0.7 + belief 0.3) · Hard Work Ethic (from reliability)"
+                                        title="Character components from measured personality facets. C = Concern for Others (compassion, cooperation, trust) · W = Hard Work Ethic (self-discipline, achievement striving, dutifulness) · R = Personal Responsibility (dutifulness, self-efficacy). A component with no facet data shows a dash. Honesty is not measured here — it belongs to the interview and reference layers."
                                       >
-                                        H {detail?.assessment_character_honesty != null ? Math.round(Number(detail.assessment_character_honesty)) : "—"}
-                                        {" · "}
                                         C {detail?.assessment_character_concern != null ? Math.round(Number(detail.assessment_character_concern)) : "—"}
                                         {" · "}
                                         W {detail?.assessment_character_work_ethic != null ? Math.round(Number(detail.assessment_character_work_ethic)) : "—"}
+                                        {" · "}
+                                        R {detail?.assessment_character_personal_resp != null ? Math.round(Number(detail.assessment_character_personal_resp)) : "—"}
                                       </div>
                                     )}
                                     {layer.key === "assessment" && c.key === "commitment" && (
