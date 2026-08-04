@@ -218,6 +218,7 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
   let textSource: "pdf" | "text_recognition" = "pdf";
   let recoveredDriveFileId: string | null = null;
   let recoveredDriveUrl: string | null = null;
+  let recoveryFailure: string | null = null;
 
   // Nothing extractable means the file is a scan or a phone photo — page
   // images with no text layer. About one in five of these resumes is. Rather
@@ -239,13 +240,22 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
       recoveredDriveUrl = rec.driveUrl;
       console.log(`[resume_manual_batch] ${args.fileName}: no text in the file; recovered ${rec.charCount} characters by Drive text recognition`);
     } else {
-      console.warn(`[resume_manual_batch] ${args.fileName}: text recognition failed at the ${rec.stage} stage: ${rec.error}`);
+      recoveryFailure = `${rec.stage} stage: ${rec.error}`;
+      console.warn(`[resume_manual_batch] ${args.fileName}: text recognition failed at the ${recoveryFailure}`);
     }
   }
 
   if (!resumeText) {
-    await rmbAlert(args, "No readable text in this file, and text recognition could not recover any either. Likely a blank page, handwriting, or a photo of something that is not a document. Needs manual entry.");
-    return fail("resume text extraction returned nothing, and text recognition recovered nothing either");
+    // Say WHICH step broke. Without this the only record is a console line
+    // nobody can read after the fact, and the three possible causes — Gmail,
+    // the conversion, the read — have three different fixes.
+    const why = recoveryFailure
+      ? `text recognition failed at the ${recoveryFailure}`
+      : args.recovery
+        ? "text recognition was not attempted (no Gmail attachment id on this file)"
+        : "text recognition is switched off for this caller";
+    await rmbAlert(args, `No readable text in this file, and ${why}. Needs manual entry.`);
+    return fail(`no text in file; ${why}`);
   }
 
   // ---- 2. Identity: language model first, twice ------------------------
