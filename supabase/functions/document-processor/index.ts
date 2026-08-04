@@ -818,60 +818,173 @@ async function handleBankStatement(
   return { jeCount, suspenseCount };
 }
 
-// Prefix for statements whose account cannot be determined from the email.
-// The chart of accounts is numeric, so any value carrying this prefix fails
-// the account lookup loudly instead of filing money to the wrong account.
+// Prefix for statements whose account cannot be determined. The chart of
+// accounts is numeric, so any value carrying this prefix fails the account
+// lookup loudly instead of filing money to the wrong account.
 const UNMAPPED = "UNMAPPED-";
 
-function resolveSourceAccount(fromEmail: string, subject: string, fileName: string): string {
+// ---- Statement account routing --------------------------------------------
+//
+// The ACCOUNT TABLES are the source of truth. credit_accounts and bank_accounts
+// each carry the account's last-4 (plus credit_accounts.alternate_last4s for
+// reissued cards) and a chart_account_id. Adding or re-numbering an account is a
+// row edit in those tables — it must never require touching this file again.
+//
+// Deliberately NOT matching digits against chart_of_accounts names: last-4 3977
+// appears in the names of both 1012 and 1050, and 1247 in both 2114 and 2140.
+// Name matching picks the wrong one. The tables carry exactly one row per real
+// account, which is why they are the thing to read.
+//
+// is_active is respected. Retired accounts (TRB, State Farm Bank 2353, Capital
+// One Spark) resolve to UNMAPPED so a surprise statement stops instead of
+// posting somewhere plausible.
+
+type AccountEntry = {
+  last4s: string[];
+  code: string | null;
+  name: string;
+  active: boolean;
+};
+
+let accountIndexCache: { agencyId: string; entries: AccountEntry[] } | null = null;
+
+async function loadAccountIndex(agencyId: string): Promise<AccountEntry[]> {
+  if (accountIndexCache && accountIndexCache.agencyId === agencyId) {
+    return accountIndexCache.entries;
+  }
+  const entries: AccountEntry[] = [];
+
+  const { data: cards, error: cardErr } = await sb
+    .from("credit_accounts")
+    .select("account_name, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
+    .eq("agency_id", agencyId);
+  if (cardErr) throw new Error(`credit_accounts read failed: ${cardErr.message}`);
+  for (const c of cards ?? []) {
+    const last4s = [c.account_number_last4, ...(c.alternate_last4s ?? [])]
+      .filter((v: string | null): v is string => !!v);
+    if (!last4s.length) continue;
+    entries.push({
+      last4s,
+      code: (c as any).chart_of_accounts?.account_code ?? null,
+      name: c.account_name ?? "credit account",
+      active: c.is_active !== false,
+    });
+  }
+
+  const { data: banks, error: bankErr } = await sb
+    .from("bank_accounts")
+    .select("account_name, account_number_last4, is_active, chart_of_accounts(account_code)")
+    .eq("agency_id", agencyId);
+  if (bankErr) throw new Error(`bank_accounts read failed: ${bankErr.message}`);
+  for (const b of banks ?? []) {
+    if (!b.account_number_last4) continue;
+    entries.push({
+      last4s: [b.account_number_last4],
+      code: (b as any).chart_of_accounts?.account_code ?? null,
+      name: b.account_name ?? "bank account",
+      active: b.is_active !== false,
+    });
+  }
+
+  accountIndexCache = { agencyId, entries };
+  return entries;
+}
+
+// Words Marie and Alvi put in filenames, translated to an ACCOUNT NUMBER only.
+// The number is then resolved through the tables like any other, so the
+// account-to-chart mapping lives in exactly one place. Order matters — most
+// specific first, or a personal statement lands on an agency account.
+const LABEL_TO_LAST4: Array<[RegExp, string]> = [
+  [/kids[\s_-]?profit[\s_-]?disc/, "6730"],
+  [/us[\s_-]?bank[\s_-]?personal[\s_-]?checking|personal[\s_-]?checking/, "0353"],
+  [/tithe[\s_-]?tax/, "6755"],
+  [/us[\s_-]?bank[\s_-]?other[\s_-]?income|other[\s_-]?income/, "2545"],
+  [/sf[\s_-]?personal[\s_-]?cc/, "8847"],
+  [/us\s*bank\s*income/, "3977"],
+  [/us\s*bank\s*expenses/, "4335"],
+  [/us\s*bank\s*cc/, "3447"],
+  [/rbfcu[\s_-]?checking|randolph[\s_-]?brooks[\s_-]?checking/, "6608"],
+  [/rbfcu|randolph[\s_-]?brooks/, "6596"],
+  [/discover[\s_-]?tithe|discover[\s_-]?cc|discover/, "3208"],
+  [/amex[\s_-]?personal/, "1006"],
+  [/chase/, "7762"],
+  [/citi/, "1247"],
+  [/capital[\s_-]?one/, "7435"],
+  [/amex|american[\s_-]?express/, "1003"],
+  // Generic US Bank fallback — Income. Must stay LAST of the US Bank rules.
+  [/usbank|us[\s_-]?bank/, "3977"],
+];
+
+// Accounts that are gone. Named explicitly so the failure message says why.
+const RETIRED_HINTS: Array<[RegExp, string]> = [
+  [/truist|trb/, "TRB-RETIRED"],
+  [/statefarm|sf[\s.-]?ach/, "SF-BANK-RETIRED"],
+  [/spark/, "SPARK-RETIRED"],
+];
+
+async function resolveSourceAccount(
+  agencyId: string,
+  fromEmail: string,
+  subject: string,
+  fileName: string,
+): Promise<string> {
   const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
 
-  // ---- US Bank PERSONAL sub-account routing (Alvi's zip labels, added
-  // 2026-07-27). Order matters — most specific first. These must be checked
-  // BEFORE the generic "us bank" fallback below, or personal statements
-  // silently route to the agency Income account (COA-007) and post to the
-  // wrong entity. Kids Profit Disc account was ingested manually 2026-07-27
-  // as one-off; going forward the labels below auto-route.
-  if (/kids[\s_-]?profit[\s_-]?disc|\b6730\b/.test(blob)) return "1072";
-  if (/us[\s_-]?bank[\s_-]?personal[\s_-]?checking|personal[\s_-]?checking|\b0353\b/.test(blob)) return "1070";
-  if (/tithe[\s_-]?tax|\b6755\b/.test(blob)) return "1073";
-  if (/us[\s_-]?bank[\s_-]?other[\s_-]?income|other[\s_-]?income|\b2545\b/.test(blob)) return "1071";
-  if (/sf[\s_-]?personal[\s_-]?cc|\b8847\b/.test(blob)) return "2173";
+  let entries: AccountEntry[];
+  try {
+    entries = await loadAccountIndex(agencyId);
+  } catch (e) {
+    // Never guess an account because a lookup failed.
+    return UNMAPPED + "ACCOUNT-TABLE-UNREADABLE";
+  }
 
-  // ---- US Bank AGENCY sub-account routing (order matters — most specific first).
-  // File naming convention (Marie's spec): "US Bank {Label} {YY-MM}.pdf" where
-  // Label is one of Income (3977, acct 1012), Expenses (4335, acct 1011), CC
-  // (3447, acct 2113). Account numbers also match if statement text is scanned in.
-  if (/us\s*bank\s*income|\b3977\b/.test(blob)) return "1012";
-  if (/us\s*bank\s*expenses|\b4335\b/.test(blob)) return "1011";
-  if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "2113";
-  // Generic US Bank fallback — Income (conservative default, matches historic behavior)
-  if (/usbank|us[\s_-]?bank/.test(blob)) return "1012";
+  const matchLast4 = (last4: string): string => {
+    const hits = entries.filter((e) => e.last4s.includes(last4));
+    const live = hits.filter((e) => e.active);
+    if (live.length === 1) {
+      return live[0].code ?? UNMAPPED + `NO-CHART-LINK-${last4}`;
+    }
+    if (live.length > 1) {
+      const codes = [...new Set(live.map((e) => e.code ?? "null"))];
+      // Same account listed twice against one chart account is not a conflict.
+      if (codes.length === 1 && codes[0] !== "null") return codes[0];
+      return UNMAPPED + `AMBIGUOUS-${last4}`;
+    }
+    if (hits.length) return UNMAPPED + `RETIRED-${last4}`;
+    return "";
+  };
 
-  // ---- Non-US-Bank personal accounts (Alvi's zip labels, added 2026-07-27).
-  // RBFCU savings and Discover Tithe CC both live on Peter's personal entity.
-  if (/rbfcu|randolph[\s_-]?brooks|\b6596\b/.test(blob)) return "1076";
-  if (/discover[\s_-]?tithe|discover[\s_-]?cc|\b3208\b/.test(blob)) return "2171";
+  // 1. An account number in the sender, subject or filename wins outright.
+  //    Longest-first so a 4-digit run inside a longer number is not mistaken
+  //    for the account. Only digits the tables actually know are considered.
+  const known = new Set<string>();
+  for (const e of entries) for (const l of e.last4s) known.add(l);
+  for (const digits of blob.match(/\d{4,}/g) ?? []) {
+    // Try the whole run, then its trailing 4 (statements often print the full
+    // number, e.g. "1-047-8744-3977" flattens to a long run ending in 3977).
+    for (const cand of [digits, digits.slice(-4)]) {
+      if (known.has(cand)) {
+        const r = matchLast4(cand);
+        if (r) return r;
+      }
+    }
+  }
 
-  // ---- Personal CC catchalls (last-4 hits from statement text) ------------
-  if (/\b1006\b/.test(blob)) return "2170"; // AMEX Personal
-  if (/\b7435\b/.test(blob)) return "2172"; // Capital One Personal
+  // 2. No usable number — fall back to the filename label, resolved through
+  //    the same tables.
+  for (const [re, last4] of LABEL_TO_LAST4) {
+    if (re.test(blob)) {
+      const r = matchLast4(last4);
+      if (r) return r;
+      return UNMAPPED + `LABEL-${last4}-NOT-IN-TABLES`;
+    }
+  }
 
-  // ---- Chase — Marketing 1 is the only Chase card on file (credit_accounts
-  // last4 7762, alternate 7770 -> acct 2110). No "Marketing 2" card or account
-  // exists, so a generic Chase match is Marketing 1.
-  if (/chase[\s\-_]*(mktg|marketing)[\s\-_]*1/.test(blob)) return "2110";
-  if (/chase/.test(blob)) return "2110";
+  // 3. Known-dead institutions get a named failure rather than a generic one.
+  for (const [re, hint] of RETIRED_HINTS) {
+    if (re.test(blob)) return UNMAPPED + hint;
+  }
 
-  // Truist/TRB (4 accounts), State Farm Bank checking 2353, and Capital One
-  // Spark are all is_active=false in bank_accounts / credit_accounts. Retired.
-  // A statement from one of these is a surprise and must stop, not route.
-  if (/truist|trb/.test(blob)) return UNMAPPED + "TRB-RETIRED";
-  if (/statefarm|sf[\s.-]?ach/.test(blob)) return UNMAPPED + "SF-BANK-RETIRED";
-  if (/amex|american[\s_-]?express/.test(blob)) return "2141"; // AMEX Discretionary (PaperNewt, last4 1003)
-  if (/capital[\s_-]?one/.test(blob)) return "2172"; // only active Cap One card is Personal 7435
-  if (/citi/.test(blob)) return "2140"; // credit_accounts: Citi 1247 -> 2140 PaperNewt printing card
-  if (/spark/.test(blob)) return UNMAPPED + "SPARK-RETIRED";
   // No silent default. Returning an account here guesses whose money this is;
   // an unrecognised statement must stop and be looked at instead.
   return UNMAPPED + "UNRECOGNISED";
@@ -1184,7 +1297,7 @@ async function processOneAttachment(
     docType === "bank_statement_primary" ||
     docType === "bank_statement_secondary";
   const sourceAccountCode = isBankStmt
-    ? resolveSourceAccount(att.fromEmail, att.subject, att.fileName)
+    ? await resolveSourceAccount(ctx.agencyId, att.fromEmail, att.subject, att.fileName)
     : null;
   const documentId = await insertSourceDocument(
     ctx, att, docType, drive, sourceAccountCode, uploadSource,
