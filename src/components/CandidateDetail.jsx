@@ -230,12 +230,12 @@ const originPillColors = (tone) => {
 // construct from source prefix. Mapping per hiregauge_rules
 // rule_type=interview_score_rubric row "Probe source to construct mapping".
 const constructForSource = (source) => {
-  if (!source) return "nature";
+  if (!source) return "capability";
   const s = String(source);
-  if (s.startsWith("warmup:") || s === "candidate_questions" || s.startsWith("motivation:")) return "drivers";
-  if (s.startsWith("character_floor:") || s.startsWith("validity:")) return "nurture";
-  if (s.startsWith("resume:") && /(agent-title|title-float|gap|honesty|misattrib)/i.test(s)) return "nurture";
-  return "nature"; // default: manual:*, resume:*, framework:archetype:*, structure:*, trait:*, behavioral_tell:*
+  if (s.startsWith("warmup:") || s === "candidate_questions" || s.startsWith("motivation:")) return "commitment";
+  if (s.startsWith("character_floor:") || s.startsWith("validity:")) return "character";
+  if (s.startsWith("resume:") && /(agent-title|title-float|gap|honesty|misattrib)/i.test(s)) return "character";
+  return "capability"; // default: manual:*, resume:*, framework:archetype:*, structure:*, trait:*, behavioral_tell:*
 };
 
 const verdictPillColors = (verdict) => {
@@ -256,7 +256,7 @@ const renderScorePill = (entry, _source) => {
   // default suggestions but no longer used here.
   const scores = entry?.scores;
   if (!scores || typeof scores !== "object") return null;
-  const constructs = ["nature", "nurture", "drivers"].filter((c) => scores[c]);
+  const constructs = ["capability", "character", "commitment"].filter((c) => scores[c]);
   if (constructs.length === 0) return null;
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
@@ -437,9 +437,9 @@ const IntelligenceHeadline = ({ composite, floor, ceiling, roleLabel, T }) => {
 // Falls back to a hint when no extraction exists (usually because
 // document-processor hasn't parsed the file yet).
 // Resume layer expansion body — shows HOW the resume score was arrived at.
-// Renders (when present): composite + verdict pill, Nature/Nurture/Drivers
-// construct rollups with sub-signals grouped underneath (11 total: 3 Nature,
-// 4 Nurture, 4 Drivers), fired resume-tell rule chips, and a collapsible
+// Renders (when present): composite + verdict pill, Capability/Character/Commitment
+// construct rollups with sub-signals grouped underneath (11 total: 3 Capability,
+// 4 Character, 4 Commitment), fired resume-tell rule chips, and a collapsible
 // extracted-text pane. Sub-signal scores + reasoning read from the resume_analysis
 // jsonb col (migration 20260723080000 step 4a). Step 4d (migration 20260723225121)
 // removed the flat-col fallback — jsonb is the sole source. All scores render on
@@ -447,9 +447,9 @@ const IntelligenceHeadline = ({ composite, floor, ceiling, roleLabel, T }) => {
 function renderResumeLayer(detail, T, resumeThresh) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
-  const nature = detail?.res_nature;
-  const nurture = detail?.res_nurture;
-  const drivers = detail?.res_drivers;
+  const capability = detail?.res_capability;
+  const character = detail?.res_character;
+  const commitment = detail?.res_commitment;
   // resume_analysis jsonb (step 4a) is the sole source of truth for signals,
   // rules_fired, scored_at, scored_model, qualifications. Step 4d removed the
   // flat-col fallback.
@@ -465,23 +465,23 @@ function renderResumeLayer(detail, T, resumeThresh) {
   };
 
   // Sub-signal → construct mapping. Canonical from hiregauge_rules.resume_score_rubric.
-  //   Nature  = mean(Autonomy, Leadership Emergence, Interpersonal Substrate)
-  //   Nurture = mean(Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility)
-  //   Drivers = mean(Trajectory Direction, Coherent Pursuit, Follow-Through, Goal Orientation)
+  //   Capability = mean(Autonomy, Leadership Emergence, Interpersonal Substrate)
+  //   Character  = mean(Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility)
+  //   Commitment = mean(Trajectory Direction, Coherent Pursuit, Follow-Through, Goal Orientation)
   // Each sub-signal resolves via sigOf(slug) → jsonb-first, flat-col fallback.
   const CONSTRUCTS = [
-    { key: "nature",  label: "Nature",  score: nature,  signals: [
+    { key: "capability", label: "Capability", score: capability, signals: [
       { label: "Autonomy",                slug: "autonomy" },
       { label: "Leadership Emergence",    slug: "leadership_emergence" },
       { label: "Interpersonal Substrate", slug: "interpersonal_substrate" },
     ]},
-    { key: "nurture", label: "Nurture", score: nurture, signals: [
+    { key: "character", label: "Character", score: character, signals: [
       { label: "Honesty",                 slug: "honesty" },
       { label: "Concern for Others",      slug: "concern_for_others" },
       { label: "Hard Work Ethic",         slug: "hard_work_ethic" },
       { label: "Personal Responsibility", slug: "personal_responsibility" },
     ]},
-    { key: "drivers", label: "Drivers", score: drivers, signals: [
+    { key: "commitment", label: "Commitment", score: commitment, signals: [
       { label: "Trajectory Direction",    slug: "trajectory_direction" },
       { label: "Coherent Pursuit",        slug: "coherent_pursuit" },
       { label: "Follow-Through",          slug: "follow_through" },
@@ -569,12 +569,12 @@ function renderResumeLayer(detail, T, resumeThresh) {
         </div>
       ) : null}
 
-      {/* Construct rollups — what went into Nature / Nurture / Drivers.
+      {/* Construct rollups — what went into Capability / Character / Commitment.
           Each construct score is the mean of its sub-signals; sub-signals
           nested under their construct heading with reasoning text.
           All scores displayed as whole numbers on the 0-100 scale.
           Sub-signal values resolve via sigOf() from resume_analysis.signals jsonb. */}
-      {(nature != null || nurture != null || drivers != null || anySubSignalScored) && (
+      {(capability != null || character != null || commitment != null || anySubSignalScored) && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
             How we got here — construct rollups
@@ -1614,16 +1614,16 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
         60-min interview: 5 min rapport · 10 min warm-up · 30 min deep-dive · 10 min candidate Qs · 5 min close
       </div>
 
-      {/* Score breakdown — 3-column grid (Nature | Nurture | Drivers), each column showing
+      {/* Score breakdown — 3-column grid (Capability | Character | Commitment), each column showing
           construct name + weight + list of contributing answers with per-construct verdict pills.
           Construct score number + composite footer intentionally omitted — Results matrix above
           already surfaces both. Grid auto-wraps to fewer columns on narrow viewports. */}
       {(() => {
         const answers = detail?.interview_answers || {};
         const constructOrder = [
-          { key: "nature",  label: "Nature",  weight: "14.3%", score: detail?.iv_nature },
-          { key: "nurture", label: "Nurture", weight: "42.9%", score: detail?.iv_nurture },
-          { key: "drivers", label: "Drivers", weight: "42.9%", score: detail?.iv_drivers },
+          { key: "capability", label: "Capability", weight: "14.3%", score: detail?.iv_capability },
+          { key: "character",  label: "Character",  weight: "42.9%", score: detail?.iv_character },
+          { key: "commitment", label: "Commitment", weight: "42.9%", score: detail?.iv_commitment },
         ];
         const rows = constructOrder.map((c) => {
           const contribs = Object.entries(answers)
@@ -1939,7 +1939,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // Which Results-matrix layer row is expanded (null = none). Only one
   // layer expanded at a time. Click chevron in the layer label cell.
   const [expandedLayer, setExpandedLayer] = useState(null);
-  // Three-construct verdict (Nature/Nurture/Drivers) — per-layer verdicts +
+  // Three-construct verdict (Capability/Character/Commitment) — per-layer verdicts +
   // framework prediction + retrospective observation + calibration status.
   // Fetched via verdict_overall RPC.
   const [threeConstruct, setThreeConstruct] = useState(null);
@@ -2030,7 +2030,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     supabase.rpc("assessment_intelligence_composite", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!error && data) setIntelligence(data); })
       .catch(() => {});
-    // Three-construct verdict: Nature/Nurture/Drivers per-layer verdicts +
+    // Three-construct verdict: Capability/Character/Commitment per-layer verdicts +
     // pre-hire framework prediction + retrospective observation + calibration.
     supabase.rpc("verdict_overall", { p_candidate_id: detail.id })
       .then(({ data, error }) => {
@@ -2165,7 +2165,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       alert("Save failed: " + error.message);
       return;
     }
-    // Refetch from view so computed aggregates (res_nature/nurture/drivers/composite) refresh
+    // Refetch from view so computed aggregates (res_capability/character/commitment/composite) refresh
     const { data } = await supabase
       .from("v_hiring_candidates")
       .select("*")
@@ -2350,7 +2350,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
 
       {/* Results — Suggs four-layer × three-construct framework read from
           verdict_overall. The 4×3 matrix
-          (Resume/Assessment/Interview/Reference × Nature/Nurture/Drivers)
+          (Resume/Assessment/Interview/Reference × Capability/Character/Commitment)
           drives the top verdict; each layer row is now clickable to expand
           layer-specific detail. Resume expansion shows extracted resume
           text; Assessment expansion holds the full LSS + traits + role-fit
@@ -2384,16 +2384,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 : (detail?.overall_score ?? null);
               const layers = [
                 { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
-                // Assessment layer sources composite/nature/nurture/drivers from v_hiring_candidates
+                // Assessment layer sources composite/capability/character/commitment from v_hiring_candidates
                 // (populated by role-fit click). Score is 0-100 like Resume. Verdict computed by layerVerdict.
                 { key: "assessment", label: "Assessment", score: assessmentLayerScore, verdict: null },
                 { key: "interview",  label: "Interview",  score: detail?.iv_composite,           verdict: detail?.interview_analysis?.verdict },
                 { key: "reference",  label: "Reference",  score: threeConstruct.reference_score,  verdict: threeConstruct.reference_verdict },
               ];
               const constructs = [
-                { key: "nature",  label: "Nature",  weight: cw.nature,  score: threeConstruct.nature_score  },
-                { key: "nurture", label: "Nurture", weight: cw.nurture, score: threeConstruct.nurture_score },
-                { key: "drivers", label: "Drivers", weight: cw.drivers, score: threeConstruct.drivers_score },
+                { key: "capability", label: "Capability", weight: cw.capability, score: threeConstruct.capability_score },
+                { key: "character",  label: "Character",  weight: cw.character,  score: threeConstruct.character_score  },
+                { key: "commitment", label: "Commitment", weight: cw.commitment, score: threeConstruct.commitment_score },
               ];
               const scoreBg = (v) => v == null ? T.slate50
                                    : v >= 75 ? T.greenLt
@@ -2503,13 +2503,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                 // from view assessment_* cols, interview from iv_*, resume/reference
                                 // from RPC matrix.
                                 const cell = layer.key === "assessment"
-                                  ? (c.key === "nature" ? detail?.assessment_nature
-                                    : c.key === "nurture" ? detail?.assessment_nurture
-                                    : detail?.assessment_drivers)
+                                  ? (c.key === "capability" ? detail?.assessment_capability
+                                    : c.key === "character" ? detail?.assessment_character
+                                    : detail?.assessment_commitment)
                                   : layer.key === "interview"
-                                  ? (c.key === "nature" ? detail?.iv_nature
-                                    : c.key === "nurture" ? detail?.iv_nurture
-                                    : detail?.iv_drivers)
+                                  ? (c.key === "capability" ? detail?.iv_capability
+                                    : c.key === "character" ? detail?.iv_character
+                                    : detail?.iv_commitment)
                                   : matrix?.[c.key]?.[layer.key];
                                 const w = weights?.[c.key]?.[layer.key];
                                 const cellDisplay = cell == null ? "—"
@@ -2526,19 +2526,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     <div style={{ fontSize: weightFont, color: cell == null ? T.slate500 : cellFg, fontWeight: 600 }}>
                                       weight {pctFmt(w)}
                                     </div>
-                                    {layer.key === "assessment" && c.key === "nurture" && (
+                                    {layer.key === "assessment" && c.key === "character" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
                                         title="Suggs character subscores: Honesty (from distortion) · Concern for Others (compassion 0.7 + belief 0.3) · Hard Work Ethic (from reliability)"
                                       >
-                                        H {detail?.assessment_nurture_honesty != null ? Math.round(Number(detail.assessment_nurture_honesty)) : "—"}
+                                        H {detail?.assessment_character_honesty != null ? Math.round(Number(detail.assessment_character_honesty)) : "—"}
                                         {" · "}
-                                        C {detail?.assessment_nurture_concern != null ? Math.round(Number(detail.assessment_nurture_concern)) : "—"}
+                                        C {detail?.assessment_character_concern != null ? Math.round(Number(detail.assessment_character_concern)) : "—"}
                                         {" · "}
-                                        W {detail?.assessment_nurture_work_ethic != null ? Math.round(Number(detail.assessment_nurture_work_ethic)) : "—"}
+                                        W {detail?.assessment_character_work_ethic != null ? Math.round(Number(detail.assessment_character_work_ethic)) : "—"}
                                       </div>
                                     )}
-                                    {layer.key === "assessment" && c.key === "drivers" && (
+                                    {layer.key === "assessment" && c.key === "commitment" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
                                         title="Suggs motivation drivers measurable via CTS: Achievement (deadline motivation) · Recognition (recognition drive) · Autonomy (independent spirit). Six other Suggs driver types not measurable via CTS."
