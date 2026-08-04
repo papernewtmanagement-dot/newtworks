@@ -7181,6 +7181,98 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   skip: "unsorted",
 };
 
+/**
+ * Which published set of Google Drive tools the folder helpers ask for.
+ *
+ * Composio publishes its tools in dated sets, and a request that does not name
+ * one gets the oldest set — which is missing tools the account genuinely has,
+ * and answers "Tool ... not found" when you reach for them. That reads exactly
+ * like a permission problem and is not one. See the long note in lib/composio.ts.
+ *
+ * Named here rather than globally because a newer set can change the shape of
+ * what comes back, and the payroll, statement and comp parsers read those
+ * shapes. The plain upload below deliberately does NOT name a set: it works on
+ * the oldest one, and there is nothing to gain by moving it.
+ */
+const DRIVE_FOLDER_TOOLKIT_VERSION = "20260721_00";
+
+/** Folder ids worked out during this run. Keyed "<parent id>/<folder name>". */
+const driveFolderCache = new Map<string, string>();
+
+/**
+ * Find a folder by name inside a parent, creating it if it is not there.
+ * Returns null if neither works, and the caller then files one level up rather
+ * than not at all.
+ */
+async function resolveDriveFolder(
+  ctx: RunCtx, name: string, parentId: string,
+): Promise<string | null> {
+  const key = `${parentId}/${name}`;
+  const cached = driveFolderCache.get(key);
+  if (cached) return cached;
+  if (!ctx.driveAccountId) return null;
+
+  const find = await callComposio({
+    apiKey: ctx.composioApiKey,
+    userId: ctx.composioUserId,
+    connectedAccountId: ctx.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_FIND_FOLDER",
+    toolArguments: { name_exact: name, parent_folder_id: parentId },
+    toolkitVersion: DRIVE_FOLDER_TOOLKIT_VERSION,
+  });
+  const files = find.ok ? (find.data?.files ?? find.data?.data?.files ?? []) : [];
+  let id: string = Array.isArray(files) && files.length > 0 ? (files[0]?.id ?? "") : "";
+
+  if (!id) {
+    const made = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.driveAccountId,
+      toolSlug: "GOOGLEDRIVE_CREATE_FOLDER",
+      toolArguments: { name, parent_id: parentId },
+      toolkitVersion: DRIVE_FOLDER_TOOLKIT_VERSION,
+    });
+    id = made.ok ? (made.data?.id ?? made.data?.data?.id ?? "") : "";
+    if (!id) {
+      console.warn(`[document-processor] could not find or create Drive folder "${name}" under ${parentId}: ${find.error ?? ""} ${made.error ?? ""}`);
+      return null;
+    }
+  }
+
+  driveFolderCache.set(key, id);
+  return id;
+}
+
+/**
+ * Where a document belongs: <Newtworks root>/Documents/<year-month>/<type>.
+ *
+ * This is the structure the agency has always used. It was lost on 2026-08-04
+ * when the upload was repaired, because the working upload tool places files by
+ * folder id and only the root folder's id was known. Both folder tools turn out
+ * to be reachable once a tool set is named, so the structure is back.
+ *
+ * Every step falls back one level up. A file in the right year but the wrong
+ * type folder can be moved later; a file that never got filed cannot.
+ */
+async function documentFolderId(
+  ctx: RunCtx, docType: DocType, txnDate: string,
+): Promise<string | null> {
+  const root = ctx.driveParentFolderId ?? null;
+  if (!root) return null;
+
+  const yearMonth = /^\d{4}-\d{2}/.test(txnDate ?? "")
+    ? txnDate.slice(0, 7)
+    : new Date().toISOString().slice(0, 7);
+  const leaf = DRIVE_FOLDER_BY_DOCTYPE[docType] ?? "unsorted";
+
+  const documents = await resolveDriveFolder(ctx, "Documents", root);
+  if (!documents) return root;
+  const month = await resolveDriveFolder(ctx, yearMonth, documents);
+  if (!month) return documents;
+  const typeFolder = await resolveDriveFolder(ctx, leaf, month);
+  return typeFolder ?? month;
+}
+
 // FIXED 2026-08-04. This had been failing on EVERY document for weeks and
 // saying nothing. GOOGLEDRIVE_UPLOAD_FILE requires a single `file_to_upload`
 // object holding the file's name, type and storage key; the old call passed
@@ -7206,6 +7298,9 @@ async function uploadToDrive(
   // (inner zip members). Skip rather than fail loudly — the zip itself is filed.
   if (!s3Key) return null;
 
+  // Year-month and document-type folder, created on first use.
+  const folderId = await documentFolderId(ctx, docType, txnDate);
+
   const res = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
@@ -7217,7 +7312,7 @@ async function uploadToDrive(
         mimetype: att.mimeType || "application/pdf",
         s3key: s3Key,
       },
-      ...(ctx.driveParentFolderId ? { folder_to_upload_to: ctx.driveParentFolderId } : {}),
+      ...(folderId ? { folder_to_upload_to: folderId } : {}),
     },
   });
 
@@ -8422,6 +8517,153 @@ async function processResumeTextRecoveryMode(
   };
 }
 
+// ---- mode: drive_backfill --------------------------------------------------
+// Files a Drive copy for documents that never got one.
+//
+// WHY THIS IS NEEDED: the Drive upload was rejecting every single file for
+// weeks and returning quietly, so nothing was filed and nothing was raised. It
+// was repaired on 2026-08-04, but by then 148 resumes, the August bank
+// statements, payroll and the card statements all had no Drive copy. Those
+// documents were processed correctly — their figures are in the books. It is
+// only the filed copy that is missing.
+//
+// LIMIT: this refiles from Gmail using the message and attachment ids already
+// on the row, so it only works while the original email is still in the
+// mailbox. Anything older than that cannot be recovered from here and needs the
+// file from another source.
+//
+// Body: { agency_id, shared_secret, mode: "drive_backfill",
+//         limit?: number, document_ids?: string[], dry_run?: boolean,
+//         classification?: string }
+interface DriveBackfillOutcome {
+  documentId: string;
+  fileName: string;
+  status: "filed" | "gone_from_gmail" | "upload_failed" | "would_run";
+  driveFileId?: string;
+  error?: string;
+}
+
+async function processDriveBackfillMode(
+  ctx: RunCtx, body: any,
+): Promise<{
+  considered: number; filed: number; goneFromGmail: number;
+  uploadFailed: number; dryRun: boolean; outcomes: DriveBackfillOutcome[];
+}> {
+  const documentIds: string[] = Array.isArray(body?.document_ids)
+    ? body.document_ids.filter((x: unknown) => typeof x === "string")
+    : [];
+  const limit = Math.min(Math.max(Number(body?.limit) || 25, 1), 100);
+  const dryRun = body?.dry_run === true;
+  const classification = typeof body?.classification === "string" ? body.classification : null;
+
+  let q = sb
+    .from("documents")
+    .select("id, file_name, groq_classification, gmail_message_id, gmail_attachment_id, uploaded_at")
+    .eq("agency_id", ctx.agencyId)
+    .is("drive_file_id", null)
+    .not("gmail_message_id", "is", null)
+    .not("gmail_attachment_id", "is", null);
+
+  if (documentIds.length > 0) q = q.in("id", documentIds);
+  if (classification) q = q.eq("groq_classification", classification);
+
+  // Newest first on purpose: the newest are the ones still inside the mailbox,
+  // so the runs that can actually succeed happen before the ones that cannot.
+  const { data: rows, error: selErr } = await q
+    .order("uploaded_at", { ascending: false })
+    .limit(limit);
+
+  if (selErr) {
+    return { considered: 0, filed: 0, goneFromGmail: 0, uploadFailed: 0, dryRun, outcomes: [] };
+  }
+
+  const outcomes: DriveBackfillOutcome[] = [];
+  let filed = 0, goneFromGmail = 0, uploadFailed = 0;
+
+  for (const row of rows ?? []) {
+    const id = (row as any).id as string;
+    const fileName = (row as any).file_name ?? "(unnamed)";
+    const docType = ((row as any).groq_classification ?? "skip") as DocType;
+    const uploadedAt = (row as any).uploaded_at ?? new Date().toISOString();
+
+    if (dryRun) {
+      outcomes.push({ documentId: id, fileName, status: "would_run" });
+      continue;
+    }
+
+    // Ask Gmail for the attachment. The reply carries a temporary signed link
+    // whose path is the storage key the upload tool wants. The bytes themselves
+    // are not needed — Drive collects the file itself.
+    const gm = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.gmailAccountId,
+      toolSlug: "GMAIL_GET_ATTACHMENT",
+      toolArguments: {
+        message_id: (row as any).gmail_message_id,
+        attachment_id: (row as any).gmail_attachment_id,
+        file_name: fileName,
+        user_id: "me",
+      },
+    });
+    const s3url = gm.ok
+      ? (gm.data?.file?.s3url ?? gm.data?.data?.file?.s3url ?? null)
+      : null;
+    if (!s3url) {
+      goneFromGmail++;
+      outcomes.push({
+        documentId: id, fileName, status: "gone_from_gmail",
+        error: gm.ok ? "Gmail returned no download link" : String(gm.error).slice(0, 300),
+      });
+      continue;
+    }
+
+    let s3Key: string | null = null;
+    try {
+      const path = new URL(s3url).pathname.replace(/^\/+/, "");
+      s3Key = path.length > 0 ? decodeURIComponent(path) : null;
+    } catch { s3Key = null; }
+    if (!s3Key) {
+      uploadFailed++;
+      outcomes.push({ documentId: id, fileName, status: "upload_failed", error: "could not read a storage key out of the Gmail link" });
+      continue;
+    }
+
+    const att: AttachmentInput = {
+      messageId: (row as any).gmail_message_id,
+      threadId: "",
+      fromEmail: "",
+      subject: "",
+      receivedAt: uploadedAt,
+      fileName,
+      mimeType: fileName.toLowerCase().endsWith(".zip") ? "application/zip" : "application/pdf",
+      attachmentId: (row as any).gmail_attachment_id,
+    } as AttachmentInput;
+
+    // Filed by the date the document arrived. The original path used the
+    // document's own transaction date, which is not on this row — close enough
+    // for a copy whose only job is to be findable.
+    const drive = await uploadToDrive(ctx, att, "", docType, String(uploadedAt).slice(0, 10), s3Key);
+    if (!drive || !drive.driveFileId) {
+      uploadFailed++;
+      outcomes.push({ documentId: id, fileName, status: "upload_failed", error: "Drive rejected the upload; an alert was raised with the reason" });
+      continue;
+    }
+
+    await sb.from("documents")
+      .update({ drive_file_id: drive.driveFileId, drive_url: drive.driveUrl || null })
+      .eq("id", id);
+
+    filed++;
+    outcomes.push({ documentId: id, fileName, status: "filed", driveFileId: drive.driveFileId });
+  }
+
+  return {
+    considered: (rows ?? []).length,
+    filed, goneFromGmail, uploadFailed, dryRun, outcomes,
+  };
+}
+
 // ---- mode: composio_probe --------------------------------------------------
 // Asks Composio, using THIS function's own key, what it can actually see and
 // do. It exists because a tool working from an interactive session proves
@@ -8566,6 +8808,16 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processResumeTextRecoveryMode(trCtx, body);
     return jsonResponse({ ok: true, mode: "resume_text_recovery", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "drive_backfill") {
+    // File the Drive copies lost while the upload was silently failing.
+    const bfCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      driveParentFolderId: driveFolderId,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processDriveBackfillMode(bfCtx, body);
+    return jsonResponse({ ok: true, mode: "drive_backfill", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "composio_probe") {
     // Read-only capability check. See the note on the function above.
