@@ -382,6 +382,31 @@ function stripExtension(fileName: string): string {
 }
 
 /**
+ * Pull the storage key out of a Composio download link. The link is a signed
+ * URL whose path IS the key, e.g. ".../486473/gmail/GMAIL_GET_ATTACHMENT/
+ * response/abc123?X-Amz-...". The upload tool wants exactly that path.
+ */
+function storageKeyFromUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname.replace(/^\/+/, "");
+    return path.length > 0 ? decodeURIComponent(path) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best guess at the original file's type, from its extension. */
+function guessSourceMime(fileName: string): string {
+  const ext = fileName.toLowerCase().match(/\.([a-z0-9]{1,6})$/)?.[1] ?? "";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "gif") return "image/gif";
+  if (ext === "tif" || ext === "tiff") return "image/tiff";
+  if (ext === "webp") return "image/webp";
+  return "application/pdf";
+}
+
+/**
  * Pull the temporary signed link out of a Composio response, tolerating the
  * two nesting shapes the wrapper can hand back.
  */
@@ -440,74 +465,66 @@ export async function recoverTextFromScannedFile(opts: {
     return { ok: false, stage: "gmail", error: "Gmail returned no download link for the attachment" };
   }
 
-  // ---- 2. Bring it into Drive AS a Google Doc --------------------------
-  // Not every Drive tool is reachable from this function's Composio key: the
-  // first choice below answered "Tool not found" on 2026-08-04 even though it
-  // works from an interactive session, so more than one shape is attempted and
-  // the winner is reported. Whichever runs, the point is the same — naming the
-  // Google Docs type as the target is what makes Drive read the page images.
-  const attempts: Array<{ slug: string; args: Record<string, unknown> }> = [
-    {
-      slug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
-      args: {
-        source_url: sourceUrl,
-        name: stripExtension(fileName),
-        mime_type: DRIVE_DOC_MIME,
-        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
-      },
-    },
-    {
-      slug: "GOOGLEDRIVE_CREATE_FILE_FROM_URL",
-      args: {
-        file_url: sourceUrl,
-        file_name: stripExtension(fileName),
-        mime_type: DRIVE_DOC_MIME,
-        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
-      },
-    },
-    {
-      slug: "GOOGLEDRIVE_UPLOAD_FILE",
-      args: {
-        file_name: stripExtension(fileName),
-        file_path: sourceUrl,
-        mime_type: DRIVE_DOC_MIME,
-        ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
-      },
-    },
-  ];
-
-  let driveFileId = "";
-  let driveUrl = "";
-  let usedSlug = "";
-  const convertErrors: string[] = [];
-
-  for (const attempt of attempts) {
-    const up = await callComposio({
-      apiKey: deps.composioApiKey,
-      userId: deps.composioUserId,
-      connectedAccountId: deps.driveAccountId,
-      toolSlug: attempt.slug,
-      toolArguments: attempt.args,
-    });
-    if (!up.ok) {
-      convertErrors.push(`${attempt.slug}: ${up.error}`);
-      continue;
-    }
-    const id: string = up.data?.id ?? up.data?.data?.id ?? up.data?.file_id ?? "";
-    if (!id) {
-      convertErrors.push(`${attempt.slug}: succeeded but returned no file id`);
-      continue;
-    }
-    driveFileId = id;
-    driveUrl = up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
-    usedSlug = attempt.slug;
-    break;
+  // ---- 2. Bring it into Drive, then convert with text recognition ------
+  // Confirmed by probing the live function on 2026-08-04: this Composio key
+  // cannot reach either URL-based upload tool, and the one it CAN reach wants a
+  // storage key rather than a URL or raw bytes. Gmail already hands back such a
+  // key inside its download link, so it is reused here instead of re-fetching.
+  //
+  // Two steps rather than one, on purpose. The upload keeps a faithful copy of
+  // the original file; the copy is what carries the text recognition. That also
+  // gives these resumes the Drive copy they have never had.
+  const s3Key = storageKeyFromUrl(sourceUrl);
+  if (!s3Key) {
+    return { ok: false, stage: "convert", error: "could not read a storage key out of the Gmail download link" };
   }
 
+  const up = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
+    toolArguments: {
+      file_to_upload: {
+        name: fileName,
+        mimetype: guessSourceMime(fileName),
+        s3key: s3Key,
+      },
+      ...(deps.driveParentFolderId ? { folder_to_upload_to: deps.driveParentFolderId } : {}),
+    },
+  });
+  if (!up.ok) {
+    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_UPLOAD_FILE failed: ${up.error}` };
+  }
+  const driveFileId: string = up.data?.id ?? up.data?.data?.id ?? up.data?.file_id ?? "";
+  const driveUrl: string =
+    up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
   if (!driveFileId) {
-    return { ok: false, stage: "convert", error: `no Drive upload tool worked — ${convertErrors.join(" | ")}` };
+    return { ok: false, stage: "convert", error: "Drive accepted the upload but returned no file id" };
   }
-  console.log(`[text_recovery] ${fileName}: converted in Drive via ${usedSlug}`);
+
+  // Copy it AS a Google Doc. Naming the Doc type as the target is what makes
+  // Drive read the page images; the language hint improves that reading.
+  const conv = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_COPY_FILE_ADVANCED",
+    toolArguments: {
+      fileId: driveFileId,
+      name: `${stripExtension(fileName)} (text)`,
+      mimeType: DRIVE_DOC_MIME,
+      ocrLanguage: "en",
+      ...(deps.driveParentFolderId ? { parents: [deps.driveParentFolderId] } : {}),
+    },
+  });
+  if (!conv.ok) {
+    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_COPY_FILE_ADVANCED failed: ${conv.error}` };
+  }
+  const textDocId: string = conv.data?.id ?? conv.data?.data?.id ?? "";
+  if (!textDocId) {
+    return { ok: false, stage: "convert", error: "Drive copied the file but returned no document id" };
+  }
 
   // ---- 3. Read the recovered text back --------------------------------
   const dl = await callComposio({
@@ -515,7 +532,7 @@ export async function recoverTextFromScannedFile(opts: {
     userId: deps.composioUserId,
     connectedAccountId: deps.driveAccountId,
     toolSlug: "GOOGLEDRIVE_DOWNLOAD_FILE",
-    toolArguments: { fileId: driveFileId, mime_type: "text/plain" },
+    toolArguments: { fileId: textDocId, mime_type: "text/plain" },
   });
   if (!dl.ok) {
     return { ok: false, stage: "read", error: `GOOGLEDRIVE_DOWNLOAD_FILE failed: ${dl.error}` };
@@ -6911,10 +6928,25 @@ async function fetchNewGmailAttachments(ctx: RunCtx): Promise<AttachmentInput[]>
   return attachments;
 }
 
+/**
+ * Pull the storage key out of a Composio download link — the link's path IS
+ * the key. GOOGLEDRIVE_UPLOAD_FILE wants that key, not a URL and not bytes.
+ */
+function storageKeyFromDownloadUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname.replace(/^\/+/, "");
+    return path.length > 0 ? decodeURIComponent(path) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function downloadAttachmentBytes(
   ctx: RunCtx, att: AttachmentInput,
-): Promise<{ ok: true; bytesB64: string } | { ok: false; error: string }> {
-  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64 }; // inner file already in hand
+): Promise<{ ok: true; bytesB64: string; s3Key: string | null } | { ok: false; error: string }> {
+  // Inner zip files have no storage key of their own — they were never
+  // downloaded separately, so there is nothing for Drive to pick up.
+  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64, s3Key: null };
   if (!att.attachmentId) return { ok: false, error: "no attachmentId on outer attachment" };
 
   // Composio's GMAIL_GET_ATTACHMENT returns an s3url to fetch the raw bytes.
@@ -6944,14 +6976,14 @@ async function downloadAttachmentBytes(
       for (let i = 0; i < buf.length; i += CHUNK) {
         bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
       }
-      return { ok: true, bytesB64: btoa(bin) };
+      return { ok: true, bytesB64: btoa(bin), s3Key: storageKeyFromDownloadUrl(s3url) };
     } catch (e) {
       return { ok: false, error: `s3url fetch threw: ${e instanceof Error ? e.message : String(e)}` };
     }
   }
   // Fallback for older Composio response shapes
   const fallback = res.data?.data ?? res.data?.bytes;
-  if (typeof fallback === "string") return { ok: true, bytesB64: fallback };
+  if (typeof fallback === "string") return { ok: true, bytesB64: fallback, s3Key: null };
   return { ok: false, error: "GMAIL_GET_ATTACHMENT returned no s3url and no inline bytes" };
 }
 
@@ -7030,14 +7062,30 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   skip: "unsorted",
 };
 
+// FIXED 2026-08-04. This had been failing on EVERY document for weeks and
+// saying nothing. GOOGLEDRIVE_UPLOAD_FILE requires a single `file_to_upload`
+// object holding the file's name, type and storage key; the old call passed
+// `file_name`, `file_path` and `content_base64`, which are not fields the tool
+// accepts, so every upload was rejected as invalid input. Because the failure
+// returned null quietly, nothing was filed to Drive and nothing was raised —
+// 148 resumes, the August bank statements, payroll and card statements all have
+// no Drive copy as a result.
+//
+// KNOWN LIMIT, follow-on work: the tool places files by folder ID, not by path,
+// and only the Newtworks root folder ID is known. So everything lands in that
+// one folder rather than the year-month and document-type folders the old path
+// string described. That structure needs the folder IDs resolved (or created)
+// before it can be restored. One flat folder beats nothing being filed at all,
+// which is the state this replaces.
 async function uploadToDrive(
   ctx: RunCtx, att: AttachmentInput, bytesB64: string,
-  docType: DocType, txnDate: string,
+  docType: DocType, txnDate: string, s3Key?: string | null,
 ): Promise<{ driveFileId: string; driveUrl: string } | null> {
   if (!ctx.driveAccountId) return null;
-  const folder = DRIVE_FOLDER_BY_DOCTYPE[docType];
-  const yearMonth = txnDate.slice(0, 7);
-  const path = `Newtworks/Documents/${yearMonth}/${folder}/${att.fileName}`;
+
+  // No storage key means the file was never staged where Drive can fetch it
+  // (inner zip members). Skip rather than fail loudly — the zip itself is filed.
+  if (!s3Key) return null;
 
   const res = await callComposio({
     apiKey: ctx.composioApiKey,
@@ -7045,16 +7093,37 @@ async function uploadToDrive(
     connectedAccountId: ctx.driveAccountId,
     toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
     toolArguments: {
-      file_name: att.fileName,
-      file_path: path,
-      content_base64: bytesB64,
-      mime_type: att.mimeType,
+      file_to_upload: {
+        name: att.fileName,
+        mimetype: att.mimeType || "application/pdf",
+        s3key: s3Key,
+      },
+      ...(ctx.driveParentFolderId ? { folder_to_upload_to: ctx.driveParentFolderId } : {}),
     },
   });
-  if (!res.ok) return null;
+
+  if (!res.ok) {
+    // Say so. A silent null here is exactly what hid this for weeks.
+    console.error(`[document-processor] drive_upload_failed: ${att.fileName} docType=${docType} reason="${res.error}"`);
+    try {
+      await sb.from("alerts").insert({
+        agency_id: ctx.agencyId,
+        alert_type: "drive_upload_failed",
+        severity: "warning",
+        title: `Could not file ${att.fileName} to Drive`,
+        message: `The Drive upload was rejected: ${res.error}\n\nThe document was still processed; only its Drive copy is missing.`,
+        module_reference: "document-processor",
+        is_read: false,
+        is_resolved: false,
+        created_at: new Date().toISOString(),
+      });
+    } catch (_e) { /* alerting must never break processing */ }
+    return null;
+  }
+
   return {
-    driveFileId: res.data?.id ?? res.data?.file_id ?? "",
-    driveUrl: res.data?.webViewLink ?? res.data?.url ?? "",
+    driveFileId: res.data?.id ?? res.data?.data?.id ?? res.data?.file_id ?? "",
+    driveUrl: res.data?.webViewLink ?? res.data?.display_url ?? res.data?.url ?? "",
   };
 }
 
@@ -7559,6 +7628,7 @@ async function processOneAttachment(
     return results;
   }
   const bytesB64 = dl.bytesB64;
+  const attachmentS3Key = dl.s3Key;
 
   // ---- ZIP fork --------------------------------------------------------
   if (docType === "archive_bundle") {
@@ -7574,7 +7644,7 @@ async function processOneAttachment(
 
     // Archive the zip itself to Drive for completeness, then walk inner.
     const txnDate = att.receivedAt.slice(0, 10);
-    const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate);
+    const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate, attachmentS3Key);
     const documentId = await insertSourceDocument(
       ctx, att, docType, drive, null, uploadSource,
     );
@@ -7652,7 +7722,7 @@ async function processOneAttachment(
   const inferred = inferDateFromFilename(att.fileName);
   const txnDate = inferred ?? att.receivedAt.slice(0, 10);
 
-  const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate);
+  const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate, attachmentS3Key);
   const isBankStmt =
     docType === "bank_statement_primary" ||
     docType === "bank_statement_secondary";
