@@ -188,6 +188,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // (misnamed column, per operational_rule). Dedup on (agency_id, bank_account_id, transaction_date, amount, description).
   let inserted = 0;
   let skippedInformational = 0;
+  let skippedDuplicate = 0;
   const errors: string[] = [];
   for (const t of rawTxns) {
     if (!t || typeof t.amount !== "number" || !t.date) continue;
@@ -241,6 +242,27 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
         amount: t.amount,
         source_document_id: doc.id,
       };
+      // DEDUP. The bank branch above upserts with an onConflict key; this
+      // branch used a plain insert, so re-ingesting a card statement duplicated
+      // every single line. That is exactly what happened on 2026-08-04 when the
+      // stranded Discover Tithe zip was finally reprocessed: 5 lines from the
+      // January statement landed a second time on top of pre-existing rows and
+      // the period double-counted to -2244.88 against a real -1122.44 move.
+      //
+      // Match on account + date + amount only, NOT description. The duplicates
+      // had different description text for the same charge ("REASONABLE FAITH —
+      // TX Services" vs "REASONABLE FAITH 4349442618 TX"), so a description-based
+      // key would not have caught them.
+      const { data: dupe } = await sb
+        .from("credit_transactions")
+        .select("id")
+        .eq("credit_account_id", ca.id)
+        .eq("transaction_date", t.date)
+        .eq("amount", t.amount)
+        .limit(1)
+        .maybeSingle();
+      if (dupe) { skippedDuplicate += 1; continue; }
+
       const { error: ctErr } = await sb
         .from("credit_transactions")
         .insert(row);
@@ -253,7 +275,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   await sb.from("documents").update({
     processing_status: "processed",
     processed_at: new Date().toISOString(),
-    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${skippedInformational ? ` (${skippedInformational} payment/thank-you lines skipped)` : ""}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
+    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${skippedInformational ? ` (${skippedInformational} payment/thank-you lines skipped)` : ""}${skippedDuplicate ? ` (${skippedDuplicate} already-present lines skipped)` : ""}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
     tables_updated: ["statement_balances", isBankAccount ? "bank_transactions" : "credit_transactions"],
     records_created: inserted + 1,
   }).eq("id", doc.id);
