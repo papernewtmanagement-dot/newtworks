@@ -59,6 +59,7 @@ import { parseWithLLM } from "../lib/llm.ts";
 import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
 import { reformatResumeSeparators } from "./resume_reformat.ts";
 import { writeResumeTextIfEmpty } from "./resume_ingest.ts";
+import { recoverTextFromScannedFile, type TextRecoveryDeps } from "../lib/text_recovery.ts";
 
 interface RmbIdentity {
   first_name: string | null;
@@ -77,6 +78,15 @@ export interface RmbArgs {
   fileName: string;
   bytesB64: string;
   resumeUrl: string | null;  // Drive link, when the Drive upload succeeded
+
+  // Gmail's own id for this attachment. Needed only to fetch the original
+  // again when the file turns out to be a scan with no text in it. Null for
+  // files that came out of a zip, which have no attachment of their own.
+  gmailAttachmentId?: string | null;
+
+  // Credentials for the scanned-file text recovery step. Omit to switch that
+  // step off entirely — the parser then behaves exactly as it did before.
+  recovery?: TextRecoveryDeps;
 }
 
 export interface RmbResult {
@@ -85,6 +95,13 @@ export interface RmbResult {
   action: string;              // inserted | updated_by_email | noop_by_gmail_message_id | ...
   candidateName: string | null;
   identitySource: "llm" | "deterministic" | "none";
+  // Where the resume text came from: the file's own text layer, or Drive text
+  // recognition after the file proved to be a scan.
+  textSource?: "pdf" | "text_recognition";
+  // Set when text recognition ran. This converted document is the Drive copy
+  // these resumes have otherwise never had, so the caller stores it.
+  recoveredDriveFileId?: string | null;
+  recoveredDriveUrl?: string | null;
   error?: string;
 }
 
@@ -197,10 +214,38 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
   });
 
   // ---- 1. Resume text --------------------------------------------------
-  const resumeText = await rmbExtractResumeText(args.bytesB64);
+  let resumeText = await rmbExtractResumeText(args.bytesB64);
+  let textSource: "pdf" | "text_recognition" = "pdf";
+  let recoveredDriveFileId: string | null = null;
+  let recoveredDriveUrl: string | null = null;
+
+  // Nothing extractable means the file is a scan or a phone photo — page
+  // images with no text layer. About one in five of these resumes is. Rather
+  // than losing a real applicant, send the original through Drive, which
+  // performs text recognition when a page-image file is brought in as a
+  // Google Doc, and carry on with the recovered text. Everything below this
+  // point is unchanged, which is the whole point of doing it here.
+  if (!resumeText && args.recovery && args.gmailAttachmentId) {
+    const rec = await recoverTextFromScannedFile({
+      deps: args.recovery,
+      messageId: args.messageId,
+      attachmentId: args.gmailAttachmentId,
+      fileName: args.fileName,
+    });
+    if (rec.ok) {
+      resumeText = reformatResumeSeparators(rec.text);
+      textSource = "text_recognition";
+      recoveredDriveFileId = rec.driveFileId;
+      recoveredDriveUrl = rec.driveUrl;
+      console.log(`[resume_manual_batch] ${args.fileName}: no text in the file; recovered ${rec.charCount} characters by Drive text recognition`);
+    } else {
+      console.warn(`[resume_manual_batch] ${args.fileName}: text recognition failed at the ${rec.stage} stage: ${rec.error}`);
+    }
+  }
+
   if (!resumeText) {
-    await rmbAlert(args, "No readable text in the PDF (likely a scan or photo). Needs manual entry.");
-    return fail("resume text extraction returned nothing (image-only PDF?)");
+    await rmbAlert(args, "No readable text in this file, and text recognition could not recover any either. Likely a blank page, handwriting, or a photo of something that is not a document. Needs manual entry.");
+    return fail("resume text extraction returned nothing, and text recognition recovered nothing either");
   }
 
   // ---- 2. Identity: language model first, twice ------------------------
@@ -289,7 +334,7 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     phone: identity.phone,
     position: null,
     applied_at: args.receivedAt,
-    resume_url: args.resumeUrl,
+    resume_url: args.resumeUrl ?? recoveredDriveUrl,
     resume_document_id: args.documentId,
     gmail_message_id: `${args.messageId}:${args.fileName}`,
     careerplug_metadata: {
@@ -329,6 +374,9 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     action: res.action ?? "unknown",
     candidateName,
     identitySource,
+    textSource,
+    recoveredDriveFileId,
+    recoveredDriveUrl,
   };
 }
 
