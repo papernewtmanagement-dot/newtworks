@@ -308,6 +308,213 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
   return { ok: false, queued: true, queueId: data.id };
 }
 
+// ==================== lib/text_recovery.ts ====================
+// =========================================================================
+// lib/text_recovery.ts
+// =========================================================================
+// Recovers readable text from a scanned or photographed file that carries no
+// extractable text of its own.
+//
+// WHY THIS EXISTS (2026-08-04):
+//   Roughly one in five hand-forwarded resumes is a scan or a phone photo
+//   saved as a PDF. Those files have page images and no text layer, so the
+//   normal extraction step returns nothing and the resume fails with no
+//   candidate row — a real applicant who never enters the system. At one in
+//   five, hand entry is a permanent tax.
+//
+// WHY THIS SHAPE:
+//   Google Drive performs text recognition when a page-image file is brought
+//   in AS a Google Doc. That costs nothing beyond the Drive account already
+//   connected, needs no new vendor and no per-file charge, and the recovered
+//   text feeds the existing identity step unchanged.
+//
+//   An earlier plan assumed these files were already sitting in Drive and
+//   could simply be converted in place. They are not: checked live on
+//   2026-08-04, none of the 143 forwarded resumes ever got a Drive copy,
+//   because the upload step returns quietly on failure. So this brings the
+//   file in from Gmail rather than converting something already there.
+//
+// THE CHAIN, three calls:
+//   1. Ask Gmail for the attachment. It answers with a temporary signed link,
+//      not the bytes. The link is good for an hour.
+//   2. Hand that link to Drive as an upload, naming the target type as a
+//      Google Doc. Naming the Doc type is what triggers text recognition.
+//      Drive fetches the link on its own servers, so the file never travels
+//      through this function.
+//   3. Read the new document back as plain text.
+//
+// The converted document is deliberately KEPT, not deleted. It becomes the
+// Drive copy these resumes have always been missing, and the caller writes
+// its id onto the documents row.
+// =========================================================================
+
+// deno-lint-ignore-file no-explicit-any
+
+
+/** Everything this module needs to reach Gmail and Drive. */
+export interface TextRecoveryDeps {
+  composioApiKey: string;
+  composioUserId: string;
+  gmailAccountId: string;
+  driveAccountId: string | null;
+  /** Optional Drive folder to file the converted document in. Null = My Drive root. */
+  driveParentFolderId?: string | null;
+}
+
+export type TextRecoveryResult =
+  | {
+      ok: true;
+      text: string;
+      driveFileId: string;
+      driveUrl: string;
+      charCount: number;
+    }
+  | { ok: false; error: string; stage: "gmail" | "convert" | "read" };
+
+/** The Drive type that forces text recognition on a page-image file. */
+const DRIVE_DOC_MIME = "application/vnd.google-apps.document";
+
+/** Shortest recovered text we will treat as a real result. */
+const MIN_USEFUL_CHARS = 40;
+
+function stripExtension(fileName: string): string {
+  return fileName.replace(/\.[A-Za-z0-9]{1,6}$/, "").trim() || fileName;
+}
+
+/**
+ * Pull the temporary signed link out of a Composio response, tolerating the
+ * two nesting shapes the wrapper can hand back.
+ */
+function signedLink(data: any, key: "file" | "downloaded_file_content"): string | null {
+  const holder = data?.[key] ?? data?.data?.[key];
+  const url = holder?.s3url;
+  return typeof url === "string" && url.length > 0 ? url : null;
+}
+
+/**
+ * Recover text from one scanned file.
+ *
+ * Every failure is reported with the stage it happened in, so a run that goes
+ * wrong says whether Gmail, the conversion, or the read broke — the three have
+ * completely different fixes.
+ */
+export async function recoverTextFromScannedFile(opts: {
+  deps: TextRecoveryDeps;
+  messageId: string;
+  attachmentId: string;
+  fileName: string;
+}): Promise<TextRecoveryResult> {
+  const { deps, messageId, attachmentId, fileName } = opts;
+
+  if (!deps.driveAccountId) {
+    return { ok: false, stage: "convert", error: "no Drive account connected, cannot run text recognition" };
+  }
+  if (!messageId || !attachmentId) {
+    return {
+      ok: false,
+      stage: "gmail",
+      error: "no Gmail message id or attachment id on this file, so the original cannot be fetched again",
+    };
+  }
+
+  // ---- 1. Fresh signed link from Gmail ---------------------------------
+  // It must be fresh: Drive fetches this link itself, and the link expires
+  // after an hour. Reusing one captured earlier in a long run will fail.
+  const gm = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.gmailAccountId,
+    toolSlug: "GMAIL_GET_ATTACHMENT",
+    toolArguments: {
+      message_id: messageId,
+      attachment_id: attachmentId,
+      file_name: fileName,
+      user_id: "me",
+    },
+  });
+  if (!gm.ok) {
+    return { ok: false, stage: "gmail", error: `GMAIL_GET_ATTACHMENT failed: ${gm.error}` };
+  }
+  const sourceUrl = signedLink(gm.data, "file");
+  if (!sourceUrl) {
+    return { ok: false, stage: "gmail", error: "Gmail returned no download link for the attachment" };
+  }
+
+  // ---- 2. Bring it into Drive AS a Google Doc --------------------------
+  const up = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
+    toolArguments: {
+      source_url: sourceUrl,
+      name: stripExtension(fileName),
+      mime_type: DRIVE_DOC_MIME,
+      ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
+    },
+  });
+  if (!up.ok) {
+    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_UPLOAD_FROM_URL failed: ${up.error}` };
+  }
+  const driveFileId: string = up.data?.id ?? up.data?.data?.id ?? "";
+  const driveUrl: string =
+    up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
+  if (!driveFileId) {
+    return { ok: false, stage: "convert", error: "Drive accepted the upload but returned no file id" };
+  }
+
+  // ---- 3. Read the recovered text back --------------------------------
+  const dl = await callComposio({
+    apiKey: deps.composioApiKey,
+    userId: deps.composioUserId,
+    connectedAccountId: deps.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_DOWNLOAD_FILE",
+    toolArguments: { fileId: driveFileId, mime_type: "text/plain" },
+  });
+  if (!dl.ok) {
+    return { ok: false, stage: "read", error: `GOOGLEDRIVE_DOWNLOAD_FILE failed: ${dl.error}` };
+  }
+  const textUrl = signedLink(dl.data, "downloaded_file_content");
+  if (!textUrl) {
+    return { ok: false, stage: "read", error: "Drive returned no plain-text download link" };
+  }
+
+  let text = "";
+  try {
+    const r = await fetch(textUrl);
+    if (!r.ok) {
+      return { ok: false, stage: "read", error: `plain-text link returned HTTP ${r.status}` };
+    }
+    text = await r.text();
+  } catch (e) {
+    return {
+      ok: false,
+      stage: "read",
+      error: `plain-text fetch threw: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const trimmed = text.trim();
+  if (trimmed.length < MIN_USEFUL_CHARS) {
+    // The conversion ran but produced nothing usable — a blank page, a photo
+    // of something that is not a document, or handwriting. Say so plainly
+    // instead of handing a few stray characters to the identity step.
+    return {
+      ok: false,
+      stage: "read",
+      error: `text recognition recovered only ${trimmed.length} characters, too little to identify anyone`,
+    };
+  }
+
+  return {
+    ok: true,
+    text: trimmed,
+    driveFileId,
+    driveUrl,
+    charCount: trimmed.length,
+  };
+}
+
 // ==================== classifier.ts ====================
 // =========================================================================
 // classifier.ts
@@ -4330,6 +4537,15 @@ export interface RmbArgs {
   fileName: string;
   bytesB64: string;
   resumeUrl: string | null;  // Drive link, when the Drive upload succeeded
+
+  // Gmail's own id for this attachment. Needed only to fetch the original
+  // again when the file turns out to be a scan with no text in it. Null for
+  // files that came out of a zip, which have no attachment of their own.
+  gmailAttachmentId?: string | null;
+
+  // Credentials for the scanned-file text recovery step. Omit to switch that
+  // step off entirely — the parser then behaves exactly as it did before.
+  recovery?: TextRecoveryDeps;
 }
 
 export interface RmbResult {
@@ -4338,6 +4554,13 @@ export interface RmbResult {
   action: string;              // inserted | updated_by_email | noop_by_gmail_message_id | ...
   candidateName: string | null;
   identitySource: "llm" | "deterministic" | "none";
+  // Where the resume text came from: the file's own text layer, or Drive text
+  // recognition after the file proved to be a scan.
+  textSource?: "pdf" | "text_recognition";
+  // Set when text recognition ran. This converted document is the Drive copy
+  // these resumes have otherwise never had, so the caller stores it.
+  recoveredDriveFileId?: string | null;
+  recoveredDriveUrl?: string | null;
   error?: string;
 }
 
@@ -4450,10 +4673,38 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
   });
 
   // ---- 1. Resume text --------------------------------------------------
-  const resumeText = await rmbExtractResumeText(args.bytesB64);
+  let resumeText = await rmbExtractResumeText(args.bytesB64);
+  let textSource: "pdf" | "text_recognition" = "pdf";
+  let recoveredDriveFileId: string | null = null;
+  let recoveredDriveUrl: string | null = null;
+
+  // Nothing extractable means the file is a scan or a phone photo — page
+  // images with no text layer. About one in five of these resumes is. Rather
+  // than losing a real applicant, send the original through Drive, which
+  // performs text recognition when a page-image file is brought in as a
+  // Google Doc, and carry on with the recovered text. Everything below this
+  // point is unchanged, which is the whole point of doing it here.
+  if (!resumeText && args.recovery && args.gmailAttachmentId) {
+    const rec = await recoverTextFromScannedFile({
+      deps: args.recovery,
+      messageId: args.messageId,
+      attachmentId: args.gmailAttachmentId,
+      fileName: args.fileName,
+    });
+    if (rec.ok) {
+      resumeText = reformatResumeSeparators(rec.text);
+      textSource = "text_recognition";
+      recoveredDriveFileId = rec.driveFileId;
+      recoveredDriveUrl = rec.driveUrl;
+      console.log(`[resume_manual_batch] ${args.fileName}: no text in the file; recovered ${rec.charCount} characters by Drive text recognition`);
+    } else {
+      console.warn(`[resume_manual_batch] ${args.fileName}: text recognition failed at the ${rec.stage} stage: ${rec.error}`);
+    }
+  }
+
   if (!resumeText) {
-    await rmbAlert(args, "No readable text in the PDF (likely a scan or photo). Needs manual entry.");
-    return fail("resume text extraction returned nothing (image-only PDF?)");
+    await rmbAlert(args, "No readable text in this file, and text recognition could not recover any either. Likely a blank page, handwriting, or a photo of something that is not a document. Needs manual entry.");
+    return fail("resume text extraction returned nothing, and text recognition recovered nothing either");
   }
 
   // ---- 2. Identity: language model first, twice ------------------------
@@ -4542,7 +4793,7 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     phone: identity.phone,
     position: null,
     applied_at: args.receivedAt,
-    resume_url: args.resumeUrl,
+    resume_url: args.resumeUrl ?? recoveredDriveUrl,
     resume_document_id: args.documentId,
     gmail_message_id: `${args.messageId}:${args.fileName}`,
     careerplug_metadata: {
@@ -4582,6 +4833,9 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     action: res.action ?? "unknown",
     candidateName,
     identitySource,
+    textSource,
+    recoveredDriveFileId,
+    recoveredDriveUrl,
   };
 }
 
@@ -6388,6 +6642,9 @@ interface RunCtx {
   composioUserId: string;
   gmailAccountId: string;
   driveAccountId: string | null;
+  // Drive folder that recovered scanned files get filed into. Null puts them
+  // in the Drive root.
+  driveParentFolderId?: string | null;
 }
 
 interface ProcessedAttachment {
@@ -7676,10 +7933,26 @@ async function processOneAttachment(
           fileName: att.fileName,
           bytesB64,
           resumeUrl: drive?.driveUrl ?? null,
+          gmailAttachmentId: att.attachmentId,
+          recovery: {
+            composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId,
+            gmailAccountId: ctx.gmailAccountId,
+            driveAccountId: ctx.driveAccountId,
+            driveParentFolderId: ctx.driveParentFolderId ?? null,
+          },
         });
         if (r.ok) {
+          // Text recognition produced a Drive copy. Keep it on the row — these
+          // resumes have otherwise never had one, because the normal Drive
+          // upload returns quietly when it fails.
+          if (r.recoveredDriveFileId && !drive?.driveFileId) {
+            await sb.from("documents")
+              .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
+              .eq("id", documentId);
+          }
           await markDocument(documentId, "processed", 1, ["hiring_candidates"],
-            `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}); candidate ${r.candidateId ?? "unknown"}`);
+            `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}, text via ${r.textSource ?? "pdf"}); candidate ${r.candidateId ?? "unknown"}`);
           await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
@@ -7737,6 +8010,142 @@ async function processOneAttachment(
   return results;
 }
 
+// ---- mode: resume_text_recovery --------------------------------------------
+// Deliberate re-run for forwarded resumes that failed because the file was a
+// scan or a photo with no text in it.
+//
+// WHY A SEPARATE DOOR: those rows sit at processing_status "error", and "error"
+// is in the do-not-retry set, so the mid-flight retry guard treats them as
+// finished and the mail fetcher will never offer them again. Nothing reopens
+// them on its own. This is the door.
+//
+// It does NOT re-download the original bytes. By definition these files have no
+// text to extract, so handing the parser an empty body lets its own recovery
+// step fetch the original from Gmail and run Drive text recognition — one fewer
+// round trip per file, and one code path instead of two.
+//
+// Body: { agency_id, shared_secret, mode: "resume_text_recovery",
+//         document_ids?: string[], limit?: number, dry_run?: boolean }
+// With no document_ids it picks up every forwarded resume still failing for
+// this reason, oldest first.
+interface TextRecoveryOutcome {
+  documentId: string;
+  fileName: string;
+  status: "recovered" | "still_failing" | "unrecoverable" | "would_run";
+  candidateId?: string | null;
+  candidateName?: string | null;
+  error?: string;
+}
+
+async function processResumeTextRecoveryMode(
+  ctx: RunCtx, body: any,
+): Promise<{
+  considered: number; recovered: number; stillFailing: number;
+  unrecoverable: number; dryRun: boolean; outcomes: TextRecoveryOutcome[];
+}> {
+  const documentIds: string[] = Array.isArray(body?.document_ids)
+    ? body.document_ids.filter((x: unknown) => typeof x === "string")
+    : [];
+  const limit = Math.min(Math.max(Number(body?.limit) || 40, 1), 100);
+  const dryRun = body?.dry_run === true;
+
+  let q = sb
+    .from("documents")
+    .select("id, file_name, gmail_message_id, gmail_attachment_id, uploaded_by, uploaded_at")
+    .eq("agency_id", ctx.agencyId)
+    .eq("groq_classification", "resume_manual_batch")
+    .eq("processing_status", "error");
+
+  if (documentIds.length > 0) {
+    q = q.in("id", documentIds);
+  } else {
+    // Only the rows that failed for lack of readable text. Leaves alone the
+    // ones that failed for any other reason, which need a different fix.
+    q = q.ilike("notes", "%image-only PDF%");
+  }
+
+  const { data: rows, error: selErr } = await q
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (selErr) {
+    return { considered: 0, recovered: 0, stillFailing: 0, unrecoverable: 0, dryRun, outcomes: [] };
+  }
+
+  const outcomes: TextRecoveryOutcome[] = [];
+  let recovered = 0, stillFailing = 0, unrecoverable = 0;
+
+  for (const row of rows ?? []) {
+    const fileName = (row as any).file_name ?? "(unnamed)";
+    const messageId = (row as any).gmail_message_id as string | null;
+    const attachmentId = (row as any).gmail_attachment_id as string | null;
+
+    // No way back to the original file. Say so rather than failing vaguely.
+    if (!messageId || !attachmentId) {
+      unrecoverable++;
+      outcomes.push({
+        documentId: (row as any).id, fileName, status: "unrecoverable",
+        error: "no Gmail message id or attachment id on this row, so the original file cannot be fetched again",
+      });
+      continue;
+    }
+
+    if (dryRun) {
+      outcomes.push({ documentId: (row as any).id, fileName, status: "would_run" });
+      continue;
+    }
+
+    const r = await processResumeManualBatch({
+      agencyId: ctx.agencyId,
+      documentId: (row as any).id,
+      messageId,
+      fromEmail: (row as any).uploaded_by ?? "",
+      // The original subject line was overwritten by the failure message when
+      // the row first errored, so it is genuinely gone. Left blank rather than
+      // invented.
+      subject: "",
+      receivedAt: (row as any).uploaded_at ?? new Date().toISOString(),
+      fileName,
+      bytesB64: "",   // deliberate — see the note above
+      resumeUrl: null,
+      gmailAttachmentId: attachmentId,
+      recovery: {
+        composioApiKey: ctx.composioApiKey,
+        composioUserId: ctx.composioUserId,
+        gmailAccountId: ctx.gmailAccountId,
+        driveAccountId: ctx.driveAccountId,
+        driveParentFolderId: ctx.driveParentFolderId ?? null,
+      },
+    });
+
+    if (r.ok) {
+      if (r.recoveredDriveFileId) {
+        await sb.from("documents")
+          .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
+          .eq("id", (row as any).id);
+      }
+      await markDocument((row as any).id, "processed", 1, ["hiring_candidates"],
+        `Resume recovered by text recognition for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}); candidate ${r.candidateId ?? "unknown"}`);
+      recovered++;
+      outcomes.push({
+        documentId: (row as any).id, fileName, status: "recovered",
+        candidateId: r.candidateId, candidateName: r.candidateName,
+      });
+    } else {
+      await markDocument((row as any).id, "error", 0, [], r.error);
+      stillFailing++;
+      outcomes.push({
+        documentId: (row as any).id, fileName, status: "still_failing", error: r.error,
+      });
+    }
+  }
+
+  return {
+    considered: (rows ?? []).length,
+    recovered, stillFailing, unrecoverable, dryRun, outcomes,
+  };
+}
+
 // ---- Main handler ----------------------------------------------------------
 
 async function run(req: Request): Promise<Response> {
@@ -7755,6 +8164,7 @@ async function run(req: Request): Promise<Response> {
   const composioUserId = await getSetting(agencyId, "composio_user_id");
   const gmailAccountId = await getSetting(agencyId, "composio_gmail_account_id");
   const driveAccountId = await getSetting(agencyId, "composio_googledrive_account_id");
+  const driveFolderId = await getSetting(agencyId, "drive_newtworks_root_folder_id");
   if (!composioApiKey || !composioUserId || !gmailAccountId) {
     return jsonResponse({
       ok: false,
@@ -7791,6 +8201,17 @@ async function run(req: Request): Promise<Response> {
     const result = await processWrapupMode(wupCtx, body);
     return jsonResponse({ ok: true, mode: "wrapup", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
+  if (mode === "resume_text_recovery") {
+    // Re-run forwarded resumes that failed for lack of readable text, pushing
+    // each one through Drive text recognition. See the note on the function.
+    const trCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      driveParentFolderId: driveFolderId,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processResumeTextRecoveryMode(trCtx, body);
+    return jsonResponse({ ok: true, mode: "resume_text_recovery", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
   if (mode === "no_send_check") {
     // Wrap-up no-send check (2026-07-22). Fires once per week at Fri 7 PM CT.
     // Emails each teammate who submitted nothing + one group Telegram to PJS
@@ -7801,7 +8222,10 @@ async function run(req: Request): Promise<Response> {
     return jsonResponse({ ok: true, mode: "no_send_check", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
 
-  const ctx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
+  const ctx: RunCtx = {
+    agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+    driveParentFolderId: driveFolderId,
+  };
   const startedAt = new Date().toISOString();
   const allResults: ProcessedAttachment[] = [];
 
