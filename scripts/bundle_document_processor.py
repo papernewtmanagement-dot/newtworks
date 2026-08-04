@@ -46,6 +46,7 @@ ORDER = [
     "lib/supabase.ts",
     "lib/composio.ts",
     "lib/llm.ts",
+    "lib/text_recovery.ts",
     "classifier.ts",
     "gl-poster.ts",
     "suspense.ts",
