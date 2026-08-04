@@ -217,6 +217,10 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
       documentId: args.documentId,
       purpose: "resume_identity_extract",
       maxTokens: 400,
+      // llm-queue-drainer has no handler for this purpose, and the pattern
+      // matching below already covers a model failure — a queued row would sit
+      // pending forever. Take the plain failure instead.
+      skipQueueOnFailure: true,
     });
     if (res.ok) {
       const cand = rmbCleanIdentity(res.json);
@@ -254,7 +258,24 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     identity.phone = identity.phone ?? det.phone;
   }
 
-  const candidateName = [identity.first_name, identity.last_name].filter(Boolean).join(" ") || null;
+  let candidateName = [identity.first_name, identity.last_name].filter(Boolean).join(" ") || null;
+
+  // hiring_candidates carries team_assessments_identity_check, which demands
+  // either a team member id or a non-empty candidate_name. A resume that gives
+  // up an email address but no name violates it and throws, and because the
+  // fetcher's duplicate check means an abandoned file is never offered again,
+  // that applicant is lost for good. Fall back to the part of the email address
+  // before the @ sign so the row lands soft and the name can be corrected in
+  // the app. (Found 2026-08-04: one resume in the first backlog run did this.)
+  let nameFromEmail = false;
+  if (!candidateName && identity.email) {
+    const localPart = identity.email.split("@")[0]?.trim();
+    if (localPart) {
+      candidateName = localPart;
+      nameFromEmail = true;
+      console.warn(`[resume_manual_batch] ${args.fileName}: no name found by either method; using email local part "${localPart}" as candidate_name`);
+    }
+  }
 
   // ---- 4. Upsert -------------------------------------------------------
   // Idempotency key is message id + file name: one forwarded email carries
@@ -293,6 +314,14 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
 
   // ---- 5. Resume text onto the candidate row ---------------------------
   await writeResumeTextIfEmpty(candidateId, resumeText);
+
+  // The row landed, but under a stand-in name. Say so, so it gets corrected.
+  if (nameFromEmail) {
+    await rmbAlert(
+      args,
+      `Saved, but no name could be read from this resume. The name currently shows as "${candidateName}" (taken from the email address). Please correct it on the candidate record.`,
+    );
+  }
 
   return {
     ok: true,
