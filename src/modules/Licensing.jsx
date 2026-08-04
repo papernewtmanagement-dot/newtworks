@@ -16,6 +16,10 @@ import { T } from "../lib/theme.js";
 
 const ADMIN_ROLES = ["owner", "manager"];
 
+// Used when a non-admin has no linked login id. Filtering on an id that
+// cannot match is safer than skipping the filter and asking for everything.
+const NO_MATCH_UUID = "00000000-0000-0000-0000-000000000000";
+
 const LICENSE_TYPES = [
   { value: "insurance_ce",                label: "Insurance CE" },
   { value: "annuities_ce",                label: "Annuities CE" },
@@ -146,23 +150,28 @@ export default function Licensing({ userRole, userId }) {
   const [referenceRow, setReferenceRow]   = useState(null);
 
   const [references, setReferences]       = useState([]);
+  // Rows marked complete in this sitting: id -> the new due date. Drives the
+  // confirmation strip and hides the button so it cannot be pressed twice.
+  const [justCompleted, setJustCompleted] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [teamRes, licensesRes, refRes] = await Promise.all([
-        supabase
-          .from("team")
-          .select("id, first_name, last_name, is_active, user_id, email_personal, email_sf")
-          .eq("agency_id", AGENCY_ID)
-          .eq("is_active", true)
-          .order("first_name"),
-        supabase
-          .from("team_licenses")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .order("due_date", { ascending: true }),
+      // Only an admin pulls the roster, because only an admin picks people from
+      // it. Everyone else pulls their own team row alone, so no other teammate's
+      // name is ever sent to their browser. The row rules on the database
+      // enforce the same thing; this stops the data being sent at all.
+      let teamQ = supabase
+        .from("team")
+        .select("id, first_name, last_name, is_active, user_id")
+        .eq("agency_id", AGENCY_ID)
+        .eq("is_active", true)
+        .order("first_name");
+      if (!isAdmin) teamQ = teamQ.eq("user_id", userId || NO_MATCH_UUID);
+
+      const [teamRes, refRes] = await Promise.all([
+        teamQ,
         supabase
           .from("license_type_reference")
           .select("*")
@@ -170,23 +179,41 @@ export default function Licensing({ userRole, userId }) {
       ]);
 
       if (teamRes.error) throw teamRes.error;
-      if (licensesRes.error) throw licensesRes.error;
       if (refRes.error) throw refRes.error;
 
-      setTeamRows(teamRes.data || []);
-      setLicenses(licensesRes.data || []);
-      setReferences(refRes.data || []);
+      const team = teamRes.data || [];
+      const mineId = userId ? (team.find(t => t.user_id === userId)?.id || null) : null;
 
-      if (userId) {
-        const mine = (teamRes.data || []).find(t => t.user_id === userId);
-        setMyTeamMemberId(mine?.id || null);
+      setTeamRows(team);
+      setReferences(refRes.data || []);
+      setMyTeamMemberId(mineId);
+      setJustCompleted({});
+
+      // Licences are requested after the team row resolves, so a non-admin can
+      // ask the server for their own rows only rather than filtering later.
+      let licQ = supabase
+        .from("team_licenses")
+        .select("*")
+        .eq("agency_id", AGENCY_ID)
+        .order("due_date", { ascending: true });
+      if (!isAdmin) {
+        if (!mineId) {
+          setLicenses([]);
+          setError("This login is not linked to a team record yet, so there is nothing to show here.");
+          return;
+        }
+        licQ = licQ.eq("team_member_id", mineId);
       }
+
+      const licensesRes = await licQ;
+      if (licensesRes.error) throw licensesRes.error;
+      setLicenses(licensesRes.data || []);
     } catch (e) {
       setError(e.message || "Failed to load licenses.");
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -211,16 +238,45 @@ export default function Licensing({ userRole, userId }) {
 
   const refByType = useMemo(() => new Map(references.map(r => [r.license_type, r])), [references]);
 
+  // Split the list into one block per calendar year it is due, so each year gets
+  // its own heading rule instead of running together as one long column.
+  const byYear = useMemo(() => {
+    const buckets = new Map();
+    for (const r of scoped) {
+      const y = r.due_date ? String(r.due_date).slice(0, 4) : "No date set";
+      if (!buckets.has(y)) buckets.set(y, []);
+      buckets.get(y).push(r);
+    }
+    return [...buckets.entries()]
+      .sort((a, b) => {
+        if (a[0] === "No date set") return 1;
+        if (b[0] === "No date set") return -1;
+        return a[0].localeCompare(b[0]);
+      })
+      .map(([year, rows]) => ({ year, rows }));
+  }, [scoped]);
+
   async function handleMarkComplete(rowId, completedOn) {
     setError("");
     try {
-      const { error: rpcErr } = await supabase.rpc("mark_license_complete", {
+      const { data, error: rpcErr } = await supabase.rpc("mark_license_complete", {
         p_license_id:  rowId,
         p_completed_on: completedOn,
       });
       if (rpcErr) throw rpcErr;
       setCompletingRow(null);
-      await load();
+
+      // Deliberately NOT reloading here. Reloading re-sorts the list by due
+      // date, which pulls the row out from under the cursor and slides the next
+      // one into its place — press again and you have pushed a second item's
+      // due date out by a whole extra cycle. So the finished row is updated
+      // where it already sits, and its button is replaced by a confirmation.
+      if (data) {
+        setLicenses(prev => prev.map(r => (r.id === rowId ? { ...r, ...data } : r)));
+        setJustCompleted(prev => ({ ...prev, [rowId]: data.due_date }));
+      } else {
+        await load();
+      }
     } catch (e) {
       setError(e.message || "Failed to mark complete.");
     }
@@ -325,19 +381,31 @@ export default function Licensing({ userRole, userId }) {
           )}
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {scoped.map(r => (
-            <LicenseCard
-              key={r.id}
-              row={r}
-              member={memberById.get(r.team_member_id)}
-              isAdmin={isAdmin}
-              showPersonName={isAdmin}
-              onMarkComplete={() => setCompletingRow(r)}
-              onEdit={() => setEditingRow(r)}
-              onDelete={() => handleDelete(r.id)}
-              onShowReference={refByType.get(r.license_type) ? () => setReferenceRow(r) : null}
-            />
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          {byYear.map(group => (
+            <div key={group.year} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={yearDivider}>
+                <span style={yearLabel}>{group.year}</span>
+                <span style={yearRule} />
+                <span style={yearCount}>
+                  {group.rows.length} {group.rows.length === 1 ? "item" : "items"}
+                </span>
+              </div>
+              {group.rows.map(r => (
+                <LicenseCard
+                  key={r.id}
+                  row={r}
+                  member={memberById.get(r.team_member_id)}
+                  isAdmin={isAdmin}
+                  showPersonName={isAdmin}
+                  justCompletedDue={justCompleted[r.id] || null}
+                  onMarkComplete={() => setCompletingRow(r)}
+                  onEdit={() => setEditingRow(r)}
+                  onDelete={() => handleDelete(r.id)}
+                  onShowReference={refByType.get(r.license_type) ? () => setReferenceRow(r) : null}
+                />
+              ))}
+            </div>
           ))}
         </div>
       )}
@@ -370,12 +438,14 @@ export default function Licensing({ userRole, userId }) {
   );
 }
 
-function LicenseCard({ row, member, isAdmin, showPersonName, onMarkComplete, onEdit, onDelete, onShowReference }) {
+function LicenseCard({ row, member, isAdmin, showPersonName, justCompletedDue, onMarkComplete, onEdit, onDelete, onShowReference }) {
   const isCeRow = CE_ROW_TYPES.has(row.license_type);
   const statesStr = (row.states && row.states.length > 0) ? row.states.join(", ") : null;
   const isOneTime = row.cycle_months === null || row.cycle_months === undefined;
   const canEdit = isAdmin || row.status === "active";
-  const canMarkComplete = row.status === "active";
+  // Once marked complete in this sitting the button goes away entirely —
+  // there is no second press to make.
+  const canMarkComplete = row.status === "active" && !justCompletedDue;
 
   return (
     <div style={{
@@ -478,6 +548,11 @@ function LicenseCard({ row, member, isAdmin, showPersonName, onMarkComplete, onE
 
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
         <StatusBadge dueDate={row.due_date} status={row.status} ceRequired={row.ce_required} isCeRow={isCeRow} />
+        {justCompletedDue && (
+          <div style={completedFlash}>
+            Marked complete · next due {humanDate(justCompletedDue)}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6 }}>
           {canMarkComplete && (
             <button onClick={onMarkComplete} style={btnSuccess}>Mark Complete</button>
@@ -635,16 +710,26 @@ function EditLicenseModal({ row, teamRows, isAdmin, myTeamMemberId, onClose, onS
       <div style={twoCol}>
         <div>
           <label style={fieldLabel}>Team Member</label>
-          <select
-            value={form.team_member_id}
-            onChange={update("team_member_id")}
-            style={input}
-            disabled={!isAdmin}
-          >
-            {teamRows.map(t => (
-              <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>
-            ))}
-          </select>
+          {isAdmin ? (
+            <select
+              value={form.team_member_id}
+              onChange={update("team_member_id")}
+              style={input}
+            >
+              {teamRows.map(t => (
+                <option key={t.id} value={t.id}>{t.first_name} {t.last_name}</option>
+              ))}
+            </select>
+          ) : (
+            // A switched-off dropdown still lists every teammate in the page
+            // source, so a non-admin gets plain text instead of a control.
+            <div style={readOnlyField}>
+              {(() => {
+                const me = teamRows.find(t => t.id === (myTeamMemberId || form.team_member_id));
+                return me ? `${me.first_name} ${me.last_name}` : "You";
+              })()}
+            </div>
+          )}
         </div>
 
         <div>
@@ -889,6 +974,51 @@ const input = {
   borderRadius: 8,
   outline: "none",
   background: T.white,
+};
+
+const readOnlyField = {
+  ...input,
+  background: T.slate50,
+  color: T.slate700,
+};
+
+const yearDivider = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  marginTop: 2,
+};
+
+const yearLabel = {
+  fontSize: 15,
+  fontWeight: 800,
+  color: T.slate900,
+  letterSpacing: "-0.01em",
+  flexShrink: 0,
+};
+
+const yearRule = {
+  flex: 1,
+  height: 1,
+  background: T.slate200,
+};
+
+const yearCount = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: T.slate400,
+  flexShrink: 0,
+};
+
+const completedFlash = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: "#065F46",
+  background: T.greenLt,
+  border: `1px solid ${T.green}`,
+  borderRadius: 999,
+  padding: "3px 9px",
+  whiteSpace: "nowrap",
 };
 
 const fieldLabel = {
