@@ -4672,6 +4672,44 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+
+  // Draws are recorded in the database as they are taken. Without that, closing
+  // this window threw away the list of what had been drawn and reopening handed
+  // back a fresh set of spins — an endless re-roll until a nice prize came up.
+  // Draws are earned from that week's sales points and there is one allotment
+  // per week, so they have to be spent and stay spent.
+  const [drawState, setDrawState] = useState(null);
+  const [loadingDraws, setLoadingDraws] = useState(true);
+  const seededRef = useRef(false);
+  const spinningRef = useRef(false);
+
+  useEffect(() => {
+    if (seededRef.current) return;
+    seededRef.current = true;
+    let alive = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_mvp_draw_state", {
+          p_team_member_id: mvp.team_member_id,
+          p_week_ending_date: weekDate,
+        });
+        if (!alive) return;
+        if (error) throw error;
+        setDrawState(data || null);
+        const priorIds = ((data && data.draws) || []).map(d => d.prize_cart_id);
+        if (priorIds.length > 0) {
+          const byId = new Map((prizeCart || []).map(p => [p.id, p]));
+          const seeded = priorIds.map(id => byId.get(id)).filter(Boolean);
+          if (seeded.length > 0) setDrawn(seeded);
+        }
+      } catch (e) {
+        if (alive) setErr(e.message || "Could not load your prize draws.");
+      } finally {
+        if (alive) setLoadingDraws(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   // Guards startReveal from being called more than once per spin.
   const revealStartedRef = useRef(false);
   // Handle for the current spin's requestAnimationFrame loop, so we can cancel
@@ -4684,7 +4722,11 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
 
   const drawnIds = new Set(drawn.map(p => p.id));
   const available = unwon.filter(p => !drawnIds.has(p.id));
-  const drawsRemaining = Math.max(0, drawsAllotted - drawn.length);
+  // The database is the authority on how many draws have been spent. A reload
+  // must not hand back spins that were already used.
+  const allotted = drawState ? Number(drawState.allotted || 0) : drawsAllotted;
+  const drawsUsed = Math.max(drawState ? Number(drawState.used || 0) : 0, drawn.length);
+  const drawsRemaining = Math.max(0, allotted - drawsUsed);
 
   // Build the strip from the FROZEN pool captured at spin-time.
   // If we built from live `available`, drawing a prize would rebuild the strip and
@@ -4697,7 +4739,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
   }
 
   const shouldPromptPick =
-    drawn.length > 0 && (drawn.length >= drawsAllotted || available.length === 0);
+    drawn.length > 0 && (drawsRemaining === 0 || available.length === 0);
 
   // If we reach the pick-prompt state after landing, transition phase.
   useEffect(() => {
@@ -4717,13 +4759,37 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     }, 900);
   }
 
-  function spin() {
+  async function spin() {
     if (available.length === 0 || drawsRemaining === 0) return;
+    // Don't spin before we know what was already drawn, and don't let a double
+    // tap spend two draws.
+    if (loadingDraws || spinningRef.current) return;
     // Freeze the pool AND the target for this entire animation. Nothing downstream
     // (drawn list, available derivation) can change these once we start.
     const spinPool = available;
     const targetIdx = Math.floor(Math.random() * spinPool.length);
     const landed = spinPool[targetIdx];
+
+    // Spend the draw in the database FIRST. If it refuses — no draws left for
+    // the week, a prize already kept, or this is not that person's week —
+    // nothing animates and nothing is committed.
+    spinningRef.current = true;
+    try {
+      const { data, error } = await supabase.rpc("record_mvp_prize_draw", {
+        p_team_member_id: mvp.team_member_id,
+        p_week_ending_date: weekDate,
+        p_prize_cart_id: landed.id,
+      });
+      if (error) throw error;
+      setDrawState(data || null);
+      setErr(null);
+    } catch (e) {
+      spinningRef.current = false;
+      setErr(e.message || "Could not record that draw.");
+      return;
+    }
+    spinningRef.current = false;
+
     // New spin — allow reveal to fire once for this run.
     revealStartedRef.current = false;
     if (rafIdRef.current) {
@@ -4778,14 +4844,15 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
     setErr(null);
     try {
       const prizeCartId = drawn[selectedIdx].id;
-      const { error } = await supabase
-        .from("prize_cart")
-        .update({
-          winner_team_member_id: mvp.team_member_id,
-          won_on: weekDate,
-        })
-        .eq("id", prizeCartId)
-        .is("winner_team_member_id", null);
+      // Claiming goes through the database now. It checks this really is the
+      // person's own drawn prize for this week, that they have not already kept
+      // one, and that the prize is still unwon. The cart table no longer accepts
+      // a winner written straight from the browser by anyone signed in.
+      const { error } = await supabase.rpc("claim_mvp_prize", {
+        p_team_member_id: mvp.team_member_id,
+        p_week_ending_date: weekDate,
+        p_prize_cart_id: prizeCartId,
+      });
       if (error) throw error;
       // Notify Marie via @paper_newt_bot. Fire-and-forget: RPC has its own
       // alert-on-failure path, and the DB save has already succeeded.
@@ -5115,7 +5182,7 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
             ) : (
               <button
                 onClick={spin}
-                disabled={available.length === 0 || drawsRemaining === 0}
+                disabled={available.length === 0 || drawsRemaining === 0 || loadingDraws}
                 style={{
                   width: "100%",
                   padding: "12px 16px",
