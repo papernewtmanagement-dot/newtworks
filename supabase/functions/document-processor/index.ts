@@ -1750,6 +1750,153 @@ async function processResumeTextRecoveryMode(
   };
 }
 
+// ---- mode: drive_backfill --------------------------------------------------
+// Files a Drive copy for documents that never got one.
+//
+// WHY THIS IS NEEDED: the Drive upload was rejecting every single file for
+// weeks and returning quietly, so nothing was filed and nothing was raised. It
+// was repaired on 2026-08-04, but by then 148 resumes, the August bank
+// statements, payroll and the card statements all had no Drive copy. Those
+// documents were processed correctly — their figures are in the books. It is
+// only the filed copy that is missing.
+//
+// LIMIT: this refiles from Gmail using the message and attachment ids already
+// on the row, so it only works while the original email is still in the
+// mailbox. Anything older than that cannot be recovered from here and needs the
+// file from another source.
+//
+// Body: { agency_id, shared_secret, mode: "drive_backfill",
+//         limit?: number, document_ids?: string[], dry_run?: boolean,
+//         classification?: string }
+interface DriveBackfillOutcome {
+  documentId: string;
+  fileName: string;
+  status: "filed" | "gone_from_gmail" | "upload_failed" | "would_run";
+  driveFileId?: string;
+  error?: string;
+}
+
+async function processDriveBackfillMode(
+  ctx: RunCtx, body: any,
+): Promise<{
+  considered: number; filed: number; goneFromGmail: number;
+  uploadFailed: number; dryRun: boolean; outcomes: DriveBackfillOutcome[];
+}> {
+  const documentIds: string[] = Array.isArray(body?.document_ids)
+    ? body.document_ids.filter((x: unknown) => typeof x === "string")
+    : [];
+  const limit = Math.min(Math.max(Number(body?.limit) || 25, 1), 100);
+  const dryRun = body?.dry_run === true;
+  const classification = typeof body?.classification === "string" ? body.classification : null;
+
+  let q = sb
+    .from("documents")
+    .select("id, file_name, groq_classification, gmail_message_id, gmail_attachment_id, uploaded_at")
+    .eq("agency_id", ctx.agencyId)
+    .is("drive_file_id", null)
+    .not("gmail_message_id", "is", null)
+    .not("gmail_attachment_id", "is", null);
+
+  if (documentIds.length > 0) q = q.in("id", documentIds);
+  if (classification) q = q.eq("groq_classification", classification);
+
+  // Newest first on purpose: the newest are the ones still inside the mailbox,
+  // so the runs that can actually succeed happen before the ones that cannot.
+  const { data: rows, error: selErr } = await q
+    .order("uploaded_at", { ascending: false })
+    .limit(limit);
+
+  if (selErr) {
+    return { considered: 0, filed: 0, goneFromGmail: 0, uploadFailed: 0, dryRun, outcomes: [] };
+  }
+
+  const outcomes: DriveBackfillOutcome[] = [];
+  let filed = 0, goneFromGmail = 0, uploadFailed = 0;
+
+  for (const row of rows ?? []) {
+    const id = (row as any).id as string;
+    const fileName = (row as any).file_name ?? "(unnamed)";
+    const docType = ((row as any).groq_classification ?? "skip") as DocType;
+    const uploadedAt = (row as any).uploaded_at ?? new Date().toISOString();
+
+    if (dryRun) {
+      outcomes.push({ documentId: id, fileName, status: "would_run" });
+      continue;
+    }
+
+    // Ask Gmail for the attachment. The reply carries a temporary signed link
+    // whose path is the storage key the upload tool wants. The bytes themselves
+    // are not needed — Drive collects the file itself.
+    const gm = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.gmailAccountId,
+      toolSlug: "GMAIL_GET_ATTACHMENT",
+      toolArguments: {
+        message_id: (row as any).gmail_message_id,
+        attachment_id: (row as any).gmail_attachment_id,
+        file_name: fileName,
+        user_id: "me",
+      },
+    });
+    const s3url = gm.ok
+      ? (gm.data?.file?.s3url ?? gm.data?.data?.file?.s3url ?? null)
+      : null;
+    if (!s3url) {
+      goneFromGmail++;
+      outcomes.push({
+        documentId: id, fileName, status: "gone_from_gmail",
+        error: gm.ok ? "Gmail returned no download link" : String(gm.error).slice(0, 300),
+      });
+      continue;
+    }
+
+    let s3Key: string | null = null;
+    try {
+      const path = new URL(s3url).pathname.replace(/^\/+/, "");
+      s3Key = path.length > 0 ? decodeURIComponent(path) : null;
+    } catch { s3Key = null; }
+    if (!s3Key) {
+      uploadFailed++;
+      outcomes.push({ documentId: id, fileName, status: "upload_failed", error: "could not read a storage key out of the Gmail link" });
+      continue;
+    }
+
+    const att: AttachmentInput = {
+      messageId: (row as any).gmail_message_id,
+      threadId: "",
+      fromEmail: "",
+      subject: "",
+      receivedAt: uploadedAt,
+      fileName,
+      mimeType: fileName.toLowerCase().endsWith(".zip") ? "application/zip" : "application/pdf",
+      attachmentId: (row as any).gmail_attachment_id,
+    } as AttachmentInput;
+
+    // Filed by the date the document arrived. The original path used the
+    // document's own transaction date, which is not on this row — close enough
+    // for a copy whose only job is to be findable.
+    const drive = await uploadToDrive(ctx, att, "", docType, String(uploadedAt).slice(0, 10), s3Key);
+    if (!drive || !drive.driveFileId) {
+      uploadFailed++;
+      outcomes.push({ documentId: id, fileName, status: "upload_failed", error: "Drive rejected the upload; an alert was raised with the reason" });
+      continue;
+    }
+
+    await sb.from("documents")
+      .update({ drive_file_id: drive.driveFileId, drive_url: drive.driveUrl || null })
+      .eq("id", id);
+
+    filed++;
+    outcomes.push({ documentId: id, fileName, status: "filed", driveFileId: drive.driveFileId });
+  }
+
+  return {
+    considered: (rows ?? []).length,
+    filed, goneFromGmail, uploadFailed, dryRun, outcomes,
+  };
+}
+
 // ---- mode: composio_probe --------------------------------------------------
 // Asks Composio, using THIS function's own key, what it can actually see and
 // do. It exists because a tool working from an interactive session proves
@@ -1894,6 +2041,16 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processResumeTextRecoveryMode(trCtx, body);
     return jsonResponse({ ok: true, mode: "resume_text_recovery", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "drive_backfill") {
+    // File the Drive copies lost while the upload was silently failing.
+    const bfCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      driveParentFolderId: driveFolderId,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processDriveBackfillMode(bfCtx, body);
+    return jsonResponse({ ok: true, mode: "drive_backfill", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "composio_probe") {
     // Read-only capability check. See the note on the function above.
