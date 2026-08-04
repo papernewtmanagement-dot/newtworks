@@ -323,29 +323,31 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
 //   five, hand entry is a permanent tax.
 //
 // WHY THIS SHAPE:
-//   Google Drive performs text recognition when a page-image file is brought
-//   in AS a Google Doc. That costs nothing beyond the Drive account already
-//   connected, needs no new vendor and no per-file charge, and the recovered
+//   Google Drive reads the page images of a file when the file is brought in
+//   AS a Google Doc. That costs nothing beyond the Drive account already
+//   connected, needs no new vendor and no charge per file, and the recovered
 //   text feeds the existing identity step unchanged.
 //
 //   An earlier plan assumed these files were already sitting in Drive and
 //   could simply be converted in place. They are not: checked live on
 //   2026-08-04, none of the 143 forwarded resumes ever got a Drive copy,
-//   because the upload step returns quietly on failure. So this brings the
-//   file in from Gmail rather than converting something already there.
+//   because the upload step had been failing quietly for weeks. So this brings
+//   the file in from Gmail rather than converting something already there.
 //
-// THE CHAIN, three calls:
+// THE CHAIN:
 //   1. Ask Gmail for the attachment. It answers with a temporary signed link,
-//      not the bytes. The link is good for an hour.
-//   2. Hand that link to Drive as an upload, naming the target type as a
-//      Google Doc. Naming the Doc type is what triggers text recognition.
-//      Drive fetches the link on its own servers, so the file never travels
-//      through this function.
-//   3. Read the new document back as plain text.
+//      good for an hour, not with the bytes.
+//   2. Get that link into Drive as a Google Doc. Two doors are tried, in order
+//      of how well they work — see the note on the conversion step below.
+//   3. Read the new document back as plain text. Two doors here as well.
 //
 // The converted document is deliberately KEPT, not deleted. It becomes the
-// Drive copy these resumes have always been missing, and the caller writes
-// its id onto the documents row.
+// Drive copy these resumes have always been missing, and the caller writes its
+// id onto the documents row.
+//
+// EVERY FAILURE NAMES ITS STAGE AND ITS DOOR. The three stages have three
+// completely different fixes, and the log cannot be read after the fact, so
+// the detail has to travel back in the returned value.
 // =========================================================================
 
 // deno-lint-ignore-file no-explicit-any
@@ -368,10 +370,12 @@ export type TextRecoveryResult =
       driveFileId: string;
       driveUrl: string;
       charCount: number;
+      /** Which conversion door worked, and which read door. For the record. */
+      via: string;
     }
   | { ok: false; error: string; stage: "gmail" | "convert" | "read" };
 
-/** The Drive type that forces text recognition on a page-image file. */
+/** The Drive type that makes Drive read the page images of a scan. */
 const DRIVE_DOC_MIME = "application/vnd.google-apps.document";
 
 /** Shortest recovered text we will treat as a real result. */
@@ -384,7 +388,8 @@ function stripExtension(fileName: string): string {
 /**
  * Pull the storage key out of a Composio download link. The link is a signed
  * URL whose path IS the key, e.g. ".../486473/gmail/GMAIL_GET_ATTACHMENT/
- * response/abc123?X-Amz-...". The upload tool wants exactly that path.
+ * response/abc123?X-Amz-...". The plain upload tool wants exactly that path,
+ * not the whole link and not the bytes.
  */
 function storageKeyFromUrl(url: string): string | null {
   try {
@@ -416,12 +421,12 @@ function signedLink(data: any, key: "file" | "downloaded_file_content"): string 
   return typeof url === "string" && url.length > 0 ? url : null;
 }
 
+function firstId(data: any): string {
+  return data?.id ?? data?.data?.id ?? data?.file_id ?? data?.data?.file_id ?? "";
+}
+
 /**
  * Recover text from one scanned file.
- *
- * Every failure is reported with the stage it happened in, so a run that goes
- * wrong says whether Gmail, the conversion, or the read broke — the three have
- * completely different fixes.
  */
 export async function recoverTextFromScannedFile(opts: {
   deps: TextRecoveryDeps;
@@ -430,9 +435,10 @@ export async function recoverTextFromScannedFile(opts: {
   fileName: string;
 }): Promise<TextRecoveryResult> {
   const { deps, messageId, attachmentId, fileName } = opts;
+  const tried: string[] = [];
 
   if (!deps.driveAccountId) {
-    return { ok: false, stage: "convert", error: "no Drive account connected, cannot run text recognition" };
+    return { ok: false, stage: "convert", error: "no Drive account connected, cannot read the page images" };
   }
   if (!messageId || !attachmentId) {
     return {
@@ -441,6 +447,17 @@ export async function recoverTextFromScannedFile(opts: {
       error: "no Gmail message id or attachment id on this file, so the original cannot be fetched again",
     };
   }
+
+  const drive = async (slug: string, toolArguments: Record<string, any>) => {
+    tried.push(slug);
+    return await callComposio({
+      apiKey: deps.composioApiKey,
+      userId: deps.composioUserId,
+      connectedAccountId: deps.driveAccountId as string,
+      toolSlug: slug,
+      toolArguments,
+    });
+  };
 
   // ---- 1. Fresh signed link from Gmail ---------------------------------
   // It must be fresh: Drive fetches this link itself, and the link expires
@@ -465,99 +482,143 @@ export async function recoverTextFromScannedFile(opts: {
     return { ok: false, stage: "gmail", error: "Gmail returned no download link for the attachment" };
   }
 
-  // ---- 2. Bring it into Drive, then convert with text recognition ------
-  // Confirmed by probing the live function on 2026-08-04: this Composio key
-  // cannot reach either URL-based upload tool, and the one it CAN reach wants a
-  // storage key rather than a URL or raw bytes. Gmail already hands back such a
-  // key inside its download link, so it is reused here instead of re-fetching.
+  // ---- 2. Get it into Drive as a Google Doc ----------------------------
+  // TWO DOORS, tried in this order. Both were checked live on 2026-08-04.
   //
-  // Two steps rather than one, on purpose. The upload keeps a faithful copy of
-  // the original file; the copy is what carries the text recognition. That also
-  // gives these resumes the Drive copy they have never had.
-  const s3Key = storageKeyFromUrl(sourceUrl);
-  if (!s3Key) {
-    return { ok: false, stage: "convert", error: "could not read a storage key out of the Gmail download link" };
+  // Door 1 hands Drive the link and asks for a Google Doc in a single call.
+  // This is the mechanism the tool itself documents for page-image files, and
+  // it is the one that works when the same chain is run by hand. It is tried
+  // first because it is one call instead of two and needs no storage key.
+  //
+  // Door 2 is the two-call route: upload a faithful copy of the original, then
+  // copy that copy as a Google Doc. Kept as the fallback because the plain
+  // upload is the one Drive tool this function is definitely able to reach.
+  //
+  // A door that answers "Tool ... not found" is not broken and not misused —
+  // it means this function's Composio key cannot see that tool at all, even
+  // though an interactive session can. Do not spend a deploy cycle re-testing
+  // it. Whichever door works is reported back in `via`.
+  let docId = "";
+  let docUrl = "";
+  let via = "";
+
+  const fromUrl = await drive("GOOGLEDRIVE_UPLOAD_FROM_URL", {
+    source_url: sourceUrl,
+    name: stripExtension(fileName),
+    mime_type: DRIVE_DOC_MIME,
+    ...(deps.driveParentFolderId ? { parent_folder_id: deps.driveParentFolderId } : {}),
+  });
+  if (fromUrl.ok && firstId(fromUrl.data)) {
+    docId = firstId(fromUrl.data);
+    docUrl = fromUrl.data?.webViewLink ?? fromUrl.data?.display_url ?? "";
+    via = "upload_from_url";
   }
 
-  const up = await callComposio({
-    apiKey: deps.composioApiKey,
-    userId: deps.composioUserId,
-    connectedAccountId: deps.driveAccountId,
-    toolSlug: "GOOGLEDRIVE_UPLOAD_FILE",
-    toolArguments: {
+  let convertError = fromUrl.ok ? "returned no document id" : String(fromUrl.error);
+
+  if (!docId) {
+    const s3Key = storageKeyFromUrl(sourceUrl);
+    if (!s3Key) {
+      return {
+        ok: false,
+        stage: "convert",
+        error: `${convertError}; and no storage key could be read out of the Gmail link for the fallback route`,
+      };
+    }
+
+    const up = await drive("GOOGLEDRIVE_UPLOAD_FILE", {
       file_to_upload: {
         name: fileName,
         mimetype: guessSourceMime(fileName),
         s3key: s3Key,
       },
       ...(deps.driveParentFolderId ? { folder_to_upload_to: deps.driveParentFolderId } : {}),
-    },
-  });
-  if (!up.ok) {
-    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_UPLOAD_FILE failed: ${up.error}` };
-  }
-  const driveFileId: string = up.data?.id ?? up.data?.data?.id ?? up.data?.file_id ?? "";
-  const driveUrl: string =
-    up.data?.webViewLink ?? up.data?.display_url ?? up.data?.data?.webViewLink ?? "";
-  if (!driveFileId) {
-    return { ok: false, stage: "convert", error: "Drive accepted the upload but returned no file id" };
-  }
+    });
+    if (!up.ok || !firstId(up.data)) {
+      return {
+        ok: false,
+        stage: "convert",
+        error: `both conversion routes failed. upload-from-link: ${convertError}. plain upload: ${up.ok ? "returned no file id" : up.error}`,
+      };
+    }
+    const originalId = firstId(up.data);
 
-  // Copy it AS a Google Doc. Naming the Doc type as the target is what makes
-  // Drive read the page images; the language hint improves that reading.
-  const conv = await callComposio({
-    apiKey: deps.composioApiKey,
-    userId: deps.composioUserId,
-    connectedAccountId: deps.driveAccountId,
-    toolSlug: "GOOGLEDRIVE_COPY_FILE_ADVANCED",
-    toolArguments: {
-      fileId: driveFileId,
+    // Copy it AS a Google Doc. Naming the Doc type as the target is what makes
+    // Drive read the page images; the language hint improves that reading. The
+    // Doc type cannot be set on the upload itself — Drive rejects it outright
+    // as an upload type, checked live 2026-08-04.
+    const conv = await drive("GOOGLEDRIVE_COPY_FILE_ADVANCED", {
+      fileId: originalId,
       name: `${stripExtension(fileName)} (text)`,
       mimeType: DRIVE_DOC_MIME,
       ocrLanguage: "en",
       ...(deps.driveParentFolderId ? { parents: [deps.driveParentFolderId] } : {}),
-    },
-  });
-  if (!conv.ok) {
-    return { ok: false, stage: "convert", error: `GOOGLEDRIVE_COPY_FILE_ADVANCED failed: ${conv.error}` };
-  }
-  const textDocId: string = conv.data?.id ?? conv.data?.data?.id ?? "";
-  if (!textDocId) {
-    return { ok: false, stage: "convert", error: "Drive copied the file but returned no document id" };
+    });
+    if (!conv.ok || !firstId(conv.data)) {
+      return {
+        ok: false,
+        stage: "convert",
+        error: `both conversion routes failed. upload-from-link: ${convertError}. copy-as-document: ${conv.ok ? "returned no document id" : conv.error}. The original file did upload to Drive as ${originalId}, so the Drive copy is not lost. Tried: ${tried.join(", ")}`,
+      };
+    }
+    docId = firstId(conv.data);
+    docUrl = conv.data?.webViewLink ?? conv.data?.display_url ?? "";
+    via = "upload_then_copy";
   }
 
+  if (!docUrl) docUrl = `https://docs.google.com/document/d/${docId}/edit`;
+
   // ---- 3. Read the recovered text back --------------------------------
-  const dl = await callComposio({
-    apiKey: deps.composioApiKey,
-    userId: deps.composioUserId,
-    connectedAccountId: deps.driveAccountId,
-    toolSlug: "GOOGLEDRIVE_DOWNLOAD_FILE",
-    toolArguments: { fileId: textDocId, mime_type: "text/plain" },
-  });
-  if (!dl.ok) {
-    return { ok: false, stage: "read", error: `GOOGLEDRIVE_DOWNLOAD_FILE failed: ${dl.error}` };
+  // Two doors again. The first exports a Google Doc to plain text directly.
+  // The second is the dedicated export tool, same idea, different slug — kept
+  // because which of the two a given key can see is not predictable.
+  let textUrl: string | null = null;
+  let readError = "";
+
+  const dl = await drive("GOOGLEDRIVE_DOWNLOAD_FILE", { fileId: docId, mime_type: "text/plain" });
+  if (dl.ok) {
+    textUrl = signedLink(dl.data, "downloaded_file_content");
+    if (!textUrl) readError = "GOOGLEDRIVE_DOWNLOAD_FILE returned no plain-text link";
+  } else {
+    readError = `GOOGLEDRIVE_DOWNLOAD_FILE failed: ${dl.error}`;
   }
-  const textUrl = signedLink(dl.data, "downloaded_file_content");
+
   if (!textUrl) {
-    return { ok: false, stage: "read", error: "Drive returned no plain-text download link" };
+    const ex = await drive("GOOGLEDRIVE_EXPORT_GOOGLE_WORKSPACE_FILE", {
+      fileId: docId,
+      mimeType: "text/plain",
+    });
+    if (ex.ok) {
+      textUrl = signedLink(ex.data, "downloaded_file_content") ?? signedLink(ex.data, "file");
+      if (textUrl) via = `${via}+export`;
+    }
+    if (!textUrl) {
+      return {
+        ok: false,
+        stage: "read",
+        error: `${readError}; export fallback also failed: ${ex.ok ? "no link returned" : ex.error}. The converted document exists as ${docId}, so the text is recoverable by hand. Tried: ${tried.join(", ")}`,
+      };
+    }
   }
 
   let text = "";
   try {
     const r = await fetch(textUrl);
     if (!r.ok) {
-      return { ok: false, stage: "read", error: `plain-text link returned HTTP ${r.status}` };
+      return { ok: false, stage: "read", error: `plain-text link returned HTTP ${r.status}; document is ${docId}` };
     }
     text = await r.text();
   } catch (e) {
     return {
       ok: false,
       stage: "read",
-      error: `plain-text fetch threw: ${e instanceof Error ? e.message : String(e)}`,
+      error: `plain-text fetch threw: ${e instanceof Error ? e.message : String(e)}; document is ${docId}`,
     };
   }
 
-  const trimmed = text.trim();
+  // Drive puts a byte-order mark at the front of an exported text file. Left in
+  // place it becomes the first character of the candidate's first name.
+  const trimmed = text.replace(/^\uFEFF/, "").trim();
   if (trimmed.length < MIN_USEFUL_CHARS) {
     // The conversion ran but produced nothing usable — a blank page, a photo
     // of something that is not a document, or handwriting. Say so plainly
@@ -565,16 +626,17 @@ export async function recoverTextFromScannedFile(opts: {
     return {
       ok: false,
       stage: "read",
-      error: `text recognition recovered only ${trimmed.length} characters, too little to identify anyone`,
+      error: `reading the page images recovered only ${trimmed.length} characters, too little to identify anyone; document is ${docId}`,
     };
   }
 
   return {
     ok: true,
     text: trimmed,
-    driveFileId,
-    driveUrl,
+    driveFileId: docId,
+    driveUrl: docUrl,
     charCount: trimmed.length,
+    via,
   };
 }
 
@@ -4609,6 +4671,14 @@ export interface RmbArgs {
   // Credentials for the scanned-file text recovery step. Omit to switch that
   // step off entirely — the parser then behaves exactly as it did before.
   recovery?: TextRecoveryDeps;
+
+  // Text already read out of this scan somewhere else and handed in with the
+  // request. When present the parser skips its own recovery step and uses this
+  // instead. See the note on the resume_text_recovery mode in index.ts for why
+  // that door exists.
+  preRecoveredText?: string | null;
+  preRecoveredDriveFileId?: string | null;
+  preRecoveredDriveUrl?: string | null;
 }
 
 export interface RmbResult {
@@ -4741,6 +4811,18 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
   let recoveredDriveFileId: string | null = null;
   let recoveredDriveUrl: string | null = null;
   let recoveryFailure: string | null = null;
+
+  // Text handed in with the request, used in place of the file's own text layer
+  // — which, these files being scans, they do not have. This is the same text
+  // the recovery step below would have produced, so everything after this point
+  // behaves identically whichever way the text arrived.
+  const handedInText = (args.preRecoveredText ?? "").trim();
+  if (!resumeText && handedInText.length >= 40) {
+    resumeText = reformatResumeSeparators(handedInText);
+    textSource = "text_recognition";
+    recoveredDriveFileId = args.preRecoveredDriveFileId ?? null;
+    recoveredDriveUrl = args.preRecoveredDriveUrl ?? null;
+  }
 
   // Nothing extractable means the file is a scan or a phone photo — page
   // images with no text layer. About one in five of these resumes is. Rather
@@ -8175,6 +8257,31 @@ async function processResumeTextRecoveryMode(
   const limit = Math.min(Math.max(Number(body?.limit) || 40, 1), 100);
   const dryRun = body?.dry_run === true;
 
+  // Text already read out of the scans by the caller, keyed by document id.
+  // This door exists because reading a scan needs a Google Drive tool that this
+  // function's Composio key cannot see, while the same tool works fine from an
+  // interactive session. Rather than leave real applicants stranded waiting on
+  // that permission, the reading can happen outside and the text be handed in
+  // here. Everything downstream — identity, candidate row, Drive link — runs
+  // exactly as it does on the automatic path.
+  const handedIn = new Map<
+    string,
+    { text: string; driveFileId: string | null; driveUrl: string | null }
+  >();
+  if (Array.isArray(body?.recovered)) {
+    for (const r of body.recovered) {
+      const id = typeof r?.document_id === "string" ? r.document_id : null;
+      const text = typeof r?.text === "string" ? r.text : "";
+      if (id && text.trim().length >= 40) {
+        handedIn.set(id, {
+          text,
+          driveFileId: typeof r?.drive_file_id === "string" ? r.drive_file_id : null,
+          driveUrl: typeof r?.drive_url === "string" ? r.drive_url : null,
+        });
+      }
+    }
+  }
+
   let q = sb
     .from("documents")
     .select("id, file_name, gmail_message_id, gmail_attachment_id, uploaded_by, uploaded_at")
@@ -8206,8 +8313,11 @@ async function processResumeTextRecoveryMode(
     const messageId = (row as any).gmail_message_id as string | null;
     const attachmentId = (row as any).gmail_attachment_id as string | null;
 
+    const supplied = handedIn.get((row as any).id) ?? null;
+
     // No way back to the original file. Say so rather than failing vaguely.
-    if (!messageId || !attachmentId) {
+    // Text handed in with the request makes this moot: nothing needs fetching.
+    if (!supplied && (!messageId || !attachmentId)) {
       unrecoverable++;
       outcomes.push({
         documentId: (row as any).id, fileName, status: "unrecoverable",
@@ -8224,7 +8334,7 @@ async function processResumeTextRecoveryMode(
     const r = await processResumeManualBatch({
       agencyId: ctx.agencyId,
       documentId: (row as any).id,
-      messageId,
+      messageId: messageId ?? "",
       fromEmail: (row as any).uploaded_by ?? "",
       // The original subject line was overwritten by the failure message when
       // the row first errored, so it is genuinely gone. Left blank rather than
@@ -8235,6 +8345,9 @@ async function processResumeTextRecoveryMode(
       bytesB64: "",   // deliberate — see the note above
       resumeUrl: null,
       gmailAttachmentId: attachmentId,
+      preRecoveredText: supplied?.text ?? null,
+      preRecoveredDriveFileId: supplied?.driveFileId ?? null,
+      preRecoveredDriveUrl: supplied?.driveUrl ?? null,
       recovery: {
         composioApiKey: ctx.composioApiKey,
         composioUserId: ctx.composioUserId,
@@ -8270,6 +8383,85 @@ async function processResumeTextRecoveryMode(
     considered: (rows ?? []).length,
     recovered, stillFailing, unrecoverable, dryRun, outcomes,
   };
+}
+
+// ---- mode: composio_probe --------------------------------------------------
+// Asks Composio, using THIS function's own key, what it can actually see and
+// do. It exists because a tool working from an interactive session proves
+// nothing about whether this function can reach it — the two authenticate
+// differently. Learning that the hard way cost four deploy cycles on
+// 2026-08-04, at roughly eight minutes each. Probe first, design second.
+//
+// Body: { agency_id, shared_secret, mode: "composio_probe",
+//         toolkit?: "googledrive",          // list every tool the key can see
+//         calls?: [ { slug, account?: "gmail" | "drive", arguments? } ] }
+//
+// Reads only. Writes nothing, changes nothing, and every result comes back in
+// the reply rather than the log, because the log cannot be read after the fact.
+async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
+  const out: any = {
+    composio_user_id: ctx.composioUserId,
+    gmail_account_id: ctx.gmailAccountId,
+    drive_account_id: ctx.driveAccountId,
+  };
+
+  const toolkit = typeof body?.toolkit === "string" ? body.toolkit : null;
+  if (toolkit) {
+    try {
+      const res = await fetch(
+        `https://backend.composio.dev/api/v3/tools?toolkit_slugs=${encodeURIComponent(toolkit)}&limit=500`,
+        { headers: { "x-api-key": ctx.composioApiKey } },
+      );
+      const text = await res.text();
+      let parsed: any = {};
+      try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1500) }; }
+      const items = parsed?.items ?? parsed?.data ?? null;
+      out.toolkit = toolkit;
+      out.toolkit_http_status = res.status;
+      if (Array.isArray(items)) {
+        out.toolkit_tool_count = items.length;
+        out.toolkit_tools = items
+          .map((t: any) => t?.slug ?? t?.name)
+          .filter((x: unknown) => typeof x === "string")
+          .sort();
+      } else {
+        out.toolkit_raw = JSON.stringify(parsed).slice(0, 1500);
+      }
+    } catch (e) {
+      out.toolkit_error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const calls = Array.isArray(body?.calls) ? body.calls.slice(0, 12) : [];
+  if (calls.length > 0) {
+    out.calls = [];
+    for (const c of calls) {
+      const slug = typeof c?.slug === "string" ? c.slug : null;
+      if (!slug) continue;
+      const account = c?.account === "drive" ? ctx.driveAccountId : ctx.gmailAccountId;
+      if (!account) {
+        out.calls.push({ slug, ok: false, error: "no connected account of that kind is stored" });
+        continue;
+      }
+      const args = c?.arguments && typeof c.arguments === "object" ? c.arguments : {};
+      const r = await callComposio({
+        apiKey: ctx.composioApiKey,
+        userId: ctx.composioUserId,
+        connectedAccountId: account,
+        toolSlug: slug,
+        toolArguments: args,
+      });
+      out.calls.push({
+        slug,
+        ok: r.ok,
+        http_status: r.httpStatus,
+        error: r.error ? String(r.error).slice(0, 400) : null,
+        data_preview: r.data ? JSON.stringify(r.data).slice(0, 1000) : null,
+      });
+    }
+  }
+
+  return out;
 }
 
 // ---- Main handler ----------------------------------------------------------
@@ -8337,6 +8529,16 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processResumeTextRecoveryMode(trCtx, body);
     return jsonResponse({ ok: true, mode: "resume_text_recovery", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "composio_probe") {
+    // Read-only capability check. See the note on the function above.
+    const prCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      driveParentFolderId: driveFolderId,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processComposioProbeMode(prCtx, body);
+    return jsonResponse({ ok: true, mode: "composio_probe", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "no_send_check") {
     // Wrap-up no-send check (2026-07-22). Fires once per week at Fri 7 PM CT.
