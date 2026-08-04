@@ -21,6 +21,7 @@
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "npm:pdf-lib@1.17.1";
+import SparkMD5 from "npm:spark-md5@3.0.2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -59,6 +60,120 @@ async function callComposio(opts: {
   const data = parsed?.data?.response_data ?? parsed?.data ?? null;
   const error = ok ? null : (parsed?.error?.message || parsed?.error || text.slice(0, 400));
   return { ok, data, error, httpStatus: res.status };
+}
+
+// =========================================================================
+// Composio file staging  (added 2026-08-04)
+// =========================================================================
+// GMAIL_SEND_EMAIL's `attachment` parameter is a FileUploadable and accepts
+// EXACTLY { name, mimetype, s3key }. There is no field anywhere on that tool
+// that takes raw base64 bytes. The previous version of this function passed
+// base64 in invented fields (`attachments[].content`, `attached_file`) with an
+// empty s3key, so every send failed Composio schema validation before it ever
+// reached Gmail. That is why no PFA reconciliation has ever been emailed
+// automatically -- the only one that landed (June 2026) was sent by hand as a
+// Gmail draft, which is why that row carries an email_gmail_draft_id and the
+// July row carries nothing.
+//
+// Correct flow, reachable with only the agency's composio_api_key:
+//   1. POST /api/v3/files/upload/request -> { key, new_presigned_url, type }
+//   2. PUT the raw bytes to new_presigned_url with a matching Content-Type
+//   3. Pass { name, mimetype, s3key: key } as `attachment`
+async function stageFileWithComposio(opts: {
+  apiKey: string;
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  toolSlug: string;
+  toolkitSlug: string;
+}): Promise<{ ok: boolean; s3key: string | null; error: string | null }> {
+  let md5: string;
+  try {
+    const ab = opts.bytes.buffer.slice(
+      opts.bytes.byteOffset,
+      opts.bytes.byteOffset + opts.bytes.byteLength,
+    );
+    md5 = SparkMD5.ArrayBuffer.hash(ab);
+  } catch (e) {
+    return { ok: false, s3key: null, error: `md5 failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  let presignRes: Response;
+  try {
+    presignRes = await fetch("https://backend.composio.dev/api/v3/files/upload/request", {
+      method: "POST",
+      headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: opts.fileName,
+        mimetype: opts.mimeType,
+        md5,
+        tool_slug: opts.toolSlug,
+        toolkit_slug: opts.toolkitSlug,
+      }),
+    });
+  } catch (e) {
+    return { ok: false, s3key: null, error: `presign threw: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const presignText = await presignRes.text();
+  if (!presignRes.ok) {
+    return { ok: false, s3key: null, error: `presign HTTP ${presignRes.status}: ${presignText.slice(0, 300)}` };
+  }
+  let presign: any;
+  try { presign = JSON.parse(presignText); }
+  catch { return { ok: false, s3key: null, error: `presign not JSON: ${presignText.slice(0, 200)}` }; }
+
+  const uploadUrl: string | undefined = presign?.new_presigned_url ?? presign?.newPresignedUrl;
+  const s3key: string | undefined = presign?.key;
+  if (!uploadUrl || !s3key) {
+    return { ok: false, s3key: null, error: `presign missing key/url: ${presignText.slice(0, 300)}` };
+  }
+
+  // type === "old" means Composio already holds this exact file (md5 match), so
+  // the PUT is unnecessary. Re-uploading would be harmless, just wasteful.
+  if (presign?.type !== "old") {
+    let putRes: Response;
+    try {
+      putRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": opts.mimeType },
+        body: opts.bytes,
+      });
+    } catch (e) {
+      return { ok: false, s3key: null, error: `upload PUT threw: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (!putRes.ok) {
+      const t = await putRes.text().catch(() => "");
+      return { ok: false, s3key: null, error: `upload PUT HTTP ${putRes.status}: ${t.slice(0, 300)}` };
+    }
+  }
+
+  return { ok: true, s3key, error: null };
+}
+
+// Silent failure is what let this break for a month: the SQL function returned
+// success, the runner logged success, and nothing anywhere said the compliance
+// email had not gone out. Any send failure now leaves a durable unresolved
+// alert row so it surfaces in the app instead of only in a log nobody reads.
+async function raiseSendFailureAlert(
+  agencyId: string,
+  reconciliationId: string,
+  periodEnd: string,
+  detail: string,
+): Promise<void> {
+  try {
+    await sb.from("alerts").insert({
+      agency_id: agencyId,
+      alert_type: "pfa_reconciliation_send_failed",
+      severity: "warning",
+      title: `PFA reconciliation email did NOT send — statement ending ${periodEnd}`,
+      message: `The reconciliation for the PFA statement ending ${periodEnd} computed clean, but the email to State Farm failed. Nothing has been filed for this period. Detail: ${detail.slice(0, 500)}`,
+      module_reference: `pfa_reconciliation_send_failed:${reconciliationId}`,
+      is_read: false,
+      is_resolved: false,
+      related_id: reconciliationId,
+      created_at: new Date().toISOString(),
+    });
+  } catch (_e) { /* alerting must never mask the underlying error */ }
 }
 
 async function getSetting(agencyId: string, key: string): Promise<string | null> {
@@ -390,6 +505,15 @@ async function run(req: Request): Promise<Response> {
   const reconciliationId = body?.reconciliation_id as string;
   const force = body?.force === true;
   const dryRun = body?.dry_run === true;
+  // Verification hatch: send the real PDF somewhere harmless to prove the
+  // attachment path works without filing anything with State Farm. When set,
+  // the reconciliation row is deliberately NOT stamped as sent, so the real
+  // send is still pending afterwards.
+  const overrideRecipient =
+    typeof body?.override_recipient === "string" && body.override_recipient.includes("@")
+      ? (body.override_recipient as string)
+      : null;
+  const recipient = overrideRecipient ?? SF_RECIPIENT;
 
   if (!agencyId) return jsonResponse({ ok: false, error: "agency_id required" }, 400);
   if (!reconciliationId) return jsonResponse({ ok: false, error: "reconciliation_id required" }, 400);
@@ -420,7 +544,7 @@ async function run(req: Request): Promise<Response> {
   }
 
   // 2) Skip logic
-  if (recon.emailed_to_agent_at && !force) {
+  if (recon.emailed_to_agent_at && !force && !overrideRecipient) {
     return jsonResponse({ ok: true, status: "already_sent",
       emailed_at: recon.emailed_to_agent_at,
       message_id: recon.emailed_to_agent_message_id });
@@ -529,36 +653,46 @@ async function run(req: Request): Promise<Response> {
 
   const fileName = `PFA_Reconciliation_${statementPeriodEnd}.pdf`;
 
+  // Stage the PDF with Composio first -- `attachment` needs an s3key, not bytes.
+  const staged = await stageFileWithComposio({
+    apiKey: composioApiKey,
+    fileName,
+    mimeType: "application/pdf",
+    bytes: pdfBytes,
+    toolSlug: "GMAIL_SEND_EMAIL",
+    toolkitSlug: "gmail",
+  });
+  if (!staged.ok || !staged.s3key) {
+    const stageErr = `attachment staging failed: ${staged.error}`;
+    if (!overrideRecipient) {
+      await raiseSendFailureAlert(agencyId, reconciliationId, statementPeriodEnd, stageErr);
+    }
+    return jsonResponse({ ok: false, status: "send_failed", error: stageErr }, 502);
+  }
+
   const sendRes = await callComposio({
     apiKey: composioApiKey,
     userId: composioUserId,
     connectedAccountId: gmailAccountId,
     toolSlug: "GMAIL_SEND_EMAIL",
     toolArguments: {
-      recipient_email: SF_RECIPIENT,
+      recipient_email: recipient,
       subject,
       body: emailBody,
       is_html: false,
       attachment: {
-        filename: fileName,
+        name: fileName,
         mimetype: "application/pdf",
-        s3key: "",
+        s3key: staged.s3key,
       },
-      // Also try attached_file (Composio has had schema drift on this):
-      attached_file: {
-        filename: fileName,
-        s3key: "",
-      },
-      // The canonical Composio Gmail attachment field is `attachment` with base64 content.
-      // Newer versions accept content directly:
-      attachments: [
-        { filename: fileName, mimetype: "application/pdf", content: pdfB64 }
-      ],
       user_id: "me",
     },
   });
 
   if (!sendRes.ok) {
+    if (!overrideRecipient) {
+      await raiseSendFailureAlert(agencyId, reconciliationId, statementPeriodEnd, String(sendRes.error));
+    }
     return jsonResponse({ ok: false, status: "send_failed", error: sendRes.error }, 502);
   }
 
@@ -567,23 +701,33 @@ async function run(req: Request): Promise<Response> {
                   ?? (sendRes.data as any)?.response_data?.id
                   ?? null;
 
-  // 6) Update the reconciliation row
-  await sb.from("pfa_reconciliations").update({
-    emailed_to_agent_at: new Date().toISOString(),
-    emailed_to_agent_message_id: messageId ?? "sent",
-    updated_at: new Date().toISOString(),
-  }).eq("id", reconciliationId);
+  // 6) Update the reconciliation row -- skipped for verification sends so the
+  //    real filing stays pending.
+  if (!overrideRecipient) {
+    await sb.from("pfa_reconciliations").update({
+      emailed_to_agent_at: new Date().toISOString(),
+      emailed_to_agent_message_id: messageId ?? "sent",
+      updated_at: new Date().toISOString(),
+    }).eq("id", reconciliationId);
 
-  // 7) Resolve any related alert
-  await sb.from("alerts").update({
-    is_resolved: true, resolved_at: new Date().toISOString(),
-  }).eq("agency_id", agencyId)
-    .eq("module_reference", `pfa_reconciliation:${reconciliationId}`)
-    .eq("is_resolved", false);
+    // 7) Resolve any related alerts (the discrepancy alert and any prior
+    //    send-failure alert both clear once the filing actually goes out).
+    await sb.from("alerts").update({
+      is_resolved: true, resolved_at: new Date().toISOString(),
+    }).eq("agency_id", agencyId)
+      .eq("module_reference", `pfa_reconciliation:${reconciliationId}`)
+      .eq("is_resolved", false);
+
+    await sb.from("alerts").update({
+      is_resolved: true, resolved_at: new Date().toISOString(),
+    }).eq("agency_id", agencyId)
+      .eq("module_reference", `pfa_reconciliation_send_failed:${reconciliationId}`)
+      .eq("is_resolved", false);
+  }
 
   return jsonResponse({
-    ok: true, status: "sent",
-    recipient: SF_RECIPIENT,
+    ok: true, status: overrideRecipient ? "sent_test" : "sent",
+    recipient,
     subject,
     message_id: messageId,
     pdf_size: pdfBytes.length,
