@@ -68,6 +68,22 @@ export type TextRecoveryResult =
 /** The Drive type that makes Drive read the page images of a scan. */
 const DRIVE_DOC_MIME = "application/vnd.google-apps.document";
 
+/**
+ * Which published set of Google Drive tools to ask for.
+ *
+ * THIS LINE IS THE FIX. Without it, Composio hands back its oldest set of Drive
+ * tools, which has 51 of the account's 90 and none of the three that can turn a
+ * scanned page into readable text. Those three then answer "Tool ... not found",
+ * which looks exactly like the account lacking permission. It is not. Checked
+ * live 2026-08-04: name a set and the same account, same key, reaches all three.
+ *
+ * A dated set rather than "latest" on purpose. "Latest" moves when Composio
+ * publishes, and a change in the shape of a reply would break this quietly.
+ * Raise this deliberately after checking, the same way any other pinned
+ * dependency gets raised.
+ */
+const DRIVE_TOOLKIT_VERSION = "20260721_00";
+
 /** Shortest recovered text we will treat as a real result. */
 const MIN_USEFUL_CHARS = 40;
 
@@ -146,6 +162,7 @@ export async function recoverTextFromScannedFile(opts: {
       connectedAccountId: deps.driveAccountId as string,
       toolSlug: slug,
       toolArguments,
+      toolkitVersion: DRIVE_TOOLKIT_VERSION,
     });
   };
 
