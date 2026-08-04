@@ -818,6 +818,11 @@ async function handleBankStatement(
   return { jeCount, suspenseCount };
 }
 
+// Prefix for statements whose account cannot be determined from the email.
+// The chart of accounts is numeric, so any value carrying this prefix fails
+// the account lookup loudly instead of filing money to the wrong account.
+const UNMAPPED = "UNMAPPED-";
+
 function resolveSourceAccount(fromEmail: string, subject: string, fileName: string): string {
   const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
 
@@ -827,44 +832,46 @@ function resolveSourceAccount(fromEmail: string, subject: string, fileName: stri
   // silently route to the agency Income account (COA-007) and post to the
   // wrong entity. Kids Profit Disc account was ingested manually 2026-07-27
   // as one-off; going forward the labels below auto-route.
-  if (/kids[\s_-]?profit[\s_-]?disc|\b6730\b/.test(blob)) return "COA-PERSONAL-6730";
-  if (/us[\s_-]?bank[\s_-]?personal[\s_-]?checking|personal[\s_-]?checking|\b0353\b/.test(blob)) return "COA-PERSONAL-0353";
-  if (/tithe[\s_-]?tax|\b6755\b/.test(blob)) return "COA-PERSONAL-6755";
-  if (/us[\s_-]?bank[\s_-]?other[\s_-]?income|other[\s_-]?income|\b2545\b/.test(blob)) return "COA-PERSONAL-2545";
-  if (/sf[\s_-]?personal[\s_-]?cc|\b8847\b/.test(blob)) return "COA-PERSONAL-CC-8847";
+  if (/kids[\s_-]?profit[\s_-]?disc|\b6730\b/.test(blob)) return "1072";
+  if (/us[\s_-]?bank[\s_-]?personal[\s_-]?checking|personal[\s_-]?checking|\b0353\b/.test(blob)) return "1070";
+  if (/tithe[\s_-]?tax|\b6755\b/.test(blob)) return "1073";
+  if (/us[\s_-]?bank[\s_-]?other[\s_-]?income|other[\s_-]?income|\b2545\b/.test(blob)) return "1071";
+  if (/sf[\s_-]?personal[\s_-]?cc|\b8847\b/.test(blob)) return "2173";
 
   // ---- US Bank AGENCY sub-account routing (order matters — most specific first).
   // File naming convention (Marie's spec): "US Bank {Label} {YY-MM}.pdf" where
-  // Label is one of Income (3977, COA-007), Expenses (4335, COA-006), CC (3447,
-  // COA-025 USBank GN Personal Card). Account numbers also match if statement
-  // text is scanned in.
-  if (/us\s*bank\s*income|\b3977\b/.test(blob)) return "COA-007";
-  if (/us\s*bank\s*expenses|\b4335\b/.test(blob)) return "COA-006";
-  if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "COA-025";
+  // Label is one of Income (3977, acct 1012), Expenses (4335, acct 1011), CC
+  // (3447, acct 2113). Account numbers also match if statement text is scanned in.
+  if (/us\s*bank\s*income|\b3977\b/.test(blob)) return "1012";
+  if (/us\s*bank\s*expenses|\b4335\b/.test(blob)) return "1011";
+  if (/us\s*bank\s*cc|\b3447\b/.test(blob)) return "2113";
   // Generic US Bank fallback — Income (conservative default, matches historic behavior)
-  if (/usbank|us[\s_-]?bank/.test(blob)) return "COA-007";
+  if (/usbank|us[\s_-]?bank/.test(blob)) return "1012";
 
   // ---- Non-US-Bank personal accounts (Alvi's zip labels, added 2026-07-27).
   // RBFCU savings and Discover Tithe CC both live on Peter's personal entity.
-  if (/rbfcu|randolph[\s_-]?brooks|\b6596\b/.test(blob)) return "COA-PERSONAL-6596";
-  if (/discover[\s_-]?tithe|discover[\s_-]?cc|\b3208\b/.test(blob)) return "COA-PERSONAL-CC-3208";
+  if (/rbfcu|randolph[\s_-]?brooks|\b6596\b/.test(blob)) return "1076";
+  if (/discover[\s_-]?tithe|discover[\s_-]?cc|\b3208\b/.test(blob)) return "2171";
 
   // ---- Personal CC catchalls (last-4 hits from statement text) ------------
-  if (/\b1006\b/.test(blob)) return "COA-PERSONAL-CC-1006"; // AMEX Personal
-  if (/\b7435\b/.test(blob)) return "COA-PERSONAL-CC-7435"; // Capital One Personal
+  if (/\b1006\b/.test(blob)) return "2170"; // AMEX Personal
+  if (/\b7435\b/.test(blob)) return "2172"; // Capital One Personal
 
-  // ---- Chase — Mktg 2 (COA-012) holds all post-cutover activity.
-  // Mktg 1 (COA-011) is inactive post-cutover; require explicit "mktg 1" match.
-  if (/chase[\s\-_]*(mktg|marketing)[\s\-_]*1/.test(blob)) return "COA-011";
-  if (/chase/.test(blob)) return "COA-012";
+  // ---- Chase — Marketing 1 (acct 2110) is the only Chase account that exists
+  // in the current numeric chart. A generic Chase match previously routed to a
+  // "Marketing 2" account that has no numeric equivalent, so it is unmapped.
+  if (/chase[\s\-_]*(mktg|marketing)[\s\-_]*1/.test(blob)) return "2110";
+  if (/chase/.test(blob)) return UNMAPPED + "CHASE-GENERIC";
 
-  if (/truist|trb/.test(blob)) return "COA-004";
-  if (/statefarm|sf[\s.-]?ach/.test(blob)) return "COA-024";
-  if (/amex|american[\s_-]?express/.test(blob)) return "COA-009";
-  if (/capital[\s_-]?one/.test(blob)) return "COA-010";
-  if (/citi/.test(blob)) return "COA-028";
-  if (/spark/.test(blob)) return "COA-026";
-  return "COA-007";
+  if (/truist|trb/.test(blob)) return UNMAPPED + "TRUIST";
+  if (/statefarm|sf[\s.-]?ach/.test(blob)) return UNMAPPED + "SF-ACH";
+  if (/amex|american[\s_-]?express/.test(blob)) return "2141"; // AMEX Discretionary (PaperNewt)
+  if (/capital[\s_-]?one/.test(blob)) return UNMAPPED + "CAPITALONE-AMBIGUOUS";
+  if (/citi/.test(blob)) return UNMAPPED + "CITI-AMBIGUOUS";
+  if (/spark/.test(blob)) return UNMAPPED + "SPARK";
+  // No silent default. Returning an account here guesses whose money this is;
+  // an unrecognised statement must stop and be looked at instead.
+  return UNMAPPED + "UNRECOGNISED";
 }
 
 // ---- statement_balances writer --------------------------------------------
