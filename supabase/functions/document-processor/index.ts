@@ -1527,6 +1527,31 @@ async function processResumeTextRecoveryMode(
   const limit = Math.min(Math.max(Number(body?.limit) || 40, 1), 100);
   const dryRun = body?.dry_run === true;
 
+  // Text already read out of the scans by the caller, keyed by document id.
+  // This door exists because reading a scan needs a Google Drive tool that this
+  // function's Composio key cannot see, while the same tool works fine from an
+  // interactive session. Rather than leave real applicants stranded waiting on
+  // that permission, the reading can happen outside and the text be handed in
+  // here. Everything downstream — identity, candidate row, Drive link — runs
+  // exactly as it does on the automatic path.
+  const handedIn = new Map<
+    string,
+    { text: string; driveFileId: string | null; driveUrl: string | null }
+  >();
+  if (Array.isArray(body?.recovered)) {
+    for (const r of body.recovered) {
+      const id = typeof r?.document_id === "string" ? r.document_id : null;
+      const text = typeof r?.text === "string" ? r.text : "";
+      if (id && text.trim().length >= 40) {
+        handedIn.set(id, {
+          text,
+          driveFileId: typeof r?.drive_file_id === "string" ? r.drive_file_id : null,
+          driveUrl: typeof r?.drive_url === "string" ? r.drive_url : null,
+        });
+      }
+    }
+  }
+
   let q = sb
     .from("documents")
     .select("id, file_name, gmail_message_id, gmail_attachment_id, uploaded_by, uploaded_at")
@@ -1558,8 +1583,11 @@ async function processResumeTextRecoveryMode(
     const messageId = (row as any).gmail_message_id as string | null;
     const attachmentId = (row as any).gmail_attachment_id as string | null;
 
+    const supplied = handedIn.get((row as any).id) ?? null;
+
     // No way back to the original file. Say so rather than failing vaguely.
-    if (!messageId || !attachmentId) {
+    // Text handed in with the request makes this moot: nothing needs fetching.
+    if (!supplied && (!messageId || !attachmentId)) {
       unrecoverable++;
       outcomes.push({
         documentId: (row as any).id, fileName, status: "unrecoverable",
@@ -1576,7 +1604,7 @@ async function processResumeTextRecoveryMode(
     const r = await processResumeManualBatch({
       agencyId: ctx.agencyId,
       documentId: (row as any).id,
-      messageId,
+      messageId: messageId ?? "",
       fromEmail: (row as any).uploaded_by ?? "",
       // The original subject line was overwritten by the failure message when
       // the row first errored, so it is genuinely gone. Left blank rather than
@@ -1587,6 +1615,9 @@ async function processResumeTextRecoveryMode(
       bytesB64: "",   // deliberate — see the note above
       resumeUrl: null,
       gmailAttachmentId: attachmentId,
+      preRecoveredText: supplied?.text ?? null,
+      preRecoveredDriveFileId: supplied?.driveFileId ?? null,
+      preRecoveredDriveUrl: supplied?.driveUrl ?? null,
       recovery: {
         composioApiKey: ctx.composioApiKey,
         composioUserId: ctx.composioUserId,
@@ -1622,6 +1653,85 @@ async function processResumeTextRecoveryMode(
     considered: (rows ?? []).length,
     recovered, stillFailing, unrecoverable, dryRun, outcomes,
   };
+}
+
+// ---- mode: composio_probe --------------------------------------------------
+// Asks Composio, using THIS function's own key, what it can actually see and
+// do. It exists because a tool working from an interactive session proves
+// nothing about whether this function can reach it — the two authenticate
+// differently. Learning that the hard way cost four deploy cycles on
+// 2026-08-04, at roughly eight minutes each. Probe first, design second.
+//
+// Body: { agency_id, shared_secret, mode: "composio_probe",
+//         toolkit?: "googledrive",          // list every tool the key can see
+//         calls?: [ { slug, account?: "gmail" | "drive", arguments? } ] }
+//
+// Reads only. Writes nothing, changes nothing, and every result comes back in
+// the reply rather than the log, because the log cannot be read after the fact.
+async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
+  const out: any = {
+    composio_user_id: ctx.composioUserId,
+    gmail_account_id: ctx.gmailAccountId,
+    drive_account_id: ctx.driveAccountId,
+  };
+
+  const toolkit = typeof body?.toolkit === "string" ? body.toolkit : null;
+  if (toolkit) {
+    try {
+      const res = await fetch(
+        `https://backend.composio.dev/api/v3/tools?toolkit_slugs=${encodeURIComponent(toolkit)}&limit=500`,
+        { headers: { "x-api-key": ctx.composioApiKey } },
+      );
+      const text = await res.text();
+      let parsed: any = {};
+      try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1500) }; }
+      const items = parsed?.items ?? parsed?.data ?? null;
+      out.toolkit = toolkit;
+      out.toolkit_http_status = res.status;
+      if (Array.isArray(items)) {
+        out.toolkit_tool_count = items.length;
+        out.toolkit_tools = items
+          .map((t: any) => t?.slug ?? t?.name)
+          .filter((x: unknown) => typeof x === "string")
+          .sort();
+      } else {
+        out.toolkit_raw = JSON.stringify(parsed).slice(0, 1500);
+      }
+    } catch (e) {
+      out.toolkit_error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const calls = Array.isArray(body?.calls) ? body.calls.slice(0, 12) : [];
+  if (calls.length > 0) {
+    out.calls = [];
+    for (const c of calls) {
+      const slug = typeof c?.slug === "string" ? c.slug : null;
+      if (!slug) continue;
+      const account = c?.account === "drive" ? ctx.driveAccountId : ctx.gmailAccountId;
+      if (!account) {
+        out.calls.push({ slug, ok: false, error: "no connected account of that kind is stored" });
+        continue;
+      }
+      const args = c?.arguments && typeof c.arguments === "object" ? c.arguments : {};
+      const r = await callComposio({
+        apiKey: ctx.composioApiKey,
+        userId: ctx.composioUserId,
+        connectedAccountId: account,
+        toolSlug: slug,
+        toolArguments: args,
+      });
+      out.calls.push({
+        slug,
+        ok: r.ok,
+        http_status: r.httpStatus,
+        error: r.error ? String(r.error).slice(0, 400) : null,
+        data_preview: r.data ? JSON.stringify(r.data).slice(0, 1000) : null,
+      });
+    }
+  }
+
+  return out;
 }
 
 // ---- Main handler ----------------------------------------------------------
@@ -1689,6 +1799,16 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processResumeTextRecoveryMode(trCtx, body);
     return jsonResponse({ ok: true, mode: "resume_text_recovery", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "composio_probe") {
+    // Read-only capability check. See the note on the function above.
+    const prCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      driveParentFolderId: driveFolderId,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processComposioProbeMode(prCtx, body);
+    return jsonResponse({ ok: true, mode: "composio_probe", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "no_send_check") {
     // Wrap-up no-send check (2026-07-22). Fires once per week at Fri 7 PM CT.
