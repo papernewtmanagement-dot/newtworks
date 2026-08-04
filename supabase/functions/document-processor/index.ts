@@ -414,6 +414,98 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   skip: "unsorted",
 };
 
+/**
+ * Which published set of Google Drive tools the folder helpers ask for.
+ *
+ * Composio publishes its tools in dated sets, and a request that does not name
+ * one gets the oldest set — which is missing tools the account genuinely has,
+ * and answers "Tool ... not found" when you reach for them. That reads exactly
+ * like a permission problem and is not one. See the long note in lib/composio.ts.
+ *
+ * Named here rather than globally because a newer set can change the shape of
+ * what comes back, and the payroll, statement and comp parsers read those
+ * shapes. The plain upload below deliberately does NOT name a set: it works on
+ * the oldest one, and there is nothing to gain by moving it.
+ */
+const DRIVE_TOOLKIT_VERSION = "20260721_00";
+
+/** Folder ids worked out during this run. Keyed "<parent id>/<folder name>". */
+const driveFolderCache = new Map<string, string>();
+
+/**
+ * Find a folder by name inside a parent, creating it if it is not there.
+ * Returns null if neither works, and the caller then files one level up rather
+ * than not at all.
+ */
+async function resolveDriveFolder(
+  ctx: RunCtx, name: string, parentId: string,
+): Promise<string | null> {
+  const key = `${parentId}/${name}`;
+  const cached = driveFolderCache.get(key);
+  if (cached) return cached;
+  if (!ctx.driveAccountId) return null;
+
+  const find = await callComposio({
+    apiKey: ctx.composioApiKey,
+    userId: ctx.composioUserId,
+    connectedAccountId: ctx.driveAccountId,
+    toolSlug: "GOOGLEDRIVE_FIND_FOLDER",
+    toolArguments: { name_exact: name, parent_folder_id: parentId },
+    toolkitVersion: DRIVE_TOOLKIT_VERSION,
+  });
+  const files = find.ok ? (find.data?.files ?? find.data?.data?.files ?? []) : [];
+  let id: string = Array.isArray(files) && files.length > 0 ? (files[0]?.id ?? "") : "";
+
+  if (!id) {
+    const made = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.driveAccountId,
+      toolSlug: "GOOGLEDRIVE_CREATE_FOLDER",
+      toolArguments: { name, parent_id: parentId },
+      toolkitVersion: DRIVE_TOOLKIT_VERSION,
+    });
+    id = made.ok ? (made.data?.id ?? made.data?.data?.id ?? "") : "";
+    if (!id) {
+      console.warn(`[document-processor] could not find or create Drive folder "${name}" under ${parentId}: ${find.error ?? ""} ${made.error ?? ""}`);
+      return null;
+    }
+  }
+
+  driveFolderCache.set(key, id);
+  return id;
+}
+
+/**
+ * Where a document belongs: <Newtworks root>/Documents/<year-month>/<type>.
+ *
+ * This is the structure the agency has always used. It was lost on 2026-08-04
+ * when the upload was repaired, because the working upload tool places files by
+ * folder id and only the root folder's id was known. Both folder tools turn out
+ * to be reachable once a tool set is named, so the structure is back.
+ *
+ * Every step falls back one level up. A file in the right year but the wrong
+ * type folder can be moved later; a file that never got filed cannot.
+ */
+async function documentFolderId(
+  ctx: RunCtx, docType: DocType, txnDate: string,
+): Promise<string | null> {
+  const root = ctx.driveParentFolderId ?? null;
+  if (!root) return null;
+
+  const yearMonth = /^\d{4}-\d{2}/.test(txnDate ?? "")
+    ? txnDate.slice(0, 7)
+    : new Date().toISOString().slice(0, 7);
+  const leaf = DRIVE_FOLDER_BY_DOCTYPE[docType] ?? "unsorted";
+
+  const documents = await resolveDriveFolder(ctx, "Documents", root);
+  if (!documents) return root;
+  const month = await resolveDriveFolder(ctx, yearMonth, documents);
+  if (!month) return documents;
+  const typeFolder = await resolveDriveFolder(ctx, leaf, month);
+  return typeFolder ?? month;
+}
+
 // FIXED 2026-08-04. This had been failing on EVERY document for weeks and
 // saying nothing. GOOGLEDRIVE_UPLOAD_FILE requires a single `file_to_upload`
 // object holding the file's name, type and storage key; the old call passed
@@ -439,6 +531,9 @@ async function uploadToDrive(
   // (inner zip members). Skip rather than fail loudly — the zip itself is filed.
   if (!s3Key) return null;
 
+  // Year-month and document-type folder, created on first use.
+  const folderId = await documentFolderId(ctx, docType, txnDate);
+
   const res = await callComposio({
     apiKey: ctx.composioApiKey,
     userId: ctx.composioUserId,
@@ -450,7 +545,7 @@ async function uploadToDrive(
         mimetype: att.mimeType || "application/pdf",
         s3key: s3Key,
       },
-      ...(ctx.driveParentFolderId ? { folder_to_upload_to: ctx.driveParentFolderId } : {}),
+      ...(folderId ? { folder_to_upload_to: folderId } : {}),
     },
   });
 
