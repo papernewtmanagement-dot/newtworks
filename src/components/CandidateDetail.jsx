@@ -867,6 +867,12 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         </div>
       )}
 
+      {/* Two-column layout: left = validity indices + cognitive/situational
+          scores + trait facets; right = role fit + competencies. Collapses
+          to a single column under ~680px combined width (rule 17 pattern). */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+
       {/* Reliability + Faking-good — validity indices, not personality traits */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
         <div>
@@ -1006,14 +1012,14 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         )}
       </div>
 
-      <div style={{ height: 1, background: T.slate200 }} />
+      </div>
 
       {/* Role Fit + Competencies — Newtworks competency layer (12 competencies
           x 7 roles, confirmed 2026-08-02, live 2026-08-03). Role buttons sorted
           by fit_score descending, best-fit highlighted (mirrors the v1/CTS
           selector in the legacy renderAssessmentLayer below). Selecting a role
           swaps which role's 12 competencies + gates display underneath. */}
-      <div>
+      <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Role Fit
         </div>
@@ -1178,6 +1184,8 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
             </>
           );
         })()}
+      </div>
+
       </div>
     </div>
   );
