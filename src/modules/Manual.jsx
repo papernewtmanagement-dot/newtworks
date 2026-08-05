@@ -183,7 +183,7 @@ function TeamRoster() {
     (async () => {
       try {
         const { data, error: e } = await supabase
-          .from("team")
+          .from("team_directory")
           .select("first_name, last_name, nickname, role, role_category, primary_function, account_alpha, sf_alias, phone_extension, phone_personal, email_personal, work_location, four_day_off_day, license_states, license_pc, license_lh")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true)
