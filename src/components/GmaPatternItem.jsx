@@ -207,7 +207,7 @@ function PatternGrid({ grid, vp }) {
   );
 }
 
-function OptionGrid({ options, onAnswer, saving, vp }) {
+function OptionGrid({ options, onAnswer, selected, saving, vp }) {
   const letters = ["A", "B", "C", "D", "E", "F"];
   const cellPx = vp.isPhone ? 60 : 72;
   return (
@@ -232,8 +232,8 @@ function OptionGrid({ options, onAnswer, saving, vp }) {
               alignItems: "center",
               gap: 6,
               padding: "10px 8px",
-              background: T.white,
-              border: `1px solid ${T.slate200}`,
+              background: selected?.label === letter ? T.blueLt : T.white,
+              border: `1px solid ${selected?.label === letter ? T.blue : T.slate200}`,
               borderRadius: 8,
               cursor: saving ? "wait" : "pointer",
               boxSizing: "border-box",
@@ -250,7 +250,7 @@ function OptionGrid({ options, onAnswer, saving, vp }) {
   );
 }
 
-export default function GmaPatternItem({ item, onAnswer, saving, vp }) {
+export default function GmaPatternItem({ item, onAnswer, selected, saving, vp }) {
   const grid = item?.choices?.grid;
   const options = item?.choices?.options;
   return (
@@ -280,7 +280,7 @@ export default function GmaPatternItem({ item, onAnswer, saving, vp }) {
       >
         Choose the missing piece
       </div>
-      <OptionGrid options={options} onAnswer={onAnswer} saving={saving} vp={vp} />
+      <OptionGrid options={options} onAnswer={onAnswer} selected={selected} saving={saving} vp={vp} />
     </div>
   );
 }
