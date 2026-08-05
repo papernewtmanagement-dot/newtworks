@@ -873,121 +873,13 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         </div>
       )}
 
-      {/* Two-column layout: left = validity indices + cognitive/situational
-          scores + trait facets; right = role fit + competencies. Collapses
-          to a single column under ~680px combined width (rule 17 pattern). */}
+      {/* Two-column layout: left = trait facets; right = role fit,
+          competencies, then validity indices (reliability, faking-good) and
+          cognitive/situational scores (GMA, SJT) below the competency list.
+          Collapses to a single column under ~680px combined width (rule 17
+          pattern). */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-
-      {/* Reliability + Faking-good — validity indices, not personality traits */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-            Reliability
-          </div>
-          <AssessRow
-            label="Data quality"
-            value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
-            band={V2_RELIABILITY_BAND(reliability)}
-            subline={reliabilityDetail?.fired_count != null ? `${reliabilityDetail.fired_count} of 6 checks fired` : null}
-          />
-          {reliability && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4, padding: "0 4px" }}>
-              {reliabilityMethods.map((k) => {
-                const m = reliabilityDetail[k];
-                const fired = m?.fired;
-                return (
-                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
-                    <span style={{ color: T.slate600 }}>{RELIABILITY_METHOD_LABELS[k]}</span>
-                    <span style={{ color: fired ? T.red : T.slate400, fontWeight: fired ? 700 : 400 }}>
-                      {fired == null ? "—" : fired ? "flagged" : "ok"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-            Faking-good (Impression Management)
-          </div>
-          <AssessRow
-            label="Score"
-            value={imScore}
-            extra={imBand ? imBand.replace(/_/g, " ") : null}
-            band={IM_BAND_COLOR(imBand)}
-          />
-          {imDetail?.interpretation && (
-            <div style={{ fontSize: 10.5, color: T.slate600, marginTop: 4, padding: "0 4px", lineHeight: 1.4 }}>
-              {imDetail.interpretation}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ height: 1, background: T.slate200 }} />
-
-      {/* GMA — total only is a decision input; subtests are diagnostics */}
-      <div>
-        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          GMA (General Mental Ability)
-        </div>
-        <AssessRow
-          label="Total"
-          value={gmaTotal}
-          extra={gmaTotal != null ? `/16 (${gmaPct}%)` : null}
-          max={16}
-        />
-        <button
-          type="button"
-          onClick={() => setGmaOpen((o) => !o)}
-          style={{
-            marginTop: 4, background: "none", border: "none", padding: "2px 4px",
-            fontSize: 10.5, color: T.blue, cursor: "pointer", fontFamily: "inherit",
-          }}
-        >
-          {gmaOpen ? "Hide subtest diagnostics" : "Show subtest diagnostics"}
-        </button>
-        {gmaOpen && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-            <AssessRow label="Pattern" value={detail?.gma_pattern_accuracy} extra="/4" max={4}
-              subline={detail?.gma_pattern_speed_seconds != null ? `${detail.gma_pattern_speed_seconds}s/item` : null} />
-            <AssessRow label="Deductive" value={detail?.gma_deductive_accuracy} extra="/4" max={4}
-              subline={detail?.gma_deductive_speed_seconds != null ? `${detail.gma_deductive_speed_seconds}s/item` : null} />
-            <AssessRow label="Numerical" value={detail?.gma_numerical_accuracy} extra="/4" max={4}
-              subline={detail?.gma_numerical_speed_seconds != null ? `${detail.gma_numerical_speed_seconds}s/item` : null} />
-            <AssessRow label="Verbal" value={detail?.gma_verbal_accuracy} extra="/4" max={4}
-              subline={detail?.gma_verbal_speed_seconds != null ? `${detail.gma_verbal_speed_seconds}s/item` : null} />
-          </div>
-        )}
-      </div>
-
-      <div style={{ height: 1, background: T.slate200 }} />
-
-      {/* SJT — total + 5 topic rows */}
-      <div>
-        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          SJT (Situational Judgement Test)
-        </div>
-        <AssessRow label="Total" value={sjtScore} extra={sjtScore != null ? "%" : null} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-          {Object.entries(SJT_TOPIC_LABELS).map(([k, label]) => {
-            const t = sjtTopics[k];
-            const pct = t && t.n > 0 ? Math.round((100 * t.correct) / t.n) : null;
-            return (
-              <AssessRow
-                key={k}
-                label={label}
-                value={pct}
-                extra={t ? `${t.correct}/${t.n}` : null}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      <div style={{ height: 1, background: T.slate200 }} />
 
       {/* 21 personality facets */}
       <div>
@@ -1141,6 +1033,26 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                   Gates fired: {roleDetail.gates_fired.join(", ")}
                 </div>
               )}
+              {entries.map(([k, c]) => {
+                const v = c?.adjusted;
+                const band = competencyBand(v);
+                const floor = c?.floor;
+                const tier = c?.tier;
+                const breached = tier === "critical" && floor != null && v != null && Number(v) < Number(floor);
+                const sublineBits = [];
+                if (floor != null) sublineBits.push(breached ? `Below critical floor (${floor})` : `Floor ${floor}`);
+                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
+                return (
+                  <AssessRow
+                    key={k}
+                    label={formatCompLabel(k)}
+                    value={v}
+                    band={v == null ? "none" : band}
+                    extra={tier ? TIER_LABEL[tier] || tier : null}
+                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
+                  />
+                );
+              })}
               {/* Integrity gate shadow result — SHADOW MODE, not yet active
                   (Peter directive 2026-08-03). The gate never declines a
                   candidate; this only shows what the conjunctive 4-condition
@@ -1167,29 +1079,120 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                   </div>
                 );
               })()}
-              {entries.map(([k, c]) => {
-                const v = c?.adjusted;
-                const band = competencyBand(v);
-                const floor = c?.floor;
-                const tier = c?.tier;
-                const breached = tier === "critical" && floor != null && v != null && Number(v) < Number(floor);
-                const sublineBits = [];
-                if (floor != null) sublineBits.push(breached ? `Below critical floor (${floor})` : `Floor ${floor}`);
-                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
-                return (
-                  <AssessRow
-                    key={k}
-                    label={formatCompLabel(k)}
-                    value={v}
-                    band={v == null ? "none" : band}
-                    extra={tier ? TIER_LABEL[tier] || tier : null}
-                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
-                  />
-                );
-              })}
             </>
           );
         })()}
+
+        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+        {/* Reliability + Faking-good — validity indices, not personality traits */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+              Reliability
+            </div>
+            <AssessRow
+              label="Data quality"
+              value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+              band={V2_RELIABILITY_BAND(reliability)}
+              subline={reliabilityDetail?.fired_count != null ? `${reliabilityDetail.fired_count} of 6 checks fired` : null}
+            />
+            {reliability && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4, padding: "0 4px" }}>
+                {reliabilityMethods.map((k) => {
+                  const m = reliabilityDetail[k];
+                  const fired = m?.fired;
+                  return (
+                    <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
+                      <span style={{ color: T.slate600 }}>{RELIABILITY_METHOD_LABELS[k]}</span>
+                      <span style={{ color: fired ? T.red : T.slate400, fontWeight: fired ? 700 : 400 }}>
+                        {fired == null ? "—" : fired ? "flagged" : "ok"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+              Faking-good (Impression Management)
+            </div>
+            <AssessRow
+              label="Score"
+              value={imScore}
+              extra={imBand ? imBand.replace(/_/g, " ") : null}
+              band={IM_BAND_COLOR(imBand)}
+            />
+            {imDetail?.interpretation && (
+              <div style={{ fontSize: 10.5, color: T.slate600, marginTop: 4, padding: "0 4px", lineHeight: 1.4 }}>
+                {imDetail.interpretation}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ height: 1, background: T.slate200 }} />
+
+        {/* GMA — total only is a decision input; subtests are diagnostics */}
+        <div>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+            GMA (General Mental Ability)
+          </div>
+          <AssessRow
+            label="Total"
+            value={gmaTotal}
+            extra={gmaTotal != null ? `/16 (${gmaPct}%)` : null}
+            max={16}
+          />
+          <button
+            type="button"
+            onClick={() => setGmaOpen((o) => !o)}
+            style={{
+              marginTop: 4, background: "none", border: "none", padding: "2px 4px",
+              fontSize: 10.5, color: T.blue, cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            {gmaOpen ? "Hide subtest diagnostics" : "Show subtest diagnostics"}
+          </button>
+          {gmaOpen && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+              <AssessRow label="Pattern" value={detail?.gma_pattern_accuracy} extra="/4" max={4}
+                subline={detail?.gma_pattern_speed_seconds != null ? `${detail.gma_pattern_speed_seconds}s/item` : null} />
+              <AssessRow label="Deductive" value={detail?.gma_deductive_accuracy} extra="/4" max={4}
+                subline={detail?.gma_deductive_speed_seconds != null ? `${detail.gma_deductive_speed_seconds}s/item` : null} />
+              <AssessRow label="Numerical" value={detail?.gma_numerical_accuracy} extra="/4" max={4}
+                subline={detail?.gma_numerical_speed_seconds != null ? `${detail.gma_numerical_speed_seconds}s/item` : null} />
+              <AssessRow label="Verbal" value={detail?.gma_verbal_accuracy} extra="/4" max={4}
+                subline={detail?.gma_verbal_speed_seconds != null ? `${detail.gma_verbal_speed_seconds}s/item` : null} />
+            </div>
+          )}
+        </div>
+
+        <div style={{ height: 1, background: T.slate200 }} />
+
+        {/* SJT — total + 5 topic rows */}
+        <div>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+            SJT (Situational Judgement Test)
+          </div>
+          <AssessRow label="Total" value={sjtScore} extra={sjtScore != null ? "%" : null} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+            {Object.entries(SJT_TOPIC_LABELS).map(([k, label]) => {
+              const t = sjtTopics[k];
+              const pct = t && t.n > 0 ? Math.round((100 * t.correct) / t.n) : null;
+              return (
+                <AssessRow
+                  key={k}
+                  label={label}
+                  value={pct}
+                  extra={t ? `${t.correct}/${t.n}` : null}
+                />
+              );
+            })}
+          </div>
+        </div>
+
       </div>
 
       </div>
