@@ -6676,14 +6676,18 @@ export async function processWrapupNoSendMode(
         console.warn(`[no_send_check] ${tm.first_name}: wrapup_text empty on ${targetWeek} row BUT ${scanMsgs.length} wrap-up-shaped email(s) found in Gmail — parser may have silently failed. Skipping nag.`);
         // Fire an alert so Peter knows to investigate
         try {
-          await sb.from("alerts").insert({
+          // FIXED 2026-08-04: alerts has `message` (not `body`) and alert_type
+          // is NOT NULL — this insert had been failing silently since ship.
+          const { error: alertErr } = await sb.from("alerts").insert({
             agency_id: ctx.agencyId,
+            alert_type: "wrapup_parser_stuck",
             module_reference: "wrapup_ingest",
             severity: "warning",
             title: `Wrap-up parser possibly stuck — ${tm.first_name}`,
-            body: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
+            message: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
             is_resolved: false,
           });
+          if (alertErr) console.warn(`[no_send_check] alert insert error for ${tm.first_name}: ${alertErr.message}`);
         } catch (e) {
           console.warn(`[no_send_check] alert insert failed for ${tm.first_name}:`, e);
         }
