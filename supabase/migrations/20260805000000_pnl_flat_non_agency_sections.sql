@@ -1,0 +1,24 @@
+-- Root cause fix: the subtype-derived section fallback (INITCAP(account_subtype))
+-- was applying to EVERY entity, not just the agency (PSS). Any new/orphaned
+-- income or expense account on a non-agency entity with section_label_override
+-- left NULL silently regrew a "parent category" on that entity's P&L, since
+-- subtypes like 'benefits', 'facilities', 'software', 'vehicle', 'supplies',
+-- 'contra' each became their own section header. Only PSS (the agency) is
+-- supposed to have multi-section P&L; every other entity renders flat under
+-- Income/Expense. Fixed in three functions: get_pnl_history_for_entity,
+-- get_pnl_history_own_only, pnl_drill_transactions — subtype-based fallback
+-- now only fires for PSS; everywhere else falls back to INITCAP(account_type).
+--
+-- Also added: trg_enforce_flat_pnl_section_non_agency BEFORE INSERT/UPDATE
+-- trigger on chart_of_accounts that auto-fills section_label_override to
+-- INITCAP(account_type) for any non-agency income/expense account left NULL,
+-- so this cannot silently regrow again from new/imported accounts.
+--
+-- Data cleanup: 6 active PaperNewt LLC expense accounts (Employee Benefits,
+-- Repairs & Maintenance, Software & SaaS, Vehicle Expenses, Office Supplies &
+-- Expense, Credit Card Rewards & Rebates) had NULL section_label_override and
+-- were rendering as their own subtype-derived sections (Benefits, Facilities,
+-- Software, Vehicle, Supplies, Contra) on PaperNewt's P&L. Set to 'Expense'.
+--
+-- See Supabase migration history (project vulhdujhbwvibbojiimi) for the full
+-- function bodies applied live via Supabase MCP on 2026-08-05.
