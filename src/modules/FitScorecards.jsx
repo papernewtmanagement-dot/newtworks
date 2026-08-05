@@ -183,7 +183,7 @@ export default function FitScorecards({ userRole, userId }) {
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
-        .from("team")
+        .from("team_directory")
         .select("id, first_name, last_name, nickname, user_id, hire_date, start_date, category, is_admin_backoffice, is_active, archived_at, role, role_category")
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
