@@ -111,8 +111,16 @@ interface DrainResult {
 
 async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
   // 1. Call Groq (force higher-TPM model for bank statements — see rate limit note above).
-  // Cap max_tokens at 4000 to stay under 12K TPM even for the biggest statements.
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, 4000);
+  //
+  // Output cap raised 4000 -> 8000 on 2026-08-04. A busy card statement is 50-65
+  // transactions, and at 4000 the JSON came back cut off mid-string: AMEX
+  // Discretionary 26-04 failed three times with "Unterminated string in JSON at
+  // position 10658" and was then dead, because a parse failure burns the attempt
+  // counter. Rate limiting does NOT burn it (429 is treated as transient and
+  // retried on the next tick), so trading a little more TPM pressure for no
+  // truncation is strictly the better failure mode: a throttled item drains
+  // later, a truncated item never drains at all.
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, 8000);
   if (!llm.ok) return { ok: false, error: llm.error };
 
   // 2. Parse JSON
