@@ -720,6 +720,10 @@ async function handleSave(supa: any, cand: any, body: any) {
 // parallel columns.
 const FACET_COLUMNS: Record<string, string> = {
   achievement_striving: "achievement_striving",
+  competitiveness: "competitiveness",
+  learning_goal_orientation: "learning_goal_orientation",
+  prove_goal_orientation: "prove_goal_orientation",
+  avoid_goal_orientation: "avoid_goal_orientation",
   self_discipline: "self_discipline",
   emotional_stability: "emotional_stability",
   assertiveness: "assertiveness",
