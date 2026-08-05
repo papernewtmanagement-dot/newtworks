@@ -17,32 +17,13 @@
 //   Batch:          { agency_id, all_active: true, shared_secret }
 // =========================================================================
 
-import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { sb, jsonResponse, getSettingOrNull } from "../_shared/supabase.ts";
+import { getDefaultModel, callGroqChat } from "../_shared/llm.ts";
+import { requireSharedSecret } from "../_shared/auth.ts";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
-
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
 const NOTES_LOOKBACK_DAYS = 90;
 const LLM_MAX_TOKENS = 700;
-
-async function getSetting(agencyId: string, key: string): Promise<string | null> {
-  const { data } = await sb.from("settings").select("setting_value")
-    .eq("agency_id", agencyId).eq("setting_key", key).maybeSingle();
-  return (data?.setting_value as string | null) ?? null;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body, null, 2), {
-    status, headers: { "Content-Type": "application/json" },
-  });
-}
 
 interface PersonCtx {
   name: string;
@@ -128,38 +109,17 @@ function buildPrompt(p: PersonCtx, a: AssessmentCtx | null, notes: NoteCtx[]): {
 }
 
 async function callGroq(agencyId: string, systemPrompt: string, userContent: string): Promise<{ text: string; model: string } | { error: string }> {
-  const groqKey = await getSetting(agencyId, "groq_api_key");
+  const groqKey = await getSettingOrNull(agencyId, "groq_api_key");
   if (!groqKey) return { error: "groq_api_key setting missing" };
-  const model = (await getSetting(agencyId, "groq_model_default")) || LLM_MODEL_FALLBACK;
-
-  let res: Response;
-  try {
-    res = await fetch(GROQ_ENDPOINT, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: LLM_MAX_TOKENS,
-      }),
-    });
-  } catch (e) {
-    return { error: `Groq fetch failed: ${(e as Error).message}` };
-  }
-  const text = await res.text();
-  if (!res.ok) return { error: `Groq HTTP ${res.status}: ${text.slice(0, 400)}` };
-  let parsed: any;
-  try { parsed = JSON.parse(text); }
-  catch (e) { return { error: `Groq returned non-JSON: ${String(e)}` }; }
-  const content: string = parsed?.choices?.[0]?.message?.content ?? "";
-  if (!content || typeof content !== "string" || !content.trim()) {
-    return { error: "Groq returned empty content" };
-  }
-  return { text: content.trim(), model };
+  const model = await getDefaultModel(agencyId);
+  const llm = await callGroqChat({
+    apiKey: groqKey, model, systemPrompt, userContent,
+    temperature: 0.2, maxTokens: LLM_MAX_TOKENS,
+  });
+  if (!llm.ok) return { error: llm.error ?? "Groq call failed" };
+  const text = llm.raw.trim();
+  if (!text) return { error: "Groq returned empty content" };
+  return { text, model };
 }
 
 async function processMember(agencyId: string, teamMemberId: string): Promise<{ ok: true; upserted: any } | { ok: false; error: string }> {
@@ -270,10 +230,8 @@ Deno.serve(async (req: Request) => {
   const providedSecret: string | undefined = body?.shared_secret;
 
   if (!agencyId) return jsonResponse({ error: "agency_id required" }, 400);
-  if (!providedSecret) return jsonResponse({ error: "shared_secret required" }, 401);
-
-  const expected = await getSetting(agencyId, "automation_runner_cron_secret");
-  if (!expected || providedSecret !== expected) return jsonResponse({ error: "shared_secret mismatch" }, 401);
+  const denied = await requireSharedSecret(agencyId, providedSecret);
+  if (denied) return denied;
 
   if (!teamMemberId && !allActive) {
     return jsonResponse({ error: "team_member_id or all_active=true required" }, 400);
