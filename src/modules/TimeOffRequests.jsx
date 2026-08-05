@@ -1013,7 +1013,7 @@ function HistoryView({ me }) {
   useEffect(() => {
     async function loadTeam() {
       if (!supabase) return;
-      const { data } = await supabase.from("team")
+      const { data } = await supabase.from("team_directory")
         .select("id, first_name, last_name, role_level")
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
@@ -1198,7 +1198,7 @@ function LogTimeOffForm({ onLogged }) {
   useEffect(() => {
     async function loadTeam() {
       if (!supabase) return;
-      const { data } = await supabase.from("team")
+      const { data } = await supabase.from("team_directory")
         .select("id, first_name, last_name")
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
