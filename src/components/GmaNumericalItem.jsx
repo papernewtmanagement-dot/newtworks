@@ -66,7 +66,7 @@ function SequenceRow({ sequence, vp }) {
   );
 }
 
-function OptionGrid({ options, onAnswer, saving, vp }) {
+function OptionGrid({ options, onAnswer, selected, saving, vp }) {
   const letters = ["A", "B", "C", "D", "E", "F"];
   return (
     <div
@@ -90,8 +90,8 @@ function OptionGrid({ options, onAnswer, saving, vp }) {
               alignItems: "center",
               gap: 4,
               padding: "14px 8px",
-              background: T.white,
-              border: `1px solid ${T.slate200}`,
+              background: selected?.label === letter ? T.blueLt : T.white,
+              border: `1px solid ${selected?.label === letter ? T.blue : T.slate200}`,
               borderRadius: 8,
               cursor: saving ? "wait" : "pointer",
               boxSizing: "border-box",
@@ -108,7 +108,7 @@ function OptionGrid({ options, onAnswer, saving, vp }) {
   );
 }
 
-export default function GmaNumericalItem({ item, onAnswer, saving, vp }) {
+export default function GmaNumericalItem({ item, onAnswer, selected, saving, vp }) {
   const sequence = item?.choices?.sequence;
   const options = item?.choices?.options;
   return (
@@ -138,7 +138,7 @@ export default function GmaNumericalItem({ item, onAnswer, saving, vp }) {
       >
         Choose the missing number
       </div>
-      <OptionGrid options={options} onAnswer={onAnswer} saving={saving} vp={vp} />
+      <OptionGrid options={options} onAnswer={onAnswer} selected={selected} saving={saving} vp={vp} />
     </div>
   );
 }
