@@ -513,13 +513,27 @@ function useCPRData(weekDate) {
         // since been terminated/archived. Filtering by is_active here would
         // leave those team_detail rows orphaned and display "(unknown)" on the page.
         const { data: liveRows } = await supabase
-          .from("team")
-          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at, annual_benefits_value")
+          .from("team_directory")
+          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at")
           .eq("agency_id", AGENCY_ID)
           .eq("is_admin_backoffice", false)
           .order("hire_date", { ascending: true })
           .order("first_name", { ascending: true });
-        const teamRows = liveRows || [];
+
+        // annual_benefits_value is comp data -- stays on the real team table
+        // (admin-or-own-row RLS), never on the open directory view. A staff
+        // viewer's fetch here returns only their own row; merge whatever
+        // comes back onto the directory rows so admins see everyone's figure
+        // and staff only ever see their own.
+        const { data: benefitRows } = await supabase
+          .from("team")
+          .select("id, annual_benefits_value")
+          .eq("agency_id", AGENCY_ID);
+        const benefitsById = new Map((benefitRows || []).map(r => [r.id, r.annual_benefits_value]));
+        const teamRows = (liveRows || []).map(r => ({
+          ...r,
+          annual_benefits_value: benefitsById.get(r.id) ?? null,
+        }));
 
         // 2. Report row for this week
         const { data: reportRow } = await supabase
