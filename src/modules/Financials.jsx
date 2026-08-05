@@ -2867,17 +2867,15 @@ const CreditSection = ({ data }) => {
           </div>
         </div>
         <Field label="Register" value={fmtMoneyR(a.balance)} color={T.red} />
-        {a.limit ? <Field label="Available" value={fmtMoneyR(a.limit - a.balance)} color={T.green} /> : null}
+        <Field label="Available" value={a.limit ? fmtMoneyR(a.limit - a.balance) : "—"} color={a.limit ? T.green : T.slate400} />
         {a.payment ? <Field label="Min Pmt" value={fmtMoneyR(a.payment)} color={T.amber} /> : null}
         {a.dueDay ? <Field label="Due" value={`Day ${a.dueDay}`} color={T.slate700} minWidth={60} /> : null}
-        {a.limit ? (
-          <div style={{ minWidth: 110, flex: "0 1 auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.slate500, marginBottom: 2, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-              <span>Utilization</span><span style={{ color: utilColor, fontWeight: 700 }}>{util}%</span>
-            </div>
-            <ProgressBar value={a.balance} max={a.limit} color={utilColor} height={5} />
+        <div style={{ minWidth: 110, flex: "0 1 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.slate500, marginBottom: 2, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            <span>Utilization</span><span style={{ color: utilColor, fontWeight: 700 }}>{util != null ? `${util}%` : "—"}</span>
           </div>
-        ) : null}
+          {a.limit ? <ProgressBar value={a.balance} max={a.limit} color={utilColor} height={5} /> : null}
+        </div>
       </div>
     );
   };
