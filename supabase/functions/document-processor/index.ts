@@ -1196,20 +1196,32 @@ async function processOneAttachment(
   if (depth > 0) {
     const { data: existing } = await sb
       .from("documents")
-      .select("id")
+      .select("id, processing_status, retry_count")
       .eq("agency_id", ctx.agencyId)
       .eq("file_name", att.fileName)
       .like("upload_source", "gmail%")
       .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString())
       .maybeSingle();
     if (existing?.id) {
-      results.push({
-        documentId: existing.id, fileName: att.fileName, fromEmail: att.fromEmail,
-        docType, status: "skipped", jeCount: 0, suspenseCount: 0,
-        sourceLabel: uploadSource,
-        error: "already_processed (idempotent)",
-      });
-      return results;
+      // This check used to skip ANY existing row regardless of status, which is
+      // the exact stranding bug retryableDocumentId() was written to fix — but
+      // the fix was only wired into the outer fetcher, not here. An inner zip
+      // file whose run died before reaching a terminal status therefore sat at
+      // "received" through every single re-run, unreachable. Discover Tithe
+      // 26-02 and 26-05 were stuck that way (found 2026-08-04).
+      const retryId = retryableDocumentId(existing, att.fileName);
+      if (retryId) {
+        att.retryDocumentId = retryId;
+        att.retryCount = existing.retry_count ?? 0;
+      } else {
+        results.push({
+          documentId: existing.id, fileName: att.fileName, fromEmail: att.fromEmail,
+          docType, status: "skipped", jeCount: 0, suspenseCount: 0,
+          sourceLabel: uploadSource,
+          error: "already_processed (idempotent)",
+        });
+        return results;
+      }
     }
   }
 
