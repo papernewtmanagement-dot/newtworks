@@ -3276,6 +3276,11 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
     // Team Bonus row: shows the sum (d.bonus = sales_pool_share + retention_pool_share).
     // Expandable → 3 sub-rows below (13-wk sales split, 4-wk sales split, retention split).
     ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklyBonusPool)} pool)`],
+    // Requirements Adjustment: informational-only row (locked 2026-08-05). d.bonus/sales_pool_share/
+    // retention_pool_share above are ALREADY net of this — it's baked in via write_weekly_comp_v2's
+    // scale factor. This row just shows the reduction that already happened, so it must NOT be
+    // double-counted in the Week Total / OT Annual reduce()s below (see the k !== "wtw_requirements_adjustment" guard).
+    ["wtw_requirements_adjustment",   "Requirements Adjustment"],
     ["marketing_pool_earned_weekly",  "Marketing"],
     // Goals: expandable row displaying goals_bonus + health_bonus.
     // Expands to 6 sub-rows (5 goals_bonus $10 buckets from residual_pool_diag.goals_detail,
@@ -3383,7 +3388,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
             background: editMode ? (T.amber50 || "#fef3c7") : T.white,
           }}>
             {editMode && saveError && (
-              <span style={{ color: T.red600 || "#dc2626", fontSize: 12, marginRight: "auto" }}>
+              <span style={{ color: T.red, fontSize: 12, marginRight: "auto" }}>
                 {saveError}
               </span>
             )}
@@ -3423,6 +3428,20 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
             )}
           </div>
         )}
+
+        {(() => {
+          // Team-level requirements-adjustment summary (locked 2026-08-05). Derived from the
+          // per-person prorated team portion already stored in residual_pool_diag — avoids a
+          // second data fetch. Condition-of-earning framing only; never call this a deduction.
+          const teamAdjDollars = sorted.reduce((sum, d) => sum + (Number(d.residual_pool_diag?.wtw_requirements_adjustment?.team_dollars_prorated_to_person) || 0), 0);
+          if (teamAdjDollars <= 0) return null;
+          const teamAdjQuotes = Math.round(teamAdjDollars / 10);
+          return (
+            <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>
+              Requirements adjustment this week: team cleared its raw quote line but landed {teamAdjQuotes} quote{teamAdjQuotes === 1 ? "" : "s"} short on net — {fmtMoneyCents(teamAdjDollars)} adjusted out of the bonus pool before the split.
+            </div>
+          );
+        })()}
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -3519,6 +3538,42 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                 // Skip rendering it as a standalone row. Kept in ROWS array so
                 // Week Total + OT Annual sums still pick up d.health_bonus.
                 if (key === "health_bonus") return [];
+                // Requirements Adjustment (locked 2026-08-05): condition-of-earning reduction, never a
+                // wage deduction. Shows the combined team-prorated + individual reduction already folded
+                // into this person's bonus/sales_pool_share/retention_pool_share above.
+                if (key === "wtw_requirements_adjustment") {
+                  const anyAdj = sorted.some(dd => {
+                    const wa = dd.residual_pool_diag?.wtw_requirements_adjustment || {};
+                    return (Number(wa.team_dollars_prorated_to_person) || 0) + (Number(wa.individual_dollars) || 0) > 0;
+                  });
+                  if (!anyAdj) return [];
+                  return [
+                    <tr key={key}>
+                      <Td style={{ paddingLeft: 14, color: T.slate700 }}>{label}</Td>
+                      {sorted.map(d => {
+                        const wa = d.residual_pool_diag?.wtw_requirements_adjustment || {};
+                        const teamPortion = Number(wa.team_dollars_prorated_to_person) || 0;
+                        const indivPortion = Number(wa.individual_dollars) || 0;
+                        const total = teamPortion + indivPortion;
+                        const indivQuotes = Number(wa.individual_quotes_under) || 0;
+                        return (
+                          <Td key={d.team_member_id} align="right">
+                            {total > 0 ? (
+                              <span style={{ color: T.red }}>
+                                {`-${fmtMoneyCentsR(total)}`.replace("--", "-")}
+                                {indivQuotes > 0 && (
+                                  <div style={{ fontSize: 10, color: T.slate500, fontWeight: 400 }}>
+                                    {indivQuotes} quote{indivQuotes === 1 ? "" : "s"} under on net
+                                  </div>
+                                )}
+                              </span>
+                            ) : "—"}
+                          </Td>
+                        );
+                      })}
+                    </tr>
+                  ];
+                }
                 // Goals: expandable row → 6 sub-rows (5 goals_bonus $10 buckets + Health Goal up to $25).
                 // Buckets 1-5 read per-person from d.residual_pool_diag.goals_detail;
                 // Health Goal reads d.health_bonus (pre-pool carveout, $25 gated on ≥5 team health checkins).
@@ -3650,7 +3705,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week Total</Td>
                 {sorted.map(d => {
-                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
+                  const compsTotal = ROWS.reduce((sum, [k]) => k === "wtw_requirements_adjustment" ? sum : sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
                   const total = compsTotal + weeklyBenefits;
@@ -3676,7 +3731,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   // Benefits flat-added (no compounding).
                   const ytdPaid = (d.payroll_ytd_paid === null || d.payroll_ytd_paid === undefined)
                     ? null : Number(d.payroll_ytd_paid);
-                  const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
+                  const thisWeekTotal = ROWS.reduce((sum, [k]) => k === "wtw_requirements_adjustment" ? sum : sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
                   const ytdWithThisWeek = ytdPaid === null ? null : ytdPaid + thisWeekTotal;
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const daysEmployedThisYear = (() => {
