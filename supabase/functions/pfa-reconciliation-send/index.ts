@@ -18,49 +18,15 @@
 // HARD RULE: NO Newtworks self-attribution footer.
 // =========================================================================
 
-import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "npm:pdf-lib@1.17.1";
 import SparkMD5 from "npm:spark-md5@3.0.2";
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
-
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
+import { sb, jsonResponse } from "../_shared/supabase.ts";
+import { requireSharedSecret } from "../_shared/auth.ts";
+import { getComposioGmailCreds, sendGmail } from "../_shared/gmail.ts";
+import { insertAlert, resolveAlerts } from "../_shared/alerts.ts";
 
 const SF_RECIPIENT = "peter.story.yrru@statefarm.com";
-
-// =========================================================================
-// Composio Gmail send
-// =========================================================================
-async function callComposio(opts: {
-  apiKey: string;
-  userId: string;
-  connectedAccountId: string;
-  toolSlug: string;
-  toolArguments: Record<string, unknown>;
-}) {
-  const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
-    method: "POST",
-    headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: opts.userId,
-      connected_account_id: opts.connectedAccountId,
-      arguments: opts.toolArguments,
-    }),
-  });
-  const text = await res.text();
-  let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = res.ok && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok ? null : (parsed?.error?.message || parsed?.error || text.slice(0, 400));
-  return { ok, data, error, httpStatus: res.status };
-}
 
 // =========================================================================
 // Composio file staging  (added 2026-08-04)
@@ -160,31 +126,14 @@ async function raiseSendFailureAlert(
   periodEnd: string,
   detail: string,
 ): Promise<void> {
-  try {
-    await sb.from("alerts").insert({
-      agency_id: agencyId,
-      alert_type: "pfa_reconciliation_send_failed",
-      severity: "warning",
-      title: `PFA reconciliation email did NOT send — statement ending ${periodEnd}`,
-      message: `The reconciliation for the PFA statement ending ${periodEnd} computed clean, but the email to State Farm failed. Nothing has been filed for this period. Detail: ${detail.slice(0, 500)}`,
-      module_reference: `pfa_reconciliation_send_failed:${reconciliationId}`,
-      is_read: false,
-      is_resolved: false,
-      related_id: reconciliationId,
-      created_at: new Date().toISOString(),
-    });
-  } catch (_e) { /* alerting must never mask the underlying error */ }
-}
-
-async function getSetting(agencyId: string, key: string): Promise<string | null> {
-  const { data } = await sb.from("settings").select("setting_value")
-    .eq("agency_id", agencyId).eq("setting_key", key).maybeSingle();
-  return data?.setting_value ?? null;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body, null, 2), {
-    status, headers: { "Content-Type": "application/json" },
+  await insertAlert({
+    agencyId,
+    alertType: "pfa_reconciliation_send_failed",
+    severity: "warning",
+    title: `PFA reconciliation email did NOT send — statement ending ${periodEnd}`,
+    message: `The reconciliation for the PFA statement ending ${periodEnd} computed clean, but the email to State Farm failed. Nothing has been filed for this period. Detail: ${detail.slice(0, 500)}`,
+    moduleReference: `pfa_reconciliation_send_failed:${reconciliationId}`,
+    relatedId: reconciliationId,
   });
 }
 
@@ -518,17 +467,15 @@ async function run(req: Request): Promise<Response> {
   if (!agencyId) return jsonResponse({ ok: false, error: "agency_id required" }, 400);
   if (!reconciliationId) return jsonResponse({ ok: false, error: "reconciliation_id required" }, 400);
 
-  const expected = await getSetting(agencyId, "automation_runner_cron_secret");
-  if (!expected || expected !== sharedSecret) {
-    return jsonResponse({ ok: false, error: "auth failed" }, 401);
-  }
+  const denied = await requireSharedSecret(agencyId, sharedSecret);
+  if (denied) return denied;
 
-  const composioApiKey = await getSetting(agencyId, "composio_api_key");
-  const composioUserId = await getSetting(agencyId, "composio_user_id");
-  const gmailAccountId = await getSetting(agencyId, "composio_gmail_account_id");
-  if (!composioApiKey || !composioUserId || !gmailAccountId) {
+  const credsRes = await getComposioGmailCreds(agencyId);
+  if (!credsRes.ok) {
     return jsonResponse({ ok: false, error: "missing composio credentials" }, 400);
   }
+  const gmailCreds = credsRes.creds;
+  const composioApiKey = gmailCreds.apiKey;
 
   // 1) Load the reconciliation
   const { data: recon, error: reconErr } = await sb
@@ -670,23 +617,12 @@ async function run(req: Request): Promise<Response> {
     return jsonResponse({ ok: false, status: "send_failed", error: stageErr }, 502);
   }
 
-  const sendRes = await callComposio({
-    apiKey: composioApiKey,
-    userId: composioUserId,
-    connectedAccountId: gmailAccountId,
-    toolSlug: "GMAIL_SEND_EMAIL",
-    toolArguments: {
-      recipient_email: recipient,
-      subject,
-      body: emailBody,
-      is_html: false,
-      attachment: {
-        name: fileName,
-        mimetype: "application/pdf",
-        s3key: staged.s3key,
-      },
-      user_id: "me",
-    },
+  const sendRes = await sendGmail({
+    creds: gmailCreds,
+    to: recipient,
+    subject,
+    text: emailBody,
+    attachment: { name: fileName, mimetype: "application/pdf", s3key: staged.s3key },
   });
 
   if (!sendRes.ok) {
@@ -712,17 +648,8 @@ async function run(req: Request): Promise<Response> {
 
     // 7) Resolve any related alerts (the discrepancy alert and any prior
     //    send-failure alert both clear once the filing actually goes out).
-    await sb.from("alerts").update({
-      is_resolved: true, resolved_at: new Date().toISOString(),
-    }).eq("agency_id", agencyId)
-      .eq("module_reference", `pfa_reconciliation:${reconciliationId}`)
-      .eq("is_resolved", false);
-
-    await sb.from("alerts").update({
-      is_resolved: true, resolved_at: new Date().toISOString(),
-    }).eq("agency_id", agencyId)
-      .eq("module_reference", `pfa_reconciliation_send_failed:${reconciliationId}`)
-      .eq("is_resolved", false);
+    await resolveAlerts({ agencyId, moduleReference: `pfa_reconciliation:${reconciliationId}` });
+    await resolveAlerts({ agencyId, moduleReference: `pfa_reconciliation_send_failed:${reconciliationId}` });
   }
 
   return jsonResponse({
