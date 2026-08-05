@@ -16,12 +16,11 @@
 //
 // Invocation: POST { agency_id, shared_secret, [max_items=10, dry_run=false] }
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { sb, jsonResponse, getSettingOrNull, stripFences } from "../_shared/supabase.ts";
+import { callGroqChat } from "../_shared/llm.ts";
+import { requireSharedSecret } from "../_shared/auth.ts";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
 // Bank statements run 11-13K tokens which exceeds gpt-oss-120b's 8000 TPM limit.
 // Force a model with higher throughput for the drainer regardless of stored model.
 const BANK_STATEMENT_MODEL = "llama-3.3-70b-versatile";
@@ -30,59 +29,15 @@ const BANK_STATEMENT_MODEL = "llama-3.3-70b-versatile";
 // backlog even when gpt-oss-120b is exhausted.
 const CAREERPLUG_MODEL = "llama-3.3-70b-versatile";
 
-const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
 // Purposes this drainer currently handles. Adding a new purpose = adding a
 // handler function below AND appending its key here.
 const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extract"];
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body, null, 2), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-async function getSetting(agencyId: string, key: string): Promise<string | null> {
-  const { data } = await sb
-    .from("settings")
-    .select("setting_value")
-    .eq("agency_id", agencyId)
-    .eq("setting_key", key)
-    .maybeSingle();
-  return (data?.setting_value as string) ?? null;
-}
-
-function stripFences(s: string): string {
-  return s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
-}
-
+// Thin adapter over the shared Groq caller so the drain call sites keep their
+// positional signature. temperature 0.1 preserved from the original inline copy.
 async function callGroq(apiKey: string, model: string, systemPrompt: string, userContent: string, maxTokens = 8000): Promise<{ ok: boolean; raw: string; error?: string }> {
-  try {
-    const res = await fetch(GROQ_ENDPOINT, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        temperature: 0.1,
-        max_tokens: maxTokens,
-      }),
-    });
-    const text = await res.text();
-    if (!res.ok) return { ok: false, raw: "", error: `Groq HTTP ${res.status}: ${text.slice(0, 400)}` };
-    let parsed: any;
-    try { parsed = JSON.parse(text); }
-    catch (e) { return { ok: false, raw: text, error: `non-JSON envelope: ${e}` }; }
-    const content = parsed?.choices?.[0]?.message?.content ?? "";
-    if (!content) return { ok: false, raw: "", error: "empty content" };
-    return { ok: true, raw: content };
-  } catch (e) {
-    return { ok: false, raw: "", error: `fetch failed: ${(e as Error).message}` };
-  }
+  const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1 });
+  return { ok: r.ok, raw: r.raw, error: r.error ?? undefined };
 }
 
 interface QueueItem {
@@ -407,12 +362,10 @@ Deno.serve(async (req) => {
   const sharedSecret = body?.shared_secret as string;
   if (!agencyId) return jsonResponse({ ok: false, error: "agency_id required" }, 400);
 
-  const expectedSecret = await getSetting(agencyId, "automation_runner_cron_secret");
-  if (!expectedSecret || expectedSecret !== sharedSecret) {
-    return jsonResponse({ ok: false, error: "auth failed" }, 401);
-  }
+  const denied = await requireSharedSecret(agencyId, sharedSecret);
+  if (denied) return denied;
 
-  const groqKey = await getSetting(agencyId, "groq_api_key");
+  const groqKey = await getSettingOrNull(agencyId, "groq_api_key");
   if (!groqKey) return jsonResponse({ ok: false, error: "groq_api_key not set" }, 400);
 
   const maxItems = Math.min(Math.max(parseInt(body?.max_items ?? "10", 10) || 10, 1), 50);
