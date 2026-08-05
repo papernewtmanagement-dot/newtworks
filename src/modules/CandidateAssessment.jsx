@@ -482,8 +482,8 @@ export default function CandidateAssessment({ candidateId, token }) {
             an honest read on how you naturally think and work. Your best guess
             is fine on any question. Each answer locks in when you tap Next —
             you can't go back to a previous question, so check your pick
-            before moving on. Plan on 45–60 minutes. You can refresh the page
-            and pick up where you left off.
+            before moving on. Plan on about 30 minutes. You can refresh the
+            page and pick up where you left off.
           </div>
           <button style={btnPrimary} onClick={runServe}>
             Begin
