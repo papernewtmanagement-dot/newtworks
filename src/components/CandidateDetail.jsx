@@ -1003,7 +1003,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
             {Object.entries(V2_FACET_LABELS).map(([trait, label]) => {
               const row = facetByTrait[trait];
               const nItems = row?.n_items_scored;
-              const insufficient = nItems != null && nItems < 5;
+              const insufficient = nItems != null && nItems < 4;
               return (
                 <AssessRow
                   key={trait}
@@ -1932,8 +1932,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // Newtworks v2 facet detail — {hypothesized_trait, facet_score, n_items_scored}
   // per facet, fetched fresh via RPC (item counts aren't stored on the flat
   // hiring_candidates columns). Only fetched for v2 candidates. Used to grey out
-  // any facet with n_items_scored < 5 per op-rule "Hardcoded functions: never
-  // prefer simpler over more accurate" / P9 in the trait scoring build spec.
+  // any facet with n_items_scored < 4 — the design floor since the 2026-08-05
+  // aggressive trim (op-rule "Assessment aggressive trim 2026-08-05"): twelve
+  // traits legitimately score from exactly 4 items, so the old < 5 guard
+  // mislabeled valid on-design scores as "insufficient data".
   const [v2Facets, setV2Facets] = useState(null);
   // Newtworks v2 competency layer — full per-role detail (12 competencies with
   // tier/floor/adjusted + gates_fired/verdict_cap/hard_decline/churn_risk),
