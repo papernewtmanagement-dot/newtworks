@@ -1029,7 +1029,7 @@ function ClosesTab() {
 
   const [teamMap, setTeamMap] = useState(new Map());
   useEffect(() => {
-    supabase.from("team").select("id, first_name").eq("agency_id", AGENCY_ID)
+    supabase.from("team_directory").select("id, first_name").eq("agency_id", AGENCY_ID)
       .then(({ data }) => {
         const m = new Map();
         for (const t of data || []) m.set(t.id, t.first_name);
@@ -1126,7 +1126,7 @@ export default function PFA({ userRole }) {
     if (!isAdmin) return;
     supabase.from("pfa_accounts").select("id").eq("agency_id", AGENCY_ID).eq("is_active", true).maybeSingle()
       .then(({ data }) => setPfaAccountId(data?.id || null));
-    supabase.from("team").select("id, first_name").eq("agency_id", AGENCY_ID)
+    supabase.from("team_directory").select("id, first_name").eq("agency_id", AGENCY_ID)
       .is("archived_at", null).eq("is_admin_backoffice", false)
       .order("first_name")
       .then(({ data }) => setTeamRoster(data || []));
