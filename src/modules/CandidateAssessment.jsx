@@ -138,6 +138,17 @@ export default function CandidateAssessment({ candidateId, token }) {
   const [batchProgress, setBatchProgress] = useState({ answered: 0, total: 0 });
   const [stint, setStint] = useState(1);
   const [saving, setSaving] = useState(false);
+  // Select-then-commit: the option the candidate tapped but has not yet
+  // locked in with the Next button. The flow is one-way by design
+  // (2026-08-05 decision): the assessment branches on earlier answers and
+  // first-instinct responses are the signal, so there is no back
+  // navigation -- the pending-selection step is the mis-tap protection
+  // that replaces it.
+  const [pending, setPending] = useState(null);
+  // Shown briefly when browser back (button or iOS edge-swipe) fires
+  // mid-assessment; the history guard below re-arms and keeps the
+  // candidate on the page.
+  const [backNotice, setBackNotice] = useState(false);
 
   // Per-item shown-at timestamp captured on the FRONTEND at the moment the
   // candidate actually sees a new question. Sent as served_at on save_response.
@@ -157,6 +168,32 @@ export default function CandidateAssessment({ candidateId, token }) {
       shownAtRef.current = new Date().toISOString();
     }
   }, [currentIdx, items, screen]);
+
+  // Browser-back guard. iPhone's left-edge swipe (and the back button)
+  // fires a real history navigation; unguarded, it dumps a mid-assessment
+  // candidate back out to their email app. Push one sentinel entry on
+  // mount and re-arm it on every popstate so back keeps the candidate on
+  // this page and shows a short notice instead. Escape is still possible
+  // (e.g. rapid double-back) and is safe: every answer is already saved
+  // server-side and reopening the link resumes mid-flow. NewtworksApp's
+  // own popstate listener re-parses an unchanged URL here, so it no-ops.
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.history.pushState({ nwAssessGuard: true }, "");
+    const onPop = () => {
+      window.history.pushState({ nwAssessGuard: true }, "");
+      setBackNotice(true);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Auto-hide the back notice.
+  useEffect(() => {
+    if (!backNotice) return undefined;
+    const t = setTimeout(() => setBackNotice(false), 4000);
+    return () => clearTimeout(t);
+  }, [backNotice]);
 
   // Fetch + render items for whichever stint is next; if server says done, finalize.
   const runServe = useCallback(async () => {
@@ -181,6 +218,7 @@ export default function CandidateAssessment({ candidateId, token }) {
     setItems(Array.isArray(data.items) ? data.items : []);
     setBatchProgress(data.progress || { answered: 0, total: 0 });
     setCurrentIdx(0);
+    setPending(null);
     setSaveError(null);
     // On first entry into stint 2, show an informational intro screen with a
     // Continue button so the candidate understands why extra questions appeared.
@@ -270,12 +308,14 @@ export default function CandidateAssessment({ candidateId, token }) {
       if (!ok) {
         setSaveError(
           data?.error === "network_error"
-            ? "Connection hiccup. Tap your answer again to retry."
-            : "Save didn't go through. Tap your answer again to retry."
+            ? "Connection hiccup. Tap Next again to retry."
+            : "Save didn't go through. Tap Next again to retry."
         );
         return;
       }
-      // Advance both counters and index.
+      // Advance both counters and index. Clear the pending selection
+      // synchronously so the next item never paints with a stale highlight.
+      setPending(null);
       setOverall((p) => ({ ...p, answered: p.answered + 1 }));
       setBatchProgress((p) => ({ ...p, answered: p.answered + 1 }));
       if (currentIdx + 1 < items.length) {
@@ -440,8 +480,10 @@ export default function CandidateAssessment({ candidateId, token }) {
           >
             There are no right or wrong answers on the statements — the goal is
             an honest read on how you naturally think and work. Your best guess
-            is fine on any question. Plan on 45–60 minutes. You can refresh the
-            page and pick up where you left off.
+            is fine on any question. Each answer locks in when you tap Next —
+            you can't go back to a previous question, so check your pick
+            before moving on. Plan on 45–60 minutes. You can refresh the page
+            and pick up where you left off.
           </div>
           <button style={btnPrimary} onClick={runServe}>
             Begin
@@ -615,6 +657,24 @@ export default function CandidateAssessment({ candidateId, token }) {
   return (
     <div style={container}>
       <div style={card}>
+        {backNotice ? (
+          <div
+            style={{
+              padding: "10px 14px",
+              background: T.amberLt,
+              color: T.slate900,
+              border: `1px solid ${T.amber}`,
+              borderRadius: 8,
+              fontSize: 13,
+              lineHeight: 1.4,
+              marginBottom: 16,
+              boxSizing: "border-box",
+            }}
+          >
+            You can't go back to a previous question — everything you've
+            answered is already saved.
+          </div>
+        ) : null}
         {/* Progress header */}
         <div style={{ marginBottom: 24 }}>
           <div
@@ -707,10 +767,35 @@ export default function CandidateAssessment({ candidateId, token }) {
         {/* Response controls */}
         <ResponseControls
           item={item}
-          onAnswer={handleAnswer}
+          onAnswer={(p) => {
+            if (!saving) setPending(p);
+          }}
+          selected={pending}
           saving={saving}
           vp={vp}
         />
+
+        {/* Commit gate: tapping an option only selects it; Next locks it
+            in and saves. This is the deliberate mis-tap protection for the
+            one-way (no back navigation) flow — the candidate can change
+            their pick freely until Next. */}
+        <button
+          disabled={saving || !pending}
+          onClick={() => {
+            if (pending) handleAnswer(pending);
+          }}
+          style={{
+            ...btnPrimary,
+            width: "100%",
+            marginTop: 20,
+            padding: "14px 24px",
+            fontSize: 16,
+            opacity: saving || !pending ? 0.45 : 1,
+            cursor: saving ? "wait" : pending ? "pointer" : "default",
+          }}
+        >
+          {saving ? "Saving…" : "Next"}
+        </button>
 
         {/* Autosave hint */}
         <div
@@ -728,20 +813,20 @@ export default function CandidateAssessment({ candidateId, token }) {
   );
 }
 
-function ResponseControls({ item, onAnswer, saving, vp }) {
+function ResponseControls({ item, onAnswer, selected, saving, vp }) {
   // GMA pattern-matching item. choices is an OBJECT ({ grid, options }), not
   // an array of text strings, so this must be checked before the multi-choice
   // Array.isArray branch below — otherwise it silently falls through to the
   // Likert-scale renderer instead of the shape grid.
   if (isGmaPatternItem(item)) {
-    return <GmaPatternItem item={item} onAnswer={onAnswer} saving={saving} vp={vp} />;
+    return <GmaPatternItem item={item} onAnswer={onAnswer} selected={selected} saving={saving} vp={vp} />;
   }
 
   // GMA numerical-reasoning item. choices is an OBJECT ({ sequence, options
   // }), not an array -- same reason this must be checked before the
   // Array.isArray multi-choice branch below as the pattern-matching check.
   if (isGmaNumericalItem(item)) {
-    return <GmaNumericalItem item={item} onAnswer={onAnswer} saving={saving} vp={vp} />;
+    return <GmaNumericalItem item={item} onAnswer={onAnswer} selected={selected} saving={saving} vp={vp} />;
   }
 
   // Multi-choice item (choices is a JSONB array).
@@ -756,8 +841,8 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
             onClick={() => onAnswer({ label: String(choice) })}
             style={{
               padding: "14px 16px",
-              background: T.white,
-              border: `1px solid ${T.slate200}`,
+              background: selected?.label === String(choice) ? T.blueLt : T.white,
+              border: `1px solid ${selected?.label === String(choice) ? T.blue : T.slate200}`,
               borderRadius: 8,
               textAlign: "left",
               fontSize: 15,
@@ -798,8 +883,8 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
             onClick={() => onAnswer({ value: opt.value })}
             style={{
               padding: "14px 16px",
-              background: T.white,
-              border: `1px solid ${T.slate200}`,
+              background: selected?.value === opt.value ? T.blueLt : T.white,
+              border: `1px solid ${selected?.value === opt.value ? T.blue : T.slate200}`,
               borderRadius: 8,
               textAlign: "left",
               fontSize: 15,
@@ -843,8 +928,8 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
           onClick={() => onAnswer({ value: opt.value })}
           style={{
             padding: "18px 8px",
-            background: T.white,
-            border: `1px solid ${T.slate200}`,
+            background: selected?.value === opt.value ? T.blueLt : T.white,
+            border: `1px solid ${selected?.value === opt.value ? T.blue : T.slate200}`,
             borderRadius: 8,
             textAlign: "center",
             fontSize: 12,
