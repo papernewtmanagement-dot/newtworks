@@ -24,7 +24,7 @@ const TRAIT_LABELS = {
   optimism:            "Optimism",
 };
 
-// Newtworks v2 assessment — the 21 live personality facets, strategic labels
+// Newtworks v2 assessment — the 25 live personality facets, strategic labels
 // pulled from hiregauge_trait_documentation.strategic_label. Feeds the 12
 // competencies + 7 role-fit functions below (Newtworks competency layer,
 // confirmed 2026-08-02, live 2026-08-03 — the earlier "no competency layer"
@@ -33,6 +33,12 @@ const TRAIT_LABELS = {
 // thread-specific, not agency-wide").
 const V2_FACET_LABELS = {
   achievement_striving:       "Achievement Striving",
+  assertiveness:              "Assertiveness",
+  compassion:                 "Compassion",
+  competitiveness:            "Competitiveness",
+  learning_goal_orientation:  "Learning Goal Orientation",
+  prove_goal_orientation:     "Prove Goal Orientation",
+  avoid_goal_orientation:     "Avoid Goal Orientation",
   self_discipline:            "Self-Discipline",
   emotional_stability:        "Emotional Stability",
   dutifulness:                "Dutifulness",
