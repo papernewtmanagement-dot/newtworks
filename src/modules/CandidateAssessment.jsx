@@ -22,6 +22,44 @@ const LIKERT_LABELS = [
   { value: 5, label: "Strongly agree" },
 ];
 
+// Anchor labels per response scale, matching each source instrument's own
+// documented format (citations live in the ingest migrations):
+//   4-pt — General Self-Efficacy Scale truth anchors (Schwarzer & Jerusalem 1995)
+//   6-pt — VandeWalle 1997 goal-orientation agreement anchors (no midpoint)
+//   7-pt — 7-point agreement anchors (proactive personality / networking /
+//          customer orientation)
+// Before 2026-08-05 anything that wasn't a 5-point scale fell back to bare
+// numbers, so every button rendered its number twice ("1" over "1").
+const SCALE_ANCHORS = {
+  4: ["Not at all true", "Hardly true", "Moderately true", "Exactly true"],
+  6: ["Strongly disagree", "Disagree", "Slightly disagree", "Slightly agree", "Agree", "Strongly agree"],
+  7: ["Strongly disagree", "Disagree", "Slightly disagree", "Neutral", "Slightly agree", "Agree", "Strongly agree"],
+};
+
+// The enterprising items are O*NET Interest Profiler ACTIVITIES ("Manage a
+// retail store"), rated by how much you'd like doing them — O*NET's own
+// computerized format (see 20260801041500 ingest migration). Agreement
+// anchors made them read as claims; liking anchors are the documented scale.
+const LIKING_ANCHORS_5 = ["Strongly dislike", "Dislike", "Unsure", "Like", "Strongly like"];
+
+// Instruments whose published items are already full first-person sentences
+// (or, for enterprising, activity phrases). These must NOT get the "I " stem
+// that headless IPIP/HEXACO fragments need — prefixing them produced
+// "I i can always manage…" / "I wherever I have been…" (caught by Peter,
+// 2026-08-05, stint 2).
+const FULL_SENTENCE_TRAITS = new Set([
+  "dispositional_optimism",
+  "self_efficacy",
+  "proactive_personality",
+  "political_skill_networking",
+  "customer_orientation",
+  "learning_goal_orientation",
+  "prove_goal_orientation",
+  "avoid_goal_orientation",
+  "competitiveness",
+  "enterprising",
+]);
+
 async function callV1(candidateId, token, action, extra = {}) {
   const body = { candidate_id: candidateId, token, action, ...extra };
   const headers = { "Content-Type": "application/json" };
@@ -87,6 +125,8 @@ function formatItemText(item) {
     item.section === "newtworks_v1_impression_mgmt" ||
     item.section === "newtworks_v2_personality";
   if (!isSelfDescriptive) return text;
+  if (FULL_SENTENCE_TRAITS.has(item.hypothesized_trait)) return text;
+  if (/^I[ '\u2019]/.test(text)) return text;
   return "I " + text.charAt(0).toLowerCase() + text.slice(1);
 }
 
@@ -379,7 +419,7 @@ export default function CandidateAssessment({ candidateId, token }) {
             }}
           >
             You've been invited to complete a short assessment. It's a series of
-            statements you'll respond to on a 1–5 scale, plus a few quick
+            statements you'll respond to on a simple rating scale, plus a few quick
             problem-solving questions.
           </div>
           <div
@@ -742,13 +782,20 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
 
   // Likert scale (default when scale_max is set and choices is null).
   const scaleMax = Number.isFinite(item?.scale_max) ? item.scale_max : 5;
-  const labels =
-    scaleMax === 5
-      ? LIKERT_LABELS
-      : Array.from({ length: scaleMax }, (_, i) => ({
-          value: i + 1,
-          label: String(i + 1),
-        }));
+  const anchorTexts =
+    item?.hypothesized_trait === "enterprising"
+      ? LIKING_ANCHORS_5
+      : scaleMax === 5
+      ? null
+      : SCALE_ANCHORS[scaleMax];
+  const labels = anchorTexts
+    ? anchorTexts.map((label, i) => ({ value: i + 1, label }))
+    : scaleMax === 5
+    ? LIKERT_LABELS
+    : Array.from({ length: scaleMax }, (_, i) => ({
+        value: i + 1,
+        label: String(i + 1),
+      }));
 
   if (vp.isPhone) {
     // Phone: stack Likert options vertically.
