@@ -13,10 +13,11 @@
 // =========================================================================
 
 // deno-lint-ignore-file no-explicit-any
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { sb, AGENCY_ID_DEFAULT } from "../_shared/supabase.ts";
+import { requireSharedSecret } from "../_shared/auth.ts";
+import { getComposioGmailCreds, sendGmail, GmailCreds } from "../_shared/gmail.ts";
 
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
-const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const OWNER_EMAIL = "storypeterj@gmail.com";
 const TZ = "America/Chicago";
 
@@ -85,50 +86,24 @@ function humanDate(iso: string): string {
   });
 }
 
+// Thin adapter over the shared Gmail sender, keeping the original call shape.
 async function callComposioGmailSend(
   opts: {
-    apiKey: string;
-    userId: string;
-    connectedAccountId: string;
+    creds: GmailCreds;
     recipient: string;
     subject: string;
     bodyHtml: string;
     cc?: string;
   },
 ): Promise<{ ok: boolean; error: string | null }> {
-  const args: Record<string, any> = {
-    recipient_email: opts.recipient,
+  const r = await sendGmail({
+    creds: opts.creds,
+    to: opts.recipient,
     subject: opts.subject,
-    body: opts.bodyHtml,
-    is_html: true,
-    user_id: "me",
-  };
-  if (opts.cc) args.cc = [opts.cc];
-
-  const res = await fetch(`${COMPOSIO_BASE}/GMAIL_SEND_EMAIL`, {
-    method: "POST",
-    headers: {
-      "x-api-key": opts.apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      user_id: opts.userId,
-      connected_account_id: opts.connectedAccountId,
-      arguments: args,
-    }),
+    html: opts.bodyHtml,
+    cc: opts.cc ? [opts.cc] : undefined,
   });
-  const text = await res.text();
-  let parsed: any = {};
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = { raw: text };
-  }
-  const ok = res.ok && !!parsed?.successful;
-  const error = ok
-    ? null
-    : (parsed?.error?.message || parsed?.error || text.slice(0, 300));
-  return { ok, error };
+  return { ok: r.ok, error: r.error };
 }
 
 function buildEmailBody(input: {
@@ -241,54 +216,20 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const agencyId = body.agency_id || AGENCY_ID;
+  const agencyId = body.agency_id || AGENCY_ID_DEFAULT;
   const sharedSecret = body.shared_secret;
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const sb = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
+  const denied = await requireSharedSecret(agencyId, sharedSecret);
+  if (denied) return denied;
 
-  const { data: secretRow } = await sb
-    .from("settings")
-    .select("setting_value")
-    .eq("agency_id", agencyId)
-    .eq("setting_key", "automation_runner_cron_secret")
-    .maybeSingle();
-
-  if (!secretRow || secretRow.setting_value !== sharedSecret) {
-    return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const { data: settingsRows } = await sb
-    .from("settings")
-    .select("setting_key,setting_value")
-    .eq("agency_id", agencyId)
-    .in("setting_key", [
-      "composio_api_key",
-      "composio_user_id",
-      "composio_gmail_account_id",
-    ]);
-  const settingsMap = Object.fromEntries(
-    (settingsRows ?? []).map((r: any) => [r.setting_key, r.setting_value]),
-  );
-  const composioApiKey = settingsMap["composio_api_key"];
-  const composioUserId = settingsMap["composio_user_id"];
-  const composioGmailAccountId = settingsMap["composio_gmail_account_id"];
-
-  if (!composioApiKey || !composioUserId || !composioGmailAccountId) {
+  const credsRes = await getComposioGmailCreds(agencyId);
+  if (!credsRes.ok) {
     return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Composio Gmail credentials missing from settings",
-      }),
+      JSON.stringify({ ok: false, error: credsRes.error }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
+  const gmailCreds = credsRes.creds;
 
   const { data: licenses, error: licenseErr } = await sb
     .from("team_licenses")
@@ -445,9 +386,7 @@ Deno.serve(async (req: Request) => {
       }
 
       const sendResult = await callComposioGmailSend({
-        apiKey: composioApiKey,
-        userId: composioUserId,
-        connectedAccountId: composioGmailAccountId,
+        creds: gmailCreds,
         recipient: rc.email,
         subject,
         bodyHtml: html,
