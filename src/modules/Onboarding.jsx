@@ -123,7 +123,7 @@ function useOnboardingData(userId, isAdmin) {
           .select("id, agency_id, team_member_id, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, target_end_date, status, notes, created_by, created_at, updated_at")
           .eq("agency_id", AGENCY_ID)
           .order("created_at", { ascending: false }),
-        supabase.from("team")
+        supabase.from("team_directory")
           .select("id, first_name, last_name, nickname, role, role_category, role_level, category, is_active, is_admin_backoffice, is_test_user, archived_at, user_id, start_date")
           .eq("agency_id", AGENCY_ID),
       ]);
