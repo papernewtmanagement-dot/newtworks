@@ -873,13 +873,62 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         </div>
       )}
 
-      {/* Two-column layout: left = trait facets; right = role fit,
-          competencies, then validity indices (reliability, faking-good) and
+      {/* Two-column layout: left = reliability + faking-good validity
+          indices, then trait facets; right = role fit, competencies, then
           cognitive/situational scores (GMA, SJT) below the competency list.
           Collapses to a single column under ~680px combined width (rule 17
           pattern). */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+
+      {/* Reliability + Faking-good — validity indices, not personality traits */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+            Reliability
+          </div>
+          <AssessRow
+            label="Data quality"
+            value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+            band={V2_RELIABILITY_BAND(reliability)}
+            subline={reliabilityDetail?.fired_count != null ? `${reliabilityDetail.fired_count} of 6 checks fired` : null}
+          />
+          {reliability && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4, padding: "0 4px" }}>
+              {reliabilityMethods.map((k) => {
+                const m = reliabilityDetail[k];
+                const fired = m?.fired;
+                return (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
+                    <span style={{ color: T.slate600 }}>{RELIABILITY_METHOD_LABELS[k]}</span>
+                    <span style={{ color: fired ? T.red : T.slate400, fontWeight: fired ? 700 : 400 }}>
+                      {fired == null ? "—" : fired ? "flagged" : "ok"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+            Faking-good (Impression Management)
+          </div>
+          <AssessRow
+            label="Score"
+            value={imScore}
+            extra={imBand ? imBand.replace(/_/g, " ") : null}
+            band={IM_BAND_COLOR(imBand)}
+          />
+          {imDetail?.interpretation && (
+            <div style={{ fontSize: 10.5, color: T.slate600, marginTop: 4, padding: "0 4px", lineHeight: 1.4 }}>
+              {imDetail.interpretation}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: T.slate200 }} />
 
       {/* 21 personality facets */}
       <div>
@@ -1084,55 +1133,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         })()}
 
         <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-        {/* Reliability + Faking-good — validity indices, not personality traits */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
-          <div>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-              Reliability
-            </div>
-            <AssessRow
-              label="Data quality"
-              value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
-              band={V2_RELIABILITY_BAND(reliability)}
-              subline={reliabilityDetail?.fired_count != null ? `${reliabilityDetail.fired_count} of 6 checks fired` : null}
-            />
-            {reliability && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4, padding: "0 4px" }}>
-                {reliabilityMethods.map((k) => {
-                  const m = reliabilityDetail[k];
-                  const fired = m?.fired;
-                  return (
-                    <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
-                      <span style={{ color: T.slate600 }}>{RELIABILITY_METHOD_LABELS[k]}</span>
-                      <span style={{ color: fired ? T.red : T.slate400, fontWeight: fired ? 700 : 400 }}>
-                        {fired == null ? "—" : fired ? "flagged" : "ok"}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <div>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-              Faking-good (Impression Management)
-            </div>
-            <AssessRow
-              label="Score"
-              value={imScore}
-              extra={imBand ? imBand.replace(/_/g, " ") : null}
-              band={IM_BAND_COLOR(imBand)}
-            />
-            {imDetail?.interpretation && (
-              <div style={{ fontSize: 10.5, color: T.slate600, marginTop: 4, padding: "0 4px", lineHeight: 1.4 }}>
-                {imDetail.interpretation}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ height: 1, background: T.slate200 }} />
 
         {/* GMA — total only is a decision input; subtests are diagnostics */}
         <div>
