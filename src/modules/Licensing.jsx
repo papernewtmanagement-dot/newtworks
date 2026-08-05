@@ -163,7 +163,7 @@ export default function Licensing({ userRole, userId }) {
       // name is ever sent to their browser. The row rules on the database
       // enforce the same thing; this stops the data being sent at all.
       let teamQ = supabase
-        .from("team")
+        .from("team_directory")
         .select("id, first_name, last_name, is_active, user_id")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", true)
