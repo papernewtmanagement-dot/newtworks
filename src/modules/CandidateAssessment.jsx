@@ -76,6 +76,12 @@ function formatItemText(item) {
   if (isGmaNumericalItem(item)) return "";
   const text = item.item_text || "";
   if (!text) return text;
+  // Vocabulary / validity checks live in the personality section but are real
+  // multiple-choice questions ("What does the word X mean?"), not IPIP
+  // fragments — prefixing produced "I what does the word …" (caught in the
+  // 2026-08-05 self-test). Anything carrying a choices payload is a full
+  // question: never prefix it.
+  if (item.choices != null) return text;
   const isSelfDescriptive =
     item.section === "newtworks_v1_personality" ||
     item.section === "newtworks_v1_impression_mgmt" ||
@@ -399,7 +405,7 @@ export default function CandidateAssessment({ candidateId, token }) {
           >
             There are no right or wrong answers on the statements — the goal is
             an honest read on how you naturally think and work. Your best guess
-            is fine on any question. Plan on 25–35 minutes. You can refresh the
+            is fine on any question. Plan on 45–60 minutes. You can refresh the
             page and pick up where you left off.
           </div>
           <button style={btnPrimary} onClick={runServe}>
@@ -412,6 +418,35 @@ export default function CandidateAssessment({ candidateId, token }) {
 
   if (screen === "expansion_intro") {
     const remaining = items?.length ?? 0;
+    // Stint-aware break-screen copy. The one-size-fits-all "short section"
+    // wording was written for the adaptive expansion (stint 3) but also fired
+    // before the 158-item stint-2 baseline battery — the 2026-08-05 self-test
+    // saw "one more short section … About 158 more questions." Stint 2 is the
+    // longest part of the assessment; say so honestly, with a real time
+    // estimate (self-test pace: ~6 s per rating statement). Stint 3 keeps the
+    // adaptive framing (accurate there). Stint 4 is the SJT.
+    const eyebrow =
+      stint === 2 ? "Section 2" : stint === 4 ? "Final section" : "Follow-up section";
+    const headline =
+      stint === 2
+        ? "Nice work — the problem-solving section is done."
+        : stint === 4
+        ? "Last section."
+        : "A few follow-up questions.";
+    const bodyLead =
+      stint === 2
+        ? "Next is the longest part of the assessment: a series of quick statements about how you naturally think and work. Rate how well each one describes you and move on — your first instinct is the right speed."
+        : stint === 4
+        ? "This section is short workplace scenarios. Read each one and pick the response closest to what you would actually do."
+        : "Based on how you answered so far, I'd like to ask a few follow-up questions on a couple of areas where a clearer read would help. This is normal — the assessment adds questions when it needs more signal, not because anything is wrong.";
+    const bodyCount =
+      stint === 2
+        ? `${remaining} statements — most people finish this section in about 15–20 minutes.`
+        : stint === 4
+        ? `${remaining} short scenarios and you're done.`
+        : remaining > 0
+        ? `About ${remaining} more question${remaining === 1 ? "" : "s"} to go. Same format as before.`
+        : "Just a few more questions in the same format as before.";
     return (
       <div style={container}>
         <div style={card}>
@@ -425,7 +460,7 @@ export default function CandidateAssessment({ candidateId, token }) {
               marginBottom: 8,
             }}
           >
-            Follow-up section
+            {eyebrow}
           </div>
           <h1
             style={{
@@ -436,7 +471,7 @@ export default function CandidateAssessment({ candidateId, token }) {
               lineHeight: 1.2,
             }}
           >
-            Nice work — one more short section.
+            {headline}
           </h1>
           <div
             style={{
@@ -446,10 +481,7 @@ export default function CandidateAssessment({ candidateId, token }) {
               fontSize: 15,
             }}
           >
-            Based on how you answered the first section, I'd like to ask a few
-            follow-up questions on a couple of areas where a clearer read would
-            help. This is normal — the assessment adds questions when it needs
-            more signal, not because anything is wrong.
+            {bodyLead}
           </div>
           <div
             style={{
@@ -459,11 +491,7 @@ export default function CandidateAssessment({ candidateId, token }) {
               fontSize: 15,
             }}
           >
-            {remaining > 0
-              ? `About ${remaining} more question${
-                  remaining === 1 ? "" : "s"
-                } to go. Same format as the first section.`
-              : "Just a few more questions in the same format as the first section."}
+            {bodyCount}
           </div>
           <div
             style={{
@@ -574,7 +602,13 @@ export default function CandidateAssessment({ candidateId, token }) {
                 color: T.blue,
               }}
             >
-              {stint > 1 ? "Follow-up section" : "Section 1"}
+              {stint === 2
+                ? "Section 2"
+                : stint === 4
+                ? "Final section"
+                : stint > 1
+                ? "Follow-up section"
+                : "Section 1"}
             </span>
             <span>
               {Math.min(currentIdx + 1, items.length)} of {items.length}
