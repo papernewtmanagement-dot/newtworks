@@ -36,14 +36,9 @@ const SCALE_ANCHORS = {
   7: ["Strongly disagree", "Disagree", "Slightly disagree", "Neutral", "Slightly agree", "Agree", "Strongly agree"],
 };
 
-// The enterprising items are O*NET Interest Profiler ACTIVITIES ("Manage a
-// retail store"), rated by how much you'd like doing them — O*NET's own
-// computerized format (see 20260801041500 ingest migration). Agreement
-// anchors made them read as claims; liking anchors are the documented scale.
-const LIKING_ANCHORS_5 = ["Strongly dislike", "Dislike", "Unsure", "Like", "Strongly like"];
-
 // Instruments whose published items are already full first-person sentences
-// (or, for enterprising, activity phrases). These must NOT get the "I " stem
+// (enterprising items were reworded 2026-08-05 to "I would enjoy …" full
+// sentences per Peter, so they belong here too). These must NOT get the "I " stem
 // that headless IPIP/HEXACO fragments need — prefixing them produced
 // "I i can always manage…" / "I wherever I have been…" (caught by Peter,
 // 2026-08-05, stint 2).
@@ -782,12 +777,7 @@ function ResponseControls({ item, onAnswer, saving, vp }) {
 
   // Likert scale (default when scale_max is set and choices is null).
   const scaleMax = Number.isFinite(item?.scale_max) ? item.scale_max : 5;
-  const anchorTexts =
-    item?.hypothesized_trait === "enterprising"
-      ? LIKING_ANCHORS_5
-      : scaleMax === 5
-      ? null
-      : SCALE_ANCHORS[scaleMax];
+  const anchorTexts = scaleMax === 5 ? null : SCALE_ANCHORS[scaleMax];
   const labels = anchorTexts
     ? anchorTexts.map((label, i) => ({ value: i + 1, label }))
     : scaleMax === 5
