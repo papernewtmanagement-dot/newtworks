@@ -204,7 +204,7 @@ export default function MonthlyClose() {
   const [busyId, setBusyId] = useState(null);
   const [closing, setClosing] = useState(false);
 
-  const { data: rows, loading, setData } =
+  const { data: rows, loading, error: rowsError, refetch: refetchRows, setData } =
     useSupabaseTable("monthly_close_checklist", AGENCY_ID, { orderBy:"expected_by", ascending:true });
 
   // Document join: fetch the documents referenced by checklist rows so we
@@ -219,7 +219,9 @@ export default function MonthlyClose() {
       .select("id, file_name, drive_url, processed_at")
       .in("id", ids)
       .then(({ data, error }) => {
-        if (cancelled || error || !data) return;
+        if (cancelled) return;
+        if (error) { console.error("[MonthlyClose] document join failed:", error); return; }
+        if (!data) return;
         const m = {};
         for (const d of data) m[d.id] = d;
         setDocMap(m);
@@ -374,6 +376,16 @@ export default function MonthlyClose() {
   // ── Render ───────────────────────────────────────────────────
   if (loading) {
     return <div style={{ padding:40, textAlign:"center", fontSize:13, color:T.slate500 }}>Loading monthly close…</div>;
+  }
+  // Same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep):
+  // a failed fetch used to render identically to "no checklist generated yet."
+  if (rowsError && (!rows || rows.length === 0)) {
+    return (
+      <div style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:13,color:"#7B241C",marginBottom:10}}>Couldn't load the close checklist — this isn't necessarily "nothing generated yet."</div>
+        <button onClick={refetchRows} style={{ padding:"7px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:7, cursor:"pointer" }}>Retry</button>
+      </div>
+    );
   }
   if (!rows || rows.length === 0) {
     return (
