@@ -2233,6 +2233,34 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     }
   };
 
+  // Invoke apply_interview_plan RPC (interview-bank-v1) -- builds off interview_questions
+  // bank + trigger codes, writes custom_probes, force=false so it reuses a plan generated
+  // in the last 24h instead of clobbering it.
+  const buildInterviewPlan = async () => {
+    if (!detail?.id || !supabase) return;
+    setPlanBuilding(true);
+    setPlanError(null);
+    try {
+      const { data, error } = await supabase.rpc("apply_interview_plan", {
+        p_candidate_id: detail.id,
+        p_target_minutes: 60,
+        p_force: false,
+      });
+      if (error) throw new Error(error.message || String(error));
+      if (data?.error) throw new Error(data.error);
+      const { data: refreshed } = await supabase
+        .from("v_hiring_candidates")
+        .select("*")
+        .eq("id", detail.id)
+        .maybeSingle();
+      if (refreshed) setDetail(refreshed);
+    } catch (e) {
+      setPlanError(e?.message || String(e));
+    } finally {
+      setPlanBuilding(false);
+    }
+  };
+
   const displayName = [detail?.first_name, detail?.last_name].filter(Boolean).join(" ") || detail?.candidate_name || "Unknown Candidate";
 
   return (
