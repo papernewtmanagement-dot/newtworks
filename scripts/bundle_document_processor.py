@@ -63,7 +63,6 @@ ORDER = [
     "parsers/resume_ingest.ts",
     "parsers/careerplug_applicant.ts",
     "parsers/resume_manual_batch.ts",
-    "parsers/sf_forwarded_applicant.ts",
     "parsers/wrapup_ingest.ts",
     "parsers/wrapup_no_send.ts",
     "index.ts",
@@ -80,15 +79,7 @@ SYSTEM_PROMPT_RENAMES = {
 # Per-file extra renames for other module-scoped symbols that collide across
 # parsers. Applied after SYSTEM_PROMPT rename. Values are (old, new) tuples so
 # all references within the same file are rewritten consistently.
-EXTRA_RENAMES = {
-    "parsers/sf_forwarded_applicant.ts": [
-        # GROQ_ENDPOINT also declared in lib/llm.ts (identical value)
-        ("GROQ_ENDPOINT", "GROQ_ENDPOINT_SFFWD"),
-        # APPLICANTS_* also declared in parsers/careerplug_applicant.ts (identical values)
-        ("APPLICANTS_GMAIL_LABEL_ID", "APPLICANTS_GMAIL_LABEL_ID_SFFWD"),
-        ("APPLICANTS_DRIVE_FOLDER_ID", "APPLICANTS_DRIVE_FOLDER_ID_SFFWD"),
-    ],
-}
+EXTRA_RENAMES = {}
 
 BANNER = (
     "// =========================================================================\n"
