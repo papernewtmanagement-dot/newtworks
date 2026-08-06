@@ -178,29 +178,48 @@ interface FacetFlag { facet: string; percentile: number; direction: "low" | "hig
 // Areas-to-press-on selection: role-relevant facets at/below p20 or at/above
 // p80, capped to the 4 most extreme by distance from p50. Convention for
 // bounding prompt length -- not a psychometric threshold, no validity claim.
+//
+// FILTER FIX 2026-08-06: hiregauge_competency_weights uses a 1-3 scale and
+// NO weight is ever 0 -- filtering on ">0" was a no-op, every competency
+// always passed, every role got the same facet pool. Filtering on weight=3
+// (the role's top-priority competencies) actually differentiates by role.
+// Fallback: if weight=3 gives fewer than 3 flagged facets after the p20/p80
+// cut, widen to weight>=2 for that candidate and say so in the logged
+// record (pressOnFallbackUsed). Two roles (retention_support, sales_in_book)
+// only have 2 weight=3 competencies, so this fallback firing for them is
+// expected, not a bug.
 function selectPressOnFacets(
   roleCategory: string | null,
   competencyWeights: Array<{ competency_name: string; weight: number }>,
   facetPercentiles: Array<{ facet: string; percentile: number | null }>
-): FacetFlag[] {
-  if (!roleCategory) return [];
-  const relevantCompetencies = new Set(
-    competencyWeights.filter(w => Number(w.weight) > 0).map(w => w.competency_name)
-  );
-  const relevantFacets = new Set<string>();
-  for (const comp of relevantCompetencies) {
-    const inputs = COMPETENCY_FACET_INPUTS[comp];
-    if (inputs) for (const f of inputs) relevantFacets.add(f);
-  }
-  const flagged: FacetFlag[] = [];
-  for (const fp of facetPercentiles) {
-    if (fp.percentile == null) continue;
-    if (!relevantFacets.has(fp.facet)) continue;
-    if (fp.percentile <= 20) flagged.push({ facet: fp.facet, percentile: fp.percentile, direction: "low" });
-    else if (fp.percentile >= 80) flagged.push({ facet: fp.facet, percentile: fp.percentile, direction: "high" });
-  }
-  flagged.sort((a, b) => Math.abs(b.percentile - 50) - Math.abs(a.percentile - 50));
-  return flagged.slice(0, 4);
+): { flagged: FacetFlag[]; fallbackUsed: boolean } {
+  if (!roleCategory) return { flagged: [], fallbackUsed: false };
+
+  const flagAtThreshold = (minWeight: number): FacetFlag[] => {
+    const relevantCompetencies = new Set(
+      competencyWeights.filter(w => Number(w.weight) >= minWeight).map(w => w.competency_name)
+    );
+    const relevantFacets = new Set<string>();
+    for (const comp of relevantCompetencies) {
+      const inputs = COMPETENCY_FACET_INPUTS[comp];
+      if (inputs) for (const f of inputs) relevantFacets.add(f);
+    }
+    const out: FacetFlag[] = [];
+    for (const fp of facetPercentiles) {
+      if (fp.percentile == null) continue;
+      if (!relevantFacets.has(fp.facet)) continue;
+      if (fp.percentile <= 20) out.push({ facet: fp.facet, percentile: fp.percentile, direction: "low" });
+      else if (fp.percentile >= 80) out.push({ facet: fp.facet, percentile: fp.percentile, direction: "high" });
+    }
+    out.sort((a, b) => Math.abs(b.percentile - 50) - Math.abs(a.percentile - 50));
+    return out;
+  };
+
+  const atThreeOnly = flagAtThreshold(3);
+  if (atThreeOnly.length >= 3) return { flagged: atThreeOnly.slice(0, 4), fallbackUsed: false };
+
+  const atTwoPlus = flagAtThreshold(2);
+  return { flagged: atTwoPlus.slice(0, 4), fallbackUsed: true };
 }
 
 // Post-processing: enforce hard cap by dropping lowest-priority sections/probes first.
@@ -363,6 +382,7 @@ Deno.serve(async (req: Request) => {
     // TASK B2: facet-fed "Areas to press on" -- best-fit role -> role-weighted
     // competencies -> unioned facet inputs -> live facet percentiles -> extreme ones.
     let pressOnFacets: FacetFlag[] = [];
+    let pressOnFallbackUsed = false;
     let bestRoleForFacets: string | null = null;
     try {
       const { data: bestFit } = await supa.rpc("assessment_best_fit_role", { p_assessment_id: assessmentId });
@@ -372,7 +392,9 @@ Deno.serve(async (req: Request) => {
           supa.from("hiregauge_competency_weights").select("competency_name, weight").eq("agency_id", a.agency_id).eq("role_category", bestRoleForFacets),
           supa.rpc("hiregauge_candidate_facet_percentiles", { p_candidate_id: assessmentId }),
         ]);
-        pressOnFacets = selectPressOnFacets(bestRoleForFacets, weights || [], percentiles || []);
+        const selection = selectPressOnFacets(bestRoleForFacets, weights || [], percentiles || []);
+        pressOnFacets = selection.flagged;
+        pressOnFallbackUsed = selection.fallbackUsed;
       }
     } catch (e) {
       console.warn("press-on facet selection failed (non-fatal):", e instanceof Error ? e.message : String(e));
@@ -404,6 +426,7 @@ Deno.serve(async (req: Request) => {
     // Log which facets fired so the same probe set is reproducible at review time.
     probes.press_on_role        = bestRoleForFacets;
     probes.press_on_facets      = pressOnFacets;
+    probes.press_on_fallback_used = pressOnFallbackUsed;
     if (capped.trim_note) probes.trim_note = capped.trim_note;
     const nowIso = new Date().toISOString();
     const { error: uErr } = await supa.from("hiring_candidates").update({ custom_probes: probes, custom_probes_generated_at: nowIso }).eq("id", assessmentId);
