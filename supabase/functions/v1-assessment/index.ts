@@ -640,15 +640,32 @@ async function handleServe(supa: any, cand: any) {
       });
     }
 
-    if (prog.stint4Total === 0) {
-      return json({ stint: 4, done: true, items: [], progress: { answered: 0, total: 0 } });
+    if (!prog.stint4Done) {
+      const unanswered = prog.stint4Items.filter((it: any) => !prog.answered.has(it.id));
+      return json({
+        stint: 4,
+        done: unanswered.length === 0,
+        items: prepareItems(constrainedShuffle(unanswered), cand.id),
+        progress: { answered: prog.stint4Answered, total: prog.stint4Total },
+      });
     }
-    const unanswered = prog.stint4Items.filter((it: any) => !prog.answered.has(it.id));
+
+    if (prog.stint5Total === 0) {
+      return json({ stint: 5, done: true, items: [], progress: { answered: 0, total: 0 } });
+    }
+    // Stint 5 (written screen) items serve in fixed item_number order, NOT
+    // constrainedShuffle -- these are plain-language application questions
+    // with a natural read order (job history -> interest -> challenges ->
+    // comp fit -> a past mistake -> insurance-move gate -> reference name
+    // last), not psychometric items needing trait-interleaving or retest
+    // spacing. loadStintItems already orders by item_number ascending;
+    // .filter() preserves that order.
+    const stint5Unanswered = prog.stint5Items.filter((it: any) => !prog.answered.has(it.id));
     return json({
-      stint: 4,
-      done: unanswered.length === 0,
-      items: prepareItems(constrainedShuffle(unanswered), cand.id),
-      progress: { answered: prog.stint4Answered, total: prog.stint4Total },
+      stint: 5,
+      done: stint5Unanswered.length === 0,
+      items: prepareItems(stint5Unanswered, cand.id),
+      progress: { answered: prog.stint5Answered, total: prog.stint5Total },
     });
   } catch (e: any) {
     return json({ error: "serve_action_failed", detail: e.message }, 500);
