@@ -59,6 +59,7 @@ const SECTIONS = [
   "newtworks_v2_personality",
   "newtworks_v2_cognitive_gma",
   "newtworks_v2_sjt",
+  "newtworks_v2_screen",
 ];
 
 const CORS = {
@@ -309,7 +310,7 @@ function constrainedShuffle<T extends {
 // ============================================================================
 
 const ITEM_SELECT =
-  "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded, retest_of_item_number";
+  "id, section, item_number, item_text, choices, scale_max, is_nonsense, hypothesized_trait, cognitive_domain, reverse_coded, retest_of_item_number, response_format";
 
 async function loadStintItems(supa: any, stint: number) {
   const { data, error } = await supa
