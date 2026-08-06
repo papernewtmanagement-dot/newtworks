@@ -813,7 +813,56 @@ export default function CandidateAssessment({ candidateId, token }) {
   );
 }
 
+function FreeTextItem({ item, onAnswer, selected, saving }) {
+  // Stint 5 (written screen) items only. Local text state, reset when the
+  // item changes -- this component is not remounted between questions (same
+  // tree position), so without the reset a second free-text question would
+  // open pre-filled with the previous answer.
+  const [text, setText] = useState(selected?.label ?? "");
+  useEffect(() => {
+    setText(selected?.label ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
+
+  return (
+    <textarea
+      value={text}
+      disabled={saving}
+      onChange={(e) => {
+        const v = e.target.value;
+        setText(v);
+        // Empty/whitespace-only -> clear pending (null) so Next stays
+        // disabled, matching the multi-choice/Likert controls behavior of
+        // starting with no selection. onAnswer here is the ResponseControls
+        // prop, which the parent wires straight to setPending.
+        onAnswer(v.trim().length > 0 ? { label: v } : null);
+      }}
+      placeholder="Type your answer here…"
+      rows={6}
+      style={{
+        width: "100%",
+        padding: "14px 16px",
+        border: `1px solid ${T.slate200}`,
+        borderRadius: 8,
+        fontSize: 15,
+        color: T.slate900,
+        fontFamily: "inherit",
+        lineHeight: 1.5,
+        resize: "vertical",
+        boxSizing: "border-box",
+      }}
+    />
+  );
+}
+
 function ResponseControls({ item, onAnswer, selected, saving, vp }) {
+  // Stint 5 (written screen) free-text items. Checked first -- these carry
+  // no choices and no scale_max, so without this check they would silently
+  // fall through to the Likert-scale default at the bottom of this function.
+  if (item?.response_format === "free_text") {
+    return <FreeTextItem item={item} onAnswer={onAnswer} selected={selected} saving={saving} />;
+  }
+
   // GMA pattern-matching item. choices is an OBJECT ({ grid, options }), not
   // an array of text strings, so this must be checked before the multi-choice
   // Array.isArray branch below — otherwise it silently falls through to the
