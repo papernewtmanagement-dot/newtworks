@@ -1,5 +1,5 @@
 {
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)supabase/migrations/**'",
+  "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- . ':(exclude)supabase/migrations/**'",
   "rewrites": [
     { "source": "/careers/:slug/apply", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/careers-site/:slug/apply" },
     { "source": "/careers", "destination": "/api/careers?p=" },
