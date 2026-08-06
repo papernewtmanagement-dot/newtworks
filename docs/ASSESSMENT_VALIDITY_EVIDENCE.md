@@ -308,8 +308,11 @@ New-path marker: `achievement_striving IS NOT NULL`. `assertiveness` and
 Per session note "2026-08-04 — Go-live plan: assessment ruled BUILD-COMPLETE":
 the instrument is **frozen from first real completion** — any item, threshold,
 or weight change thereafter is a formal versioning event, never a routine
-tweak. This guard is carried forward into every subsequent handoff's
-do-not list.
+tweak. A *real* completion is one with `hiring_candidates.is_test_candidate
+= false` (column added 2026-08-06); internal smoke-test rows — owner/family
+walkthroughs — carry `is_test_candidate = true` and neither trigger the freeze
+nor count toward any calibration N in Section 9. This guard is carried forward
+into every subsequent handoff's do-not list.
 
 ## 9. Monitoring & Recalibration Protocol
 
@@ -375,8 +378,8 @@ outside a formal versioning event.
   on the 2026-08-06 live-DB pull.
 
 **(c) The 10 impression-management items, extracted verbatim from
-`hiregauge_instrument_items` (source verification is a main-thread job — not
-verified here):**
+`hiregauge_instrument_items` — source VERIFIED 2026-08-06 by the main thread;
+see the verification note below the table:**
 
 | Item # | Text | Reverse-coded |
 |---|---|---|
@@ -390,3 +393,21 @@ verified here):**
 | 307 | "I always admit it when I make a mistake." | false |
 | 309 | "I use swear words." | true |
 | 310 | "I don't always practice what I preach." | true |
+
+**Source verification (2026-08-06, main thread):** all 10 items are drawn from
+the **IPIP Impression Management scale** — the International Personality Item
+Pool's public-domain analog of the Balanced Inventory of Desirable Responding
+(BIDR) impression-management scale (Paulhus, 1991) — published at
+`ipip.ori.org/newSingleConstructsKey.htm` with a reported internal-consistency
+alpha of .82 for the full 20-item scale. Newtworks uses a balanced half-set: 5
+of IPIP's 10 positive-keyed items (19, 301, 302, 306, 307) and 5 of its 10
+negative-keyed items (303, 304, 305, 309, 310); keying direction matches the
+IPIP key on all 10. Items are presented with an added "I" pronoun and terminal
+punctuation (IPIP stems are pronoun-less fragments; IPIP explicitly permits
+editing item wording). One deliberate wording deviation: item 303 shortens the
+IPIP stem "Have sometimes had to tell a lie" to "I have sometimes told a lie"
+(owner decision 2026-08-05, rationale preserved in the item's notes column).
+Item 19's sentence appears in both the IPIP-HEXACO Fairness key and the IPIP
+Impression Management key, which is why it is legitimately scored on both
+(fairness home trait + impression-management extra trait). This closes the
+source-verification gap flagged at file creation.
