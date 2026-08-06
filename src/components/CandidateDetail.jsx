@@ -900,35 +900,15 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         )}
       </div>
 
-      {/* Column 2 — Reliability, Faking-good, and Situational Judgement as
-          single-line bars (name lives in the bar itself, no header row),
-          then Capabilities (GMA is one of the rows below — same value
-          that used to have its own standalone section; consolidated
+      {/* Column 2 — Traits: GMA, Reliability, Faking-good, and Situational
+          Judgement grouped right under the header, then a dividing line,
+          then the rest of the per-role trait rows (GMA pulled out of the
+          normal list and rendered first here rather than duplicated — same
+          value that used to have its own standalone section; consolidated
           2026-08-05). */}
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
-          <AssessRow
-            label="Reliability"
-            value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
-            band={V2_RELIABILITY_BAND(reliability)}
-          />
-          <AssessRow
-            label="Faking-good"
-            value={imScore}
-            extra={imBand ? imBand.replace(/_/g, " ") : null}
-            band={IM_BAND_COLOR(imBand)}
-          />
-          <AssessRow
-            label="Situational Judgement"
-            value={sjtScore}
-            extra={sjtScore != null ? "%" : null}
-          />
-        </div>
-
-        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          Capabilities
+          Traits
         </div>
 
         {(() => {
@@ -938,6 +918,8 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
           const roleDetail = v2RoleFits ? v2RoleFits[currentSelected] : null;
           const comps = roleDetail?.competencies || {};
           const entries = Object.entries(comps);
+          const gmaEntry = entries.find(([k]) => k === "gma");
+          const restEntries = entries.filter(([k]) => k !== "gma");
           const formatCompLabel = (k) =>
             k === "gma" ? "General Mental Ability" : k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
           if (entries.length === 0) {
@@ -957,7 +939,42 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                   Gates fired: {roleDetail.gates_fired.join(", ")}
                 </div>
               )}
-              {entries.map(([k, c]) => {
+              {gmaEntry && (() => {
+                const [k, c] = gmaEntry;
+                const v = c?.adjusted;
+                const band = competencyBand(v);
+                const sublineBits = [];
+                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
+                return (
+                  <AssessRow
+                    key={k}
+                    label={formatCompLabel(k)}
+                    value={v}
+                    band={v == null ? "none" : band}
+                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
+                  />
+                );
+              })()}
+              <AssessRow
+                label="Reliability"
+                value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+                band={V2_RELIABILITY_BAND(reliability)}
+              />
+              <AssessRow
+                label="Faking-good"
+                value={imScore}
+                extra={imBand ? imBand.replace(/_/g, " ") : null}
+                band={IM_BAND_COLOR(imBand)}
+              />
+              <AssessRow
+                label="Situational Judgement"
+                value={sjtScore}
+                extra={sjtScore != null ? "%" : null}
+              />
+
+              <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+              {restEntries.map(([k, c]) => {
                 const v = c?.adjusted;
                 const band = competencyBand(v);
                 const sublineBits = [];
