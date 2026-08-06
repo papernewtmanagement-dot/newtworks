@@ -683,12 +683,20 @@ const DocImporter = ({ imports }) => {
 // ─── Main Automations Module ──────────────────────────────────
 export default function Automations() {
   const [section, setSection] = useTabParam("tab", "overview", ["overview","recipes","runlog","importer","briefing","connections"]);
-  const { data: liveRecipes, loading: recipesLoading } = useSupabaseTable("automation_recipes", AGENCY_ID, { orderBy: "created_at", ascending: false });
-  const { data: liveRunLog }   = useSupabaseTable("automation_run_log", AGENCY_ID, { orderBy: "run_at", ascending: false });
-  const { data: liveSettings } = useSupabaseTable("settings", AGENCY_ID);
-  const { data: liveDocs }     = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
-  const { data: liveBriefings } = useSupabaseTable("briefings", AGENCY_ID, { orderBy: "briefing_date", ascending: false });
-  const { data: liveQueue }     = useSupabaseTable("llm_parse_queue", AGENCY_ID, { orderBy: "created_at", ascending: false });
+  const { data: liveRecipes, loading: recipesLoading, error: recipesError, refetch: refetchRecipes } = useSupabaseTable("automation_recipes", AGENCY_ID, { orderBy: "created_at", ascending: false });
+  const { data: liveRunLog, error: runLogError }   = useSupabaseTable("automation_run_log", AGENCY_ID, { orderBy: "run_at", ascending: false });
+  const { data: liveSettings, error: settingsError } = useSupabaseTable("settings", AGENCY_ID);
+  const { data: liveDocs, error: docsError }     = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
+  const { data: liveBriefings, error: briefingsError } = useSupabaseTable("briefings", AGENCY_ID, { orderBy: "briefing_date", ascending: false });
+  const { data: liveQueue, error: queueError }     = useSupabaseTable("llm_parse_queue", AGENCY_ID, { orderBy: "created_at", ascending: false });
+  // Secondary tables (run log, settings, docs, briefings, queue) feed specific
+  // sub-tabs rather than gating the whole module — logged so failures are
+  // traceable, without adding a retry banner per sub-tab in this pass.
+  useEffect(() => {
+    for (const [label, err] of [["automation_run_log", runLogError], ["settings", settingsError], ["documents", docsError], ["briefings", briefingsError], ["llm_parse_queue", queueError]]) {
+      if (err) console.error(`[Automations] ${label} load failed:`, err);
+    }
+  }, [runLogError, settingsError, docsError, briefingsError, queueError]);
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
 
   const [recipes, setRecipes] = useState(useMockData ? MOCK_RECIPES : []);
@@ -847,6 +855,16 @@ export default function Automations() {
   }, [liveQueue]);
 
   if (recipesLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading automations…</div>;
+  // Same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep):
+  // a failed fetch used to render identically to "no automations set up yet."
+  if (recipesError && recipes.length === 0) {
+    return (
+      <div style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:13,color:"#7B241C",marginBottom:10}}>Couldn't load automations — this isn't necessarily "nothing set up."</div>
+        <button onClick={refetchRecipes} style={{ padding:"7px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:7, cursor:"pointer" }}>Retry</button>
+      </div>
+    );
+  }
   if (recipes.length === 0) return <EmptyState module="automations" />;
 
   const sections = [
