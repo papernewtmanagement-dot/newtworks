@@ -2818,8 +2818,34 @@ const HypotheticalHireForecast = () => {
 // visible. Sub-nav toggles between Recruiting and Declined. Onboarding
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
-const GrowthTab = ({ applicants, declined, former, onUpdate }) => {
+const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry }) => {
   const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former"]);
+
+  // Distinguish "still fetching" and "fetch failed" from a genuinely empty
+  // pipeline — all three used to render as the same blank board.
+  if (error) {
+    return (
+      <div>
+        <GrowthBudgetHeader />
+        <div style={{ background:T.slate50, border:`1px solid ${T.slate200}`, borderRadius:10, padding:"28px 16px", textAlign:"center" }}>
+          <div style={{ fontSize:13, fontWeight:600, color:T.slate700, marginBottom:4 }}>Couldn't load the candidate pipeline</div>
+          <div style={{ fontSize:12, color:T.slate500, marginBottom:14 }}>This is usually a dropped connection, not missing data.</div>
+          <button onClick={onRetry} style={{ padding:"7px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div>
+        <GrowthBudgetHeader />
+        <div style={{ fontSize:12, color:T.slate400, textAlign:"center", padding:"28px 16px" }}>Loading pipeline…</div>
+      </div>
+    );
+  }
   // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
   const RECRUITING_STAGES = ["applied","assessed","email_screen","interview"];
   const CLOSING_STAGES    = ["reference_check","offer","hired"];
@@ -2883,32 +2909,66 @@ export default function Team() {
   const { data: roi } = useProducerROI();
   const [section, setSection] = useTabParam("tab", "members", ["members","growth"]);
   const [applicants,  setApplicants]  = useState([]);
+  const [applicantsLoading, setApplicantsLoading] = useState(true);
+  const [applicantsError,   setApplicantsError]   = useState(false);
+  const [applicantsRetryTick, setApplicantsRetryTick] = useState(0);
 
-  // Load applicants from live Supabase table. Empty result yields empty pipeline.
+  // Load applicants from live Supabase table. Empty result (no error) yields
+  // empty pipeline — that's a legitimate state. A FAILED fetch is not: prior
+  // version silently swallowed any error and left `applicants` at its initial
+  // [] forever with no loading/error indicator, so the kanban looked exactly
+  // like "no candidates" whether the query genuinely returned zero rows or
+  // just failed. One retry is attempted automatically; if that also fails,
+  // applicantsError flips true so the Growth tab shows a retry affordance
+  // instead of a blank board. (Root-caused 2026-08-05 — bug report: "growth
+  // tab kanban often loads empty, refresh fixes it.")
   useEffect(() => {
     if (!supabase || !AGENCY_ID) return;
     let cancelled = false;
-    supabase
-      .from("v_hiring_candidates")
-      .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
-      .eq("agency_id", AGENCY_ID)
-      .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
-      .order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (cancelled || error) return;
-        const normalized = (data || []).map(a => ({
-          ...a,
-          // Display name fallbacks: first/last → candidate_name → "Unknown"
-          first_name: a.first_name || (a.candidate_name ? a.candidate_name.split(" ")[0] : "Unknown"),
-          last_name:  a.last_name  || (a.candidate_name ? a.candidate_name.split(" ").slice(1).join(" ") : ""),
-          position:   a.position || "—",
-          interview_notes: null,
-          rating: null,
-        }));
-        setApplicants(normalized);
-      });
+
+    const fetchApplicants = async (isRetry) => {
+      if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
+      const { data, error } = await supabase
+        .from("v_hiring_candidates")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
+        .eq("agency_id", AGENCY_ID)
+        .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
+        .order("created_at", { ascending: false });
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Failed to load hiring pipeline (v_hiring_candidates):", error);
+        if (!isRetry) {
+          // One automatic retry after a beat — covers transient network/session
+          // blips without making the user do anything.
+          setTimeout(() => { if (!cancelled) fetchApplicants(true); }, 1500);
+          return;
+        }
+        setApplicantsLoading(false);
+        setApplicantsError(true);
+        return;
+      }
+
+      const normalized = (data || []).map(a => ({
+        ...a,
+        // Display name fallbacks: first/last → candidate_name → "Unknown"
+        first_name: a.first_name || (a.candidate_name ? a.candidate_name.split(" ")[0] : "Unknown"),
+        last_name:  a.last_name  || (a.candidate_name ? a.candidate_name.split(" ").slice(1).join(" ") : ""),
+        position:   a.position || "—",
+        interview_notes: null,
+        rating: null,
+      }));
+      setApplicants(normalized);
+      setApplicantsLoading(false);
+      setApplicantsError(false);
+    };
+
+    fetchApplicants(false);
     return () => { cancelled = true; };
-  }, []);
+  }, [applicantsRetryTick]);
+
+  const retryApplicants = () => setApplicantsRetryTick(t => t + 1);
 
   const updateApplicantStage = async (id, newStatus) => {
     // Optimistic UI update
@@ -2958,7 +3018,7 @@ export default function Team() {
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
-      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} />}
+      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} />}
     </div>
   );
 }
