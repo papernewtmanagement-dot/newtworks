@@ -38,7 +38,7 @@ import { BlobReader, ZipReader, Uint8ArrayWriter } from "jsr:@zip-js/zip-js@2";
 // v4 (2026-07-01): unpdf replaces removed Composio pdf-to-text tool
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
 import { sb, getSetting, jsonResponse } from "./lib/supabase.ts";
-import { callComposio } from "./lib/composio.ts";
+import { callComposio, fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "./lib/composio.ts";
 import {
   classifyDocument,
   classifyBankTxn,
@@ -329,7 +329,8 @@ async function downloadAttachmentBytes(
   const s3url = file?.s3url;
   if (s3url) {
     try {
-      const r = await fetch(s3url);
+      const { res: r, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", "generic attachment download");
+      if (!r) return { ok: false, error: timedOut ? `s3url fetch timed out` : `s3url fetch failed` };
       if (!r.ok) return { ok: false, error: `s3url fetch returned HTTP ${r.status}` };
       const buf = new Uint8Array(await r.arrayBuffer());
       // Base64-encode in chunks to avoid call-stack issues on large files.
@@ -2091,24 +2092,32 @@ async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
   const toolkit = typeof body?.toolkit === "string" ? body.toolkit : null;
   if (toolkit) {
     try {
-      const res = await fetch(
+      const { res, timedOut } = await fetchWithTimeout(
         `https://backend.composio.dev/api/v3/tools?toolkit_slugs=${encodeURIComponent(toolkit)}&limit=500`,
         { headers: { "x-api-key": ctx.composioApiKey } },
+        S3_FETCH_TIMEOUT_MS,
+        "composio",
+        `toolkit probe: ${toolkit}`,
       );
-      const text = await res.text();
-      let parsed: any = {};
-      try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1500) }; }
-      const items = parsed?.items ?? parsed?.data ?? null;
-      out.toolkit = toolkit;
-      out.toolkit_http_status = res.status;
-      if (Array.isArray(items)) {
-        out.toolkit_tool_count = items.length;
-        out.toolkit_tools = items
-          .map((t: any) => t?.slug ?? t?.name)
-          .filter((x: unknown) => typeof x === "string")
-          .sort();
+      if (!res) {
+        out.toolkit = toolkit;
+        out.toolkit_error = timedOut ? "toolkit probe timed out" : "toolkit probe fetch failed";
       } else {
-        out.toolkit_raw = JSON.stringify(parsed).slice(0, 1500);
+        const text = await res.text();
+        let parsed: any = {};
+        try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1500) }; }
+        const items = parsed?.items ?? parsed?.data ?? null;
+        out.toolkit = toolkit;
+        out.toolkit_http_status = res.status;
+        if (Array.isArray(items)) {
+          out.toolkit_tool_count = items.length;
+          out.toolkit_tools = items
+            .map((t: any) => t?.slug ?? t?.name)
+            .filter((x: unknown) => typeof x === "string")
+            .sort();
+        } else {
+          out.toolkit_raw = JSON.stringify(parsed).slice(0, 1500);
+        }
       }
     } catch (e) {
       out.toolkit_error = e instanceof Error ? e.message : String(e);
