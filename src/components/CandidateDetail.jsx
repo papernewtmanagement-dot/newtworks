@@ -2615,6 +2615,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     detail, T,
                                     updateAnswer, saveAnswers, savingAnswers, answersLastSavedAt,
                                     generateCustomProbes, probesGenerating, probesError,
+                                    buildInterviewPlan, planBuilding, planError,
                                   })}
                                   {layer.key === "reference" && (
                                     <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
