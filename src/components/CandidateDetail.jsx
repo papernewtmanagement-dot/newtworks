@@ -839,7 +839,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // columns fit (Peter directive 2026-08-06). Breakpoints match
 // lib/hooks.js useViewport (phone <640, tablet 640-1023, desktop >=1024)
 // for consistency with the rest of the app's responsive behavior.
-const CD_ASSESS_GRID_CSS = \`
+const CD_ASSESS_GRID_CSS = `
 .cd-assess-grid {
   display: grid;
   gap: 16px;
@@ -862,7 +862,7 @@ const CD_ASSESS_GRID_CSS = \`
 .cd-col-facets  { grid-area: facets;  min-width: 0; }
 .cd-col-traits  { grid-area: traits;  min-width: 0; }
 .cd-col-rolefit { grid-area: rolefit; min-width: 0; }
-\`;
+`;
 
 function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen, screenAnswers }) {
   const exitGate = detail?.assessment_exit_gate;
