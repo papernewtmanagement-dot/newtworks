@@ -996,7 +996,7 @@ async function handleFinalize(supa: any, cand: any) {
               bestFitLabel && bestFitScore != null
                 ? `${escapeHtml(bestFitLabel)} (${bestFitScore})`
                 : "role fit unavailable";
-            const dmText = `<a href="${link}">${escapeHtml(candName)} \u2014 ${fitText}</a>`;
+            const dmText = `<a href="${link}">${escapeHtml(candName)} assessed \u2014 ${fitText}</a>`;
             const { error: dmErr } = await supa.rpc("paper_newt_send_message", {
               p_chat_id: peterChatId,
               p_text: dmText,
