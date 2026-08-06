@@ -43,15 +43,16 @@ import { useTabParam } from "../lib/routing.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
 const STAGES = {
-  applied:         { label:"Applied",        color:T.slate500, bg:T.slate100, order:0 },
-  assessed:        { label:"Assessed",       color:T.slate500, bg:T.slate100, order:1 },
-  email_screen:    { label:"Email Screen",   color:T.slate600, bg:T.slate100, order:2 },
-  interview:       { label:"Interview",      color:T.amber,    bg:T.amberLt,  order:3 },
-  reference_check: { label:"Ref Check",      color:T.blue,     bg:T.blueLt,   order:4 },
-  offer:           { label:"Offer",          color:T.purple,   bg:T.purpleLt, order:5 },
-  hired:           { label:"Hired",          color:T.green,    bg:T.greenLt,  order:6 },
-  declined:        { label:"Declined",       color:T.red,      bg:T.redLt,    order:7 },
-  former:          { label:"Former",         color:T.slate500, bg:T.slate100, order:8 },
+  applied:          { label:"Applied",          color:T.slate500, bg:T.slate100, order:0 },
+  assessment_sent:  { label:"Assessment Sent",  color:T.slate600, bg:T.slate100, order:1 },
+  assessed:         { label:"Assessed",         color:T.slate500, bg:T.slate100, order:2 },
+  email_screen:     { label:"Email Screen",     color:T.slate600, bg:T.slate100, order:3 },
+  interview:        { label:"Interview",        color:T.amber,    bg:T.amberLt,  order:4 },
+  reference_check:  { label:"Ref Check",        color:T.blue,     bg:T.blueLt,   order:5 },
+  offer:            { label:"Offer",            color:T.purple,   bg:T.purpleLt, order:6 },
+  hired:            { label:"Hired",            color:T.green,    bg:T.greenLt,  order:7 },
+  declined:         { label:"Declined",         color:T.red,      bg:T.redLt,    order:8 },
+  former:           { label:"Former",           color:T.slate500, bg:T.slate100, order:9 },
 };
 
 // ─── Producer ROI Hook ───────────────────────────────────────
