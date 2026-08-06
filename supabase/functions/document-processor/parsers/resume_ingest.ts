@@ -18,6 +18,7 @@
 import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
 import { reformatResumeSeparators } from "./resume_reformat.ts";
 import { sb } from "../lib/supabase.ts";
+import { fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "../lib/composio.ts";
 
 /**
  * Fetch a resume PDF from the given Composio s3url, extract text
@@ -30,7 +31,11 @@ import { sb } from "../lib/supabase.ts";
  */
 export async function extractResumeTextFromS3url(s3url: string): Promise<string | null> {
   try {
-    const r = await fetch(s3url);
+    const { res: r, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", `resume text extraction, url=${s3url.slice(0, 80)}`);
+    if (!r) {
+      console.warn(timedOut ? "resume s3url fetch for text extraction timed out" : "resume s3url fetch for text extraction failed");
+      return null;
+    }
     if (!r.ok) {
       console.warn(`resume s3url fetch for text extraction returned HTTP ${r.status}`);
       return null;
