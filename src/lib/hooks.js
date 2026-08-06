@@ -10,6 +10,8 @@ export function useSupabaseTable(tableName, agencyId, options = {}) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [retryTick, setRetryTick] = useState(0);
+  const refetch = () => setRetryTick(t => t + 1);
 
   useEffect(() => {
     if (!tableName) return;
@@ -48,9 +50,9 @@ export function useSupabaseTable(tableName, agencyId, options = {}) {
 
     fetchData();
     return () => { cancelled = true; };
-  }, [tableName, agencyId, JSON.stringify(filters)]);
+  }, [tableName, agencyId, JSON.stringify(filters), retryTick]);
 
-  return { data, loading, error, setData };
+  return { data, loading, error, setData, refetch };
 }
 
 /**
