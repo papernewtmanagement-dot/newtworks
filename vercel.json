@@ -1,4 +1,5 @@
 {
+  "ignoreCommand": "bash scripts/vercel-ignore-build.sh",
   "rewrites": [
     { "source": "/careers/:slug/apply", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/careers-site/:slug/apply" },
     { "source": "/careers", "destination": "/api/careers?p=" },
