@@ -832,6 +832,38 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // detail (tier/floor/adjusted) the selector below drills into. v1/CTS
 // candidates keep the legacy renderAssessmentLayer below — this function only
 // renders when detail.assessment_source === "v2".
+// Explicit grid-template-areas per breakpoint (rather than plain CSS Grid
+// auto-fit) so Role Fit always lands under Traits at the 2-column width,
+// never under Facets. auto-fit's implicit placement fills the first open
+// cell left-to-right, which put Role Fit under Facets whenever exactly 2
+// columns fit (Peter directive 2026-08-06). Breakpoints match
+// lib/hooks.js useViewport (phone <640, tablet 640-1023, desktop >=1024)
+// for consistency with the rest of the app's responsive behavior.
+const CD_ASSESS_GRID_CSS = \`
+.cd-assess-grid {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+  grid-template-columns: 1fr;
+  grid-template-areas: "facets" "traits" "rolefit";
+}
+@media (min-width: 640px) {
+  .cd-assess-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "facets traits" ". rolefit";
+  }
+}
+@media (min-width: 1024px) {
+  .cd-assess-grid {
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-areas: "facets traits rolefit";
+  }
+}
+.cd-col-facets  { grid-area: facets;  min-width: 0; }
+.cd-col-traits  { grid-area: traits;  min-width: 0; }
+.cd-col-rolefit { grid-area: rolefit; min-width: 0; }
+\`;
+
 function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen, screenAnswers }) {
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
@@ -911,12 +943,15 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
       {/* Three-column layout: facets | reliability, faking-good, and
           situational judgement bars, then role competencies (GMA lives
           inside role competencies, not as a separate section — see the
-          "gma" key in newtworks_all_role_fits) | role fit. Collapses to
-          fewer columns as space narrows (rule 17 auto-fit pattern). */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, alignItems: "start" }}>
+          "gma" key in newtworks_all_role_fits) | role fit. Explicit
+          grid-template-areas per breakpoint (see CD_ASSESS_GRID_CSS above)
+          — Role Fit always sits under Traits, never under Facets, at the
+          tablet 2-column width. */}
+      <style>{CD_ASSESS_GRID_CSS}</style>
+      <div className="cd-assess-grid">
 
       {/* Column 1 — Personality Facets */}
-      <div style={{ minWidth: 0 }}>
+      <div className="cd-col-facets">
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Personality Facets
         </div>
@@ -949,7 +984,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
           normal list and rendered first here rather than duplicated — same
           value that used to have its own standalone section; consolidated
           2026-08-05). */}
-      <div style={{ minWidth: 0 }}>
+      <div className="cd-col-traits">
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Traits
         </div>
@@ -1063,7 +1098,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
       </div>
 
       {/* Column 3 — Role Fit */}
-      <div style={{ minWidth: 0 }}>
+      <div className="cd-col-rolefit">
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Role Fit
         </div>
