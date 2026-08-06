@@ -979,13 +979,28 @@ async function handleFinalize(supa: any, cand: any) {
           const peterChatId = owner?.telegram_user_id ?? null;
 
           if (peterChatId) {
-            const dmText =
-              `\u{1F4DD} Assessment complete: ${candName} (${position})\n` +
-              `${rows.length} facets \u00B7 ${totalItemsScored} items \u00B7 GMA + SJT + competency gates scored\n` +
-              `${link}`;
+            let bestFitLabel = "";
+            let bestFitScore: number | null = null;
+            try {
+              const { data: bestFit } = await supa
+                .rpc("assessment_best_fit_role", { p_assessment_id: cand.id })
+                .maybeSingle();
+              bestFitLabel = bestFit?.display_label ?? "";
+              bestFitScore = bestFit?.best_fit_score ?? null;
+            } catch (_bfErr) {
+              // Silent -- role fit is a nice-to-have on the DM, not a blocker.
+            }
+            const escapeHtml = (s: string) =>
+              s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const fitText =
+              bestFitLabel && bestFitScore != null
+                ? `${escapeHtml(bestFitLabel)} (${bestFitScore})`
+                : "role fit unavailable";
+            const dmText = `<a href="${link}">${escapeHtml(candName)} \u2014 ${fitText}</a>`;
             const { error: dmErr } = await supa.rpc("paper_newt_send_message", {
               p_chat_id: peterChatId,
               p_text: dmText,
+              p_parse_mode: "HTML",
             });
             if (dmErr) {
               notification_skip_reason = `dm_failed: ${dmErr.message}`;
