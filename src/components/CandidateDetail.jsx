@@ -1517,7 +1517,7 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
 // interview_answers jsonb keys: warmup:frogs, warmup:why_insurance, warmup:why_agency,
 // custom_probes[*].source (manual:*, trait:*, character_floor:*, resume:*, behavioral_tell:*),
 // candidate_questions.
-function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnswers, answersLastSavedAt, generateCustomProbes, probesGenerating, probesError }) {
+function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnswers, answersLastSavedAt, generateCustomProbes, probesGenerating, probesError, buildInterviewPlan, planBuilding, planError }) {
   return (
     <div>
       <div style={{ fontSize: 10, color: T.slate500, marginBottom: 12, fontStyle: "italic" }}>
