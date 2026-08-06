@@ -795,6 +795,9 @@ async function handleFinalize(supa: any, cand: any) {
     if (prog.stint4Total > 0 && !prog.stint4Done) {
       return json({ error: "assessment_incomplete", stage: "stint_4", answered: prog.stint4Answered, total: prog.stint4Total }, 409);
     }
+    if (prog.stint5Total > 0 && !prog.stint5Done) {
+      return json({ error: "assessment_incomplete", stage: "stint_5", answered: prog.stint5Answered, total: prog.stint5Total }, 409);
+    }
 
     // Personality facet scores — the raw psychometric profile. Competency
     // and role-fit derivation happen downstream (newtworks_competency_*,
