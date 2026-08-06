@@ -12,16 +12,12 @@ const DECLINE_REASON_LABEL = {
   former_team:      "Former team",
 };
 
+// Seven of the nine old CTS traits, and every lss_* column, were dropped from
+// hiring_candidates on 2026-08-06 (migration 20260806170033). Only assertiveness
+// and compassion survive, so only those two can be labelled or rendered.
 const TRAIT_LABELS = {
-  deadline_motivation: "Deadline Motivation",
-  recognition_drive:   "Recognition Drive",
   assertiveness:       "Assertiveness",
-  independent_spirit:  "Independent Spirit",
-  analytical:          "Analytical",
   compassion:          "Compassion",
-  self_promotion:      "Self Promotion",
-  belief_in_others:    "Belief in Others",
-  optimism:            "Optimism",
 };
 
 // Newtworks v2 assessment — the 25 live personality facets, strategic labels
@@ -1245,77 +1241,11 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
               </div>
             );
           })()}
-          {(() => {
-            const isV1 = detail?.assessment_source === "v1";
-            const maxMath = isV1 ? 6 : 12;
-            const maxVerbal = isV1 ? 6 : 10;
-            const maxPs = isV1 ? 5 : 9;
-            const maxTotal = isV1 ? 17 : 35;
-            return (
-              <>
-                <AssessRow
-                  label="LSS Math"
-                  value={detail?.lss_math_accuracy}
-                  max={maxMath}
-                  extra={detail?.lss_math_speed_seconds != null ? `${detail.lss_math_speed_seconds}s/item` : null}
-                />
-                <AssessRow
-                  label="LSS Verbal"
-                  value={detail?.lss_verbal_accuracy}
-                  max={maxVerbal}
-                  extra={detail?.lss_verbal_speed_seconds != null ? `${detail.lss_verbal_speed_seconds}s/item` : null}
-                />
-                <AssessRow
-                  label="LSS Problem Solving"
-                  value={detail?.lss_problem_solving_accuracy}
-                  max={maxPs}
-                  extra={detail?.lss_problem_solving_speed_seconds != null ? `${detail.lss_problem_solving_speed_seconds}s/item` : null}
-                />
-                <AssessRow
-                  label="LSS Total"
-                  value={detail?.lss_total_accuracy}
-                  max={maxTotal}
-                  extra={detail?.lss_total_accuracy != null ? `/${maxTotal}` : null}
-                  band="none"
-                  subline={(() => {
-                    const m = detail?.lss_math_accuracy;
-                    const v = detail?.lss_verbal_accuracy;
-                    const p = detail?.lss_problem_solving_accuracy;
-                    if (m == null && v == null && p == null) return null;
-                    return `Math ${m ?? "—"} · Verbal ${v ?? "—"} · PS ${p ?? "—"}`;
-                  })()}
-                />
-                <AssessRow
-                  label="LSS Speed"
-                  noBar
-                  value={(() => {
-                    const m = Number(detail?.lss_math_speed_seconds);
-                    const v = Number(detail?.lss_verbal_speed_seconds);
-                    const p = Number(detail?.lss_problem_solving_speed_seconds);
-                    if (!Number.isFinite(m) || !Number.isFinite(v) || !Number.isFinite(p)) return null;
-                    return Math.round((m + v + p) / 3);
-                  })()}
-                  extra="s/item avg"
-                  band={(() => {
-                    const maxSpeed = Math.max(
-                      Number(detail?.lss_math_speed_seconds) || 0,
-                      Number(detail?.lss_verbal_speed_seconds) || 0,
-                      Number(detail?.lss_problem_solving_speed_seconds) || 0
-                    );
-                    if (!maxSpeed) return "none";
-                    return maxSpeed > 60 ? "red" : maxSpeed > 40 ? "yellow" : "green";
-                  })()}
-                  subline={(() => {
-                    const m = detail?.lss_math_speed_seconds;
-                    const v = detail?.lss_verbal_speed_seconds;
-                    const p = detail?.lss_problem_solving_speed_seconds;
-                    if (m == null && v == null && p == null) return null;
-                    return `Math ${m ?? "—"}s · Verbal ${v ?? "—"}s · PS ${p ?? "—"}s`;
-                  })()}
-                />
-              </>
-            );
-          })()}
+          {/* The LSS accuracy + speed rows were removed 2026-08-06: every column
+              they read (lss_math_accuracy, lss_verbal_accuracy,
+              lss_problem_solving_accuracy, lss_total_accuracy and the three
+              matching speed columns) was dropped from hiring_candidates. The
+              cognitive read for current candidates is the GMA section. */}
           <AssessRow label="Reliability" value={detail?.reliability} band={RELIABILITY_BAND(detail?.reliability)} />
           <AssessRow label="Distortion" value={detail?.response_distortion} band={DISTORTION_BAND(detail?.response_distortion)} />
 
@@ -1466,16 +1396,10 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
         const takingDur = started && completed ? fmtDuration(completed - started) : null;
 
         const reliabilityMap = v1Extras.reliability_by_trait || {};
+        // Pruned 2026-08-06 to the two traits that still exist as columns.
         const traitOrder = [
           ["assertiveness", "Assertiveness"],
-          ["independent_spirit", "Independent Spirit"],
           ["compassion", "Compassion"],
-          ["belief_in_others", "Belief in Others"],
-          ["optimism", "Optimism"],
-          ["analytical", "Analytical"],
-          ["deadline_motivation", "Deadline Motivation"],
-          ["self_promotion", "Self Promotion"],
-          ["recognition_drive", "Recognition Drive"],
         ];
 
         const flagBadge = (fires, label) => (
@@ -2700,11 +2624,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                           </>
                                         ) : (
                                           <>
-                                            Ach {detail?.deadline_motivation != null ? Math.round(Number(detail.deadline_motivation)) : "—"}
-                                            {" · "}
-                                            Rec {detail?.recognition_drive != null ? Math.round(Number(detail.recognition_drive)) : "—"}
-                                            {" · "}
-                                            Aut {detail?.independent_spirit != null ? Math.round(Number(detail.independent_spirit)) : "—"}
+                                            {/* Old-path motivation chips removed 2026-08-06 —
+                                                deadline_motivation, recognition_drive and
+                                                independent_spirit were dropped as columns. */}
+                                            No motivation detail on file
                                           </>
                                         )}
                                       </div>
