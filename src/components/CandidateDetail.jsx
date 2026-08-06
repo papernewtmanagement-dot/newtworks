@@ -1001,8 +1001,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
               <AssessRow
                 label="Reliability"
                 value={reliabilityScore}
-                extra={reliabilityScore != null ? `/100` : null}
-                subline={reliabilityFiredCount != null ? `${reliabilityFiredCount} of ${RELIABILITY_TOTAL_CHECKS} checks flagged` : null}
                 band={V2_RELIABILITY_BAND(reliability)}
               />
               <AssessRow
