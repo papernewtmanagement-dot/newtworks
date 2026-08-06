@@ -579,14 +579,16 @@ async function handleVerify(supa: any, cand: any) {
       });
     }
     const prog = await loadProgress(supa, cand.id);
-    const allDone = prog.stint1Done && prog.stint2Done && prog.stint3Done && prog.stint4Done;
+    const allDone = prog.stint1Done && prog.stint2Done && prog.stint3Done && prog.stint4Done && prog.stint5Done;
     const currentProgress = !prog.stint1Done
       ? { answered: prog.stint1Answered, total: prog.stint1Total }
       : !prog.stint2Done
       ? { answered: prog.stint2Answered, total: prog.stint2Total }
       : !prog.stint3Done
       ? { answered: prog.stint3Answered, total: prog.stint3Total }
-      : { answered: prog.stint4Answered, total: prog.stint4Total };
+      : !prog.stint4Done
+      ? { answered: prog.stint4Answered, total: prog.stint4Total }
+      : { answered: prog.stint5Answered, total: prog.stint5Total };
     return json({
       ok: true,
       candidate: { first_name: cand.first_name, position: cand.position },
