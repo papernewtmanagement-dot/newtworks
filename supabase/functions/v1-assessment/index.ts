@@ -948,7 +948,7 @@ async function handleFinalize(supa: any, cand: any) {
             "Unknown candidate";
           const position = fullCand?.position || "unspecified role";
 
-          const link = `https://newtworks.vercel.app/?module=team&candidate=${cand.id}`;
+          const link = `https://newtworks.vercel.app/team?candidate=${cand.id}`;
           const title = `Assessment complete: ${candName}`;
           const message =
             `${candName} finished the Newtworks assessment for ${position}. ` +
