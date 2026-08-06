@@ -55,7 +55,6 @@ import { processPfaStatement } from "./parsers/pfa_statement.ts";
 import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
-import { processSFForwardedApplicantMode } from "./parsers/sf_forwarded_applicant.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
 import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
 import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
@@ -2190,12 +2189,6 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processCareerplugMode(cpCtx, body);
     return jsonResponse({ ok: true, mode: "careerplug", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
-  }
-  if (mode === "sf_forwarded_applicant") {
-    const sfCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
-    const startedAt = new Date().toISOString();
-    const result = await processSFForwardedApplicantMode(sfCtx, body);
-    return jsonResponse({ ok: true, mode: "sf_forwarded_applicant", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "wrapup") {
     const wupCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
