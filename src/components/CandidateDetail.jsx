@@ -834,15 +834,8 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   const exitedAt = detail?.assessment_exited_at;
 
   const reliability = detail?.reliability; // 'high' | 'medium' | 'low'
-  const reliabilityDetail = detail?.reliability_detail || {};
-  const reliabilityMethods = Object.keys(RELIABILITY_METHOD_LABELS);
-
   const imScore = detail?.impression_management;
   const imBand = detail?.impression_management_band;
-  const imDetail = detail?.impression_management_detail || {};
-
-  const gmaTotal = detail?.gma_total_accuracy; // raw correct count, max 16
-  const gmaPct = gmaTotal != null ? Math.round((Number(gmaTotal) / 16) * 100) : null;
 
   const sjtScore = detail?.sjt_score; // 0-100
   const sjtTopics = detail?.sjt_topic_detail || {};
@@ -873,65 +866,15 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         </div>
       )}
 
-      {/* Two-column layout: left = reliability + faking-good validity
-          indices, then trait facets; right = role fit, competencies, then
-          cognitive/situational scores (GMA, SJT) below the competency list.
-          Collapses to a single column under ~680px combined width (rule 17
-          pattern). */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+      {/* Three-column layout: facets | reliability + faking-good bars then
+          competencies (GMA lives inside competencies, not as a separate
+          section — see the "gma" key in newtworks_all_role_fits) | role fit
+          then SJT. Collapses to fewer columns as space narrows (rule 17
+          auto-fit pattern). */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, alignItems: "start" }}>
 
-      {/* Reliability + Faking-good — validity indices, not personality traits */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-            Reliability
-          </div>
-          <AssessRow
-            label="Data quality"
-            value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
-            band={V2_RELIABILITY_BAND(reliability)}
-            subline={reliabilityDetail?.fired_count != null ? `${reliabilityDetail.fired_count} of 6 checks fired` : null}
-          />
-          {reliability && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4, padding: "0 4px" }}>
-              {reliabilityMethods.map((k) => {
-                const m = reliabilityDetail[k];
-                const fired = m?.fired;
-                return (
-                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
-                    <span style={{ color: T.slate600 }}>{RELIABILITY_METHOD_LABELS[k]}</span>
-                    <span style={{ color: fired ? T.red : T.slate400, fontWeight: fired ? 700 : 400 }}>
-                      {fired == null ? "—" : fired ? "flagged" : "ok"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-            Faking-good (Impression Management)
-          </div>
-          <AssessRow
-            label="Score"
-            value={imScore}
-            extra={imBand ? imBand.replace(/_/g, " ") : null}
-            band={IM_BAND_COLOR(imBand)}
-          />
-          {imDetail?.interpretation && (
-            <div style={{ fontSize: 10.5, color: T.slate600, marginTop: 4, padding: "0 4px", lineHeight: 1.4 }}>
-              {imDetail.interpretation}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ height: 1, background: T.slate200 }} />
-
-      {/* 21 personality facets */}
-      <div>
+      {/* Column 1 — Personality Facets */}
+      <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Personality Facets
         </div>
@@ -950,7 +893,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                   key={trait}
                   label={label}
                   value={insufficient ? "insufficient data" : row?.facet_score}
-                  extra={row && !insufficient ? `n=${nItems}` : null}
                   band={insufficient ? "none" : null}
                 />
               );
@@ -959,13 +901,113 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         )}
       </div>
 
+      {/* Column 2 — Reliability + Faking-good bars, then Competencies
+          (GMA is one of the 12 competency rows below — same value that used
+          to have its own standalone section; consolidated 2026-08-05). */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+              Reliability
+            </div>
+            <AssessRow
+              label="Data quality"
+              value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+              band={V2_RELIABILITY_BAND(reliability)}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+              Faking-good
+            </div>
+            <AssessRow
+              label="Score"
+              value={imScore}
+              extra={imBand ? imBand.replace(/_/g, " ") : null}
+              band={IM_BAND_COLOR(imBand)}
+            />
+          </div>
+        </div>
+
+        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
+
+        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
+          Competencies
+        </div>
+
+        {(() => {
+          const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
+          const bestKey = bf?.best_role;
+          const currentSelected = selectedRole || bestKey || "sales_outbound";
+          const roleDetail = v2RoleFits ? v2RoleFits[currentSelected] : null;
+          const comps = roleDetail?.competencies || {};
+          const entries = Object.entries(comps);
+          const formatCompLabel = (k) =>
+            k === "gma" ? "GMA" : k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
+          if (entries.length === 0) {
+            return (
+              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
+                {v2RoleFits ? `No competency data for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
+              </div>
+            );
+          }
+          return (
+            <>
+              <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
+                Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit to swap.
+              </div>
+              {roleDetail?.gates_fired?.length > 0 && (
+                <div style={{ fontSize: 10, color: T.red, fontWeight: 600, marginBottom: 2, padding: "0 10px" }}>
+                  Gates fired: {roleDetail.gates_fired.join(", ")}
+                </div>
+              )}
+              {entries.map(([k, c]) => {
+                const v = c?.adjusted;
+                const band = competencyBand(v);
+                const sublineBits = [];
+                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
+                return (
+                  <AssessRow
+                    key={k}
+                    label={formatCompLabel(k)}
+                    value={v}
+                    band={v == null ? "none" : band}
+                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
+                  />
+                );
+              })}
+              {/* Integrity gate shadow result — SHADOW MODE, not yet active
+                  (Peter directive 2026-08-03). The gate never declines a
+                  candidate; this only shows what the conjunctive 4-condition
+                  test WOULD have done, for review once 25-30 real candidates
+                  have been scored. Role-agnostic — same value regardless of
+                  which role is selected above. */}
+              {roleDetail?.gate_detail?.integrity_decline && (() => {
+                const ig = roleDetail.gate_detail.integrity_decline;
+                const cond = ig.conditions || {};
+                const metCount = Object.values(cond).filter((c) => c?.met).length;
+                return (
+                  <div style={{
+                    padding: "6px 10px", background: T.slate50, borderRadius: 6,
+                    border: `1px dashed ${T.slate300 || T.slate200}`, marginBottom: 4,
+                  }}>
+                    <div style={{ fontSize: 9.5, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 700, color: T.slate500 }}>
+                      Integrity gate — shadow mode, not yet active
+                    </div>
+                    <div style={{ fontSize: 11, color: T.slate700, marginTop: 2 }}>
+                      Would {ig.shadow_would_decline ? "flag for decline" : "pass"} — {metCount}/4 conditions met
+                      {cond.raw_composite_low?.value != null && ` · raw self-report ${cond.raw_composite_low.value}`}
+                      {cond.sjt_honesty_low?.value != null && ` · SJT honesty ${cond.sjt_honesty_low.value}%`}
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          );
+        })()}
       </div>
 
-      {/* Role Fit + Competencies — Newtworks competency layer (12 competencies
-          x 7 roles, confirmed 2026-08-02, live 2026-08-03). Role buttons sorted
-          by fit_score descending, best-fit highlighted (mirrors the v1/CTS
-          selector in the legacy renderAssessmentLayer below). Selecting a role
-          swaps which role's 12 competencies + gates display underneath. */}
+      {/* Column 3 — Role Fit, then SJT */}
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Role Fit
@@ -1034,7 +1076,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                       fontFamily: "inherit", textAlign: "left", width: "100%",
                       marginBottom: 2,
                     }}
-                    title={isSelected ? "Selected — competencies below" : "Click to show this role's competencies"}
+                    title={isSelected ? "Selected — competencies shown in the middle column" : "Click to show this role's competencies"}
                   >
                     <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
                       {ROLE_LABELS[r.key] || r.key} Fit
@@ -1052,147 +1094,23 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
 
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          Competencies
+          SJT (Situational Judgement Test)
         </div>
-
-        {(() => {
-          const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
-          const bestKey = bf?.best_role;
-          const currentSelected = selectedRole || bestKey || "sales_outbound";
-          const roleDetail = v2RoleFits ? v2RoleFits[currentSelected] : null;
-          const comps = roleDetail?.competencies || {};
-          const entries = Object.entries(comps);
-          const formatCompLabel = (k) =>
-            k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
-          const TIER_LABEL = { critical: "critical · hard floor", important: "important", supporting: "supporting" };
-          if (entries.length === 0) {
+        <AssessRow label="Total" value={sjtScore} extra={sjtScore != null ? "%" : null} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+          {Object.entries(SJT_TOPIC_LABELS).map(([k, label]) => {
+            const t = sjtTopics[k];
+            const pct = t && t.n > 0 ? Math.round((100 * t.correct) / t.n) : null;
             return (
-              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
-                {v2RoleFits ? `No competency data for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
-              </div>
+              <AssessRow
+                key={k}
+                label={label}
+                value={pct}
+                extra={t ? `${t.correct}/${t.n}` : null}
+              />
             );
-          }
-          return (
-            <>
-              <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
-                Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit above to swap.
-              </div>
-              {roleDetail?.gates_fired?.length > 0 && (
-                <div style={{ fontSize: 10, color: T.red, fontWeight: 600, marginBottom: 2, padding: "0 10px" }}>
-                  Gates fired: {roleDetail.gates_fired.join(", ")}
-                </div>
-              )}
-              {entries.map(([k, c]) => {
-                const v = c?.adjusted;
-                const band = competencyBand(v);
-                const floor = c?.floor;
-                const tier = c?.tier;
-                const breached = tier === "critical" && floor != null && v != null && Number(v) < Number(floor);
-                const sublineBits = [];
-                if (floor != null) sublineBits.push(breached ? `Below critical floor (${floor})` : `Floor ${floor}`);
-                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
-                return (
-                  <AssessRow
-                    key={k}
-                    label={formatCompLabel(k)}
-                    value={v}
-                    band={v == null ? "none" : band}
-                    extra={tier ? TIER_LABEL[tier] || tier : null}
-                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
-                  />
-                );
-              })}
-              {/* Integrity gate shadow result — SHADOW MODE, not yet active
-                  (Peter directive 2026-08-03). The gate never declines a
-                  candidate; this only shows what the conjunctive 4-condition
-                  test WOULD have done, for review once 25-30 real candidates
-                  have been scored. Role-agnostic — same value regardless of
-                  which role is selected above. */}
-              {roleDetail?.gate_detail?.integrity_decline && (() => {
-                const ig = roleDetail.gate_detail.integrity_decline;
-                const cond = ig.conditions || {};
-                const metCount = Object.values(cond).filter((c) => c?.met).length;
-                return (
-                  <div style={{
-                    padding: "6px 10px", background: T.slate50, borderRadius: 6,
-                    border: `1px dashed ${T.slate300 || T.slate200}`, marginBottom: 4,
-                  }}>
-                    <div style={{ fontSize: 9.5, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 700, color: T.slate500 }}>
-                      Integrity gate — shadow mode, not yet active
-                    </div>
-                    <div style={{ fontSize: 11, color: T.slate700, marginTop: 2 }}>
-                      Would {ig.shadow_would_decline ? "flag for decline" : "pass"} — {metCount}/4 conditions met
-                      {cond.raw_composite_low?.value != null && ` · raw self-report ${cond.raw_composite_low.value}`}
-                      {cond.sjt_honesty_low?.value != null && ` · SJT honesty ${cond.sjt_honesty_low.value}%`}
-                    </div>
-                  </div>
-                );
-              })()}
-            </>
-          );
-        })()}
-
-        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-        {/* GMA — total only is a decision input; subtests are diagnostics */}
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-            GMA (General Mental Ability)
-          </div>
-          <AssessRow
-            label="Total"
-            value={gmaTotal}
-            extra={gmaTotal != null ? `/16 (${gmaPct}%)` : null}
-            max={16}
-          />
-          <button
-            type="button"
-            onClick={() => setGmaOpen((o) => !o)}
-            style={{
-              marginTop: 4, background: "none", border: "none", padding: "2px 4px",
-              fontSize: 10.5, color: T.blue, cursor: "pointer", fontFamily: "inherit",
-            }}
-          >
-            {gmaOpen ? "Hide subtest diagnostics" : "Show subtest diagnostics"}
-          </button>
-          {gmaOpen && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-              <AssessRow label="Pattern" value={detail?.gma_pattern_accuracy} extra="/4" max={4}
-                subline={detail?.gma_pattern_speed_seconds != null ? `${detail.gma_pattern_speed_seconds}s/item` : null} />
-              <AssessRow label="Deductive" value={detail?.gma_deductive_accuracy} extra="/4" max={4}
-                subline={detail?.gma_deductive_speed_seconds != null ? `${detail.gma_deductive_speed_seconds}s/item` : null} />
-              <AssessRow label="Numerical" value={detail?.gma_numerical_accuracy} extra="/4" max={4}
-                subline={detail?.gma_numerical_speed_seconds != null ? `${detail.gma_numerical_speed_seconds}s/item` : null} />
-              <AssessRow label="Verbal" value={detail?.gma_verbal_accuracy} extra="/4" max={4}
-                subline={detail?.gma_verbal_speed_seconds != null ? `${detail.gma_verbal_speed_seconds}s/item` : null} />
-            </div>
-          )}
+          })}
         </div>
-
-        <div style={{ height: 1, background: T.slate200 }} />
-
-        {/* SJT — total + 5 topic rows */}
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-            SJT (Situational Judgement Test)
-          </div>
-          <AssessRow label="Total" value={sjtScore} extra={sjtScore != null ? "%" : null} />
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-            {Object.entries(SJT_TOPIC_LABELS).map(([k, label]) => {
-              const t = sjtTopics[k];
-              const pct = t && t.n > 0 ? Math.round((100 * t.correct) / t.n) : null;
-              return (
-                <AssessRow
-                  key={k}
-                  label={label}
-                  value={pct}
-                  extra={t ? `${t.correct}/${t.n}` : null}
-                />
-              );
-            })}
-          </div>
-        </div>
-
       </div>
 
       </div>
