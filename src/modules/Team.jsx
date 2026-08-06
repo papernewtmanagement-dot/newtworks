@@ -2012,7 +2012,10 @@ const StaffDirectory = ({ staff }) => {
                     { label:"Personal Phone", value:member.phone_personal||"—" },
                     { label:"Phone Ext",      value:member.phone_extension||"—" },
                     { label:"Address",        value: member.address_line1
-                        ? [member.address_line1, member.address_line2].filter(Boolean).join(", ") + " — " + [member.city, member.state, member.zip_code].filter(Boolean).join(", ")
+                        ? <>
+                            <div>{[member.address_line1, member.address_line2].filter(Boolean).join(", ")}</div>
+                            <div>{[member.city, member.state, member.zip_code].filter(Boolean).join(", ")}</div>
+                          </>
                         : "—" },
                     { label:"Licensed States", value:(member.license_states || []).length>0?(member.license_states || []).join(", "):"None" },
                     { label:"Start Date",     value:member.start_date||"—" },
