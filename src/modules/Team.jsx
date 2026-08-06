@@ -2930,7 +2930,7 @@ export default function Team() {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
         .from("v_hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism, lss_total_accuracy, lss_math_speed_seconds, lss_verbal_speed_seconds, lss_problem_solving_speed_seconds, resume_document_id, resume_url, reliability, response_distortion")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, assertiveness, compassion, resume_document_id, resume_url, reliability, response_distortion")
         .eq("agency_id", AGENCY_ID)
         .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
         .order("created_at", { ascending: false });
