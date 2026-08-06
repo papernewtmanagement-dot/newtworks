@@ -83,8 +83,9 @@ export function stripFences(s: string): string {
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 const COMPOSIO_TIMEOUT_MS = 25000;
+export const S3_FETCH_TIMEOUT_MS = 25000;
 
-async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
+export async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
   try {
     await sb.from("alerts").insert({
       alert_type: "external_call_timeout",
@@ -101,7 +102,7 @@ async function writeTimeoutAlert(service: string, elapsedMs: number, context: st
   }
 }
 
-async function fetchWithTimeout(
+export async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
@@ -3203,7 +3204,8 @@ async function processMessage(
   const s3url = att?.file?.s3url ?? att?.data?.file?.s3url;
   if (!s3url) return { status: "error", error: "no s3url from GMAIL_GET_ATTACHMENT" };
 
-  const htmlFetch = await fetch(s3url);
+  const { res: htmlFetch, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", `call log HTML, message=${messageId}`);
+  if (!htmlFetch) return { status: "error", error: timedOut ? "s3 fetch timed out" : "s3 fetch failed" };
   if (!htmlFetch.ok) return { status: "error", error: `s3 fetch ${htmlFetch.status}` };
   const html = await htmlFetch.text();
 
@@ -4043,7 +4045,11 @@ export function reformatResumeSeparators(raw: string): string {
  */
 export async function extractResumeTextFromS3url(s3url: string): Promise<string | null> {
   try {
-    const r = await fetch(s3url);
+    const { res: r, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", `resume text extraction, url=${s3url.slice(0, 80)}`);
+    if (!r) {
+      console.warn(timedOut ? "resume s3url fetch for text extraction timed out" : "resume s3url fetch for text extraction failed");
+      return null;
+    }
     if (!r.ok) {
       console.warn(`resume s3url fetch for text extraction returned HTTP ${r.status}`);
       return null;
@@ -6701,7 +6707,8 @@ async function downloadAttachmentBytes(
   const s3url = file?.s3url;
   if (s3url) {
     try {
-      const r = await fetch(s3url);
+      const { res: r, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", "generic attachment download");
+      if (!r) return { ok: false, error: timedOut ? `s3url fetch timed out` : `s3url fetch failed` };
       if (!r.ok) return { ok: false, error: `s3url fetch returned HTTP ${r.status}` };
       const buf = new Uint8Array(await r.arrayBuffer());
       // Base64-encode in chunks to avoid call-stack issues on large files.
@@ -8463,24 +8470,32 @@ async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
   const toolkit = typeof body?.toolkit === "string" ? body.toolkit : null;
   if (toolkit) {
     try {
-      const res = await fetch(
+      const { res, timedOut } = await fetchWithTimeout(
         `https://backend.composio.dev/api/v3/tools?toolkit_slugs=${encodeURIComponent(toolkit)}&limit=500`,
         { headers: { "x-api-key": ctx.composioApiKey } },
+        S3_FETCH_TIMEOUT_MS,
+        "composio",
+        `toolkit probe: ${toolkit}`,
       );
-      const text = await res.text();
-      let parsed: any = {};
-      try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1500) }; }
-      const items = parsed?.items ?? parsed?.data ?? null;
-      out.toolkit = toolkit;
-      out.toolkit_http_status = res.status;
-      if (Array.isArray(items)) {
-        out.toolkit_tool_count = items.length;
-        out.toolkit_tools = items
-          .map((t: any) => t?.slug ?? t?.name)
-          .filter((x: unknown) => typeof x === "string")
-          .sort();
+      if (!res) {
+        out.toolkit = toolkit;
+        out.toolkit_error = timedOut ? "toolkit probe timed out" : "toolkit probe fetch failed";
       } else {
-        out.toolkit_raw = JSON.stringify(parsed).slice(0, 1500);
+        const text = await res.text();
+        let parsed: any = {};
+        try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1500) }; }
+        const items = parsed?.items ?? parsed?.data ?? null;
+        out.toolkit = toolkit;
+        out.toolkit_http_status = res.status;
+        if (Array.isArray(items)) {
+          out.toolkit_tool_count = items.length;
+          out.toolkit_tools = items
+            .map((t: any) => t?.slug ?? t?.name)
+            .filter((x: unknown) => typeof x === "string")
+            .sort();
+        } else {
+          out.toolkit_raw = JSON.stringify(parsed).slice(0, 1500);
+        }
       }
     } catch (e) {
       out.toolkit_error = e instanceof Error ? e.message : String(e);
