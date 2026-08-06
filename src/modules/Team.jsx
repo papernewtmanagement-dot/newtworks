@@ -14,7 +14,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 //
 // SECTIONS:
 //   1. Overview      — Pipeline summary, team snapshot, alerts
-//   2. Recruiting    — Kanban: Assessed→EmailScreen→Interview→RefCheck→Offer→Hired
+//   2. Recruiting    — Kanban: Applied→AssessmentSent→Assessed→EmailScreen (Interview moved to Finalists)
 //   3. Candidate Detail — CTS scores, resume, scorecards (new: click a card)
 //   4. Staff         — Current team directory with licensing status
 //   5. Performance   — Monthly KPI tracking per staff member
