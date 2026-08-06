@@ -1160,16 +1160,28 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
 
   const loadCoaOptions = async () => {
     try {
+      // Not filtered to ctx.accountType: Peter needs to move transactions
+      // between income and expense, so both types must be selectable here.
       const { data } = await supabase.from("chart_of_accounts")
         .select("id, account_code, account_name, account_type")
-        .eq("account_type", ctx.accountType)
+        .in("account_type", ["income", "expense"])
         .eq("is_active", true)
-        .order("account_code");
+        .order("account_type").order("account_code");
       setCoaOptions(data || []);
     } catch (e) {
       console.error("PLDrillPanel COA load error:", e);
     }
   };
+
+  // Debit/credit sign convention for a given account type. Matches the
+  // CASE logic in pnl_drill_transactions exactly: expense (and
+  // historical_import-sourced income) read debit-minus-credit; ordinary
+  // income reads credit-minus-debit. Used so reclassifying an account
+  // between income and expense can preserve the displayed sign by
+  // default, per Peter's rule: moving a txn must not flip its sign
+  // unless he explicitly asks it to.
+  const _signFormula = (accountType, isHistorical) =>
+    (accountType === "income" && !isHistorical) ? "credit_minus_debit" : "debit_minus_credit";
 
   useEffect(() => {
     load();
@@ -1191,6 +1203,8 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
       description:  row.description || "",
       entry_date:   String(row.entry_date).split("T")[0],
       account_name: row.account_name || "",
+      section_type: ctx.accountType === "income" ? "Income" : "Expense",
+      flip_sign:    false,
     });
   };
 
@@ -1201,12 +1215,38 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
     try {
       if (row.source === "journal") {
         const jlUpdates = {};
-        if (editDraft.account_id && editDraft.account_id !== row.account_id) {
+        const accountChanged = editDraft.account_id && editDraft.account_id !== row.account_id;
+        if (accountChanged) {
           jlUpdates.account_id = editDraft.account_id;
         }
         if ((editDraft.description || null) !== (row.description || null)) {
           jlUpdates.description = editDraft.description || null;
         }
+
+        // Sign preservation: reclassifying to an account of a different
+        // account_type (income <-> expense) changes which debit/credit
+        // formula pnl_drill_transactions applies to this line. Left alone,
+        // that would silently flip the displayed sign. Default behavior is
+        // to swap debit/credit so the displayed amount is unchanged; the
+        // "flip sign" checkbox inverts that (also usable standalone, with
+        // no account change, to correct a mis-signed line in place).
+        const wantFlip = !!editDraft.flip_sign;
+        if (accountChanged || wantFlip) {
+          const isHistorical = (row.je_source || "").startsWith("historical_import");
+          const oldType = ctx.accountType;
+          const targetAccount = coaOptions.find(a => a.id === (editDraft.account_id || row.account_id));
+          const newType = targetAccount ? targetAccount.account_type : oldType;
+          const formulaDiffers = _signFormula(oldType, isHistorical) !== _signFormula(newType, isHistorical);
+          const doSwap = formulaDiffers !== wantFlip; // XOR: preserve by default, invert if flip_sign checked
+          if (doSwap) {
+            const { data: jlRow, error: jlReadErr } = await supabase.from("journal_lines")
+              .select("debit, credit").eq("id", row.line_id).single();
+            if (jlReadErr) throw jlReadErr;
+            jlUpdates.debit  = jlRow.credit || 0;
+            jlUpdates.credit = jlRow.debit  || 0;
+          }
+        }
+
         if (Object.keys(jlUpdates).length > 0) {
           const { data, error } = await supabase.from("journal_lines")
             .update(jlUpdates).eq("id", row.line_id).select("id");
@@ -1227,6 +1267,14 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
         const pypUpdates = {};
         if (editDraft.account_name && editDraft.account_name !== row.account_name) {
           pypUpdates.account_name = editDraft.account_name;
+        }
+        // prior_year_pl.amount is a stored value, never derived from
+        // section_type, so moving it between Income and Expense here
+        // already carries no sign-flip risk — the number stays exactly
+        // what it was unless Peter edits it separately.
+        const currentSectionType = ctx.accountType === "income" ? "Income" : "Expense";
+        if (editDraft.section_type && editDraft.section_type !== currentSectionType) {
+          pypUpdates.section_type = editDraft.section_type;
         }
         if (editDraft.entry_date && editDraft.entry_date !== String(row.entry_date).split("T")[0]) {
           const parts = editDraft.entry_date.split("-");
@@ -1356,15 +1404,39 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
                     {!isPrior && (
                       <label style={_drillLabel}>Account
                         <select value={editDraft.account_id || ""} onChange={(e) => setEditDraft({ ...editDraft, account_id: e.target.value })} style={_drillInput}>
-                          {coaOptions.map(a => (
-                            <option key={a.id} value={a.id}>{a.account_code} · {a.account_name}</option>
-                          ))}
+                          <optgroup label="Income">
+                            {coaOptions.filter(a => a.account_type === "income").map(a => (
+                              <option key={a.id} value={a.id}>{a.account_code} · {a.account_name}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Expense">
+                            {coaOptions.filter(a => a.account_type === "expense").map(a => (
+                              <option key={a.id} value={a.id}>{a.account_code} · {a.account_name}</option>
+                            ))}
+                          </optgroup>
                         </select>
+                      </label>
+                    )}
+                    {!isPrior && (
+                      <label style={{ ..._drillLabel, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={!!editDraft.flip_sign} onChange={(e) => setEditDraft({ ...editDraft, flip_sign: e.target.checked })} />
+                        Flip sign
+                        <span style={{ fontWeight: 400, color: T.slate500 }}>
+                          — moving between income/expense keeps this amount's sign as-is by default; check this to invert it instead
+                        </span>
                       </label>
                     )}
                     {isPrior && (
                       <label style={_drillLabel}>Account name
                         <input type="text" value={editDraft.account_name || ""} onChange={(e) => setEditDraft({ ...editDraft, account_name: e.target.value })} style={_drillInput} />
+                      </label>
+                    )}
+                    {isPrior && (
+                      <label style={_drillLabel}>Section
+                        <select value={editDraft.section_type || ""} onChange={(e) => setEditDraft({ ...editDraft, section_type: e.target.value })} style={_drillInput}>
+                          <option value="Income">Income</option>
+                          <option value="Expense">Expense</option>
+                        </select>
                       </label>
                     )}
                     {!isPrior && (
