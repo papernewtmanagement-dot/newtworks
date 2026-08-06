@@ -339,18 +339,16 @@ const generateSeatInsights = (row, projection) => {
 const generateCoachingHints = (seat, assessment) => {
   if (!assessment) return [];
 
-  const anl = parseInt(assessment.analytical);
-  const opt = parseInt(assessment.optimism);
+  // Only assertiveness + compassion survived the 2026-08-06 retirement of the old
+  // CTS trait set. The hints that keyed off the other seven (analytical, optimism,
+  // independent_spirit, belief_in_others, recognition_drive, deadline_motivation,
+  // self_promotion) were removed rather than remapped — picking replacement facets
+  // and thresholds is a calibration decision, not a rename.
   const asr = parseInt(assessment.assertiveness);
-  const ind = parseInt(assessment.independent_spirit);
-  const bel = parseInt(assessment.belief_in_others);
   const com = parseInt(assessment.compassion);
-  const rec = parseInt(assessment.recognition_drive);
-  const dl  = parseInt(assessment.deadline_motivation);
-  const sp  = parseInt(assessment.self_promotion);
-  const traits = [anl, opt, asr, ind, bel, com, rec, dl, sp];
+  const traits = [asr, com];
   const anyTraitPresent = traits.some(v => Number.isFinite(v) && v > 0);
-  if (!anyTraitPresent) return [];  // Phase-2 placeholder rows have all traits null
+  if (!anyTraitPresent) return [];  // rows with no trait data at all
 
   const covPct = seat ? (parseFloat(seat.coverage_pct) || 0) : null;
   const rqm    = seat ? (parseFloat(seat.retention_quality_multiplier) || 0) : null;
@@ -360,10 +358,6 @@ const generateCoachingHints = (seat, assessment) => {
   const cat    = seat?.role_category || null;
   const reliability = (assessment.reliability || "").toLowerCase();
   const distortion  = (assessment.response_distortion || "").toLowerCase();
-  const lssMath = parseInt(assessment.lss_math_speed_seconds);
-  const lssVerb = parseInt(assessment.lss_verbal_speed_seconds);
-  const lssPS   = parseInt(assessment.lss_problem_solving_speed_seconds);
-  const lssAcc  = parseInt(assessment.lss_total_accuracy);
   // intelligence_composite / intelligence_floor come from assessment_intelligence_fit
   // (role-specific, live from hiregauge_role_ideal_ranges). Replaces the dropped
   // lss_total_ideal_min flat raw-item-count column — Step 7, 2026-08-01.
@@ -376,20 +370,6 @@ const generateCoachingHints = (seat, assessment) => {
 
   // ─── Sales-role patterns ───
   if (cat === "Sales") {
-    if (opt >= 70 && anl < 20 && covPct != null && covPct < 90) {
-      hints.push({
-        severity:"critical",
-        title:"Complacency archetype",
-        detail:`High Optimism (${opt}) + low Analytical (${anl}) = blind spot to own pace drops. Rides good stretches, misses declines. Coaching lever: external mirror (weekly data reviews with witnesses, immediate feedback). Do NOT confront as personality — it's structural.`,
-      });
-    }
-    if (bel >= 85 && com < 25 && asr < 45 && ind >= 80) {
-      hints.push({
-        severity:"concern",
-        title:"Broken-trust has no graceful recovery",
-        detail:`Belief ${bel} + Compassion ${com} + Assertiveness ${asr} + Independent ${ind}: extends trust freely, no softening on violation, won't confront, doesn't self-repair. When a rupture occurs, YOU must reset the trust signal explicitly — silence festers into withdrawal + covert resistance.`,
-      });
-    }
     if (asr < 25 && covPct != null && covPct < 90) {
       hints.push({
         severity:"action",
@@ -397,22 +377,15 @@ const generateCoachingHints = (seat, assessment) => {
         detail:`Assertiveness ${asr} caps ask-strength. Direct coaching move: role-play push-back scenarios and objection-handling. This trait responds measurably to structured reps.`,
       });
     }
-    if (ind >= 85) {
-      hints.push({
-        severity:"info",
-        title:"Autonomy-driven",
-        detail:`Independent Spirit ${ind}: highly resistant to close supervision. Delegate outcomes, not process. Light check-in cadence, expect autonomous execution.`,
-      });
-    }
   }
 
   // ─── Retention-role patterns ───
   if (cat === "Retention") {
-    if (com >= 60 && bel >= 60 && rqm != null && rqm < 0.6) {
+    if (com >= 60 && rqm != null && rqm < 0.6) {
       hints.push({
         severity:"action",
         title:"Right person, wrong environment",
-        detail:`Compassion ${com} + Belief ${bel} = strong retention base. Coverage gap is agency-lapse-driven (RQM ${rqm.toFixed(2)}), NOT coaching-intensity-driven. Lapse investigation is what moves the needle for this seat.`,
+        detail:`Compassion ${com} = strong retention base. Coverage gap is agency-lapse-driven (RQM ${rqm.toFixed(2)}), NOT coaching-intensity-driven. Lapse investigation is what moves the needle for this seat.`,
       });
     }
     if (com < 25) {
@@ -420,20 +393,6 @@ const generateCoachingHints = (seat, assessment) => {
         severity:"critical",
         title:"Compassion mismatch for retention",
         detail:`Compassion ${com} — this is the base skill of retention work. More coaching hours won't unlock what isn't there. Role-fit conversation warranted, not intensity increase.`,
-      });
-    }
-    if (dl < 30) {
-      hints.push({
-        severity:"concern",
-        title:"Slow-pace tolerance",
-        detail:`Deadline Motivation ${dl}: won't self-drive on time-sensitive work. Match to non-cadence tasks (policy audits, deep-service review). Don't put on outbound rhythms — they'll fall behind.`,
-      });
-    }
-    if (anl >= 70) {
-      hints.push({
-        severity:"info",
-        title:"Analytical strength underused",
-        detail:`Analytical ${anl}: naturally fits policy-review + coverage-audit work. Route complex service tasks here — this profile is often underutilized in pure inbound answering.`,
       });
     }
   }
@@ -453,14 +412,6 @@ const generateCoachingHints = (seat, assessment) => {
       severity:"info",
       title:"Assessment reliability is low",
       detail:`Reliability tagged low — cross-check trait interpretation against multiple observations before acting.`,
-    });
-  }
-  if (Number.isFinite(lssMath) && Number.isFinite(lssVerb) && Number.isFinite(lssPS)
-      && lssMath > 60 && lssVerb > 45 && lssPS > 120) {
-    hints.push({
-      severity:"concern",
-      title:"Productivity ceiling from LSS",
-      detail:`LSS speeds slow across math (${lssMath}s), verbal (${lssVerb}s), problem-solving (${lssPS}s). Per-day throughput is constrained regardless of coaching. Match to deep-detail work with fewer per-day transactions.`,
     });
   }
   if (Number.isFinite(intelComposite) && Number.isFinite(intelFloor) && intelComposite <= intelFloor + 5) {
@@ -2072,15 +2023,10 @@ const StaffDirectory = ({ staff }) => {
                 {(() => {
                   const asmt = asmtByMember[member.id];
                   if (!asmt) return null;
+                  // Seven of the nine old CTS traits were dropped 2026-08-06; only
+                  // assertiveness + compassion remain on hiring_candidates.
                   const traits = [
-                    ["Analytical",          asmt.analytical],
                     ["Assertiveness",       asmt.assertiveness],
-                    ["Independent Spirit",  asmt.independent_spirit],
-                    ["Optimism",            asmt.optimism],
-                    ["Deadline Motivation", asmt.deadline_motivation],
-                    ["Recognition Drive",   asmt.recognition_drive],
-                    ["Self-Promotion",      asmt.self_promotion],
-                    ["Belief in Others",    asmt.belief_in_others],
                     ["Compassion",          asmt.compassion],
                   ];
                   // Competency lookup will be rebuilt against the assessment_<role>_competencies
@@ -2189,14 +2135,10 @@ const StaffDirectory = ({ staff }) => {
                           </div>
                         </details>
                       )}
-                      {(asmt.lss_total_accuracy != null || asmt.lss_math_speed_seconds != null) && (
+                      {asmt.intelligence_composite != null && (
                         <div style={{ fontSize:11, color:T.slate600, marginBottom:8 }}>
-                          <strong style={{ color:T.slate900 }}>LSS:</strong>
-                          {asmt.lss_total_accuracy != null && <span> Accuracy <strong style={{ color:T.slate900 }}>{asmt.lss_total_accuracy}</strong></span>}
-                          {asmt.intelligence_composite != null && <span> · Intelligence <strong style={{ color:T.slate900 }}>{Math.round(asmt.intelligence_composite)}{(asmt.intelligence_floor != null && asmt.intelligence_ceiling != null) ? ` (${asmt.role_label || "role"} range ${asmt.intelligence_floor}\u2013${asmt.intelligence_ceiling})` : ""}</strong></span>}
-                          {asmt.lss_math_speed_seconds != null && <span> · Math <strong style={{ color:T.slate900 }}>{asmt.lss_math_speed_seconds}s</strong></span>}
-                          {asmt.lss_verbal_speed_seconds != null && <span> · Verbal <strong style={{ color:T.slate900 }}>{asmt.lss_verbal_speed_seconds}s</strong></span>}
-                          {asmt.lss_problem_solving_speed_seconds != null && <span> · Problem-solving <strong style={{ color:T.slate900 }}>{asmt.lss_problem_solving_speed_seconds}s</strong></span>}
+                          <strong style={{ color:T.slate900 }}>Intelligence:</strong>
+                          <span> <strong style={{ color:T.slate900 }}>{Math.round(asmt.intelligence_composite)}{(asmt.intelligence_floor != null && asmt.intelligence_ceiling != null) ? ` (${asmt.role_label || "role"} range ${asmt.intelligence_floor}\u2013${asmt.intelligence_ceiling})` : ""}</strong></span>
                         </div>
                       )}
                       {asmt.notes && (
