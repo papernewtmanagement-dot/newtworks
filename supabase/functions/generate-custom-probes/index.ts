@@ -153,14 +153,21 @@ async function fetchResumeText(agencyId: string, resumeUrl: string | null, extra
   return { text: capped, source: "drive_download" };
 }
 
-// Facet inputs per competency -- mirrored verbatim from the 12
-// newtworks_competency_* SQL function bodies (migration 20260803184500).
-// Not a new weighting scheme; this is the existing input list, just
-// available in JS so we can union it without 12 extra RPC round-trips.
-// GMA/SJT inputs excluded -- those aren't in the 25-facet percentile set.
+// Facet inputs per competency -- copied from the live newtworks_competency_*
+// SQL function bodies (verified directly against pg_proc 2026-08-06, not
+// from an older migration snapshot). Not a new weighting scheme; this is
+// the existing input list, just available in JS so we can union it without
+// 13 extra RPC round-trips. GMA/SJT inputs excluded -- those aren't in the
+// 25-facet percentile set.
+// BUG FIXED 2026-08-06: drive_work_intensity, persuasive_influence, and
+// autonomy_ownership each had a phantom "enterprising" entry that the real
+// SQL functions do not use. Found while building the drift-detector for
+// this exact class of error. See operational_rule "COMPETENCY_FACET_INPUTS
+// in generate-custom-probes is a hand copy of SQL -- edit both or it goes
+// silently stale" and its drift-detector companion, hiregauge_detect_facet_input_drift().
 const COMPETENCY_FACET_INPUTS: Record<string, string[]> = {
-  drive_work_intensity:            ["achievement_striving", "self_discipline", "proactive_personality", "enterprising"],
-  persuasive_influence:            ["assertiveness", "political_skill_networking", "self_efficacy", "enterprising"],
+  drive_work_intensity:            ["achievement_striving", "self_discipline", "proactive_personality"],
+  persuasive_influence:            ["assertiveness", "political_skill_networking", "self_efficacy"],
   rapport_building:                ["friendliness", "political_skill_networking", "compassion", "trust"],
   needs_discovery:                 ["customer_orientation", "compassion", "cooperation"],
   resilience_under_rejection:      ["emotional_stability", "anxiety", "dispositional_optimism", "self_efficacy"],
@@ -170,7 +177,7 @@ const COMPETENCY_FACET_INPUTS: Record<string, string[]> = {
   integrity:                       ["sincerity", "fairness", "greed_avoidance"],
   judgment_escalation:             ["cautiousness", "dutifulness"],
   coachability_team_contribution:  ["cooperation", "trust", "compassion", "anger"],
-  autonomy_ownership:              ["proactive_personality", "self_efficacy", "enterprising", "achievement_striving"],
+  autonomy_ownership:              ["proactive_personality", "self_efficacy", "achievement_striving"],
 };
 
 interface FacetFlag { facet: string; percentile: number; direction: "low" | "high"; }
