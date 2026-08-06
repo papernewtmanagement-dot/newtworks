@@ -1652,9 +1652,24 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
 
       {/* Deep-Dive — LLM-generated candidate-specific probes, flat list. */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>
-          Deep-Dive · ~{detail?.custom_probes?.time_budget_minutes || 30} min · candidate-specific
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            Deep-Dive · ~{detail?.custom_probes?.time_budget_minutes || 30} min · candidate-specific
+          </div>
+          <button
+            onClick={buildInterviewPlan}
+            disabled={planBuilding}
+            title="Build a 60-min interview plan from the interview_questions bank, driven by this candidate's trigger codes"
+            style={{ padding: "5px 10px", fontSize: 10, fontWeight: 600, color: T.blue, background: T.blueLt, border: "none", borderRadius: 7, cursor: planBuilding ? "wait" : "pointer", marginLeft: "auto" }}
+          >
+            {planBuilding ? "Building..." : "🧭 Build Interview Plan"}
+          </button>
         </div>
+        {planError && (
+          <div style={{ marginBottom: 8, padding: 8, background: T.redLt, borderRadius: 6, color: T.red, fontSize: 11 }}>
+            {planError}
+          </div>
+        )}
 
         {(!detail?.custom_probes || !Array.isArray(detail?.custom_probes?.sections) || detail.custom_probes.sections.length === 0) ? (
           <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic", marginBottom: 12 }}>
