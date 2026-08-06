@@ -3,9 +3,65 @@
 // =========================================================================
 // Composio HTTP wrapper. Mirrors callComposio() from automation-runner so
 // behavior stays identical — same auth shape, same response unwrapping.
+//
+// TIMEOUT HANDLING added 2026-08-06 (Task 4, build-instructions 2026-08-06).
+// Two document-processor invocations hung ~105-113s then died as an
+// uncaught exception (Supabase status 546) rather than a clean error --
+// the signature of an external call stuck until the platform's own
+// wall-clock limit killed the whole function. Every fetch() here now has
+// an explicit timeout well below that limit, so a stuck call fails fast
+// and CATCHABLY instead of taking the whole invocation down with it. On
+// timeout: write an alerts row (service, elapsed ms, tool/context) and
+// return a normal {ok:false} result -- never let it surface as an
+// uncaught exception. No retry logic added here on purpose: retrying a
+// hang just doubles the wait and can push an otherwise-fine invocation
+// over the platform limit too. Retry is a separate decision.
 // =========================================================================
 
+import { sb } from "./supabase.ts";
+
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
+const COMPOSIO_TIMEOUT_MS = 25000;
+
+async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
+  try {
+    await sb.from("alerts").insert({
+      alert_type: "external_call_timeout",
+      severity: "warning",
+      title: `${service} call timed out`,
+      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
+      module_reference: `document-processor:${service}_timeout`,
+      is_read: false,
+      is_resolved: false,
+    });
+  } catch (_e) {
+    // Alert-writing is best-effort. Never let a failed alert insert mask
+    // the original timeout or throw a second uncaught exception.
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  service: string,
+  context: string,
+): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return { res, timedOut: false, elapsedMs: Date.now() - startedAt };
+  } catch (e) {
+    const elapsedMs = Date.now() - startedAt;
+    const timedOut = e instanceof Error && e.name === "AbortError";
+    if (timedOut) await writeTimeoutAlert(service, elapsedMs, context);
+    return { res: null, timedOut, elapsedMs };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface ComposioCallResult {
   ok: boolean;
@@ -40,19 +96,31 @@ export async function callComposio(opts: {
    */
   toolkitVersion?: string;
 }): Promise<ComposioCallResult> {
-  const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
-    method: "POST",
-    headers: {
-      "x-api-key": opts.apiKey,
-      "Content-Type": "application/json",
+  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
+    `${COMPOSIO_BASE}/${opts.toolSlug}`,
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": opts.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: opts.userId,
+        connected_account_id: opts.connectedAccountId,
+        arguments: opts.toolArguments,
+        ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
+      }),
     },
-    body: JSON.stringify({
-      user_id: opts.userId,
-      connected_account_id: opts.connectedAccountId,
-      arguments: opts.toolArguments,
-      ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
-    }),
-  });
+    COMPOSIO_TIMEOUT_MS,
+    "composio",
+    `tool=${opts.toolSlug}`,
+  );
+  if (!res) {
+    const error = timedOut
+      ? `Composio call timed out after ${elapsedMs}ms (tool: ${opts.toolSlug})`
+      : `Composio fetch failed (tool: ${opts.toolSlug})`;
+    return { ok: false, data: null, error, httpStatus: 0 };
+  }
   const text = await res.text();
   let parsed: any = {};
   try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
@@ -70,17 +138,29 @@ export async function callComposioNoAuth(opts: {
   toolSlug: string;
   toolArguments: Record<string, any>;
 }): Promise<ComposioCallResult> {
-  const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
-    method: "POST",
-    headers: {
-      "x-api-key": opts.apiKey,
-      "Content-Type": "application/json",
+  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
+    `${COMPOSIO_BASE}/${opts.toolSlug}`,
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": opts.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: opts.userId,
+        arguments: opts.toolArguments,
+      }),
     },
-    body: JSON.stringify({
-      user_id: opts.userId,
-      arguments: opts.toolArguments,
-    }),
-  });
+    COMPOSIO_TIMEOUT_MS,
+    "composio",
+    `tool=${opts.toolSlug}`,
+  );
+  if (!res) {
+    const error = timedOut
+      ? `Composio call timed out after ${elapsedMs}ms (tool: ${opts.toolSlug})`
+      : `Composio fetch failed (tool: ${opts.toolSlug})`;
+    return { ok: false, data: null, error, httpStatus: 0 };
+  }
   const text = await res.text();
   let parsed: any = {};
   try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
