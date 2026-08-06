@@ -2316,9 +2316,37 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const isV2Matrix = detail?.assessment_source === "v2";
               const matrixBf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
               const matrixCurrentRole = selectedRole || matrixBf?.best_role || "sales_outbound";
-              const assessmentLayerScore = isV2Matrix
+              // v2 facet lookup — compute_newtworks_v2_facets_as_row returns one row per
+              // hypothesized_trait; used for the Commitment sub-score line below.
+              const v2FacetVal = (facets, trait) => {
+                const f = Array.isArray(facets) ? facets.find((x) => x.hypothesized_trait === trait) : null;
+                return f?.facet_score != null ? Math.round(Number(f.facet_score)) : "—";
+              };
+              // Assessment layer total blends all three constructs (Capability, Character,
+              // Commitment) — it used to read capability alone (the selected role's fit
+              // score), which is why Character/Commitment never reached the Total column.
+              // Capability stays role-aware (reads the selected role's fit score from
+              // v2RoleFits, same as before); Character/Commitment are role-independent and
+              // come straight off detail. Blend weights are read from meta.layer_weights_
+              // within_construct — the same hiregauge_layer_composite_weights row the
+              // DB-side verdict_assessment RPC uses for the assessment layer, so the two
+              // can never drift apart. Fixed 2026-08-05.
+              const assessmentCapForTotal = isV2Matrix
                 ? (v2RoleFits ? v2RoleFits[matrixCurrentRole]?.fit_score ?? null : null)
-                : (detail?.overall_score ?? null);
+                : (detail?.assessment_capability ?? null);
+              const assessmentChrForTotal = detail?.assessment_character ?? null;
+              const assessmentComForTotal = detail?.assessment_commitment ?? null;
+              const aLayerCapW = weights?.capability?.assessment;
+              const aLayerChrW = weights?.character?.assessment;
+              const aLayerComW = weights?.commitment?.assessment;
+              let assessmentLayerScore = null;
+              {
+                let wsum = 0, sum = 0;
+                if (assessmentCapForTotal != null && aLayerCapW != null) { sum += assessmentCapForTotal * aLayerCapW; wsum += aLayerCapW; }
+                if (assessmentChrForTotal != null && aLayerChrW != null) { sum += assessmentChrForTotal * aLayerChrW; wsum += aLayerChrW; }
+                if (assessmentComForTotal != null && aLayerComW != null) { sum += assessmentComForTotal * aLayerComW; wsum += aLayerComW; }
+                assessmentLayerScore = wsum > 0 ? (sum / wsum) : (detail?.overall_score ?? null);
+              }
               const layers = [
                 { key: "resume",     label: "Resume",     score: threeConstruct.resume_score,     verdict: threeConstruct.resume_verdict },
                 // Assessment layer sources composite/capability/character/commitment from v_hiring_candidates
@@ -2478,13 +2506,33 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     {layer.key === "assessment" && c.key === "commitment" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
-                                        title="Suggs motivation drivers measurable via CTS: Achievement (deadline motivation) · Recognition (recognition drive) · Autonomy (independent spirit). Six other Suggs driver types not measurable via CTS."
+                                        title={isV2Matrix
+                                          ? "IPIP-sourced commitment facets: Ach = Achievement striving · Comp = Competitiveness · Prv = Prove-goal orientation · Lrn = Learning-goal orientation · Avd = Avoid-goal orientation (reversed before averaging) · Ent = Enterprising interest."
+                                          : "Suggs motivation drivers measurable via CTS: Achievement (deadline motivation) · Recognition (recognition drive) · Autonomy (independent spirit). Six other Suggs driver types not measurable via CTS."}
                                       >
-                                        Ach {detail?.deadline_motivation != null ? Math.round(Number(detail.deadline_motivation)) : "—"}
-                                        {" · "}
-                                        Rec {detail?.recognition_drive != null ? Math.round(Number(detail.recognition_drive)) : "—"}
-                                        {" · "}
-                                        Aut {detail?.independent_spirit != null ? Math.round(Number(detail.independent_spirit)) : "—"}
+                                        {isV2Matrix ? (
+                                          <>
+                                            Ach {v2FacetVal(v2Facets, "achievement_striving")}
+                                            {" · "}
+                                            Comp {v2FacetVal(v2Facets, "competitiveness")}
+                                            {" · "}
+                                            Prv {v2FacetVal(v2Facets, "prove_goal_orientation")}
+                                            {" · "}
+                                            Lrn {v2FacetVal(v2Facets, "learning_goal_orientation")}
+                                            {" · "}
+                                            Avd {v2FacetVal(v2Facets, "avoid_goal_orientation")}
+                                            {" · "}
+                                            Ent {v2FacetVal(v2Facets, "enterprising")}
+                                          </>
+                                        ) : (
+                                          <>
+                                            Ach {detail?.deadline_motivation != null ? Math.round(Number(detail.deadline_motivation)) : "—"}
+                                            {" · "}
+                                            Rec {detail?.recognition_drive != null ? Math.round(Number(detail.recognition_drive)) : "—"}
+                                            {" · "}
+                                            Aut {detail?.independent_spirit != null ? Math.round(Number(detail.independent_spirit)) : "—"}
+                                          </>
+                                        )}
                                       </div>
                                     )}
                                   </td>
