@@ -1,18 +1,18 @@
 // deno-lint-ignore-file no-explicit-any
-// Edge function: generate-custom-probes  (v9.0 — manual-grounded Trait triggers)
+// Edge function: generate-custom-probes  (v10.0 — Trait-triggers/manual subsystem removed)
 //
-// Changes from v8.0:
-//   - Trait triggers section is now grounded in the Final Interview manual
-//     (Suggs pool). The edge fn loads the manual page, detects this
-//     candidate's trait triggers, extracts the matching sections, and feeds
-//     them to the LLM as reference material with instructions to pick the
-//     best 1-2 questions per trigger and reformat them as probes
-//     (question/listen_for/concern/source).
-//   - Trigger detection + section extraction logic mirrored from
-//     CandidateDetail.jsx (kept in lockstep on trait bands + header names).
-//   - Frontend "Assessment-Triggered · From Final Interview Manual" section
-//     retired in commit 56840021 — trait-trigger content is now surfaced
-//     ONLY through the LLM's "Trait triggers" section, in probe format.
+// Changes from v9.0:
+//   - The entire "Trait triggers" subsystem (TRAIT_IDEAL, TRAIT_BAND,
+//     detectTriggers, triggerToHeader, the Final Interview manual lookup,
+//     and the corresponding prompt section) was removed 2026-08-06. It
+//     rendered an affirmative "no concerns detected" signal even when only
+//     2 of 9 old-instrument traits still populated data -- a false all-clear
+//     inside the two highest-weighted Character/Commitment layers. See
+//     build-instructions doc 2026-08-06 for full rationale + citations.
+//   - See TASK B2 (facet-fed probe context, still pending as of this
+//     revision) for the intended replacement: facet percentiles at/below
+//     p20 or at/above p80 for the role's weighted facets, surfaced as
+//     follow-up probe context -- not a scoring layer, not a question bank.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
@@ -28,8 +28,6 @@ const TIME_BUDGET_MINUTES = 35;
 const PROBE_COUNT_TARGET  = 10;
 const PROBE_COUNT_HARD_MAX = 12;
 
-// Final Interview manual page id (Suggs pool source-of-truth for trait triggers).
-const FINAL_INTERVIEW_MANUAL_ID = "d83be3b8-55c9-4d60-9303-13a1f84141a8";
 
 // Priority order for which sections survive when total exceeds hard-max.
 // Higher = kept first when trimming. Resume signals are ONLY answerable by this specific
@@ -37,7 +35,6 @@ const FINAL_INTERVIEW_MANUAL_ID = "d83be3b8-55c9-4d60-9303-13a1f84141a8";
 const SECTION_PRIORITY: Record<string, number> = {
   "Resume signals":                100,
   "Character floor verification":   90,
-  "Trait triggers":                 80,
   "Validity follow-up":             70,
   "Archetype probes":               60,
   "Motivation probe":               50,
@@ -146,99 +143,6 @@ async function fetchResumeText(agencyId: string, resumeUrl: string | null, extra
   return { text: capped, source: "drive_download" };
 }
 
-// Pruned 2026-08-06: seven of the nine old trait columns, and every lss_* column,
-// were dropped from hiring_candidates (migration 20260806170033). Only
-// assertiveness and compassion still hold values, so only those two can produce
-// a trigger. Whether any of the 22 new facets should take over the retired
-// entries — and at what thresholds — is an open calibration decision.
-const TRAIT_IDEAL: Record<string, { min: number|null; max: number|null }> = {
-  assertiveness:       { min: 50,  max: null },
-  compassion:          { min: 30,  max: 70 },
-};
-
-function traitReadout(a: any): string {
-  const lines: string[] = [];
-  for (const [t, r] of Object.entries(TRAIT_IDEAL)) {
-    const v = a?.[t];
-    if (v == null) { lines.push(`  ${t}: —`); continue; }
-    let flag = "in-ideal";
-    if (r.min != null && v < r.min) flag = `LOW (ideal ≥${r.min})`;
-    else if (r.max != null && v > r.max) flag = `HIGH (ideal ≤${r.max})`;
-    lines.push(`  ${t}: ${v}  [${flag}]`);
-  }
-  return lines.join("\n");
-}
-
-// ─── Trigger detection (mirrors CandidateDetail.jsx) ─────────────────
-// Kept in lockstep with the frontend for consistent trigger identification.
-// Bands (red/yellow) map to Final Interview manual sections via triggerToHeader.
-
-interface Trigger { trait: string; value: number | string; severity: "red" | "yellow"; }
-
-const TRAIT_BAND: Record<string, (v: number) => "green" | "yellow" | "red" | "none"> = {
-  assertiveness:       (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
-  compassion:          (v) => v == null ? "none" : (v >= 30 && v <= 70) ? "green" : (v >= 20 && v <= 80) ? "yellow" : "red",
-};
-
-function detectTriggers(a: any): Trigger[] {
-  const triggers: Trigger[] = [];
-  for (const [trait, evaluator] of Object.entries(TRAIT_BAND)) {
-    const v = a?.[trait];
-    if (v == null) continue;
-    const band = evaluator(Number(v));
-    if (band === "red" || band === "yellow") {
-      triggers.push({ trait, value: v, severity: band });
-    }
-  }
-  // The LSS speed + accuracy triggers were removed 2026-08-06 along with their
-  // columns. No cognitive trigger is raised here for now; the GMA section is the
-  // current cognitive read and has not been wired into probe triggers yet.
-  return triggers;
-}
-
-function triggerToHeader(trait: string, value: number): string | null {
-  if (trait === "assertiveness" && value < 50) return "Low Assertiveness";
-  if (trait === "compassion"    && value < 30) return "Low Compassion";
-  if (trait === "compassion"    && value > 70) return "High Compassion";
-  return null;
-}
-
-// Extract a subsection from Final Interview manual markdown by its ### header.
-// Returns the raw markdown text from that header to the next ### or ## (exclusive).
-function extractManualSection(markdown: string, headerText: string): string | null {
-  if (!markdown || !headerText) return null;
-  const lines = markdown.split("\n");
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith("### ") && lines[i].includes(headerText)) { start = i; break; }
-  }
-  if (start === -1) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (lines[i].startsWith("### ") || lines[i].startsWith("## ")) { end = i; break; }
-  }
-  return lines.slice(start, end).join("\n");
-}
-
-async function loadFinalInterviewManual(): Promise<string | null> {
-  const { data, error } = await supa.from("manuals").select("content").eq("id", FINAL_INTERVIEW_MANUAL_ID).maybeSingle();
-  if (error) { console.warn("manual load error:", error.message); return null; }
-  return data?.content || null;
-}
-
-// For each trigger, look up the matching manual section. Returns array of
-// { trait, value, severity, header, section_text } where section_text is the
-// raw manual section (or null if not found).
-function buildManualReference(triggers: Trigger[], manualMarkdown: string | null): Array<{ trait: string; value: number | string; severity: string; header: string | null; section_text: string | null }> {
-  if (!manualMarkdown) return triggers.map(t => ({ ...t, header: null, section_text: null }));
-  return triggers.map(t => {
-    const numericValue = typeof t.value === "number" ? t.value : Number(String(t.value).replace(/[^0-9.-]/g, "")) || 0;
-    const header = triggerToHeader(t.trait, numericValue);
-    const section_text = header ? extractManualSection(manualMarkdown, header) : null;
-    return { ...t, header, section_text };
-  });
-}
-
 // Post-processing: enforce hard cap by dropping lowest-priority sections/probes first.
 // Never touches question/listen_for/concern content; just trims the count.
 function enforceProbeCap(probes: any): { trimmed: any; trim_note: string | null } {
@@ -297,28 +201,17 @@ Rules for the probes you produce:
 2. Group probes by focus. Priority order when picking what to include (fill from top down, stop at ${PROBE_COUNT_TARGET}-${PROBE_COUNT_HARD_MAX}):
    1. "Resume signals" — specific claims on the resume that need verification (biggest-account, promotion claims, gaps, self-superiority language). Highest per-probe leverage — only this candidate can answer these. Target 3-4.
    2. "Character floor verification" — only fire for character areas the CTS or framework flagged concerning. If nothing is concerning, skip this section entirely. Target 0-3.
-   3. "Trait triggers" — see the TRAIT TRIGGER MANUAL REFERENCE block in the user message. PRODUCE EXACTLY 3-4 probes for this section when 3+ triggers exist; one probe per trigger when fewer triggers exist. Prioritize red-severity triggers over yellow. For each selected trigger, pick the single BEST question from its section_text (favor CORE bullets over *(optional)* italicized ones) and reformat verbatim or with light personalization. Suggs's wording is proven — favor it strongly over invention.
-   4. "Validity follow-up" — moderate/low reliability or elevated distortion. Target 0-2.
-   5. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
-   6. "Motivation probe" — money_motivator match. Target 0-1.
-   7. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
-3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate", "resume:self-superiority-language", "manual:Low Assertiveness" when derived from the manual). ALL FOUR FIELDS ARE REQUIRED on every probe.
+   3. "Validity follow-up" — moderate/low reliability or elevated distortion. Target 0-2.
+   4. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
+   5. "Motivation probe" — money_motivator match. Target 0-1.
+   6. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
+3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate", "resume:self-superiority-language"). ALL FOUR FIELDS ARE REQUIRED on every probe.
 4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age).
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
 6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate's actual numbers and situation.
 7. If resume text IS provided: Resume signals section MUST be included AND MUST be the top-priority section. Reference the exact resume phrasing when you can. Never collapse the entire output down to only resume signals — trait triggers and character floor concerns still need to be probed.
 8. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
 9. DO NOT include warm-up questions ("tell me about your last role", "why insurance", "why our agency"). Those are asked before the deep-dive. Your output is the deep-dive only.
-
-TRAIT-TRIGGERS SECTION — how to use the manual reference:
-- The user message includes a TRAIT TRIGGER MANUAL REFERENCE block per active trigger for this candidate.
-- Each entry has: trait, value, severity (red/yellow), and section_text (markdown from the Final Interview manual with the questions Suggs wrote for that trigger pattern).
-- The manual has CORE questions (bulleted) and OPTIONAL questions (marked with *(optional) ... *). Prefer CORE. Skip OPTIONAL unless it adds unique signal.
-- For each SELECTED trigger, pick the single BEST question from that section_text — best = most likely to reveal genuine behavior vs rehearsed answer for THIS candidate. Do not pick multiple questions from a single trigger.
-- Reformat as probe objects: question (verbatim or lightly personalized), listen_for (derived from context around the question in the section_text or from your understanding of the trait), concern (specific red flag for THAT question).
-- source tag: "manual:<header>" e.g. "manual:Low Assertiveness". If you generate a fresh question because manual had no matching section, use the standard "trait:<name>=<value>(low/high)" tag.
-- Do NOT include the whole manual section verbatim. Do NOT include the question stem "###" headers. Just extract the specific 1-2 best questions per trigger, formatted as probe objects.
-- Total across the section: EXACTLY 3-4 probes when 3+ triggers exist; one probe per trigger otherwise. Prioritize red-severity triggers first, then yellow.
 
 Style directives (agency voice):
 - Direct, first-person plural: "We'd like to understand...", "Walk us through...", "Tell us about a time when..."
@@ -339,20 +232,8 @@ Output requirements:
 }`;
 
 async function generateProbes(context: any, groqKey: string, model: string): Promise<any> {
-  const triggerRefBlock = context.manual_reference.length === 0
-    ? "(no active trait triggers — skip the Trait triggers section)"
-    : context.manual_reference.map((m: any) => {
-        const label = `${m.trait} = ${m.value} (${m.severity})`;
-        const hdr = m.header ? `manual header: "${m.header}"` : `(no matching manual header — generate candidate-specific probe from scratch)`;
-        const body = m.section_text ? m.section_text : "(no matching manual section — invent a candidate-specific behavioral probe)";
-        return `--- TRIGGER: ${label} · ${hdr} ---\n${body}`;
-      }).join("\n\n");
-
   const userMsg = `CANDIDATE: ${context.candidate_name}
 POSITION APPLIED FOR: ${context.position || "(not specified)"}
-
-TRAIT SCORES (ideal ranges annotated):
-${context.trait_readout}
 
 VALIDITY (band labels; framework validity_rule matches will fire if concerning):
   reliability: ${context.a.reliability ?? "—"}
@@ -363,9 +244,6 @@ ${context.a.claude_summary || "(no resume summary on file)"}
 
 FRAMEWORK MATCHES (from hiregauge_evaluate_candidate):
 ${context.framework_readout}
-
-TRAIT TRIGGER MANUAL REFERENCE (Suggs pool from Final Interview manual — pick the 1-2 best questions per trigger, reformat as probes):
-${triggerRefBlock}
 
 RESUME TEXT: ${context.resume_text ? context.resume_text : "(not available — do not fabricate resume-specific probes, note this in output.notes)"}
 
@@ -408,16 +286,10 @@ Deno.serve(async (req: Request) => {
       : "(no framework rules matched)";
     const resumeFetch = await fetchResumeText(a.agency_id, a.resume_url, a.resume_extracted_text);
 
-    // v9.0 addition: load Final Interview manual + detect this candidate's triggers
-    // + build manual reference block for the Trait triggers section.
-    const manualMarkdown = await loadFinalInterviewManual();
-    const triggers = detectTriggers(a);
-    const manual_reference = buildManualReference(triggers, manualMarkdown);
-
     const context = {
       candidate_name: [a.first_name, a.last_name].filter(Boolean).join(" ") || a.candidate_name || "Candidate",
-      position: a.position, trait_readout: traitReadout(a), framework_readout,
-      resume_text: resumeFetch.text, manual_reference, a,
+      position: a.position, framework_readout,
+      resume_text: resumeFetch.text, a,
     };
     const groqKey = await getSetting(a.agency_id, "groq_api_key");
     if (!groqKey) return json({ error: "settings.groq_api_key missing for agency" }, 500);
@@ -427,7 +299,7 @@ Deno.serve(async (req: Request) => {
     const probes = capped.trimmed;
 
     // Stamp metadata
-    probes.version              = 9.0;
+    probes.version              = 10.0;
     probes.model                = model;
     probes.resume_analyzed      = Boolean(context.resume_text);
     probes.resume_source        = resumeFetch.source;
@@ -437,9 +309,6 @@ Deno.serve(async (req: Request) => {
     probes.probe_count_target   = PROBE_COUNT_TARGET;
     probes.probe_count_hard_max = PROBE_COUNT_HARD_MAX;
     probes.probes_total_count   = (probes.sections || []).reduce((s: number, sec: any) => s + (Array.isArray(sec?.probes) ? sec.probes.length : 0), 0);
-    probes.triggers_analyzed_n  = triggers.length;
-    probes.manual_loaded        = Boolean(manualMarkdown);
-    probes.manual_sections_matched_n = manual_reference.filter(m => m.section_text).length;
     if (capped.trim_note) probes.trim_note = capped.trim_note;
     const nowIso = new Date().toISOString();
     const { error: uErr } = await supa.from("hiring_candidates").update({ custom_probes: probes, custom_probes_generated_at: nowIso }).eq("id", assessmentId);
