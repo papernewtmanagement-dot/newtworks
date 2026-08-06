@@ -472,7 +472,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   const [selected, setSelected] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
-  const stages = stagesProp || ["applied","assessed","email_screen","interview","reference_check","offer","hired"]; // declined + former hidden by default
+  const stages = stagesProp || ["applied","assessment_sent","assessed","email_screen","interview","reference_check","offer","hired"]; // declined + former hidden by default
 
 
   const selectedApp = applicants.find(a => a.id === selected);
@@ -2811,8 +2811,8 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
     );
   }
   // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
-  const RECRUITING_STAGES = ["applied","assessed","email_screen","interview"];
-  const CLOSING_STAGES    = ["reference_check","offer","hired"];
+  const RECRUITING_STAGES = ["applied","assessment_sent","assessed","email_screen"];
+  const CLOSING_STAGES    = ["interview","reference_check","offer","hired"];
   const recruitingApps = applicants.filter(a => RECRUITING_STAGES.includes(a.status));
   const closingApps    = applicants.filter(a => CLOSING_STAGES.includes(a.status));
   const subs = [
