@@ -1,18 +1,28 @@
 // deno-lint-ignore-file no-explicit-any
-// Edge function: generate-custom-probes  (v10.0 — Trait-triggers/manual subsystem removed)
+// Edge function: generate-custom-probes  (v11.0 — facet-fed "Areas to press on")
 //
-// Changes from v9.0:
-//   - The entire "Trait triggers" subsystem (TRAIT_IDEAL, TRAIT_BAND,
-//     detectTriggers, triggerToHeader, the Final Interview manual lookup,
-//     and the corresponding prompt section) was removed 2026-08-06. It
-//     rendered an affirmative "no concerns detected" signal even when only
-//     2 of 9 old-instrument traits still populated data -- a false all-clear
-//     inside the two highest-weighted Character/Commitment layers. See
-//     build-instructions doc 2026-08-06 for full rationale + citations.
-//   - See TASK B2 (facet-fed probe context, still pending as of this
-//     revision) for the intended replacement: facet percentiles at/below
-//     p20 or at/above p80 for the role's weighted facets, surfaced as
-//     follow-up probe context -- not a scoring layer, not a question bank.
+// Changes from v10.0:
+//   - Replacement for the removed Trait-triggers subsystem (TASK B2,
+//     build-instructions 2026-08-06). NOT a question bank, NOT a scoring
+//     layer, NOT a stored column. At request time: (1) look up which of
+//     the 12 newtworks_competency_* functions carry nonzero weight for
+//     this candidate's best-fit role in hiregauge_competency_weights,
+//     (2) union the facet inputs those competencies read (a fixed mapping
+//     mirrored from the SQL function bodies -- no new weights invented),
+//     (3) read live facet percentiles via
+//     hiregauge_candidate_facet_percentiles (already-existing, computed
+//     on read, never stored), (4) keep only facets at/below p20 or
+//     at/above p80, capped to the 4 most extreme by distance from p50.
+//     Surfaced to the model as follow-up context under "Areas to press
+//     on" -- the fixed core question set is untouched; these are
+//     additions, never substitutions (Campion, Palmer & Campion 1997;
+//     Levashina, Hartwell, Morgeson & Campion 2014 -- structured
+//     interviews lose validity as structure erodes). p20/p80 is a
+//     probe-targeting convention to bound prompt length, not a
+//     psychometric threshold -- carries no validity claim.
+//   - v9.0's Trait-triggers subsystem (TRAIT_IDEAL, TRAIT_BAND,
+//     detectTriggers, triggerToHeader, the Final Interview manual lookup)
+//     was removed in v10.0 (TASK B1) -- see that revision's header for why.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
@@ -143,6 +153,56 @@ async function fetchResumeText(agencyId: string, resumeUrl: string | null, extra
   return { text: capped, source: "drive_download" };
 }
 
+// Facet inputs per competency -- mirrored verbatim from the 12
+// newtworks_competency_* SQL function bodies (migration 20260803184500).
+// Not a new weighting scheme; this is the existing input list, just
+// available in JS so we can union it without 12 extra RPC round-trips.
+// GMA/SJT inputs excluded -- those aren't in the 25-facet percentile set.
+const COMPETENCY_FACET_INPUTS: Record<string, string[]> = {
+  drive_work_intensity:            ["achievement_striving", "self_discipline", "proactive_personality", "enterprising"],
+  persuasive_influence:            ["assertiveness", "political_skill_networking", "self_efficacy", "enterprising"],
+  rapport_building:                ["friendliness", "political_skill_networking", "compassion", "trust"],
+  needs_discovery:                 ["customer_orientation", "compassion", "cooperation"],
+  resilience_under_rejection:      ["emotional_stability", "anxiety", "dispositional_optimism", "self_efficacy"],
+  composure_under_pressure:        ["anger", "anxiety", "emotional_stability"],
+  accuracy_procedural_discipline:  ["dutifulness", "cautiousness", "self_discipline"],
+  rule_compliance_adherence:       ["dutifulness", "cautiousness"],
+  integrity:                       ["sincerity", "fairness", "greed_avoidance"],
+  judgment_escalation:             ["cautiousness", "dutifulness"],
+  coachability_team_contribution:  ["cooperation", "trust", "compassion", "anger"],
+  autonomy_ownership:              ["proactive_personality", "self_efficacy", "enterprising", "achievement_striving"],
+};
+
+interface FacetFlag { facet: string; percentile: number; direction: "low" | "high"; }
+
+// Areas-to-press-on selection: role-relevant facets at/below p20 or at/above
+// p80, capped to the 4 most extreme by distance from p50. Convention for
+// bounding prompt length -- not a psychometric threshold, no validity claim.
+function selectPressOnFacets(
+  roleCategory: string | null,
+  competencyWeights: Array<{ competency_name: string; weight: number }>,
+  facetPercentiles: Array<{ facet: string; percentile: number | null }>
+): FacetFlag[] {
+  if (!roleCategory) return [];
+  const relevantCompetencies = new Set(
+    competencyWeights.filter(w => Number(w.weight) > 0).map(w => w.competency_name)
+  );
+  const relevantFacets = new Set<string>();
+  for (const comp of relevantCompetencies) {
+    const inputs = COMPETENCY_FACET_INPUTS[comp];
+    if (inputs) for (const f of inputs) relevantFacets.add(f);
+  }
+  const flagged: FacetFlag[] = [];
+  for (const fp of facetPercentiles) {
+    if (fp.percentile == null) continue;
+    if (!relevantFacets.has(fp.facet)) continue;
+    if (fp.percentile <= 20) flagged.push({ facet: fp.facet, percentile: fp.percentile, direction: "low" });
+    else if (fp.percentile >= 80) flagged.push({ facet: fp.facet, percentile: fp.percentile, direction: "high" });
+  }
+  flagged.sort((a, b) => Math.abs(b.percentile - 50) - Math.abs(a.percentile - 50));
+  return flagged.slice(0, 4);
+}
+
 // Post-processing: enforce hard cap by dropping lowest-priority sections/probes first.
 // Never touches question/listen_for/concern content; just trims the count.
 function enforceProbeCap(probes: any): { trimmed: any; trim_note: string | null } {
@@ -201,17 +261,25 @@ Rules for the probes you produce:
 2. Group probes by focus. Priority order when picking what to include (fill from top down, stop at ${PROBE_COUNT_TARGET}-${PROBE_COUNT_HARD_MAX}):
    1. "Resume signals" — specific claims on the resume that need verification (biggest-account, promotion claims, gaps, self-superiority language). Highest per-probe leverage — only this candidate can answer these. Target 3-4.
    2. "Character floor verification" — only fire for character areas the CTS or framework flagged concerning. If nothing is concerning, skip this section entirely. Target 0-3.
-   3. "Validity follow-up" — moderate/low reliability or elevated distortion. Target 0-2.
-   4. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
-   5. "Motivation probe" — money_motivator match. Target 0-1.
-   6. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
+   3. "Areas to press on" — see the AREAS TO PRESS ON block in the user message, if present. These are FOLLOW-UP probes only, appended after the fixed core question set — never a substitute for it. One probe per listed facet, up to the number listed. If the block is absent, skip this section entirely — do not invent one. Target 0-4.
+   4. "Validity follow-up" — moderate/low reliability or elevated distortion. Target 0-2.
+   5. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
+   6. "Motivation probe" — money_motivator match. Target 0-1.
+   7. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
 3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate", "resume:self-superiority-language"). ALL FOUR FIELDS ARE REQUIRED on every probe.
-4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age).
+4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age). This applies to EVERY section, including Areas to press on — a facet flag is never grounds to ask about a protected characteristic, and none of the facets in that block relate to one.
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
 6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate's actual numbers and situation.
 7. If resume text IS provided: Resume signals section MUST be included AND MUST be the top-priority section. Reference the exact resume phrasing when you can. Never collapse the entire output down to only resume signals — trait triggers and character floor concerns still need to be probed.
 8. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
 9. DO NOT include warm-up questions ("tell me about your last role", "why insurance", "why our agency"). Those are asked before the deep-dive. Your output is the deep-dive only.
+
+AREAS TO PRESS ON — how to use (if the block appears in the user message):
+- Each entry is a role-relevant facet where this candidate scored at or below the 20th percentile or at or above the 80th percentile against typical adults, in a direction the specific role weights.
+- This is NOT a diagnosis and NOT a red flag by itself — write a genuinely curious behavioral probe, not a gotcha. Low or high just means "worth understanding this candidate's specific pattern here."
+- One probe per listed facet. Do not invent extra facets. Do not speculate about facets not listed.
+- source tag: "facet:<name>=<percentile>th(<low/high>)".
+- These probes are follow-ups appended AFTER the fixed core question set — never a replacement for Resume signals, Character floor, or any other section.
 
 Style directives (agency voice):
 - Direct, first-person plural: "We'd like to understand...", "Walk us through...", "Tell us about a time when..."
@@ -232,6 +300,12 @@ Output requirements:
 }`;
 
 async function generateProbes(context: any, groqKey: string, model: string): Promise<any> {
+  const pressOnBlock = context.press_on_facets.length === 0
+    ? ""
+    : `\n\nAREAS TO PRESS ON (role-relevant facets at/below p20 or at/above p80 vs typical adults):\n${
+        context.press_on_facets.map((f: FacetFlag) => `  - ${f.facet}: ${f.percentile}th percentile (${f.direction})`).join("\n")
+      }`;
+
   const userMsg = `CANDIDATE: ${context.candidate_name}
 POSITION APPLIED FOR: ${context.position || "(not specified)"}
 
@@ -243,7 +317,7 @@ CLAUDE RESUME SUMMARY (from intake analysis):
 ${context.a.claude_summary || "(no resume summary on file)"}
 
 FRAMEWORK MATCHES (from hiregauge_evaluate_candidate):
-${context.framework_readout}
+${context.framework_readout}${pressOnBlock}
 
 RESUME TEXT: ${context.resume_text ? context.resume_text : "(not available — do not fabricate resume-specific probes, note this in output.notes)"}
 
@@ -286,10 +360,28 @@ Deno.serve(async (req: Request) => {
       : "(no framework rules matched)";
     const resumeFetch = await fetchResumeText(a.agency_id, a.resume_url, a.resume_extracted_text);
 
+    // TASK B2: facet-fed "Areas to press on" -- best-fit role -> role-weighted
+    // competencies -> unioned facet inputs -> live facet percentiles -> extreme ones.
+    let pressOnFacets: FacetFlag[] = [];
+    let bestRoleForFacets: string | null = null;
+    try {
+      const { data: bestFit } = await supa.rpc("assessment_best_fit_role", { p_assessment_id: assessmentId });
+      bestRoleForFacets = (Array.isArray(bestFit) && bestFit[0]?.best_role) || null;
+      if (bestRoleForFacets) {
+        const [{ data: weights }, { data: percentiles }] = await Promise.all([
+          supa.from("hiregauge_competency_weights").select("competency_name, weight").eq("agency_id", a.agency_id).eq("role_category", bestRoleForFacets),
+          supa.rpc("hiregauge_candidate_facet_percentiles", { p_candidate_id: assessmentId }),
+        ]);
+        pressOnFacets = selectPressOnFacets(bestRoleForFacets, weights || [], percentiles || []);
+      }
+    } catch (e) {
+      console.warn("press-on facet selection failed (non-fatal):", e instanceof Error ? e.message : String(e));
+    }
+
     const context = {
       candidate_name: [a.first_name, a.last_name].filter(Boolean).join(" ") || a.candidate_name || "Candidate",
       position: a.position, framework_readout,
-      resume_text: resumeFetch.text, a,
+      resume_text: resumeFetch.text, a, press_on_facets: pressOnFacets,
     };
     const groqKey = await getSetting(a.agency_id, "groq_api_key");
     if (!groqKey) return json({ error: "settings.groq_api_key missing for agency" }, 500);
@@ -299,7 +391,7 @@ Deno.serve(async (req: Request) => {
     const probes = capped.trimmed;
 
     // Stamp metadata
-    probes.version              = 10.0;
+    probes.version              = 11.0;
     probes.model                = model;
     probes.resume_analyzed      = Boolean(context.resume_text);
     probes.resume_source        = resumeFetch.source;
@@ -309,6 +401,9 @@ Deno.serve(async (req: Request) => {
     probes.probe_count_target   = PROBE_COUNT_TARGET;
     probes.probe_count_hard_max = PROBE_COUNT_HARD_MAX;
     probes.probes_total_count   = (probes.sections || []).reduce((s: number, sec: any) => s + (Array.isArray(sec?.probes) ? sec.probes.length : 0), 0);
+    // Log which facets fired so the same probe set is reproducible at review time.
+    probes.press_on_role        = bestRoleForFacets;
+    probes.press_on_facets      = pressOnFacets;
     if (capped.trim_note) probes.trim_note = capped.trim_note;
     const nowIso = new Date().toISOString();
     const { error: uErr } = await supa.from("hiring_candidates").update({ custom_probes: probes, custom_probes_generated_at: nowIso }).eq("id", assessmentId);
