@@ -836,7 +836,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // detail (tier/floor/adjusted) the selector below drills into. v1/CTS
 // candidates keep the legacy renderAssessmentLayer below — this function only
 // renders when detail.assessment_source === "v2".
-function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen }) {
+function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen, screenAnswers }) {
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
@@ -1125,9 +1125,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   );
 }
 
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2RoleFits, gmaOpen, setGmaOpen }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2RoleFits, gmaOpen, setGmaOpen, screenAnswers }) {
   if (detail?.assessment_source === "v2") {
-    return renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen });
+    return renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen, screenAnswers });
   }
   return (
     <div>
@@ -2642,6 +2642,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     v1Extras, v1InvitedAt,
                                     intelligence, roleIdealRange,
                                     v2Facets, v2RoleFits, gmaOpen, setGmaOpen,
+                                    screenAnswers,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
                                     detail, T,
