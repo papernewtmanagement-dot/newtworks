@@ -1120,17 +1120,45 @@ export default function PFA({ userRole }) {
   const isAdmin = userRole === "owner" || userRole === "manager";
   const [activeTab, setActiveTab] = useTabParam("tab", "today", ["today","statements","closes","recon","ledger"]);
   const [pfaAccountId, setPfaAccountId] = useState(null);
+  const [pfaAccountError, setPfaAccountError] = useState(false);
+  const [pfaAccountRetryTick, setPfaAccountRetryTick] = useState(0);
   const [teamRoster, setTeamRoster] = useState([]);
 
+  // pfaAccountId feeds Ledger/Statements/Reconciliations tabs, each of which
+  // no-ops on a null id — so a silent failure here used to make all three
+  // tabs look like "nothing on file" with zero indication it was actually a
+  // failed fetch, not an empty account. Same silent-swallow class as the
+  // Growth tab kanban bug (2026-08-05 sweep) — added error state + one retry.
   useEffect(() => {
     if (!isAdmin) return;
-    supabase.from("pfa_accounts").select("id").eq("agency_id", AGENCY_ID).eq("is_active", true).maybeSingle()
-      .then(({ data }) => setPfaAccountId(data?.id || null));
+    let cancelled = false;
+
+    const fetchAccount = async (isRetry) => {
+      if (!isRetry) setPfaAccountError(false);
+      const { data, error } = await supabase
+        .from("pfa_accounts").select("id").eq("agency_id", AGENCY_ID).eq("is_active", true).maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed to load PFA account:", error);
+        if (!isRetry) { setTimeout(() => { if (!cancelled) fetchAccount(true); }, 1500); return; }
+        setPfaAccountError(true);
+        return;
+      }
+      setPfaAccountId(data?.id || null);
+      setPfaAccountError(false);
+    };
+    fetchAccount(false);
+
     supabase.from("team_directory").select("id, first_name").eq("agency_id", AGENCY_ID)
       .is("archived_at", null).eq("is_admin_backoffice", false)
       .order("first_name")
-      .then(({ data }) => setTeamRoster(data || []));
-  }, [isAdmin]);
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) { console.error("Failed to load team roster:", error); return; }
+        setTeamRoster(data || []);
+      });
+    return () => { cancelled = true; };
+  }, [isAdmin, pfaAccountRetryTick]);
 
   const tabs = [
     { id: "today",   label: "Today" },
@@ -1156,6 +1184,12 @@ export default function PFA({ userRole }) {
         </div>
 
         {/* Admin tabs */}
+        {isAdmin && pfaAccountError && (
+          <div style={{ marginBottom: 16, padding: "10px 14px", fontSize: 12, color: "#7B241C", background: "#FDEDEC", border: "1px solid #F5B7B1", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span>Couldn't load the PFA account — Ledger, Statements, and Reconciliations may look empty because of this, not because there's nothing on file.</span>
+            <button onClick={() => setPfaAccountRetryTick(t => t + 1)} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: T.white, background: T.red, border: "none", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>Retry</button>
+          </div>
+        )}
         {isAdmin && (
           <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: `1px solid ${T.slate200}`, flexWrap: "wrap" }}>
             {tabs.map(t => {
