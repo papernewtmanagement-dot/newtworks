@@ -39,7 +39,9 @@ prose, no markdown fences, no explanation:
       "date": "YYYY-MM-DD",
       "payee": "<vendor / merchant / counterparty>",
       "memo": "<any additional description; empty string if none>",
-      "amount": <number; NEGATIVE for money out, POSITIVE for money in>
+      "amount": <number; NEGATIVE for money out, POSITIVE for money in>,
+      "section": "<one of: purchase, payment, credit_refund, other>",
+      "raw_line": "<the verbatim text of this transaction line from the statement, before any parsing>"
     }
   ]
 }
@@ -55,6 +57,21 @@ Rules:
   as transactions.
 - Skip non-transactional informational lines.
 - Combine multi-line transaction descriptions into the single payee/memo pair.
+- "date" MUST be the TRANSACTION date (the date the purchase/payment actually
+  occurred). If the statement prints both a transaction date and a separate
+  posting date for a line, use the transaction date — never the posting date.
+- "section" classifies which part of the statement this line came from:
+  - "purchase" — a charge / purchase / new debit on the account (credit card
+    purchases, fees, interest charged).
+  - "payment" — a payment made toward the account balance (includes autopay,
+    "Payment - Thank You" style lines).
+  - "credit_refund" — a merchant refund, rebate, or statement credit issued
+    back to the account.
+  - "other" — use ONLY when the line genuinely does not fit any of the above;
+    do not guess — if uncertain between two categories, prefer "other".
+- Combine multi-line transaction descriptions into the single payee/memo pair;
+  "raw_line" is a best-effort verbatim capture of the source line(s) for that
+  transaction and may include the original date/amount text as printed.
 - Use ISO dates only.
 - All amounts as JSON numbers, never strings.
 - Output raw JSON, never wrap it in code fences.
