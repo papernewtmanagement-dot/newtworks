@@ -840,6 +840,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
+  const assessmentFlags = Array.isArray(detail?.assessment_flags) ? detail.assessment_flags : [];
 
   const reliability = detail?.reliability; // 'high' | 'moderate' | 'low' — still the color source
   // Reliability score (Peter directive 2026-08-06 — show a number, not just
@@ -877,6 +878,27 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
             Assessment stopped early on this stint. Candidate was shown a neutral completion screen and told nothing.
             {exitedAt ? ` · ${new Date(exitedAt).toLocaleString()}` : ""}
           </div>
+        </div>
+      )}
+
+      {/* Non-blocking assessment flags — interview probes only, never a
+          decline reason. Amber, not red: distinct from the exit-gate banner
+          above so nobody reads a flag as a stop. Written by
+          apply_hiregauge_v2_stint1_exit_gate. Peter directive 2026-08-06 —
+          op-rule "Made-up-word check is a FLAG, never an eliminator". */}
+      {assessmentFlags.length > 0 && (
+        <div style={{
+          padding: "10px 12px", background: T.amberLt, borderRadius: 6,
+          borderLeft: `4px solid ${T.amber}`, boxSizing: "border-box",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.amber }}>
+            {assessmentFlags.length === 1 ? "Assessment flag" : `Assessment flags (${assessmentFlags.length})`} — interview probe, not a decline reason
+          </div>
+          {assessmentFlags.map((f, i) => (
+            <div key={f?.flag ?? i} style={{ fontSize: 11, color: T.slate700, marginTop: i === 0 ? 3 : 6 }}>
+              {f?.detail || f?.flag || "Flag recorded."}
+            </div>
+          ))}
         </div>
       )}
 
