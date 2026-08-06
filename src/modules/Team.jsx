@@ -67,7 +67,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -1119,7 +1119,7 @@ const StaffDirectory = ({ staff }) => {
     (async () => {
       const { data: teamRows, error: teamErr } = await supabase
         .from("team")
-        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id, photo_storage_path")
+        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id, photo_storage_path, address_line1, address_line2, city, state, zip_code")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", false)
         .order("archived_at", { ascending: false, nullsFirst: false });
@@ -1459,6 +1459,11 @@ const StaffDirectory = ({ staff }) => {
       email_sf:        member.email_sf        || "",
       phone_personal:  member.phone_personal  || "",
       phone_extension: member.phone_extension || "",
+      address_line1:   member.address_line1   || "",
+      address_line2:   member.address_line2   || "",
+      city:            member.city            || "",
+      state:           member.state           || "",
+      zip_code:        member.zip_code        || "",
       pay_type: member.pay_type || "",
       pay_rate: member.pay_rate ?? "",
       pay_frequency: member.pay_frequency || "",
@@ -1494,6 +1499,11 @@ const StaffDirectory = ({ staff }) => {
       email_sf:        form.email_sf.trim()        || null,
       phone_personal:  form.phone_personal.trim()  || null,
       phone_extension: form.phone_extension.trim() || null,
+      address_line1:   (form.address_line1 || "").trim() || null,
+      address_line2:   (form.address_line2 || "").trim() || null,
+      city:            (form.city || "").trim() || null,
+      state:           (form.state || "").trim() || null,
+      zip_code:        (form.zip_code || "").trim() || null,
       pay_type: form.pay_type.trim() || null,
       pay_rate: form.pay_rate === "" || form.pay_rate == null ? null : Number(form.pay_rate),
       pay_frequency: form.pay_frequency.trim() || null,
@@ -2001,6 +2011,9 @@ const StaffDirectory = ({ staff }) => {
                     { label:"SF Email",       value:member.email_sf||"—" },
                     { label:"Personal Phone", value:member.phone_personal||"—" },
                     { label:"Phone Ext",      value:member.phone_extension||"—" },
+                    { label:"Address",        value: member.address_line1
+                        ? [member.address_line1, member.address_line2].filter(Boolean).join(", ") + " — " + [member.city, member.state, member.zip_code].filter(Boolean).join(", ")
+                        : "—" },
                     { label:"Licensed States", value:(member.license_states || []).length>0?(member.license_states || []).join(", "):"None" },
                     { label:"Start Date",     value:member.start_date||"—" },
                   ].map((d,i) => (
@@ -2460,6 +2473,11 @@ const StaffDirectory = ({ staff }) => {
                   <div><label style={labelStyle}>SF email</label><input style={inputStyle} value={form.email_sf} onChange={e=>setForm({...form, email_sf:e.target.value})} placeholder="name@statefarm.com" /></div>
                   <div><label style={labelStyle}>Personal phone</label><input style={inputStyle} value={form.phone_personal} onChange={e=>setForm({...form, phone_personal:e.target.value})} placeholder="(210) 555-0100" /></div>
                   <div><label style={labelStyle}>Phone extension</label><input style={inputStyle} value={form.phone_extension} onChange={e=>setForm({...form, phone_extension:e.target.value})} placeholder="e.g. 101" /></div>
+                  <div><label style={labelStyle}>Address line 1</label><input style={inputStyle} value={form.address_line1} onChange={e=>setForm({...form, address_line1:e.target.value})} placeholder="123 Main St" /></div>
+                  <div><label style={labelStyle}>Address line 2</label><input style={inputStyle} value={form.address_line2} onChange={e=>setForm({...form, address_line2:e.target.value})} placeholder="Apt 4B" /></div>
+                  <div><label style={labelStyle}>City</label><input style={inputStyle} value={form.city} onChange={e=>setForm({...form, city:e.target.value})} placeholder="San Antonio" /></div>
+                  <div><label style={labelStyle}>State</label><input style={inputStyle} value={form.state} onChange={e=>setForm({...form, state:e.target.value})} placeholder="TX" /></div>
+                  <div><label style={labelStyle}>Zip code</label><input style={inputStyle} value={form.zip_code} onChange={e=>setForm({...form, zip_code:e.target.value})} placeholder="78201" /></div>
                   <div><label style={labelStyle}>Pay type</label>
                     <select style={inputStyle} value={form.pay_type} onChange={e=>setForm({...form, pay_type:e.target.value})}>
                       <option value="">—</option>
