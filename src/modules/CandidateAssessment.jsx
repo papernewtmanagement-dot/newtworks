@@ -36,6 +36,22 @@ const SCALE_ANCHORS = {
   7: ["Strongly disagree", "Disagree", "Slightly disagree", "Neutral", "Slightly agree", "Agree", "Strongly agree"],
 };
 
+// Familiarity-rating anchors for the vocabulary validity block (fake + real
+// words). Condensed from the Over-Claiming Questionnaire's published 7-point
+// "never heard of it" -> "know it very well" scale to our 5-point format.
+// Paulhus, Harms, Bruce & Lysy 2003, Journal of Personality and Social
+// Psychology 84(4) 890-904. Selected via response_format = 'vocab_familiarity',
+// independent of scale_max, so it never collides with the agree/disagree
+// anchors other scale sizes use. Op-rule "Vocabulary overclaiming check
+// converted to Paulhus familiarity-rating format" (2026-08-06).
+const VOCAB_FAMILIARITY_ANCHORS = [
+  "Never heard of it",
+  "Heard of it, but don't know what it means",
+  "Have some idea what it means",
+  "Know what it means fairly well",
+  "Know exactly what it means",
+];
+
 // Instruments whose published items are already full first-person sentences
 // (enterprising items were reworded 2026-08-05 to "I would enjoy …" full
 // sentences per Peter, so they belong here too). These must NOT get the "I " stem
@@ -925,7 +941,12 @@ function ResponseControls({ item, onAnswer, selected, saving, vp }) {
 
   // Likert scale (default when scale_max is set and choices is null).
   const scaleMax = Number.isFinite(item?.scale_max) ? item.scale_max : 5;
-  const anchorTexts = scaleMax === 5 ? null : SCALE_ANCHORS[scaleMax];
+  const anchorTexts =
+    item?.response_format === "vocab_familiarity"
+      ? VOCAB_FAMILIARITY_ANCHORS
+      : scaleMax === 5
+      ? null
+      : SCALE_ANCHORS[scaleMax];
   const labels = anchorTexts
     ? anchorTexts.map((label, i) => ({ value: i + 1, label }))
     : scaleMax === 5
