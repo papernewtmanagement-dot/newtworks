@@ -146,16 +146,14 @@ async function fetchResumeText(agencyId: string, resumeUrl: string | null, extra
   return { text: capped, source: "drive_download" };
 }
 
+// Pruned 2026-08-06: seven of the nine old trait columns, and every lss_* column,
+// were dropped from hiring_candidates (migration 20260806170033). Only
+// assertiveness and compassion still hold values, so only those two can produce
+// a trigger. Whether any of the 22 new facets should take over the retired
+// entries — and at what thresholds — is an open calibration decision.
 const TRAIT_IDEAL: Record<string, { min: number|null; max: number|null }> = {
-  deadline_motivation: { min: 70,  max: null },
-  recognition_drive:   { min: 50,  max: null },
   assertiveness:       { min: 50,  max: null },
-  independent_spirit:  { min: 50,  max: null },
-  analytical:          { min: null, max: 60 },
   compassion:          { min: 30,  max: 70 },
-  self_promotion:      { min: 10,  max: 80 },
-  belief_in_others:    { min: 20,  max: 80 },
-  optimism:            { min: 20,  max: 80 },
 };
 
 function traitReadout(a: any): string {
@@ -178,15 +176,8 @@ function traitReadout(a: any): string {
 interface Trigger { trait: string; value: number | string; severity: "red" | "yellow"; }
 
 const TRAIT_BAND: Record<string, (v: number) => "green" | "yellow" | "red" | "none"> = {
-  deadline_motivation: (v) => v == null ? "none" : v >= 70 ? "green" : v >= 50 ? "yellow" : "red",
-  recognition_drive:   (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
   assertiveness:       (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
-  independent_spirit:  (v) => v == null ? "none" : v >= 50 ? "green" : v >= 30 ? "yellow" : "red",
-  analytical:          (v) => v == null ? "none" : v <= 60 ? "green" : v <= 70 ? "yellow" : "red",
   compassion:          (v) => v == null ? "none" : (v >= 30 && v <= 70) ? "green" : (v >= 20 && v <= 80) ? "yellow" : "red",
-  self_promotion:      (v) => v == null ? "none" : (v >= 10 && v <= 80) ? "green" : (v >= 5  && v <= 89) ? "yellow" : "red",
-  belief_in_others:    (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
-  optimism:            (v) => v == null ? "none" : (v >= 20 && v <= 80) ? "green" : (v >= 10 && v <= 90) ? "yellow" : "red",
 };
 
 function detectTriggers(a: any): Trigger[] {
@@ -199,33 +190,16 @@ function detectTriggers(a: any): Trigger[] {
       triggers.push({ trait, value: v, severity: band });
     }
   }
-  const maxSpeed = Math.max(
-    Number(a?.lss_math_speed_seconds) || 0,
-    Number(a?.lss_verbal_speed_seconds) || 0,
-    Number(a?.lss_problem_solving_speed_seconds) || 0,
-  );
-  if (maxSpeed > 60) triggers.push({ trait: "lss_speed", value: `${maxSpeed}s`, severity: "red" });
-  const acc = a?.lss_total_accuracy;
-  if (Number.isFinite(acc) && acc < 25)      triggers.push({ trait: "lss_accuracy", value: `${acc}/35`, severity: "red" });
-  else if (Number.isFinite(acc) && acc < 35) triggers.push({ trait: "lss_accuracy", value: `${acc}/35`, severity: "yellow" });
+  // The LSS speed + accuracy triggers were removed 2026-08-06 along with their
+  // columns. No cognitive trigger is raised here for now; the GMA section is the
+  // current cognitive read and has not been wired into probe triggers yet.
   return triggers;
 }
 
 function triggerToHeader(trait: string, value: number): string | null {
-  if (trait === "deadline_motivation" && value < 70) return "Low Deadline Motivation";
-  if (trait === "recognition_drive"   && value < 50) return "Low Recognition Drive";
-  if (trait === "assertiveness"       && value < 50) return "Low Assertiveness";
-  if (trait === "independent_spirit"  && value < 50) return "Low Independent Spirit";
-  if (trait === "analytical"          && value > 60) return "High Analytical";
-  if (trait === "compassion"          && value < 30) return "Low Compassion";
-  if (trait === "compassion"          && value > 70) return "High Compassion";
-  if (trait === "self_promotion"      && value < 10) return "Low Self-Promotion";
-  if (trait === "self_promotion"      && value > 80) return "High Self-Promotion";
-  if (trait === "belief_in_others"    && value < 20) return "Low Belief in Others";
-  if (trait === "belief_in_others"    && value > 80) return "High Belief in Others";
-  if (trait === "optimism"            && value < 20) return "Low Optimism";
-  if (trait === "optimism"            && value > 80) return "High Optimism";
-  if (trait === "lss_speed" || trait === "lss_accuracy") return "LSS Speed";
+  if (trait === "assertiveness" && value < 50) return "Low Assertiveness";
+  if (trait === "compassion"    && value < 30) return "Low Compassion";
+  if (trait === "compassion"    && value > 70) return "High Compassion";
   return null;
 }
 
@@ -314,7 +288,7 @@ HARD CONSTRAINTS on your output:
 - Never produce a generic probe just to fill a slot. If the data doesn't warrant a probe, don't invent one.
 
 Framework context:
-- The agency uses HireGauge (Suggs CTS + Story Agency calibration). CTS traits (deadline_motivation, recognition_drive, assertiveness, independent_spirit, analytical, compassion, self_promotion, belief_in_others, optimism) each have ideal ranges. LSS measures problem-solving capacity. Reliability + response_distortion are validity band indicators (values: very high / high / moderate / low / very low).
+- The agency uses HireGauge (Story Agency calibration). Two personality traits with ideal ranges are still on file for every candidate: assertiveness and compassion. Reliability + response_distortion are validity band indicators (values: very high / high / moderate / low / very low). Do not ask for, refer to, or reason about any other trait score — no other trait data exists on the record.
 - Character floor is non-negotiable at 7/10 across Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility (measured in interview scorecards, not CTS).
 - Every hire participates in selling — even reception/retention seats. Every team member carries image-bearer dignity (Genesis 1:27) — probes should be direct but never demeaning.
 
@@ -328,7 +302,7 @@ Rules for the probes you produce:
    5. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
    6. "Motivation probe" — money_motivator match. Target 0-1.
    7. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
-3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:analytical=75(high)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate", "resume:self-superiority-language", "manual:Low Deadline Motivation" when derived from the manual). ALL FOUR FIELDS ARE REQUIRED on every probe.
+3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate", "resume:self-superiority-language", "manual:Low Assertiveness" when derived from the manual). ALL FOUR FIELDS ARE REQUIRED on every probe.
 4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age).
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
 6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate's actual numbers and situation.
@@ -342,7 +316,7 @@ TRAIT-TRIGGERS SECTION — how to use the manual reference:
 - The manual has CORE questions (bulleted) and OPTIONAL questions (marked with *(optional) ... *). Prefer CORE. Skip OPTIONAL unless it adds unique signal.
 - For each SELECTED trigger, pick the single BEST question from that section_text — best = most likely to reveal genuine behavior vs rehearsed answer for THIS candidate. Do not pick multiple questions from a single trigger.
 - Reformat as probe objects: question (verbatim or lightly personalized), listen_for (derived from context around the question in the section_text or from your understanding of the trait), concern (specific red flag for THAT question).
-- source tag: "manual:<header>" e.g. "manual:Low Deadline Motivation". If you generate a fresh question because manual had no matching section, use the standard "trait:<name>=<value>(low/high)" tag.
+- source tag: "manual:<header>" e.g. "manual:Low Assertiveness". If you generate a fresh question because manual had no matching section, use the standard "trait:<name>=<value>(low/high)" tag.
 - Do NOT include the whole manual section verbatim. Do NOT include the question stem "###" headers. Just extract the specific 1-2 best questions per trigger, formatted as probe objects.
 - Total across the section: EXACTLY 3-4 probes when 3+ triggers exist; one probe per trigger otherwise. Prioritize red-severity triggers first, then yellow.
 
@@ -377,14 +351,8 @@ async function generateProbes(context: any, groqKey: string, model: string): Pro
   const userMsg = `CANDIDATE: ${context.candidate_name}
 POSITION APPLIED FOR: ${context.position || "(not specified)"}
 
-CTS TRAIT SCORES (ideal ranges annotated):
+TRAIT SCORES (ideal ranges annotated):
 ${context.trait_readout}
-
-LSS (accuracy / speed sec):
-  math:   ${context.a.lss_math_accuracy ?? "—"} / ${context.a.lss_math_speed_seconds ?? "—"}s
-  verbal: ${context.a.lss_verbal_accuracy ?? "—"} / ${context.a.lss_verbal_speed_seconds ?? "—"}s
-  ps:     ${context.a.lss_problem_solving_accuracy ?? "—"} / ${context.a.lss_problem_solving_speed_seconds ?? "—"}s
-  total:  ${context.a.lss_total_accuracy ?? "—"}/35
 
 VALIDITY (band labels; framework validity_rule matches will fire if concerning):
   reliability: ${context.a.reliability ?? "—"}
