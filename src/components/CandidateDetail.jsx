@@ -1887,6 +1887,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // keyed by role_category. Only fetched for v2 candidates; replaces the old
   // assessment_all_competencies orchestrator for the v2 path (Step 8, 2026-08-03).
   const [v2RoleFits, setV2RoleFits] = useState(null);
+  // Written screen (stint 5, "Part 2") answers — v2 candidates only. Two
+  // plain queries (items + this candidate's responses) merged client-side
+  // rather than a PostgREST embed, to avoid depending on the exact FK
+  // constraint name between hiregauge_candidate_responses and
+  // hiregauge_instrument_items.
+  const [screenAnswers, setScreenAnswers] = useState(null);
   // v2 GMA subtest diagnostics disclosure — ephemeral UI toggle, not URL-persisted
   // (per frontend coding rule 24: disclosure state stays useState, not a tab).
   const [gmaOpen, setGmaOpen] = useState(false);
