@@ -845,6 +845,16 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   // no migration, no re-deriving. Same 0-1/2/3+ boundaries drive the color
   // via V2_RELIABILITY_BAND(reliability) below.
   const reliabilityFiredCount = detail?.reliability_detail?.fired_count ?? null;
+  // Reliability score (Peter directive 2026-08-06, same day as the fired-count
+  // display above it): (checks not fired) / (total checks) * 100. Total is a
+  // fixed 6 — hiregauge_v2_reliability_composite always evaluates all six
+  // methods and each always returns a real true/false, never null/skipped
+  // (confirmed in migration 20260802033616 — e.g. retest_divergence returns
+  // fired=false, not null, when there are no retest pairs to compare).
+  const RELIABILITY_TOTAL_CHECKS = 6;
+  const reliabilityScore = reliabilityFiredCount != null
+    ? Math.round(((RELIABILITY_TOTAL_CHECKS - reliabilityFiredCount) / RELIABILITY_TOTAL_CHECKS) * 100)
+    : null;
 
   const imScore = detail?.impression_management;
   const imBand = detail?.impression_management_band;
@@ -990,8 +1000,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
               })()}
               <AssessRow
                 label="Reliability"
-                value={reliabilityFiredCount}
-                extra={reliabilityFiredCount != null ? (reliabilityFiredCount === 1 ? "flag" : "flags") : null}
+                value={reliabilityScore}
+                extra={reliabilityScore != null ? `/100` : null}
+                subline={reliabilityFiredCount != null ? `${reliabilityFiredCount} of ${RELIABILITY_TOTAL_CHECKS} checks flagged` : null}
                 band={V2_RELIABILITY_BAND(reliability)}
               />
               <AssessRow
