@@ -373,6 +373,7 @@ async function loadProgress(supa: any, candidateId: string) {
   const stint1Items = await loadStintItems(supa, 1);
   const stint2Items = await loadStintItems(supa, 2);
   const stint4Items = await loadStintItems(supa, 4);
+  const stint5Items = await loadStintItems(supa, 5);
   const answered = await loadAnswered(supa, candidateId);
 
   const stint1Answered = stint1Items.filter((it: any) => answered.has(it.id)).length;
@@ -397,12 +398,22 @@ async function loadProgress(supa: any, candidateId: string) {
   const stint4Answered = stint4Items.filter((it: any) => answered.has(it.id)).length;
   const stint4Done = stint3Done && (stint4Items.length === 0 || stint4Answered >= stint4Items.length);
 
+  // Stint 5 (written screen — "Part 2") is unconditional, same pattern as
+  // stint 2/4 — not trigger-gated — reachable once stint 4 is done. Added
+  // 2026-08-06: in-app replacement for the emailed Part 2 flow. Filter
+  // economics are inherited for free — a candidate only reaches stint 5 by
+  // clearing every earlier stint's exit gates, so there is no separate
+  // "clears CTS" condition to reproduce here.
+  const stint5Answered = stint5Items.filter((it: any) => answered.has(it.id)).length;
+  const stint5Done = stint4Done && (stint5Items.length === 0 || stint5Answered >= stint5Items.length);
+
   return {
-    stint1Items, stint2Items, stint3Items, stint4Items, answered,
+    stint1Items, stint2Items, stint3Items, stint4Items, stint5Items, answered,
     stint1Total: stint1Items.length, stint1Answered, stint1Done,
     stint2Total: stint2Items.length, stint2Answered, stint2Done,
     stint3Total: stint3Items.length, stint3Answered, stint3Done,
     stint4Total: stint4Items.length, stint4Answered, stint4Done,
+    stint5Total: stint5Items.length, stint5Answered, stint5Done,
   };
 }
 
