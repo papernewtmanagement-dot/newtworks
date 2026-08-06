@@ -34,7 +34,7 @@ import { useViewport } from "../lib/hooks.js";
 const FALLBACK = {
   VISION:  { essence: "Trusted",    body: "We are the trusted resource for anyone who wants to protect and grow their assets and wealth." },
   MISSION: { essence: "Understand", body: "We understand people, and we help them understand what they have, what they don\u2019t have, and why it\u2019s important." },
-  CULTURE: { essence: "Dignity",    body: "We like people. We\u2019re positive, diligent, and patient problem-solvers. We tell each other the truth with respect, communicate clearly, and treat every person \u2014 customer, teammate, neighbor \u2014 with dignity." },
+  CULTURE: { essence: "Better",     body: "We make others better. We\u2019re positive, hard-working problem-solvers. We communicate clearly and speak the truth with respect." },
   DUTY:    { essence: "Deliver",    body: "We do what we say we will do. We trust our processes, hit our deadlines, and pursue our goals with focused energy \u2014 finding new customers, earning their business honestly, and keeping their trust for the long haul." },
 };
 
