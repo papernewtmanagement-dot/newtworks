@@ -19,6 +19,28 @@ import { sb, stripFences, getSetting } from "./supabase.ts";
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
+const GROQ_TIMEOUT_MS = 25000;
+
+// TIMEOUT HANDLING added 2026-08-06 (Task 4, build-instructions 2026-08-06).
+// See lib/composio.ts's header comment for the full "why" -- same rationale
+// applies here: a stuck Groq call should fail fast and catchably instead of
+// riding the invocation to the platform's own wall-clock kill (observed as
+// an uncaught-exception 546 after ~105-113s). No retry added on purpose.
+async function writeGroqTimeoutAlert(elapsedMs: number, context: string): Promise<void> {
+  try {
+    await sb.from("alerts").insert({
+      alert_type: "external_call_timeout",
+      severity: "warning",
+      title: "Groq call timed out",
+      message: `Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
+      module_reference: "document-processor:groq_timeout",
+      is_read: false,
+      is_resolved: false,
+    });
+  } catch (_e) {
+    // Best-effort; never let a failed alert insert mask the original timeout.
+  }
+}
 
 // Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
 // if the row is missing OR the settings read errors.
@@ -59,7 +81,11 @@ async function callGroqDirect(opts: {
   systemPrompt: string;
   userContent: string;
   maxTokens: number;
+  context: string; // e.g. "purpose=resume_identity_extract document=<id>" -- for the timeout alert
 }): Promise<{ ok: boolean; raw: string; error: string | null; httpStatus: number }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+  const startedAt = Date.now();
   try {
     const res = await fetch(GROQ_ENDPOINT, {
       method: "POST",
@@ -77,6 +103,7 @@ async function callGroqDirect(opts: {
         max_tokens: opts.maxTokens,
         // Groq supports response_format hinting for newer models; safe to omit.
       }),
+      signal: controller.signal,
     });
     const text = await res.text();
     if (!res.ok) {
@@ -98,7 +125,15 @@ async function callGroqDirect(opts: {
     }
     return { ok: true, raw: content, error: null, httpStatus: res.status };
   } catch (e) {
-    return { ok: false, raw: "", error: `Groq fetch failed: ${(e as Error).message}`, httpStatus: 0 };
+    const elapsedMs = Date.now() - startedAt;
+    const timedOut = e instanceof Error && e.name === "AbortError";
+    if (timedOut) await writeGroqTimeoutAlert(elapsedMs, opts.context);
+    const error = timedOut
+      ? `Groq call timed out after ${elapsedMs}ms`
+      : `Groq fetch failed: ${(e as Error).message}`;
+    return { ok: false, raw: "", error, httpStatus: 0 };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -117,6 +152,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
       maxTokens: opts.maxTokens ?? 4000,
+      context: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
     });
 
     if (llm.ok) {
