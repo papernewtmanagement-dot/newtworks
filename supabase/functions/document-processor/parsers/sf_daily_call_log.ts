@@ -27,7 +27,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { sb } from "../lib/supabase.ts";
-import { callComposio } from "../lib/composio.ts";
+import { callComposio, fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "../lib/composio.ts";
 
 interface CallLogBody {
   agency_id?: string;
@@ -216,7 +216,8 @@ async function processMessage(
   const s3url = att?.file?.s3url ?? att?.data?.file?.s3url;
   if (!s3url) return { status: "error", error: "no s3url from GMAIL_GET_ATTACHMENT" };
 
-  const htmlFetch = await fetch(s3url);
+  const { res: htmlFetch, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", `call log HTML, message=${messageId}`);
+  if (!htmlFetch) return { status: "error", error: timedOut ? "s3 fetch timed out" : "s3 fetch failed" };
   if (!htmlFetch.ok) return { status: "error", error: `s3 fetch ${htmlFetch.status}` };
   const html = await htmlFetch.text();
 
