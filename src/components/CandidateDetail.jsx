@@ -838,7 +838,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   const imBand = detail?.impression_management_band;
 
   const sjtScore = detail?.sjt_score; // 0-100
-  const sjtTopics = detail?.sjt_topic_detail || {};
 
   const facetRows = Array.isArray(v2Facets) ? v2Facets : null;
   const facetByTrait = {};
@@ -866,11 +865,11 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         </div>
       )}
 
-      {/* Three-column layout: facets | reliability + faking-good bars then
-          competencies (GMA lives inside competencies, not as a separate
-          section — see the "gma" key in newtworks_all_role_fits) | role fit
-          then SJT. Collapses to fewer columns as space narrows (rule 17
-          auto-fit pattern). */}
+      {/* Three-column layout: facets | reliability, faking-good, and
+          situational judgement bars, then role competencies (GMA lives
+          inside role competencies, not as a separate section — see the
+          "gma" key in newtworks_all_role_fits) | role fit. Collapses to
+          fewer columns as space narrows (rule 17 auto-fit pattern). */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, alignItems: "start" }}>
 
       {/* Column 1 — Personality Facets */}
@@ -901,38 +900,35 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         )}
       </div>
 
-      {/* Column 2 — Reliability + Faking-good bars, then Competencies
-          (GMA is one of the 12 competency rows below — same value that used
-          to have its own standalone section; consolidated 2026-08-05). */}
+      {/* Column 2 — Reliability, Faking-good, and Situational Judgement as
+          single-line bars (name lives in the bar itself, no header row),
+          then Role Competencies (GMA is one of the rows below — same value
+          that used to have its own standalone section; consolidated
+          2026-08-05). */}
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginBottom: 8 }}>
-          <div>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-              Reliability
-            </div>
-            <AssessRow
-              label="Data quality"
-              value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
-              band={V2_RELIABILITY_BAND(reliability)}
-            />
-          </div>
-          <div>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-              Faking-good
-            </div>
-            <AssessRow
-              label="Score"
-              value={imScore}
-              extra={imBand ? imBand.replace(/_/g, " ") : null}
-              band={IM_BAND_COLOR(imBand)}
-            />
-          </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+          <AssessRow
+            label="Reliability"
+            value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+            band={V2_RELIABILITY_BAND(reliability)}
+          />
+          <AssessRow
+            label="Faking-good"
+            value={imScore}
+            extra={imBand ? imBand.replace(/_/g, " ") : null}
+            band={IM_BAND_COLOR(imBand)}
+          />
+          <AssessRow
+            label="Situational Judgement"
+            value={sjtScore}
+            extra={sjtScore != null ? "%" : null}
+          />
         </div>
 
         <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
 
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          Competencies
+          Role Competencies
         </div>
 
         {(() => {
@@ -943,7 +939,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
           const comps = roleDetail?.competencies || {};
           const entries = Object.entries(comps);
           const formatCompLabel = (k) =>
-            k === "gma" ? "GMA" : k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
+            k === "gma" ? "General Mental Ability" : k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
           if (entries.length === 0) {
             return (
               <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
@@ -1007,7 +1003,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         })()}
       </div>
 
-      {/* Column 3 — Role Fit, then SJT */}
+      {/* Column 3 — Role Fit */}
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Role Fit
@@ -1090,27 +1086,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
             </>
           );
         })()}
-
-        <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          SJT (Situational Judgement Test)
-        </div>
-        <AssessRow label="Total" value={sjtScore} extra={sjtScore != null ? "%" : null} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-          {Object.entries(SJT_TOPIC_LABELS).map(([k, label]) => {
-            const t = sjtTopics[k];
-            const pct = t && t.n > 0 ? Math.round((100 * t.correct) / t.n) : null;
-            return (
-              <AssessRow
-                key={k}
-                label={label}
-                value={pct}
-                extra={t ? `${t.correct}/${t.n}` : null}
-              />
-            );
-          })}
-        </div>
       </div>
 
       </div>
