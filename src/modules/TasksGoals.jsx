@@ -1144,8 +1144,8 @@ const CompletedSection = ({ tasks, canEdit, onReopen }) => {
 // ─── Main Tasks & Goals Module ────────────────────────────────
 export default function TasksGoals({ onNavigate, userRole, userId }) {
   const [section, setSection] = useTabParam("tab", "todos", ["todos","goals","overview","completed"]);
-  const { data: liveTasks, loading: tasksLoading } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
-  const { data: liveGoals, loading: goalsLoading } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
+  const { data: liveTasks, loading: tasksLoading, error: tasksError, refetch: refetchTasks } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
+  const { data: liveGoals, loading: goalsLoading, error: goalsError, refetch: refetchGoals } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
 
   // Admin users (owner + manager) — assignee dropdown source + UUID→name lookup.
@@ -1225,6 +1225,16 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
   const [modalDefaultParentId, setModalDefaultParentId] = useState(null);
 
   if (tasksLoading || goalsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading tasks and goals…</div>;
+  // Same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep):
+  // a failed fetch used to be indistinguishable from "no tasks or goals."
+  if ((tasksError || goalsError) && tasks.length === 0 && goals.length === 0) {
+    return (
+      <div style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:13,color:"#7B241C",marginBottom:10}}>Couldn't load tasks/goals — this isn't necessarily "nothing on file."</div>
+        <button onClick={() => { refetchTasks(); refetchGoals(); }} style={{ padding:"7px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:7, cursor:"pointer" }}>Retry</button>
+      </div>
+    );
+  }
   if (tasks.length === 0 && goals.length === 0) return <EmptyState module="tasks" />;
 
   const completeTask = async (id) => {
