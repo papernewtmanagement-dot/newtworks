@@ -563,7 +563,7 @@ const NotificationPrefs = () => {
 // ─── Main Alerts Module ───────────────────────────────────────
 export default function AlertsNotifications({ onNavigate }) {
   const [section, setSection] = useTabParam("tab", "overview", ["overview","all","history","prefs"]);
-  const { data: liveAlerts, loading: alertsLoading } = useSupabaseTable("alerts", AGENCY_ID, { orderBy: "created_at", ascending: false });
+  const { data: liveAlerts, loading: alertsLoading, error: alertsError, refetch: refetchAlerts } = useSupabaseTable("alerts", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
   const [alerts, setAlerts] = useState(useMockData ? MOCK_ALERTS : []);
   useEffect(() => {
@@ -574,6 +574,17 @@ export default function AlertsNotifications({ onNavigate }) {
   const markResolved= (id) => setAlerts(p => p.map(a => a.id===id ? {...a, is_resolved:true, resolved_at:"Just now"} : a));
 
   if (alertsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading alerts…</div>;
+  // A failed fetch used to be indistinguishable from "genuinely no alerts" (or,
+  // worse, silently masked by mock data) — same silent-swallow class as the
+  // Growth tab kanban bug (2026-08-05 sweep).
+  if (alertsError && alerts.length === 0) {
+    return (
+      <div style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:13,color:"#7B241C",marginBottom:10}}>Couldn't load alerts — this isn't necessarily "no alerts."</div>
+        <button onClick={refetchAlerts} style={{ padding:"7px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:7, cursor:"pointer" }}>Retry</button>
+      </div>
+    );
+  }
   if (alerts.length === 0) return <EmptyState module="alerts" />;
 
   const active  = alerts.filter(a => !a.is_resolved);
