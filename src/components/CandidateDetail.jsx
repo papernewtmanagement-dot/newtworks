@@ -1862,21 +1862,37 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // v1 assessment copy-link button state. "idle"|"copying"|"copied"|"error".
   const [copyLinkStatus, setCopyLinkStatus] = useState("idle");
 
-  // Fetch full row on mount
+  // Fetch full row on mount. `detail` starts as the (partial) card data passed
+  // in from the pipeline list, so a silent failure here used to just leave the
+  // page looking complete-but-thin with zero indication anything was missing —
+  // same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep).
+  const [detailError, setDetailError] = useState(false);
+  const [detailRetryTick, setDetailRetryTick] = useState(0);
   useEffect(() => {
     if (!candidate?.id || !supabase) return;
     let cancelled = false;
-    supabase
-      .from("v_hiring_candidates")
-      .select("*")
-      .eq("id", candidate.id)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (cancelled || error || !data) return;
-        setDetail(data);
-      });
+
+    const fetchDetail = async (isRetry) => {
+      if (!isRetry) setDetailError(false);
+      const { data, error } = await supabase
+        .from("v_hiring_candidates")
+        .select("*")
+        .eq("id", candidate.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        console.error("Failed to load full candidate record:", error);
+        if (!isRetry) { setTimeout(() => { if (!cancelled) fetchDetail(true); }, 1500); return; }
+        setDetailError(true);
+        return;
+      }
+      setDetail(data);
+      setDetailError(false);
+    };
+
+    fetchDetail(false);
     return () => { cancelled = true; };
-  }, [candidate?.id]);
+  }, [candidate?.id, detailRetryTick]);
 
   // v2 facet detail (item counts) — only for v2 candidates.
   useEffect(() => {
@@ -2252,6 +2268,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
         <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>
           {[detail?.position, detail?.email, detail?.phone].filter(Boolean).join(" · ") || "No contact info on file"}
         </div>
+        {detailError && (
+          <div style={{ marginTop: 10, padding: "8px 12px", fontSize: 12, color: "#7B241C", background: "#FDEDEC", border: "1px solid #F5B7B1", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <span>Couldn't load the full record for this candidate — showing what's cached from the pipeline list.</span>
+            <button onClick={() => setDetailRetryTick(t => t + 1)} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 600, color: T.white, background: T.red, border: "none", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>Retry</button>
+          </div>
+        )}
         {(detail?.decline_reason || detail?.assessment_date) && (
           <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
             {detail?.decline_reason && (<>Declined: {DECLINE_REASON_LABEL[detail.decline_reason] || detail.decline_reason} · </>)}
