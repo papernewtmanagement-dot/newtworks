@@ -22,8 +22,9 @@ import { sb } from "./supabase.ts";
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 const COMPOSIO_TIMEOUT_MS = 25000;
+export const S3_FETCH_TIMEOUT_MS = 25000;
 
-async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
+export async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
   try {
     await sb.from("alerts").insert({
       alert_type: "external_call_timeout",
@@ -40,7 +41,7 @@ async function writeTimeoutAlert(service: string, elapsedMs: number, context: st
   }
 }
 
-async function fetchWithTimeout(
+export async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
