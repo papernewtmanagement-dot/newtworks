@@ -1808,6 +1808,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   const [bestFit, setBestFit] = useState(null);
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
+  const [planBuilding, setPlanBuilding] = useState(false);
+  const [planError, setPlanError] = useState(null);
   const [composite, setComposite] = useState(null);
   const [frameworkRules, setFrameworkRules] = useState([]);
   const [competencies, setCompetencies] = useState(null);
