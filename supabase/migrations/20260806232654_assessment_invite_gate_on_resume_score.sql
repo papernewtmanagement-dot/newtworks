@@ -1,0 +1,10 @@
+-- migration: 20260806232654_assessment_invite_gate_on_resume_score
+-- Gate send_v1_assessment_invitations so a candidate must have a scored
+-- resume at or above the resume-layer "consider" threshold (50, from
+-- hiregauge_verdict_thresholds) before attempt 1 goes out. Resume declines
+-- (<50) and unscored candidates (resume_analysis IS NULL) are skipped and
+-- counted in the new resume_score_gated return field. Reminders (attempts
+-- 2/3) are not re-gated -- they only follow up on a link already sent.
+-- Fails safe: if the hiregauge_verdict_thresholds resume row is ever
+-- missing, the function returns an error and sends nothing rather than
+-- defaulting open.
