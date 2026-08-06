@@ -1976,6 +1976,33 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
 
+  // Written screen (stint 5, "Part 2") answers — v2 candidates only.
+  useEffect(() => {
+    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    let cancelled = false;
+    (async () => {
+      const [itemsRes, respRes] = await Promise.all([
+        supabase
+          .from("hiregauge_instrument_items")
+          .select("id, item_number, item_text, answer_key")
+          .eq("section", "newtworks_v2_screen")
+          .order("item_number", { ascending: true }),
+        supabase
+          .from("hiregauge_candidate_responses")
+          .select("item_id, response_label, response_value, is_correct, answered_at")
+          .eq("candidate_id", detail.id),
+      ]);
+      if (cancelled) return;
+      const items = itemsRes?.data;
+      const responses = respRes?.data;
+      if (itemsRes?.error || respRes?.error || !Array.isArray(items)) return;
+      const byItem = {};
+      for (const r of responses || []) byItem[r.item_id] = r;
+      setScreenAnswers(items.map((it) => ({ ...it, response: byItem[it.id] || null })));
+    })();
+    return () => { cancelled = true; };
+  }, [detail?.id, detail?.assessment_source]);
+
   // Best-fit role via RPC (graceful fallback if function missing)
   useEffect(() => {
     if (!detail?.id || !supabase) return;
