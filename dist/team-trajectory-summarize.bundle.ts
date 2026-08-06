@@ -430,15 +430,10 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
       reliability: asmt.reliability,
       response_distortion: asmt.response_distortion,
       notes: asmt.notes,
+      // Pruned 2026-08-06: the other seven trait columns were dropped from
+      // hiring_candidates (migration 20260806170033), so only these two remain.
       traits: {
-        analytical: asmt.analytical,
         assertiveness: asmt.assertiveness,
-        independent_spirit: asmt.independent_spirit,
-        optimism: asmt.optimism,
-        deadline_motivation: asmt.deadline_motivation,
-        recognition_drive: asmt.recognition_drive,
-        self_promotion: asmt.self_promotion,
-        belief_in_others: asmt.belief_in_others,
         compassion: asmt.compassion,
       },
     };
