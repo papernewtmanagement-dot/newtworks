@@ -80,11 +80,15 @@ const RELIABILITY_METHOD_LABELS = {
   bogus_items:         "Bogus/attention items",
 };
 
-// v2 reliability band is high/medium/low (fired-count based) — distinct from
-// the v1 RELIABILITY_BAND's five-value text scale. Higher fired_count = worse.
+// v2 reliability band is high/moderate/low (fired-count based) — distinct
+// from the v1 RELIABILITY_BAND's five-value text scale. Higher fired_count =
+// worse. BUG FIXED 2026-08-06: this checked for 'medium', but
+// hiregauge_v2_reliability_composite has always returned 'moderate' for the
+// middle band — 9 live candidates were silently rendering uncolored ('none')
+// instead of yellow.
 const V2_RELIABILITY_BAND = (v) => {
   if (v === "high") return "green";
-  if (v === "medium") return "yellow";
+  if (v === "moderate") return "yellow";
   if (v === "low") return "red";
   return "none";
 };
@@ -335,6 +339,10 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
   const gaugeFill = colors ? colors.bg : (T.slate200 || "#e2e8f0");
   const numMax = typeof max === "number" && max > 0 ? max : 100;
   const numValue = typeof value === "number" ? value : Number(value);
+  // Display-only rounding (Peter directive 2026-08-06 — every score should
+  // read as a whole number). Bar-fill math above still uses the unrounded
+  // numValue so the gauge stays precise; this only affects the printed digits.
+  const displayValue = Number.isFinite(numValue) ? Math.round(numValue) : value;
   let fillPct = null;
   if (!noBar) {
     if (Number.isFinite(numValue)) {
@@ -376,7 +384,7 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>{label}</span>
         <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
-          {value ?? "—"}
+          {displayValue ?? "—"}
           {extra != null && extra !== "" && (
             <span style={{ fontSize: 10, color: T.slate500, fontWeight: 400, marginLeft: 4 }}>{extra}</span>
           )}
@@ -833,7 +841,14 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
 
-  const reliability = detail?.reliability; // 'high' | 'medium' | 'low'
+  const reliability = detail?.reliability; // 'high' | 'moderate' | 'low' — still the color source
+  // Reliability score (Peter directive 2026-08-06 — show a number, not just
+  // the band word). hiregauge_v2_reliability_composite already stamps
+  // fired_count straight into reliability_detail, so this just reads it —
+  // no migration, no re-deriving. Same 0-1/2/3+ boundaries drive the color
+  // via V2_RELIABILITY_BAND(reliability) below.
+  const reliabilityFiredCount = detail?.reliability_detail?.fired_count ?? null;
+
   const imScore = detail?.impression_management;
   const imBand = detail?.impression_management_band;
 
@@ -957,19 +972,19 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
               })()}
               <AssessRow
                 label="Reliability"
-                value={reliability ? reliability.charAt(0).toUpperCase() + reliability.slice(1) : null}
+                value={reliabilityFiredCount}
+                extra={reliabilityFiredCount != null ? (reliabilityFiredCount === 1 ? "flag" : "flags") : null}
                 band={V2_RELIABILITY_BAND(reliability)}
               />
               <AssessRow
                 label="Faking-good"
                 value={imScore}
-                extra={imBand ? imBand.replace(/_/g, " ") : null}
                 band={IM_BAND_COLOR(imBand)}
               />
               <AssessRow
                 label="Situational Judgement"
                 value={sjtScore}
-                extra={sjtScore != null ? "%" : null}
+                band={sjtScore == null ? "none" : competencyBand(sjtScore)}
               />
 
               <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
