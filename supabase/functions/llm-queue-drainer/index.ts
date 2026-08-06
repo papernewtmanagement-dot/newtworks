@@ -5,7 +5,7 @@
 // max_tokens truncations, daily TPD exhaustion).
 //
 // Supported purposes:
-//   - parse_bank_statement         → drainBankStatementItem  (statement_balances + bank_transactions)
+//   - parse_bank_statement         → drainBankStatementItem  (statement_balances + bank_transactions/credit_transactions)
 //   - careerplug_applicant_extract → drainCareerplugItem     (hiring_candidates via upsert RPC)
 //
 // Flow per item:
@@ -58,6 +58,9 @@ interface DrainResult {
   statementBalance?: any;         // bank statements
   transactionsInserted?: number;  // bank statements
   skippedInformational?: number;  // bank statements
+  skippedDuplicates?: number;     // bank statements
+  skippedUntyped?: number;        // bank statements (credit accounts only — R3)
+  untypedLines?: string[];        // bank statements — raw_line text for skippedUntyped rows
   docId?: string | null;          // bank statements
   applicantsUpserted?: number;    // careerplug
   applicantActions?: any[];       // careerplug
@@ -152,7 +155,13 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   let inserted = 0;
   let skippedInformational = 0;
   let skippedDuplicate = 0;
+  let skippedUntyped = 0;
+  const untypedLines: string[] = [];
   const errors: string[] = [];
+  // R1: dedup_fingerprint occurrence counter, batch-scoped to this drain call.
+  // Key = credit_account_id|date|abs(amount); occurrence increments per repeat
+  // within that key, in statement order (same shape as the Task D backfill).
+  const fpOccurrence: Record<string, number> = {};
   for (const t of rawTxns) {
     if (!t || typeof t.amount !== "number" || !t.date) continue;
     const payee = String(t.payee ?? "").trim();
@@ -196,6 +205,29 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
         .eq("chart_account_id", coa.id)
         .maybeSingle();
       if (!ca) { errors.push(`no credit_accounts row for chart_account_id=${coa.id}`); continue; }
+
+      // R3: transaction_type comes ONLY from the parser's "section" classification
+      // (purchase → charge, payment → payment, credit_refund → credit). Never
+      // guessed from amount sign — that's exactly the bug 2026-08-05 cleanup fixed.
+      // Indeterminate/missing section → do not insert; record raw_line for review.
+      const section = String(t.section ?? "").toLowerCase().trim();
+      const txnType =
+        section === "purchase" ? "charge" :
+        section === "payment" ? "payment" :
+        section === "credit_refund" ? "credit" :
+        null;
+      if (!txnType) {
+        skippedUntyped += 1;
+        untypedLines.push(String(t.raw_line ?? `${t.date} ${payee} ${memo} ${t.amount}`).slice(0, 300));
+        continue;
+      }
+
+      // R1: batch-scoped dedup fingerprint. Format identical to the Task D
+      // backfill: card_uuid|YYYY-MM-DD|abs(amount).2f|occurrence.
+      const fpKey = `${ca.id}|${t.date}|${Math.abs(t.amount).toFixed(2)}`;
+      const occ = (fpOccurrence[fpKey] = (fpOccurrence[fpKey] ?? 0) + 1);
+      const dedupFingerprint = `${fpKey}|${occ}`;
+
       const row = {
         agency_id: doc.agency_id,
         business_entity_id: ca.business_entity_id ?? coa.business_entity_id,
@@ -203,33 +235,24 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
         transaction_date: t.date,
         description: memo ? `${payee} — ${memo}` : payee,
         amount: t.amount,
+        transaction_type: txnType,
+        dedup_fingerprint: dedupFingerprint,
         source_document_id: doc.id,
       };
-      // DEDUP. The bank branch above upserts with an onConflict key; this
-      // branch used a plain insert, so re-ingesting a card statement duplicated
-      // every single line. That is exactly what happened on 2026-08-04 when the
-      // stranded Discover Tithe zip was finally reprocessed: 5 lines from the
-      // January statement landed a second time on top of pre-existing rows and
-      // the period double-counted to -2244.88 against a real -1122.44 move.
-      //
-      // Match on account + date + amount only, NOT description. The duplicates
-      // had different description text for the same charge ("REASONABLE FAITH —
-      // TX Services" vs "REASONABLE FAITH 4349442618 TX"), so a description-based
-      // key would not have caught them.
-      const { data: dupe } = await sb
-        .from("credit_transactions")
-        .select("id")
-        .eq("credit_account_id", ca.id)
-        .eq("transaction_date", t.date)
-        .eq("amount", t.amount)
-        .limit(1)
-        .maybeSingle();
-      if (dupe) { skippedDuplicate += 1; continue; }
 
-      const { error: ctErr } = await sb
+      // R2: collide = skip. The fingerprint's unique index (Task D,
+      // uq_credit_transactions_dedup) is now the authoritative dedup
+      // mechanism — replaces the old SELECT-then-insert check, which missed
+      // description-text variants of the same charge (2026-08-04 Discover
+      // Tithe re-ingest double-count). ignoreDuplicates → ON CONFLICT DO
+      // NOTHING; an empty returned row set means the fingerprint already
+      // existed and nothing was inserted.
+      const { data: insData, error: ctErr } = await sb
         .from("credit_transactions")
-        .insert(row);
+        .upsert(row, { onConflict: "dedup_fingerprint", ignoreDuplicates: true })
+        .select("id");
       if (ctErr) { errors.push(`tx ${t.date}: ${ctErr.message}`); continue; }
+      if (!insData || insData.length === 0) { skippedDuplicate += 1; continue; }
       inserted += 1;
     }
   }
@@ -238,7 +261,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   await sb.from("documents").update({
     processing_status: "processed",
     processed_at: new Date().toISOString(),
-    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${skippedInformational ? ` (${skippedInformational} payment/thank-you lines skipped)` : ""}${skippedDuplicate ? ` (${skippedDuplicate} already-present lines skipped)` : ""}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
+    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${skippedInformational ? ` (${skippedInformational} payment/thank-you lines skipped)` : ""}${skippedDuplicate ? ` (${skippedDuplicate} already-present lines skipped)` : ""}${skippedUntyped ? ` (${skippedUntyped} untyped lines skipped, needs review: ${untypedLines.slice(0, 5).join(" || ")})` : ""}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
     tables_updated: ["statement_balances", isBankAccount ? "bank_transactions" : "credit_transactions"],
     records_created: inserted + 1,
   }).eq("id", doc.id);
@@ -248,6 +271,9 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     statementBalance: { period, openingBalance, closingBalance, accountLast4 },
     transactionsInserted: inserted,
     skippedInformational,
+    skippedDuplicates: skippedDuplicate,
+    skippedUntyped,
+    untypedLines: untypedLines.length ? untypedLines : undefined,
     docId: doc.id,
     error: errors.length ? errors.slice(0, 5).join(" | ") : undefined,
   };
@@ -456,6 +482,10 @@ Deno.serve(async (req) => {
       ok: r.ok,
       // Bank statement fields (undefined for careerplug):
       transactions_inserted: r.transactionsInserted,
+      skipped_informational: r.skippedInformational,
+      skipped_duplicates: r.skippedDuplicates,
+      skipped_untyped: r.skippedUntyped,
+      untyped_lines: r.untypedLines,
       statement_balance: r.statementBalance,
       // Careerplug fields (undefined for bank statements):
       applicants_upserted: r.applicantsUpserted,
