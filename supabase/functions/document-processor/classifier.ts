@@ -210,19 +210,14 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       Ordering is load-bearing: this sits AFTER the CareerPlug rule above
   //       so genuine CareerPlug mail keeps its own route.
   //
-  //       The one carve-out is the State-Farm-forward path. Those emails carry
-  //       a resume AND a CTS profile PDF, and only the dedicated
-  //       mode=sf_forwarded_applicant parser reads the CTS scores. If this
-  //       rule grabbed the resume first, the thread would get archived and
-  //       Applicants-labeled, and that parser's own query (which excludes
-  //       Applicants-labeled mail) would then never see it — losing the
-  //       scores silently. There is no cron for that mode; Peter runs it by
-  //       hand, so the carve-out is what keeps the door open. -----
+  //       State-Farm-forward carve-out REMOVED 2026-08-06: the old CTS
+  //       instrument (and its mode=sf_forwarded_applicant parser) is fully
+  //       decommissioned -- Peter confirmed he is no longer forwarding CTS
+  //       profile PDFs. Resumes from Peter's SF mailbox now flow through
+  //       this same route like every other hand-forwarded resume. -----
   { docType: "resume_manual_batch",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
-                 /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) &&
-                 !(/peter\.story\.yrru@statefarm\.com/i.test(i.fromEmail) &&
-                   /\bapplicant\b/i.test(i.subject)) },
+                 /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) },
 
   // ----- FROST PFA STATEMENT (2026-07-09) — must come BEFORE the generic
   //       bank statement rules. Sender = Frost Bank; subject/filename mentions
