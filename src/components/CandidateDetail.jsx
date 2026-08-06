@@ -902,7 +902,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
 
       {/* Column 2 — Reliability, Faking-good, and Situational Judgement as
           single-line bars (name lives in the bar itself, no header row),
-          then Role Competencies (GMA is one of the rows below — same value
+          then Capabilities (GMA is one of the rows below — same value
           that used to have its own standalone section; consolidated
           2026-08-05). */}
       <div style={{ minWidth: 0 }}>
@@ -928,7 +928,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
 
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
-          Role Competencies
+          Capabilities
         </div>
 
         {(() => {
