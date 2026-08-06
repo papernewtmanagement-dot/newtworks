@@ -712,7 +712,9 @@ export default function CandidateAssessment({ candidateId, token }) {
               {stint === 2
                 ? "Section 2"
                 : stint === 4
-                ? "Final section"
+                ? "Section 3"
+                : stint === 5
+                ? "Part 2 — final section"
                 : stint > 1
                 ? "Follow-up section"
                 : "Section 1"}
