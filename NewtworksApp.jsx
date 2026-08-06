@@ -56,10 +56,12 @@ import { TOKENS } from "./src/lib/theme.js";
 // AUTH (Path 1 — login gates the UI):
 //   The whole app is wrapped in an auth gate. On mount we check for a
 //   Supabase session. No session -> Login screen only. Has session ->
-//   the full app renders unchanged. Data reads still use anon grants
-//   underneath (untouched), so there is no blank-screen risk. Being
-//   logged in (authenticated role) is what unlocks writes such as the
-//   staff edit form.
+//   the full app renders unchanged. As of 2026-08-06 the anon role and the
+//   PUBLIC pseudo-role have ZERO database privileges — all reads AND writes
+//   require the authenticated role. Safe because modules only mount once
+//   authState=="in", so every fetch carries the session token. The only
+//   public surface is /assess/*, which goes through edge fn v1-assessment
+//   (service role + HMAC token) and needs no anon DB privilege.
 //
 // ENVIRONMENT VARIABLES NEEDED (.env):
 //   VITE_SUPABASE_URL=https://[project].supabase.co
@@ -384,9 +386,9 @@ const css = {
 
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
-// Path 1 auth: this gates the UI. The data layer (anon reads) is untouched,
-// so there is no blank-screen risk. Signing in (authenticated role) is what
-// unlocks writes such as the staff edit form.
+// Path 1 auth: this gates the UI, and since 2026-08-06 it also gates ALL
+// data — anon and PUBLIC have zero database privileges. Signing in
+// (authenticated role) is what unlocks both reads and writes.
 const LoginScreen = ({ onSignedIn }) => {
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
