@@ -921,7 +921,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
           const gmaEntry = entries.find(([k]) => k === "gma");
           const restEntries = entries.filter(([k]) => k !== "gma");
           const formatCompLabel = (k) =>
-            k === "gma" ? "General Mental Ability" : k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
+            k === "gma" ? "General Mental Ability" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
           if (entries.length === 0) {
             return (
               <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
