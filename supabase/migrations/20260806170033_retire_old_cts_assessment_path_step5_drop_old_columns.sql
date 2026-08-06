@@ -1,0 +1,15 @@
+ALTER TABLE public.hiring_candidates
+  DROP COLUMN IF EXISTS deadline_motivation,
+  DROP COLUMN IF EXISTS recognition_drive,
+  DROP COLUMN IF EXISTS independent_spirit,
+  DROP COLUMN IF EXISTS analytical,
+  DROP COLUMN IF EXISTS self_promotion,
+  DROP COLUMN IF EXISTS belief_in_others,
+  DROP COLUMN IF EXISTS optimism,
+  DROP COLUMN IF EXISTS lss_math_accuracy,
+  DROP COLUMN IF EXISTS lss_math_speed_seconds,
+  DROP COLUMN IF EXISTS lss_problem_solving_accuracy,
+  DROP COLUMN IF EXISTS lss_problem_solving_speed_seconds,
+  DROP COLUMN IF EXISTS lss_total_accuracy,
+  DROP COLUMN IF EXISTS lss_verbal_accuracy,
+  DROP COLUMN IF EXISTS lss_verbal_speed_seconds;
