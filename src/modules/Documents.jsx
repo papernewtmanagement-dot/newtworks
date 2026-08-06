@@ -643,7 +643,7 @@ const UploadSection = () => {
 // ─── Main Documents Module ────────────────────────────────────
 export default function Documents() {
   const [section, setSection] = useTabParam("tab", "overview", ["overview","intake","library","upload"]);
-  const { data: liveDocs, loading: docsLoading } = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
+  const { data: liveDocs, loading: docsLoading, error: docsError, refetch: refetchDocs } = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
   const documents = (liveDocs && liveDocs.length > 0)
     ? liveDocs
@@ -678,6 +678,16 @@ export default function Documents() {
   ];
 
   if (docsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading documents…</div>;
+  // Same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep):
+  // a failed fetch used to be indistinguishable from "no documents on file."
+  if (docsError && documents.length === 0) {
+    return (
+      <div style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:13,color:"#7B241C",marginBottom:10}}>Couldn't load documents — this isn't necessarily "no documents."</div>
+        <button onClick={refetchDocs} style={{ padding:"7px 16px", fontSize:12, fontWeight:600, color:T.white, background:T.red, border:"none", borderRadius:7, cursor:"pointer" }}>Retry</button>
+      </div>
+    );
+  }
   if (documents.length === 0) return <EmptyState module="documents" />;
 
   return (
