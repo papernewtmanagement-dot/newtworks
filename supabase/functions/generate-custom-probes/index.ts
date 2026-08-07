@@ -1,22 +1,45 @@
 // deno-lint-ignore-file no-explicit-any
-// Edge function: generate-custom-probes  (v11.0 — facet-fed "Areas to press on")
+// Edge function: generate-custom-probes  (v12.0 — facet-direct "Areas to press on")
 //
-// Changes from v10.0:
+// Changes from v11.0:
+//   - Migration F re-key (planning-authorized 2026-08-07, F.1 of the F
+//     companion package). The two-hop selection this function used --
+//     competency weight (hiregauge_competency_weights) -> hand-copied
+//     COMPETENCY_FACET_INPUTS map -> facet -- is replaced by a single
+//     facet-direct lookup against hiregauge_role_facet_weights, which is
+//     already facet-level (input_name IS the facet, no map needed).
+//     COMPETENCY_FACET_INPUTS is deleted entirely, along with every
+//     reference to hiregauge_competency_weights in this file.
+//   - Filter is weight >= 2 (this role's above-baseline facets), explicitly
+//     named as such in code and comments -- never "nonzero". On this table
+//     weights run roughly -1..3, zeros are meaningful (deliberately-excluded
+//     facets, e.g. sincerity/fairness/greed_avoidance to avoid double-
+//     counting the integrity floor), and anger can carry a negative weight.
+//     "nonzero" would silently include those two very different cases.
+//   - gma and sjt are ability/scenario scores, not probeable personality
+//     facets, so they're excluded from the candidate pool (input_name NOT
+//     IN ('gma','sjt')) the same way the old map never included them.
+//   - Fallback shape unchanged: if fewer than 3 facets survive the p20/p80
+//     candidate-extremes cut at weight>=2, widen to weight>=1 for that
+//     candidate and log it (pressOnFallbackUsed) -- same behavior as v11.0,
+//     just reading a different source table.
+//   - Everything else (probe generation, budget, prompt, output shape) is
+//     unchanged from v11.0.
+//
+// Prior header (v11.0, retained for history):
+//   Changes from v10.0:
 //   - Replacement for the removed Trait-triggers subsystem (TASK B2,
 //     build-instructions 2026-08-06). NOT a question bank, NOT a scoring
-//     layer, NOT a stored column. At request time: (1) look up which of
-//     the 12 newtworks_competency_* functions carry nonzero weight for
-//     this candidate's best-fit role in hiregauge_competency_weights,
-//     (2) union the facet inputs those competencies read (a fixed mapping
-//     mirrored from the SQL function bodies -- no new weights invented),
-//     (3) read live facet percentiles via
-//     hiregauge_candidate_facet_percentiles (already-existing, computed
-//     on read, never stored), (4) keep only facets at/below p20 or
-//     at/above p80, capped to the 4 most extreme by distance from p50.
-//     Surfaced to the model as follow-up context under "Areas to press
-//     on" -- the fixed core question set is untouched; these are
-//     additions, never substitutions (Campion, Palmer & Campion 1997;
-//     Levashina, Hartwell, Morgeson & Campion 2014 -- structured
+//     layer, NOT a stored column. At request time: (1) look up which
+//     facets carry above-baseline weight for this candidate's best-fit
+//     role in hiregauge_role_facet_weights, (2) read live facet
+//     percentiles via hiregauge_candidate_facet_percentiles (already-
+//     existing, computed on read, never stored), (3) keep only facets
+//     at/below p20 or at/above p80, capped to the 4 most extreme by
+//     distance from p50. Surfaced to the model as follow-up context under
+//     "Areas to press on" -- the fixed core question set is untouched;
+//     these are additions, never substitutions (Campion, Palmer & Campion
+//     1997; Levashina, Hartwell, Morgeson & Campion 2014 -- structured
 //     interviews lose validity as structure erodes). p20/p80 is a
 //     probe-targeting convention to bound prompt length, not a
 //     psychometric threshold -- carries no validity claim.
@@ -153,64 +176,34 @@ async function fetchResumeText(agencyId: string, resumeUrl: string | null, extra
   return { text: capped, source: "drive_download" };
 }
 
-// Facet inputs per competency -- copied from the live newtworks_competency_*
-// SQL function bodies (verified directly against pg_proc 2026-08-06, not
-// from an older migration snapshot). Not a new weighting scheme; this is
-// the existing input list, just available in JS so we can union it without
-// 13 extra RPC round-trips. GMA/SJT inputs excluded -- those aren't in the
-// 25-facet percentile set.
-// BUG FIXED 2026-08-06: drive_work_intensity, persuasive_influence, and
-// autonomy_ownership each had a phantom "enterprising" entry that the real
-// SQL functions do not use. Found while building the drift-detector for
-// this exact class of error. See operational_rule "COMPETENCY_FACET_INPUTS
-// in generate-custom-probes is a hand copy of SQL -- edit both or it goes
-// silently stale" and its drift-detector companion, hiregauge_detect_facet_input_drift().
-const COMPETENCY_FACET_INPUTS: Record<string, string[]> = {
-  drive_work_intensity:            ["achievement_striving", "self_discipline", "proactive_personality"],
-  persuasive_influence:            ["assertiveness", "political_skill_networking", "self_efficacy"],
-  rapport_building:                ["friendliness", "political_skill_networking", "compassion", "trust"],
-  needs_discovery:                 ["customer_orientation", "compassion", "cooperation"],
-  resilience_under_rejection:      ["emotional_stability", "anxiety", "dispositional_optimism", "self_efficacy"],
-  composure_under_pressure:        ["anger", "anxiety", "emotional_stability"],
-  accuracy_procedural_discipline:  ["dutifulness", "cautiousness", "self_discipline"],
-  rule_compliance_adherence:       ["dutifulness", "cautiousness"],
-  integrity:                       ["sincerity", "fairness", "greed_avoidance"],
-  judgment_escalation:             ["cautiousness", "dutifulness"],
-  coachability_team_contribution:  ["cooperation", "trust", "compassion", "anger"],
-  autonomy_ownership:              ["proactive_personality", "self_efficacy", "achievement_striving"],
-};
-
 interface FacetFlag { facet: string; percentile: number; direction: "low" | "high"; }
 
 // Areas-to-press-on selection: role-relevant facets at/below p20 or at/above
 // p80, capped to the 4 most extreme by distance from p50. Convention for
 // bounding prompt length -- not a psychometric threshold, no validity claim.
 //
-// FILTER FIX 2026-08-06: hiregauge_competency_weights uses a 1-3 scale and
-// NO weight is ever 0 -- filtering on ">0" was a no-op, every competency
-// always passed, every role got the same facet pool. Filtering on weight=3
-// (the role's top-priority competencies) actually differentiates by role.
-// Fallback: if weight=3 gives fewer than 3 flagged facets after the p20/p80
-// cut, widen to weight>=2 for that candidate and say so in the logged
-// record (pressOnFallbackUsed). Two roles (retention_support, sales_in_book)
-// only have 2 weight=3 competencies, so this fallback firing for them is
-// expected, not a bug.
+// MIGRATION F RE-KEY 2026-08-07: facet-direct. roleFacetWeights comes
+// straight from hiregauge_role_facet_weights (input_name IS the facet --
+// no COMPETENCY_FACET_INPUTS map, no two-hop lookup). Filter is
+// weight >= 2 named explicitly -- this table runs roughly -1..3, zeros are
+// meaningful (deliberately-excluded facets), and anger can be negative, so
+// "nonzero" would silently pull in the wrong set. Fallback: if weight>=2
+// gives fewer than 3 flagged facets after the p20/p80 cut, widen to
+// weight>=1 for that candidate and log it (pressOnFallbackUsed) -- same
+// shape as the old fallback, just reading the facet-direct table.
 function selectPressOnFacets(
   roleCategory: string | null,
-  competencyWeights: Array<{ competency_name: string; weight: number }>,
+  roleFacetWeights: Array<{ input_name: string; weight: number }>,
   facetPercentiles: Array<{ facet: string; percentile: number | null }>
 ): { flagged: FacetFlag[]; fallbackUsed: boolean } {
   if (!roleCategory) return { flagged: [], fallbackUsed: false };
 
   const flagAtThreshold = (minWeight: number): FacetFlag[] => {
-    const relevantCompetencies = new Set(
-      competencyWeights.filter(w => Number(w.weight) >= minWeight).map(w => w.competency_name)
+    const relevantFacets = new Set(
+      roleFacetWeights
+        .filter(w => Number(w.weight) >= minWeight && w.input_name !== "gma" && w.input_name !== "sjt")
+        .map(w => w.input_name)
     );
-    const relevantFacets = new Set<string>();
-    for (const comp of relevantCompetencies) {
-      const inputs = COMPETENCY_FACET_INPUTS[comp];
-      if (inputs) for (const f of inputs) relevantFacets.add(f);
-    }
     const out: FacetFlag[] = [];
     for (const fp of facetPercentiles) {
       if (fp.percentile == null) continue;
@@ -222,11 +215,12 @@ function selectPressOnFacets(
     return out;
   };
 
-  const atThreeOnly = flagAtThreshold(3);
-  if (atThreeOnly.length >= 3) return { flagged: atThreeOnly.slice(0, 4), fallbackUsed: false };
-
+  // weight >= 2 -- explicit, never "nonzero". See header comment.
   const atTwoPlus = flagAtThreshold(2);
-  return { flagged: atTwoPlus.slice(0, 4), fallbackUsed: true };
+  if (atTwoPlus.length >= 3) return { flagged: atTwoPlus.slice(0, 4), fallbackUsed: false };
+
+  const atOnePlus = flagAtThreshold(1);
+  return { flagged: atOnePlus.slice(0, 4), fallbackUsed: true };
 }
 
 // Post-processing: enforce hard cap by dropping lowest-priority sections/probes first.
@@ -386,8 +380,9 @@ Deno.serve(async (req: Request) => {
       : "(no framework rules matched)";
     const resumeFetch = await fetchResumeText(a.agency_id, a.resume_url, a.resume_extracted_text);
 
-    // TASK B2: facet-fed "Areas to press on" -- best-fit role -> role-weighted
-    // competencies -> unioned facet inputs -> live facet percentiles -> extreme ones.
+    // MIGRATION F re-key: facet-direct "Areas to press on". best-fit role ->
+    // hiregauge_role_facet_weights (weight>=2, facet-level already) ->
+    // live facet percentiles -> extreme ones. No COMPETENCY_FACET_INPUTS map.
     let pressOnFacets: FacetFlag[] = [];
     let pressOnFallbackUsed = false;
     let bestRoleForFacets: string | null = null;
@@ -395,11 +390,11 @@ Deno.serve(async (req: Request) => {
       const { data: bestFit } = await supa.rpc("assessment_best_fit_role", { p_assessment_id: assessmentId });
       bestRoleForFacets = (Array.isArray(bestFit) && bestFit[0]?.best_role) || null;
       if (bestRoleForFacets) {
-        const [{ data: weights }, { data: percentiles }] = await Promise.all([
-          supa.from("hiregauge_competency_weights").select("competency_name, weight").eq("agency_id", a.agency_id).eq("role_category", bestRoleForFacets),
+        const [{ data: roleFacetWeights }, { data: percentiles }] = await Promise.all([
+          supa.from("hiregauge_role_facet_weights").select("input_name, weight").eq("role_category", bestRoleForFacets),
           supa.rpc("hiregauge_candidate_facet_percentiles", { p_candidate_id: assessmentId }),
         ]);
-        const selection = selectPressOnFacets(bestRoleForFacets, weights || [], percentiles || []);
+        const selection = selectPressOnFacets(bestRoleForFacets, roleFacetWeights || [], percentiles || []);
         pressOnFacets = selection.flagged;
         pressOnFallbackUsed = selection.fallbackUsed;
       }
@@ -420,7 +415,7 @@ Deno.serve(async (req: Request) => {
     const probes = capped.trimmed;
 
     // Stamp metadata
-    probes.version              = 11.0;
+    probes.version              = 12.0;
     probes.model                = model;
     probes.resume_analyzed      = Boolean(context.resume_text);
     probes.resume_source        = resumeFetch.source;
