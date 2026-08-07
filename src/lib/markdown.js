@@ -141,6 +141,7 @@ const NW_FILL_RE = new RegExp(
   "g"
 );
 
+// build nudge 2026-08-07
 const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
 
 // Slugify heading text for id attribute (used by mdToHtml heading render)
