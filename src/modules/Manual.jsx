@@ -1253,7 +1253,20 @@ What I\'d like to discuss:
           background: ${T.blueLt};
           border-color: ${T.blue}88;
         }
-        .newtworks-handbook-body details > *:not(summary) { margin-top: 8px; padding-left: 26px; }
+        .newtworks-handbook-body details > *:not(summary) { margin-top: 8px; padding-left: 22px; }
+        /* The chip caret alone only marks the TITLE as open - the paragraph text
+           below it looked identical to ordinary page copy once expanded, so an open
+           section vanished into the rest of the page. Peter 2026-08-07 (third pass):
+           give the open BODY its own visual edge, not just the button. Sage left
+           rule + a hair of sage tint on the content only, never on the title line,
+           never on closed sections - so a page of fifteen closed items still reads
+           quiet, and only the ones actually expanded stand apart from body text. */
+        .newtworks-handbook-body details[open] > *:not(summary) {
+          border-left: 2px solid ${T.blue}55;
+          background: ${T.blue}08;
+          padding-left: 14px;
+          border-radius: 0 4px 4px 0;
+        }
         .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
       `}</style>
 
