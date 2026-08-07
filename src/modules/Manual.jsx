@@ -1215,8 +1215,8 @@ What I\'d like to discuss:
         .newtworks-handbook-body details[open] { background: ${T.white}; }
         .newtworks-handbook-body summary {
           cursor: pointer;
-          font-weight: 600;
-          color: ${T.slate900};
+          font-weight: 500;
+          color: ${T.slate700};
           padding: 2px 0 2px 22px;
           user-select: none;
           list-style: none;
@@ -1228,9 +1228,9 @@ What I\'d like to discuss:
           position: absolute;
           left: 0;
           top: 2px;
-          color: ${T.blue};
-          font-size: 14px;
-          font-weight: 700;
+          color: ${T.slate400};
+          font-size: 12px;
+          font-weight: 400;
           display: inline-block;
         }
         .newtworks-handbook-body details[open] > summary::before { content: "▾"; }
