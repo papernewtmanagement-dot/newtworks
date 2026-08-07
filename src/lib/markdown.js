@@ -117,6 +117,13 @@ function inlineMd(s) {
   return out;
 }
 
+// HAZARD: this comment block and the const below it were flattened onto one
+// physical line by shell quoting when b313c1d was written. That left the
+// const sitting behind a // comment, so NW_FILL_RE was never declared and a
+// stray $ at line start threw ReferenceError the moment this module was
+// imported. It compiled clean and broke only at runtime. Repaired in
+// 93c1e19. Edit this block with a file write, never an inline shell string,
+// and confirm the module still imports before pushing.
 // Fill-in blanks: anything in angle brackets that is NOT a known HTML tag and
 // does not open an HTML comment. Widened 2026-08-07 - the old
 // /<([A-Z$][^<>\n]{0,40})>/ silently swallowed real blanks that began with a
