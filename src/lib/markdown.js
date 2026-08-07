@@ -35,6 +35,17 @@ export function escapeHtml(s) {
     .replace(/>/g, "&gt;");
 }
 
+// ─── Script-voice + placeholder styling ───────────────────────
+// Inline (not class-only) so the same markup renders correctly in the
+// ContentEditor live preview, which does not load Manual.jsx's style block.
+const SAY_STYLE =
+  "color:#065F46;background:#ECFDF5;border-radius:3px;padding:0 3px;";
+const THEM_STYLE =
+  "color:#B91C1C;background:#FEF2F2;border-radius:3px;padding:0 3px;";
+const FILL_STYLE =
+  "color:#6B5227;background:#F2E8D5;border-radius:3px;padding:0 3px;" +
+  "font-weight:600;white-space:nowrap;";
+
 function inlineMd(s) {
   if (!s) return "";
   let out = String(s);
@@ -66,6 +77,30 @@ function inlineMd(s) {
   );
   out = out.replace(/<(mailto:[^\s<>]+)>/g, (m, url) =>
     `<a href="${url}">${url.replace(/^mailto:/, "")}</a>`
+  );
+
+  // ─── Script-voice markers ───────────────────────────────────
+  // Restores the colour coding the Confluence process manual used to carry.
+  //   {{say: ...}}  → the words WE say out loud   (green)
+  //   {{them: ...}} → the words the CUSTOMER says (red)
+  // Emitted as inline spans so they nest inside lists, bold, and <details>.
+  // Inner content is left as markdown — later passes in this same function
+  // handle any bold/italic/link/placeholder inside the marker.
+  out = out.replace(/\{\{say:\s*([\s\S]+?)\s*\}\}/g, (m, t) =>
+    `<span class="newtworks-say" style="${SAY_STYLE}">${t}</span>`
+  );
+  out = out.replace(/\{\{them:\s*([\s\S]+?)\s*\}\}/g, (m, t) =>
+    `<span class="newtworks-them" style="${THEM_STYLE}">${t}</span>`
+  );
+
+  // ─── Fill-in placeholders ──────────────────────────────────
+  // Script placeholders are authored as <NAME>, <ME>, <$$$>, <ALL/MOST>.
+  // Nothing else in this pipeline escapes angle brackets, so the browser
+  // was parsing these as unknown HTML elements and dropping them entirely —
+  // the blanks were invisible on the rendered page. Escape them and give
+  // them the gold treatment the source manual used.
+  out = out.replace(/<([A-Z$][^<>\n]{0,40})>/g, (m, t) =>
+    `<span class="newtworks-fill" style="${FILL_STYLE}">&lt;${t}&gt;</span>`
   );
 
   // Bold (** or __)
