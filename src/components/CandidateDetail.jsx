@@ -886,6 +886,13 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
 
   const sjtScore = detail?.sjt_score; // 0-100
 
+  // GMA total, as percent correct — canonical live-count formula from the
+  // role-fit payload. NEVER client-derive this from detail.gma_total_accuracy
+  // (that column is a raw count, not a percent). T4, Step 8, 2026-08-07.
+  const gmaRoleFits = v2RoleFits || {};
+  const gmaBestRoleKey = (Array.isArray(bestFit) && bestFit[0]?.best_role) || Object.keys(gmaRoleFits)[0];
+  const gmaPct = gmaRoleFits?.[gmaBestRoleKey]?.inputs?.gma?.value ?? null;
+
   const facetRows = Array.isArray(v2Facets) ? v2Facets : null;
   const facetByTrait = {};
   if (facetRows) {
@@ -954,6 +961,24 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
           <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>
             Self-ratings ran high — verify flagged areas in interview and references.
           </div>
+        </div>
+      )}
+
+      {/* Restores the 2026-08-06 directive (reliability shown as a number,
+          not just a band word) that was computed but never rendered; GMA
+          and SJT are the two ability inputs to role fit. T4, Step 8,
+          2026-08-07. */}
+      {(reliabilityScore != null || gmaPct != null || sjtScore != null) && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {reliabilityScore != null && (
+            <AssessRow label="Reliability" value={reliabilityScore} band="none" subline="attention & consistency checks" max={100} />
+          )}
+          {gmaPct != null && (
+            <AssessRow label="GMA" value={gmaPct} band="none" subline="percent correct" />
+          )}
+          {sjtScore != null && (
+            <AssessRow label="SJT" value={sjtScore} band="none" subline="percent correct" />
+          )}
         </div>
       )}
 
