@@ -1218,24 +1218,42 @@ What I\'d like to discuss:
           cursor: pointer;
           font-weight: 500;
           color: ${T.slate600};
-          padding: 2px 0 2px 22px;
+          padding: 1px 0 1px 26px;
           user-select: none;
           list-style: none;
           position: relative;
         }
         .newtworks-handbook-body summary::-webkit-details-marker { display: none; }
+        /* Round chip caret, not a bare triangle. Matches the existing 18px circular
+           info-button badge (see .newtworks-info-btn above): same size, same sage
+           border+tint family, same border-radius:50%. Closed = quiet outline chip
+           (border ${T.blue}55 / bg ${T.blue}11), matching info-btn exactly. Open =
+           the app-wide "active" fill (T.blueLt, same token used for the active nav
+           row and active manual-tree row) rather than a hard solid sage fill, so
+           "this is open" reads the same as every other active state in the app.
+           Peter 2026-08-07: wanted a bit more obvious it is a dropdown, not a bullet. */
         .newtworks-handbook-body summary::before {
           content: "▸";
           position: absolute;
           left: 0;
-          top: 2px;
-          color: ${T.slate400};
-          font-size: 12px;
-          font-weight: 400;
-          display: inline-block;
+          top: 0;
+          width: 18px;
+          height: 18px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          border: 1px solid ${T.blue}55;
+          background: ${T.blue}11;
+          color: ${T.blue};
+          font-size: 10px;
         }
-        .newtworks-handbook-body details[open] > summary::before { content: "▾"; }
-        .newtworks-handbook-body details > *:not(summary) { margin-top: 8px; padding-left: 22px; }
+        .newtworks-handbook-body details[open] > summary::before {
+          content: "▾";
+          background: ${T.blueLt};
+          border-color: ${T.blue}88;
+        }
+        .newtworks-handbook-body details > *:not(summary) { margin-top: 8px; padding-left: 26px; }
         .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
       `}</style>
 
