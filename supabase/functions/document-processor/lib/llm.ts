@@ -68,6 +68,14 @@ export interface ParseLLMOpts {
   // fallback and would otherwise leave rows nobody drains — see the note on
   // Step 3 below.
   skipQueueOnFailure?: boolean;
+  // Pointer to the row this job must write its result back to, stored on the
+  // queue row as target_ref and read by llm-queue-drainer. Required for any
+  // purpose whose write target is NOT implied by documentId or by the parsed
+  // payload itself. Shape is purpose-specific — the drainer's handler for the
+  // purpose defines it. Added 2026-08-07 after a queued wrapup_organize job
+  // proved undrainable: nothing recorded which weekly_cpr_team_detail row it
+  // belonged to, and the source email had already been archived.
+  targetRef?: Record<string, unknown>;
 }
 
 export type ParseLLMResult =
@@ -193,6 +201,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       user_content: opts.userContent,
       model,
       status: "pending",
+      target_ref: opts.targetRef ?? null,
     })
     .select("id")
     .single();

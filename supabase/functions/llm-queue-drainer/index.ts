@@ -7,6 +7,7 @@
 // Supported purposes:
 //   - parse_bank_statement         → drainBankStatementItem  (statement_balances + bank_transactions/credit_transactions)
 //   - careerplug_applicant_extract → drainCareerplugItem     (hiring_candidates via upsert RPC)
+//   - wrapup_organize              → drainWrapupOrganizeItem (weekly_cpr_team_detail.wrapup_text/_done via target_ref)
 //
 // Flow per item:
 //   1. Call Groq direct with stored system_prompt + user_content
@@ -28,10 +29,15 @@ const BANK_STATEMENT_MODEL = "llama-3.3-70b-versatile";
 // victim (200K TPD). Draining on a different model spreads TPD load so we can drain
 // backlog even when gpt-oss-120b is exhausted.
 const CAREERPLUG_MODEL = "llama-3.3-70b-versatile";
+// Wrap-up organize items are small (~1-3K tokens). They queue on Friday
+// afternoons, which is precisely when the whole team sends wrap-ups within the
+// same hour and gpt-oss-120b is most likely to be over quota -- so drain on a
+// different model for the same TPD-spreading reason as careerplug.
+const WRAPUP_MODEL = "llama-3.3-70b-versatile";
 
 // Purposes this drainer currently handles. Adding a new purpose = adding a
 // handler function below AND appending its key here.
-const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extract"];
+const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extract", "wrapup_organize"];
 
 // Thin adapter over the shared Groq caller so the drain call sites keep their
 // positional signature. temperature 0.1 preserved from the original inline copy.
@@ -49,12 +55,15 @@ interface QueueItem {
   user_content: string;
   model: string;
   attempts: number;
+  target_ref: Record<string, any> | null;
 }
 
 interface DrainResult {
   ok: boolean;
   error?: string;
   // Optional purpose-specific fields:
+  wrapupDone?: boolean;           // wrapup organize
+  wrapupMissingItems?: string[];  // wrapup organize
   statementBalance?: any;         // bank statements
   transactionsInserted?: number;  // bank statements
   skippedInformational?: number;  // bank statements
@@ -379,6 +388,104 @@ async function drainCareerplugItem(item: QueueItem, groqKey: string, dryRun: boo
   return { ok: true, applicantsUpserted: upserted, applicantActions: actions };
 }
 
+// ── wrapup_organize ──────────────────────────────────────────────────────────
+// Finishes a team wrap-up organize job that document-processor could not
+// complete synchronously (almost always Groq over quota on a Friday afternoon).
+//
+// Requires target_ref.detail_id -- the weekly_cpr_team_detail row the organized
+// text belongs to. Jobs queued before target_ref shipped (2026-08-07) have no
+// pointer and cannot be completed here; they fail with a clear message rather
+// than guessing at a row.
+//
+// STALENESS GUARD: the queued user_content embeds a <CURRENT_WRAPUP_TEXT>
+// snapshot taken when the job was enqueued. If a LATER email for the same
+// teammate/week was organized successfully in the meantime, the live row now
+// holds strictly more content than this job's snapshot, and writing this job's
+// output would DELETE that newer content. When live text and snapshot disagree,
+// this handler refuses the write and raises an alert for a manual merge instead.
+// Losing a teammate's words silently is worse than a visible stuck job.
+//
+// NOT DONE HERE: the missing-item nag email. Nagging needs Composio + the team
+// roster and lives in document-processor's wrapup parser. A drained job that
+// comes back incomplete records wrapup_done=false and the missing labels; the
+// Friday 7 PM no-send check is what surfaces the gap to the team.
+function wupExtractSnapshotFromUserContent(userContent: string): string | null {
+  const m = userContent.match(/<CURRENT_WRAPUP_TEXT>\n([\s\S]*?)\n<\/CURRENT_WRAPUP_TEXT>/);
+  if (!m) return null;
+  const raw = m[1];
+  return raw === "(none yet)" ? "" : raw;
+}
+
+async function drainWrapupOrganizeItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
+  const detailId = item.target_ref?.detail_id as string | undefined;
+  if (!detailId) {
+    return { ok: false, error: "target_ref.detail_id missing — job predates target_ref (2026-08-07) or was enqueued without a write target; cannot resolve which weekly_cpr_team_detail row to write" };
+  }
+
+  const llm = await callGroq(groqKey, WRAPUP_MODEL, item.system_prompt, item.user_content, 2500);
+  if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(stripFences(llm.raw));
+  } catch (e) {
+    return { ok: false, error: `JSON parse failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  const organizedText: string = typeof parsed?.organized_text === "string" ? parsed.organized_text : "";
+  if (!organizedText.trim()) {
+    return { ok: false, error: "LLM returned empty organized_text" };
+  }
+  const coverage = parsed?.coverage ?? {};
+  const allCovered =
+    coverage.item_1 === true && coverage.item_2 === true && coverage.item_3 === true &&
+    coverage.item_4 === true && coverage.item_5 === true && coverage.item_6 === true;
+  const missingLabels: string[] = Array.isArray(parsed?.missing_item_labels) ? parsed.missing_item_labels : [];
+
+  if (dryRun) {
+    return { ok: true, wrapupDone: allCovered, wrapupMissingItems: missingLabels, note: `dry run — would write ${organizedText.length} chars to weekly_cpr_team_detail ${detailId}` };
+  }
+
+  const { data: liveRow, error: liveErr } = await sb
+    .from("weekly_cpr_team_detail")
+    .select("id, wrapup_text")
+    .eq("id", detailId)
+    .maybeSingle();
+  if (liveErr) return { ok: false, error: `detail read failed: ${liveErr.message}` };
+  if (!liveRow) return { ok: false, error: `weekly_cpr_team_detail ${detailId} no longer exists` };
+
+  const snapshot = wupExtractSnapshotFromUserContent(item.user_content);
+  const liveText = (liveRow.wrapup_text ?? "") as string;
+  if (liveText.trim() && snapshot !== null && liveText.trim() !== snapshot.trim()) {
+    if ((item.attempts ?? 0) === 0) {
+      await sb.from("alerts").insert({
+        agency_id: item.agency_id,
+        alert_type: "data_conflict",
+        severity: "warning",
+        title: "Queued wrap-up needs a manual merge",
+        message: `Queued wrap-up job ${item.id} (${item.target_ref?.sender_first_name ?? "unknown teammate"}, week ${item.target_ref?.week_ending_date ?? "unknown"}) was organized against an older copy of the wrap-up text. The stored text has changed since, so writing this result would delete newer content. Merge by hand from Gmail message ${item.target_ref?.gmail_message_id ?? "unknown"}.`,
+        module_reference: "llm-queue-drainer:wrapup_stale",
+        is_read: false,
+        is_resolved: false,
+      }).then(() => {}, () => {});
+    }
+    return { ok: false, error: "detail row advanced since this job was queued — refusing to overwrite newer wrap-up text; manual merge required (alert raised)" };
+  }
+
+  const { error: updErr } = await sb
+    .from("weekly_cpr_team_detail")
+    .update({ wrapup_text: organizedText, wrapup_done: allCovered, updated_at: new Date().toISOString() })
+    .eq("id", detailId);
+  if (updErr) return { ok: false, error: `detail update failed: ${updErr.message}` };
+
+  return {
+    ok: true,
+    wrapupDone: allCovered,
+    wrapupMissingItems: missingLabels,
+    note: `wrote ${organizedText.length} chars to weekly_cpr_team_detail ${detailId}${allCovered ? "" : ` — ${missingLabels.length} item(s) still missing, no nag sent from the drainer`}`,
+  };
+}
+
 Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); }
@@ -401,7 +508,7 @@ Deno.serve(async (req) => {
   // oldest backlog drains first (fair-queue behavior across purposes).
   const { data: items, error: qErr } = await sb
     .from("llm_parse_queue")
-    .select("id, agency_id, document_id, purpose, system_prompt, user_content, model, attempts")
+    .select("id, agency_id, document_id, purpose, system_prompt, user_content, model, attempts, target_ref")
     .eq("agency_id", agencyId)
     .eq("status", "pending")
     .in("purpose", SUPPORTED_PURPOSES)
@@ -430,6 +537,8 @@ Deno.serve(async (req) => {
       r = await drainBankStatementItem(item, groqKey, dryRun);
     } else if (item.purpose === "careerplug_applicant_extract") {
       r = await drainCareerplugItem(item, groqKey, dryRun);
+    } else if (item.purpose === "wrapup_organize") {
+      r = await drainWrapupOrganizeItem(item, groqKey, dryRun);
     } else {
       // Shouldn't happen — SUPPORTED_PURPOSES filter guards this. Skip defensively.
       r = { ok: false, error: `unsupported purpose: ${item.purpose}` };
@@ -490,6 +599,9 @@ Deno.serve(async (req) => {
       // Careerplug fields (undefined for bank statements):
       applicants_upserted: r.applicantsUpserted,
       applicant_actions: r.applicantActions,
+      // Wrap-up fields (undefined for other purposes):
+      wrapup_done: r.wrapupDone,
+      wrapup_missing_items: r.wrapupMissingItems,
       note: r.note,
       error: r.error,
     });

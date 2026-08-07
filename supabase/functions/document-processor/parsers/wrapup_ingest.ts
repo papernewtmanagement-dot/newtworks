@@ -370,6 +370,20 @@ async function processOneWrapupMessage(
     documentId: null,
     purpose: "wrapup_organize",
     maxTokens: 2500,
+    // Write-back pointer for llm-queue-drainer. Without this the queue-fallback
+    // path below is a silent loss: the email gets labeled + archived (so no
+    // future cron tick re-fetches it) while the queued job has no way to know
+    // which weekly_cpr_team_detail row it was organizing. That is exactly how
+    // John Kostov's 2026-08-06 wrap-up went missing until it was recovered by
+    // hand on 2026-08-07.
+    targetRef: {
+      table: "weekly_cpr_team_detail",
+      detail_id: detailRow.id,
+      team_member_id: teamMember.id,
+      week_ending_date: weekEnding,
+      gmail_message_id: messageId,
+      sender_first_name: teamMember.first_name,
+    },
   });
   if (!parseRes.ok) {
     // Archive so the wrapup email exits the fetch pool. Without this, the
