@@ -1206,20 +1206,18 @@ What I\'d like to discuss:
         }
         .newtworks-handbook-body th { background: ${T.slate50}; font-weight: 700; color: ${T.slate900}; }
         .newtworks-handbook-body details {
-          background: ${T.slate50};
-          border: 1px solid ${T.slate200};
-          border-radius: 8px;
-          padding: 10px 14px;
-          margin: 12px 0;
+          margin: 6px 0;
         }
-        .newtworks-handbook-body details[open] { background: ${T.white}; }
-        /* Expander titles deliberately sit BELOW h3 in weight (500 vs 700) and use
-           body-text colour, with a light unbolded marker. Peter 2026-08-07: expanders
-           were reading heavier than the headings above them. Do not restore 600/slate900. */
+        .newtworks-handbook-body details[open] { margin-bottom: 14px; }
+        /* Expanders are a QUIET DISCLOSURE LINE, not a card. No fill, no border, no
+           radius, no padding box - Peter 2026-08-07, said twice: the grey bordered
+           panels grabbed more attention than the headings. Title sits below h3 weight
+           (500 vs 700) in a lighter-than-body colour with a small grey caret; open
+           content is indented to align under the title. Do not restore the box. */
         .newtworks-handbook-body summary {
           cursor: pointer;
           font-weight: 500;
-          color: ${T.slate700};
+          color: ${T.slate600};
           padding: 2px 0 2px 22px;
           user-select: none;
           list-style: none;
@@ -1237,7 +1235,7 @@ What I\'d like to discuss:
           display: inline-block;
         }
         .newtworks-handbook-body details[open] > summary::before { content: "▾"; }
-        .newtworks-handbook-body details > *:not(summary) { margin-top: 10px; }
+        .newtworks-handbook-body details > *:not(summary) { margin-top: 8px; padding-left: 22px; }
         .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
       `}</style>
 
