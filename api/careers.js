@@ -13,8 +13,14 @@
 // passes the original path through the "p" query parameter, because a
 // rewrite replaces the visible path with /api/careers.
 //
-// KEYS: reads use the browser-safe key only. job_postings and
-// job_screener_questions both carry public read policies for active rows.
+// KEYS (changed 2026-08-07): this used to read job_postings and
+// job_screener_questions directly with the browser-safe key. That stopped
+// working once the default-deny RLS sweep's Phase A revoked every anon/
+// PUBLIC table grant — not an RLS problem, a GRANT problem, so no policy
+// change could have fixed it. Reads now go through two GET JSON routes on
+// the careers-site Supabase function, which holds the service-role key.
+// The privileged key still never reaches Vercel; this file has no
+// database credentials of its own anymore.
 
 // careers-site edge function
 // Serves the public careers surface for Peter Story State Farm agency:
@@ -26,18 +32,13 @@
 //   GET  /careers/apply-received → confirmation page
 // Vercel rewrites /careers/* on newtworks domain → this function.
 
-import { createClient } from "@supabase/supabase-js";
-
 const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const AGENCY_NAME = "Peter Story State Farm";
 const AGENCY_ADDRESS_LINES = ["28120 US Hwy 281 N, Suite 125", "San Antonio, TX 78260"];
 const AGENCY_PHONE = "830-980-8100";
 const AGENCY_CONTACT_EMAIL = "paper.newt.management@gmail.com";
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL,
-  process.env.VITE_SUPABASE_ANON_KEY
-);
+const CAREERS_SITE_BASE = `${process.env.VITE_SUPABASE_URL}/functions/v1/careers-site`;
 
 // ────────────────────────────────────────────────────────────────────────────
 // HTML helpers
@@ -167,15 +168,12 @@ function locationLabel(mode, city, state) {
 // ────────────────────────────────────────────────────────────────────────────
 
 async function renderListing() {
-  const { data: postings, error } = await supabase
-    .from("job_postings")
-    .select("posting_slug, job_title, employment_type, location_mode, city, state, salary_min, salary_max, salary_period")
-    .eq("agency_id", AGENCY_ID)
-    .eq("is_active", true)
-    .eq("publish_to_careers_page", true)
-    .order("job_title");
-
-  if (error) return new Response(`Error loading postings: ${error.message}`, { status: 500 });
+  const res = await fetch(`${CAREERS_SITE_BASE}/postings`);
+  if (!res.ok) {
+    const body = await res.text();
+    return new Response(`Error loading postings: ${body}`, { status: 500 });
+  }
+  const { postings } = await res.json();
 
   const items = (postings || []).map(p => `
     <li>
@@ -205,24 +203,13 @@ async function renderListing() {
 // ────────────────────────────────────────────────────────────────────────────
 
 async function renderJobDetail(slug) {
-  const { data: posting, error } = await supabase
-    .from("job_postings")
-    .select("*")
-    .eq("agency_id", AGENCY_ID)
-    .eq("posting_slug", slug)
-    .eq("is_active", true)
-    .eq("publish_to_careers_page", true)
-    .maybeSingle();
-
-  if (error) return new Response(`Error: ${error.message}`, { status: 500 });
-  if (!posting) return new Response("Position not found or no longer open.", { status: 404 });
-
-  const { data: questions } = await supabase
-    .from("job_screener_questions")
-    .select("question_code, question_text, answer_type, options, is_required")
-    .eq("agency_id", AGENCY_ID)
-    .in("question_code", posting.screener_codes)
-    .eq("is_active", true);
+  const res = await fetch(`${CAREERS_SITE_BASE}/${encodeURIComponent(slug)}`);
+  if (res.status === 404) return new Response("Position not found or no longer open.", { status: 404 });
+  if (!res.ok) {
+    const body = await res.text();
+    return new Response(`Error: ${body}`, { status: 500 });
+  }
+  const { posting, questions } = await res.json();
 
   // Preserve the order defined in posting.screener_codes
   const questionMap = new Map((questions || []).map(q => [q.question_code, q]));
