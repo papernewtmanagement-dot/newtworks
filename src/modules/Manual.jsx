@@ -1213,6 +1213,9 @@ What I\'d like to discuss:
           margin: 12px 0;
         }
         .newtworks-handbook-body details[open] { background: ${T.white}; }
+        /* Expander titles deliberately sit BELOW h3 in weight (500 vs 700) and use
+           body-text colour, with a light unbolded marker. Peter 2026-08-07: expanders
+           were reading heavier than the headings above them. Do not restore 600/slate900. */
         .newtworks-handbook-body summary {
           cursor: pointer;
           font-weight: 500;
