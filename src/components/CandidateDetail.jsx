@@ -2039,8 +2039,33 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   }, [detail?.id, detail?.assessment_source]);
 
   // Best-fit role via RPC (graceful fallback if function missing)
+  //
+  // FIX 2026-08-06 (Peter directive): this effect had no `cancelled` guard and
+  // never reset its own state when detail.id changed. Two bugs from that:
+  // (1) stale-candidate flash — old candidate's verdict/score stayed on screen
+  //     during the gap before the new candidate's fetch resolved;
+  // (2) out-of-order race — if a PRIOR candidate's request was still in flight
+  //     when you navigated to a NEW candidate, the old response could land
+  //     after the new one and silently overwrite it — e.g. threeConstruct set
+  //     to a prior candidate's "decline" verdict while the page shows a
+  //     candidate whose real score/verdict is "hire". Reported live 2026-08-06:
+  //     candidate showing an averaged ~84 score with a "decline" verdict —
+  //     verdict_overall for that candidate returns "hire" when queried
+  //     directly, confirming the displayed verdict was stale, not computed.
   useEffect(() => {
     if (!detail?.id || !supabase) return;
+    let cancelled = false;
+    // Clear all state this effect owns immediately on candidate change so a
+    // slow-to-resolve fetch can't leave a previous candidate's verdict/score
+    // visible against the new candidate's page.
+    setBestFit(null);
+    setCompetencies(null);
+    setComposite(null);
+    setFrameworkRules(null);
+    setIntelligence(null);
+    setThreeConstruct(null);
+    setV1Extras(null);
+    setV1InvitedAt(null);
     // v2 candidates: assessment_best_fit_role was rewired onto the v2
     // architecture (*Ass Comp Build 2) and stays live for both paths. The
     // other three legacy RPCs below (assessment_all_competencies,
@@ -2049,23 +2074,23 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     // v1/CTS only so they never fire against a v2 candidate.
     const isV2 = detail?.assessment_source === "v2";
     supabase.rpc("assessment_best_fit_role", { p_assessment_id: detail.id })
-      .then(({ data, error }) => { if (!error) setBestFit(data); })
+      .then(({ data, error }) => { if (!cancelled && !error) setBestFit(data); })
       .catch(() => {});
     if (!isV2) {
       // Competencies for all four role fits (single RPC returning JSONB keyed by role)
       supabase.rpc("assessment_all_competencies", { p_assessment_id: detail.id })
-        .then(({ data, error }) => { if (!error) setCompetencies(data); })
+        .then(({ data, error }) => { if (!cancelled && !error) setCompetencies(data); })
         .catch(() => {});
       // HireGauge framework read — composite verdict + all matched rules.
       // Both RPCs are read-only, IMMUTABLE per candidate, safe to call every mount.
       supabase.rpc("hiregauge_composite_recommendation", { p_assessment_id: detail.id })
         .then(({ data, error }) => {
-          if (!error && Array.isArray(data) && data[0]) setComposite(data[0]);
+          if (!cancelled && !error && Array.isArray(data) && data[0]) setComposite(data[0]);
         })
         .catch(() => {});
       supabase.rpc("hiregauge_evaluate_candidate", { p_assessment_id: detail.id })
         .then(({ data, error }) => {
-          if (!error && Array.isArray(data)) setFrameworkRules(data);
+          if (!cancelled && !error && Array.isArray(data)) setFrameworkRules(data);
         })
         .catch(() => {});
     }
@@ -2073,13 +2098,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     // hiregauge_lss_delta_v2 so the frontend keeps the p_assessment_id calling
     // convention used by every other RPC on this page.
     supabase.rpc("assessment_intelligence_composite", { p_assessment_id: detail.id })
-      .then(({ data, error }) => { if (!error && data) setIntelligence(data); })
+      .then(({ data, error }) => { if (!cancelled && !error && data) setIntelligence(data); })
       .catch(() => {});
     // Three-construct verdict: Capability/Character/Commitment per-layer verdicts +
     // pre-hire framework prediction + retrospective observation + calibration.
     supabase.rpc("verdict_overall", { p_candidate_id: detail.id })
       .then(({ data, error }) => {
-        if (!error && Array.isArray(data) && data[0]) setThreeConstruct(data[0]);
+        if (!cancelled && !error && Array.isArray(data) && data[0]) setThreeConstruct(data[0]);
       })
       .catch(() => {});
     // Newtworks v1 assessment extras (reliability + distortion + timing signals).
@@ -2089,7 +2114,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       p_candidate_id: detail.id, p_stint: null, p_sitting: 1,
     })
       .then(({ data, error }) => {
-        if (!error && Array.isArray(data) && data[0]) setV1Extras(data[0]);
+        if (!cancelled && !error && Array.isArray(data) && data[0]) setV1Extras(data[0]);
       })
       .catch(() => {});
     // Earliest invitation sent_at drives invite→start lag calculation for v1
@@ -2103,8 +2128,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .limit(1)
       .maybeSingle()
       .then(({ data, error }) => {
-        if (!error && data?.sent_at) setV1InvitedAt(data.sent_at);
+        if (!cancelled && !error && data?.sent_at) setV1InvitedAt(data.sent_at);
       });
+    return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
 
   // Default selectedRole to best-fit role once bestFit resolves. Local UI state only —
