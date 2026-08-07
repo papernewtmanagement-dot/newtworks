@@ -1019,17 +1019,15 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
               )}
               {gmaEntry && (() => {
                 const [k, c] = gmaEntry;
-                const v = c?.adjusted;
+                const v = c?.effective;
                 const band = competencyBand(v);
-                const sublineBits = [];
-                if (c?.missing_inputs?.length > 0) sublineBits.push(`Missing: ${c.missing_inputs.join(", ")}`);
                 return (
                   <AssessRow
                     key={k}
                     label={formatCompLabel(k)}
                     value={v}
                     band={v == null ? "none" : band}
-                    subline={sublineBits.length > 0 ? sublineBits.join(" · ") : null}
+                    subline={v == null ? "insufficient data" : null}
                   />
                 );
               })()}
