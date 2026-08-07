@@ -39,9 +39,9 @@ export function escapeHtml(s) {
 // Inline (not class-only) so the same markup renders correctly in the
 // ContentEditor live preview, which does not load Manual.jsx's style block.
 const SAY_STYLE =
-  "color:#065F46;background:#ECFDF5;border-radius:3px;padding:0 3px;";
+  "color:#047857;";
 const THEM_STYLE =
-  "color:#B91C1C;background:#FEF2F2;border-radius:3px;padding:0 3px;";
+  "color:#B91C1C;";
 const FILL_STYLE =
   "color:#6B5227;background:#F2E8D5;border-radius:3px;padding:0 3px;" +
   "font-weight:600;white-space:nowrap;";
