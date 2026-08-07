@@ -29,6 +29,13 @@ Overwrite mode:
       --content-file /home/claude/local_edited.jsx \
       --message 'refactor: rewrite Foo'
 
+Delete mode:
+  python3 commit_newtworks.py path/in/repo --delete --message 'chore: remove stale file'
+
+  Fetches the file's current blob sha first (that sha requirement IS the
+  stale-basis guard — GitHub rejects the delete if the file changed
+  underneath you). Cannot combine with --replace/--content-file/--create.
+
 Batch mode (several files, ONE commit, ONE Vercel deployment):
   python3 commit_newtworks.py --batch /home/claude/manifest.json \
       --message 'migration: default_deny_tier2 batches 1-8'
@@ -36,6 +43,10 @@ Batch mode (several files, ONE commit, ONE Vercel deployment):
   Use this whenever more than one file is going out together. The single-file
   modes create a separate commit and a separate deployment per file, which is
   what exhausted the free-tier daily deployment cap on 2026-08-07.
+
+  Manifest entries can also delete a file with {"path": "...", "delete": true,
+  "expect_sha": "..."} — expect_sha is REQUIRED on delete entries since batch
+  has no other confirmation mechanism.
 
 Dry-run: apply patches locally, print diff stats, do NOT commit.
 
@@ -123,6 +134,18 @@ def create_file(path, new_content, message, branch="main"):
     return data["commit"]["sha"]
 
 
+def delete_file(path, sha, message, branch="main"):
+    body = {
+        "message": message,
+        "sha": sha,
+        "branch": branch,
+    }
+    status, data = gh_request("DELETE", f"/contents/{path}", body=body)
+    if status not in (200, 201):
+        die(f"Delete failed ({status}): {json.dumps(data)[:400]}")
+    return data["commit"]["sha"]
+
+
 def apply_replacements(src, replacements):
     for old, new, expected in replacements:
         found = src.count(old)
@@ -177,14 +200,18 @@ def run_batch(manifest_path, message, branch, dry_run):
          {"path": "supabase/migrations/x.sql", "content_file": "/home/claude/x.sql"},
          {"path": "src/modules/Team.jsx",
           "replace": [["old", "new"], ["old2", "new2", 3]],
-          "expect_sha": "abc123..."}
+          "expect_sha": "abc123..."},
+         {"path": "docs/_stale.md", "delete": true, "expect_sha": "def456..."}
       ]}
 
     Per entry: "content_file" writes the whole file; "replace" applies the same
     exact-match patching as --replace (optional third element pins the expected
-    occurrence count). Optional "expect_sha" aborts if the file's blob at the
-    base commit is not the one the edit was built against, which is the batch
-    equivalent of the stale-basis guard on the single-file overwrite path.
+    occurrence count); "delete": true removes the file from the tree. Optional
+    "expect_sha" aborts if the file's blob at the base commit is not the one the
+    edit was built against, which is the batch equivalent of the stale-basis
+    guard on the single-file overwrite path. "delete": true entries REQUIRE
+    expect_sha — batch has no other mechanism to confirm you're deleting the
+    file you think you are, so this is not optional the way it is elsewhere.
     """
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
@@ -210,12 +237,25 @@ def run_batch(manifest_path, message, branch, dry_run):
         current = fetch_file_at(path, base_sha)
 
         expect = entry.get("expect_sha")
+        is_delete = bool(entry.get("delete"))
+
+        if is_delete and not expect:
+            die(f"{path}: 'delete' entries require expect_sha. Batch has no other way to "
+                "confirm you're deleting the file you think you are.")
+
         if expect:
             if current is None:
                 die(f"{path}: expect_sha given but the file does not exist at the base commit.")
             if not current["sha"].startswith(expect):
                 die(f"{path}: blob is {current['sha'][:12]}, manifest expected {expect[:12]}. "
                     "Stale basis - reconcile before committing.")
+
+        if is_delete:
+            if current is None:
+                die(f"{path}: 'delete' entry but the file does not exist at the base commit.")
+            print(f"[delete] {path} - {current['sha'][:12]}")
+            staged.append((path, None, True))
+            continue
 
         if "replace" in entry:
             if current is None:
@@ -226,25 +266,31 @@ def run_batch(manifest_path, message, branch, dry_run):
             with open(entry["content_file"], "rb") as f:
                 new_content = f.read().decode("utf-8")
         else:
-            die(f"{path}: entry needs either 'replace' or 'content_file'.")
+            die(f"{path}: entry needs 'replace', 'content_file', or 'delete': true.")
 
         if current is not None and new_content == current["content"]:
             print(f"[skip] {path} unchanged")
             continue
         verb = "create" if current is None else "update"
         print(f"[{verb}] {path} - {len(new_content)} bytes")
-        staged.append((path, new_content))
+        staged.append((path, new_content, False))
 
     if not staged:
         print("[skip] Nothing changed, no commit made.")
         return
 
     if dry_run:
-        print(f"[dry-run] Would land {len(staged)} file(s) in ONE commit. Not committing.")
+        n_delete = sum(1 for _, _, d in staged if d)
+        n_write = len(staged) - n_delete
+        print(f"[dry-run] Would land {n_write} write(s) and {n_delete} delete(s) "
+              f"in ONE commit. Not committing.")
         return
 
     tree_entries = []
-    for path, content in staged:
+    for path, content, is_delete in staged:
+        if is_delete:
+            tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+            continue
         blob = gh_post_json("/git/blobs", {
             "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
             "encoding": "base64",
@@ -283,10 +329,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--create", action="store_true",
                     help="Create new file (no existing remote file expected)")
+    ap.add_argument("--delete", action="store_true",
+                    help="Delete an existing file. Cannot combine with --replace/--content-file/--create.")
     args = ap.parse_args()
 
     if args.batch:
-        if args.path or args.replace or args.content_file or args.create:
+        if args.path or args.replace or args.content_file or args.create or args.delete:
             die("--batch is standalone. Put every file in the manifest instead.")
         run_batch(args.batch, args.message, args.branch, args.dry_run)
         return
@@ -294,10 +342,25 @@ def main():
     if not args.path:
         die("Missing repo path. Pass a path, or use --batch with a manifest.")
 
+    if args.delete:
+        if args.replace or args.content_file or args.create:
+            die("--delete cannot combine with --replace, --content-file, or --create.")
+        current = fetch_file_at(args.path, ref=args.branch)
+        if current is None:
+            die(f"{args.path} does not exist on branch {args.branch} — nothing to delete.")
+        print(f"[delete] {args.path} @ {current['sha'][:12]} — {len(current['content'])} bytes")
+        if args.dry_run:
+            print("[dry-run] Not committing.")
+            return
+        commit_sha = delete_file(args.path, current["sha"], args.message, args.branch)
+        print(f"[commit] {commit_sha}")
+        print(f"[link] https://github.com/{OWNER}/{REPO}/commit/{commit_sha}")
+        return
+
     if args.replace and args.content_file:
         die("Use --replace OR --content-file, not both.")
     if not args.replace and not args.content_file:
-        die("Nothing to do. Pass --replace or --content-file.")
+        die("Nothing to do. Pass --replace, --content-file, or --delete.")
 
     # CREATE path (no fetch, no sha)
     if args.create:
