@@ -2563,7 +2563,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const cellFont = isPhone ? 12 : 14;
               const layerTotalFont = isPhone ? 13 : 15;
               const subtotalFont = isPhone ? 13 : 16;
-              const resultFont = isPhone ? 15 : 18;
               const weightFont = isPhone ? 8 : 9;
               const verdictPillFont = isPhone ? 8 : 9;
               const subDetailFont = isPhone ? 7.5 : 8;
@@ -2728,9 +2727,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                           </Fragment>
                         );
                       })}
-                      {/* Per-construct weighted subtotal row */}
+                      {/* Total row — per-construct weighted subtotals (Capability/Character/
+                          Commitment) plus the overall blended score + verdict as the 4th
+                          column. Used to be two rows (Subtotal + a separate full-width
+                          Result row) — merged 2026-08-06 per Peter directive. Confidence
+                          tag and @70/@75/@80 threshold previews dropped in the same pass —
+                          not useful on this surface. */}
                       <tr style={{ borderTop: `2px solid ${T.slate200}`, background: T.slate50 }}>
-                        <td style={{ ...rowLabelBase, background: T.slate100, fontWeight: 700 }}>Subtotal</td>
+                        <td style={{ ...rowLabelBase, background: T.slate100, fontWeight: 700 }}>Total</td>
                         {constructs.map((c) => (
                           <td key={c.key} style={{ padding: isPhone ? "6px 3px" : "10px", background: scoreBg(c.score), borderLeft: `3px solid ${scoreFg(c.score)}`, borderRight: `1px solid ${T.slate100}`, textAlign: "center" }}>
                             <div style={{ fontSize: subtotalFont, fontWeight: 800, color: c.score == null ? T.slate500 : T.slate900 }}>
@@ -2738,27 +2742,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                             </div>
                           </td>
                         ))}
-                        <td style={{ padding: isPhone ? "6px 3px" : "10px", background: T.slate100, borderLeft: `2px solid ${T.slate200}` }}></td>
-                      </tr>
-                      {/* Overall result row — score + verdict + confidence + threshold previews */}
-                      <tr>
-                        <td style={{ ...rowLabelBase, background: T.slate900, color: T.white, fontWeight: 700, borderRight: `1px solid ${T.slate900}` }}>Result</td>
-                        <td colSpan={4} style={{ padding: isPhone ? "8px 6px" : "10px 12px", background: threeConstruct.verdict ? verdictBg(threeConstruct.verdict) : scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${threeConstruct.verdict ? verdictFg(threeConstruct.verdict) : scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: isPhone ? 6 : 10, flexWrap: "wrap", marginBottom: 6 }}>
-                            <span style={{ fontSize: resultFont, fontWeight: 800, color: T.slate900 }}>
+                        <td style={{ padding: isPhone ? "6px 3px" : "10px", background: threeConstruct.verdict ? verdictBg(threeConstruct.verdict) : scoreBg(threeConstruct.score_0_10), borderLeft: `3px solid ${threeConstruct.verdict ? verdictFg(threeConstruct.verdict) : scoreFg(threeConstruct.score_0_10)}`, textAlign: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: isPhone ? 4 : 6, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: subtotalFont, fontWeight: 800, color: T.slate900 }}>
                               {threeConstruct.score_0_10 != null ? Math.round(Number(threeConstruct.score_0_10)) : "—"}
                             </span>
-                            <span style={{ padding: isPhone ? "2px 6px" : "3px 10px", borderRadius: 4, fontSize: isPhone ? 9 : 10, fontWeight: 700, color: T.white, background: threeConstruct.verdict ? verdictFg(threeConstruct.verdict) : scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.5 }}>
+                            <span style={{ padding: isPhone ? "1px 4px" : "2px 6px", borderRadius: 3, fontSize: isPhone ? 8 : 9, fontWeight: 700, color: T.white, background: threeConstruct.verdict ? verdictFg(threeConstruct.verdict) : scoreFg(threeConstruct.score_0_10), textTransform: "uppercase", letterSpacing: 0.3 }}>
                               {(threeConstruct.verdict || "insufficient data").replace(/_/g, " ")}
                             </span>
-                            <span style={{ fontSize: isPhone ? 10 : 11, color: T.slate600 }}>
-                              confidence: {threeConstruct.confidence || "—"}
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", gap: isPhone ? 8 : 12, fontSize: isPhone ? 9 : 10, color: T.slate600, justifyContent: "center", flexWrap: "wrap" }}>
-                            <span>@70: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_70 || "n/a"}</strong></span>
-                            <span>@75: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_75 || "n/a"}</strong></span>
-                            <span>@80: <strong style={{ color: T.slate900 }}>{threeConstruct.score_hire_at_80 || "n/a"}</strong></span>
                           </div>
                         </td>
                       </tr>
