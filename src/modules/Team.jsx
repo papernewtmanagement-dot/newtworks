@@ -2896,7 +2896,7 @@ export default function Team() {
         .from("v_hiring_candidates")
         .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, assertiveness, compassion, resume_document_id, resume_url, reliability, response_distortion")
         .eq("agency_id", AGENCY_ID)
-        .in("status", ["applied","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
+        .in("status", ["applied","assessment_sent","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
         .order("created_at", { ascending: false });
 
       if (cancelled) return;
