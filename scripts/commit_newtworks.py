@@ -29,6 +29,14 @@ Overwrite mode:
       --content-file /home/claude/local_edited.jsx \
       --message 'refactor: rewrite Foo'
 
+Batch mode (several files, ONE commit, ONE Vercel deployment):
+  python3 commit_newtworks.py --batch /home/claude/manifest.json \
+      --message 'migration: default_deny_tier2 batches 1-8'
+
+  Use this whenever more than one file is going out together. The single-file
+  modes create a separate commit and a separate deployment per file, which is
+  what exhausted the free-tier daily deployment cap on 2026-08-07.
+
 Dry-run: apply patches locally, print diff stats, do NOT commit.
 
 Env: GH_TOKEN must be set. Load from /home/claude/.gh_pat or Supabase settings.
@@ -126,9 +134,146 @@ def apply_replacements(src, replacements):
     return src
 
 
+def gh_get_json(path):
+    status, data = gh_request("GET", path)
+    if status != 200:
+        die(f"GET {path} failed ({status}): {json.dumps(data)[:400]}")
+    return data
+
+
+def gh_post_json(path, body):
+    status, data = gh_request("POST", path, body=body)
+    if status not in (200, 201):
+        die(f"POST {path} failed ({status}): {json.dumps(data)[:400]}")
+    return data
+
+
+def fetch_file_at(path, ref):
+    """Fetch a file pinned to a specific commit. Returns None if it does not exist."""
+    status, data = gh_request("GET", f"/contents/{path}?ref={ref}")
+    if status == 404:
+        return None
+    if status != 200:
+        die(f"Fetch failed ({status}) for {path}: {json.dumps(data)[:400]}")
+    if data.get("encoding") != "base64":
+        die(f"Unexpected encoding for {path}: {data.get('encoding')}")
+    content = base64.b64decode(data["content"].replace("\n", "")).decode("utf-8")
+    return {"sha": data["sha"], "content": content}
+
+
+def run_batch(manifest_path, message, branch, dry_run):
+    """Land several files in ONE commit via the Git Data API.
+
+    Why this exists: the Contents API used by the single-file modes creates one
+    commit AND one ref update per file, and Vercel raises one deployment per ref
+    update. On 2026-08-07 eight migration mirrors pushed one at a time burned
+    eight deployments for zero site change and tipped the project over the
+    free-tier daily deployment cap, which silently stopped every later push from
+    building. This path builds one tree, one commit and one ref update, so the
+    same eight files cost a single deployment.
+
+    Manifest is JSON:
+      {"files": [
+         {"path": "supabase/migrations/x.sql", "content_file": "/home/claude/x.sql"},
+         {"path": "src/modules/Team.jsx",
+          "replace": [["old", "new"], ["old2", "new2", 3]],
+          "expect_sha": "abc123..."}
+      ]}
+
+    Per entry: "content_file" writes the whole file; "replace" applies the same
+    exact-match patching as --replace (optional third element pins the expected
+    occurrence count). Optional "expect_sha" aborts if the file's blob at the
+    base commit is not the one the edit was built against, which is the batch
+    equivalent of the stale-basis guard on the single-file overwrite path.
+    """
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    files = manifest.get("files") or []
+    if not files:
+        die(f"Manifest {manifest_path} has no 'files' entries.")
+
+    ref = gh_get_json(f"/git/ref/heads/{branch}")
+    base_sha = ref["object"]["sha"]
+    base_tree = gh_get_json(f"/git/commits/{base_sha}")["tree"]["sha"]
+    print(f"[base] {branch} @ {base_sha[:12]} (tree {base_tree[:12]})")
+
+    staged = []
+    seen = set()
+    for entry in files:
+        path = entry.get("path")
+        if not path:
+            die(f"Manifest entry missing 'path': {json.dumps(entry)[:200]}")
+        if path in seen:
+            die(f"{path} appears twice in the manifest. Merge the edits into one entry.")
+        seen.add(path)
+
+        current = fetch_file_at(path, base_sha)
+
+        expect = entry.get("expect_sha")
+        if expect:
+            if current is None:
+                die(f"{path}: expect_sha given but the file does not exist at the base commit.")
+            if not current["sha"].startswith(expect):
+                die(f"{path}: blob is {current['sha'][:12]}, manifest expected {expect[:12]}. "
+                    "Stale basis - reconcile before committing.")
+
+        if "replace" in entry:
+            if current is None:
+                die(f"{path}: 'replace' entry but the file does not exist at the base commit.")
+            reps = [(p[0], p[1], p[2] if len(p) > 2 else None) for p in entry["replace"]]
+            new_content = apply_replacements(current["content"], reps)
+        elif "content_file" in entry:
+            with open(entry["content_file"], "rb") as f:
+                new_content = f.read().decode("utf-8")
+        else:
+            die(f"{path}: entry needs either 'replace' or 'content_file'.")
+
+        if current is not None and new_content == current["content"]:
+            print(f"[skip] {path} unchanged")
+            continue
+        verb = "create" if current is None else "update"
+        print(f"[{verb}] {path} - {len(new_content)} bytes")
+        staged.append((path, new_content))
+
+    if not staged:
+        print("[skip] Nothing changed, no commit made.")
+        return
+
+    if dry_run:
+        print(f"[dry-run] Would land {len(staged)} file(s) in ONE commit. Not committing.")
+        return
+
+    tree_entries = []
+    for path, content in staged:
+        blob = gh_post_json("/git/blobs", {
+            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            "encoding": "base64",
+        })
+        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+
+    tree = gh_post_json("/git/trees", {"base_tree": base_tree, "tree": tree_entries})
+    commit = gh_post_json("/git/commits", {
+        "message": message,
+        "tree": tree["sha"],
+        "parents": [base_sha],
+    })
+
+    status, data = gh_request("PATCH", f"/git/refs/heads/{branch}",
+                              body={"sha": commit["sha"], "force": False})
+    if status != 200:
+        die(f"Ref update failed ({status}). HEAD moved mid-batch and NOTHING was published - "
+            f"rebuild the manifest against the new HEAD: {json.dumps(data)[:400]}")
+
+    print(f"[commit] {commit['sha']} - {len(staged)} file(s) in one commit, one deployment")
+    print(f"[link] https://github.com/{OWNER}/{REPO}/commit/{commit['sha']}")
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=True)
-    ap.add_argument("path", help="Path in repo (e.g. src/modules/CPRDetail.jsx)")
+    ap.add_argument("path", nargs="?",
+                    help="Path in repo (e.g. src/modules/CPRDetail.jsx). Omit when using --batch.")
+    ap.add_argument("--batch",
+                    help="JSON manifest of files to land in ONE commit (one Vercel deployment)")
     ap.add_argument("--replace", nargs=2, action="append", metavar=("OLD", "NEW"), default=[])
     ap.add_argument("--count", type=int, action="append", default=[],
                     help="Expected occurrence count per --replace (positional match)")
@@ -139,6 +284,15 @@ def main():
     ap.add_argument("--create", action="store_true",
                     help="Create new file (no existing remote file expected)")
     args = ap.parse_args()
+
+    if args.batch:
+        if args.path or args.replace or args.content_file or args.create:
+            die("--batch is standalone. Put every file in the manifest instead.")
+        run_batch(args.batch, args.message, args.branch, args.dry_run)
+        return
+
+    if not args.path:
+        die("Missing repo path. Pass a path, or use --batch with a manifest.")
 
     if args.replace and args.content_file:
         die("Use --replace OR --content-file, not both.")
