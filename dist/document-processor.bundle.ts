@@ -304,6 +304,14 @@ export interface ParseLLMOpts {
   // fallback and would otherwise leave rows nobody drains — see the note on
   // Step 3 below.
   skipQueueOnFailure?: boolean;
+  // Pointer to the row this job must write its result back to, stored on the
+  // queue row as target_ref and read by llm-queue-drainer. Required for any
+  // purpose whose write target is NOT implied by documentId or by the parsed
+  // payload itself. Shape is purpose-specific — the drainer's handler for the
+  // purpose defines it. Added 2026-08-07 after a queued wrapup_organize job
+  // proved undrainable: nothing recorded which weekly_cpr_team_detail row it
+  // belonged to, and the source email had already been archived.
+  targetRef?: Record<string, unknown>;
 }
 
 export type ParseLLMResult =
@@ -429,6 +437,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       user_content: opts.userContent,
       model,
       status: "pending",
+      target_ref: opts.targetRef ?? null,
     })
     .select("id")
     .single();
@@ -2804,10 +2813,20 @@ export function parseSurePayrollCsvText(text: string): ParsedSurePayroll {
   };
 }
 
-async function spMatchTeamMember(last: string, first: string): Promise<{ id: string; agency_id: string | null } | null> {
-  const { data, error } = await sb.from("team").select("id, agency_id").ilike("last_name", last).ilike("first_name", first).maybeSingle();
+// role_level + is_admin_backoffice are selected so the CPR write below can skip
+// people who are paid but do not belong in CPR team roll-ups (Owner, admin /
+// back-office). They still get full payroll_detail rows -- the exclusion is
+// CPR-only. Fix 2026-08-07: without these fields the payroll import CREATED
+// weekly_cpr_team_detail rows for the Owner and for the back-office teammate
+// (the upsert below inserts when no row exists), which then rendered in every
+// team section of the CPR page -- the Owner under his own name and the
+// back-office teammate as "(unknown)", because the page deliberately filters
+// back-office people out of its name lookup. Standing rule: is_admin_backoffice
+// = false and role_level != 'Owner' in every CPR / comp / production roll-up.
+async function spMatchTeamMember(last: string, first: string): Promise<{ id: string; agency_id: string | null; role_level: string | null; is_admin_backoffice: boolean | null } | null> {
+  const { data, error } = await sb.from("team").select("id, agency_id, role_level, is_admin_backoffice").ilike("last_name", last).ilike("first_name", first).maybeSingle();
   if (error || !data) return null;
-  return { id: data.id, agency_id: data.agency_id };
+  return { id: data.id, agency_id: data.agency_id, role_level: data.role_level ?? null, is_admin_backoffice: data.is_admin_backoffice ?? null };
 }
 
 function spTargetCprWeekEnding(checkDate: string): string {
@@ -2929,7 +2948,14 @@ export async function processSurePayrollParsed(opts: {
       raw_employer_taxes: { items: e.employer_items, period_total: empPeriodTotal, ytd_total: empYtdTotal },
     });
 
-    if (match.agency_id === opts.agencyId) {
+    // CPR roll-up gate: agency entity AND not Owner AND not admin/back-office.
+    // payroll_detail above already has this person; this only decides whether a
+    // weekly_cpr_team_detail row gets created/updated for them.
+    const spCprEligible =
+      match.agency_id === opts.agencyId &&
+      (match.role_level ?? "") !== "Owner" &&
+      match.is_admin_backoffice !== true;
+    if (spCprEligible) {
       cprBreakdownByTeamId[match.id] = {
         period_hours: e.period_hours,
         items: e.earnings_items,
@@ -5562,6 +5588,20 @@ async function processOneWrapupMessage(
     documentId: null,
     purpose: "wrapup_organize",
     maxTokens: 2500,
+    // Write-back pointer for llm-queue-drainer. Without this the queue-fallback
+    // path below is a silent loss: the email gets labeled + archived (so no
+    // future cron tick re-fetches it) while the queued job has no way to know
+    // which weekly_cpr_team_detail row it was organizing. That is exactly how
+    // John Kostov's 2026-08-06 wrap-up went missing until it was recovered by
+    // hand on 2026-08-07.
+    targetRef: {
+      table: "weekly_cpr_team_detail",
+      detail_id: detailRow.id,
+      team_member_id: teamMember.id,
+      week_ending_date: weekEnding,
+      gmail_message_id: messageId,
+      sender_first_name: teamMember.first_name,
+    },
   });
   if (!parseRes.ok) {
     // Archive so the wrapup email exits the fetch pool. Without this, the
