@@ -845,22 +845,15 @@ const CD_ASSESS_GRID_CSS = `
   gap: 16px;
   align-items: start;
   grid-template-columns: 1fr;
-  grid-template-areas: "facets" "traits" "rolefit";
+  grid-template-areas: "facets" "rolefit";
 }
 @media (min-width: 640px) {
   .cd-assess-grid {
     grid-template-columns: 1fr 1fr;
-    grid-template-areas: "facets traits" ". rolefit";
-  }
-}
-@media (min-width: 1024px) {
-  .cd-assess-grid {
-    grid-template-columns: 1fr 1fr 1fr;
-    grid-template-areas: "facets traits rolefit";
+    grid-template-areas: "facets rolefit";
   }
 }
 .cd-col-facets  { grid-area: facets;  min-width: 0; }
-.cd-col-traits  { grid-area: traits;  min-width: 0; }
 .cd-col-rolefit { grid-area: rolefit; min-width: 0; }
 `;
 
