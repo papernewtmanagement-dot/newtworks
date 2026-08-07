@@ -994,10 +994,10 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
           const bestKey = bf?.best_role;
           const currentSelected = selectedRole || bestKey || "sales_outbound";
           const roleDetail = v2RoleFits ? v2RoleFits[currentSelected] : null;
-          const comps = roleDetail?.competencies || {};
+          const comps = roleDetail?.inputs || {};
           const entries = Object.entries(comps);
           const gmaEntry = entries.find(([k]) => k === "gma");
-          const restEntries = entries.filter(([k]) => k !== "gma");
+          const restEntries = entries.filter(([k]) => k !== "gma" && k !== "sjt");
           const formatCompLabel = (k) =>
             k === "gma" ? "General Mental Ability" : k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
           if (entries.length === 0) {
