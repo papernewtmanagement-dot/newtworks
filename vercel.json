@@ -1,13 +1,42 @@
 {
   "ignoreCommand": "bash scripts/vercel-ignore-build.sh",
   "rewrites": [
-    { "source": "/careers/:slug/apply", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/careers-site/:slug/apply" },
-    { "source": "/careers", "destination": "/api/careers?p=" },
-    { "source": "/careers/:path*", "destination": "/api/careers?p=:path*" },
-    { "source": "/jobs.xml", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/jobs-xml-feed" },
-    { "source": "/webhooks/indeed", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/indeed-apply-webhook" },
-    { "source": "/webhooks/ziprecruiter", "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/zip-apply-webhook" },
-    { "source": "/privacy", "destination": "/privacy.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/careers/:slug/apply",
+      "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/careers-site/:slug/apply"
+    },
+    {
+      "source": "/careers",
+      "destination": "/api/careers?p="
+    },
+    {
+      "source": "/careers/:path*",
+      "destination": "/api/careers?p=:path*"
+    },
+    {
+      "source": "/jobs.xml",
+      "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/jobs-xml-feed"
+    },
+    {
+      "source": "/webhooks/indeed",
+      "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/indeed-apply-webhook"
+    },
+    {
+      "source": "/webhooks/ziprecruiter",
+      "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/zip-apply-webhook"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "db": false
+    }
+  }
 }
