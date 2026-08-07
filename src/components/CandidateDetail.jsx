@@ -821,17 +821,18 @@ function renderResumeLayer(detail, T, resumeThresh) {
 }
 
 // Assessment layer expansion body — the LSS + traits view on the left;
-// role-fit selector + competencies for the currently-selected role on the
-// right. Moved here from the standalone top-of-page Assessment section per
-// Peter directive 2026-07-17.
-// Newtworks v2 assessment layer — trait/GMA/SJT results, plus Role Fit +
-// Competencies from the Newtworks competency layer (12 competencies x 7
-// roles, confirmed 2026-08-02, live 2026-08-03). bestFit comes from
-// assessment_best_fit_role (uuid RPC, already gated); v2RoleFits comes from
-// newtworks_all_role_fits (uuid RPC) and carries the full per-role competency
-// detail (tier/floor/adjusted) the selector below drills into. v1/CTS
-// candidates keep the legacy renderAssessmentLayer below — this function only
-// renders when detail.assessment_source === "v2".
+// role-fit selector for the currently-selected role on the right. Moved
+// here from the standalone top-of-page Assessment section per Peter
+// directive 2026-07-17.
+// Newtworks v2 assessment layer — facet percentiles (vs typical adults,
+// via hiregauge_candidate_facet_percentiles, computed on read, never
+// stored), GMA/SJT results, and Role Fit from the facet-direct v5 model
+// (role_fit_v5_0_facet_direct_2026_08_06, live migration D). bestFit comes
+// from assessment_best_fit_role (uuid RPC, already gated); v2RoleFits comes
+// from newtworks_all_role_fits (uuid RPC). The competency layer no longer
+// drives role fit or display here and is slated for removal in Migration F.
+// v1/CTS candidates keep the legacy renderAssessmentLayer below — this
+// function only renders when detail.assessment_source === "v2".
 // Explicit grid-template-areas per breakpoint (rather than plain CSS Grid
 // auto-fit) so Role Fit always lands under Traits at the 2-column width,
 // never under Facets. auto-fit's implicit placement fills the first open
@@ -857,7 +858,7 @@ const CD_ASSESS_GRID_CSS = `
 .cd-col-rolefit { grid-area: rolefit; min-width: 0; }
 `;
 
-function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen, screenAnswers }) {
+function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, screenAnswers }) {
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
@@ -881,7 +882,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
     ? Math.round(((RELIABILITY_TOTAL_CHECKS - reliabilityFiredCount) / RELIABILITY_TOTAL_CHECKS) * 100)
     : null;
 
-  const imScore = detail?.impression_management;
   const imBand = detail?.impression_management_band;
 
   const sjtScore = detail?.sjt_score; // 0-100
@@ -890,6 +890,16 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   const facetByTrait = {};
   if (facetRows) {
     for (const r of facetRows) facetByTrait[r.hypothesized_trait] = r;
+  }
+  // Facet percentiles vs typical adults — hiregauge_candidate_facet_percentiles,
+  // computed on read, never stored. Replaces raw facet_score display (Step 8,
+  // 2026-08-07). A parked facet (no seeded norm, e.g. competitiveness) returns
+  // percentile null and renders as an em dash.
+  const pctRowsLoading = v2Percentiles == null;
+  const pctRows = Array.isArray(v2Percentiles) ? v2Percentiles : null;
+  const pctByFacet = {};
+  if (pctRows) {
+    for (const r of pctRows) pctByFacet[r.facet] = r.percentile;
   }
 
   return (
@@ -933,13 +943,24 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         </div>
       )}
 
-      {/* Three-column layout: facets | reliability, faking-good, and
-          situational judgement bars, then role competencies (GMA lives
-          inside role competencies, not as a separate section — see the
-          "gma" key in newtworks_all_role_fits) | role fit. Explicit
-          grid-template-areas per breakpoint (see CD_ASSESS_GRID_CSS above)
-          — Role Fit always sits under Traits, never under Facets, at the
-          tablet 2-column width. */}
+      {/* Faking-good caveat — Ones, Viswesvaran & Reiss 1996: never adjust
+          scores for impression management, flag for interview/reference
+          verification instead. Step 8, 2026-08-07. */}
+      {(imBand === "elevated" || imBand === "very_elevated") && (
+        <div style={{
+          padding: "10px 12px", background: T.amberLt, borderRadius: 6,
+          borderLeft: `4px solid ${T.amber}`, boxSizing: "border-box",
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>
+            Self-ratings ran high — verify flagged areas in interview and references.
+          </div>
+        </div>
+      )}
+
+      {/* Two-column layout: facets | role fit. Explicit grid-template-areas
+          per breakpoint (see CD_ASSESS_GRID_CSS above) — single-column
+          stack (facets above rolefit) on phone, side by side (facets left,
+          rolefit right) from the tablet breakpoint up. */}
       <style>{CD_ASSESS_GRID_CSS}</style>
       <div className="cd-assess-grid">
 
@@ -948,7 +969,10 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Personality Facets
         </div>
-        {facetRows == null ? (
+        <div style={{ fontSize: 9, color: T.slate500, marginBottom: 6, marginTop: -2 }}>
+          Percentile vs. typical adults
+        </div>
+        {(facetRows == null || pctRowsLoading) ? (
           <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
             Loading facet detail…
           </div>
@@ -958,12 +982,13 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
               const row = facetByTrait[trait];
               const nItems = row?.n_items_scored;
               const insufficient = nItems != null && nItems < 4;
+              const pct = pctByFacet[trait];
               return (
                 <AssessRow
                   key={trait}
                   label={label}
-                  value={insufficient ? "insufficient data" : row?.facet_score}
-                  band={insufficient ? "none" : null}
+                  value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
+                  band="none"
                 />
               );
             })}
@@ -1007,7 +1032,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
               )}
               {!bf.best_hard_decline && bf.best_verdict_cap === "consider" && (
                 <div style={{ padding: "6px 10px", background: T.amberLt, borderRadius: 6, marginBottom: 4, fontSize: 11, fontWeight: 700, color: T.amber }}>
-                  Verdict capped at "consider" — a critical competency or reasoning floor missed on best-fit role
+                  Verdict capped at "consider" — an integrity flag or reasoning floor fired on best-fit role
                 </div>
               )}
               {bf.best_churn_risk && (
@@ -1042,7 +1067,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
                       fontFamily: "inherit", textAlign: "left", width: "100%",
                       marginBottom: 2,
                     }}
-                    title={isSelected ? "Selected — competencies shown in the middle column" : "Click to show this role's competencies"}
+                    title={isSelected ? "Selected — the score matrix Capability row uses this role" : "Click to score Capability against this role"}
                   >
                     <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
                       {ROLE_LABELS[r.key] || r.key} Fit
@@ -1108,9 +1133,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, select
   );
 }
 
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2RoleFits, gmaOpen, setGmaOpen, screenAnswers }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, screenAnswers }) {
   if (detail?.assessment_source === "v2") {
-    return renderAssessmentLayerV2({ detail, v2Facets, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, gmaOpen, setGmaOpen, screenAnswers });
+    return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, screenAnswers });
   }
   return (
     <div>
@@ -1793,6 +1818,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // traits legitimately score from exactly 4 items, so the old < 5 guard
   // mislabeled valid on-design scores as "insufficient data".
   const [v2Facets, setV2Facets] = useState(null);
+  // Facet percentiles vs typical adults — computed on read via
+  // hiregauge_candidate_facet_percentiles, never stored. Step 8 frontend
+  // work order (2026-08-07): facet display shows percentile, not raw score.
+  const [v2Percentiles, setV2Percentiles] = useState(null);
   // Newtworks v2 competency layer — full per-role detail (12 competencies with
   // tier/floor/adjusted + gates_fired/verdict_cap/hard_decline/churn_risk),
   // keyed by role_category. Only fetched for v2 candidates; replaces the old
@@ -1804,9 +1833,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // constraint name between hiregauge_candidate_responses and
   // hiregauge_instrument_items.
   const [screenAnswers, setScreenAnswers] = useState(null);
-  // v2 GMA subtest diagnostics disclosure — ephemeral UI toggle, not URL-persisted
-  // (per frontend coding rule 24: disclosure state stays useState, not a tab).
-  const [gmaOpen, setGmaOpen] = useState(false);
   // Which role fit is selected. Local UI state only — session-scoped, defaults to
   // bestFit on load. Framework scoring always uses assessment_best_fit_role's best_role;
   // the selector only controls which competency detail displays.
@@ -1869,6 +1895,22 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .then(({ data, error }) => {
         if (cancelled || error) return;
         setV2Facets(Array.isArray(data) ? data : []);
+      });
+    return () => { cancelled = true; };
+  }, [detail?.id, detail?.assessment_source]);
+
+  // v2 facet percentiles vs typical adults — only for v2 candidates. Computed
+  // on read via hiregauge_candidate_facet_percentiles, never stored (Step 8,
+  // 2026-08-07).
+  useEffect(() => {
+    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    setV2Percentiles(null);
+    let cancelled = false;
+    supabase
+      .rpc("hiregauge_candidate_facet_percentiles", { p_candidate_id: detail.id })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        setV2Percentiles(Array.isArray(data) ? data : []);
       });
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
@@ -2360,11 +2402,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
               const isV2Matrix = detail?.assessment_source === "v2";
               const matrixBf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
               const matrixCurrentRole = selectedRole || matrixBf?.best_role || "sales_outbound";
-              // v2 facet lookup — compute_newtworks_v2_facets_as_row returns one row per
-              // hypothesized_trait; used for the Commitment sub-score line below.
-              const v2FacetVal = (facets, trait) => {
-                const f = Array.isArray(facets) ? facets.find((x) => x.hypothesized_trait === trait) : null;
-                return f?.facet_score != null ? Math.round(Number(f.facet_score)) : "—";
+              // v2 facet percentile lookup — hiregauge_candidate_facet_percentiles
+              // (vs typical adults, computed on read, never stored); used for the
+              // Commitment sub-score line below. Matches Migration E, which wraps
+              // assessment_commitment's raw facet inputs in the same percentile
+              // function. reversed=true mirrors the (100 - pct) reversal Migration E
+              // applies to avoid_goal_orientation AFTER percentile conversion.
+              const commitPctByFacet = {};
+              if (Array.isArray(v2Percentiles)) {
+                for (const r of v2Percentiles) commitPctByFacet[r.facet] = r.percentile;
+              }
+              const commitPct = (trait, reversed) => {
+                const p = commitPctByFacet[trait];
+                if (p == null) return "—";
+                return reversed ? Math.round(100 - Number(p)) : Math.round(Number(p));
               };
               // Assessment layer total blends all three constructs (Capability, Character,
               // Commitment) — it used to read capability alone (the selected role's fit
@@ -2555,17 +2606,17 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                       >
                                         {isV2Matrix ? (
                                           <>
-                                            Ach {v2FacetVal(v2Facets, "achievement_striving")}
+                                            Ach {commitPct("achievement_striving")}
                                             {" · "}
-                                            Comp {v2FacetVal(v2Facets, "competitiveness")}
+                                            Comp {commitPct("competitiveness")}
                                             {" · "}
-                                            Prv {v2FacetVal(v2Facets, "prove_goal_orientation")}
+                                            Prv {commitPct("prove_goal_orientation")}
                                             {" · "}
-                                            Lrn {v2FacetVal(v2Facets, "learning_goal_orientation")}
+                                            Lrn {commitPct("learning_goal_orientation")}
                                             {" · "}
-                                            Avd {v2FacetVal(v2Facets, "avoid_goal_orientation")}
+                                            Avd(rev) {commitPct("avoid_goal_orientation", true)}
                                             {" · "}
-                                            Ent {v2FacetVal(v2Facets, "enterprising")}
+                                            Ent {commitPct("enterprising")}
                                           </>
                                         ) : (
                                           <>
@@ -2609,7 +2660,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     selectedRole, setSelectedRole, T,
                                     v1Extras, v1InvitedAt,
                                     intelligence, roleIdealRange,
-                                    v2Facets, v2RoleFits, gmaOpen, setGmaOpen,
+                                    v2Facets, v2Percentiles, v2RoleFits,
                                     screenAnswers,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
