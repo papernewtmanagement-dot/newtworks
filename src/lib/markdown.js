@@ -117,7 +117,24 @@ function inlineMd(s) {
   return out;
 }
 
-$// Fill-in blanks: anything in angle brackets that is NOT a known HTML tag and\n// does not open an HTML comment. Widened 2026-08-07 — the old /<([A-Z$][^<>\\n]{0,40})>/\n// silently swallowed real blanks that began with a digit, a lower-case letter or\n// a space, or that ran past 40 characters: <10X>, <30% of Coverage A>,\n// <insert target date>, <n>, <NAME THE VALUABLES THAT YOU ITEMIZED ALONG WITH\n// THEIR COSTS>. They rendered as unknown elements and vanished off the page.\nconst NW_FILL_RE = new RegExp(\n  "<(?!!)(?!/?(?:" +\n  "a|p|br|hr|b|i|u|em|strong|span|div|section|article|header|footer|nav|" +\n  "table|thead|tbody|tfoot|colgroup|col|tr|td|th|caption|ul|ol|li|dl|dt|dd|" +\n  "details|summary|blockquote|figure|figcaption|aside|img|h[1-6]|code|pre|" +\n  "small|sup|sub|mark" +\n  ")(?:[\\\\s/>]|$))([^<>\\\\n]{1,140})>",\n  "g"\n);\n\nconst PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
+// Fill-in blanks: anything in angle brackets that is NOT a known HTML tag and
+// does not open an HTML comment. Widened 2026-08-07 - the old
+// /<([A-Z$][^<>\n]{0,40})>/ silently swallowed real blanks that began with a
+// digit, a lower-case letter or a space, or that ran past 40 characters:
+// <10X>, <30% of Coverage A>, <insert target date>, <n>, and
+// <NAME THE VALUABLES THAT YOU ITEMIZED ALONG WITH THEIR COSTS>. Those
+// rendered as unknown elements and vanished off the page.
+const NW_FILL_RE = new RegExp(
+  "<(?!!)(?!/?(?:" +
+  "a|p|br|hr|b|i|u|em|strong|span|div|section|article|header|footer|nav|" +
+  "table|thead|tbody|tfoot|colgroup|col|tr|td|th|caption|ul|ol|li|dl|dt|dd|" +
+  "details|summary|blockquote|figure|figcaption|aside|img|h[1-6]|code|pre|" +
+  "small|sup|sub|mark" +
+  ")(?:[\\s/>]|$))([^<>\\n]{1,140})>",
+  "g"
+);
+
+const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
 
 // Slugify heading text for id attribute (used by mdToHtml heading render)
 function slugifyHeading(text) {
