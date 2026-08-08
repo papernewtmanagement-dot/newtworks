@@ -133,7 +133,7 @@ function useFinancialsData(entity) {
         const [
           pnlOwnRes, pnlFullRes, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
-          aippRow, balanceSheetRows,
+          aippRow,
           growthBudgetRes, growthCeilingRes,
           bookLatestRes, bookYearStartRes, s11Res,
           childrenRes, allEntitiesRes,
@@ -207,12 +207,6 @@ function useFinancialsData(entity) {
           supabase.from("aipp_tracking")
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
             .order("program_year", { ascending: false }).limit(1).maybeSingle(),
-
-          // Balance Sheet — anchored to 6/30/2026 opening balances + post-6/30 GL activity
-          // Phase 5: business_entity_id lets BalanceSheetSection filter to current
-          // entity's subtree + render entity badge per row (Option B flat listing).
-          supabase.from("v_balance_sheet_anchored")
-            .select("account_code, account_name, account_type, opening_balance, activity_since_open, balance_current, business_entity_id"),
 
           // Growth budget YTD (salary ramp + licensing 6715)
           supabase.from("v_growth_budget_full_ytd")
@@ -567,32 +561,12 @@ function useFinancialsData(entity) {
           }
         } catch (e) { /* swallow */ }
 
-        // Balance Sheet — group anchored rows by type, with totals
-        // Phase 5: preserve business_entity_id so BalanceSheetSection can filter
-        // to current subtree + render entity badge per row (same Option B flat
-        // listing pattern as Bank/Credit — Phase 4). Whole-agency totals still
-        // computed here for MOCK compatibility; section recomputes from filtered
-        // rows when an entity subtree filter is active.
-        const bsRows = (balanceSheetRows.data || []).map(r => ({
-          code:    r.account_code,
-          name:    r.account_name,
-          type:    r.account_type,
-          anchor:  parseFloat(r.opening_balance || 0),
-          activity:parseFloat(r.activity_since_open || 0),
-          balance: parseFloat(r.balance_current || 0),
-          businessEntityId: r.business_entity_id,
-        }));
-        const bsGroup = (t) => bsRows.filter(r => r.type === t).sort((a,b) => a.code.localeCompare(b.code));
-        const bsSum   = (t) => bsRows.filter(r => r.type === t).reduce((s,r) => s + r.balance, 0);
-        const balanceSheet = {
-          assets:      bsGroup("asset"),
-          liabilities: bsGroup("liability"),
-          equity:      bsGroup("equity"),
-          totalAssets:      Math.round(bsSum("asset")),
-          totalLiabilities: Math.round(bsSum("liability")),
-          totalEquity:      Math.round(bsSum("equity")),
-          asOfLabel: monthYearLabel(currentMonth, currentYear),
-        };
+        // Balance Sheet tab retired 2026-08-08 (finrebuild: single-line ledger
+        // has no cash leg, so an anchored balance sheet can no longer be derived
+        // from the ledger). PrintPackage's Balance Sheet page still reads this
+        // shape, so it stays present as the same empty default used before any
+        // data ever loaded, rather than being computed from a live query.
+        const balanceSheet = { assets:[], liabilities:[], equity:[], totalAssets:0, totalLiabilities:0, totalEquity:0, asOfLabel:"" };
 
         // Owner Profit Pace — quarterly margin computation against +1pp/quarter goal.
         // priorIsData is the own-only P&L rows for years !== currentYear (defined above
@@ -3024,113 +2998,6 @@ const CreditSection = ({ data }) => {
   );
 };
 
-// ─── Section: Balance Sheet ───────────────────────────────────
-const BalanceSheetSection = ({ data }) => {
-  const bs = data?.balanceSheet || { assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0, asOfLabel: "" };
-
-  // Phase 5: filter rows to current entity's subtree (Option B — flat listing
-  // across whole subtree with per-row entity badge, same pattern as
-  // BankSection / CreditSection from Phase 4). Totals recompute from filtered
-  // rows so subtree-view totals reflect what's shown, and the ties check works
-  // against the actual displayed slice. entitiesById + descendants derive
-  // client-side from the 5-entity map already fetched by the hook.
-  const ctx = data?.entityContext || {};
-  const allEntities = Array.isArray(ctx.allEntities) ? ctx.allEntities : [];
-  const entitiesById = Object.fromEntries(allEntities.map(e => [e.id, e]));
-  const allow = descendantsOf(ctx.currentEntityId, allEntities);
-  const inScope = (r) => allEntities.length === 0 || !r.businessEntityId || allow.has(r.businessEntityId);
-
-  const allAssets = Array.isArray(bs.assets) ? bs.assets : [];
-  const allLiabilities = Array.isArray(bs.liabilities) ? bs.liabilities : [];
-  const allEquity = Array.isArray(bs.equity) ? bs.equity : [];
-  const assets = allAssets.filter(inScope);
-  const liabilities = allLiabilities.filter(inScope);
-  const equity = allEquity.filter(inScope);
-
-  const totalAssets = assets.reduce((s,r) => s + (r?.balance || 0), 0);
-  const totalLiabilities = liabilities.reduce((s,r) => s + (r?.balance || 0), 0);
-  const totalEquity = equity.reduce((s,r) => s + (r?.balance || 0), 0);
-  const totalLE = totalLiabilities + totalEquity;
-  const ties = Math.abs(totalAssets - totalLE) < 1;
-
-  const totalShown = assets.length + liabilities.length + equity.length;
-  const totalAll = allAssets.length + allLiabilities.length + allEquity.length;
-  const subtreeLabel = allEntities.length > 0 && totalShown !== totalAll
-    ? ` · ${totalShown} of ${totalAll} accounts (subtree)`
-    : "";
-
-  const EntityPill = ({ id }) => {
-    if (!id) return null;
-    const name = entitiesById[id]?.name;
-    if (!name) return null;
-    return (
-      <span style={{
-        display: "inline-block",
-        marginLeft: 8,
-        padding: "1px 6px",
-        fontSize: 9,
-        fontWeight: 600,
-        color: T.slate700,
-        background: T.slate100,
-        border: `1px solid ${T.slate200}`,
-        borderRadius: 999,
-        letterSpacing: "0.02em",
-        verticalAlign: "middle",
-      }}>{name}</span>
-    );
-  };
-
-  const Row = ({ name, amount, bold, indent, entityId }) => (
-    <tr style={{ background: bold ? T.slate50 : "transparent" }}>
-      <td style={{ padding: "7px 8px", fontSize: 12, color: indent ? T.slate600 : T.slate800, paddingLeft: indent ? 24 : 8, fontWeight: bold ? 700 : 400 }}>
-        {name}
-        {!bold && entityId && <EntityPill id={entityId} />}
-      </td>
-      <td style={{ padding: "7px 8px", fontSize: 12, textAlign: "right", fontWeight: bold ? 700 : 400, color: amount < 0 ? T.red : bold ? T.slate900 : T.slate700 }}>{fmtMoneyR(Math.round(amount))}</td>
-    </tr>
-  );
-
-  return (
-    <Card>
-      <CardHeader
-        title="Balance Sheet"
-        sub={`Anchored to 6/30/2026 close + live GL · As of ${bs.asOfLabel || "current"}${subtreeLabel}`}
-      />
-
-      {!ties && (
-        <div style={{ marginBottom: 12, padding: "8px 12px", background: T.amberLt, borderRadius: 8, fontSize: 11, color: "#92400E", borderLeft: `3px solid ${T.amber}` }}>
-          Note: Assets do not currently equal Liabilities + Equity. This indicates GL activity awaiting reconciliation.
-        </div>
-      )}
-
-      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <tbody>
-          <Row name="ASSETS" bold />
-          {assets.map((r,i) => <Row key={`a${i}`} name={r.name} amount={r.balance} indent entityId={r.businessEntityId} />)}
-          <Row name="Total Assets" amount={totalAssets} bold />
-
-          <tr><td colSpan={2} style={{ padding: "6px 0" }} /></tr>
-
-          <Row name="LIABILITIES" bold />
-          {liabilities.map((r,i) => <Row key={`l${i}`} name={r.name} amount={r.balance} indent entityId={r.businessEntityId} />)}
-          <Row name="Total Liabilities" amount={totalLiabilities} bold />
-
-          <tr><td colSpan={2} style={{ padding: "6px 0" }} /></tr>
-
-          <Row name="EQUITY" bold />
-          {equity.map((r,i) => <Row key={`e${i}`} name={r.name} amount={r.balance} indent entityId={r.businessEntityId} />)}
-          <Row name="Total Equity" amount={totalEquity} bold />
-
-          <tr><td colSpan={2} style={{ padding: "2px 0", borderTop: `2px solid ${T.slate800}` }} /></tr>
-          <Row name="Total Liabilities + Equity" amount={totalLE} bold />
-        </tbody>
-      </table>
-      </div>
-    </Card>
-  );
-};
-
 // ─── Section: General Ledger ──────────────────────────────────
 const GLSection = ({ data }) => {
   // Phase 6 (entity hierarchy): filter to current entity's subtree — Option B
@@ -3450,7 +3317,7 @@ const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
 
 // ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
-  const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","balsheet","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
+  const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
   // Phase 3 (entity hierarchy): which entity the Financials views are scoped
   // to. Persists in URL so refresh restores; default = Personal (root of tree).
@@ -3466,7 +3333,6 @@ export default function Financials() {
     { id: "payroll",   label: "Payroll"         },
     { id: "bank",      label: "Bank Accounts"   },
     { id: "credit",    label: "Credit & Debt"   },
-    { id: "balsheet",  label: "Balance Sheet"   },
     { id: "gl",        label: "General Ledger"  },
   ];
   const toolSections = [
@@ -3543,7 +3409,6 @@ export default function Financials() {
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
       {section === "credit"   && <CreditSection data={MOCK} />}
-      {section === "balsheet" && <BalanceSheetSection data={MOCK} />}
       {section === "gl"       && <GLSection data={MOCK} />}
 
       {/* Operational financial tools (folded in from former top-nav items) */}
