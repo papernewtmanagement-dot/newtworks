@@ -1459,8 +1459,8 @@ async function processOneAttachment(
           });
         } else {
           await markDocument(documentId, "processed", r.jeCount,
-            ["journal_entries", "journal_lines"],
-            `${r.jeCount} JEs posted, ${r.suspenseCount} in suspense`);
+            ["statements"],
+            `${r.jeCount} statement rows written`);
           await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
