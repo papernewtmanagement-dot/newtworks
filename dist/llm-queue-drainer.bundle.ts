@@ -303,18 +303,28 @@ async function requireSharedSecret(
 // Invocation: POST { agency_id, shared_secret, [max_items=10, dry_run=false] }
 
 
-// Bank statements run 11-13K tokens which exceeds gpt-oss-120b's 8000 TPM limit.
-// Force a model with higher throughput for the drainer regardless of stored model.
-const BANK_STATEMENT_MODEL = "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile (12,000 TPM) is decommissioned by Groq 2026-08-16.
+// Moved to openai/gpt-oss-120b (8,000 TPM) 2026-08-08 — less throughput, but
+// the only realistic account-tier model that survives the deadline; the
+// account-wide plain-model TPM ceiling is 8,000 regardless of which model is
+// picked (verified live against every candidate). Large statements that
+// still exceed 8,000 tokens are a known, tracked gap (see finance-rebuild
+// Groq-cap blocker) — never silently plugged or hand-entered.
+const BANK_STATEMENT_MODEL = "openai/gpt-oss-120b";
 // Careerplug items are small (~1-2K tokens) but gpt-oss-120b is often the daily-cap
 // victim (200K TPD). Draining on a different model spreads TPD load so we can drain
-// backlog even when gpt-oss-120b is exhausted.
-const CAREERPLUG_MODEL = "llama-3.3-70b-versatile";
+// backlog even when gpt-oss-120b is exhausted. Was llama-3.3-70b-versatile
+// (decommissioned 2026-08-16) — no other account-tier model beats gpt-oss-120b's
+// TPD headroom for this purpose, so this constant is now the same model as the
+// default; kept as a separate constant for the TPD-spreading intent, not because
+// it currently differs.
+const CAREERPLUG_MODEL = "openai/gpt-oss-120b";
 // Wrap-up organize items are small (~1-3K tokens). They queue on Friday
 // afternoons, which is precisely when the whole team sends wrap-ups within the
 // same hour and gpt-oss-120b is most likely to be over quota -- so drain on a
-// different model for the same TPD-spreading reason as careerplug.
-const WRAPUP_MODEL = "llama-3.3-70b-versatile";
+// different model for the same TPD-spreading reason as careerplug. Was
+// llama-3.3-70b-versatile (decommissioned 2026-08-16); same note as above.
+const WRAPUP_MODEL = "openai/gpt-oss-120b";
 
 // Purposes this drainer currently handles. Adding a new purpose = adding a
 // handler function below AND appending its key here.
@@ -546,7 +556,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
 // the RPC's email-based dedup layer will merge in resume data if the same
 // applicant arrives cleanly later.
 //
-// Uses CAREERPLUG_MODEL (llama-3.3-70b-versatile) instead of the queued
+// Uses CAREERPLUG_MODEL (openai/gpt-oss-120b) instead of the queued
 // model (usually gpt-oss-120b) to spread TPD load — gpt-oss-120b is the model
 // that hits 200K TPD daily and drops these to the queue in the first place,
 // so retrying on the same model recreates the problem.

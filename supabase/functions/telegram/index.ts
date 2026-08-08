@@ -28,7 +28,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const TELEGRAM_API_BASE = "https://api.telegram.org/bot";
 const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const BOT_USERNAME = "pjsagencybot";
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile decommissioned by Groq 2026-08-16. Moved to
+// openai/gpt-oss-120b 2026-08-08, matching chatbot/document-processor.
+const GROQ_MODEL = "openai/gpt-oss-120b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 const sb = createClient(
