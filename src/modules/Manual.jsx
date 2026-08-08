@@ -1304,16 +1304,16 @@ What I\'d like to discuss:
            tokens or redesigned. Do not "improve" this without a new preview
            approved first; that is exactly what went wrong last time. */
         .newtworks-handbook-body details { margin: 6px 0 6px 10px; }
-        .newtworks-handbook-body details:not([open]) { background: #EFF1E8; border-radius: 7px; }
+        .newtworks-handbook-body details:not([open]) { background: #F8FAF3; border-radius: 7px; }
         .newtworks-handbook-body details:not([open]) > summary { padding: 8px 12px 8px 30px; }
         .newtworks-handbook-body details[open] {
-          background: #DFE3D2;
+          background: #F1F4E9;
           border-radius: 7px;
           overflow: hidden;
           margin-bottom: 14px;
         }
         .newtworks-handbook-body details[open] > summary {
-          background: #EFF1E8;
+          background: #F8FAF3;
           padding: 8px 12px 8px 30px;
           margin: 0;
         }
