@@ -912,7 +912,7 @@ async function handleFinalize(supa: any, cand: any) {
           .update({ status: "assessed" })
           .eq("id", cand.id)
           .eq("agency_id", AGENCY_ID)
-          .eq("status", "applied")
+          .in("status", ["applied", "assessment_sent"])
           .select("id");
         if (!flipErr && Array.isArray(flipped) && flipped.length > 0) {
           status_flipped = true;
