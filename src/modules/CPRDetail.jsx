@@ -268,10 +268,12 @@ const EDIT_FIELDS = {
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
-    "campaign_onboarding_date", "campaign_defectors_date",
+    "campaign_defectors_date",
     "campaign_single_line_date", "campaign_af_renewals_date",
     // EUR notes (free-form, weekly)
     "eur",
+    // Whiteboard Errors (free-form, weekly) — each line adds +1 to team requirements count
+    "whiteboard_errors",
   ],
   // Agency Performance YTD fields — live on agency_snapshot (single source of truth).
   // Row keyed by (agency_id, snapshot_date=week_ending_date, cadence='weekly').
@@ -471,7 +473,7 @@ function useCPRData(weekDate) {
     bookYearStart: null, // agency_snapshot row at year start
     bookCurrent: null,   // agency_snapshot row (most recent)
     goals: [],           // book_performance_goals rows (current year)
-    campaignPriors: {},  // {onboarding_date, defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
+    campaignPriors: {},  // {defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
     cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
@@ -655,16 +657,15 @@ function useCPRData(weekDate) {
         // Stored directly on weekly_cpr_reports (one column per campaign type).
         const { data: priorCampRows } = await supabase
           .from("weekly_cpr_reports")
-          .select("week_ending_date, campaign_onboarding_date, campaign_defectors_date, campaign_single_line_date, campaign_af_renewals_date")
+          .select("week_ending_date, campaign_defectors_date, campaign_single_line_date, campaign_af_renewals_date")
           .eq("agency_id", AGENCY_ID)
           .lt("week_ending_date", weekDate)
           .order("week_ending_date", { ascending: false })
           .limit(30);
         const campaignPriors = {
-          onboarding_date: null, defectors_date: null, single_line_date: null, af_renewals_date: null,
+          defectors_date: null, single_line_date: null, af_renewals_date: null,
         };
         (priorCampRows || []).forEach(r => {
-          if (!campaignPriors.onboarding_date && r.campaign_onboarding_date) campaignPriors.onboarding_date = r.campaign_onboarding_date;
           if (!campaignPriors.defectors_date  && r.campaign_defectors_date)  campaignPriors.defectors_date  = r.campaign_defectors_date;
           if (!campaignPriors.single_line_date && r.campaign_single_line_date) campaignPriors.single_line_date = r.campaign_single_line_date;
           if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
@@ -2712,6 +2713,39 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
   );
 }
 
+// 13.6 — Whiteboard Errors — free-form text, to the right of EUR.
+// Each line entered adds +1 to the team requirements count (get_weekly_cpr_requirements).
+function WhiteboardErrorsSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  if (editMode) {
+    return (
+      <div>
+        <SectionHeader icon="⚠️" title="Whiteboard Errors" />
+        <Card>
+          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6, lineHeight: 1.4 }}>
+            One error per line. Each line adds +1 to the team requirements count for this week.
+          </div>
+          <TextArea
+            value={formReport.whiteboard_errors}
+            onChange={v => onReportChange("whiteboard_errors", v)}
+            dirty={isReportDirty("whiteboard_errors")}
+            rows={4}
+          />
+        </Card>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <SectionHeader icon="⚠️" title="Whiteboard Errors" />
+      <Card>
+        {report?.whiteboard_errors
+          ? <div style={{ fontSize: 13, color: T.slate800, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{report.whiteboard_errors}</div>
+          : <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>No whiteboard errors for this week.</div>}
+      </Card>
+    </div>
+  );
+}
+
 // 13 — Non-Pays
 function NonPaysSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
   if (editMode) {
@@ -2752,7 +2786,6 @@ function CampaignsSection({ report, campaignPriors, weekDate, editMode, formRepo
   // cadence "week" → "this week" option = weekDate (Saturday)
   // cadence "month" → "this month" option = first-of-month YYYY-MM-01
   const TYPES = [
-    { key: "campaign_onboarding_date",  priorKey: "onboarding_date",  label: "Onboarding",          cadence: "week"  },
     { key: "campaign_defectors_date",   priorKey: "defectors_date",   label: "Defectors",           cadence: "month" },
     { key: "campaign_single_line_date", priorKey: "single_line_date", label: "Single-Line At-Risk", cadence: "month" },
     { key: "campaign_af_renewals_date", priorKey: "af_renewals_date", label: "A/F Renewals",        cadence: "month" },
@@ -5989,12 +6022,13 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 11. SMVC & Scorecard — merged into Agency Performance section (rate rows). */}
 
 
-      {/* 12 + 13. Claims (left) + Non-Pays (right) — same row, equal widths.
-          Stacks vertically on narrow screens via grid auto-fit. Per Peter 2026-07-12. */}
+      {/* 12 + 13 + 14. Non-Pays + Claims + Campaigns — same row, single column each.
+          Stacks vertically on narrow screens via grid auto-fit. Per Peter 2026-07-12 (Non-Pays/Claims),
+          Campaigns folded into row + onboarding option dropped 2026-08-07. */}
       <Section>
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
           gap: 16, alignItems: "start",
         }}>
           <div>
@@ -6015,31 +6049,47 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
               onReportChange={edit.setReportField}
             />
           </div>
+          <div>
+            <CampaignsSection
+              report={data.report}
+              campaignPriors={data.campaignPriors}
+              weekDate={weekDate}
+              editMode={edit.active}
+              formReport={edit.form.report}
+              isReportDirty={edit.isReportDirty}
+              onReportChange={edit.setReportField}
+            />
+          </div>
         </div>
       </Section>
 
-      {/* 13.5. EUR (Underwriting Reports) — text notes */}
+      {/* 13.5. EUR (left) + Whiteboard Errors (right) — same row, single column each.
+          Stacks vertically on narrow screens via grid auto-fit. Whiteboard Errors added 2026-08-07. */}
       <Section>
-        <EURSection
-          report={data.report}
-          editMode={edit.active}
-          formReport={edit.form.report}
-          isReportDirty={edit.isReportDirty}
-          onReportChange={edit.setReportField}
-        />
-      </Section>
-
-      {/* 14. Campaigns */}
-      <Section>
-        <CampaignsSection
-          report={data.report}
-          campaignPriors={data.campaignPriors}
-          weekDate={weekDate}
-          editMode={edit.active}
-          formReport={edit.form.report}
-          isReportDirty={edit.isReportDirty}
-          onReportChange={edit.setReportField}
-        />
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 16, alignItems: "start",
+        }}>
+          <div>
+            <EURSection
+              report={data.report}
+              editMode={edit.active}
+              formReport={edit.form.report}
+              isReportDirty={edit.isReportDirty}
+              onReportChange={edit.setReportField}
+            />
+          </div>
+          <div>
+            <WhiteboardErrorsSection
+              report={data.report}
+              editMode={edit.active}
+              formReport={edit.form.report}
+              isReportDirty={edit.isReportDirty}
+              onReportChange={edit.setReportField}
+            />
+          </div>
+        </div>
       </Section>
 
       <Divider />
