@@ -1251,33 +1251,6 @@ What I\'d like to discuss:
         .newtworks-info-popover a { color: ${T.blue}; text-decoration: underline; }
         .newtworks-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 22px 0 8px 0; }
         .newtworks-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 18px 0 6px 0; }
-        /* Peter 2026-08-08: body content should sit slightly indented under its
-           header, so it stands apart rather than starting flush at the same left
-           edge as the heading above it. Direct-child selectors so this applies
-           once at the top level and never double-indents nested content (a
-           <p> inside a blockquote or details doesn't get hit again). */
-        .newtworks-handbook-body > p,
-        .newtworks-handbook-body > ul,
-        .newtworks-handbook-body > ol,
-        .newtworks-handbook-body > blockquote,
-        .newtworks-handbook-body > pre,
-        .newtworks-handbook-body > details,
-        .newtworks-handbook-body > table,
-        .newtworks-handbook-body > .newtworks-table-wrap {
-          margin-left: 16px;
-        }
-        /* Tables render inside their own horizontal-scroll wrapper div (see
-           markdown.js), so they were never a direct child of this container and
-           the indent above skipped them entirely - table content stayed flush
-           while everything around it moved. Widened here rather than 10px:
-           against h2 (which has its own 12px inner padding), a 10px content
-           indent landed almost exactly under the header text and read as no
-           indent at all. Peter 2026-08-08, second pass - first pass was correct
-           in code but too subtle to see. */
-        .newtworks-handbook-body > table,
-        .newtworks-handbook-body > .newtworks-table-wrap {
-          width: calc(100% - 16px);
-        }
         .newtworks-handbook-body p { margin: 0 0 14px 0; }
         .newtworks-handbook-body ul, .newtworks-handbook-body ol { margin: 8px 0 16px 0; padding-left: 24px; }
         .newtworks-handbook-body li { margin-bottom: 6px; }
@@ -1371,6 +1344,25 @@ What I\'d like to discuss:
         .newtworks-handbook-body details[open] > summary + * { padding-top: 10px; }
         .newtworks-handbook-body details[open] > *:last-child { padding-bottom: 12px; }
         .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
+        /* ─── BODY CONTENT INDENT — MUST STAY LAST IN THIS BLOCK ───
+           Peter 2026-08-08. Body content sits 12px in from its header so it
+           stands apart; headers stay flush.
+           WHY IT LIVES AT THE BOTTOM: the first two attempts set margin-left
+           near the top of this style block and were SILENTLY CANCELLED. The
+           element rules further down use the margin SHORTHAND
+           (p -> margin: 0 0 14px 0; ul/ol -> margin: 8px 0 16px 0; blockquote
+           and pre -> margin: 14px 0; table -> margin: 16px 0), and a shorthand
+           resets every side including left. Equal specificity, later rule wins,
+           so the indent was dead CSS - it shipped in the bundle and changed
+           nothing on screen. :is() also lifts specificity above the bare
+           element rules so ordering alone isn't the only defence.
+           If you add element margin rules, add them ABOVE this, never below. */
+        .newtworks-handbook-body > :is(p, ul, ol, blockquote, pre, details, table, .newtworks-table-wrap) {
+          margin-left: 12px;
+        }
+        .newtworks-handbook-body > :is(table, .newtworks-table-wrap) {
+          width: calc(100% - 12px);
+        }
       `}</style>
 
       {/* Title block */}
