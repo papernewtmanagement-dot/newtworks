@@ -1285,38 +1285,51 @@ What I\'d like to discuss:
           vertical-align: top;
         }
         .newtworks-handbook-body th { background: ${T.slate50}; font-weight: 700; color: ${T.slate900}; }
+        /* Expanders — SEAMLESS CONTAINER, not a chip + floating text. Approved
+           2026-08-08 after three passes: a bare quiet line (no box at all) didn't
+           read as a dropdown; a chip caret + separate left-rule on the content
+           looked like two disconnected pieces with a visible seam where the rule
+           started. This version is ONE surface: closed state is a light sage-tint
+           bar; open state keeps that same bar as the title CAP and adds a darker
+           step of the same colour behind the content, with NO border/gap between
+           them — the details element itself carries the single background
+           (overflow:hidden clips it into the rounded shape), so title and every
+           child underneath it (however many paragraphs or bullet lists) sit on
+           one continuous colour instead of each getting its own box. Round chip
+           caret (matches the 18px .newtworks-info-btn badge) stays from the prior
+           pass — only the container architecture changed here. Do not go back to
+           per-child backgrounds (*:not(summary) each got their own bg + radius) —
+           that was the exact bug that caused the visible seam.  */
         .newtworks-handbook-body details {
-          margin: 6px 0;
+          margin: 6px 0 6px 8px;
+          background: ${T.blue}0D;
+          border-radius: 8px;
         }
-        .newtworks-handbook-body details[open] { margin-bottom: 14px; }
-        /* Expanders are a QUIET DISCLOSURE LINE, not a card. No fill, no border, no
-           radius, no padding box - Peter 2026-08-07, said twice: the grey bordered
-           panels grabbed more attention than the headings. Title sits below h3 weight
-           (500 vs 700) in a lighter-than-body colour with a small grey caret; open
-           content is indented to align under the title. Do not restore the box. */
+        .newtworks-handbook-body details[open] {
+          background: ${T.blue}17;
+          overflow: hidden;
+          margin-bottom: 14px;
+        }
         .newtworks-handbook-body summary {
           cursor: pointer;
           font-weight: 500;
           color: ${T.slate600};
-          padding: 1px 0 1px 26px;
+          padding: 8px 12px 8px 34px;
+          margin: 0;
           user-select: none;
           list-style: none;
           position: relative;
         }
+        .newtworks-handbook-body details[open] > summary {
+          background: ${T.blue}0D;
+        }
         .newtworks-handbook-body summary::-webkit-details-marker { display: none; }
-        /* Round chip caret, not a bare triangle. Matches the existing 18px circular
-           info-button badge (see .newtworks-info-btn above): same size, same sage
-           border+tint family, same border-radius:50%. Closed = quiet outline chip
-           (border ${T.blue}55 / bg ${T.blue}11), matching info-btn exactly. Open =
-           the app-wide "active" fill (T.blueLt, same token used for the active nav
-           row and active manual-tree row) rather than a hard solid sage fill, so
-           "this is open" reads the same as every other active state in the app.
-           Peter 2026-08-07: wanted a bit more obvious it is a dropdown, not a bullet. */
         .newtworks-handbook-body summary::before {
           content: "▸";
           position: absolute;
-          left: 0;
-          top: 0;
+          left: 8px;
+          top: 50%;
+          transform: translateY(-50%);
           width: 18px;
           height: 18px;
           display: inline-flex;
@@ -1333,20 +1346,13 @@ What I\'d like to discuss:
           background: ${T.blueLt};
           border-color: ${T.blue}88;
         }
-        .newtworks-handbook-body details > *:not(summary) { margin-top: 8px; padding-left: 22px; }
-        /* The chip caret alone only marks the TITLE as open - the paragraph text
-           below it looked identical to ordinary page copy once expanded, so an open
-           section vanished into the rest of the page. Peter 2026-08-07 (third pass):
-           give the open BODY its own visual edge, not just the button. Sage left
-           rule + a hair of sage tint on the content only, never on the title line,
-           never on closed sections - so a page of fifteen closed items still reads
-           quiet, and only the ones actually expanded stand apart from body text. */
-        .newtworks-handbook-body details[open] > *:not(summary) {
-          border-left: 2px solid ${T.blue}55;
-          background: ${T.blue}08;
-          padding-left: 14px;
-          border-radius: 0 4px 4px 0;
+        .newtworks-handbook-body details > *:not(summary) {
+          margin: 0;
+          padding: 0 12px 0 34px;
+          background: transparent;
         }
+        .newtworks-handbook-body details[open] > summary + * { padding-top: 10px; }
+        .newtworks-handbook-body details[open] > *:last-child { padding-bottom: 12px; }
         .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
       `}</style>
 
