@@ -77,6 +77,17 @@ const fmtInt = (n) => {
   if (!isFinite(v)) return "—";
   return Math.round(v).toLocaleString("en-US");
 };
+// Quote quantities can be fractional now that Cost ramps during the Code Red grace
+// period (weeks 1-2 = 0, 3-4 = 0.20, 5-8 = 0.50, 9+ = 1.00). fmtInt would round 0.20
+// down to 0 and 0.50 up to 1, hiding the ramp — use this for any quote quantity that
+// passes through Cost: Last Wk, Cost, Total, Paid, Next Wk, Net Quotes.
+const fmtQty = (n) => {
+  if (n === null || n === undefined || n === "") return "—";
+  const v = Number(n);
+  if (!isFinite(v)) return "—";
+  if (Number.isInteger(v)) return v.toLocaleString("en-US");
+  return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 const fmtSigned = (n) => {
   if (n === null || n === undefined || n === "") return "—";
   const v = Number(n);
@@ -477,7 +488,7 @@ function useCPRData(weekDate) {
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
     cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
-    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses, code_red_misses}}
+    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
     section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
     leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
@@ -783,7 +794,6 @@ function useCPRData(weekDate) {
             carryover: Number(r.carryover) || 0,
             personal_misses: Number(r.personal_misses) || 0,
             team_misses: Number(r.team_misses) || 0,
-            code_red_misses: Number(r.code_red_misses) || 0,
             missed: Number(r.missed) || 0,
             cost: Number(r.cost) || 0,
             total: Number(r.total) || 0,
@@ -1659,18 +1669,8 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                 return (
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                    <Td align="right">{fmtInt(r.carryover)}</Td>
-                    <Td align="right">
-                      {fmtInt(r.missed)}
-                      {(Number(r.code_red_misses) || 0) > 0 ? (
-                        <span
-                          title={`${r.code_red_misses} of these came from Code Reds`}
-                          style={{ fontSize: 10, color: T.red, fontWeight: 700, marginLeft: 4 }}
-                        >
-                          🔴{r.code_red_misses}
-                        </span>
-                      ) : null}
-                    </Td>
+                    <Td align="right">{fmtQty(r.carryover)}</Td>
+                    <Td align="right">{fmtInt(r.missed)}</Td>
                     <Td align="right" style={{ padding: editMode ? 4 : undefined, background: dirty ? (T.amber50 || "#fef3c7") : undefined }}>
                       {editMode ? (
                         <NumberInput
@@ -1684,10 +1684,10 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                         <span style={{ color: (Number(r.modified) || 0) === 0 ? T.slate500 : T.slate900 }}>{fmtSigned(Number(r.modified) || 0)}</span>
                       )}
                     </Td>
-                    <Td align="right">{fmtInt(r.cost)}</Td>
-                    <Td align="right">{fmtInt(liveTotal)}</Td>
-                    <Td align="right">{fmtInt(r.paid)}</Td>
-                    <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtInt(liveOwed)}</Td>
+                    <Td align="right">{fmtQty(r.cost)}</Td>
+                    <Td align="right">{fmtQty(liveTotal)}</Td>
+                    <Td align="right">{fmtQty(r.paid)}</Td>
+                    <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtQty(liveOwed)}</Td>
                   </tr>
                 );
               })}
@@ -3109,7 +3109,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                     ) : (
                       <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
                     )}
-                    <Td align="right" style={{ color: T.slate500 }}>{fmtInt(netPreview)}</Td>
+                    <Td align="right" style={{ color: T.slate500 }}>{fmtQty(netPreview)}</Td>
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
                         <NumberInput
@@ -3195,7 +3195,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
               <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Team Total</Td>
                 <Td align="right"></Td>
-                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtInt(teamNetQuotesTotal)}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtQty(teamNetQuotesTotal)}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
                 <Td align="right" style={{ background: _TINT_1PCT }}></Td>
                 {quarterList.map(q => <Td key={q} align="right" style={{ background: _TINT_HIST }}></Td>)}
