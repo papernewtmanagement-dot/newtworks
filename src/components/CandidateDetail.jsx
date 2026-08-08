@@ -858,7 +858,7 @@ const CD_ASSESS_GRID_CSS = `
 .cd-col-rolefit { grid-area: rolefit; min-width: 0; }
 `;
 
-function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, screenAnswers }) {
+function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers }) {
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
@@ -907,6 +907,19 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
   const pctByFacet = {};
   if (pctRows) {
     for (const r of pctRows) pctByFacet[r.facet] = r.percentile;
+  }
+  // Batch 0 / 0E — dual-reference facet display inputs.
+  const rewordedByFacet = facetRewordedFlags || {};
+  const poolRows = Array.isArray(v2PoolPosition) ? v2PoolPosition : null;
+  const poolByFacet = {};
+  if (poolRows) {
+    for (const r of poolRows) poolByFacet[r.facet] = r;
+  }
+  // Note shows once per facet section (not once per facet) — only if at
+  // least one VISIBLE facet on this candidate has been reworded.
+  let anyRewordedVisible = false;
+  for (const trait of Object.keys(V2_FACET_LABELS)) {
+    if (rewordedByFacet[trait]) { anyRewordedVisible = true; break; }
   }
 
   return (
@@ -1008,15 +1021,71 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
               const nItems = row?.n_items_scored;
               const insufficient = nItems != null && nItems < 4;
               const pct = pctByFacet[trait];
+              const reworded = !!rewordedByFacet[trait];
+              const pool = poolByFacet[trait]; // undefined until pool_n >= 2
+
+              // WHEN items_reworded_after_norm = false — unchanged from today.
+              if (!reworded) {
+                return (
+                  <AssessRow
+                    key={trait}
+                    label={label}
+                    value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
+                    band="none"
+                  />
+                );
+              }
+
+              if (insufficient) {
+                return (
+                  <AssessRow key={trait} label={label} value="insufficient data" band="none" />
+                );
+              }
+
+              const poolLine = pool
+                ? `${pool.pool_position} of ${pool.pool_n} applicants` +
+                  (pool.pool_n >= 30 ? ` · ${pool.pool_percentile}th in our pool` : "")
+                : null;
+
+              // WHEN items_reworded_after_norm = true AND pool_is_primary = true —
+              // pool position leads, published-norm percentile is the secondary line.
+              if (pool?.pool_is_primary) {
+                return (
+                  <AssessRow
+                    key={trait}
+                    label={label}
+                    value={pool.pool_percentile == null ? "—" : `${pool.pool_percentile}th in our applicant pool (${pool.pool_position} of ${pool.pool_n})`}
+                    band="none"
+                    subline={pct == null ? undefined : `${pct}th percentile (published average, shifted)`}
+                  />
+                );
+              }
+
+              // WHEN items_reworded_after_norm = true AND pool_is_primary = false
+              // (includes no pool data yet, pool_n < 2) — published-norm percentile
+              // leads with the shifted-label suffix; pool line (if any) is secondary.
               return (
                 <AssessRow
                   key={trait}
                   label={label}
-                  value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
+                  value={pct == null ? "—" : pct}
+                  extra={pct == null ? undefined : "(shifted — see note)"}
                   band="none"
+                  subline={poolLine || undefined}
                 />
               );
             })}
+          </div>
+        )}
+        {/* Neutralization note — shown once per facet section, never per
+            facet. Batch 0 / 0E copy, verbatim per planning-thread spec. */}
+        {!pctRowsLoading && facetRows != null && anyRewordedVisible && (
+          <div style={{ fontSize: 10, color: T.slate500, marginTop: 8, lineHeight: 1.4 }}>
+            Questions for these facets were reworded so candidates can't guess the preferred answer.
+            That makes scores run lower than the published adult averages they're compared against,
+            so treat the percentile as a way to rank candidates against each other, not as a statement
+            about where someone sits among adults generally. Applicant-pool position becomes the main
+            number once we have 100 completed assessments.
           </div>
         )}
       </div>
@@ -1158,9 +1227,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
   );
 }
 
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, screenAnswers }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, facetRewordedFlags, v2PoolPosition, screenAnswers }) {
   if (detail?.assessment_source === "v2") {
-    return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, selectedRole, setSelectedRole, T, screenAnswers });
+    return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers });
   }
   return (
     <div>
@@ -1847,6 +1916,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
   // hiregauge_candidate_facet_percentiles, never stored. Step 8 frontend
   // work order (2026-08-07): facet display shows percentile, not raw score.
   const [v2Percentiles, setV2Percentiles] = useState(null);
+  // Batch 0 / 0E — dual-reference facet display. items_reworded_after_norm
+  // per facet (hiregauge_facet_norms.items_reworded_after_norm) tells the
+  // renderer whether the published-norm percentile above is shifted low by
+  // item neutralization. pool_position/pool_n/pool_percentile/pool_is_primary
+  // come from hiregauge_candidate_pool_position, computed on read, never
+  // stored — empty until the neutralization cutover marker is set AND the
+  // pool has at least 2 completed post-cutover assessments for that facet.
+  const [facetRewordedFlags, setFacetRewordedFlags] = useState(null);
+  const [v2PoolPosition, setV2PoolPosition] = useState(null);
   // Newtworks v2 competency layer — full per-role detail (12 competencies with
   // tier/floor/adjusted + gates_fired/verdict_cap/hard_decline/churn_risk),
   // keyed by role_category. Only fetched for v2 candidates; replaces the old
@@ -1936,6 +2014,41 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
       .then(({ data, error }) => {
         if (cancelled || error) return;
         setV2Percentiles(Array.isArray(data) ? data : []);
+      });
+    return () => { cancelled = true; };
+  }, [detail?.id, detail?.assessment_source]);
+
+  // Batch 0 / 0E — items_reworded_after_norm per facet. Agency-wide, not
+  // per-candidate, so it only needs to refetch when the agency does (i.e.
+  // effectively once) — not keyed to detail.id.
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase
+      .from("hiregauge_facet_norms")
+      .select("facet, items_reworded_after_norm")
+      .eq("agency_id", AGENCY_ID)
+      .then(({ data, error }) => {
+        if (cancelled || error || !Array.isArray(data)) return;
+        const byFacet = {};
+        for (const r of data) byFacet[r.facet] = r.items_reworded_after_norm;
+        setFacetRewordedFlags(byFacet);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Batch 0 / 0E — applicant-pool position per facet, only for v2 candidates.
+  // Returns zero rows for every facet until the neutralization cutover marker
+  // is set (0C) and enough post-cutover assessments exist (0D thresholds).
+  useEffect(() => {
+    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    setV2PoolPosition(null);
+    let cancelled = false;
+    supabase
+      .rpc("hiregauge_candidate_pool_position", { p_candidate_id: detail.id })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        setV2PoolPosition(Array.isArray(data) ? data : []);
       });
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
@@ -2686,6 +2799,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     v1Extras, v1InvitedAt,
                                     intelligence, roleIdealRange,
                                     v2Facets, v2Percentiles, v2RoleFits,
+                                    facetRewordedFlags, v2PoolPosition,
                                     screenAnswers,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({

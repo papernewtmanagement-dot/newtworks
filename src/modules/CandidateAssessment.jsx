@@ -91,10 +91,55 @@ async function callV1(candidateId, token, action, extra = {}) {
   }
 }
 
-// Sort choices so any "None of these" option sits last (VCT convention).
-function orderChoices(choices) {
+// Deterministic string hash (djb2) -> used to seed the shuffle below. Same
+// seed string always produces the same hash, so the same candidate viewing
+// the same item always sees the same choice order, even across reloads.
+function djb2Hash(str) {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 33) ^ str.charCodeAt(i);
+  }
+  return hash >>> 0; // force unsigned 32-bit
+}
+
+// Mulberry32 PRNG seeded from a 32-bit integer. Deterministic, fast, good
+// enough distribution for shuffling a 4-option list -- not cryptographic.
+function mulberry32(seed) {
+  let a = seed;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Seeded Fisher-Yates shuffle. seedString should uniquely identify the
+// (candidate, item) pair so the same candidate always sees the same order
+// for the same item on reload, but different candidates see different
+// orders. Not Math.random() -- that would reshuffle on every render/reload.
+function seededShuffle(arr, seedString) {
+  const out = [...arr];
+  const rand = mulberry32(djb2Hash(String(seedString)));
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// Sort choices so any "None of these" option sits last (VCT convention),
+// after first shuffling the remaining choices deterministically per
+// candidate+item. This breaks the position-2-is-always-correct display
+// leak on scenario (SJT) items -- scoring compares selected TEXT against
+// answer_key, so storage order was never the issue, only display order.
+// seedKey should be `${candidateId}:${item.id}` (or similar) -- omit it
+// (or pass a falsy value) to fall back to unshuffled order, e.g. for any
+// caller that doesn't have a stable candidate+item identity yet.
+function orderChoices(choices, seedKey) {
   if (!Array.isArray(choices)) return [];
-  const out = [...choices];
+  let out = seedKey ? seededShuffle(choices, seedKey) : [...choices];
   const idx = out.findIndex(
     (c) => typeof c === "string" && c.toLowerCase().includes("none of these")
   );
@@ -797,6 +842,7 @@ export default function CandidateAssessment({ candidateId, token }) {
         {/* Response controls */}
         <ResponseControls
           item={item}
+          candidateId={candidateId}
           onAnswer={(p) => {
             if (!saving) setPending(p);
           }}
@@ -885,7 +931,7 @@ function FreeTextItem({ item, onAnswer, selected, saving }) {
   );
 }
 
-function ResponseControls({ item, onAnswer, selected, saving, vp }) {
+function ResponseControls({ item, candidateId, onAnswer, selected, saving, vp }) {
   // Stint 5 (written screen) free-text items. Checked first -- these carry
   // no choices and no scale_max, so without this check they would silently
   // fall through to the Likert-scale default at the bottom of this function.
@@ -910,7 +956,10 @@ function ResponseControls({ item, onAnswer, selected, saving, vp }) {
 
   // Multi-choice item (choices is a JSONB array).
   if (Array.isArray(item?.choices) && item.choices.length > 0) {
-    const choices = orderChoices(item.choices);
+    const choices = orderChoices(
+      item.choices,
+      candidateId && item?.id ? `${candidateId}:${item.id}` : null
+    );
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {choices.map((choice, i) => (
