@@ -1287,6 +1287,19 @@ What I\'d like to discuss:
         }
         .newtworks-handbook-body blockquote p { margin: 0 0 6px 0; }
         .newtworks-handbook-body blockquote p:last-child { margin-bottom: 0; }
+        /* Info-box blockquotes (Knowledge & FAQ sections) carry their own left
+           border + tint so they stand out on a plain page. Inside an OPEN
+           expander that surface already exists - the blockquotes own border
+           was showing as a second colored line nested inside the containers
+           shading. Peter 2026-08-08. Neutralize only in that context; leave the
+           standalone blockquote style untouched everywhere else. */
+        .newtworks-handbook-body details[open] blockquote {
+          background: transparent;
+          border-left: none;
+          border-radius: 0;
+          padding: 4px 0;
+          margin: 10px 0;
+        }
         .newtworks-handbook-body table {
           border-collapse: collapse;
           margin: 16px 0;
