@@ -52,25 +52,6 @@ const VOCAB_FAMILIARITY_ANCHORS = [
   "Know exactly what it means",
 ];
 
-// Instruments whose published items are already full first-person sentences
-// (enterprising items were reworded 2026-08-05 to "I would enjoy …" full
-// sentences per Peter, so they belong here too). These must NOT get the "I " stem
-// that headless IPIP/HEXACO fragments need — prefixing them produced
-// "I i can always manage…" / "I wherever I have been…" (caught by Peter,
-// 2026-08-05, stint 2).
-const FULL_SENTENCE_TRAITS = new Set([
-  "dispositional_optimism",
-  "self_efficacy",
-  "proactive_personality",
-  "political_skill_networking",
-  "customer_orientation",
-  "learning_goal_orientation",
-  "prove_goal_orientation",
-  "avoid_goal_orientation",
-  "competitiveness",
-  "enterprising",
-]);
-
 async function callV1(candidateId, token, action, extra = {}) {
   const body = { candidate_id: candidateId, token, action, ...extra };
   const headers = { "Content-Type": "application/json" };
@@ -150,11 +131,15 @@ function orderChoices(choices, seedKey) {
   return out;
 }
 
-// Personality and impression-management items are stored as IPIP fragments
-// ("Enjoy silence.", "Am the life of the party.", "Believe there is never an
-// excuse for lying."). Render them to the candidate as first-person statements
-// so it's obvious they're being asked to reflect on themselves. Cognitive and
-// validity items are already full sentences — pass them through untouched.
+// Items are shown to the candidate exactly as they are stored. Every statement
+// in the bank was rewritten to stand on its own as a complete sentence, so
+// nothing is prepended to it. Peter directive 2026-08-07: the old "I " stem was
+// still being glued onto the front of 116 active statements even after the
+// rewording, which mangled them — it lowercased the first word and produced
+// "I getting someone to move usually means …" and "I how well do you know the
+// word …" (the vocabulary familiarity items lost their multiple-choice payload
+// when they moved to a rating format on 2026-08-06, so they slipped past the
+// guard that used to protect real questions from being prefixed).
 function formatItemText(item) {
   if (!item) return "";
   // GMA pattern items store their generator's internal rule description in
@@ -168,22 +153,7 @@ function formatItemText(item) {
   // for consistency with the pattern-matching item type -- skip item_text
   // here too so the two GMA subtests behave identically.
   if (isGmaNumericalItem(item)) return "";
-  const text = item.item_text || "";
-  if (!text) return text;
-  // Vocabulary / validity checks live in the personality section but are real
-  // multiple-choice questions ("What does the word X mean?"), not IPIP
-  // fragments — prefixing produced "I what does the word …" (caught in the
-  // 2026-08-05 self-test). Anything carrying a choices payload is a full
-  // question: never prefix it.
-  if (item.choices != null) return text;
-  const isSelfDescriptive =
-    item.section === "newtworks_v1_personality" ||
-    item.section === "newtworks_v1_impression_mgmt" ||
-    item.section === "newtworks_v2_personality";
-  if (!isSelfDescriptive) return text;
-  if (FULL_SENTENCE_TRAITS.has(item.hypothesized_trait)) return text;
-  if (/^I[ '\u2019]/.test(text)) return text;
-  return "I " + text.charAt(0).toLowerCase() + text.slice(1);
+  return item.item_text || "";
 }
 
 export default function CandidateAssessment({ candidateId, token }) {
