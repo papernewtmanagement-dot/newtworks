@@ -41,7 +41,6 @@ import { sb, getSetting, jsonResponse } from "./lib/supabase.ts";
 import { callComposio, fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "./lib/composio.ts";
 import {
   classifyDocument,
-  classifyBankTxn,
   inferDateFromFilename,
   DocType,
 } from "./classifier.ts";
@@ -57,8 +56,6 @@ import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
 import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
-import { postJournalEntry, resetReferenceCounters } from "./gl-poster.ts";
-import { createSuspenseTask } from "./suspense.ts";
 
 interface RunCtx {
   agencyId: string;
@@ -690,13 +687,61 @@ async function extractText(
 
 // ---- Bank handler ----------------------------------------------------------
 
+// Statement-native sign per D15 (finance rebuild spec, 2026-08-07):
+// bank: deposit positive / withdrawal negative. credit: charge positive /
+// credit-refund negative. The LLM parser (bank.ts) always returns
+// "positive = money in, negative = money out" regardless of account kind —
+// that is a fixed, documented source convention, not a guess from magnitude,
+// so flipping it for credit accounts here is a mechanical transform, not a
+// judgment call. Bank needs no flip (money-in/out already matches
+// deposit/withdrawal). Credit needs a flip: a charge is money paid out by
+// the cardholder (negative in parser convention) but must land positive
+// (increases what's owed); a credit/refund is money "in" (parser positive)
+// but must land negative (reduces what's owed). Never derived from the
+// amount's own sign or magnitude — only from the known account_kind. This
+// is the exact bug class behind the 2026-08-05 cc_gl_writer sign incident;
+// flagging it explicitly rather than letting it pass silently.
+function toStatementNativeAmount(accountKind: string, parsedSignedAmount: number): number {
+  return accountKind === "credit" ? -parsedSignedAmount : parsedSignedAmount;
+}
+
+// Same dedup-fingerprint scheme gl-poster.ts used for journal_entries
+// idempotency (base = account:date:amount:payee, :N suffix for same-day
+// repeats). Per D16, statements has no unique index and duplicates are
+// flagged, not blocked — so this is no longer a pre-insert existence check,
+// just a traceable identifier carried onto the row.
+const statementRefCounters = new Map<string, number>();
+function resetStatementRefCounters(): void {
+  statementRefCounters.clear();
+}
+function makeStatementReference(accountCode: string, txnDate: string, payee: string, amountAbs: number): { base: string; reference: string } {
+  const payeeShort = payee.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
+  const amtCents = Math.round(amountAbs * 100);
+  const base = `dp:${accountCode}:${txnDate}:${amtCents}:${payeeShort}`;
+  const count = (statementRefCounters.get(base) ?? 0) + 1;
+  statementRefCounters.set(base, count);
+  return { base, reference: count === 1 ? base : `${base}:${count}` };
+}
+
 async function handleBankStatement(
   ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
 ): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string; held?: boolean }> {
   // Reset per-doc reference counter so identical-fingerprint txns across
   // different documents don't leak :N suffixes to each other.
-  resetReferenceCounters();
+  resetStatementRefCounters();
+
+  // Resolve the full accounts row (id, business_entity_id, account_kind) —
+  // not just the chart code sourceAccountCode already carries. See
+  // resolveSourceAccountEntry: same match logic as resolveSourceAccount, so
+  // this can never disagree with the code already resolved for this
+  // document, it just also returns the row identity statements.account_id
+  // needs.
+  const acctResult = await resolveSourceAccountEntry(ctx.agencyId, att.fromEmail, att.subject, att.fileName);
+  if (!("entry" in acctResult)) {
+    return { jeCount: 0, suspenseCount: 0, error: `account_unmapped: ${acctResult.unmapped}` };
+  }
+  const account = acctResult.entry;
 
   const extracted = await extractText(ctx, att, bytesB64);
   if (!extracted.ok) return { jeCount: 0, suspenseCount: 0, error: extracted.error };
@@ -801,30 +846,46 @@ async function handleBankStatement(
     console.warn(`[document-processor] statement_balance_write_failed doc=${documentId} account=${sourceAccountCode}: ${balWrite.error}`);
   }
 
+  // ---- Write to statements (canon), NOT to a journal / ledger table -------
+  // D3 (finance rebuild, 2026-08-07): the ledger no longer gets written from
+  // here at all. This function's only job is landing raw statement rows in
+  // statements. Classification into the profit-and-loss ledger is a
+  // separate, later step (statement_gl_writer, built in Phase 3) that reads
+  // statements — it is not triggered inline per document. No suspense
+  // account, no classification, no journal entry, from this function.
   let jeCount = 0;
-  let suspenseCount = 0;
+  const suspenseCount = 0; // no suspense concept in the new design (D3/D13)
   for (const row of parsed.transactions) {
-    const classification = await classifyBankTxn(ctx.agencyId, row.txn);
-    const post = await postJournalEntry({
-      agencyId: ctx.agencyId,
-      txn: row.txn,
-      txnDate: row.date,
-      classification,
-      sourceDocumentId: documentId,
+    const amount = toStatementNativeAmount(account.accountKind, row.txn.signedAmount);
+    const { base, reference } = makeStatementReference(
+      sourceAccountCode, row.date, row.txn.payee, Math.abs(amount),
+    );
+    const description = row.txn.memo
+      ? `${row.txn.payee} — ${row.txn.memo}`
+      : row.txn.payee;
+
+    // legacy_source_table intentionally omitted. Migration
+    // finrebuild_e1_statements_legacy_source_table_nullable (2026-08-07)
+    // dropped its NOT NULL constraint with no default; NULL is the correct,
+    // intended value for live intake (means "not from the 2026-08-07
+    // merge"), not a sentinel to be filled in.
+    const { error: insErr } = await sb.from("statements").insert({
+      agency_id: ctx.agencyId,
+      business_entity_id: account.businessEntityId,
+      account_id: account.id,
+      account_kind: account.accountKind,
+      transaction_date: row.date,
+      description,
+      amount,
+      transaction_type: account.accountKind === "credit"
+        ? (amount >= 0 ? "charge" : "payment_or_credit")
+        : (amount >= 0 ? "deposit" : "withdrawal"),
+      reference_number: reference,
+      dedup_fingerprint: base,
+      source_document_id: documentId,
     });
-    if (post.skipped) continue;
+    if (insErr) throw new Error(`statements insert failed: ${insErr.message}`);
     jeCount += 1;
-    if (post.isSuspense && post.journalEntryId) {
-      await createSuspenseTask({
-        agencyId: ctx.agencyId,
-        composioApiKey: ctx.composioApiKey,
-        composioUserId: ctx.composioUserId,
-        journalEntryId: post.journalEntryId,
-        txn: row.txn,
-        txnDate: row.date,
-      });
-      suspenseCount += 1;
-    }
   }
   return { jeCount, suspenseCount };
 }
@@ -851,6 +912,9 @@ const UNMAPPED = "UNMAPPED-";
 // posting somewhere plausible.
 
 type AccountEntry = {
+  id: string;
+  businessEntityId: string;
+  accountKind: string;
   last4s: string[];
   code: string | null;
   name: string;
@@ -863,44 +927,32 @@ type AccountEntry = {
 
 let accountIndexCache: { agencyId: string; entries: AccountEntry[] } | null = null;
 
+// Single source table (accounts) replaces the old bank_accounts/credit_accounts
+// pair. account_kind ('bank' | 'credit') is a column on the row now, not
+// implied by which table it came from.
 async function loadAccountIndex(agencyId: string): Promise<AccountEntry[]> {
   if (accountIndexCache && accountIndexCache.agencyId === agencyId) {
     return accountIndexCache.entries;
   }
   const entries: AccountEntry[] = [];
 
-  const { data: cards, error: cardErr } = await sb
-    .from("credit_accounts")
-    .select("account_name, institution, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
+  const { data: rows, error: accErr } = await sb
+    .from("accounts")
+    .select("id, business_entity_id, account_kind, account_name, institution, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
     .eq("agency_id", agencyId);
-  if (cardErr) throw new Error(`credit_accounts read failed: ${cardErr.message}`);
-  for (const c of cards ?? []) {
-    const last4s = [c.account_number_last4, ...(c.alternate_last4s ?? [])]
+  if (accErr) throw new Error(`accounts read failed: ${accErr.message}`);
+  for (const a of rows ?? []) {
+    const last4s = [a.account_number_last4, ...(a.alternate_last4s ?? [])]
       .filter((v: string | null): v is string => !!v);
-    if (!last4s.length) continue;
     entries.push({
+      id: a.id,
+      businessEntityId: a.business_entity_id,
+      accountKind: a.account_kind,
       last4s,
-      code: (c as any).chart_of_accounts?.account_code ?? null,
-      name: c.account_name ?? "credit account",
-      haystack: `${c.institution ?? ""} ${c.account_name ?? ""}`.toLowerCase(),
-      active: c.is_active !== false,
-    });
-  }
-
-  const { data: banks, error: bankErr } = await sb
-    .from("bank_accounts")
-    .select("account_name, institution, account_number_last4, is_active, chart_of_accounts(account_code)")
-    .eq("agency_id", agencyId);
-  if (bankErr) throw new Error(`bank_accounts read failed: ${bankErr.message}`);
-  for (const b of banks ?? []) {
-    // A missing account number is fine — the row can still be matched by
-    // institution name. Do NOT invent a last-4 to make a row look complete.
-    entries.push({
-      last4s: b.account_number_last4 ? [b.account_number_last4] : [],
-      code: (b as any).chart_of_accounts?.account_code ?? null,
-      name: b.account_name ?? "bank account",
-      haystack: `${b.institution ?? ""} ${b.account_name ?? ""}`.toLowerCase(),
-      active: b.is_active !== false,
+      code: (a as any).chart_of_accounts?.account_code ?? null,
+      name: a.account_name ?? `${a.account_kind} account`,
+      haystack: `${a.institution ?? ""} ${a.account_name ?? ""}`.toLowerCase(),
+      active: a.is_active !== false,
     });
   }
 
@@ -949,12 +1001,18 @@ const RETIRED_HINTS: Array<[RegExp, string]> = [
   [/spark/, "SPARK-RETIRED"],
 ];
 
-async function resolveSourceAccount(
+// Returns the full matched accounts row (id, business_entity_id, account_kind,
+// chart code) — not just the chart code string. statements.account_id needs
+// the row id; the old bank_gl_writer/cc_gl_writer era only ever needed the
+// chart code, which is why this used to return a bare string. Kept as one
+// function (not two independent lookups) so the code and the id can never
+// diverge for the same resolution.
+async function resolveSourceAccountEntry(
   agencyId: string,
   fromEmail: string,
   subject: string,
   fileName: string,
-): Promise<string> {
+): Promise<{ entry: AccountEntry } | { unmapped: string }> {
   const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
 
   let entries: AccountEntry[];
@@ -962,23 +1020,24 @@ async function resolveSourceAccount(
     entries = await loadAccountIndex(agencyId);
   } catch (e) {
     // Never guess an account because a lookup failed.
-    return UNMAPPED + "ACCOUNT-TABLE-UNREADABLE";
+    return { unmapped: UNMAPPED + "ACCOUNT-TABLE-UNREADABLE" };
   }
 
-  const matchLast4 = (last4: string): string => {
+  const matchLast4 = (last4: string): { entry: AccountEntry } | { unmapped: string } | null => {
     const hits = entries.filter((e) => e.last4s.includes(last4));
     const live = hits.filter((e) => e.active);
     if (live.length === 1) {
-      return live[0].code ?? UNMAPPED + `NO-CHART-LINK-${last4}`;
+      if (!live[0].code) return { unmapped: UNMAPPED + `NO-CHART-LINK-${last4}` };
+      return { entry: live[0] };
     }
     if (live.length > 1) {
       const codes = [...new Set(live.map((e) => e.code ?? "null"))];
       // Same account listed twice against one chart account is not a conflict.
-      if (codes.length === 1 && codes[0] !== "null") return codes[0];
-      return UNMAPPED + `AMBIGUOUS-${last4}`;
+      if (codes.length === 1 && codes[0] !== "null") return { entry: live[0] };
+      return { unmapped: UNMAPPED + `AMBIGUOUS-${last4}` };
     }
-    if (hits.length) return UNMAPPED + `RETIRED-${last4}`;
-    return "";
+    if (hits.length) return { unmapped: UNMAPPED + `RETIRED-${last4}` };
+    return null;
   };
 
   // 1. An account number in the sender, subject or filename wins outright.
@@ -1003,7 +1062,7 @@ async function resolveSourceAccount(
     if (re.test(blob)) {
       const r = matchLast4(last4);
       if (r) return r;
-      return UNMAPPED + `LABEL-${last4}-NOT-IN-TABLES`;
+      return { unmapped: UNMAPPED + `LABEL-${last4}-NOT-IN-TABLES` };
     }
   }
 
@@ -1011,20 +1070,34 @@ async function resolveSourceAccount(
   for (const [re, needle] of LABEL_TO_NAME) {
     if (!re.test(blob)) continue;
     const live = entries.filter((e) => e.active && e.haystack.includes(needle));
-    const codes = [...new Set(live.map((e) => e.code).filter((c): c is string => !!c))];
-    if (codes.length === 1) return codes[0];
-    if (codes.length > 1) return UNMAPPED + `AMBIGUOUS-NAME-${needle}`;
-    return UNMAPPED + `NAME-${needle}-NOT-IN-TABLES`;
+    const withCode = live.filter((e) => !!e.code);
+    const codes = [...new Set(withCode.map((e) => e.code))];
+    if (codes.length === 1) return { entry: withCode[0] };
+    if (codes.length > 1) return { unmapped: UNMAPPED + `AMBIGUOUS-NAME-${needle}` };
+    return { unmapped: UNMAPPED + `NAME-${needle}-NOT-IN-TABLES` };
   }
 
   // 4. Known-dead institutions get a named failure rather than a generic one.
   for (const [re, hint] of RETIRED_HINTS) {
-    if (re.test(blob)) return UNMAPPED + hint;
+    if (re.test(blob)) return { unmapped: UNMAPPED + hint };
   }
 
   // No silent default. Returning an account here guesses whose money this is;
   // an unrecognised statement must stop and be looked at instead.
-  return UNMAPPED + "UNRECOGNISED";
+  return { unmapped: UNMAPPED + "UNRECOGNISED" };
+}
+
+// Thin wrapper preserving the old string-returning signature for call sites
+// that only ever needed the chart code (documents.source_account_code,
+// statement_balances.account_code, error/log messages).
+async function resolveSourceAccount(
+  agencyId: string,
+  fromEmail: string,
+  subject: string,
+  fileName: string,
+): Promise<string> {
+  const r = await resolveSourceAccountEntry(agencyId, fromEmail, subject, fileName);
+  return "entry" in r ? (r.entry.code as string) : r.unmapped;
 }
 
 // ---- statement_balances writer --------------------------------------------
