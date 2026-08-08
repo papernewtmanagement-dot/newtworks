@@ -1251,6 +1251,21 @@ What I\'d like to discuss:
         .newtworks-info-popover a { color: ${T.blue}; text-decoration: underline; }
         .newtworks-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 22px 0 8px 0; }
         .newtworks-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 18px 0 6px 0; }
+        /* Peter 2026-08-08: body content should sit slightly indented under its
+           header, so it stands apart rather than starting flush at the same left
+           edge as the heading above it. Direct-child selectors so this applies
+           once at the top level and never double-indents nested content (a
+           <p> inside a blockquote or details doesn't get hit again). */
+        .newtworks-handbook-body > p,
+        .newtworks-handbook-body > ul,
+        .newtworks-handbook-body > ol,
+        .newtworks-handbook-body > blockquote,
+        .newtworks-handbook-body > pre,
+        .newtworks-handbook-body > details,
+        .newtworks-handbook-body > table {
+          margin-left: 10px;
+        }
+        .newtworks-handbook-body > table { width: calc(100% - 10px); }
         .newtworks-handbook-body p { margin: 0 0 14px 0; }
         .newtworks-handbook-body ul, .newtworks-handbook-body ol { margin: 8px 0 16px 0; padding-left: 24px; }
         .newtworks-handbook-body li { margin-bottom: 6px; }
@@ -1285,70 +1300,47 @@ What I\'d like to discuss:
           vertical-align: top;
         }
         .newtworks-handbook-body th { background: ${T.slate50}; font-weight: 700; color: ${T.slate900}; }
-        /* Expanders — SEAMLESS CONTAINER, not a chip + floating text. Approved
-           2026-08-08 after three passes: a bare quiet line (no box at all) didn't
-           read as a dropdown; a chip caret + separate left-rule on the content
-           looked like two disconnected pieces with a visible seam where the rule
-           started. This version is ONE surface: closed state is a light sage-tint
-           bar; open state keeps that same bar as the title CAP and adds a darker
-           step of the same colour behind the content, with NO border/gap between
-           them — the details element itself carries the single background
-           (overflow:hidden clips it into the rounded shape), so title and every
-           child underneath it (however many paragraphs or bullet lists) sit on
-           one continuous colour instead of each getting its own box. Round chip
-           caret (matches the 18px .newtworks-info-btn badge) stays from the prior
-           pass — only the container architecture changed here. Do not go back to
-           per-child backgrounds (*:not(summary) each got their own bg + radius) —
-           that was the exact bug that caused the visible seam.  */
-        .newtworks-handbook-body details {
-          margin: 6px 0 6px 8px;
-          background: ${T.blue}0D;
-          border-radius: 8px;
-        }
+        /* Expanders — literal port of the approved preview file
+           (expander_v4_preview.html), shipped 2026-08-08. Same hex values, same
+           paddings, same plain-triangle caret — not translated through design
+           tokens or redesigned. Do not "improve" this without a new preview
+           approved first; that is exactly what went wrong last time. */
+        .newtworks-handbook-body details { margin: 6px 0 6px 10px; }
+        .newtworks-handbook-body details:not([open]) { background: #EFF1E8; border-radius: 7px; }
+        .newtworks-handbook-body details:not([open]) > summary { padding: 8px 12px 8px 30px; }
         .newtworks-handbook-body details[open] {
-          background: ${T.blue}17;
+          background: #DFE3D2;
+          border-radius: 7px;
           overflow: hidden;
           margin-bottom: 14px;
         }
+        .newtworks-handbook-body details[open] > summary {
+          background: #EFF1E8;
+          padding: 8px 12px 8px 30px;
+          margin: 0;
+        }
         .newtworks-handbook-body summary {
           cursor: pointer;
-          font-weight: 500;
-          color: ${T.slate600};
-          padding: 8px 12px 8px 34px;
-          margin: 0;
+          font-weight: 600;
+          color: ${T.slate700};
+          position: relative;
           user-select: none;
           list-style: none;
-          position: relative;
-        }
-        .newtworks-handbook-body details[open] > summary {
-          background: ${T.blue}0D;
         }
         .newtworks-handbook-body summary::-webkit-details-marker { display: none; }
         .newtworks-handbook-body summary::before {
           content: "▸";
           position: absolute;
-          left: 8px;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 18px;
-          height: 18px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%;
-          border: 1px solid ${T.blue}55;
-          background: ${T.blue}11;
+          left: 10px;
+          top: 9px;
           color: ${T.blue};
-          font-size: 10px;
+          font-size: 11px;
+          font-weight: 700;
         }
-        .newtworks-handbook-body details[open] > summary::before {
-          content: "▾";
-          background: ${T.blueLt};
-          border-color: ${T.blue}88;
-        }
-        .newtworks-handbook-body details > *:not(summary) {
+        .newtworks-handbook-body details[open] > summary::before { content: "▾"; }
+        .newtworks-handbook-body details[open] > *:not(summary) {
           margin: 0;
-          padding: 0 12px 0 34px;
+          padding: 4px 30px;
           background: transparent;
         }
         .newtworks-handbook-body details[open] > summary + * { padding-top: 10px; }
