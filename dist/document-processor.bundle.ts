@@ -7014,6 +7014,7 @@ async function handleBankStatement(
     // intended value for live intake (means "not from the 2026-08-07
     // merge"), not a sentinel to be filled in.
     const { error: insErr } = await sb.from("statements").insert({
+      id: crypto.randomUUID(),
       agency_id: ctx.agencyId,
       business_entity_id: account.businessEntityId,
       account_id: account.id,

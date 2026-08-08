@@ -482,6 +482,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     const reference = occ === 1 ? fpBase : `${fpBase}:${occ}`;
 
     const { error: stErr } = await sb.from("statements").insert({
+      id: crypto.randomUUID(),
       agency_id: doc.agency_id,
       business_entity_id: acct.business_entity_id,
       account_id: acct.id,
