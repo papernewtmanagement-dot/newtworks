@@ -1262,10 +1262,22 @@ What I\'d like to discuss:
         .newtworks-handbook-body > blockquote,
         .newtworks-handbook-body > pre,
         .newtworks-handbook-body > details,
-        .newtworks-handbook-body > table {
-          margin-left: 10px;
+        .newtworks-handbook-body > table,
+        .newtworks-handbook-body > .newtworks-table-wrap {
+          margin-left: 16px;
         }
-        .newtworks-handbook-body > table { width: calc(100% - 10px); }
+        /* Tables render inside their own horizontal-scroll wrapper div (see
+           markdown.js), so they were never a direct child of this container and
+           the indent above skipped them entirely - table content stayed flush
+           while everything around it moved. Widened here rather than 10px:
+           against h2 (which has its own 12px inner padding), a 10px content
+           indent landed almost exactly under the header text and read as no
+           indent at all. Peter 2026-08-08, second pass - first pass was correct
+           in code but too subtle to see. */
+        .newtworks-handbook-body > table,
+        .newtworks-handbook-body > .newtworks-table-wrap {
+          width: calc(100% - 16px);
+        }
         .newtworks-handbook-body p { margin: 0 0 14px 0; }
         .newtworks-handbook-body ul, .newtworks-handbook-body ol { margin: 8px 0 16px 0; padding-left: 24px; }
         .newtworks-handbook-body li { margin-bottom: 6px; }

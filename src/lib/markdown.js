@@ -534,7 +534,7 @@ export function mdToHtml(md, options = {}) {
         return `<${tag}${styleAttr}>${inlineMd(txt)}</${tag}>`;
       };
 
-      let html = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table>`;
+      let html = `<div class="newtworks-table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table>`;
       html += "<thead><tr>";
       headerCells.forEach((c, idx) => { html += cell("th", c, idx); });
       html += "</tr></thead><tbody>";
