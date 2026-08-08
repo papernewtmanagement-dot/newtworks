@@ -697,7 +697,7 @@ function useCPRData(weekDate) {
           try {
             const { data: cdRows } = await supabase
               .from("weekly_cpr_team_detail")
-              .select("team_member_id, commission, sales_points, prod_total_count, prod_total_premium, prod_auto, prod_fire, prod_life, prod_health, prod_bank, weekly_cpr_reports!inner(week_ending_date)")
+              .select("team_member_id, commission, sales_points, prod_total_count, prod_total_premium, prod_issued_count, prod_issued_premium, prod_auto, prod_fire, prod_life, prod_health, prod_bank, weekly_cpr_reports!inner(week_ending_date)")
               .eq("agency_id", AGENCY_ID)
               .gte("weekly_cpr_reports.week_ending_date", cycleStartISO)
               .lte("weekly_cpr_reports.week_ending_date", weekDate);
@@ -708,6 +708,8 @@ function useCPRData(weekDate) {
                 commission: Number(r.commission) || 0,
                 sales_points: Number(r.sales_points) || 0,
                 prod_total_count: Number(r.prod_total_count) || 0,
+                prod_issued_count: Number(r.prod_issued_count) || 0,
+                prod_issued_premium: Number(r.prod_issued_premium) || 0,
                 prod_total_premium: Number(r.prod_total_premium) || 0,
                 prod_auto: Number(r.prod_auto) || 0,
                 prod_fire: Number(r.prod_fire) || 0,
@@ -1182,21 +1184,25 @@ function MultiLineChart({ weeks, seriesList }) {
 }
 
 // TeammateWeeklyProduction — per-week production table shown inside the
-// Team Activity per-person expansion. Rows = weeks in cycle, columns = the
-// count metrics stored in weekly_cpr_team_detail (Total / Auto / Fire / Life /
-// Health / Bank + Premium). Cycle-to-date total row at bottom.
+// Team Activity per-person expansion. Rows = weeks in cycle. Headline count +
+// premium read the ISSUED columns (prod_issued_count / prod_issued_premium) per
+// Peter directive 2026-08-07 — issued is the basis the agency reports on.
+// The line columns (Auto / Fire / Life / Health / Bank) are only published by
+// State Farm on a WRITTEN basis, so they sum to prod_total_count, not to the
+// issued headline. Footnote under the table says so. Do not "reconcile" them.
+// Cycle-to-date total row at bottom.
 function TeammateWeeklyProduction({ teammateName, cycleWeeks, cycleWeeklyDetails, teammateId }) {
   const rows = cycleWeeks.map(w => {
     const r = (cycleWeeklyDetails || []).find(x => x.team_member_id === teammateId && x.week_ending_date === w);
     return {
       week: w,
-      total: r ? Number(r.prod_total_count) || 0 : null,
+      total: r ? Number(r.prod_issued_count) || 0 : null,
       auto: r ? Number(r.prod_auto) || 0 : null,
       fire: r ? Number(r.prod_fire) || 0 : null,
       life: r ? Number(r.prod_life) || 0 : null,
       health: r ? Number(r.prod_health) || 0 : null,
       bank: r ? Number(r.prod_bank) || 0 : null,
-      premium: r ? Number(r.prod_total_premium) || 0 : null,
+      premium: r ? Number(r.prod_issued_premium) || 0 : null,
       hasData: !!r,
     };
   });
@@ -1210,18 +1216,19 @@ function TeammateWeeklyProduction({ teammateName, cycleWeeks, cycleWeeklyDetails
       {!anyData ? (
         <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>No production rows for this cycle yet.</div>
       ) : (
+        <>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480, fontSize: 12 }}>
             <thead>
               <tr>
                 <Th align="left">Week</Th>
-                <Th align="right">Total</Th>
+                <Th align="right">Issued</Th>
                 <Th align="right">Auto</Th>
                 <Th align="right">Fire</Th>
                 <Th align="right">Life</Th>
                 <Th align="right">Health</Th>
                 <Th align="right">Bank</Th>
-                <Th align="right">Premium</Th>
+                <Th align="right">Issued Prem</Th>
               </tr>
             </thead>
             <tbody>
@@ -1250,6 +1257,12 @@ function TeammateWeeklyProduction({ teammateName, cycleWeeks, cycleWeeklyDetails
             </tbody>
           </table>
         </div>
+        <div style={{ fontSize: 10, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
+          Issued and Issued Prem are policies State Farm has actually issued. Auto / Fire / Life /
+          Health / Bank are published by State Farm on a written basis only, so they can add up to
+          more than Issued when an application is written but not yet issued.
+        </div>
+        </>
       )}
     </div>
   );
