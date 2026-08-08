@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 
@@ -884,6 +884,82 @@ export default function Manual({ manualType, userRole }) {
 }
 
 // ─── Page detail view ─────────────────────────────────────────
+// ─── Smooth <details> expand/collapse ──────────────────────────
+// Native <details> snaps open/closed with no transition. This intercepts the
+// summary click, measures start/end height, and animates it with the Web
+// Animations API — standard reference pattern (web.dev "Building a smoothly
+// animated details element"). Peter 2026-08-07: wanted the expanders in
+// manuals to open smoothly instead of snapping.
+//
+// scrollHeight (not a manual sum of children) drives the expand target so
+// margins/padding on the content are measured correctly automatically —
+// summing child offsetHeights was tried first and undercounts spacing.
+function nwEnableSmoothDetails(container) {
+  if (!container) return;
+  const nodes = container.querySelectorAll("details");
+  nodes.forEach((el) => {
+    if (el.dataset.nwAnimated) return; // idempotent — content swaps wholesale on nav
+    el.dataset.nwAnimated = "1";
+    const summary = el.querySelector(":scope > summary");
+    if (!summary) return;
+
+    let animation = null;
+    let isClosing = false;
+    let isExpanding = false;
+
+    const onFinish = (isOpen) => {
+      el.open = isOpen;
+      animation = null;
+      isClosing = false;
+      isExpanding = false;
+      el.style.height = "";
+      el.style.overflow = "";
+    };
+
+    const shrink = () => {
+      isClosing = true;
+      const startHeight = `${el.offsetHeight}px`;
+      const endHeight = `${summary.offsetHeight}px`;
+      if (animation) animation.cancel();
+      animation = el.animate(
+        { height: [startHeight, endHeight] },
+        { duration: 200, easing: "ease-out" }
+      );
+      animation.onfinish = () => onFinish(false);
+      animation.oncancel = () => { isClosing = false; };
+    };
+
+    const expand = () => {
+      isExpanding = true;
+      const startHeight = `${el.offsetHeight}px`;
+      const endHeight = `${el.scrollHeight}px`;
+      if (animation) animation.cancel();
+      animation = el.animate(
+        { height: [startHeight, endHeight] },
+        { duration: 200, easing: "ease-out" }
+      );
+      animation.onfinish = () => onFinish(true);
+      animation.oncancel = () => { isExpanding = false; };
+    };
+
+    const openThenExpand = () => {
+      el.style.height = `${el.offsetHeight}px`;
+      el.open = true;
+      requestAnimationFrame(() => requestAnimationFrame(expand));
+    };
+
+    summary.addEventListener("click", (e) => {
+      e.preventDefault();
+      el.style.overflow = "hidden";
+      if (isClosing || !el.open) {
+        openThenExpand();
+      } else if (isExpanding || el.open) {
+        shrink();
+      }
+    });
+  });
+}
+
 function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
@@ -1136,6 +1212,10 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary, resolveExcerpt }),
     [page?.content, resolveInclude, resolveGlossary, resolveExcerpt]
   );
+  const bodyRef = useRef(null);
+  useEffect(() => {
+    nwEnableSmoothDetails(bodyRef.current);
+  }, [html]);
   const askContext = useMemo(() => {
     return `I\'m looking at this page from ${cfg.askContextLabel}:
 
@@ -1391,7 +1471,7 @@ What I\'d like to discuss:
             <GlossaryList manualType={manualType} parentId={cfg.glossaryParentId} />
           </div>
         ) : (page?.content || "").trim() ? (
-          <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
+          <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} ref={bodyRef} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
             This page has no text content.
