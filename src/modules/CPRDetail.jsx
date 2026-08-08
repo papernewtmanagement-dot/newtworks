@@ -477,7 +477,7 @@ function useCPRData(weekDate) {
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
     cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
-    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
+    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses, code_red_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
     section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
     leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
@@ -781,6 +781,7 @@ function useCPRData(weekDate) {
             carryover: Number(r.carryover) || 0,
             personal_misses: Number(r.personal_misses) || 0,
             team_misses: Number(r.team_misses) || 0,
+            code_red_misses: Number(r.code_red_misses) || 0,
             missed: Number(r.missed) || 0,
             cost: Number(r.cost) || 0,
             total: Number(r.total) || 0,
@@ -1646,7 +1647,17 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
                     <Td align="right">{fmtInt(r.carryover)}</Td>
-                    <Td align="right">{fmtInt(r.missed)}</Td>
+                    <Td align="right">
+                      {fmtInt(r.missed)}
+                      {(Number(r.code_red_misses) || 0) > 0 ? (
+                        <span
+                          title={`${r.code_red_misses} of these came from Code Reds`}
+                          style={{ fontSize: 10, color: T.red, fontWeight: 700, marginLeft: 4 }}
+                        >
+                          🔴{r.code_red_misses}
+                        </span>
+                      ) : null}
+                    </Td>
                     <Td align="right" style={{ padding: editMode ? 4 : undefined, background: dirty ? (T.amber50 || "#fef3c7") : undefined }}>
                       {editMode ? (
                         <NumberInput
