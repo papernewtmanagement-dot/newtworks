@@ -20,7 +20,7 @@ import { useTabParam } from "../lib/routing.jsx";
 //
 // DATA SOURCES:
 //   lead_source_quarterly        Per-source snapshots (weekly + Q-close)
-//   journal_lines + coa          Marketing spend (0003 MARKETING + descendants)
+//   ledger + coa                 Marketing spend (0003 MARKETING + descendants)
 //   compute_weekly_marketing_bonus RPC → envelope + pool state
 // ============================================================
 
@@ -87,17 +87,17 @@ function useMarketingData(year, quarter) {
             .order("snapshot_date", { ascending: false }),
 
           // GL marketing spend YTD by month + account
-          supabase.from("journal_lines")
+          // 2026-08-08: journal_lines/journal_entries merged into public.ledger (finrebuild)
+          supabase.from("ledger")
             .select(`
-              debit, credit,
-              journal_entries!inner(entry_date, agency_id),
+              debit, credit, entry_date,
               chart_of_accounts!inner(
                 id, account_code, account_name, chart_namespace, parent_account_id
               )
             `)
             .eq("agency_id", AGENCY_ID)
-            .gte("journal_entries.entry_date", ytdStart)
-            .lte("journal_entries.entry_date", qEnd),
+            .gte("entry_date", ytdStart)
+            .lte("entry_date", qEnd),
 
           // Marketing bonus pool state for current week
           supabase.rpc("compute_weekly_marketing_bonus", {
@@ -131,7 +131,7 @@ function useMarketingData(year, quarter) {
         const byAccount = {};
         let ytdTotal = 0;
         marketingLines.forEach(l => {
-          const dt = l?.journal_entries?.entry_date;
+          const dt = l?.entry_date;
           if (!dt) return;
           const monthKey = dt.slice(0, 7); // YYYY-MM
           const amt = (Number(l.debit) || 0) - (Number(l.credit) || 0);

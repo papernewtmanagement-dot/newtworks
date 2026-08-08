@@ -173,10 +173,10 @@ function useFinancialsData(entity) {
           // starving the displayed list at 50.
           // Entity now sourced from chart_of_accounts.business_entity_id (single
           // source of truth), NOT from the redundant journal_lines column.
-          supabase.from("journal_lines")
+          // 2026-08-08: journal_lines/journal_entries merged into public.ledger (finrebuild)
+          supabase.from("ledger")
             .select(`
-              debit, credit, created_at,
-              journal_entries!inner ( entry_date, reference_number, description, source ),
+              debit, credit, created_at, entry_date, reference_number, description, source,
               chart_of_accounts!inner ( account_name, business_entity_id )
             `)
             .order("created_at", { ascending: false }).limit(200),
@@ -669,10 +669,10 @@ function useFinancialsData(entity) {
           })),
           creditAccounts,
           glEntries: (glRows.data || []).map(g => ({
-            date:        g.journal_entries?.entry_date,
-            ref:         g.journal_entries?.reference_number,
-            description: g.journal_entries?.description,
-            source:      g.journal_entries?.source,
+            date:        g.entry_date,
+            ref:         g.reference_number,
+            description: g.description,
+            source:      g.source,
             account:     g.chart_of_accounts?.account_name,
             debit:       parseFloat(g.debit  || 0),
             credit:      parseFloat(g.credit || 0),
@@ -1239,7 +1239,7 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
           const formulaDiffers = _signFormula(oldType, isHistorical) !== _signFormula(newType, isHistorical);
           const doSwap = formulaDiffers !== wantFlip; // XOR: preserve by default, invert if flip_sign checked
           if (doSwap) {
-            const { data: jlRow, error: jlReadErr } = await supabase.from("journal_lines")
+            const { data: jlRow, error: jlReadErr } = await supabase.from("ledger")
               .select("debit, credit").eq("id", row.line_id).single();
             if (jlReadErr) throw jlReadErr;
             jlUpdates.debit  = jlRow.credit || 0;
@@ -1247,21 +1247,16 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
           }
         }
 
+        // 2026-08-08: journal_lines/journal_entries merged into public.ledger (finrebuild) --
+        // one row per leg now, so the line-level and entry-level updates collapse into one.
+        if (editDraft.entry_date && editDraft.entry_date !== String(row.entry_date).split("T")[0]) {
+          jlUpdates.entry_date = editDraft.entry_date;
+        }
         if (Object.keys(jlUpdates).length > 0) {
-          const { data, error } = await supabase.from("journal_lines")
+          const { data, error } = await supabase.from("ledger")
             .update(jlUpdates).eq("id", row.line_id).select("id");
           if (error) throw error;
-          if (!data || data.length === 0) throw new Error("Journal line update returned no rows (RLS?)");
-        }
-        const jeUpdates = {};
-        if (editDraft.entry_date && editDraft.entry_date !== String(row.entry_date).split("T")[0]) {
-          jeUpdates.entry_date = editDraft.entry_date;
-        }
-        if (Object.keys(jeUpdates).length > 0) {
-          const { data, error } = await supabase.from("journal_entries")
-            .update(jeUpdates).eq("id", row.je_id).select("id");
-          if (error) throw error;
-          if (!data || data.length === 0) throw new Error("Journal entry update returned no rows (RLS?)");
+          if (!data || data.length === 0) throw new Error("Ledger row update returned no rows (RLS?)");
         }
       } else if (row.source === "prior_year_pl") {
         const pypUpdates = {};
@@ -1306,11 +1301,12 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
     setSaving(true);
     try {
       if (row.source === "journal") {
-        // Cascade: journal_lines FK is ON DELETE CASCADE, so both sides go.
-        const { data, error } = await supabase.from("journal_entries")
+        // 2026-08-08: journal_lines/journal_entries merged into public.ledger (finrebuild) --
+        // one row per leg now, no cascade needed, delete the ledger row directly.
+        const { data, error } = await supabase.from("ledger")
           .delete().eq("id", row.je_id).select("id");
         if (error) throw error;
-        if (!data || data.length === 0) throw new Error("Journal entry delete returned no rows (RLS?)");
+        if (!data || data.length === 0) throw new Error("Ledger row delete returned no rows (RLS?)");
       } else if (row.source === "prior_year_pl") {
         const { data, error } = await supabase.from("prior_year_pl")
           .delete().eq("id", row.pyp_id).select("id");
