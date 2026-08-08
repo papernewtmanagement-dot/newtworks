@@ -48,8 +48,6 @@ ORDER = [
     "lib/llm.ts",
     "lib/text_recovery.ts",
     "classifier.ts",
-    "gl-poster.ts",
-    "suspense.ts",
     "parsers/bank.ts",
     "parsers/comp_recap.ts",
     "parsers/deduction.ts",

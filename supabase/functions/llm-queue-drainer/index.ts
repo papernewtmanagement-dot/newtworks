@@ -5,7 +5,7 @@
 // max_tokens truncations, daily TPD exhaustion).
 //
 // Supported purposes:
-//   - parse_bank_statement         → drainBankStatementItem  (statement_balances + bank_transactions/credit_transactions)
+//   - parse_bank_statement         → drainBankStatementItem  (statement_balances + statements)
 //   - careerplug_applicant_extract → drainCareerplugItem     (hiring_candidates via upsert RPC)
 //   - wrapup_organize              → drainWrapupOrganizeItem (weekly_cpr_team_detail.wrapup_text/_done via target_ref)
 //
@@ -123,8 +123,17 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     .maybeSingle();
   if (!coa) return { ok: false, error: `chart_of_accounts row not found for account_code=${doc.source_account_code}` };
 
-  const isBankAccount = coa.account_type === "asset" || coa.account_type === "bank";
-  const isCreditAccount = coa.account_type === "liability" || coa.account_type === "credit";
+  // accounts replaces the old bank_accounts/credit_accounts pair (finance
+  // rebuild, 2026-08-07). account_kind ('bank' | 'credit') is a column on
+  // the row now — read it directly rather than inferring from
+  // chart_of_accounts.account_type, same as document-processor does.
+  const { data: acct } = await sb
+    .from("accounts")
+    .select("id, business_entity_id, account_kind")
+    .eq("agency_id", doc.agency_id)
+    .eq("chart_account_id", coa.id)
+    .maybeSingle();
+  if (!acct) return { ok: false, error: `accounts row not found for chart_account_id=${coa.id} (account_code=${doc.source_account_code})` };
 
   if (dryRun) {
     return {
@@ -149,7 +158,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     business_entity_id: coa.business_entity_id,
     account_code: doc.source_account_code,
     account_last4: accountLast4,
-    account_kind: isBankAccount ? "bank" : (isCreditAccount ? "credit" : "unknown"),
+    account_kind: acct.account_kind,
     statement_period_start: period.start,
     statement_period_end: period.end,
     opening_balance: openingBalance,
@@ -159,119 +168,82 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   });
   if (sbErr) return { ok: false, error: `statement_balances insert failed: ${sbErr.message}` };
 
-  // 5. Insert transactions. bank_transactions.bank_account_id FKs chart_of_accounts.id
-  // (misnamed column, per operational_rule). Dedup on (agency_id, bank_account_id, transaction_date, amount, description).
+  // 5. Insert transactions into statements (canon). D3 (finance rebuild,
+  // 2026-08-07): one statements row per transaction, no classification, no
+  // suspense, no offset pair. Matches document-processor's handleBankStatement
+  // exactly — this drainer is the same ingestion pipeline, just for items that
+  // didn't complete synchronously.
   let inserted = 0;
-  let skippedInformational = 0;
-  let skippedDuplicate = 0;
-  let skippedUntyped = 0;
-  const untypedLines: string[] = [];
   const errors: string[] = [];
-  // R1: dedup_fingerprint occurrence counter, batch-scoped to this drain call.
-  // Key = credit_account_id|date|abs(amount); occurrence increments per repeat
-  // within that key, in statement order (same shape as the Task D backfill).
-  const fpOccurrence: Record<string, number> = {};
+  const refCounters: Record<string, number> = {};
   for (const t of rawTxns) {
     if (!t || typeof t.amount !== "number" || !t.date) continue;
     const payee = String(t.payee ?? "").trim();
     if (!payee) continue;
     const memo = String(t.memo ?? "").trim();
+    const description = memo ? `${payee} — ${memo}` : payee;
 
-    if (isBankAccount) {
-      const row = {
-        agency_id: doc.agency_id,
-        business_entity_id: coa.business_entity_id,
-        bank_account_id: coa.id,  // NB: FKs chart_of_accounts.id (misnamed column)
-        transaction_date: t.date,
-        description: memo ? `${payee} — ${memo}` : payee,
-        amount: t.amount,
-        transaction_type: t.amount >= 0 ? "deposit" : "withdrawal",
-        source_document_id: doc.id,
-      };
-      const { error: btErr } = await sb
-        .from("bank_transactions")
-        .upsert(row, { onConflict: "agency_id,bank_account_id,transaction_date,amount,description", ignoreDuplicates: true });
-      if (btErr) { errors.push(`tx ${t.date}: ${btErr.message}`); continue; }
-      inserted += 1;
-    } else if (isCreditAccount) {
-      // Skip payment/thank-you lines on CC statements — these are informational
-      // (the credit-side echo of a bank withdrawal that already gets posted from the paying
-      // bank's statement). Posting them creates shadow duplicate JEs against the card liability.
-      // Backfill migration 20260729235855 cleared 12 shadow JEs + 13 credit_transactions.
-      // See open_question ca5f4a79.
-      const descForCheck = `${payee} ${memo}`;
-      if (/(?:online\s+payment|autopay|automatic\s+payment)[\s\-]*(?:thank\s*you|received)?|payment\s+thank\s*you/i.test(descForCheck)) {
-        skippedInformational += 1;
-        continue;
-      }
+    // D15: statement-native sign. Parser convention is always "positive =
+    // money in, negative = money out" regardless of account kind. Bank needs
+    // no flip. Credit needs a flip: a charge (money out, parser-negative)
+    // must land positive; a credit/refund (money in, parser-positive) must
+    // land negative. Derived only from the known account_kind, never from
+    // the amount's own sign — same rule document-processor applies.
+    const amount = acct.account_kind === "credit" ? -t.amount : t.amount;
+    const transactionType = acct.account_kind === "credit"
+      ? (amount >= 0 ? "charge" : "payment_or_credit")
+      : (amount >= 0 ? "deposit" : "withdrawal");
 
-      // credit_transactions has its own credit_account_id (FKs credit_accounts).
-      // Look up credit_accounts row that maps to this chart account.
-      const { data: ca } = await sb
-        .from("credit_accounts")
-        .select("id, business_entity_id")
-        .eq("agency_id", doc.agency_id)
-        .eq("chart_account_id", coa.id)
-        .maybeSingle();
-      if (!ca) { errors.push(`no credit_accounts row for chart_account_id=${coa.id}`); continue; }
+    const payeeShort = payee.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
+    const amtCents = Math.round(Math.abs(amount) * 100);
+    const fpBase = `dp:${doc.source_account_code}:${t.date}:${amtCents}:${payeeShort}`;
+    const occ = (refCounters[fpBase] = (refCounters[fpBase] ?? 0) + 1);
+    const reference = occ === 1 ? fpBase : `${fpBase}:${occ}`;
 
-      // R3: transaction_type comes ONLY from the parser's "section" classification
-      // (purchase → charge, payment → payment, credit_refund → credit). Never
-      // guessed from amount sign — that's exactly the bug 2026-08-05 cleanup fixed.
-      // Indeterminate/missing section → do not insert; record raw_line for review.
-      const section = String(t.section ?? "").toLowerCase().trim();
-      const txnType =
-        section === "purchase" ? "charge" :
-        section === "payment" ? "payment" :
-        section === "credit_refund" ? "credit" :
-        null;
-      if (!txnType) {
-        skippedUntyped += 1;
-        untypedLines.push(String(t.raw_line ?? `${t.date} ${payee} ${memo} ${t.amount}`).slice(0, 300));
-        continue;
-      }
-
-      // R1: batch-scoped dedup fingerprint. Format identical to the Task D
-      // backfill: card_uuid|YYYY-MM-DD|abs(amount).2f|occurrence.
-      const fpKey = `${ca.id}|${t.date}|${Math.abs(t.amount).toFixed(2)}`;
-      const occ = (fpOccurrence[fpKey] = (fpOccurrence[fpKey] ?? 0) + 1);
-      const dedupFingerprint = `${fpKey}|${occ}`;
-
-      const row = {
-        agency_id: doc.agency_id,
-        business_entity_id: ca.business_entity_id ?? coa.business_entity_id,
-        credit_account_id: ca.id,
-        transaction_date: t.date,
-        description: memo ? `${payee} — ${memo}` : payee,
-        amount: t.amount,
-        transaction_type: txnType,
-        dedup_fingerprint: dedupFingerprint,
-        source_document_id: doc.id,
-      };
-
-      // R2: collide = skip. The fingerprint's unique index (Task D,
-      // uq_credit_transactions_dedup) is now the authoritative dedup
-      // mechanism — replaces the old SELECT-then-insert check, which missed
-      // description-text variants of the same charge (2026-08-04 Discover
-      // Tithe re-ingest double-count). ignoreDuplicates → ON CONFLICT DO
-      // NOTHING; an empty returned row set means the fingerprint already
-      // existed and nothing was inserted.
-      const { data: insData, error: ctErr } = await sb
-        .from("credit_transactions")
-        .upsert(row, { onConflict: "dedup_fingerprint", ignoreDuplicates: true })
-        .select("id");
-      if (ctErr) { errors.push(`tx ${t.date}: ${ctErr.message}`); continue; }
-      if (!insData || insData.length === 0) { skippedDuplicate += 1; continue; }
-      inserted += 1;
-    }
+    const { error: stErr } = await sb.from("statements").insert({
+      agency_id: doc.agency_id,
+      business_entity_id: acct.business_entity_id,
+      account_id: acct.id,
+      account_kind: acct.account_kind,
+      transaction_date: t.date,
+      description,
+      amount,
+      transaction_type: transactionType,
+      reference_number: reference,
+      dedup_fingerprint: fpBase,
+      source_document_id: doc.id,
+      // legacy_source_table intentionally omitted — NULL is correct for
+      // live intake (finrebuild_e1_statements_legacy_source_table_nullable).
+    });
+    if (stErr) { errors.push(`tx ${t.date}: ${stErr.message}`); continue; }
+    inserted += 1;
   }
 
-  // 6. Mark doc processed
+  // R2 (silent-failure fix, 2026-08-08): per-transaction insert errors used
+  // to be swallowed — this function always returned ok:true and the caller
+  // always marked the queue item "succeeded" and the document "processed"
+  // regardless of how many of the N transactions actually landed. Confirmed
+  // 2026-08-08 on Chase CC 26-07 (queue item dad71509): 16/16 inserts failed
+  // (credit_accounts had already been dropped), inserted stayed 0, yet the
+  // item was marked succeeded and the document processed. A genuine insert
+  // error is now a real failure: no "processed" stamp, caller retries (or
+  // fails after 3 attempts) instead of silently losing the transactions.
+  if (errors.length > 0) {
+    return {
+      ok: false,
+      error: `${errors.length}/${rawTxns.length} transaction inserts failed: ${errors.slice(0, 5).join(" | ")}`,
+      transactionsInserted: inserted,
+      docId: doc.id,
+    };
+  }
+
+  // 6. Mark doc processed — only reached when every transaction insert
+  // succeeded (or rawTxns was empty).
   await sb.from("documents").update({
     processing_status: "processed",
     processed_at: new Date().toISOString(),
-    notes: `${inserted} txns via llm_queue_drainer; balance ${openingBalance}→${closingBalance}${skippedInformational ? ` (${skippedInformational} payment/thank-you lines skipped)` : ""}${skippedDuplicate ? ` (${skippedDuplicate} already-present lines skipped)` : ""}${skippedUntyped ? ` (${skippedUntyped} untyped lines skipped, needs review: ${untypedLines.slice(0, 5).join(" || ")})` : ""}${errors.length ? ` (${errors.length} tx errors)` : ""}`,
-    tables_updated: ["statement_balances", isBankAccount ? "bank_transactions" : "credit_transactions"],
+    notes: `${inserted} statement rows via llm_queue_drainer; balance ${openingBalance}→${closingBalance}`,
+    tables_updated: ["statement_balances", "statements"],
     records_created: inserted + 1,
   }).eq("id", doc.id);
 
@@ -279,12 +251,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     ok: true,
     statementBalance: { period, openingBalance, closingBalance, accountLast4 },
     transactionsInserted: inserted,
-    skippedInformational,
-    skippedDuplicates: skippedDuplicate,
-    skippedUntyped,
-    untypedLines: untypedLines.length ? untypedLines : undefined,
     docId: doc.id,
-    error: errors.length ? errors.slice(0, 5).join(" | ") : undefined,
   };
 }
 

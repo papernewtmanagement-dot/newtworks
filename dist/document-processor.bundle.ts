@@ -1162,283 +1162,6 @@ export function inferDateFromFilename(fileName: string): string | null {
   return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
 
-// ==================== gl-poster.ts ====================
-// =========================================================================
-// gl-poster.ts
-// =========================================================================
-// Writes balanced double-entry journal entries from classified bank txns.
-// Two-step: INSERT header to journal_entries, then 2 rows in journal_lines.
-//
-// Idempotency: every JE carries a deterministic reference_number derived
-// from (source_account, txn_date, signed_amount, payee_hash). Re-inserting
-// the same bank txn is a no-op.
-// =========================================================================
-
-
-export interface PostGLInput {
-  agencyId: string;
-  txn: BankTxn;
-  txnDate: string;
-  classification: ClassificationResult;
-  sourceDocumentId: string | null;
-}
-
-export interface PostGLResult {
-  journalEntryId: string | null;
-  skipped: boolean;
-  skipReason: string | null;
-  isSuspense: boolean;
-}
-
-// In-memory counter to disambiguate multiple bank txns that share the same
-// (source, date, amount, payee-short) fingerprint (e.g., 5 identical Plarium
-// $32.39 charges on the same day). First occurrence uses the base reference;
-// subsequent occurrences append :2, :3, etc. Preserves idempotency across
-// re-runs of the same document since txn order is stable.
-//
-// MUST be reset at the start of processing each document via
-// resetReferenceCounters(); otherwise counter state leaks across docs and a
-// later doc's identical-fingerprint txn gets a spurious :N suffix.
-const refCounters = new Map<string, number>();
-
-export function resetReferenceCounters(): void {
-  refCounters.clear();
-}
-
-function makeReference(input: PostGLInput): string {
-  const payeeShort = (input.txn.payee || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 20);
-  const amtCents = Math.round(Math.abs(input.txn.signedAmount) * 100);
-  const base = `dp:${input.txn.sourceAccountCode}:${input.txnDate}:${amtCents}:${payeeShort}`;
-  const count = (refCounters.get(base) ?? 0) + 1;
-  refCounters.set(base, count);
-  return count === 1 ? base : `${base}:${count}`;
-}
-
-async function lookupAccountId(agencyId: string, accountCode: string): Promise<string | null> {
-  const { data, error } = await sb
-    .from("chart_of_accounts")
-    .select("id")
-    .eq("agency_id", agencyId)
-    .eq("account_code", accountCode)
-    .maybeSingle();
-  if (error) throw new Error(`COA lookup failed for ${accountCode}: ${error.message}`);
-  return data?.id ?? null;
-}
-
-export async function postJournalEntry(input: PostGLInput): Promise<PostGLResult> {
-  const reference = makeReference(input);
-
-  const { data: existing } = await sb
-    .from("journal_entries")
-    .select("id")
-    .eq("agency_id", input.agencyId)
-    .eq("reference_number", reference)
-    .maybeSingle();
-  if (existing?.id) {
-    return {
-      journalEntryId: existing.id,
-      skipped: true,
-      skipReason: "duplicate reference_number",
-      isSuspense: input.classification.isSuspense,
-    };
-  }
-
-  const debitId = await lookupAccountId(input.agencyId, input.classification.debitAccountCode);
-  const creditId = await lookupAccountId(input.agencyId, input.classification.creditAccountCode);
-  if (!debitId || !creditId) {
-    throw new Error(`Account code not found: debit=${input.classification.debitAccountCode} credit=${input.classification.creditAccountCode}`);
-  }
-
-  const description = input.classification.subCategoryLabel
-    ? `${input.txn.payee} — ${input.classification.subCategoryLabel}`
-    : input.txn.payee;
-
-  const { data: je, error: jeErr } = await sb
-    .from("journal_entries")
-    .insert({
-      agency_id: input.agencyId,
-      entry_date: input.txnDate,
-      entry_type: "bank_txn",
-      reference_number: reference,
-      description,
-      memo: input.txn.memo || null,
-      source: "document_processor",
-      document_id: input.sourceDocumentId,
-      classification_status: input.classification.isSuspense ? "pending_review" : "classified",
-      suspense_reason: input.classification.isSuspense ? "no_rule_match" : null,
-      rule_id_used: input.classification.ruleId.startsWith("00000000") ? null : input.classification.ruleId,
-      classified_by: input.classification.isSuspense ? null : "rule",
-      classified_at: input.classification.isSuspense ? null : new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-  if (jeErr || !je) throw new Error(`journal_entries insert failed: ${jeErr?.message ?? "unknown"}`);
-
-  const amount = Math.abs(input.txn.signedAmount);
-
-  const { error: linesErr } = await sb.from("journal_lines").insert([
-    { journal_entry_id: je.id, agency_id: input.agencyId, account_id: debitId,  debit: amount, credit: 0,      description },
-    { journal_entry_id: je.id, agency_id: input.agencyId, account_id: creditId, debit: 0,      credit: amount, description },
-  ]);
-  if (linesErr) {
-    await sb.from("journal_entries").delete().eq("id", je.id);
-    throw new Error(`journal_lines insert failed: ${linesErr.message}`);
-  }
-
-  if (!input.classification.ruleId.startsWith("00000000")) {
-    await sb
-      .from("gl_classification_rules")
-      .update({ last_used_at: new Date().toISOString() })
-      .eq("id", input.classification.ruleId);
-  }
-
-  return { journalEntryId: je.id, skipped: false, skipReason: null, isSuspense: input.classification.isSuspense };
-}
-
-// ==================== suspense.ts ====================
-// =========================================================================
-// suspense.ts
-// =========================================================================
-// For each JE that landed in COA-SUSP, create a task in the tasks table so
-// the agent can classify it. Task includes up to 3 LLM-ranked best guesses.
-//
-// Priority by amount:  >$500=high, $100-500=medium, <$100=low
-// =========================================================================
-
-
-export interface SuspenseTaskInput {
-  agencyId: string;
-  composioApiKey: string;
-  composioUserId: string;
-  journalEntryId: string;
-  txn: BankTxn;
-  txnDate: string;
-}
-
-function priorityForAmount(amount: number): "high" | "medium" | "low" {
-  if (amount > 500) return "high";
-  if (amount >= 100) return "medium";
-  return "low";
-}
-
-async function loadRuleSummaries(agencyId: string) {
-  const { data } = await sb
-    .from("gl_classification_rules")
-    .select("id, rule_name, debit_account_code, credit_account_code, sub_category_label, confidence")
-    .eq("agency_id", agencyId)
-    .eq("is_active", true)
-    .neq("confidence", "suspense")
-    .order("match_priority", { ascending: true });
-  return (data ?? []).map((r: any) => ({
-    id: r.id, name: r.rule_name, debit: r.debit_account_code,
-    credit: r.credit_account_code, sub: r.sub_category_label,
-  }));
-}
-
-async function generateBestGuesses(input: SuspenseTaskInput): Promise<string> {
-  const rules = await loadRuleSummaries(input.agencyId);
-  if (rules.length === 0) return "(no existing rules to compare against)";
-
-  const systemPrompt =
-    "You are an accounting assistant for a State Farm insurance agency. " +
-    "You are shown a bank transaction and a list of existing classification rules. " +
-    "Pick the THREE most likely correct rules to apply, ranked best first. " +
-    "Reply with raw JSON only (no fences, no prose) in this exact shape: " +
-    `{"guesses":[{"rule_id":"<uuid>","reason":"<brief>"},{"rule_id":"<uuid>","reason":"<brief>"},{"rule_id":"<uuid>","reason":"<brief>"}]}`;
-
-  const userContent =
-    `Transaction:\n` +
-    `  Date: ${input.txnDate}\n` +
-    `  Payee: ${input.txn.payee}\n` +
-    `  Memo: ${input.txn.memo}\n` +
-    `  Amount: ${input.txn.signedAmount.toFixed(2)} (${input.txn.signedAmount > 0 ? "in" : "out"})\n` +
-    `  Source account: ${input.txn.sourceAccountCode}\n\n` +
-    `Existing rules (id — name — debit/credit — sub):\n` +
-    rules.map((r) => `  ${r.id} — ${r.name} — ${r.debit}/${r.credit} — ${r.sub ?? ""}`).join("\n");
-
-  const result = await parseWithLLM({
-    agencyId: input.agencyId,
-    composioApiKey: input.composioApiKey,
-    composioUserId: input.composioUserId,
-    systemPrompt, userContent,
-    documentId: null,
-    purpose: "suspense_guesses",
-    maxTokens: 800,
-    // No queue row: this call is enrichment with a working lexical fallback
-    // below, and createSuspenseTask writes the task immediately either way.
-    // Nothing records WHICH task a queued guess belonged to, so a drained
-    // result could never be applied — it would strand forever. Same reason
-    // resume_identity_extract opted out (2026-08-04).
-    skipQueueOnFailure: true,
-  });
-
-  if (result.ok) {
-    const guesses = (result.json?.guesses ?? []).slice(0, 3);
-    const byId = new Map(rules.map((r) => [r.id, r]));
-    return guesses.map((g: any, i: number) => {
-      const r = byId.get(g.rule_id);
-      if (!r) return `  ${i + 1}. (rule not found)`;
-      return `  ${i + 1}. ${r.name} → debit ${r.debit}, credit ${r.credit}\n      Reason: ${g.reason ?? ""}`;
-    }).join("\n");
-  }
-
-  // Fallback: lexical match
-  const payeeLower = input.txn.payee.toLowerCase();
-  const memoLower = input.txn.memo.toLowerCase();
-  const scored = rules.map((r) => {
-    let score = 0;
-    for (const word of r.name.toLowerCase().split(/\W+/).filter(Boolean)) {
-      if (payeeLower.includes(word)) score += 2;
-      if (memoLower.includes(word)) score += 1;
-    }
-    return { r, score };
-  }).sort((a, b) => b.score - a.score).slice(0, 3);
-
-  if (scored[0]?.score === 0) return "(no lexical matches — please classify manually)";
-  return scored.map((s, i) =>
-    `  ${i + 1}. ${s.r.name} → debit ${s.r.debit}, credit ${s.r.credit}`
-  ).join("\n");
-}
-
-export async function createSuspenseTask(input: SuspenseTaskInput): Promise<{ taskId: string }> {
-  const amount = Math.abs(input.txn.signedAmount);
-  const direction = input.txn.signedAmount > 0 ? "in" : "out";
-  const guesses = await generateBestGuesses(input);
-
-  const title = `Classify: $${amount.toFixed(2)} ${direction} — ${input.txn.payee.slice(0, 50)}`;
-  const description =
-    `Suspense queue item — needs classification.\n\n` +
-    `Date: ${input.txnDate}\n` +
-    `Payee: ${input.txn.payee}\n` +
-    `Memo: ${input.txn.memo}\n` +
-    `Amount: $${amount.toFixed(2)} (${direction})\n` +
-    `Source: ${input.txn.sourceAccountCode}\n` +
-    `JE: ${input.journalEntryId}\n\n` +
-    `Best guesses:\n${guesses}\n\n` +
-    `Reply in chat with the number, the rule name, or your own classification. ` +
-    `I'll update the JE and add a new rule so this never hits suspense again.`;
-
-  const { data, error } = await sb
-    .from("tasks")
-    .insert({
-      agency_id: input.agencyId,
-      title, description,
-      created_by: "document_processor",
-      priority: priorityForAmount(amount),
-      status: "open",
-      task_category: "finances",
-      task_type: "parse_review",
-      related_id: input.journalEntryId,
-    })
-    .select("id")
-    .single();
-  if (error || !data) throw new Error(`suspense task insert failed: ${error?.message ?? "unknown"}`);
-  return { taskId: data.id };
-}
-
 // ==================== parsers/bank.ts ====================
 // =========================================================================
 // parsers/bank.ts
@@ -7108,13 +6831,61 @@ async function extractText(
 
 // ---- Bank handler ----------------------------------------------------------
 
+// Statement-native sign per D15 (finance rebuild spec, 2026-08-07):
+// bank: deposit positive / withdrawal negative. credit: charge positive /
+// credit-refund negative. The LLM parser (bank.ts) always returns
+// "positive = money in, negative = money out" regardless of account kind —
+// that is a fixed, documented source convention, not a guess from magnitude,
+// so flipping it for credit accounts here is a mechanical transform, not a
+// judgment call. Bank needs no flip (money-in/out already matches
+// deposit/withdrawal). Credit needs a flip: a charge is money paid out by
+// the cardholder (negative in parser convention) but must land positive
+// (increases what's owed); a credit/refund is money "in" (parser positive)
+// but must land negative (reduces what's owed). Never derived from the
+// amount's own sign or magnitude — only from the known account_kind. This
+// is the exact bug class behind the 2026-08-05 cc_gl_writer sign incident;
+// flagging it explicitly rather than letting it pass silently.
+function toStatementNativeAmount(accountKind: string, parsedSignedAmount: number): number {
+  return accountKind === "credit" ? -parsedSignedAmount : parsedSignedAmount;
+}
+
+// Same dedup-fingerprint scheme gl-poster.ts used for journal_entries
+// idempotency (base = account:date:amount:payee, :N suffix for same-day
+// repeats). Per D16, statements has no unique index and duplicates are
+// flagged, not blocked — so this is no longer a pre-insert existence check,
+// just a traceable identifier carried onto the row.
+const statementRefCounters = new Map<string, number>();
+function resetStatementRefCounters(): void {
+  statementRefCounters.clear();
+}
+function makeStatementReference(accountCode: string, txnDate: string, payee: string, amountAbs: number): { base: string; reference: string } {
+  const payeeShort = payee.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
+  const amtCents = Math.round(amountAbs * 100);
+  const base = `dp:${accountCode}:${txnDate}:${amtCents}:${payeeShort}`;
+  const count = (statementRefCounters.get(base) ?? 0) + 1;
+  statementRefCounters.set(base, count);
+  return { base, reference: count === 1 ? base : `${base}:${count}` };
+}
+
 async function handleBankStatement(
   ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
 ): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string; held?: boolean }> {
   // Reset per-doc reference counter so identical-fingerprint txns across
   // different documents don't leak :N suffixes to each other.
-  resetReferenceCounters();
+  resetStatementRefCounters();
+
+  // Resolve the full accounts row (id, business_entity_id, account_kind) —
+  // not just the chart code sourceAccountCode already carries. See
+  // resolveSourceAccountEntry: same match logic as resolveSourceAccount, so
+  // this can never disagree with the code already resolved for this
+  // document, it just also returns the row identity statements.account_id
+  // needs.
+  const acctResult = await resolveSourceAccountEntry(ctx.agencyId, att.fromEmail, att.subject, att.fileName);
+  if (!("entry" in acctResult)) {
+    return { jeCount: 0, suspenseCount: 0, error: `account_unmapped: ${acctResult.unmapped}` };
+  }
+  const account = acctResult.entry;
 
   const extracted = await extractText(ctx, att, bytesB64);
   if (!extracted.ok) return { jeCount: 0, suspenseCount: 0, error: extracted.error };
@@ -7219,30 +6990,46 @@ async function handleBankStatement(
     console.warn(`[document-processor] statement_balance_write_failed doc=${documentId} account=${sourceAccountCode}: ${balWrite.error}`);
   }
 
+  // ---- Write to statements (canon), NOT to a journal / ledger table -------
+  // D3 (finance rebuild, 2026-08-07): the ledger no longer gets written from
+  // here at all. This function's only job is landing raw statement rows in
+  // statements. Classification into the profit-and-loss ledger is a
+  // separate, later step (statement_gl_writer, built in Phase 3) that reads
+  // statements — it is not triggered inline per document. No suspense
+  // account, no classification, no journal entry, from this function.
   let jeCount = 0;
-  let suspenseCount = 0;
+  const suspenseCount = 0; // no suspense concept in the new design (D3/D13)
   for (const row of parsed.transactions) {
-    const classification = await classifyBankTxn(ctx.agencyId, row.txn);
-    const post = await postJournalEntry({
-      agencyId: ctx.agencyId,
-      txn: row.txn,
-      txnDate: row.date,
-      classification,
-      sourceDocumentId: documentId,
+    const amount = toStatementNativeAmount(account.accountKind, row.txn.signedAmount);
+    const { base, reference } = makeStatementReference(
+      sourceAccountCode, row.date, row.txn.payee, Math.abs(amount),
+    );
+    const description = row.txn.memo
+      ? `${row.txn.payee} — ${row.txn.memo}`
+      : row.txn.payee;
+
+    // legacy_source_table intentionally omitted. Migration
+    // finrebuild_e1_statements_legacy_source_table_nullable (2026-08-07)
+    // dropped its NOT NULL constraint with no default; NULL is the correct,
+    // intended value for live intake (means "not from the 2026-08-07
+    // merge"), not a sentinel to be filled in.
+    const { error: insErr } = await sb.from("statements").insert({
+      agency_id: ctx.agencyId,
+      business_entity_id: account.businessEntityId,
+      account_id: account.id,
+      account_kind: account.accountKind,
+      transaction_date: row.date,
+      description,
+      amount,
+      transaction_type: account.accountKind === "credit"
+        ? (amount >= 0 ? "charge" : "payment_or_credit")
+        : (amount >= 0 ? "deposit" : "withdrawal"),
+      reference_number: reference,
+      dedup_fingerprint: base,
+      source_document_id: documentId,
     });
-    if (post.skipped) continue;
+    if (insErr) throw new Error(`statements insert failed: ${insErr.message}`);
     jeCount += 1;
-    if (post.isSuspense && post.journalEntryId) {
-      await createSuspenseTask({
-        agencyId: ctx.agencyId,
-        composioApiKey: ctx.composioApiKey,
-        composioUserId: ctx.composioUserId,
-        journalEntryId: post.journalEntryId,
-        txn: row.txn,
-        txnDate: row.date,
-      });
-      suspenseCount += 1;
-    }
   }
   return { jeCount, suspenseCount };
 }
@@ -7269,6 +7056,9 @@ const UNMAPPED = "UNMAPPED-";
 // posting somewhere plausible.
 
 type AccountEntry = {
+  id: string;
+  businessEntityId: string;
+  accountKind: string;
   last4s: string[];
   code: string | null;
   name: string;
@@ -7281,44 +7071,32 @@ type AccountEntry = {
 
 let accountIndexCache: { agencyId: string; entries: AccountEntry[] } | null = null;
 
+// Single source table (accounts) replaces the old bank_accounts/credit_accounts
+// pair. account_kind ('bank' | 'credit') is a column on the row now, not
+// implied by which table it came from.
 async function loadAccountIndex(agencyId: string): Promise<AccountEntry[]> {
   if (accountIndexCache && accountIndexCache.agencyId === agencyId) {
     return accountIndexCache.entries;
   }
   const entries: AccountEntry[] = [];
 
-  const { data: cards, error: cardErr } = await sb
-    .from("credit_accounts")
-    .select("account_name, institution, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
+  const { data: rows, error: accErr } = await sb
+    .from("accounts")
+    .select("id, business_entity_id, account_kind, account_name, institution, account_number_last4, alternate_last4s, is_active, chart_of_accounts(account_code)")
     .eq("agency_id", agencyId);
-  if (cardErr) throw new Error(`credit_accounts read failed: ${cardErr.message}`);
-  for (const c of cards ?? []) {
-    const last4s = [c.account_number_last4, ...(c.alternate_last4s ?? [])]
+  if (accErr) throw new Error(`accounts read failed: ${accErr.message}`);
+  for (const a of rows ?? []) {
+    const last4s = [a.account_number_last4, ...(a.alternate_last4s ?? [])]
       .filter((v: string | null): v is string => !!v);
-    if (!last4s.length) continue;
     entries.push({
+      id: a.id,
+      businessEntityId: a.business_entity_id,
+      accountKind: a.account_kind,
       last4s,
-      code: (c as any).chart_of_accounts?.account_code ?? null,
-      name: c.account_name ?? "credit account",
-      haystack: `${c.institution ?? ""} ${c.account_name ?? ""}`.toLowerCase(),
-      active: c.is_active !== false,
-    });
-  }
-
-  const { data: banks, error: bankErr } = await sb
-    .from("bank_accounts")
-    .select("account_name, institution, account_number_last4, is_active, chart_of_accounts(account_code)")
-    .eq("agency_id", agencyId);
-  if (bankErr) throw new Error(`bank_accounts read failed: ${bankErr.message}`);
-  for (const b of banks ?? []) {
-    // A missing account number is fine — the row can still be matched by
-    // institution name. Do NOT invent a last-4 to make a row look complete.
-    entries.push({
-      last4s: b.account_number_last4 ? [b.account_number_last4] : [],
-      code: (b as any).chart_of_accounts?.account_code ?? null,
-      name: b.account_name ?? "bank account",
-      haystack: `${b.institution ?? ""} ${b.account_name ?? ""}`.toLowerCase(),
-      active: b.is_active !== false,
+      code: (a as any).chart_of_accounts?.account_code ?? null,
+      name: a.account_name ?? `${a.account_kind} account`,
+      haystack: `${a.institution ?? ""} ${a.account_name ?? ""}`.toLowerCase(),
+      active: a.is_active !== false,
     });
   }
 
@@ -7367,12 +7145,18 @@ const RETIRED_HINTS: Array<[RegExp, string]> = [
   [/spark/, "SPARK-RETIRED"],
 ];
 
-async function resolveSourceAccount(
+// Returns the full matched accounts row (id, business_entity_id, account_kind,
+// chart code) — not just the chart code string. statements.account_id needs
+// the row id; the old bank_gl_writer/cc_gl_writer era only ever needed the
+// chart code, which is why this used to return a bare string. Kept as one
+// function (not two independent lookups) so the code and the id can never
+// diverge for the same resolution.
+async function resolveSourceAccountEntry(
   agencyId: string,
   fromEmail: string,
   subject: string,
   fileName: string,
-): Promise<string> {
+): Promise<{ entry: AccountEntry } | { unmapped: string }> {
   const blob = (fromEmail + " " + subject + " " + fileName).toLowerCase();
 
   let entries: AccountEntry[];
@@ -7380,23 +7164,24 @@ async function resolveSourceAccount(
     entries = await loadAccountIndex(agencyId);
   } catch (e) {
     // Never guess an account because a lookup failed.
-    return UNMAPPED + "ACCOUNT-TABLE-UNREADABLE";
+    return { unmapped: UNMAPPED + "ACCOUNT-TABLE-UNREADABLE" };
   }
 
-  const matchLast4 = (last4: string): string => {
+  const matchLast4 = (last4: string): { entry: AccountEntry } | { unmapped: string } | null => {
     const hits = entries.filter((e) => e.last4s.includes(last4));
     const live = hits.filter((e) => e.active);
     if (live.length === 1) {
-      return live[0].code ?? UNMAPPED + `NO-CHART-LINK-${last4}`;
+      if (!live[0].code) return { unmapped: UNMAPPED + `NO-CHART-LINK-${last4}` };
+      return { entry: live[0] };
     }
     if (live.length > 1) {
       const codes = [...new Set(live.map((e) => e.code ?? "null"))];
       // Same account listed twice against one chart account is not a conflict.
-      if (codes.length === 1 && codes[0] !== "null") return codes[0];
-      return UNMAPPED + `AMBIGUOUS-${last4}`;
+      if (codes.length === 1 && codes[0] !== "null") return { entry: live[0] };
+      return { unmapped: UNMAPPED + `AMBIGUOUS-${last4}` };
     }
-    if (hits.length) return UNMAPPED + `RETIRED-${last4}`;
-    return "";
+    if (hits.length) return { unmapped: UNMAPPED + `RETIRED-${last4}` };
+    return null;
   };
 
   // 1. An account number in the sender, subject or filename wins outright.
@@ -7421,7 +7206,7 @@ async function resolveSourceAccount(
     if (re.test(blob)) {
       const r = matchLast4(last4);
       if (r) return r;
-      return UNMAPPED + `LABEL-${last4}-NOT-IN-TABLES`;
+      return { unmapped: UNMAPPED + `LABEL-${last4}-NOT-IN-TABLES` };
     }
   }
 
@@ -7429,20 +7214,34 @@ async function resolveSourceAccount(
   for (const [re, needle] of LABEL_TO_NAME) {
     if (!re.test(blob)) continue;
     const live = entries.filter((e) => e.active && e.haystack.includes(needle));
-    const codes = [...new Set(live.map((e) => e.code).filter((c): c is string => !!c))];
-    if (codes.length === 1) return codes[0];
-    if (codes.length > 1) return UNMAPPED + `AMBIGUOUS-NAME-${needle}`;
-    return UNMAPPED + `NAME-${needle}-NOT-IN-TABLES`;
+    const withCode = live.filter((e) => !!e.code);
+    const codes = [...new Set(withCode.map((e) => e.code))];
+    if (codes.length === 1) return { entry: withCode[0] };
+    if (codes.length > 1) return { unmapped: UNMAPPED + `AMBIGUOUS-NAME-${needle}` };
+    return { unmapped: UNMAPPED + `NAME-${needle}-NOT-IN-TABLES` };
   }
 
   // 4. Known-dead institutions get a named failure rather than a generic one.
   for (const [re, hint] of RETIRED_HINTS) {
-    if (re.test(blob)) return UNMAPPED + hint;
+    if (re.test(blob)) return { unmapped: UNMAPPED + hint };
   }
 
   // No silent default. Returning an account here guesses whose money this is;
   // an unrecognised statement must stop and be looked at instead.
-  return UNMAPPED + "UNRECOGNISED";
+  return { unmapped: UNMAPPED + "UNRECOGNISED" };
+}
+
+// Thin wrapper preserving the old string-returning signature for call sites
+// that only ever needed the chart code (documents.source_account_code,
+// statement_balances.account_code, error/log messages).
+async function resolveSourceAccount(
+  agencyId: string,
+  fromEmail: string,
+  subject: string,
+  fileName: string,
+): Promise<string> {
+  const r = await resolveSourceAccountEntry(agencyId, fromEmail, subject, fileName);
+  return "entry" in r ? (r.entry.code as string) : r.unmapped;
 }
 
 // ---- statement_balances writer --------------------------------------------
@@ -7804,8 +7603,8 @@ async function processOneAttachment(
           });
         } else {
           await markDocument(documentId, "processed", r.jeCount,
-            ["journal_entries", "journal_lines"],
-            `${r.jeCount} JEs posted, ${r.suspenseCount} in suspense`);
+            ["statements"],
+            `${r.jeCount} statement rows written`);
           await maybeArchiveThread(ctx, att.threadId, docType);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,

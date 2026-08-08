@@ -417,7 +417,7 @@ Even though internal, the State Farm Agent's Agreement governs:
 
 You have two tools. Call them when the answer needs live data or specific stored knowledge — do not guess.
 
-- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, journal_entries, payroll_runs, persistent_memory, core_principles, manuals, automation_recipes, automation_run_log, settings, and ~70 others.
+- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, ledger, payroll_runs, persistent_memory, core_principles, manuals, automation_recipes, automation_run_log, settings, and ~70 others.
 - search_knowledge(query, max_per_table): keyword search across persistent_memory, core_principles, handbook, and processes simultaneously.
 
 IMPORTANT: When you call a tool, use the structured tool_calls format the API expects. Do not write tool calls inline as text or in custom syntax — emit them through the standard function-calling channel.

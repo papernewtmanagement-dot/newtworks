@@ -10,9 +10,9 @@
 // started failing with a not-null violation once a real transaction showed
 // up (silent while records_processed stayed 0, so it went unnoticed for a
 // day and a half). Resolution: look up account_last4 against
-// chart_of_accounts (checking/primary accounts) then credit_accounts
-// (cards, including alternate_last4s for reissued numbers) — same sources
-// document-processor's writeStatementBalance() already trusts.
+// chart_of_accounts (checking/primary accounts) then accounts
+// (any kind, including alternate_last4s for reissued numbers) — same
+// sources document-processor's writeStatementBalance() already trusts.
 //
 // v43 (2026-07-10): After a successful sf_crm_analytics_email parse, stamp
 // crm_analytics_ingested=true + crm_analytics_ingested_at=now on the
@@ -345,10 +345,10 @@ function pickKnownCols(rec: Record<string, any>, cols: Set<string>): Record<stri
 
 // -------------------------------------------------------------------------
 // business_entity_id resolver for bank_register_preliminary (added v45,
-// 2026-08-03). Mirrors document-processor's writeStatementBalance()
-// resolution order: chart_of_accounts first (checking/primary accounts,
-// matched by "(last4)" in the account name), then credit_accounts (cards,
-// including alternate_last4s for reissued numbers). Cached per-agency for
+// 2026-08-03; repointed to unified accounts table 2026-08-08 finance rebuild).
+// Resolution order: chart_of_accounts first (checking/primary accounts,
+// matched by "(last4)" in the account name), then accounts (any kind,
+// including alternate_last4s for reissued cards). Cached per-agency for
 // the life of the invocation since a recipe run never touches more than a
 // handful of distinct last-4s.
 // -------------------------------------------------------------------------
@@ -370,14 +370,16 @@ async function resolveBusinessEntityIdByLast4(agencyId: string, last4: string | 
   if (coaRow?.business_entity_id) resolved = coaRow.business_entity_id as string;
 
   if (!resolved) {
-    const { data: ccRow } = await sb
-      .from("credit_accounts")
+    // accounts replaces the old bank_accounts/credit_accounts pair
+    // (finance rebuild, 2026-08-07). Same last4/alternate_last4s match.
+    const { data: acctRow } = await sb
+      .from("accounts")
       .select("business_entity_id")
       .eq("agency_id", agencyId)
       .or(`account_number_last4.eq.${last4},alternate_last4s.cs.{${last4}}`)
       .not("business_entity_id", "is", null)
       .maybeSingle();
-    if (ccRow?.business_entity_id) resolved = ccRow.business_entity_id as string;
+    if (acctRow?.business_entity_id) resolved = acctRow.business_entity_id as string;
   }
 
   _entityByLast4Cache.set(cacheKey, resolved);
