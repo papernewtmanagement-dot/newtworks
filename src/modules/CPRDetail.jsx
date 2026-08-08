@@ -273,9 +273,6 @@ const EDIT_FIELDS = {
     "shareds_done", "texts_done", "deposits_done", "appts_done", "tasks_done",
     "cases_done", "no_onboarding_done", "no_fu_task_done", "new_opps_done",
     "no_phone_done", "bad_data_done",
-    // Auto/Fire retention bonus
-    "auto_ratio_pct", "auto_rank", "auto_bonus",
-    "fire_ratio_pct", "fire_rank", "fire_bonus",
     // Claims + Non-Pays
     "non_pays", "new_claims", "open_claims", "unreviewed_claims",
     // Campaigns — stored on the CPR row (per-week snapshot); prefilled from most recent prior week
