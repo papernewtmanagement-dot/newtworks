@@ -159,11 +159,22 @@ function useFinancialsData(entity) {
 
           // Bank — pull institution + last4 + needs_statement so BankSection can render "Institution · ••3977" and flag accounts awaiting statements.
           supabase.from("v_bank_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, needs_statement, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes, statement_close_day, next_statement_expected_date, statement_overdue"),
+            // finrebuild 2026-08-08: needs_statement/statement_overdue -> is_overdue,
+            // last_entry_date/last_statement_close_date -> last_statement_period_end,
+            // last_statement_balance -> current_balance_derived (identical now — balance
+            // IS the last statement's closing balance, no separate anchor+activity derivation),
+            // next_statement_expected_date -> expected_last_close (semantics flipped: now
+            // most-recent-expected-close-in-the-past, not next-future-close).
+            // last_statement_source / last_statement_notes have NO equivalent in the new
+            // contract (statement_balances.source/notes are not exposed by v_bank_balances
+            // per Phase 5 spec, which forbids adding columns to accommodate the frontend) —
+            // dropped from select and downstream reads; flagged for Peter's call.
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, expected_last_close"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, last_entry_date, last_statement_close_date, last_statement_balance, last_statement_source, last_statement_notes, statement_close_day, next_statement_expected_date, statement_overdue"),
+            // finrebuild 2026-08-08: same remap as v_bank_balances above.
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, expected_last_close"),
 
           // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
           // filter; expose business_entity_id so GLSection can filter to the
@@ -456,7 +467,7 @@ function useFinancialsData(entity) {
         const creditAccounts = (ccRows.data || []).map(c => ({
           name:    c.account_name,
           balance: parseFloat(c.current_balance || 0),
-          asOf:    c.last_entry_date,
+          asOf:    c.last_statement_period_end,
           needsReview: c.needs_review,
           needsLast4:  c.needs_last4,
           institution: c.institution,
@@ -468,13 +479,13 @@ function useFinancialsData(entity) {
           payment: parseFloat(c.minimum_payment || 0),
           dueDay:  c.payment_due_day,
           businessEntityId: c.business_entity_id,     // Phase 4: entity badge + subtree filter
-          lastStmtDate:    c.last_statement_close_date || null,
-          lastStmtBalance: c.last_statement_balance != null ? parseFloat(c.last_statement_balance) : null,
-          lastStmtSource:  c.last_statement_source || null,
-          lastStmtNotes:   c.last_statement_notes || null,
+          lastStmtDate:    c.last_statement_period_end || null,
+          lastStmtBalance: c.current_balance != null ? parseFloat(c.current_balance) : null,
+          lastStmtSource:  null,   // finrebuild 2026-08-08: no equivalent column — flagged
+          lastStmtNotes:   null,   // finrebuild 2026-08-08: no equivalent column — flagged
           stmtCloseDay:    c.statement_close_day || null,
-          nextStmtExpected: c.next_statement_expected_date || null,
-          stmtOverdue:     c.statement_overdue === true,
+          nextStmtExpected: c.expected_last_close || null,   // semantics flipped: past close, not next future close
+          stmtOverdue:     c.is_overdue === true,
         }));
 
         // Goals feed pace computation
@@ -652,20 +663,20 @@ function useFinancialsData(entity) {
           bankAccounts: (bankRows.data || []).map(b => ({
             name: b.account_name,
             balance: parseFloat(b.current_balance||0),
-            asOf: b.last_entry_date,
+            asOf: b.last_statement_period_end,
             needsReview: b.needs_review,
-            needsStatement: b.needs_statement,
+            needsStatement: b.is_overdue,
             type: b.account_type,
             last4: b.account_number_last4,
             institution: b.institution,
             businessEntityId: b.business_entity_id,   // Phase 4: entity badge + subtree filter
-            lastStmtDate:    b.last_statement_close_date || null,
-            lastStmtBalance: b.last_statement_balance != null ? parseFloat(b.last_statement_balance) : null,
-            lastStmtSource:  b.last_statement_source || null,
-            lastStmtNotes:   b.last_statement_notes || null,
+            lastStmtDate:    b.last_statement_period_end || null,
+            lastStmtBalance: b.current_balance != null ? parseFloat(b.current_balance) : null,
+            lastStmtSource:  null,   // finrebuild 2026-08-08: no equivalent column — flagged
+            lastStmtNotes:   null,   // finrebuild 2026-08-08: no equivalent column — flagged
             stmtCloseDay:    b.statement_close_day || null,
-            nextStmtExpected: b.next_statement_expected_date || null,
-            stmtOverdue:     b.statement_overdue === true,
+            nextStmtExpected: b.expected_last_close || null,   // semantics flipped: past close, not next future close
+            stmtOverdue:     b.is_overdue === true,
           })),
           creditAccounts,
           glEntries: (glRows.data || []).map(g => ({
