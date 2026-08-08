@@ -446,7 +446,7 @@ export function mdToHtml(md, options = {}) {
             summaryHtml = `<summary>${inlineMd(sumMatch[1].trim())}</summary>`;
             inner = inner.replace(sumMatch[0], "");
           }
-          const innerHtml = mdToHtml(inner);
+          const innerHtml = mdToHtml(inner, options);
           out.push(`${opener}\n${summaryHtml}\n${innerHtml}\n</details>`);
         } else {
           out.push(buf.join("\n"));
