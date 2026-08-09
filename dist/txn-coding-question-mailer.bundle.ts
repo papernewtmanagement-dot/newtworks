@@ -361,7 +361,7 @@ function escHtml(s: string | null | undefined): string {
 // =========================================================================
 // txn-coding-question-mailer (Newtworks)
 // =========================================================================
-// Reads v_bank_register_coding_questions filtered by agency, composes a
+// Reads v_cash_register_coding_questions filtered by agency, composes a
 // grouped HTML email of pending coding questions, sends via Composio Gmail.
 //
 // Invoked by automation-runner as an INTERNAL dispatch handler.
@@ -455,7 +455,7 @@ Deno.serve(async (req: Request) => {
 
   // Read pending coding questions
   const { data: rows, error: viewErr } = await sb
-    .from("v_bank_register_coding_questions")
+    .from("v_cash_register_coding_questions")
     .select("id, txn_date, account_label, direction, amount, merchant, suggested_debit_account, suggested_credit_account, suggested_confidence, coding_status, coding_question, status")
     .eq("agency_id", agencyId)
     .order("txn_date", { ascending: false })
