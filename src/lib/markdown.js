@@ -53,6 +53,20 @@ function inlineMd(s) {
   // Unescape \* \_ before inline parsing so escaped bold/italic still renders.
   out = out.replace(/\\([*_`\[\]])/g, "$1");
 
+  // Protect {{faq: topic_key}} markers from the emphasis pass below. Unlike
+  // {{say:}}/{{them:}}, topic_key is a plain [a-z0-9_]+ identifier that must
+  // survive to the post-mdToHtml substitution pass (applyFaqSubstitution)
+  // completely unmangled — the underscore-italic regex further down would
+  // otherwise turn "ac_breakdown_bridge" into "ac<em>breakdown</em>bridge"
+  // and break the exact-text match that substitution depends on. Swapped
+  // for a null-byte placeholder here, restored verbatim (not reprocessed)
+  // at the end of this function, after every other inline transform.
+  const faqPlaceholders = [];
+  out = out.replace(/\{\{faq:\s*([a-z0-9_]+)\s*\}\}/gi, (_m, key) => {
+    faqPlaceholders.push(`{{faq: ${key.toLowerCase()}}}`);
+    return `\u0000FAQ${faqPlaceholders.length - 1}\u0000`;
+  });
+
   // Info popovers: [[info: content]] → native popover button + popover pair.
   // Uses HTML popover attribute (Chrome 114+, Safari 17+, Firefox 125+).
   // Content emitted verbatim into the popover span; subsequent inline passes
@@ -113,6 +127,11 @@ function inlineMd(s) {
 
   // Inline code
   out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+  // Restore protected {{faq: topic_key}} markers verbatim — never reprocessed.
+  if (faqPlaceholders.length) {
+    out = out.replace(/\u0000FAQ(\d+)\u0000/g, (_m, idx) => faqPlaceholders[Number(idx)]);
+  }
 
   return out;
 }
@@ -334,16 +353,28 @@ function expandGlossary(md, resolveGlossary) {
 }
 
 // ─── Knowledge & FAQ preprocessing ─────────────────────────────
-// {{faq: topic_key}}  → replaced with a <details><summary>Knowledge &amp; FAQ
-//   </summary> block reproducing the manual's original on-page appearance,
-//   sourced from public.knowledge_faqs instead of hand-authored markdown.
-// Rows are grouped by tag_label (first-appearance order among the rows
-// passed in), each group's questions in sort_order. Unlike glossary markers,
-// a topic_key with no matching rows renders NOTHING — no empty box, no
-// error banner — per spec (a page mid-approval should look untouched).
+// {{faq: topic_key}}  → an IN-PLACE insertion, not a whole-block replacement.
+// The page body keeps its own <details>/<summary>Knowledge &amp; FAQ</summary>
+// wrapper, "ℹ️ INFO" line, tag line, and every non-question line — those are
+// hand-authored content the table doesn't (and shouldn't) try to hold. The
+// marker only stands in for that one tag group's Q&A bullets, written on its
+// own blockquote line: "> {{faq: topic_key}}".
+//
+// Substitution runs AFTER the main parser, on the rendered HTML, not on the
+// raw markdown. A marker alone on a blockquote line parses to a plain
+// <p>{{faq: topic_key}}</p> (mdToHtml doesn't run the list parser inside a
+// blockquote, so this is a predictable, matchable shape) — that whole <p> is
+// swapped for the rendered Q&A HTML. This sidesteps the blockquote/list
+// parsing quirk entirely instead of fighting it pre-parse.
+//
+// A topic_key with no matching rows renders NOTHING at that spot — no empty
+// box, no error banner — since the surrounding wrapper/tag line is already
+// real content and an empty callout there would look broken, not helpful.
 // Only rows with status='approved' AND is_active=true are ever handed to
 // this renderer (see buildFaqLookup below) — draft/retired rows never reach
 // this function, so there is no separate filter to apply here.
+
+const FAQ_HTML_MARKER_RE = /<p>\{\{faq:\s*([a-z0-9_]+)\s*\}\}<\/p>/gi;
 
 function renderFaqAnswer(answer) {
   const lines = String(answer || "")
@@ -355,51 +386,26 @@ function renderFaqAnswer(answer) {
   return `<ul>` + lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("") + `</ul>`;
 }
 
-function renderFaqTagLine(tagLabel, productLine) {
-  const label = escapeHtml(tagLabel || "");
-  const product = productLine ? " " + escapeHtml(productLine) : "";
-  return `<p><strong>${label}:</strong>${product}</p>`;
+// Q&A pairs only — no wrapper, no INFO line, no tag line. Those all stay in
+// the page body under Ruling 10; this function must never emit them, even
+// if it's tempting to for a "complete-looking" fragment.
+function renderFaqGroup(rows) {
+  const parts = [];
+  for (const item of rows) {
+    parts.push(`<p><strong>${escapeHtml(item.question || "")}</strong></p>`);
+    parts.push(renderFaqAnswer(item.answer));
+  }
+  return parts.join("");
 }
 
-function renderFaqBlock(rows) {
-  // Group by tag_label, preserving first-appearance order in the rows array
-  // (rows arrive pre-sorted by sort_order from buildFaqLookup).
-  const groups = [];
-  const byLabel = new Map();
-  for (const r of rows) {
-    const key = r.tag_label == null ? "" : String(r.tag_label);
-    let g = byLabel.get(key);
-    if (!g) {
-      g = { tag_label: r.tag_label, product_line: r.product_line, items: [] };
-      byLabel.set(key, g);
-      groups.push(g);
-    }
-    g.items.push(r);
-  }
-  const parts = [`<p><strong>ℹ️ INFO</strong></p>`];
-  for (const g of groups) {
-    parts.push(renderFaqTagLine(g.tag_label, g.product_line));
-    for (const item of g.items) {
-      parts.push(`<p><strong>${escapeHtml(item.question || "")}</strong></p>`);
-      parts.push(renderFaqAnswer(item.answer));
-    }
-  }
-  return [
-    `<details>`,
-    `<summary>Knowledge &amp; FAQ</summary>`,
-    `<blockquote>${parts.join("")}</blockquote>`,
-    `</details>`,
-  ].join("\n");
-}
-
-function expandFaq(md, resolveFaq) {
-  if (!resolveFaq) return md;
-  return md.replace(FAQ_TAG_RE, (_m, rawKey) => {
+function applyFaqSubstitution(html, resolveFaq) {
+  if (!resolveFaq) return html;
+  return html.replace(FAQ_HTML_MARKER_RE, (_m, rawKey) => {
     const key = String(rawKey).trim().toLowerCase();
     let rows;
     try { rows = resolveFaq(key); } catch (_e) { rows = null; }
     if (!Array.isArray(rows) || rows.length === 0) return "";
-    return renderFaqBlock(rows);
+    return renderFaqGroup(rows);
   });
 }
 
@@ -429,10 +435,6 @@ export function mdToHtml(md, options = {}) {
 
   if (options && typeof options.resolveGlossary === "function") {
     src = expandGlossary(src, options.resolveGlossary);
-  }
-
-  if (options && typeof options.resolveFaq === "function") {
-    src = expandFaq(src, options.resolveFaq);
   }
 
   if (!src.trim()) return "";
@@ -692,7 +694,13 @@ export function mdToHtml(md, options = {}) {
   }
   flushPara(); flushList();
   if (inCode) out.push(`<pre><code>${escapeHtml(codeBuf.join("\n"))}</code></pre>`);
-  return out.join("\n");
+  let result = out.join("\n");
+
+  if (options && typeof options.resolveFaq === "function") {
+    result = applyFaqSubstitution(result, options.resolveFaq);
+  }
+
+  return result;
 }
 
 // ─── Helper: build a title→content lookup from rows ───────────
