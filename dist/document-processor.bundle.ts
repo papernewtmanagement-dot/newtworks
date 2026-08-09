@@ -7386,24 +7386,61 @@ async function writeStatementBalance(opts: {
 // same gmail_thread_id is in a terminal state (processed/error/skipped). If so,
 // archive the thread in Gmail by removing the INBOX label. Sets
 // documents.gmail_archived_at for all rows in the thread so we know it happened.
-// Gmail label routing per docType. Created 2026-07-14. Update this map when
-// adding a new docType. Nulls skip label-add (still removes INBOX).
+// Gmail label routing per docType — this is the fallback used only when the
+// account has no accounts.gmail_label_id (see getAccountGmailLabelId above,
+// checked first in maybeArchiveThread). Created 2026-07-14. Update this map
+// when adding a new docType. Nulls skip label-add (still removes INBOX).
+//
+// bank_statement_* were null from 2026-07-29 (old generic bank-statement
+// labels deleted in that reorg) until 2026-08-09, when per-account labels
+// (accounts.gmail_label_id) took over routing for every mapped account. They
+// stay null here on purpose — an account not yet in the table should get NO
+// label rather than a wrong generic one, same reasoning as Drive's UNMAPPED.
 const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
-  bank_statement_primary:   null, // deleted 2026-07-29 in Gmail-label reorg
+  bank_statement_primary:   null,
   bank_statement_secondary: null,
-  bank_statement_pfa:       null, // deleted 2026-07-29
-  comp_recap_1h:            "Label_24", // "SF Compensation"
+  bank_statement_pfa:       null,
+  comp_recap_1h:            "Label_24", // "Comp-Deduct"
   comp_recap_daily:         "Label_24",
   deduction_statement:      "Label_24", // "Comp-Deduct" (merged with comp recap 2026-08-09; old "SF Deductions" Label_25 was retired)
-  surepayroll_payroll:      "Label_26", // "Payroll"
+  surepayroll_payroll:      "Label_26", // "Team/Payroll"
   adp_payroll:              "Label_26",
   commission_report:        null, // deleted 2026-07-29
   team_production:          null,
-  careerplug_applicant:     "Label_20", // "Applicants" (attachment pipeline)
-  resume_manual_batch:      "Label_20", // "Applicants" (hand-forwarded batches)
+  careerplug_applicant:     "Label_20", // "Team/Hiring/Applicants" (attachment pipeline)
+  resume_manual_batch:      "Label_20", // "Team/Hiring/Applicants" (hand-forwarded batches)
 };
 
-async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefined, docType?: string): Promise<void> {
+/** account_code -> Gmail label id, cached per run. Populated from
+ * accounts.gmail_label_id (2026-08-09 Drive/Gmail reorg follow-up: bank/CC
+ * statements route to their own account's label instead of no label at all —
+ * the old generic bank-statement labels were deleted in the 2026-07-29 reorg
+ * and nothing replaced them until now). Null/absent falls through to
+ * ARCHIVE_LABEL_FOR_DOCTYPE exactly as before.
+ */
+const accountGmailLabelCache = new Map<string, string | null>();
+async function getAccountGmailLabelId(
+  agencyId: string, accountCode: string | null,
+): Promise<string | null> {
+  if (!accountCode) return null;
+  const key = `${agencyId}/${accountCode}`;
+  if (accountGmailLabelCache.has(key)) return accountGmailLabelCache.get(key) ?? null;
+
+  const { data, error } = await sb
+    .from("accounts")
+    .select("gmail_label_id, chart_of_accounts!inner(account_code)")
+    .eq("agency_id", agencyId)
+    .eq("chart_of_accounts.account_code", accountCode)
+    .maybeSingle();
+
+  const id = !error && (data as any)?.gmail_label_id ? String((data as any).gmail_label_id) : null;
+  accountGmailLabelCache.set(key, id);
+  return id;
+}
+
+async function maybeArchiveThread(
+  ctx: RunCtx, threadId: string | null | undefined, docType?: string, accountCode?: string | null,
+): Promise<void> {
   if (!threadId) return;
   // Inner zip files inherit empty threadId — skip.
   try {
@@ -7417,6 +7454,11 @@ async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefin
       console.log(`[archive] thread ${threadId}: ${pending?.length} docs still pending, not archiving yet`);
       return;
     }
+    // Per-account label wins when the account has one; otherwise fall back to
+    // the doc-type map exactly as before.
+    const acctLabel = await getAccountGmailLabelId(ctx.agencyId, accountCode ?? null);
+    const labelId = acctLabel ?? (docType ? ARCHIVE_LABEL_FOR_DOCTYPE[docType] : null);
+
     const res = await callComposio({
       apiKey: ctx.composioApiKey,
       userId: ctx.composioUserId,
@@ -7425,9 +7467,7 @@ async function maybeArchiveThread(ctx: RunCtx, threadId: string | null | undefin
       toolArguments: {
         thread_id: threadId,
         remove_label_ids: ["INBOX"],
-        ...(docType && ARCHIVE_LABEL_FOR_DOCTYPE[docType]
-          ? { add_label_ids: [ARCHIVE_LABEL_FOR_DOCTYPE[docType]!] }
-          : {}),
+        ...(labelId ? { add_label_ids: [labelId] } : {}),
         user_id: "me",
       },
     });
@@ -7663,7 +7703,7 @@ async function processOneAttachment(
           await markDocument(documentId, "processed", r.jeCount,
             ["statements"],
             `${r.jeCount} statement rows written`);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed",
@@ -7692,7 +7732,7 @@ async function processOneAttachment(
         if (r.ok) {
           await markDocument(documentId, "processed", r.written, ["comp_recap"],
             `${r.written} comp_recap rows written`);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -7725,7 +7765,7 @@ async function processOneAttachment(
         if (r.ok) {
           await markDocument(documentId, "processed", r.written, ["comp_recap"],
             `${r.written} deduction rows written`);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -7768,7 +7808,7 @@ async function processOneAttachment(
           const note = `PFA statement: ${res.totalLines} lines · ${res.matched} matched · ${res.inserted} inserted` + (unm > 0 ? ` · ${unm} unmatched` : "");
           await markDocument(documentId, "processed", res.totalLines,
             (unm > 0 ? ["pfa_bank_statements", "pfa_transactions", "alerts"] : ["pfa_bank_statements", "pfa_transactions"]), note);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -7835,7 +7875,7 @@ async function processOneAttachment(
           const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}, ${r.alerts_resolved} alerts resolved${mergeNote}${unmatchedNote}`;
           await markDocument(documentId, "processed", r.employees_written ?? 0,
             ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail", "alerts"], note);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -7870,7 +7910,7 @@ async function processOneAttachment(
           await markDocument(documentId, "processed", r.detailCount + 1,
             ["payroll_runs", "payroll_detail"],
             `payroll run ${r.run.pay_date}: ${r.detailCount} detail rows`);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -7916,7 +7956,7 @@ async function processOneAttachment(
             ? `${r.written} rows; ${r.unmatchedStaff.length} unmatched: ${r.unmatchedStaff.slice(0,5).join(", ")}`
             : `${r.written} producer_production rows written`;
           await markDocument(documentId, "processed", r.written, ["producer_production"], note);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -7973,7 +8013,7 @@ async function processOneAttachment(
           }
           await markDocument(documentId, "processed", 1, ["hiring_candidates"],
             `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}, text via ${r.textSource ?? "pdf"}); candidate ${r.candidateId ?? "unknown"}`);
-          await maybeArchiveThread(ctx, att.threadId, docType);
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "processed", jeCount: 0, suspenseCount: 0,
@@ -8000,7 +8040,7 @@ async function processOneAttachment(
         // the parent notification is parsed.
         await markDocument(documentId, "processed", 0, ["documents"],
           "CareerPlug resume stored via attachment pipeline; linkage handled by mode=careerplug");
-        await maybeArchiveThread(ctx, att.threadId, docType);
+        await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
         results.push({
           documentId, fileName: att.fileName, fromEmail: att.fromEmail,
           docType, status: "processed", jeCount: 0, suspenseCount: 0,
