@@ -98,6 +98,8 @@ import {
   makeGlossaryResolver,
   buildExcerptLookup,
   makeExcerptResolver,
+  buildFaqLookup,
+  makeFaqResolver,
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
@@ -1196,6 +1198,29 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     return () => { cancelled = true; };
   }, []);
 
+  // Load Knowledge & FAQ bank rows so pages can reference them inline via
+  // {{faq: topic_key}}. Not gated behind a manual-type check — knowledge_faqs
+  // isn't tied to a specific manual/parent page the way glossary is, and the
+  // row count is small. buildFaqLookup (src/lib/markdown.js) filters to
+  // status='approved' AND is_active=true — that filter is the only thing
+  // standing between a draft row and every team member's manual view, so it
+  // is enforced there regardless of who is looking at this page.
+  const [faqRows, setFaqRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: e } = await supabase
+          .from("knowledge_faqs")
+          .select("topic_key, question, answer, tag_label, product_line, sort_order, status, is_active")
+          .eq("agency_id", AGENCY_ID);
+        if (cancelled) return;
+        if (!e) setFaqRows(Array.isArray(data) ? data : []);
+      } catch (_err) { /* silent — inline FAQ is optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const resolveInclude = useMemo(
     () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
     [allRows]
@@ -1208,9 +1233,13 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     () => makeExcerptResolver(buildExcerptLookup(excerptRows || [])),
     [excerptRows]
   );
+  const resolveFaq = useMemo(
+    () => makeFaqResolver(buildFaqLookup(faqRows || [])),
+    [faqRows]
+  );
   const html = useMemo(
-    () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary, resolveExcerpt }),
-    [page?.content, resolveInclude, resolveGlossary, resolveExcerpt]
+    () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq }),
+    [page?.content, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq]
   );
   const bodyRef = useRef(null);
   useEffect(() => {

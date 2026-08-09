@@ -172,6 +172,7 @@ const INCLUDE_LINE_RE = /^[ \t]*\*?\[Included from:\s*([^\]\n]+?)\]\*?[ \t]*$/gm
 const EXCERPT_LINE_RE = /^[ \t]*\*?\[Embedded excerpt from:\s*([^\]\n]+?)\]\*?[ \t]*$/gm;
 const GLOSSARY_TAG_RE = /\{\{glossary:([a-z0-9_-]+)\}\}/gi;
 const GLOSSARY_ALL_RE = /\{\{glossary_all\}\}/gi;
+const FAQ_TAG_RE = /\{\{faq:\s*([a-z0-9_]+)\s*\}\}/gi;
 const MAX_INCLUDE_DEPTH = 6;
 
 const BANNER_STYLE_MISSING =
@@ -332,6 +333,76 @@ function expandGlossary(md, resolveGlossary) {
   return out;
 }
 
+// ─── Knowledge & FAQ preprocessing ─────────────────────────────
+// {{faq: topic_key}}  → replaced with a <details><summary>Knowledge &amp; FAQ
+//   </summary> block reproducing the manual's original on-page appearance,
+//   sourced from public.knowledge_faqs instead of hand-authored markdown.
+// Rows are grouped by tag_label (first-appearance order among the rows
+// passed in), each group's questions in sort_order. Unlike glossary markers,
+// a topic_key with no matching rows renders NOTHING — no empty box, no
+// error banner — per spec (a page mid-approval should look untouched).
+// Only rows with status='approved' AND is_active=true are ever handed to
+// this renderer (see buildFaqLookup below) — draft/retired rows never reach
+// this function, so there is no separate filter to apply here.
+
+function renderFaqAnswer(answer) {
+  const lines = String(answer || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return "";
+  if (lines.length === 1) return `<p>${escapeHtml(lines[0])}</p>`;
+  return `<ul>` + lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("") + `</ul>`;
+}
+
+function renderFaqTagLine(tagLabel, productLine) {
+  const label = escapeHtml(tagLabel || "");
+  const product = productLine ? " " + escapeHtml(productLine) : "";
+  return `<p><strong>${label}:</strong>${product}</p>`;
+}
+
+function renderFaqBlock(rows) {
+  // Group by tag_label, preserving first-appearance order in the rows array
+  // (rows arrive pre-sorted by sort_order from buildFaqLookup).
+  const groups = [];
+  const byLabel = new Map();
+  for (const r of rows) {
+    const key = r.tag_label == null ? "" : String(r.tag_label);
+    let g = byLabel.get(key);
+    if (!g) {
+      g = { tag_label: r.tag_label, product_line: r.product_line, items: [] };
+      byLabel.set(key, g);
+      groups.push(g);
+    }
+    g.items.push(r);
+  }
+  const parts = [`<p><strong>ℹ️ INFO</strong></p>`];
+  for (const g of groups) {
+    parts.push(renderFaqTagLine(g.tag_label, g.product_line));
+    for (const item of g.items) {
+      parts.push(`<p><strong>${escapeHtml(item.question || "")}</strong></p>`);
+      parts.push(renderFaqAnswer(item.answer));
+    }
+  }
+  return [
+    `<details>`,
+    `<summary>Knowledge &amp; FAQ</summary>`,
+    `<blockquote>${parts.join("")}</blockquote>`,
+    `</details>`,
+  ].join("\n");
+}
+
+function expandFaq(md, resolveFaq) {
+  if (!resolveFaq) return md;
+  return md.replace(FAQ_TAG_RE, (_m, rawKey) => {
+    const key = String(rawKey).trim().toLowerCase();
+    let rows;
+    try { rows = resolveFaq(key); } catch (_e) { rows = null; }
+    if (!Array.isArray(rows) || rows.length === 0) return "";
+    return renderFaqBlock(rows);
+  });
+}
+
 // ─── Strip markdown to a short preview for sidebar ────────────
 export function previewText(content, n = 90) {
   if (!content) return "";
@@ -358,6 +429,10 @@ export function mdToHtml(md, options = {}) {
 
   if (options && typeof options.resolveGlossary === "function") {
     src = expandGlossary(src, options.resolveGlossary);
+  }
+
+  if (options && typeof options.resolveFaq === "function") {
+    src = expandFaq(src, options.resolveFaq);
   }
 
   if (!src.trim()) return "";
@@ -717,4 +792,39 @@ export function buildExcerptLookup(rows) {
 
 export function makeExcerptResolver(lookup) {
   return makeIncludeResolver(lookup);
+}
+
+// ─── FAQ lookup helpers ────────────────────────────────────────
+// Knowledge & FAQ bank rows live in public.knowledge_faqs, one row per
+// question/answer pair, grouped under topic_key (one tag-line group on one
+// manual page). Only approved, active rows are kept here — this is the one
+// place that filter is enforced for rendering, so draft/retired rows can
+// never reach the {{faq: topic_key}} renderer through any code path, no
+// matter who is viewing the page. The approval screen at /knowledge-faqs
+// queries the table directly (bypassing this lookup) to show drafts.
+export function buildFaqLookup(rows) {
+  const map = new Map();
+  for (const r of (rows || [])) {
+    if (!r || r.status !== "approved" || r.is_active === false) continue;
+    const key = r.topic_key ? String(r.topic_key).trim().toLowerCase() : "";
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => {
+      const ao = a.sort_order == null ? 999999 : a.sort_order;
+      const bo = b.sort_order == null ? 999999 : b.sort_order;
+      return ao - bo;
+    });
+  }
+  return map;
+}
+
+// Convenience: pair with buildFaqLookup to make a resolver in one call.
+export function makeFaqResolver(lookup) {
+  return function resolveFaq(topicKey) {
+    if (!lookup) return null;
+    return lookup.get(String(topicKey).trim().toLowerCase()) || null;
+  };
 }
