@@ -2,7 +2,9 @@
 // automation-runner  (Newtworks)
 // =========================================================================
 // v45 (2026-08-03): writeOutput() now resolves business_entity_id for
-// bank_register_preliminary rows before insert. The 2026-07-29 migration
+// cash_register_preliminary rows before insert (table renamed from
+// bank_register_preliminary 2026-08-09 to match the Cash Register module
+// it feeds). The 2026-07-29 migration
 // (drop_entity_default_trigger_and_set_not_null_on_13_tables) removed the
 // auto-populate trigger and made the column NOT NULL, but this generic
 // writer only ever picked columns present on the parsed record — Groq's
@@ -344,7 +346,7 @@ async function getTableColumns(table: string): Promise<Set<string>> {
 function pickKnownCols(rec: Record<string, any>, cols: Set<string>): Record<string, any> { const o: Record<string, any> = {}; for (const [k, v] of Object.entries(rec)) if (cols.has(k)) o[k] = v; return o; }
 
 // -------------------------------------------------------------------------
-// business_entity_id resolver for bank_register_preliminary (added v45,
+// business_entity_id resolver for cash_register_preliminary (added v45,
 // 2026-08-03; repointed to unified accounts table 2026-08-08 finance rebuild).
 // Resolution order: chart_of_accounts first (checking/primary accounts,
 // matched by "(last4)" in the account name), then accounts (any kind,
@@ -394,7 +396,7 @@ async function writeOutput(opts: { outputTable: string; outputConfig: any; recor
   const mergeStrategy: string = cfg.merge_strategy ? cfg.merge_strategy : (cfg.on_conflict === "update" ? "overwrite" : "ignore");
   const secondaryWrite: any = cfg.secondary_write;
   const secondaryRowsByIndex: any[][] = opts.records.map((r) => { if (secondaryWrite?.rows_from) { const v = (r as any)[secondaryWrite.rows_from]; return Array.isArray(v) ? v : []; } return []; });
-  const needsBusinessEntityId = opts.agencyId && primaryCols.has("business_entity_id") && opts.outputTable === "bank_register_preliminary";
+  const needsBusinessEntityId = opts.agencyId && primaryCols.has("business_entity_id") && opts.outputTable === "cash_register_preliminary";
   const primaryRecords: any[] = [];
   for (const r of opts.records) {
     const o: any = pickKnownCols(r, primaryCols);

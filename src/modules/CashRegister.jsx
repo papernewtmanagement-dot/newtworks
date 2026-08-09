@@ -51,7 +51,7 @@ function CodingModal({ txn, coaAccounts, onSave, onClose }) {
 
   async function handleSave() {
     setSaving(true);
-    await supabase.from("bank_register_preliminary").update({
+    await supabase.from("cash_register_preliminary").update({
       peter_debit_account:  debit,
       peter_credit_account: credit,
       peter_note:           note,
@@ -557,7 +557,7 @@ function useCashRegisterData() {
         registerRes, questionsRes, rulesRes,
         balancesRes, weeklyRes, snapshotRes, coaRes,
       ] = await Promise.all([
-        supabase.from("bank_register_preliminary")
+        supabase.from("cash_register_preliminary")
           .select("*")
           .eq("business_entity_id", BUSINESS_ENTITY_ID)
           .order("txn_date", { ascending: false })
