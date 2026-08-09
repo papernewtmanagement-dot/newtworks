@@ -66,6 +66,12 @@ interface RunCtx {
   // Drive folder that recovered scanned files get filed into. Null puts them
   // in the Drive root.
   driveParentFolderId?: string | null;
+  // Fixed folders for doc types that file by type, not by account (2026-08-09
+  // Drive/Gmail reorg: Comp + Deductions merged into one "Comp - Deduct"
+  // folder; Payroll lives under Team/Payroll). Falls through to the generic
+  // Documents/<month>/<type> tree under driveParentFolderId if unset.
+  driveCompDeductFolderId?: string | null;
+  drivePayrollFolderId?: string | null;
 }
 
 interface ProcessedAttachment {
@@ -484,20 +490,67 @@ async function resolveDriveFolder(
   return id;
 }
 
+/** account_code -> Drive folder id, cached per run. Populated from
+ * accounts.drive_folder_id (2026-08-09 Drive/Gmail reorg: statements now file
+ * straight into the matching Accounts/Bank/<code> or Accounts/Credit Cards/<code>
+ * folder instead of a generic bucket). Null/absent means no mapping yet — the
+ * account was probably added after the last folder-ID backfill; falls through
+ * to the generic tree rather than guessing.
+ */
+const accountDriveFolderCache = new Map<string, string | null>();
+async function getAccountDriveFolderId(
+  agencyId: string, accountCode: string | null,
+): Promise<string | null> {
+  if (!accountCode) return null;
+  const key = `${agencyId}/${accountCode}`;
+  if (accountDriveFolderCache.has(key)) return accountDriveFolderCache.get(key) ?? null;
+
+  const { data, error } = await sb
+    .from("accounts")
+    .select("drive_folder_id, chart_of_accounts!inner(account_code)")
+    .eq("agency_id", agencyId)
+    .eq("chart_of_accounts.account_code", accountCode)
+    .maybeSingle();
+
+  const id = !error && (data as any)?.drive_folder_id ? String((data as any).drive_folder_id) : null;
+  accountDriveFolderCache.set(key, id);
+  return id;
+}
+
 /**
- * Where a document belongs: <Newtworks root>/Documents/<year-month>/<type>.
+ * Where a document belongs.
  *
- * This is the structure the agency has always used. It was lost on 2026-08-04
- * when the upload was repaired, because the working upload tool places files by
- * folder id and only the root folder's id was known. Both folder tools turn out
- * to be reachable once a tool set is named, so the structure is back.
+ * 2026-08-09: Peter reorganized both Drive and Gmail around three fixed
+ * targets instead of the old generic tree — per-account folders under
+ * Accounts/Bank/<code> and Accounts/Credit Cards/<code>, one merged
+ * "Comp - Deduct" folder, and Team/Payroll. Those are checked first, in that
+ * order. Anything that doesn't match (commission reports, team production,
+ * archive bundles, and any bank/CC account not yet in accounts.drive_folder_id)
+ * falls through to the legacy <Newtworks root>/Documents/<year-month>/<type>
+ * tree, which still exists as the catch-all.
  *
  * Every step falls back one level up. A file in the right year but the wrong
  * type folder can be moved later; a file that never got filed cannot.
  */
 async function documentFolderId(
-  ctx: RunCtx, docType: DocType, txnDate: string,
+  ctx: RunCtx, docType: DocType, txnDate: string, accountCode?: string | null,
 ): Promise<string | null> {
+  const acctFolder = await getAccountDriveFolderId(ctx.agencyId, accountCode ?? null);
+  if (acctFolder) return acctFolder;
+
+  if (
+    (docType === "comp_recap_1h" || docType === "comp_recap_daily" || docType === "deduction_statement")
+    && ctx.driveCompDeductFolderId
+  ) {
+    return ctx.driveCompDeductFolderId;
+  }
+  if (
+    (docType === "adp_payroll" || docType === "surepayroll_payroll")
+    && ctx.drivePayrollFolderId
+  ) {
+    return ctx.drivePayrollFolderId;
+  }
+
   const root = ctx.driveParentFolderId ?? null;
   if (!root) return null;
 
@@ -532,6 +585,7 @@ async function documentFolderId(
 async function uploadToDrive(
   ctx: RunCtx, att: AttachmentInput, bytesB64: string,
   docType: DocType, txnDate: string, s3Key?: string | null,
+  accountCode?: string | null,
 ): Promise<{ driveFileId: string; driveUrl: string } | null> {
   if (!ctx.driveAccountId) return null;
 
@@ -539,8 +593,9 @@ async function uploadToDrive(
   // (inner zip members). Skip rather than fail loudly — the zip itself is filed.
   if (!s3Key) return null;
 
-  // Year-month and document-type folder, created on first use.
-  const folderId = await documentFolderId(ctx, docType, txnDate);
+  // Account folder, fixed type folder, or year-month/document-type folder,
+  // in that priority order. Created on first use.
+  const folderId = await documentFolderId(ctx, docType, txnDate, accountCode);
 
   const res = await callComposio({
     apiKey: ctx.composioApiKey,
@@ -1195,7 +1250,7 @@ const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
   bank_statement_pfa:       null, // deleted 2026-07-29
   comp_recap_1h:            "Label_24", // "SF Compensation"
   comp_recap_daily:         "Label_24",
-  deduction_statement:      "Label_25", // "SF Deductions"
+  deduction_statement:      "Label_24", // "Comp-Deduct" (merged with comp recap 2026-08-09; old "SF Deductions" Label_25 was retired)
   surepayroll_payroll:      "Label_26", // "Payroll"
   adp_payroll:              "Label_26",
   commission_report:        null, // deleted 2026-07-29
@@ -1415,13 +1470,15 @@ async function processOneAttachment(
   const inferred = inferDateFromFilename(att.fileName);
   const txnDate = inferred ?? att.receivedAt.slice(0, 10);
 
-  const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate, attachmentS3Key);
+  // Resolved before the Drive upload (not after, as before 2026-08-09) so
+  // bank/CC statements can file straight into their matching account folder.
   const isBankStmt =
     docType === "bank_statement_primary" ||
     docType === "bank_statement_secondary";
   const sourceAccountCode = isBankStmt
     ? await resolveSourceAccount(ctx.agencyId, att.fromEmail, att.subject, att.fileName)
     : null;
+  const drive = await uploadToDrive(ctx, att, bytesB64, docType, txnDate, attachmentS3Key, sourceAccountCode);
   const documentId = await insertSourceDocument(
     ctx, att, docType, drive, sourceAccountCode, uploadSource,
   );
@@ -2037,7 +2094,7 @@ async function processDriveBackfillMode(
 
   let q = sb
     .from("documents")
-    .select("id, file_name, groq_classification, gmail_message_id, gmail_attachment_id, uploaded_at")
+    .select("id, file_name, groq_classification, gmail_message_id, gmail_attachment_id, uploaded_at, source_account_code")
     .eq("agency_id", ctx.agencyId)
     .is("drive_file_id", null)
     .not("gmail_message_id", "is", null)
@@ -2122,7 +2179,10 @@ async function processDriveBackfillMode(
     // Filed by the date the document arrived. The original path used the
     // document's own transaction date, which is not on this row — close enough
     // for a copy whose only job is to be findable.
-    const drive = await uploadToDrive(ctx, att, "", docType, String(uploadedAt).slice(0, 10), s3Key);
+    const drive = await uploadToDrive(
+      ctx, att, "", docType, String(uploadedAt).slice(0, 10), s3Key,
+      (row as any).source_account_code ?? null,
+    );
     if (!drive || !drive.driveFileId) {
       uploadFailed++;
       outcomes.push({ documentId: id, fileName, status: "upload_failed", error: "Drive rejected the upload; an alert was raised with the reason" });
@@ -2249,6 +2309,8 @@ async function run(req: Request): Promise<Response> {
   const gmailAccountId = await getSetting(agencyId, "composio_gmail_account_id");
   const driveAccountId = await getSetting(agencyId, "composio_googledrive_account_id");
   const driveFolderId = await getSetting(agencyId, "drive_newtworks_root_folder_id");
+  const driveCompDeductFolderId = await getSetting(agencyId, "drive_comp_deduct_folder_id");
+  const drivePayrollFolderId = await getSetting(agencyId, "drive_payroll_folder_id");
   if (!composioApiKey || !composioUserId || !gmailAccountId) {
     return jsonResponse({
       ok: false,
@@ -2285,6 +2347,7 @@ async function run(req: Request): Promise<Response> {
     const trCtx: RunCtx = {
       agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
       driveParentFolderId: driveFolderId,
+      driveCompDeductFolderId, drivePayrollFolderId,
     };
     const startedAt = new Date().toISOString();
     const result = await processResumeTextRecoveryMode(trCtx, body);
@@ -2295,6 +2358,7 @@ async function run(req: Request): Promise<Response> {
     const bfCtx: RunCtx = {
       agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
       driveParentFolderId: driveFolderId,
+      driveCompDeductFolderId, drivePayrollFolderId,
     };
     const startedAt = new Date().toISOString();
     const result = await processDriveBackfillMode(bfCtx, body);
@@ -2305,6 +2369,7 @@ async function run(req: Request): Promise<Response> {
     const prCtx: RunCtx = {
       agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
       driveParentFolderId: driveFolderId,
+      driveCompDeductFolderId, drivePayrollFolderId,
     };
     const startedAt = new Date().toISOString();
     const result = await processComposioProbeMode(prCtx, body);
@@ -2323,6 +2388,7 @@ async function run(req: Request): Promise<Response> {
   const ctx: RunCtx = {
     agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
     driveParentFolderId: driveFolderId,
+      driveCompDeductFolderId, drivePayrollFolderId,
   };
   const startedAt = new Date().toISOString();
   const allResults: ProcessedAttachment[] = [];
