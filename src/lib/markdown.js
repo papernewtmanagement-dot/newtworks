@@ -259,6 +259,35 @@ function expandIncludes(md, resolveInclude, visited, depth) {
   });
 }
 
+// ─── Marker discovery (admin edit-affordance UI only) ─────────
+// Scans raw markdown for every top-level [Included from: X] / [Embedded
+// excerpt from: X] marker and returns [{kind:'include'|'excerpt', title}]
+// in document order, de-duplicated by (kind, lowercase title). Read-only —
+// does not touch rendering. Does NOT recurse into a resolved fragment's own
+// content; call it again against a fragment's own `content` once loaded to
+// discover markers nested inside IT (see Manual.jsx's included-section
+// quick editor, which does exactly that to support drilling into chains
+// like FIT Conversations).
+export function extractTransclusionMarkers(md) {
+  const src = String(md || "");
+  const out = [];
+  const seen = new Set();
+  const push = (kind, rawTitle) => {
+    const title = String(rawTitle).replace(/\\\*/g, "*").trim();
+    if (!title) return;
+    const key = kind + "::" + title.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ kind, title });
+  };
+  const incRe = new RegExp(INCLUDE_LINE_RE.source, INCLUDE_LINE_RE.flags);
+  let m;
+  while ((m = incRe.exec(src))) push("include", m[1]);
+  const excRe = new RegExp(EXCERPT_LINE_RE.source, EXCERPT_LINE_RE.flags);
+  while ((m = excRe.exec(src))) push("excerpt", m[1]);
+  return out;
+}
+
 // ─── Excerpt preprocessing ────────────────────────────────────
 // [Embedded excerpt from: X] markers are Confluence's named-excerpt-include
 // macro. Semantically identical to [Included from: X] (title lookup + inline

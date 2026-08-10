@@ -100,6 +100,7 @@ import {
   makeExcerptResolver,
   buildFaqLookup,
   makeFaqResolver,
+  extractTransclusionMarkers,
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
@@ -1187,7 +1188,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       try {
         const { data, error: e } = await supabase
           .from("manuals")
-          .select("title, content, is_active")
+          .select("id, title, content, is_active, version")
           .eq("agency_id", AGENCY_ID)
           .eq("manual_type", "excerpt")
           .eq("is_active", true);
@@ -1241,6 +1242,32 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq }),
     [page?.content, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq]
   );
+
+  // ── Included-section quick editor ─────────────────────────────
+  // Every [Included from: X] / [Embedded excerpt from: X] marker on THIS
+  // page's raw content, resolved to a live row so it can be edited without
+  // hunting for it in the tree — excerpt rows are deliberately hidden from
+  // tree nav. findFragmentRow follows the same two-row-set rule the
+  // renderer itself uses: 'include' targets live in allRows (this manual's
+  // own rows), 'excerpt' targets live in excerptRows (the shared,
+  // cross-manual namespace). fragmentStack is a stack, not a single value,
+  // so drilling into a marker nested inside a fragment (FIT Conversations
+  // chains several deep) opens on top rather than replacing the view.
+  const transclusionRefs = useMemo(
+    () => extractTransclusionMarkers(page?.content),
+    [page?.content]
+  );
+  const findFragmentRow = useCallback((kind, title) => {
+    const key = String(title || "").trim().toLowerCase();
+    const pool = kind === "excerpt" ? excerptRows : allRows;
+    return (pool || []).find((r) => String(r.title || "").trim().toLowerCase() === key) || null;
+  }, [allRows, excerptRows]);
+  const [fragmentStack, setFragmentStack] = useState([]);
+  const openFragment = useCallback((ref) => {
+    const row = findFragmentRow(ref.kind, ref.title);
+    if (!row) return;
+    setFragmentStack([{ kind: ref.kind, title: ref.title, row }]);
+  }, [findFragmentRow]);
   const bodyRef = useRef(null);
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
@@ -1440,6 +1467,43 @@ What I\'d like to discuss:
       {/* Accent bar */}
       <div style={{ height: 4, background: T.blue, borderRadius: 2, marginBottom: 24, opacity: 0.85 }} />
 
+      {/* Included sections on this page — admin-only quick-edit chips.
+          Excerpt rows never appear in the tree, so this is often the only
+          way to reach them at all. */}
+      {isAdmin && mode === "view" && transclusionRefs.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, color: T.slate500,
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6,
+          }}>
+            Included sections on this page
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {transclusionRefs.map((ref) => {
+              const row = findFragmentRow(ref.kind, ref.title);
+              return (
+                <button
+                  key={ref.kind + "::" + ref.title}
+                  type="button"
+                  disabled={!row}
+                  onClick={() => openFragment(ref)}
+                  title={row
+                    ? `Edit "${ref.title}" (${ref.kind === "excerpt" ? "shared excerpt" : "included page"})`
+                    : `"${ref.title}" not found — check the marker`}
+                  style={{
+                    padding: "5px 10px", borderRadius: 999, border: `1px solid ${T.blue}55`,
+                    background: row ? T.blueLt : T.slate100, color: row ? T.blue : T.slate400,
+                    fontSize: 12, fontWeight: 700, cursor: row ? "pointer" : "not-allowed",
+                  }}
+                >
+                  ✎ {ref.title}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Action row — admin-only edit controls */}
       {isAdmin && mode === "view" && (
         <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
@@ -1537,6 +1601,198 @@ What I\'d like to discuss:
             This page has no text content.
           </div>
         )}
+      </div>
+
+      {isAdmin && fragmentStack.length > 0 && (
+        <FragmentEditModal
+          stack={fragmentStack}
+          setStack={setFragmentStack}
+          allRows={allRows}
+          excerptRows={excerptRows}
+          setExcerptRows={setExcerptRows}
+          findFragmentRow={findFragmentRow}
+          onMutated={onMutated}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Included-section quick editor ─────────────────────────────
+// Edits the manuals row behind an [Included from: X] / [Embedded excerpt
+// from: X] marker directly, in place, without navigating to it in the tree
+// — excerpt rows are deliberately hidden from tree nav (Manuals Rulebook),
+// so this is their primary edit path. `stack` supports drilling into
+// markers nested inside the fragment being edited (chains like FIT
+// Conversations run several deep). Title is intentionally read-only:
+// transclusion joins on title (Manual transclusion op-rule), so a casual
+// rename here could silently break every marker aimed at this row on every
+// other page. Renames stay in the full page editor, where that risk is
+// visible.
+function FragmentEditModal({ stack, setStack, allRows, excerptRows, setExcerptRows, findFragmentRow, onMutated }) {
+  const top = stack[stack.length - 1];
+  const [content, setContent] = useState(top?.row?.content || "");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setContent(top?.row?.content || "");
+    setSaveError(null);
+    setSaved(false);
+  }, [top?.row?.id]);
+
+  const nestedRefs = useMemo(() => extractTransclusionMarkers(content), [content]);
+
+  const close = () => setStack([]);
+  const back = () => setStack((s) => s.slice(0, -1));
+  const openNested = (ref) => {
+    const row = findFragmentRow(ref.kind, ref.title);
+    if (!row) return;
+    setStack((s) => [...s, { kind: ref.kind, title: ref.title, row }]);
+  };
+
+  const save = async () => {
+    if (!top?.row?.id) return;
+    setSaving(true); setSaveError(null); setSaved(false);
+    try {
+      const patch = {
+        content,
+        version: (top.row.version || 0) + 1,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error: e } = await supabase
+        .from("manuals")
+        .update(patch)
+        .eq("id", top.row.id)
+        .select("id");
+      if (e) throw new Error(e.message);
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("No row updated. Do you still have admin access?");
+      }
+      // Optimistic local patch — excerptRows isn't wired to the top-level
+      // refreshTick, so patch it directly for an immediate render update.
+      // allRows comes back fresh via onMutated()'s refetch instead.
+      if (top.kind === "excerpt" && typeof setExcerptRows === "function") {
+        setExcerptRows((prev) => (prev || []).map((r) => (r.id === top.row.id ? { ...r, content, version: patch.version } : r)));
+      }
+      setStack((s) => {
+        const next = s.slice();
+        next[next.length - 1] = { ...top, row: { ...top.row, content, version: patch.version } };
+        return next;
+      });
+      setSaved(true);
+      if (onMutated) onMutated();
+    } catch (err) {
+      setSaveError(err?.message || "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!top) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: 20,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) close(); }}
+    >
+      <div style={{
+        background: T.white, borderRadius: 14, width: "min(720px, 100%)",
+        maxHeight: "88vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 20px 60px rgba(15,23,42,0.35)",
+      }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.slate200}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {stack.length > 1 && (
+              <div style={{ fontSize: 11, color: T.slate500, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {stack.slice(0, -1).map((s) => s.title).join(" → ")} →
+              </div>
+            )}
+            <div style={{ fontSize: 16, fontWeight: 800, color: T.slate900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              ✎ {top.title}
+            </div>
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
+              {top.kind === "excerpt" ? "Shared excerpt — reused on every page that includes it" : "Included page"} · v{top.row?.version ?? "—"}
+            </div>
+          </div>
+          {stack.length > 1 && (
+            <button type="button" onClick={back} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${T.slate300}`, background: T.white, color: T.slate700, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              ← Back
+            </button>
+          )}
+          <button type="button" onClick={close} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${T.slate300}`, background: T.white, color: T.slate700, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            ✕ Close
+          </button>
+        </div>
+
+        <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
+          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10 }}>
+            Renaming isn't offered here — every marker pointing at this fragment finds it by title. Use the full page editor to rename it safely.
+          </div>
+          <textarea
+            value={content}
+            onChange={(e) => { setContent(e.target.value); setSaved(false); }}
+            spellCheck={true}
+            style={{
+              width: "100%", minHeight: 320, padding: "10px 12px", borderRadius: 8,
+              border: `1px solid ${T.slate300}`, fontSize: 13, lineHeight: 1.55,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              boxSizing: "border-box", resize: "vertical",
+            }}
+          />
+          {nestedRefs.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+                This fragment includes
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {nestedRefs.map((ref) => {
+                  const row = findFragmentRow(ref.kind, ref.title);
+                  return (
+                    <button
+                      key={ref.kind + "::" + ref.title}
+                      type="button"
+                      disabled={!row}
+                      onClick={() => openNested(ref)}
+                      title={row ? `Edit "${ref.title}"` : `"${ref.title}" not found — check the marker`}
+                      style={{
+                        padding: "5px 10px", borderRadius: 999, border: `1px solid ${T.slate300}`,
+                        background: T.slate50, color: row ? T.slate700 : T.slate400, fontSize: 12,
+                        fontWeight: 600, cursor: row ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      ✎ {ref.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${T.slate200}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            style={{
+              padding: "8px 16px", borderRadius: 8, border: `1px solid ${T.blue}`,
+              background: T.blue, color: T.white, fontSize: 13, fontWeight: 700,
+              cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+          {saved && !saving && (
+            <div style={{ color: T.green, fontSize: 12, fontWeight: 600 }}>Saved ✓ — live everywhere this is included</div>
+          )}
+          {saveError && <div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{saveError}</div>}
+        </div>
       </div>
     </div>
   );
