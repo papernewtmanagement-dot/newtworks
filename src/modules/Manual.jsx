@@ -1211,8 +1211,8 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     (async () => {
       try {
         const { data, error: e } = await supabase
-          .from("knowledge_faqs")
-          .select("topic_key, question, answer, tag_label, product_line, sort_order, status, is_active")
+          .from("v_knowledge_faqs_resolved")
+          .select("topic_key, question:question_resolved, answer:answer_resolved, tag_label, product_line, sort_order, status, is_active")
           .eq("agency_id", AGENCY_ID);
         if (cancelled) return;
         if (!e) setFaqRows(Array.isArray(data) ? data : []);

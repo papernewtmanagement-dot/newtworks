@@ -29,6 +29,7 @@ import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
 import Onboarding from "./src/modules/Onboarding.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
+import Trivia from "./src/modules/Trivia.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -125,6 +126,7 @@ const NAV_ITEMS = [
   { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
   { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
   { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
+  { id: "trivia",      label: "Trivia",      icon: "grid",          roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
 ];
 
@@ -687,6 +689,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
+    trivia:      <ErrorBoundary name="Trivia"><Trivia userRole={userRole} userId={userId} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
