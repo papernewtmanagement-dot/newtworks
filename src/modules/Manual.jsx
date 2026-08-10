@@ -1376,10 +1376,10 @@ What I\'d like to discuss:
            normal page. Peter 2026-08-10: "when bullets are not inside an
            expanding section, they always indent a certain amount when compared
            to normal text. Within an expanding section, they do not."
-           WHY IT BROKE: the rule directly above sets `padding: 4px 30px` on every
+           WHY IT BROKE: the rule directly above sets padding: 4px 30px on every
            direct child of an open expander. 30px is what lines body text up with
            the summary label - but it is the SHORTHAND, so it also overwrote the
-           `padding-left: 24px` that ul/ol carry from the element rule higher up.
+           padding-left: 24px that ul/ol carry from the element rule higher up.
            Lists ended up flush with the body text instead of stepped in from it,
            and the bullet glyphs hung out to its left. 54px = the 30px body
            alignment + the same 24px step lists use everywhere else.
