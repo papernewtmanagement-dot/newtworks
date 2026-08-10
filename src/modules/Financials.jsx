@@ -2685,12 +2685,6 @@ const BankSection = ({ data }) => {
     const delta = hasStmt ? (a.balance - a.lastStmtBalance) : null;
     const deltaSmall = delta == null ? false : Math.abs(delta) < 0.01;
     const deltaColor = delta == null || deltaSmall ? T.slate400 : delta > 0 ? T.green : T.red;
-    // Ordinal helper for day-of-month display
-    const ord = (n) => {
-      if (n == null) return null;
-      const s = ["th","st","nd","rd"], v = n % 100;
-      return n + (s[(v-20)%10] || s[v] || s[0]);
-    };
     return (
       <Card key={i}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 6, flexWrap: "wrap" }}>
@@ -2743,11 +2737,9 @@ const BankSection = ({ data }) => {
             deltaSmall ? "Matches statement" :
             `${delta > 0 ? "+" : ""}${fmt(delta)} since statement`}
         </div>
-        {(a.stmtCloseDay || a.nextStmtExpected) && (
+        {a.nextStmtExpected && (
           <div style={{ fontSize: 9, color: T.slate500, marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${T.slate200}`, letterSpacing: "0.02em" }}>
-            {a.stmtCloseDay ? `Closes ${ord(a.stmtCloseDay)}` : ""}
-            {a.stmtCloseDay && a.nextStmtExpected ? " · " : ""}
-            {a.nextStmtExpected ? <span style={{ color: a.stmtOverdue ? T.red : T.slate600, fontWeight: a.stmtOverdue ? 700 : 400 }}>Next: {nextDateLabel}</span> : ""}
+            <span style={{ color: a.stmtOverdue ? T.red : T.slate600, fontWeight: a.stmtOverdue ? 700 : 400 }}>Next: {nextDateLabel}</span>
           </div>
         )}
       </Card>
@@ -2859,11 +2851,6 @@ const CreditSection = ({ data }) => {
     const nextDateLabel = a.nextStmtExpected
       ? new Date(a.nextStmtExpected + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
       : null;
-    const ord = (n) => {
-      if (n == null) return null;
-      const s = ["th","st","nd","rd"], v = n % 100;
-      return n + (s[(v-20)%10] || s[v] || s[0]);
-    };
     const Field = ({ label, value, color = T.slate900, minWidth = 90 }) => (
       <div style={{ minWidth, flex: "0 1 auto" }}>
         <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
@@ -2902,12 +2889,10 @@ const CreditSection = ({ data }) => {
             {typeLabel(a.type)}{a.rate ? ` · ${a.rate}% APR` : ""}
             {a.needsLast4 ? <span style={{ color: T.amber, marginLeft: 6 }}>· Add last 4</span> : null}
             {a.needsReview ? <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 6 }}><Pill type="warning">Review</Pill></span> : null}
-            {(a.stmtCloseDay || a.nextStmtExpected) ? (
+            {a.nextStmtExpected ? (
               <span style={{ marginLeft: 6, color: T.slate500 }}>
                 {" · "}
-                {a.stmtCloseDay ? `Closes ${ord(a.stmtCloseDay)}` : ""}
-                {a.stmtCloseDay && a.nextStmtExpected ? " · " : ""}
-                {a.nextStmtExpected ? <span style={{ color: a.stmtOverdue ? T.red : T.slate500, fontWeight: a.stmtOverdue ? 700 : 400 }}>Next {nextDateLabel}</span> : ""}
+                <span style={{ color: a.stmtOverdue ? T.red : T.slate500, fontWeight: a.stmtOverdue ? 700 : 400 }}>Next {nextDateLabel}</span>
               </span>
             ) : null}
           </div>
