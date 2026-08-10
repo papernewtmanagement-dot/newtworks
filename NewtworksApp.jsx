@@ -30,6 +30,7 @@ import ContentEditor from "./src/modules/ContentEditor.jsx";
 import Onboarding from "./src/modules/Onboarding.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import Trivia from "./src/modules/Trivia.jsx";
+import CourseGradebook from "./src/modules/CourseGradebook.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -128,6 +129,7 @@ const NAV_ITEMS = [
   { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
   { id: "trivia",      label: "Trivia",      icon: "grid",          roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
+  { id: "gradebook",   label: "Gradebook",   icon: "bookOpen",      roles: ["owner"] },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -694,6 +696,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
     scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
+    gradebook:   <ErrorBoundary name="Gradebook"><CourseGradebook /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
