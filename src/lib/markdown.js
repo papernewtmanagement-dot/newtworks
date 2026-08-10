@@ -421,6 +421,130 @@ export function previewText(content, n = 90) {
   return stripped.length > n ? stripped.slice(0, n - 1).trimEnd() + "…" : stripped;
 }
 
+// ─── Chart preprocessing ──────────────────────────────────────
+// {{chart: Title | label=value | label=value ...}}
+//   → a compact self-contained inline-SVG horizontal bar chart.
+//
+// Options are segments beginning with "!":
+//   !hi=4 PM      highlight this row (repeatable)
+//   !max=100      fix the axis maximum instead of deriving it from the data
+//   !unit=%       suffix appended to every printed value
+//
+// Values may carry thousands separators and a trailing % ("9,250", "37%").
+// A trailing % on any value implies !unit=% unless one is given.
+//
+// Emitted as one <svg> with no external dependency, so it survives the same
+// pass-through path the glossary callouts use and needs no chart library on
+// the markdown side. Deliberately NOT the recharts route the CPR module uses:
+// that renders inside a React component tree, and manual pages are an HTML
+// string. See persistent_memory operational_rule "Manuals charts".
+
+const CHART_RE = /\{\{chart:\s*([\s\S]+?)\s*\}\}/gi;
+
+const CHART_BAR = "#94a3b8";
+const CHART_BAR_HI = "#16a34a";
+const CHART_TEXT = "#475569";
+const CHART_VALUE = "#0f172a";
+
+function parseChartNumber(raw) {
+  const s = String(raw).trim();
+  const pct = /%\s*$/.test(s);
+  const n = parseFloat(s.replace(/,/g, "").replace(/%/g, ""));
+  return { n: Number.isFinite(n) ? n : null, pct };
+}
+
+function formatChartNumber(n, unit) {
+  const body = Number.isInteger(n) ? n.toLocaleString("en-US") : String(n);
+  return unit ? `${body}${unit}` : body;
+}
+
+function renderChart(spec) {
+  const segs = String(spec).split("|").map((s) => s.trim()).filter(Boolean);
+  if (!segs.length) return "";
+
+  let title = "";
+  const rows = [];
+  const highlights = [];
+  let fixedMax = null;
+  let unit = "";
+  let sawPct = false;
+
+  segs.forEach((seg, idx) => {
+    if (seg.startsWith("!")) {
+      const m = /^!\s*([a-z]+)\s*=\s*([\s\S]+)$/i.exec(seg);
+      if (!m) return;
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      if (key === "hi") highlights.push(val.toLowerCase());
+      else if (key === "max") { const p = parseChartNumber(val); if (p.n !== null) fixedMax = p.n; }
+      else if (key === "unit") unit = val;
+      return;
+    }
+    const eq = seg.indexOf("=");
+    if (eq === -1) {
+      if (idx === 0 && !title) title = seg;
+      return;
+    }
+    const label = seg.slice(0, eq).trim();
+    const parsed = parseChartNumber(seg.slice(eq + 1));
+    if (parsed.n === null) return;
+    if (parsed.pct) sawPct = true;
+    rows.push({ label, value: parsed.n });
+  });
+
+  if (!rows.length) return "";
+  if (!unit && sawPct) unit = "%";
+
+  const dataMax = rows.reduce((a, r) => Math.max(a, r.value), 0);
+  const max = fixedMax !== null ? fixedMax : dataMax;
+  if (!(max > 0)) return "";
+
+  // Geometry: fixed viewBox, scaled by the browser to the container width.
+  const LABEL_W = 54;
+  const VALUE_W = 46;
+  const PLOT_W = 200;
+  const ROW_H = 17;
+  const BAR_H = 10;
+  const TITLE_H = title ? 20 : 4;
+  const W = LABEL_W + PLOT_W + VALUE_W;
+  const H = TITLE_H + rows.length * ROW_H + 4;
+
+  const parts = [
+    `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:420px;height:auto;` +
+      `margin:8px 0;font-family:inherit;display:block;" role="img" ` +
+      `aria-label="${escapeHtml(title || "chart")}">`,
+  ];
+
+  if (title) {
+    parts.push(
+      `<text x="0" y="12" font-size="10" font-weight="700" fill="${CHART_TEXT}" ` +
+        `letter-spacing="0.05em">${escapeHtml(title.toUpperCase())}</text>`
+    );
+  }
+
+  rows.forEach((r, i) => {
+    const y = TITLE_H + i * ROW_H;
+    const isHi = highlights.includes(r.label.toLowerCase());
+    const w = Math.max(max > 0 ? (r.value / max) * PLOT_W : 0, r.value > 0 ? 1.5 : 0);
+    parts.push(
+      `<text x="0" y="${y + BAR_H - 1}" font-size="9" fill="${CHART_TEXT}">${escapeHtml(r.label)}</text>`,
+      `<rect x="${LABEL_W}" y="${y}" width="${w.toFixed(1)}" height="${BAR_H}" rx="2" ` +
+        `fill="${isHi ? CHART_BAR_HI : CHART_BAR}"/>`,
+      `<text x="${LABEL_W + PLOT_W + 6}" y="${y + BAR_H - 1}" font-size="9" ` +
+        `font-weight="${isHi ? 700 : 400}" fill="${CHART_VALUE}">` +
+        `${escapeHtml(formatChartNumber(r.value, unit))}</text>`
+    );
+  });
+
+  parts.push(`</svg>`);
+  return parts.join("");
+}
+
+function expandCharts(md) {
+  if (!md || md.indexOf("{{chart:") === -1) return md;
+  return md.replace(CHART_RE, (_m, spec) => renderChart(spec));
+}
+
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
   let src = String(md || "");
@@ -436,6 +560,9 @@ export function mdToHtml(md, options = {}) {
   if (options && typeof options.resolveGlossary === "function") {
     src = expandGlossary(src, options.resolveGlossary);
   }
+
+  // No resolver needed — chart data is authored inline in the marker.
+  src = expandCharts(src);
 
   if (!src.trim()) return "";
 
