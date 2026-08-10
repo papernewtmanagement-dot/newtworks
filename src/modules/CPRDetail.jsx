@@ -569,6 +569,22 @@ function useCPRData(weekDate) {
         }
 
         // 3. Detail rows for this week
+        //
+        // weekly_cpr_team_detail_admin_or_own_read (20260805040457) is a
+        // ROW-level policy: a non-admin viewer's select("*") on the base
+        // table drops every OTHER teammate's row entirely, not just the
+        // comp columns on those rows. That's correct for comp fields (pay,
+        // bonuses, pool diagnostics) but it also silently hid harmless
+        // activity fields (quotes, sales points, checklist, production
+        // counts) that Team Activity and other sections need team-wide.
+        //
+        // Fix mirrors the annual_benefits_value pattern above: base table
+        // fetch stays primary (full row, comp fields included, for admins
+        // or for the viewer's own row). Any team_member_id the base fetch
+        // didn't return gets filled in from weekly_cpr_team_detail_activity
+        // -- a view with the comp/pool/pay columns dropped -- so every
+        // teammate's row is present with activity data, and only comp
+        // fields are (correctly) blank for people other than the viewer.
         let detailRows = [];
         if (reportRow?.id) {
           const { data: dr } = await supabase
@@ -577,6 +593,19 @@ function useCPRData(weekDate) {
             .eq("agency_id", AGENCY_ID)
             .eq("weekly_cpr_report_id", reportRow.id);
           detailRows = dr || [];
+
+          const seenMemberIds = new Set(detailRows.map(r => r.team_member_id));
+          const { data: activityRows } = await supabase
+            .from("weekly_cpr_team_detail_activity")
+            .select("*")
+            .eq("agency_id", AGENCY_ID)
+            .eq("weekly_cpr_report_id", reportRow.id);
+          for (const a of activityRows || []) {
+            if (!seenMemberIds.has(a.team_member_id)) {
+              detailRows.push(a);
+              seenMemberIds.add(a.team_member_id);
+            }
+          }
         }
 
         // 3b. Scorecard completion auto-verify — tenure-aware.
@@ -700,6 +729,17 @@ function useCPRData(weekDate) {
         // 8c. Cycle weekly team detail — every team_detail row from cycle start through this week.
         // Drives Payroll Commission expandable chart, Team Activity per-person weekly production
         // expansion, and inline sparkline next to each teammate's name.
+        //
+        // `commission` is comp data and correctly stays admin-or-own (that's
+        // the Payroll Commission chart's existing, intended privacy — not
+        // part of this fix). But bundling it into one select("*")-style
+        // query meant the row-level RLS policy dropped sales_points/prod_*
+        // for every OTHER teammate too, killing their production expansion
+        // and sparkline on Team Activity. Same split as the main detail
+        // fetch: base table for commission (own/admin only), the activity
+        // view — which has no embedded-join support since it's a view, so
+        // report ids are resolved first — fills in sales_points/prod_* for
+        // teammates the base query didn't return.
         let cycleWeeklyDetails = [];
         if (cycleStartISO && weekDate) {
           try {
@@ -709,10 +749,14 @@ function useCPRData(weekDate) {
               .eq("agency_id", AGENCY_ID)
               .gte("weekly_cpr_reports.week_ending_date", cycleStartISO)
               .lte("weekly_cpr_reports.week_ending_date", weekDate);
+
+            const seenMemberWeek = new Set();
             (cdRows || []).forEach(r => {
+              const wed = r.weekly_cpr_reports?.week_ending_date;
+              seenMemberWeek.add(r.team_member_id + "|" + wed);
               cycleWeeklyDetails.push({
                 team_member_id: r.team_member_id,
-                week_ending_date: r.weekly_cpr_reports?.week_ending_date,
+                week_ending_date: wed,
                 commission: Number(r.commission) || 0,
                 sales_points: Number(r.sales_points) || 0,
                 prod_total_count: Number(r.prod_total_count) || 0,
@@ -726,6 +770,43 @@ function useCPRData(weekDate) {
                 prod_bank: Number(r.prod_bank) || 0,
               });
             });
+
+            const { data: cycleReports } = await supabase
+              .from("weekly_cpr_reports")
+              .select("id, week_ending_date")
+              .eq("agency_id", AGENCY_ID)
+              .gte("week_ending_date", cycleStartISO)
+              .lte("week_ending_date", weekDate);
+            const reportIdToDate = Object.fromEntries((cycleReports || []).map(r => [r.id, r.week_ending_date]));
+            const cycleReportIds = Object.keys(reportIdToDate);
+            if (cycleReportIds.length > 0) {
+              const { data: activityRows } = await supabase
+                .from("weekly_cpr_team_detail_activity")
+                .select("team_member_id, weekly_cpr_report_id, sales_points, prod_total_count, prod_total_premium, prod_issued_count, prod_issued_premium, prod_auto, prod_fire, prod_life, prod_health, prod_bank")
+                .eq("agency_id", AGENCY_ID)
+                .in("weekly_cpr_report_id", cycleReportIds);
+              (activityRows || []).forEach(r => {
+                const wed = reportIdToDate[r.weekly_cpr_report_id];
+                const key = r.team_member_id + "|" + wed;
+                if (seenMemberWeek.has(key)) return; // base query already had this row (commission included)
+                seenMemberWeek.add(key);
+                cycleWeeklyDetails.push({
+                  team_member_id: r.team_member_id,
+                  week_ending_date: wed,
+                  commission: 0, // comp field — intentionally not exposed for teammates other than viewer/admin
+                  sales_points: Number(r.sales_points) || 0,
+                  prod_total_count: Number(r.prod_total_count) || 0,
+                  prod_issued_count: Number(r.prod_issued_count) || 0,
+                  prod_issued_premium: Number(r.prod_issued_premium) || 0,
+                  prod_total_premium: Number(r.prod_total_premium) || 0,
+                  prod_auto: Number(r.prod_auto) || 0,
+                  prod_fire: Number(r.prod_fire) || 0,
+                  prod_life: Number(r.prod_life) || 0,
+                  prod_health: Number(r.prod_health) || 0,
+                  prod_bank: Number(r.prod_bank) || 0,
+                });
+              });
+            }
           } catch (e) {
             console.warn("cycleWeeklyDetails fetch failed:", e);
           }
@@ -743,8 +824,13 @@ function useCPRData(weekDate) {
             .eq("week_ending_date", lastWeekDate)
             .maybeSingle();
           if (prevWeekReport?.id) {
+            // weekly_cpr_team_detail_activity — same RLS-row-scope issue as
+            // the main detail fetch above: sales_points alone is not comp
+            // data, but the base table's admin-or-own-row policy still
+            // dropped every non-viewer row wholesale, silently zeroing the
+            // WoW delta indicator for everyone but the viewer.
             const { data: prevDetail } = await supabase
-              .from("weekly_cpr_team_detail")
+              .from("weekly_cpr_team_detail_activity")
               .select("team_member_id, sales_points")
               .eq("agency_id", AGENCY_ID)
               .eq("weekly_cpr_report_id", prevWeekReport.id);
@@ -944,13 +1030,34 @@ function useCPRData(weekDate) {
           return ALL_QTR_ENDS.filter(d => d < weekDate).slice(-4);
         })();
         try {
-          const { data: qtrRows } = priorQuarterEndDates.length === 0 ? { data: [] } : await supabase
-            .from("weekly_cpr_team_detail")
-            .select("team_member_id, sales_points, weekly_cpr_report_id, weekly_cpr_reports!inner(week_ending_date)")
-            .eq("agency_id", AGENCY_ID)
-            .not("sales_points", "is", null)
-            .lt("weekly_cpr_reports.week_ending_date", weekDate)
-            .in("weekly_cpr_reports.week_ending_date", priorQuarterEndDates);
+          // weekly_cpr_team_detail_activity — sales_points is not comp data,
+          // but the base table's row-level admin-or-own policy dropped every
+          // non-viewer row wholesale, so the prior-quarter reference columns
+          // in Team Activity only ever populated for the viewer. Views don't
+          // reliably support PostgREST's embedded-join syntax
+          // (weekly_cpr_reports!inner(...)), so report ids for the target
+          // quarter-end dates are resolved first, then the view is filtered
+          // by weekly_cpr_report_id directly.
+          let qtrRows = [];
+          if (priorQuarterEndDates.length > 0) {
+            const { data: qtrReportRows } = await supabase
+              .from("weekly_cpr_reports")
+              .select("id, week_ending_date")
+              .eq("agency_id", AGENCY_ID)
+              .in("week_ending_date", priorQuarterEndDates)
+              .lt("week_ending_date", weekDate);
+            const qtrReportIdToDate = Object.fromEntries((qtrReportRows || []).map(r => [r.id, r.week_ending_date]));
+            const qtrReportIds = Object.keys(qtrReportIdToDate);
+            if (qtrReportIds.length > 0) {
+              const { data: qr } = await supabase
+                .from("weekly_cpr_team_detail_activity")
+                .select("team_member_id, sales_points, weekly_cpr_report_id")
+                .eq("agency_id", AGENCY_ID)
+                .not("sales_points", "is", null)
+                .in("weekly_cpr_report_id", qtrReportIds);
+              qtrRows = (qr || []).map(r => ({ ...r, weekly_cpr_reports: { week_ending_date: qtrReportIdToDate[r.weekly_cpr_report_id] } }));
+            }
+          }
           if (!cancelled && qtrRows) {
             const grouped = {};
             qtrRows.forEach(r => {
