@@ -163,18 +163,20 @@ function useFinancialsData(entity) {
             // last_entry_date/last_statement_close_date -> last_statement_period_end,
             // last_statement_balance -> current_balance_derived (identical now — balance
             // IS the last statement's closing balance, no separate anchor+activity derivation),
-            // next_statement_expected_date -> expected_last_close (semantics flipped: now
-            // most-recent-expected-close-in-the-past, not next-future-close).
+            // next_statement_expected: forward-looking projection via
+            // compute_next_statement_close() (2026-08-10 fix — the interim
+            // expected_last_close column from the 08-08 rebuild was backward-looking
+            // and got mislabeled "Next" in the UI; see is_overdue below for the red flag).
             // last_statement_source / last_statement_notes have NO equivalent in the new
             // contract (statement_balances.source/notes are not exposed by v_bank_balances
             // per Phase 5 spec, which forbids adding columns to accommodate the frontend) —
             // dropped from select and downstream reads; flagged for Peter's call.
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, expected_last_close"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
             // finrebuild 2026-08-08: same remap as v_bank_balances above.
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, expected_last_close"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
           // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
           // filter; expose business_entity_id so GLSection can filter to the
@@ -478,7 +480,7 @@ function useFinancialsData(entity) {
           lastStmtSource:  null,   // finrebuild 2026-08-08: no equivalent column — flagged
           lastStmtNotes:   null,   // finrebuild 2026-08-08: no equivalent column — flagged
           stmtCloseDay:    c.statement_close_day || null,
-          nextStmtExpected: c.expected_last_close || null,   // semantics flipped: past close, not next future close
+          nextStmtExpected: c.next_statement_expected || null,   // forward-looking projection; red via stmtOverdue when passed
           stmtOverdue:     c.is_overdue === true,
         }));
 
@@ -649,7 +651,7 @@ function useFinancialsData(entity) {
             lastStmtSource:  null,   // finrebuild 2026-08-08: no equivalent column — flagged
             lastStmtNotes:   null,   // finrebuild 2026-08-08: no equivalent column — flagged
             stmtCloseDay:    b.statement_close_day || null,
-            nextStmtExpected: b.expected_last_close || null,   // semantics flipped: past close, not next future close
+            nextStmtExpected: b.next_statement_expected || null,   // forward-looking projection; red via stmtOverdue when passed
             stmtOverdue:     b.is_overdue === true,
           })),
           creditAccounts,
