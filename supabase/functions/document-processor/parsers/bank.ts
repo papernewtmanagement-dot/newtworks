@@ -72,6 +72,11 @@ Rules:
 - Combine multi-line transaction descriptions into the single payee/memo pair;
   "raw_line" is a best-effort verbatim capture of the source line(s) for that
   transaction and may include the original date/amount text as printed.
+- If the statement prints multiple transaction lines with the SAME date,
+  payee, and amount, output one JSON object for EACH printed line. NEVER
+  merge, collapse, or deduplicate repeated identical lines — repeated small
+  identical charges (game stores, app stores, subscriptions) are real
+  separate transactions and every printed line must appear in the output.
 - Use ISO dates only.
 - All amounts as JSON numbers, never strings.
 - Output raw JSON, never wrap it in code fences.
@@ -93,7 +98,7 @@ export async function parseBankStatement(opts: {
     userContent: opts.statementText,
     documentId: opts.documentId,
     purpose: "parse_bank_statement",
-    maxTokens: 6000,
+    maxTokens: 8000,
   });
 
   if (!result.ok) {

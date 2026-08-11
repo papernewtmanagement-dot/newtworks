@@ -44,6 +44,7 @@ from pathlib import Path
 # Do NOT reorder without understanding the dependency chain.
 ORDER = [
     "lib/supabase.ts",
+    "../_shared/statement_writer.ts",
     "lib/composio.ts",
     "lib/llm.ts",
     "lib/text_recovery.ts",
