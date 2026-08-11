@@ -1681,7 +1681,7 @@ function TriviaGatesTab({ userId }) {
     setGatesBanner(null);
     try {
       const { error } = await supabase.from("quiz_topic_set_rules").insert({
-        agency_id: AGENCY_ID, set_id: selectedSetId,
+        set_id: selectedSetId,
         category: newRuleCategory || null, difficulty: newRuleDifficulty || null,
       });
       if (error) throw error;
@@ -1712,7 +1712,7 @@ function TriviaGatesTab({ userId }) {
     setGatesBanner(null);
     try {
       const { error } = await supabase.from("quiz_topic_set_rules").insert({
-        agency_id: AGENCY_ID, set_id: selectedSetId, item_id: itemId,
+        set_id: selectedSetId, item_id: itemId,
       });
       if (error) throw error;
       setPinnedSearch(""); setPinnedResults([]);
