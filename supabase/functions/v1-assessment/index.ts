@@ -28,7 +28,7 @@
 //     in the ambiguous 45-55 band (compute_newtworks_v2_stint3_triggers).
 //     Pulled from the SAME already-published, already-cited scale used for
 //     Stint 2 — not new content, not a retest. Conditional; may be empty.
-//   - Stint 4 = SJT (40 items, 10 competencies x 4 items each). Served in
+//   - Stint 4 = SJT (40 items, 10 constructs x 4 items each). Served in
 //     full once Stint 3 is resolved (whether or not it triggered any
 //     facets), unconditional, same pattern as Stint 2 — not trigger-gated.
 //   - Retest items (1 per personality facet, all 22) are separate from
@@ -38,14 +38,12 @@
 //   - Scoring on finalize: compute_newtworks_v2_facets_as_row (personality
 //     facets), apply_newtworks_gma_to_candidate (GMA accuracy + speed per
 //     domain), apply_newtworks_v2_sjt_to_candidate (SJT % correct per
-//     construct), apply_newtworks_v2_reliability_to_candidate
-//     (careless-response composite), apply_newtworks_v2_competency_gates_to_
-//     candidate (Newtworks competency layer — 12 competencies x 7 roles,
-//     confirmed 2026-08-02, live 2026-08-03: determines best-fit role, then
-//     persists which gates fired — integrity decline / critical-floor /
-//     reasoning-floor — plus the churn-risk flag, wired in Step 9). All five
-//     are independent and best-effort at finalize — one failing does not
-//     block the others or the core facet write.
+//     construct), apply_newtworks_v2_impression_management_to_candidate
+//     (social-desirability index), and apply_newtworks_v2_reliability_to_
+//     candidate (careless-response composite). All are independent and
+//     best-effort at finalize — one failing does not block the others or
+//     the core facet write. Role fit and gating are computed at read time
+//     by the facet-direct chain — nothing derived is persisted here.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -934,7 +932,7 @@ async function handleFinalize(supa: any, cand: any) {
           const message =
             `${candName} finished the Newtworks assessment for ${position}. ` +
             `${rows.length} personality facets scored, ${totalItemsScored} items. ` +
-            `GMA + SJT + competency gates scored alongside. View: ${link}`;
+            `GMA + SJT scored alongside. View: ${link}`;
 
           const { error: alertErr } = await supa.from("alerts").insert({
             agency_id: AGENCY_ID,
