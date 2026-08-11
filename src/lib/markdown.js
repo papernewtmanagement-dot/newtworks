@@ -155,13 +155,15 @@ const NW_FILL_RE = new RegExp(
   "a|p|br|hr|b|i|u|em|strong|span|div|section|article|header|footer|nav|" +
   "table|thead|tbody|tfoot|colgroup|col|tr|td|th|caption|ul|ol|li|dl|dt|dd|" +
   "details|summary|blockquote|figure|figcaption|aside|img|h[1-6]|code|pre|" +
-  "small|sup|sub|mark" +
+  "small|sup|sub|mark|" +
+  "svg|g|rect|text|tspan|line|circle|ellipse|path|polyline|polygon|defs|" +
+  "title|desc|use|clipPath|linearGradient|stop" +
   ")(?:[\\s/>]|$))([^<>\\n]{1,140})>",
   "g"
 );
 
 // build nudge 2026-08-07
-const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside"];
+const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "figure", "aside", "svg"];
 
 // Slugify heading text for id attribute (used by mdToHtml heading render)
 function slugifyHeading(text) {
