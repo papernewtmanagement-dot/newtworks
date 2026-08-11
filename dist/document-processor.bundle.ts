@@ -763,9 +763,24 @@ export async function recoverTextFromScannedFile(opts: {
     }
   }
 
+  // Was a bare fetch() with no time limit until 2026-08-11. Google holding this
+  // link open would hang the whole invocation until the platform's own
+  // wall-clock limit killed it as an uncaught exception (status 546) instead of
+  // returning a catchable error — the exact failure mode fetchWithTimeout was
+  // written for on 2026-08-06, and the last fetch() in this function that had
+  // not been moved onto it.
   let text = "";
   try {
-    const r = await fetch(textUrl);
+    const { res: r, timedOut, elapsedMs } = await fetchWithTimeout(
+      textUrl, {}, S3_FETCH_TIMEOUT_MS, "drive_plaintext_export",
+      `document=${docId}`,
+    );
+    if (timedOut) {
+      return { ok: false, stage: "read", error: `plain-text link did not respond within ${elapsedMs}ms and was aborted; document is ${docId}, text is recoverable by hand` };
+    }
+    if (!r) {
+      return { ok: false, stage: "read", error: `plain-text fetch failed after ${elapsedMs}ms; document is ${docId}` };
+    }
     if (!r.ok) {
       return { ok: false, stage: "read", error: `plain-text link returned HTTP ${r.status}; document is ${docId}` };
     }
