@@ -110,6 +110,7 @@ const NAV_ITEMS = [
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "onboarding",  label: "Onboarding",  icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
+  { id: "trivia",      label: "Trivia",      icon: "grid",          roles: TEAM_VISIBLE_ROLES },
   { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
@@ -127,7 +128,6 @@ const NAV_ITEMS = [
   { id: "principles",  label: "Principles",  icon: "book",          roles: ADMIN_ROLES },
   { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
   { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
-  { id: "trivia",      label: "Trivia",      icon: "grid",          roles: TEAM_VISIBLE_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
   { id: "gradebook",   label: "Gradebook",   icon: "bookOpen",      roles: ["owner"] },
 ];
