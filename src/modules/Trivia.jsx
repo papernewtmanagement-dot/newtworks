@@ -5,7 +5,7 @@ import { T } from "../lib/theme.js";
 import { useTabParam } from "../lib/routing.jsx";
 
 // ============================================================
-// Newtworks TRIVIA MODULE — Wave 3 (training gate) shipped
+// Newtworks TRIVIA MODULE — Wave 4 part 1 (The Grid) shipped
 //
 // SCOPE: Block A — review/approve/retire quiz items, browse
 // approved items, work the bad-question report queue, switch a
@@ -15,10 +15,14 @@ import { useTabParam } from "../lib/routing.jsx";
 // onboarding training gate: a Training card on Play (server-drawn
 // gauntlet/phase_final attempts against named topic sets) and an
 // admin-only Gates tab (topic sets, rules, pool preview, step
-// attachments, per-teammate status + owner override). Review/
-// Approved/Reports/Gates stay admin-gated in-module. The planning
-// thread authors items separately; no question-writing UI lives
-// here.
+// attachments, per-teammate status + owner override). Wave 4 part
+// 1 — The Grid: a server-drawn, content-adaptive 3-5 column board
+// on Play, once per Central-time day like Daily Five, with
+// server-authoritative per-cell point values. Per-attempt option
+// shuffling is live across every play runner (Daily Five, Duel,
+// Training, The Grid). Review/Approved/Reports/Gates stay
+// admin-gated in-module. The planning thread authors items
+// separately; no question-writing UI lives here.
 // ============================================================
 
 const s = {
@@ -164,6 +168,28 @@ const s = {
   duelListRow: {
     padding: "8px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, marginBottom: 6, fontSize: 13,
   },
+  gridBoardGrid: {
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+    gap: 8, marginTop: 10,
+  },
+  gridColumnHeader: {
+    fontSize: 11, fontWeight: 700, color: T.slate600, textAlign: "center",
+    marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em",
+  },
+  gridCellBtn: (state) => {
+    // state: "open" | "correct" | "wrong"
+    const map = {
+      open: { background: "#fff", border: `1px solid ${T.slate300}`, color: T.slate800, cursor: "pointer" },
+      correct: { background: T.greenLt, border: `1px solid ${T.green}`, color: T.green, cursor: "default" },
+      wrong: { background: T.redLt, border: `1px solid ${T.red}`, color: T.red, cursor: "default" },
+    };
+    const chosen = map[state] || map.open;
+    return {
+      width: "100%", padding: "10px 6px", marginBottom: 6, fontSize: 13, fontWeight: 700,
+      textAlign: "center", borderRadius: 6, ...chosen,
+    };
+  },
+  gridRunningTotal: { fontSize: 13, fontWeight: 700, color: T.slate800, marginTop: 10, textAlign: "right" },
 };
 
 const DIFFICULTY_TINT = { basic: T.green, intermediate: T.amber, advanced: T.red };
@@ -198,6 +224,25 @@ function sampleN(pool, n) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr.slice(0, count);
+}
+
+// Deterministic per-attempt option order. The same attempt and item
+// always produce the same order, so a resumed attempt looks identical
+// while the correct answer no longer sits in a fixed slot.
+function orderedOptions(options, attemptId, itemId) {
+  const arr = Array.isArray(options) ? [...options] : [];
+  let h = 2166136261;
+  const seed = `${attemptId || ""}:${itemId || ""}`;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  for (let i = arr.length - 1; i > 0; i--) {
+    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+    const j = h % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 export default function Trivia({ userRole, userId }) {
@@ -362,7 +407,7 @@ export default function Trivia({ userRole, userId }) {
           if (!trimmed) continue;
           const { error: e2 } = await supabase
             .from("quiz_item_options")
-            .insert({ item_id: itemId, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: i });
+            .insert({ item_id: itemId, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: i + 1 });
           if (e2) throw e2;
         }
       }
@@ -396,7 +441,7 @@ export default function Trivia({ userRole, userId }) {
           if (!trimmed) continue;
           const { error: e2 } = await supabase
             .from("quiz_item_options")
-            .insert({ item_id: itemId, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: i });
+            .insert({ item_id: itemId, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: i + 1 });
           if (e2) throw e2;
         }
       }
@@ -734,6 +779,22 @@ async function loadItemsWithOptions(ids) {
   return map;
 }
 
+// The Grid column header rule: strip a leading "sf_" and prefix
+// "State Farm ", replace underscores with spaces, capitalise each
+// word. sf_auto -> "State Farm Auto", fire -> "Fire",
+// commercial_auto -> "Commercial Auto".
+function formatGridCategoryLabel(category) {
+  let label = category || "";
+  let prefix = "";
+  if (label.startsWith("sf_")) {
+    label = label.slice(3);
+    prefix = "State Farm ";
+  }
+  label = label.replace(/_/g, " ");
+  label = label.replace(/\b\w/g, (c) => c.toUpperCase());
+  return prefix + label;
+}
+
 function TriviaPlayTab({ userId }) {
   const [modes, setModes] = useState({});
   const [modesError, setModesError] = useState(null);
@@ -780,11 +841,23 @@ function TriviaPlayTab({ userId }) {
   const [gateResult, setGateResult] = useState(null);
   const [gateError, setGateError] = useState(null);
 
+  // The Grid (Wave 4 part 1)
+  const [gridCatCounts, setGridCatCounts] = useState({});
+  const [gridPhase, setGridPhase] = useState("checking"); // checking | not_started | in_progress | board | finishing | finished | error
+  const [gridError, setGridError] = useState(null);
+  const [gridAttempt, setGridAttempt] = useState(null);
+  const [gridBoard, setGridBoard] = useState([]);
+  const [gridItemsById, setGridItemsById] = useState({});
+  const [gridAnsweredByItem, setGridAnsweredByItem] = useState({});
+  const [gridPointsSoFar, setGridPointsSoFar] = useState(0);
+  const [gridActiveCell, setGridActiveCell] = useState(null); // { category, item_id, points } when in clue view
+  const [gridResult, setGridResult] = useState(null);
+
   // ── Loaders ──
   const loadModesAndPool = useCallback(async () => {
     try {
       const [modesRes, poolRes] = await Promise.all([
-        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final"]),
+        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final", "the_grid"]),
         supabase.from("quiz_items").select("id"),
       ]);
       if (modesRes.error) throw modesRes.error;
@@ -907,11 +980,57 @@ function TriviaPlayTab({ userId }) {
     }
   }, []);
 
+  // Category counts for The Grid's client-side availability check — same
+  // approved/unblocked scope the rest of Play relies on via RLS.
+  const loadGridAvailability = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from("quiz_items").select("category");
+      if (error) throw error;
+      const counts = {};
+      for (const row of (data || [])) {
+        if (!row.category) continue;
+        counts[row.category] = (counts[row.category] || 0) + 1;
+      }
+      setGridCatCounts(counts);
+    } catch (ex) {
+      // non-fatal — the card will read "not enough questions yet" if this stays empty
+    }
+  }, []);
+
+  const loadGridStatus = useCallback(async () => {
+    if (!userId) return;
+    setGridPhase("checking");
+    setGridError(null);
+    try {
+      const today = ctToday();
+      const { data: row, error } = await supabase.from("quiz_attempts").select("*")
+        .eq("team_member_id", userId).eq("mode_key", "the_grid").eq("attempt_day", today)
+        .maybeSingle();
+      if (error) throw error;
+      if (!row) {
+        setGridAttempt(null);
+        setGridPhase("not_started");
+      } else if (row.finished_at) {
+        setGridAttempt(row);
+        setGridResult({ correct_count: row.correct_count, question_count: row.question_count, points_earned: row.points_earned });
+        setGridPhase("finished");
+      } else {
+        setGridAttempt(row);
+        setGridPhase("in_progress");
+      }
+    } catch (ex) {
+      setGridError(ex?.message || "Could not check today's board.");
+      setGridPhase("error");
+    }
+  }, [userId]);
+
   useEffect(() => { loadModesAndPool(); }, [loadModesAndPool]);
   useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
   useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
   useEffect(() => { loadStandings(); }, [loadStandings]);
   useEffect(() => { loadGates(); }, [loadGates]);
+  useEffect(() => { loadGridAvailability(); }, [loadGridAvailability]);
+  useEffect(() => { loadGridStatus(); }, [loadGridStatus]);
 
   // ── Training gate actions ──
   const startGate = async (gate) => {
@@ -975,6 +1094,122 @@ function TriviaPlayTab({ userId }) {
     setGateResult(null);
     setGateError(null);
   };
+
+  // ── The Grid actions ──
+  const beginPlayingGrid = async (attempt) => {
+    const board = attempt?.context?.board || [];
+    const allIds = (attempt?.context?.item_ids) || [];
+    const [ansRes, itemsMap] = await Promise.all([
+      supabase.from("quiz_answers").select("item_id, chosen_option_id").eq("attempt_id", attempt.id),
+      loadItemsWithOptions(allIds),
+    ]);
+    if (ansRes.error) throw ansRes.error;
+
+    const answeredMap = {};
+    let pts = 0;
+    for (const r of (ansRes.data || [])) {
+      const item = itemsMap[r.item_id];
+      const opt = (item?.options || []).find(o => o.id === r.chosen_option_id);
+      answeredMap[r.item_id] = { chosen_option_id: r.chosen_option_id, is_correct: !!opt?.is_correct };
+    }
+    for (const col of board) {
+      for (const clue of (col.clues || [])) {
+        const ans = answeredMap[clue.item_id];
+        if (ans && ans.is_correct) pts += clue.points;
+      }
+    }
+
+    setGridAttempt(attempt);
+    setGridBoard(board);
+    setGridItemsById(itemsMap);
+    setGridAnsweredByItem(answeredMap);
+    setGridPointsSoFar(pts);
+    setGridActiveCell(null);
+
+    const totalCells = board.reduce((n, col) => n + (col.clues || []).length, 0);
+    const answeredCount = Object.keys(answeredMap).length;
+    if (totalCells > 0 && answeredCount >= totalCells) {
+      setGridPhase("finishing");
+      await finishGrid(attempt.id);
+    } else {
+      setGridPhase("board");
+    }
+  };
+
+  const startGrid = async () => {
+    setGridError(null);
+    setGridPhase("checking");
+    try {
+      const { data: attemptId, error } = await supabase.rpc("quiz_start_grid_attempt");
+      if (error) {
+        setGridError(error.message);
+        setGridPhase("not_started");
+        return;
+      }
+      const { data: row, error: fetchErr } = await supabase
+        .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      await beginPlayingGrid(row);
+    } catch (ex) {
+      setGridError(ex?.message || "Could not start the board.");
+      setGridPhase("error");
+    }
+  };
+
+  const resumeGrid = async () => {
+    if (!gridAttempt) return;
+    setGridError(null);
+    setGridPhase("checking");
+    try {
+      await beginPlayingGrid(gridAttempt);
+    } catch (ex) {
+      setGridError(ex?.message || "Could not resume the board.");
+      setGridPhase("error");
+    }
+  };
+
+  const openGridCell = (category, clue) => {
+    if (gridAnsweredByItem[clue.item_id]) return;
+    setGridActiveCell({ category, item_id: clue.item_id, points: clue.points });
+  };
+
+  const submitGridAnswer = async (itemId, chosenOptionId, secondsTaken) => {
+    const { error } = await supabase.from("quiz_answers").insert({
+      attempt_id: gridAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
+    });
+    if (error) throw error;
+    const item = gridItemsById[itemId];
+    const opt = (item?.options || []).find(o => o.id === chosenOptionId);
+    const isCorrect = !!opt?.is_correct;
+    setGridAnsweredByItem(prev => ({ ...prev, [itemId]: { chosen_option_id: chosenOptionId, is_correct: isCorrect } }));
+    if (isCorrect && gridActiveCell && gridActiveCell.item_id === itemId) {
+      setGridPointsSoFar(prev => prev + gridActiveCell.points);
+    }
+  };
+
+  const finishGrid = async (attemptId) => {
+    setGridPhase("finishing");
+    const { data, error } = await supabase.rpc("quiz_finish_attempt", { p_attempt_id: attemptId });
+    if (error) {
+      setGridError(error.message || "Could not finish — try again.");
+      setGridPhase("board");
+      return;
+    }
+    setGridResult(data);
+    setGridPhase("finished");
+    await loadStandings();
+  };
+
+  // Every cell spent → finish automatically, same moment the board goes empty.
+  useEffect(() => {
+    if (gridPhase !== "board" || !gridAttempt) return;
+    const totalCells = gridBoard.reduce((n, col) => n + (col.clues || []).length, 0);
+    const answeredCount = Object.keys(gridAnsweredByItem).length;
+    if (totalCells > 0 && answeredCount >= totalCells) {
+      finishGrid(gridAttempt.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gridAnsweredByItem, gridBoard, gridPhase, gridAttempt]);
 
   // ── Daily Five actions ──
   const startFreshDaily = async () => {
@@ -1155,6 +1390,14 @@ function TriviaPlayTab({ userId }) {
   // ── Render ──
   const dailyCfg = modes.daily_five;
   const duelCfg = modes.duel;
+  const gridCfg = modes.the_grid;
+  const gridQualifyingCats = useMemo(() => {
+    return Object.entries(gridCatCounts)
+      .filter(([, n]) => n >= 5)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([cat]) => cat);
+  }, [gridCatCounts]);
+  const gridAvailable = gridQualifyingCats.length >= 3;
 
   return (
     <div>
@@ -1178,6 +1421,7 @@ function TriviaPlayTab({ userId }) {
                 <QuestionRunner
                   itemIds={gateRemainingIds}
                   itemsById={gateItemsById}
+                  attemptId={gateAttempt?.id}
                   secondsPerQuestion={(activeGate.mode_key === "gauntlet" ? modes.gauntlet : modes.phase_final)?.seconds_per_question || 30}
                   onSubmitAnswer={submitGateAnswer}
                   onAllDone={finishGate}
@@ -1264,6 +1508,7 @@ function TriviaPlayTab({ userId }) {
             <QuestionRunner
               itemIds={dfRemainingIds}
               itemsById={dfItemsById}
+              attemptId={dfAttempt?.id}
               secondsPerQuestion={dailyCfg?.seconds_per_question || 30}
               onSubmitAnswer={submitDailyAnswer}
               onAllDone={() => finishDaily(dfAttempt.id)}
@@ -1296,6 +1541,7 @@ function TriviaPlayTab({ userId }) {
               <QuestionRunner
                 itemIds={duelActiveRemainingIds}
                 itemsById={duelActiveItemsById}
+                attemptId={duelActiveAttempt?.id}
                 secondsPerQuestion={duelCfg?.seconds_per_question || 20}
                 onSubmitAnswer={submitDuelAnswer}
                 onAllDone={finishDuel}
@@ -1380,6 +1626,82 @@ function TriviaPlayTab({ userId }) {
                 </div>
               )}
             </>
+          )}
+        </div>
+
+        {/* ── The Grid card ── */}
+        <div style={s.playCard}>
+          <div style={s.playCardTitle}>The Grid</div>
+          <div style={s.playCardDesc}>Pick a square, answer the question — higher rows are worth more.</div>
+
+          {gridError && <div style={s.errorBanner}>{gridError}</div>}
+
+          {gridPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking today's board…</div>}
+
+          {gridPhase === "not_started" && (
+            !gridAvailable ? (
+              <div style={{ fontSize: 13, color: T.slate500 }}>
+                Not enough questions yet — the board needs three categories with five questions each.
+              </div>
+            ) : (
+              <button type="button" style={s.primaryBtn} onClick={startGrid}>Play The Grid</button>
+            )
+          )}
+
+          {gridPhase === "in_progress" && (
+            <button type="button" style={s.primaryBtn} onClick={resumeGrid}>Resume the board</button>
+          )}
+
+          {gridPhase === "finishing" && <div style={{ fontSize: 13, color: T.slate500 }}>Finishing up…</div>}
+
+          {gridPhase === "board" && gridAttempt && !gridActiveCell && (
+            <div>
+              <div style={s.gridBoardGrid}>
+                {gridBoard.map(col => (
+                  <div key={col.category}>
+                    <div style={s.gridColumnHeader}>{formatGridCategoryLabel(col.category)}</div>
+                    {(col.clues || []).map(clue => {
+                      const ans = gridAnsweredByItem[clue.item_id];
+                      const cellState = ans ? (ans.is_correct ? "correct" : "wrong") : "open";
+                      return (
+                        <button
+                          key={clue.item_id}
+                          type="button"
+                          style={s.gridCellBtn(cellState)}
+                          disabled={!!ans}
+                          onClick={() => openGridCell(col.category, clue)}
+                        >
+                          {clue.points}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+              <div style={s.gridRunningTotal}>{gridPointsSoFar} points so far</div>
+            </div>
+          )}
+
+          {gridPhase === "board" && gridAttempt && gridActiveCell && (
+            <QuestionRunner
+              itemIds={[gridActiveCell.item_id]}
+              itemsById={gridItemsById}
+              attemptId={gridAttempt.id}
+              secondsPerQuestion={gridCfg?.seconds_per_question || 30}
+              onSubmitAnswer={submitGridAnswer}
+              onAllDone={() => setGridActiveCell(null)}
+            />
+          )}
+
+          {gridPhase === "finished" && gridResult && (
+            <div>
+              <div style={s.bigStat}>{gridResult.correct_count}/{gridResult.question_count}</div>
+              <div style={s.smallLabel}>{gridResult.points_earned} points earned</div>
+              <div style={s.smallLabel}>once a day — back tomorrow.</div>
+              {gridResult.on_leaderboard && (
+                <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -2054,7 +2376,7 @@ function TriviaGatesTab({ userId }) {
 }
 
 // ─── Shared question-loop runner for Daily Five + Duel ───
-function QuestionRunner({ itemIds, itemsById, secondsPerQuestion, onSubmitAnswer, onAllDone }) {
+function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onSubmitAnswer, onAllDone }) {
   const [idx, setIdx] = useState(0);
   const [timeLeft, setTimeLeft] = useState(secondsPerQuestion);
   const [revealed, setRevealed] = useState(false);
@@ -2064,6 +2386,10 @@ function QuestionRunner({ itemIds, itemsById, secondsPerQuestion, onSubmitAnswer
 
   const currentId = itemIds[idx];
   const currentItem = itemsById[currentId];
+  const displayOptions = useMemo(
+    () => orderedOptions(currentItem?.options, attemptId, currentId),
+    [currentItem, attemptId, currentId]
+  );
 
   const advanceOrFinish = useCallback(() => {
     firingRef.current = false;
@@ -2128,7 +2454,7 @@ function QuestionRunner({ itemIds, itemsById, secondsPerQuestion, onSubmitAnswer
       </div>
       {submitError && <div style={s.errorBanner}>{submitError}</div>}
       <div style={s.qStem}>{currentItem.stem}</div>
-      {(currentItem.options || []).map(o => {
+      {(displayOptions || []).map(o => {
         let state = "default";
         if (revealed) {
           if (o.id === selectedId && o.is_correct) state = "selectedCorrect";
