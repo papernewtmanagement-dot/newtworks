@@ -2833,9 +2833,6 @@ const CreditSection = ({ data }) => {
   const accounts = allEntities.length === 0
     ? allAccounts
     : allAccounts.filter(a => !a.businessEntityId || allow.has(a.businessEntityId));
-  const totalDebt      = accounts.reduce((s,r) => s + (r?.balance || 0), 0);
-  const totalAvailable = accounts.filter(a => a.limit).reduce((s,r) => s + (r.limit - r.balance), 0);
-
   const typeLabel = (t) => t === "credit_card" ? "Credit Card" : t === "loan" ? "Loan" : "Line of Credit";
 
   const AccountRow = ({ a }) => {
@@ -2906,7 +2903,7 @@ const CreditSection = ({ data }) => {
             {stmtIsAwaiting ? "Not on hand" : hasStmt ? (stmtIsEstimate ? `${stmtDateLabel} · est` : stmtDateLabel) : ""}
           </div>
         </div>
-        <Field label="Register" value={fmtMoneyR(a.balance)} color={T.red} />
+        <Field label="Balance" value={fmtMoneyR(a.balance)} color={T.red} />
         <Field label="Available" value={a.limit ? fmtMoneyR(a.limit - a.balance) : "—"} color={a.limit ? T.green : T.slate400} />
         {a.payment ? <Field label="Min Pmt" value={fmtMoneyR(a.payment)} color={T.amber} /> : null}
         {a.dueDay ? <Field label="Due" value={`Day ${a.dueDay}`} color={T.slate700} minWidth={60} /> : null}
@@ -2920,19 +2917,10 @@ const CreditSection = ({ data }) => {
     );
   };
 
-  const kpis = (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
-      <KPICard label="Total Debt Exposure" value={fmtMoneyR(totalDebt)} color={T.red} border={T.red} />
-      <KPICard label="Available Credit" value={fmtMoneyR(totalAvailable)} color={T.green} border={T.green} />
-      <KPICard label="Accounts Tracked" value={String(accounts.length)} sub={accounts.length === allAccounts.length ? "Balances from ledger" : `of ${allAccounts.length} agency-wide`} border={T.amber} />
-    </div>
-  );
-
   // Fallback: entity map unavailable → render flat list (pre-Phase-3 shape).
   if (allEntities.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {kpis}
         {accounts.map((a, i) => <AccountRow key={i} a={a} />)}
       </div>
     );
@@ -2952,32 +2940,47 @@ const CreditSection = ({ data }) => {
   }
   const nonEmpty = Array.from(groups.entries()).filter(([, accts]) => accts.length > 0);
 
-  const GroupHeader = ({ label, count, subtotalDebt }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 2px", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
-      <div>
+  // Column layout matches AccountRow exactly (name block, Last Stmt block, then
+  // Balance/Available fields) so the group totals sit directly under the same
+  // columns as the per-account numbers above them.
+  const GroupHeader = ({ label, count, subtotalDebt, subtotalLimit }) => (
+    <div style={{
+      display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "10px 18px",
+      padding: "0 14px 6px 14px",
+      borderBottom: `1px solid ${T.slate200}`,
+    }}>
+      <div style={{ flex: "1 1 220px", minWidth: 180 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>{label}</div>
         <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{count} account{count === 1 ? "" : "s"}</div>
       </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: T.red, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotalDebt)}</div>
+      <div style={{ minWidth: 105, flex: "0 1 auto" }} />
+      <div style={{ minWidth: 90, flex: "0 1 auto" }}>
+        <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total Balance</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.red, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotalDebt)}</div>
+      </div>
+      <div style={{ minWidth: 90, flex: "0 1 auto" }}>
+        <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total Limit</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate700, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotalLimit)}</div>
+      </div>
     </div>
   );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {kpis}
       {nonEmpty.map(([eid, accts]) => {
         const e = entitiesById[eid];
         const subDebt = accts.reduce((s, a) => s + (a?.balance || 0), 0);
+        const subLimit = accts.reduce((s, a) => s + (a?.limit || 0), 0);
         return (
           <div key={eid} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <GroupHeader label={e?.name || "Unknown entity"} count={accts.length} subtotalDebt={subDebt} />
+            <GroupHeader label={e?.name || "Unknown entity"} count={accts.length} subtotalDebt={subDebt} subtotalLimit={subLimit} />
             {accts.map((a, i) => <AccountRow key={i} a={a} />)}
           </div>
         );
       })}
       {orphans.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <GroupHeader label="Unassigned" count={orphans.length} subtotalDebt={orphans.reduce((s, a) => s + (a?.balance || 0), 0)} />
+          <GroupHeader label="Unassigned" count={orphans.length} subtotalDebt={orphans.reduce((s, a) => s + (a?.balance || 0), 0)} subtotalLimit={orphans.reduce((s, a) => s + (a?.limit || 0), 0)} />
           {orphans.map((a, i) => <AccountRow key={i} a={a} />)}
         </div>
       )}
