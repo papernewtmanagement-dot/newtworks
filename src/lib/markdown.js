@@ -541,7 +541,7 @@ function renderChart(spec) {
   const H = TITLE_H + rows.length * ROW_H + 4;
 
   const parts = [
-    `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:420px;height:auto;` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:420px;` +
       `margin:8px 0;font-family:inherit;display:block;" role="img" ` +
       `aria-label="${escapeHtml(title || "chart")}">`,
   ];
@@ -571,6 +571,171 @@ function renderChart(spec) {
   return parts.join("");
 }
 
+// ─── Line chart preprocessing ─────────────────────────────────
+// {{line: Title | !x=lbl;lbl;lbl | Series name=v;v;v | Series name=v;v;v}}
+//
+// Semicolons separate points so that thousands separators stay usable inside
+// a value ("9,250;1,750;550"). Series are plotted against the shared !x axis
+// and drawn in declaration order; a legend appears whenever there is more
+// than one. Same option set as {{chart:}}: !max, !unit. A trailing % on any
+// value implies !unit=%.
+//
+// Use a line for anything ordered — elapsed time, hour of day, attempt
+// number, day of week. Reserve {{chart:}} bars for unordered comparisons.
+
+const LINE_RE = /\{\{line:\s*([\s\S]+?)\s*\}\}/gi;
+
+const LINE_COLORS = ["#16a34a", "#64748b", "#d97706", "#2563eb"];
+const LINE_GRID = "#e2e8f0";
+
+function renderLine(spec) {
+  const segs = String(spec).split("|").map((s) => s.trim()).filter(Boolean);
+  if (!segs.length) return "";
+
+  let title = "";
+  let xLabels = [];
+  let fixedMax = null;
+  let unit = "";
+  let sawPct = false;
+  const series = [];
+
+  segs.forEach((seg, idx) => {
+    if (seg.startsWith("!")) {
+      const m = /^!\s*([a-z]+)\s*=\s*([\s\S]+)$/i.exec(seg);
+      if (!m) return;
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      if (key === "x") xLabels = val.split(";").map((v) => v.trim());
+      else if (key === "max") { const p = parseChartNumber(val); if (p.n !== null) fixedMax = p.n; }
+      else if (key === "unit") unit = val;
+      return;
+    }
+    const eq = seg.indexOf("=");
+    if (eq === -1) {
+      if (idx === 0 && !title) title = seg;
+      return;
+    }
+    const name = seg.slice(0, eq).trim();
+    const pts = seg.slice(eq + 1).split(";").map((v) => {
+      const p = parseChartNumber(v);
+      if (p.pct) sawPct = true;
+      return p.n;
+    });
+    if (pts.some((n) => n !== null)) series.push({ name, pts });
+  });
+
+  if (!series.length) return "";
+  if (!unit && sawPct) unit = "%";
+
+  const n = Math.max(xLabels.length, ...series.map((s) => s.pts.length));
+  if (n < 2) return "";
+
+  let dataMax = 0;
+  series.forEach((s) => s.pts.forEach((v) => { if (v !== null && v > dataMax) dataMax = v; }));
+  const max = fixedMax !== null ? fixedMax : dataMax;
+  if (!(max > 0)) return "";
+
+  const multi = series.length > 1;
+  const W = 320;
+  const PAD_L = 36;
+  const PAD_R = 8;
+  const PAD_T = (title ? 16 : 4) + (multi ? 13 : 0);
+  const PLOT_H = 88;
+  const PAD_B = 20;
+  const H = PAD_T + PLOT_H + PAD_B;
+  const plotW = W - PAD_L - PAD_R;
+
+  const xAt = (i) => PAD_L + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = (v) => PAD_T + PLOT_H - (v / max) * PLOT_H;
+
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:480px;` +
+      `margin:10px 0;font-family:inherit;display:block;" role="img" ` +
+      `aria-label="${escapeHtml(title || "line chart")}">`,
+  ];
+
+  if (title) {
+    parts.push(
+      `<text x="0" y="10" font-size="10" font-weight="700" fill="${CHART_TEXT}" ` +
+        `letter-spacing="0.05em">${escapeHtml(title.toUpperCase())}</text>`
+    );
+  }
+
+  if (multi) {
+    let lx = 0;
+    series.forEach((s, si) => {
+      const c = LINE_COLORS[si % LINE_COLORS.length];
+      parts.push(
+        `<rect x="${lx}" y="${(title ? 16 : 4) + 1}" width="7" height="7" rx="1.5" fill="${c}"/>`,
+        `<text x="${lx + 10}" y="${(title ? 16 : 4) + 7.5}" font-size="8" fill="${CHART_TEXT}">` +
+          `${escapeHtml(s.name)}</text>`
+      );
+      lx += 10 + 6 + String(s.name).length * 4.3 + 10;
+    });
+  }
+
+  // Horizontal gridlines at 0, half, max, with value labels.
+  [0, max / 2, max].forEach((v) => {
+    const y = yAt(v);
+    parts.push(
+      `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${W - PAD_R}" y2="${y.toFixed(1)}" ` +
+        `stroke="${LINE_GRID}" stroke-width="1"/>`,
+      `<text x="${PAD_L - 4}" y="${(y + 3).toFixed(1)}" font-size="8" text-anchor="end" ` +
+        `fill="${CHART_TEXT}">${escapeHtml(formatChartNumber(Math.round(v), unit))}</text>`
+    );
+  });
+
+  // Series lines and point markers.
+  series.forEach((s, si) => {
+    const c = LINE_COLORS[si % LINE_COLORS.length];
+    const pts = [];
+    s.pts.forEach((v, i) => {
+      if (v === null) return;
+      pts.push(`${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`);
+    });
+    if (pts.length > 1) {
+      parts.push(
+        `<polyline points="${pts.join(" ")}" fill="none" stroke="${c}" stroke-width="2" ` +
+          `stroke-linejoin="round" stroke-linecap="round"/>`
+      );
+    }
+    s.pts.forEach((v, i) => {
+      if (v === null) return;
+      parts.push(
+        `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(v).toFixed(1)}" r="2.2" fill="${c}"/>`
+      );
+    });
+  });
+
+  // X axis labels, thinned so they never collide on a long series. The last
+  // label is always drawn; if thinning left one immediately beside it, that
+  // neighbour is dropped rather than allowed to overlap.
+  const step = n > 8 ? 2 : 1;
+  const idxs = [];
+  for (let i = 0; i < n; i += step) idxs.push(i);
+  if (idxs[idxs.length - 1] !== n - 1) idxs.push(n - 1);
+  if (idxs.length > 1 && idxs[idxs.length - 1] - idxs[idxs.length - 2] === 1) {
+    idxs.splice(idxs.length - 2, 1);
+  }
+  idxs.forEach((i) => {
+    const lbl = xLabels[i];
+    if (!lbl) return;
+    const anchor = i === 0 ? "start" : i === n - 1 ? "end" : "middle";
+    parts.push(
+      `<text x="${xAt(i).toFixed(1)}" y="${PAD_T + PLOT_H + 12}" font-size="8" ` +
+        `text-anchor="${anchor}" fill="${CHART_TEXT}">${escapeHtml(lbl)}</text>`
+    );
+  });
+
+  parts.push(`</svg>`);
+  return parts.join("");
+}
+
+function expandLines(md) {
+  if (!md || md.indexOf("{{line:") === -1) return md;
+  return md.replace(LINE_RE, (_m, spec) => renderLine(spec));
+}
+
 function expandCharts(md) {
   if (!md || md.indexOf("{{chart:") === -1) return md;
   return md.replace(CHART_RE, (_m, spec) => renderChart(spec));
@@ -594,6 +759,7 @@ export function mdToHtml(md, options = {}) {
 
   // No resolver needed — chart data is authored inline in the marker.
   src = expandCharts(src);
+  src = expandLines(src);
 
   if (!src.trim()) return "";
 
