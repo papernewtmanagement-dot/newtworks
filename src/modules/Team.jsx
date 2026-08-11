@@ -15,7 +15,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 // SECTIONS:
 //   1. Overview      — Pipeline summary, team snapshot, alerts
 //   2. Recruiting    — Kanban: Applied→AssessmentSent→Assessed→EmailScreen (Interview moved to Finalists)
-//   3. Candidate Detail — CTS scores, resume, scorecards (new: click a card)
+//   3. Candidate Detail — assessment scores, resume, scorecards (new: click a card)
 //   4. Staff         — Current team directory with licensing status
 //   5. Performance   — Monthly KPI tracking per staff member
 //   6. Commissions   — Commission structures and monthly calculations
@@ -565,7 +565,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
   const [selected, setSelected] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   const selectedApp = declined.find(a => a.id === selected);
-  // sortKey ∈ {name, source, resume, cts, recent}; direction ∈ {asc, desc}
+  // sortKey ∈ {name, source, resume, assess, recent}; direction ∈ {asc, desc}
   const [sortKey, setSortKey] = useState("recent");
   const [sortDir, setSortDir] = useState("desc");
 
@@ -579,7 +579,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
     const dir = sortDir === "asc" ? 1 : -1;
     const num = (v) => (v == null ? -Infinity : v);
     const str = (v) => (v || "").toLowerCase();
-    if (sortKey === "cts")         arr.sort((a,b) => (num(a.assessment_composite) - num(b.assessment_composite)) * dir);
+    if (sortKey === "assess")         arr.sort((a,b) => (num(a.assessment_composite) - num(b.assessment_composite)) * dir);
     else if (sortKey === "resume") arr.sort((a,b) => (num(a.res_composite) - num(b.res_composite)) * dir);
     else if (sortKey === "name")   arr.sort((a,b) => str(a.last_name).localeCompare(str(b.last_name)) * dir);
     else if (sortKey === "source") arr.sort((a,b) => str(a.decline_reason).localeCompare(str(b.decline_reason)) * dir);
@@ -636,7 +636,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
               <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("name",   "asc")}>Name{arrow("name")}</th>
               <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("source", "asc")}>Source{arrow("source")}</th>
               <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("resume", "desc")}>Res{arrow("resume")}</th>
-              <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("cts",    "desc")}>CTS{arrow("cts")}</th>
+              <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("assess",    "desc")}>Assess{arrow("assess")}</th>
               <th style={{ ...thBase, textAlign: "left"  }}>Notes</th>
             </tr>
           </thead>

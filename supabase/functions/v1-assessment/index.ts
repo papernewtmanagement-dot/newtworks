@@ -799,11 +799,11 @@ async function handleFinalize(supa: any, cand: any) {
       return json({ error: "assessment_incomplete", stage: "stint_5", answered: prog.stint5Answered, total: prog.stint5Total }, 409);
     }
 
-    // Personality facet scores — the raw psychometric profile. Competency
-    // and role-fit derivation happen downstream (newtworks_competency_*,
-    // newtworks_role_fit_*, assessment_best_fit_role) reading these columns
-    // live at request time — nothing about competencies gets written here
-    // except the gate-fired/churn-risk summary a few blocks below.
+    // Personality facet scores — the raw psychometric profile. Role-fit
+    // derivation happens downstream (the facet-direct chain:
+    // _newtworks_role_fit_core, newtworks_role_fit_*, assessment_best_fit_role)
+    // reading these columns live at request time — nothing derived gets
+    // written here.
     const { data: facetRows, error: facetErr } = await supa.rpc(
       "compute_newtworks_v2_facets_as_row",
       { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
@@ -875,25 +875,6 @@ async function handleFinalize(supa: any, cand: any) {
       im_result = error ? { error: error.message } : data;
     } catch (e: any) {
       im_result = { error: e?.message ?? "unknown" };
-    }
-
-    // Competency gates — determines best-fit role, then persists whichever
-    // gate fired (integrity decline / critical-floor / reasoning-floor) plus
-    // the churn-risk flag to hiring_candidates.competency_gate_fired /
-    // competency_gate_detail / churn_risk. Runs only once the core facet
-    // write succeeded (achievement_striving etc. must be populated, which is
-    // the same gate _newtworks_role_fit_core checks).
-    let competency_gates_result: any = null;
-    if (updated) {
-      try {
-        const { data, error } = await supa.rpc(
-          "apply_newtworks_v2_competency_gates_to_candidate",
-          { p_candidate_id: cand.id }
-        );
-        competency_gates_result = error ? { error: error.message } : data;
-      } catch (e: any) {
-        competency_gates_result = { error: e?.message ?? "unknown" };
-      }
     }
 
     if (updated) {
@@ -1029,7 +1010,6 @@ async function handleFinalize(supa: any, cand: any) {
       gma: gma_result,
       sjt: sjt_result,
       impression_management: im_result,
-      competency_gates: competency_gates_result,
     });
   } catch (e: any) {
     return json({ error: "finalize_action_failed", detail: e.message }, 500);

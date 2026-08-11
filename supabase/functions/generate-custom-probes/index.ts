@@ -273,14 +273,14 @@ HARD CONSTRAINTS on your output:
 
 Framework context:
 - The agency uses HireGauge (Story Agency calibration). Two personality traits with ideal ranges are still on file for every candidate: assertiveness and compassion. Reliability + response_distortion are validity band indicators (values: very high / high / moderate / low / very low). Do not ask for, refer to, or reason about any other trait score — no other trait data exists on the record.
-- Character floor is non-negotiable at 7/10 across Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility (measured in interview scorecards, not CTS).
+- Character floor is non-negotiable at 7/10 across Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility (measured in interview scorecards).
 - Every hire participates in selling — even reception/retention seats. Every team member carries image-bearer dignity (Genesis 1:27) — probes should be direct but never demeaning.
 
 Rules for the probes you produce:
 1. Every probe must be traceable to a specific signal in the data you receive. Never invent generic screening questions. If the data doesn't support a section, omit it.
 2. Group probes by focus. Priority order when picking what to include (fill from top down, stop at ${PROBE_COUNT_TARGET}-${PROBE_COUNT_HARD_MAX}):
    1. "Resume signals" — specific claims on the resume that need verification (biggest-account, promotion claims, gaps, self-superiority language). Highest per-probe leverage — only this candidate can answer these. Target 3-4.
-   2. "Character floor verification" — only fire for character areas the CTS or framework flagged concerning. If nothing is concerning, skip this section entirely. Target 0-3.
+   2. "Character floor verification" — only fire for character areas the framework flagged concerning. If nothing is concerning, skip this section entirely. Target 0-3.
    3. "Areas to press on" — see the AREAS TO PRESS ON block in the user message, if present. These are FOLLOW-UP probes only, appended after the fixed core question set — never a substitute for it. One probe per listed facet, up to the number listed. If the block is absent, skip this section entirely — do not invent one. Target 0-4.
    4. "Validity follow-up" — moderate/low reliability or elevated distortion. Target 0-2.
    5. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.

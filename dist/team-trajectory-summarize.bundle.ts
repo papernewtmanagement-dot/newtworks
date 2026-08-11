@@ -287,7 +287,7 @@ async function requireSharedSecret(
 // team-trajectory-summarize edge function (v2 — max_tokens 700)
 // =========================================================================
 // Reads the last 90 days of team_profile.behavioral_log for a team member, feeds
-// them plus CTS assessment context to Groq (openai/gpt-oss-120b), stores the
+// them plus assessment context to Groq (openai/gpt-oss-120b), stores the
 // 2-3 sentence synthesized "recent behavioral trajectory" summary in
 // team_profile.trajectory_summary. Displayed in the Team/Members expanded row.
 //
@@ -367,7 +367,7 @@ function buildPrompt(p: PersonCtx, a: AssessmentCtx | null, notes: NoteCtx[]): {
       rows.push(`Assessment meta: ${parts.join(" · ")}.`);
     }
     if (traitLines.length > 0) {
-      rows.push(`CTS trait scores (out of 100):\n${traitLines.join("\n")}`);
+      rows.push(`Trait scores (out of 100):\n${traitLines.join("\n")}`);
     }
     if (a.notes) {
       rows.push(`Assessment interpretation (context, do NOT quote): ${a.notes.slice(0, 800).replace(/\s+/g, " ").trim()}`);
