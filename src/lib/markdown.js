@@ -708,14 +708,18 @@ function renderLine(spec) {
   });
 
   // X axis labels, thinned so they never collide on a long series. The last
-  // label is always drawn; if thinning left one immediately beside it, that
-  // neighbour is dropped rather than allowed to overlap.
+  // label is always drawn. Only when that last label had to be force-added
+  // off the thinning grid can it land beside a kept neighbour — drop the
+  // neighbour in that case only, never when every label is already spaced.
   const step = n > 8 ? 2 : 1;
   const idxs = [];
   for (let i = 0; i < n; i += step) idxs.push(i);
-  if (idxs[idxs.length - 1] !== n - 1) idxs.push(n - 1);
-  if (idxs.length > 1 && idxs[idxs.length - 1] - idxs[idxs.length - 2] === 1) {
-    idxs.splice(idxs.length - 2, 1);
+  const forcedLast = idxs[idxs.length - 1] !== n - 1;
+  if (forcedLast) {
+    idxs.push(n - 1);
+    if (idxs.length > 1 && idxs[idxs.length - 1] - idxs[idxs.length - 2] === 1) {
+      idxs.splice(idxs.length - 2, 1);
+    }
   }
   idxs.forEach((i) => {
     const lbl = xLabels[i];
@@ -734,6 +738,32 @@ function renderLine(spec) {
 function expandLines(md) {
   if (!md || md.indexOf("{{line:") === -1) return md;
   return md.replace(LINE_RE, (_m, spec) => renderLine(spec));
+}
+
+// ─── Side-by-side row preprocessing ───────────────────────────
+// {{row}} … {{/row}} wraps the charts inside it into equal columns on one
+// line, wrapping to stacked full-width on a narrow screen. Runs AFTER the
+// chart passes, so by the time this sees the block its children are already
+// finished <svg> elements — each one becomes a column.
+//
+// Text belongs ABOVE the row, not inside it: two charts side by side share
+// one lead-in paragraph. Peter directive 2026-08-11.
+
+const ROW_RE = /\{\{row\}\}([\s\S]*?)\{\{\/row\}\}/gi;
+
+function expandRows(md) {
+  if (!md || md.indexOf("{{row}}") === -1) return md;
+  return md.replace(ROW_RE, (_m, inner) => {
+    const svgs = inner.match(/<svg[\s\S]*?<\/svg>/gi) || [];
+    if (!svgs.length) return String(inner).trim();
+    const cols = svgs
+      .map((s) => `<div style="flex:1 1 240px;min-width:0;">${s}</div>`)
+      .join("");
+    return (
+      `<div style="display:flex;flex-wrap:wrap;gap:14px 22px;` +
+      `align-items:flex-start;margin:10px 0;">${cols}</div>`
+    );
+  });
 }
 
 function expandCharts(md) {
@@ -760,6 +790,7 @@ export function mdToHtml(md, options = {}) {
   // No resolver needed — chart data is authored inline in the marker.
   src = expandCharts(src);
   src = expandLines(src);
+  src = expandRows(src);
 
   if (!src.trim()) return "";
 
