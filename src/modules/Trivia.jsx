@@ -255,12 +255,22 @@ export default function Trivia({ userRole, userId }) {
         .update({ stem: form.stem, explanation: form.explanation, difficulty: form.difficulty })
         .eq("id", itemId);
       if (e1) throw e1;
-      for (const opt of form.options) {
-        const { error: e2 } = await supabase
-          .from("quiz_item_options")
-          .update({ option_text: opt.option_text, is_correct: opt.is_correct })
-          .eq("id", opt.id);
-        if (e2) throw e2;
+      for (let i = 0; i < form.options.length; i++) {
+        const opt = form.options[i];
+        if (opt.id) {
+          const { error: e2 } = await supabase
+            .from("quiz_item_options")
+            .update({ option_text: opt.option_text, is_correct: opt.is_correct })
+            .eq("id", opt.id);
+          if (e2) throw e2;
+        } else {
+          const trimmed = (opt.option_text || "").trim();
+          if (!trimmed) continue;
+          const { error: e2 } = await supabase
+            .from("quiz_item_options")
+            .insert({ item_id: itemId, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: i });
+          if (e2) throw e2;
+        }
       }
       setEditingItemId(null);
       await reload();
@@ -279,12 +289,22 @@ export default function Trivia({ userRole, userId }) {
         .update({ stem: form.stem, explanation: form.explanation, difficulty: form.difficulty, report_blocked: false })
         .eq("id", itemId);
       if (e1) throw e1;
-      for (const opt of form.options) {
-        const { error: e2 } = await supabase
-          .from("quiz_item_options")
-          .update({ option_text: opt.option_text, is_correct: opt.is_correct })
-          .eq("id", opt.id);
-        if (e2) throw e2;
+      for (let i = 0; i < form.options.length; i++) {
+        const opt = form.options[i];
+        if (opt.id) {
+          const { error: e2 } = await supabase
+            .from("quiz_item_options")
+            .update({ option_text: opt.option_text, is_correct: opt.is_correct })
+            .eq("id", opt.id);
+          if (e2) throw e2;
+        } else {
+          const trimmed = (opt.option_text || "").trim();
+          if (!trimmed) continue;
+          const { error: e2 } = await supabase
+            .from("quiz_item_options")
+            .insert({ item_id: itemId, option_text: opt.option_text, is_correct: opt.is_correct, sort_order: i });
+          if (e2) throw e2;
+        }
       }
       const { error: e3 } = await supabase
         .from("quiz_item_reports")
@@ -520,15 +540,20 @@ function EditForm({ item, options, onCancel, onSave }) {
   const [stem, setStem] = useState(item.stem || "");
   const [explanation, setExplanation] = useState(item.explanation || "");
   const [difficulty, setDifficulty] = useState(item.difficulty || "basic");
-  const [optDrafts, setOptDrafts] = useState(
-    (options || []).map(o => ({ id: o.id, option_text: o.option_text, is_correct: o.is_correct }))
-  );
+  const [optDrafts, setOptDrafts] = useState(() => {
+    const existing = (options || []).map(o => ({ id: o.id, option_text: o.option_text, is_correct: o.is_correct }));
+    const padded = [...existing];
+    while (padded.length < 4) {
+      padded.push({ id: null, option_text: "", is_correct: false });
+    }
+    return padded.slice(0, 4);
+  });
 
-  const setOptText = (id, text) => {
-    setOptDrafts(list => list.map(o => o.id === id ? { ...o, option_text: text } : o));
+  const setOptText = (idx, text) => {
+    setOptDrafts(list => list.map((o, i) => i === idx ? { ...o, option_text: text } : o));
   };
-  const setCorrect = (id) => {
-    setOptDrafts(list => list.map(o => ({ ...o, is_correct: o.id === id })));
+  const setCorrect = (idx) => {
+    setOptDrafts(list => list.map((o, i) => ({ ...o, is_correct: i === idx })));
   };
 
   return (
@@ -547,14 +572,14 @@ function EditForm({ item, options, onCancel, onSave }) {
       </div>
       <div style={s.editField}>
         <label style={s.editLabel}>Options (select the correct one)</label>
-        {optDrafts.map(o => (
-          <div key={o.id} style={s.optionEditRow}>
-            <input type="radio" checked={o.is_correct} onChange={() => setCorrect(o.id)} />
+        {optDrafts.map((o, idx) => (
+          <div key={idx} style={s.optionEditRow}>
+            <input type="radio" checked={o.is_correct} onChange={() => setCorrect(idx)} />
             <input
               type="text"
               style={{ ...s.editInput, flex: 1 }}
               value={o.option_text}
-              onChange={(e) => setOptText(o.id, e.target.value)}
+              onChange={(e) => setOptText(idx, e.target.value)}
             />
           </div>
         ))}
