@@ -5,16 +5,20 @@ import { T } from "../lib/theme.js";
 import { useTabParam } from "../lib/routing.jsx";
 
 // ============================================================
-// Newtworks TRIVIA MODULE — Wave 2 Block B (play tab shipped,
-// admin-only flag removed)
+// Newtworks TRIVIA MODULE — Wave 3 (training gate) shipped
 //
 // SCOPE: Block A — review/approve/retire quiz items, browse
 // approved items, work the bad-question report queue, switch a
 // manual-page read to the resolved FAQ view. Block B — a Play tab
 // (Daily Five + Duel) open to every team-visible role, plus a
-// weekly trivia standings strip. Review/Approved/Reports stay
-// admin-gated in-module. The planning thread authors items
-// separately; no question-writing UI lives here.
+// weekly trivia standings strip. Wave 3 — a database-enforced
+// onboarding training gate: a Training card on Play (server-drawn
+// gauntlet/phase_final attempts against named topic sets) and an
+// admin-only Gates tab (topic sets, rules, pool preview, step
+// attachments, per-teammate status + owner override). Review/
+// Approved/Reports/Gates stay admin-gated in-module. The planning
+// thread authors items separately; no question-writing UI lives
+// here.
 // ============================================================
 
 const s = {
@@ -199,7 +203,7 @@ function sampleN(pool, n) {
 export default function Trivia({ userRole, userId }) {
   const vp = useViewport();
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports"]);
+  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
   const tab = isAdmin ? tabRaw : "play"; // non-admins always land on Play regardless of URL param
 
   const [items, setItems] = useState([]);
@@ -611,6 +615,7 @@ export default function Trivia({ userRole, userId }) {
             <button type="button" style={s.tabBtn(tab === "reports")} onClick={() => setTabRaw("reports")}>
               Reports{reports.length > 0 && <span style={s.badge}>{reports.length}</span>}
             </button>
+            <button type="button" style={s.tabBtn(tab === "gates")} onClick={() => setTabRaw("gates")}>Gates</button>
           </>
         )}
       </div>
@@ -626,6 +631,7 @@ export default function Trivia({ userRole, userId }) {
         {isAdmin && !loading && tab === "review" && reviewTab}
         {isAdmin && !loading && tab === "approved" && approvedTab}
         {isAdmin && !loading && tab === "reports" && reportsTab}
+        {isAdmin && !loading && tab === "gates" && <TriviaGatesTab userId={userId} />}
       </div>
     </div>
   );
@@ -762,11 +768,23 @@ function TriviaPlayTab({ userId }) {
   const [standingsNameById, setStandingsNameById] = useState({});
   const [standingsError, setStandingsError] = useState(null);
 
+  // Training gates (Wave 3)
+  const [gates, setGates] = useState([]);
+  const [gatesLoading, setGatesLoading] = useState(true);
+  const [gatesError, setGatesError] = useState(null);
+  const [activeGate, setActiveGate] = useState(null);
+  const [gateAttempt, setGateAttempt] = useState(null);
+  const [gateItemsById, setGateItemsById] = useState({});
+  const [gateRemainingIds, setGateRemainingIds] = useState([]);
+  const [gatePhase, setGatePhase] = useState("idle"); // idle | starting | playing | finishing | result
+  const [gateResult, setGateResult] = useState(null);
+  const [gateError, setGateError] = useState(null);
+
   // ── Loaders ──
   const loadModesAndPool = useCallback(async () => {
     try {
       const [modesRes, poolRes] = await Promise.all([
-        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel"]),
+        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final"]),
         supabase.from("quiz_items").select("id"),
       ]);
       if (modesRes.error) throw modesRes.error;
@@ -875,10 +893,88 @@ function TriviaPlayTab({ userId }) {
     }
   }, [userId]);
 
+  const loadGates = useCallback(async () => {
+    setGatesLoading(true);
+    setGatesError(null);
+    try {
+      const { data, error } = await supabase.rpc("quiz_my_gates");
+      if (error) throw error;
+      setGates(Array.isArray(data) ? data : []);
+    } catch (ex) {
+      setGatesError(ex?.message || "Could not load training requirements.");
+    } finally {
+      setGatesLoading(false);
+    }
+  }, []);
+
   useEffect(() => { loadModesAndPool(); }, [loadModesAndPool]);
   useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
   useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
   useEffect(() => { loadStandings(); }, [loadStandings]);
+  useEffect(() => { loadGates(); }, [loadGates]);
+
+  // ── Training gate actions ──
+  const startGate = async (gate) => {
+    setGateError(null);
+    setActiveGate(gate);
+    setGatePhase("starting");
+    try {
+      const { data: attemptId, error } = await supabase.rpc("quiz_start_gated_attempt", {
+        p_mode_key: gate.mode_key, p_topic_set_id: gate.topic_set_id,
+      });
+      if (error) {
+        setGateError(error.message);
+        setGatePhase("idle");
+        return;
+      }
+      const { data: attemptRow, error: fetchErr } = await supabase
+        .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      const ids = (attemptRow?.context?.item_ids) || [];
+      const itemsMap = await loadItemsWithOptions(ids);
+      setGateAttempt(attemptRow);
+      setGateItemsById(itemsMap);
+      setGateRemainingIds(ids);
+      setGateResult(null);
+      setGatePhase("playing");
+    } catch (ex) {
+      setGateError(ex?.message || "Could not start.");
+      setGatePhase("idle");
+    }
+  };
+
+  const submitGateAnswer = async (itemId, chosenOptionId, secondsTaken) => {
+    const { error } = await supabase.from("quiz_answers").insert({
+      attempt_id: gateAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
+    });
+    if (error) throw error;
+  };
+
+  const finishGate = async () => {
+    if (!gateAttempt) return;
+    setGatePhase("finishing");
+    const { data, error } = await supabase.rpc("quiz_finish_attempt", { p_attempt_id: gateAttempt.id });
+    if (error) {
+      setGateError(error.message || "Could not finish — try again.");
+      setGatePhase("playing");
+      return;
+    }
+    setGateResult(data);
+    setGatePhase("result");
+    await loadGates();
+  };
+
+  const retakeGate = () => {
+    if (activeGate) startGate(activeGate);
+  };
+
+  const closeGate = () => {
+    setActiveGate(null);
+    setGateAttempt(null);
+    setGatePhase("idle");
+    setGateResult(null);
+    setGateError(null);
+  };
 
   // ── Daily Five actions ──
   const startFreshDaily = async () => {
@@ -887,6 +983,11 @@ function TriviaPlayTab({ userId }) {
     try {
       const dailyCfg = modes.daily_five;
       const ids = sampleN(itemPool, dailyCfg?.question_count || 5);
+      if (ids.length < (dailyCfg?.question_count || 5)) {
+        setDfError("Not enough questions available yet.");
+        setDfPhase("not_started");
+        return;
+      }
       let attempt = null;
       const { data: inserted, error: insErr } = await supabase
         .from("quiz_attempts")
@@ -937,9 +1038,12 @@ function TriviaPlayTab({ userId }) {
     setDfItemsById(itemsMap);
     setDfRemainingIds(remaining);
 
-    if (remaining.length === 0) {
+    if (remaining.length === 0 && answeredIds.size > 0) {
       setDfPhase("finishing");
       await finishDaily(attempt.id);
+    } else if (remaining.length === 0 && answeredIds.size === 0) {
+      setDfError("Today's round is empty — it will reset tomorrow.");
+      setDfPhase("not_started");
     } else {
       setDfPhase("playing");
     }
@@ -972,6 +1076,11 @@ function TriviaPlayTab({ userId }) {
     try {
       const duelCfg = modes.duel;
       const ids = sampleN(itemPool, duelCfg?.question_count || 7);
+      if (ids.length < (duelCfg?.question_count || 7)) {
+        setDuelError("Not enough questions available yet.");
+        setDuelMode("idle");
+        return;
+      }
       const { data: inserted, error } = await supabase
         .from("quiz_attempts")
         .insert({
@@ -1051,6 +1160,82 @@ function TriviaPlayTab({ userId }) {
     <div>
       {(modesError || poolError) && <div style={s.errorBanner}>{modesError || poolError}</div>}
 
+      {!gatesLoading && (gatesError || gates.length > 0) && (
+        <div style={s.playCard}>
+          <div style={s.playCardTitle}>Training</div>
+          {gatesError && <div style={s.errorBanner}>{gatesError}</div>}
+
+          {!gatesError && activeGate && gatePhase !== "idle" && (
+            <div>
+              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 8 }}>
+                {activeGate.step_title} — {activeGate.set_title}
+              </div>
+              {gateError && <div style={s.errorBanner}>{gateError}</div>}
+
+              {gatePhase === "starting" && <div style={{ fontSize: 13, color: T.slate500 }}>Starting…</div>}
+
+              {gatePhase === "playing" && gateAttempt && (
+                <QuestionRunner
+                  itemIds={gateRemainingIds}
+                  itemsById={gateItemsById}
+                  secondsPerQuestion={(activeGate.mode_key === "gauntlet" ? modes.gauntlet : modes.phase_final)?.seconds_per_question || 30}
+                  onSubmitAnswer={submitGateAnswer}
+                  onAllDone={finishGate}
+                />
+              )}
+
+              {gatePhase === "finishing" && <div style={{ fontSize: 13, color: T.slate500 }}>Finishing up…</div>}
+
+              {gatePhase === "result" && gateResult && (
+                <div>
+                  <div style={s.bigStat}>
+                    {gateResult.question_count > 0 ? Math.round((gateResult.correct_count * 100) / gateResult.question_count) : 0}%
+                  </div>
+                  {gateResult.passed === true && (
+                    <>
+                      <div style={{ ...s.smallLabel, color: T.green, fontWeight: 700 }}>
+                        PASSED — {gateResult.correct_count}/{gateResult.question_count}
+                      </div>
+                      <div style={s.actionsRow}>
+                        <button type="button" style={s.ghostBtn} onClick={closeGate}>Close</button>
+                      </div>
+                    </>
+                  )}
+                  {gateResult.passed === false && (
+                    <>
+                      <div style={{ ...s.smallLabel, color: T.red, fontWeight: 700 }}>
+                        Not yet — {gateResult.passing_score}% needed
+                      </div>
+                      <div style={s.actionsRow}>
+                        <button type="button" style={s.primaryBtn} onClick={retakeGate}>Retake</button>
+                        <button type="button" style={s.ghostBtn} onClick={closeGate}>Close</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!gatesError && (!activeGate || gatePhase === "idle") && gates.map(g => (
+            <div key={g.step_id} style={s.duelListRow}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>{g.step_title}</div>
+              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 4 }}>
+                {g.set_title} — {(g.mode_key === "gauntlet" ? modes.gauntlet?.title : modes.phase_final?.title) || g.mode_key} — pass at {g.passing_score}%
+                {g.best_pct != null && <> — best: {g.best_pct}%</>}
+              </div>
+              {g.overridden ? (
+                <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>cleared by owner</div>
+              ) : (
+                <button type="button" style={s.primaryBtn} onClick={() => startGate(g)}>
+                  {g.best_pct != null ? "Retake" : "Take it"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={s.playGrid}>
         {/* ── Daily Five card ── */}
         <div style={s.playCard}>
@@ -1062,7 +1247,11 @@ function TriviaPlayTab({ userId }) {
           {dfPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking today's status…</div>}
 
           {dfPhase === "not_started" && (
-            <button type="button" style={s.primaryBtn} onClick={startFreshDaily}>Play today's five</button>
+            itemPool.length < (dailyCfg?.question_count || 5) ? (
+              <div style={{ fontSize: 13, color: T.slate500 }}>Questions are coming soon — check back after review.</div>
+            ) : (
+              <button type="button" style={s.primaryBtn} onClick={startFreshDaily}>Play today's five</button>
+            )
           )}
 
           {dfPhase === "in_progress" && (
@@ -1139,9 +1328,13 @@ function TriviaPlayTab({ userId }) {
 
           {(duelMode === "idle" || duelMode === "picking") && (
             <>
-              <button type="button" style={s.ghostBtn} onClick={() => setDuelMode(duelMode === "picking" ? "idle" : "picking")}>
-                Challenge a teammate
-              </button>
+              {itemPool.length < (duelCfg?.question_count || 7) ? (
+                <div style={{ fontSize: 13, color: T.slate500 }}>Questions are coming soon — check back after review.</div>
+              ) : (
+                <button type="button" style={s.ghostBtn} onClick={() => setDuelMode(duelMode === "picking" ? "idle" : "picking")}>
+                  Challenge a teammate
+                </button>
+              )}
               {duelMode === "picking" && (
                 <div style={{ marginTop: 10 }}>
                   {duelOpponents.length === 0 && <div style={{ fontSize: 12, color: T.slate500 }}>No teammates available to challenge.</div>}
@@ -1210,6 +1403,651 @@ function TriviaPlayTab({ userId }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// WAVE 3 — GATES TAB (admin only)
+// Topic sets, rules, pool preview, step attachments, and
+// per-teammate gate status + owner override.
+// ============================================================
+
+function slugifySetKey(title) {
+  return (title || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s_]/g, "")
+    .replace(/\s+/g, "_");
+}
+
+function renderRuleLabel(rule, pinnedItemsById) {
+  const parts = [];
+  if (rule.item_id) {
+    const stem = pinnedItemsById[rule.item_id]?.stem || "(item)";
+    parts.push(`pinned: ${stem.slice(0, 60)}`);
+  }
+  if (rule.category) parts.push(`category: ${rule.category}`);
+  if (rule.difficulty) parts.push(`difficulty: ${rule.difficulty}`);
+  if (parts.length === 0) return "whole bank";
+  return parts.join(" + ");
+}
+
+function TriviaGatesTab({ userId }) {
+  const [topicSets, setTopicSets] = useState([]);
+  const [setsError, setSetsError] = useState(null);
+  const [setsLoading, setSetsLoading] = useState(true);
+  const [selectedSetId, setSelectedSetId] = useState(null);
+
+  const [newSetTitle, setNewSetTitle] = useState("");
+  const [newSetDesc, setNewSetDesc] = useState("");
+  const [editingSetId, setEditingSetId] = useState(null);
+  const [editSetTitle, setEditSetTitle] = useState("");
+  const [editSetDesc, setEditSetDesc] = useState("");
+
+  const [rules, setRules] = useState([]);
+  const [rulesError, setRulesError] = useState(null);
+  const [pinnedItemsById, setPinnedItemsById] = useState({});
+  const [categories, setCategories] = useState([]);
+  const [newRuleCategory, setNewRuleCategory] = useState("");
+  const [newRuleDifficulty, setNewRuleDifficulty] = useState("");
+  const [pinnedSearch, setPinnedSearch] = useState("");
+  const [pinnedResults, setPinnedResults] = useState([]);
+
+  const [poolPreview, setPoolPreview] = useState(null);
+  const [poolPreviewError, setPoolPreviewError] = useState(null);
+  const [modesForPreview, setModesForPreview] = useState({});
+
+  const [stepTemplates, setStepTemplates] = useState([]);
+  const [templatesError, setTemplatesError] = useState(null);
+  const [attachSetId, setAttachSetId] = useState({});
+  const [attachMode, setAttachMode] = useState({});
+
+  const [teamList, setTeamList] = useState([]);
+  const [teamGateRows, setTeamGateRows] = useState([]);
+  const [overridesList, setOverridesList] = useState([]);
+  const [teamAttempts, setTeamAttempts] = useState([]);
+  const [plansCount, setPlansCount] = useState(null);
+  const [teamStatusError, setTeamStatusError] = useState(null);
+  const [overrideOpenFor, setOverrideOpenFor] = useState(null);
+  const [overrideReason, setOverrideReason] = useState("");
+
+  const [gatesBanner, setGatesBanner] = useState(null);
+
+  // ── Loaders ──
+  const loadSets = useCallback(async () => {
+    setSetsLoading(true);
+    setSetsError(null);
+    try {
+      const { data, error } = await supabase.from("quiz_topic_sets").select("*").eq("agency_id", AGENCY_ID);
+      if (error) throw error;
+      const list = Array.isArray(data) ? [...data] : [];
+      list.sort((a, b) => {
+        if (!!a.is_active !== !!b.is_active) return a.is_active ? -1 : 1;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+      setTopicSets(list);
+      setSelectedSetId(prev => prev || (list[0]?.id ?? null));
+    } catch (ex) {
+      setSetsError(ex?.message || "Could not load topic sets.");
+    } finally {
+      setSetsLoading(false);
+    }
+  }, []);
+
+  const loadCategories = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from("quiz_items").select("category").eq("agency_id", AGENCY_ID);
+      if (error) throw error;
+      const set = new Set((data || []).map(r => r.category).filter(Boolean));
+      setCategories([...set].sort());
+    } catch (ex) {
+      // non-fatal — category dropdown just stays empty
+    }
+  }, []);
+
+  const loadRules = useCallback(async (setId) => {
+    if (!setId) { setRules([]); setPinnedItemsById({}); return; }
+    setRulesError(null);
+    try {
+      const { data, error } = await supabase.from("quiz_topic_set_rules").select("*").eq("set_id", setId);
+      if (error) throw error;
+      const list = Array.isArray(data) ? data : [];
+      setRules(list);
+      const pinnedIds = list.map(r => r.item_id).filter(Boolean);
+      if (pinnedIds.length > 0) {
+        const { data: pinnedData } = await supabase.from("quiz_items").select("id, stem").in("id", pinnedIds);
+        const map = {};
+        for (const it of (pinnedData || [])) map[it.id] = it;
+        setPinnedItemsById(map);
+      } else {
+        setPinnedItemsById({});
+      }
+    } catch (ex) {
+      setRulesError(ex?.message || "Could not load rules.");
+    }
+  }, []);
+
+  const loadPoolPreview = useCallback(async (setId) => {
+    if (!setId) { setPoolPreview(null); return; }
+    setPoolPreviewError(null);
+    try {
+      const [poolRes, modesRes] = await Promise.all([
+        supabase.rpc("quiz_topic_set_pool", { p_set_id: setId }),
+        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["gauntlet", "phase_final"]),
+      ]);
+      if (poolRes.error) throw poolRes.error;
+      if (modesRes.error) throw modesRes.error;
+      const modeMap = {};
+      for (const m of (modesRes.data || [])) modeMap[m.mode_key] = m;
+      setModesForPreview(modeMap);
+      setPoolPreview({ count: Array.isArray(poolRes.data) ? poolRes.data.length : 0 });
+    } catch (ex) {
+      setPoolPreviewError(ex?.message || "Could not load pool preview.");
+    }
+  }, []);
+
+  const loadTemplates = useCallback(async () => {
+    setTemplatesError(null);
+    try {
+      const { data, error } = await supabase.from("onboarding_step_templates").select("*").eq("agency_id", AGENCY_ID);
+      if (error) throw error;
+      const list = Array.isArray(data) ? [...data] : [];
+      list.sort((a, b) => (a.phase - b.phase) || (a.title || "").localeCompare(b.title || ""));
+      setStepTemplates(list);
+    } catch (ex) {
+      setTemplatesError(ex?.message || "Could not load step templates.");
+    }
+  }, []);
+
+  const loadTeamStatus = useCallback(async () => {
+    setTeamStatusError(null);
+    try {
+      const teamRes = await supabase.from("team").select("id, first_name, last_name, role, is_active")
+        .eq("agency_id", AGENCY_ID).eq("is_active", true);
+      if (teamRes.error) throw teamRes.error;
+      const filteredTeam = (teamRes.data || []).filter(t => t.role !== "backoffice");
+      setTeamList(filteredTeam);
+
+      const plansRes = await supabase.from("team_onboarding_plans").select("id, team_member_id").eq("agency_id", AGENCY_ID);
+      if (plansRes.error) throw plansRes.error;
+      const plans = plansRes.data || [];
+      setPlansCount(plans.length);
+      const planIds = plans.map(p => p.id);
+      const planMemberById = {};
+      for (const p of plans) planMemberById[p.id] = p.team_member_id;
+
+      let gateSteps = [];
+      if (planIds.length > 0) {
+        const stepsRes = await supabase.from("team_onboarding_steps")
+          .select("*")
+          .in("plan_id", planIds)
+          .is("completed_at", null)
+          .not("required_topic_set_id", "is", null);
+        if (stepsRes.error) throw stepsRes.error;
+        gateSteps = (stepsRes.data || []).map(row => ({ ...row, team_member_id: planMemberById[row.plan_id] }));
+      }
+      setTeamGateRows(gateSteps);
+
+      const overridesRes = await supabase.from("quiz_gate_overrides").select("*").eq("agency_id", AGENCY_ID);
+      if (overridesRes.error) throw overridesRes.error;
+      setOverridesList(Array.isArray(overridesRes.data) ? overridesRes.data : []);
+
+      const memberIds = [...new Set(gateSteps.map(r => r.team_member_id).filter(Boolean))];
+      if (memberIds.length > 0) {
+        const attemptsRes = await supabase.from("quiz_attempts")
+          .select("team_member_id, topic_set_id, mode_key, passed, finished_at")
+          .eq("agency_id", AGENCY_ID)
+          .in("team_member_id", memberIds)
+          .not("finished_at", "is", null);
+        if (attemptsRes.error) throw attemptsRes.error;
+        setTeamAttempts(Array.isArray(attemptsRes.data) ? attemptsRes.data : []);
+      } else {
+        setTeamAttempts([]);
+      }
+    } catch (ex) {
+      setTeamStatusError(ex?.message || "Could not load team status.");
+    }
+  }, []);
+
+  useEffect(() => { loadSets(); }, [loadSets]);
+  useEffect(() => { loadCategories(); }, [loadCategories]);
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+  useEffect(() => { loadTeamStatus(); }, [loadTeamStatus]);
+  useEffect(() => {
+    if (selectedSetId) {
+      loadRules(selectedSetId);
+      loadPoolPreview(selectedSetId);
+    } else {
+      setRules([]);
+      setPoolPreview(null);
+    }
+  }, [selectedSetId, loadRules, loadPoolPreview]);
+
+  const memberHasPassed = (memberId, setId, modeKey) => teamAttempts.some(a =>
+    a.team_member_id === memberId && a.topic_set_id === setId && a.mode_key === modeKey && a.passed === true
+  );
+  const memberOverrideRow = (memberId, setId, modeKey) => overridesList.find(o =>
+    o.team_member_id === memberId && o.topic_set_id === setId && o.mode_key === modeKey
+  );
+
+  // ── Actions ──
+  const doCreateSet = async () => {
+    const title = newSetTitle.trim();
+    if (!title) return;
+    setGatesBanner(null);
+    try {
+      const set_key = slugifySetKey(title);
+      const { error } = await supabase.from("quiz_topic_sets").insert({
+        agency_id: AGENCY_ID, title, description: newSetDesc || null, set_key, is_active: true,
+      });
+      if (error) throw error;
+      setNewSetTitle(""); setNewSetDesc("");
+      await loadSets();
+      setGatesBanner({ kind: "success", text: "Topic set created." });
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not create topic set." });
+    }
+  };
+
+  const doSaveSetEdit = async (setId) => {
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("quiz_topic_sets")
+        .update({ title: editSetTitle, description: editSetDesc || null })
+        .eq("id", setId);
+      if (error) throw error;
+      setEditingSetId(null);
+      await loadSets();
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not save." });
+    }
+  };
+
+  const doToggleSetActive = async (set) => {
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("quiz_topic_sets").update({ is_active: !set.is_active }).eq("id", set.id);
+      if (error) throw error;
+      await loadSets();
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not update." });
+    }
+  };
+
+  const doAddCategoryRule = async () => {
+    if (!selectedSetId) return;
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("quiz_topic_set_rules").insert({
+        agency_id: AGENCY_ID, set_id: selectedSetId,
+        category: newRuleCategory || null, difficulty: newRuleDifficulty || null,
+      });
+      if (error) throw error;
+      setNewRuleCategory(""); setNewRuleDifficulty("");
+      await loadRules(selectedSetId);
+      await loadPoolPreview(selectedSetId);
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not add rule." });
+    }
+  };
+
+  const searchPinnedItems = async (q) => {
+    setPinnedSearch(q);
+    if (!q || q.trim().length < 2) { setPinnedResults([]); return; }
+    try {
+      const { data, error } = await supabase.from("quiz_items")
+        .select("id, stem, category").eq("agency_id", AGENCY_ID).eq("status", "approved")
+        .ilike("stem", `%${q.trim()}%`).limit(10);
+      if (error) throw error;
+      setPinnedResults(Array.isArray(data) ? data : []);
+    } catch (ex) {
+      setPinnedResults([]);
+    }
+  };
+
+  const doAddPinnedRule = async (itemId) => {
+    if (!selectedSetId) return;
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("quiz_topic_set_rules").insert({
+        agency_id: AGENCY_ID, set_id: selectedSetId, item_id: itemId,
+      });
+      if (error) throw error;
+      setPinnedSearch(""); setPinnedResults([]);
+      await loadRules(selectedSetId);
+      await loadPoolPreview(selectedSetId);
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not pin item." });
+    }
+  };
+
+  const doDeleteRule = async (ruleId) => {
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("quiz_topic_set_rules").delete().eq("id", ruleId);
+      if (error) throw error;
+      await loadRules(selectedSetId);
+      await loadPoolPreview(selectedSetId);
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not delete rule." });
+    }
+  };
+
+  const doAttachStep = async (templateId) => {
+    const setId = attachSetId[templateId];
+    const modeKey = attachMode[templateId];
+    if (!setId || !modeKey) return;
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("onboarding_step_templates")
+        .update({ required_topic_set_id: setId, required_mode_key: modeKey })
+        .eq("id", templateId);
+      if (error) throw error;
+      await loadTemplates();
+      setGatesBanner({ kind: "success", text: "Attached." });
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not attach." });
+    }
+  };
+
+  const doDetachStep = async (templateId) => {
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("onboarding_step_templates")
+        .update({ required_topic_set_id: null, required_mode_key: null })
+        .eq("id", templateId);
+      if (error) throw error;
+      await loadTemplates();
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not detach." });
+    }
+  };
+
+  const doSubmitOverride = async () => {
+    if (!overrideOpenFor) return;
+    const reason = overrideReason.trim();
+    if (reason.length < 5) {
+      setGatesBanner({ kind: "error", text: "Reason must be at least 5 characters." });
+      return;
+    }
+    setGatesBanner(null);
+    try {
+      const { error } = await supabase.from("quiz_gate_overrides").insert({
+        agency_id: AGENCY_ID,
+        team_member_id: overrideOpenFor.team_member_id,
+        topic_set_id: overrideOpenFor.topic_set_id,
+        mode_key: overrideOpenFor.mode_key,
+        reason,
+        granted_by: userId,
+      });
+      if (error) throw error;
+      setOverrideOpenFor(null);
+      setOverrideReason("");
+      await loadTeamStatus();
+      setGatesBanner({ kind: "success", text: "Override granted." });
+    } catch (ex) {
+      setGatesBanner({ kind: "error", text: ex?.message || "Could not grant override." });
+    }
+  };
+
+  const selectedSet = topicSets.find(s2 => s2.id === selectedSetId);
+
+  return (
+    <div>
+      {gatesBanner && (
+        <div style={gatesBanner.kind === "success" ? s.successBanner : s.errorBanner}>
+          {gatesBanner.text}
+        </div>
+      )}
+
+      {/* ── TOPIC SETS ── */}
+      <div style={s.card}>
+        <div style={s.groupTitle}>Topic sets</div>
+        {setsError && <div style={s.errorBanner}>{setsError}</div>}
+        {!setsLoading && topicSets.length === 0 && (
+          <div style={{ fontSize: 12, color: T.slate500, margin: "8px 0" }}>No topic sets yet — create the first one above.</div>
+        )}
+        {topicSets.map(set => (
+          <div
+            key={set.id}
+            style={{ ...s.duelListRow, cursor: "pointer", background: selectedSetId === set.id ? T.blueLt : "#fff" }}
+            onClick={() => setSelectedSetId(set.id)}
+          >
+            {editingSetId === set.id ? (
+              <div onClick={(e) => e.stopPropagation()}>
+                <input style={s.editInput} value={editSetTitle} onChange={(e) => setEditSetTitle(e.target.value)} />
+                <textarea style={{ ...s.editTextarea, marginTop: 6 }} value={editSetDesc} onChange={(e) => setEditSetDesc(e.target.value)} />
+                <div style={s.actionsRow}>
+                  <button type="button" style={s.primaryBtn} onClick={() => doSaveSetEdit(set.id)}>Save</button>
+                  <button type="button" style={s.ghostBtn} onClick={() => setEditingSetId(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {set.title} {!set.is_active && <span style={s.pill(T.slate500)}>inactive</span>}
+                  </div>
+                  {set.description && <div style={{ fontSize: 12, color: T.slate500 }}>{set.description}</div>}
+                </div>
+                <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                  <button type="button" style={s.ghostBtn} onClick={() => { setEditingSetId(set.id); setEditSetTitle(set.title || ""); setEditSetDesc(set.description || ""); }}>Edit</button>
+                  <button type="button" style={s.ghostBtn} onClick={() => doToggleSetActive(set)}>{set.is_active ? "Deactivate" : "Activate"}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        <div style={{ marginTop: 12 }}>
+          <div style={s.editField}>
+            <label style={s.editLabel}>New set title</label>
+            <input style={s.editInput} value={newSetTitle} onChange={(e) => setNewSetTitle(e.target.value)} />
+          </div>
+          <div style={s.editField}>
+            <label style={s.editLabel}>Description</label>
+            <textarea style={s.editTextarea} value={newSetDesc} onChange={(e) => setNewSetDesc(e.target.value)} />
+          </div>
+          <button type="button" style={s.primaryBtn} onClick={doCreateSet}>Create topic set</button>
+        </div>
+      </div>
+
+      {/* ── RULES ── */}
+      {selectedSetId && (
+        <div style={s.card}>
+          <div style={s.groupTitle}>Rules for "{selectedSet?.title || ""}"</div>
+          {rulesError && <div style={s.errorBanner}>{rulesError}</div>}
+          {rules.length === 0 && <div style={{ fontSize: 12, color: T.slate500, margin: "8px 0" }}>whole bank (no rules yet)</div>}
+          {rules.map(rule => (
+            <div key={rule.id} style={s.duelListRow}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <span>{renderRuleLabel(rule, pinnedItemsById)}</span>
+                <button type="button" style={s.dangerBtn} onClick={() => doDeleteRule(rule.id)}>Delete</button>
+              </div>
+            </div>
+          ))}
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={s.editField}>
+              <label style={s.editLabel}>Category</label>
+              <select style={s.editInput} value={newRuleCategory} onChange={(e) => setNewRuleCategory(e.target.value)}>
+                <option value="">(any)</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={s.editField}>
+              <label style={s.editLabel}>Difficulty</label>
+              <select style={s.editInput} value={newRuleDifficulty} onChange={(e) => setNewRuleDifficulty(e.target.value)}>
+                <option value="">(any)</option>
+                <option value="basic">basic</option>
+                <option value="intermediate">intermediate</option>
+                <option value="advanced">advanced</option>
+              </select>
+            </div>
+            <button type="button" style={s.primaryBtn} onClick={doAddCategoryRule}>Add rule</button>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={s.editField}>
+              <label style={s.editLabel}>Or pin a specific approved item — search by stem</label>
+              <input style={s.editInput} value={pinnedSearch} onChange={(e) => searchPinnedItems(e.target.value)} placeholder="Search approved items…" />
+            </div>
+            {pinnedResults.map(it => (
+              <div key={it.id} style={s.duelListRow}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12 }}>{it.stem}</span>
+                  <button type="button" style={s.ghostBtn} onClick={() => doAddPinnedRule(it.id)}>Pin</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── POOL PREVIEW ── */}
+      {selectedSetId && (
+        <div style={s.card}>
+          <div style={s.groupTitle}>Pool preview</div>
+          {poolPreviewError && <div style={s.errorBanner}>{poolPreviewError}</div>}
+          {poolPreview && (
+            <div>
+              <div style={s.bigStat}>{poolPreview.count} playable questions right now</div>
+              <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                {["gauntlet", "phase_final"].map(mk => {
+                  const need = modesForPreview[mk]?.question_count;
+                  const ok = need != null && poolPreview.count >= need;
+                  return (
+                    <div key={mk} style={{ fontSize: 12 }}>
+                      {modesForPreview[mk]?.title || mk}:{" "}
+                      {need != null ? (
+                        ok ? <span style={{ color: T.green }}>✓ ({need} needed)</span> : <span style={{ color: T.red }}>short by {need - poolPreview.count}</span>
+                      ) : "—"}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── STEP ATTACHMENTS ── */}
+      <div style={s.card}>
+        <div style={s.groupTitle}>Step attachments</div>
+        <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>
+          New hires get a copy of these steps — attaching here gates future plans. Existing plan steps are edited on the person.
+        </div>
+        {templatesError && <div style={s.errorBanner}>{templatesError}</div>}
+        {[0, 1, 2, 3, 4, 5].map(phase => {
+          const phaseSteps = stepTemplates.filter(t => t.phase === phase);
+          if (phaseSteps.length === 0) return null;
+          return (
+            <div key={phase}>
+              <div style={s.groupHeader}><div style={s.groupTitle}>Phase {phase}</div></div>
+              {phaseSteps.map(t => (
+                <div key={t.id} style={s.duelListRow}>
+                  <div style={{ marginBottom: 6 }}>
+                    <strong>{t.title}</strong> <span style={{ fontSize: 11, color: T.slate500 }}>{t.category}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: T.slate600, marginBottom: 6 }}>
+                    {t.required_topic_set_id
+                      ? `Attached: ${topicSets.find(s2 => s2.id === t.required_topic_set_id)?.title || "(set)"} — ${t.required_mode_key || "gauntlet"}`
+                      : "Not attached"}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <select style={s.editInput} value={attachSetId[t.id] || ""} onChange={(e) => setAttachSetId(m => ({ ...m, [t.id]: e.target.value }))}>
+                      <option value="">Choose set…</option>
+                      {topicSets.filter(s2 => s2.is_active).map(s2 => <option key={s2.id} value={s2.id}>{s2.title}</option>)}
+                    </select>
+                    <select style={s.editInput} value={attachMode[t.id] || ""} onChange={(e) => setAttachMode(m => ({ ...m, [t.id]: e.target.value }))}>
+                      <option value="">Choose mode…</option>
+                      <option value="gauntlet">gauntlet</option>
+                      <option value="phase_final">phase_final</option>
+                    </select>
+                    <button type="button" style={s.primaryBtn} onClick={() => doAttachStep(t.id)}>Attach</button>
+                    {t.required_topic_set_id && (
+                      <button type="button" style={s.dangerBtn} onClick={() => doDetachStep(t.id)}>Detach</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── TEAM STATUS + OVERRIDE ── */}
+      <div style={s.card}>
+        <div style={s.groupTitle}>Team status</div>
+        {teamStatusError && <div style={s.errorBanner}>{teamStatusError}</div>}
+        {plansCount === 0 && (
+          <div style={{ fontSize: 12, color: T.slate500, margin: "8px 0" }}>
+            No onboarding plans exist yet. The gate activates automatically when plans are created.
+          </div>
+        )}
+        {plansCount > 0 && teamGateRows.length === 0 && (
+          <div style={{ fontSize: 12, color: T.slate500, margin: "8px 0" }}>No open gated steps right now.</div>
+        )}
+        {plansCount > 0 && teamList.map(member => {
+          const rows = teamGateRows.filter(r => r.team_member_id === member.id);
+          if (rows.length === 0) return null;
+          return (
+            <div key={member.id} style={{ marginBottom: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{member.first_name}</div>
+              {rows.map(row => {
+                const modeKey = row.required_mode_key || "gauntlet";
+                const passed = memberHasPassed(member.id, row.required_topic_set_id, modeKey);
+                const existingOverride = memberOverrideRow(member.id, row.required_topic_set_id, modeKey);
+                const overridden = !!existingOverride;
+                const setTitle = topicSets.find(s2 => s2.id === row.required_topic_set_id)?.title || "(set)";
+                const openForThis = overrideOpenFor
+                  && overrideOpenFor.team_member_id === member.id
+                  && overrideOpenFor.topic_set_id === row.required_topic_set_id
+                  && overrideOpenFor.mode_key === modeKey;
+                return (
+                  <div key={row.id} style={s.duelListRow}>
+                    <div style={{ fontSize: 12, marginBottom: 4 }}>
+                      {row.title} — {setTitle} ({modeKey}) —{" "}
+                      {passed
+                        ? <span style={{ color: T.green }}>passed</span>
+                        : overridden
+                        ? <span style={{ color: T.amber }}>overridden</span>
+                        : <span style={{ color: T.red }}>locked</span>}
+                    </div>
+                    {existingOverride && (
+                      <div style={{ fontSize: 11, color: T.slate500 }}>
+                        Override: "{existingOverride.reason}" — {existingOverride.created_at ? new Date(existingOverride.created_at).toLocaleDateString() : ""}
+                      </div>
+                    )}
+                    {!passed && !overridden && (
+                      openForThis ? (
+                        <div style={{ marginTop: 6 }}>
+                          <input
+                            style={s.editInput}
+                            placeholder="Reason (min 5 characters)"
+                            value={overrideReason}
+                            onChange={(e) => setOverrideReason(e.target.value)}
+                          />
+                          <div style={s.actionsRow}>
+                            <button type="button" style={s.primaryBtn} disabled={overrideReason.trim().length < 5} onClick={doSubmitOverride}>Submit override</button>
+                            <button type="button" style={s.ghostBtn} onClick={() => { setOverrideOpenFor(null); setOverrideReason(""); }}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          style={s.ghostBtn}
+                          onClick={() => setOverrideOpenFor({ team_member_id: member.id, topic_set_id: row.required_topic_set_id, mode_key: modeKey })}
+                        >
+                          Override
+                        </button>
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
