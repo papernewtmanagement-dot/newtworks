@@ -1,19 +1,20 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
 import { useTabParam } from "../lib/routing.jsx";
 
 // ============================================================
-// Newtworks TRIVIA MODULE — Wave 2 Block A (admin only)
+// Newtworks TRIVIA MODULE — Wave 2 Block B (play tab shipped,
+// admin-only flag removed)
 //
-// SCOPE: review/approve/retire quiz items, browse approved items,
-// work the bad-question report queue, and switch a manual-page read
-// to the resolved FAQ view. No play screens, no gate, no question
-// writing here — the planning thread authors items separately.
-//
-// Three tabs: Review (draft items), Approved (live items), Reports
-// (open bad-question reports). Card-based layout throughout.
+// SCOPE: Block A — review/approve/retire quiz items, browse
+// approved items, work the bad-question report queue, switch a
+// manual-page read to the resolved FAQ view. Block B — a Play tab
+// (Daily Five + Duel) open to every team-visible role, plus a
+// weekly trivia standings strip. Review/Approved/Reports stay
+// admin-gated in-module. The planning thread authors items
+// separately; no question-writing UI lives here.
 // ============================================================
 
 const s = {
@@ -107,13 +108,99 @@ const s = {
     color: T.slate900, fontFamily: "inherit", resize: "vertical",
   },
   optionEditRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
+  // ── Play-tab styles ──
+  playGrid: {
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gap: 12, marginBottom: 16,
+  },
+  playCard: {
+    background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 16,
+  },
+  playCardTitle: { fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 4 },
+  playCardDesc: { fontSize: 12, color: T.slate500, marginBottom: 12 },
+  bigStat: { fontSize: 22, fontWeight: 700, color: T.slate900 },
+  smallLabel: { fontSize: 11, color: T.slate500, marginTop: 2 },
+  timerPill: (urgent) => ({
+    fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 12,
+    background: urgent ? T.redLt : T.slate100, color: urgent ? T.red : T.slate700,
+  }),
+  qStem: { fontSize: 15, fontWeight: 600, color: T.slate900, lineHeight: 1.4, marginBottom: 12 },
+  qOptionBtn: (state) => {
+    // state: "default" | "selectedCorrect" | "selectedWrong" | "revealCorrect" | "revealDim"
+    const map = {
+      default: { background: "#fff", border: `1px solid ${T.slate300}`, color: T.slate800 },
+      selectedCorrect: { background: T.greenLt, border: `1px solid ${T.green}`, color: T.green },
+      selectedWrong: { background: T.redLt, border: `1px solid ${T.red}`, color: T.red },
+      revealCorrect: { background: T.greenLt, border: `1px solid ${T.green}`, color: T.green },
+      revealDim: { background: T.slate50, border: `1px solid ${T.slate200}`, color: T.slate400 },
+    };
+    const chosen = map[state] || map.default;
+    return {
+      display: "block", width: "100%", textAlign: "left", padding: "10px 12px",
+      fontSize: 13, borderRadius: 8, marginBottom: 8, cursor: "pointer", ...chosen,
+    };
+  },
+  explanationBox: {
+    marginTop: 8, padding: 10, background: T.slate50, borderRadius: 6,
+    fontSize: 12, color: T.slate700, lineHeight: 1.5,
+  },
+  standingsRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "8px 10px", borderRadius: 6, marginBottom: 6, background: T.slate50, fontSize: 13,
+  },
+  standingsTier: (tier) => ({
+    width: 22, height: 22, borderRadius: 11, display: "flex", alignItems: "center",
+    justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff",
+    background: tier === 1 ? T.gold : tier === 2 ? T.slate500 : T.amber,
+  }),
+  opponentPickRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "8px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, marginBottom: 6, fontSize: 13,
+  },
+  duelListRow: {
+    padding: "8px 10px", border: `1px solid ${T.slate200}`, borderRadius: 6, marginBottom: 6, fontSize: 13,
+  },
 };
 
 const DIFFICULTY_TINT = { basic: T.green, intermediate: T.amber, advanced: T.red };
 
+// ── Central Time helpers (no library dependency) ──
+function ctToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago" }).format(new Date());
+}
+function shiftDateStr(dateStr, deltaDays) {
+  const parts = (dateStr || "").split("-").map(Number);
+  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return dateStr;
+  const [y, m, d] = parts;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  return dt.toISOString().slice(0, 10);
+}
+function computeStreak(attemptDays) {
+  const set = new Set(Array.isArray(attemptDays) ? attemptDays : []);
+  let streak = 0;
+  let cursor = ctToday();
+  while (set.has(cursor)) {
+    streak += 1;
+    cursor = shiftDateStr(cursor, -1);
+  }
+  return streak;
+}
+function sampleN(pool, n) {
+  const arr = Array.isArray(pool) ? [...pool] : [];
+  const count = Math.min(n || 0, arr.length);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(0, count);
+}
+
 export default function Trivia({ userRole, userId }) {
   const vp = useViewport();
-  const [tab, setTab] = useTabParam("tab", "review", ["review", "approved", "reports"]);
+  const isAdmin = userRole === "owner" || userRole === "manager";
+  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports"]);
+  const tab = isAdmin ? tabRaw : "play"; // non-admins always land on Play regardless of URL param
 
   const [items, setItems] = useState([]);
   const [optionsByItem, setOptionsByItem] = useState({});
@@ -171,7 +258,10 @@ export default function Trivia({ userRole, userId }) {
     }
   }, []);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    if (isAdmin) reload();
+    else setLoading(false); // non-admins never touch the review/approved/reports data
+  }, [reload, isAdmin]);
 
   const draftItems = useMemo(() => (items || []).filter(i => i.status === "draft"), [items]);
   const approvedItems = useMemo(() => (items || []).filter(i => i.status === "approved"), [items]);
@@ -513,11 +603,16 @@ export default function Trivia({ userRole, userId }) {
         <div style={s.headerTitle}>Trivia</div>
       </div>
       <div style={s.tabBar}>
-        <button type="button" style={s.tabBtn(tab === "review")} onClick={() => setTab("review")}>Review</button>
-        <button type="button" style={s.tabBtn(tab === "approved")} onClick={() => setTab("approved")}>Approved</button>
-        <button type="button" style={s.tabBtn(tab === "reports")} onClick={() => setTab("reports")}>
-          Reports{reports.length > 0 && <span style={s.badge}>{reports.length}</span>}
-        </button>
+        <button type="button" style={s.tabBtn(tab === "play")} onClick={() => setTabRaw("play")}>Play</button>
+        {isAdmin && (
+          <>
+            <button type="button" style={s.tabBtn(tab === "review")} onClick={() => setTabRaw("review")}>Review</button>
+            <button type="button" style={s.tabBtn(tab === "approved")} onClick={() => setTabRaw("approved")}>Approved</button>
+            <button type="button" style={s.tabBtn(tab === "reports")} onClick={() => setTabRaw("reports")}>
+              Reports{reports.length > 0 && <span style={s.badge}>{reports.length}</span>}
+            </button>
+          </>
+        )}
       </div>
       <div style={s.body}>
         {error && <div style={s.errorBanner}>{error}</div>}
@@ -526,10 +621,11 @@ export default function Trivia({ userRole, userId }) {
             {banner.text.split("\n").map((line, idx) => <div key={idx}>{line}</div>)}
           </div>
         )}
-        {loading && <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Loading…</div>}
-        {!loading && tab === "review" && reviewTab}
-        {!loading && tab === "approved" && approvedTab}
-        {!loading && tab === "reports" && reportsTab}
+        {tab === "play" && <TriviaPlayTab userId={userId} />}
+        {isAdmin && loading && <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Loading…</div>}
+        {isAdmin && !loading && tab === "review" && reviewTab}
+        {isAdmin && !loading && tab === "approved" && approvedTab}
+        {isAdmin && !loading && tab === "reports" && reportsTab}
       </div>
     </div>
   );
@@ -598,6 +694,632 @@ function EditForm({ item, options, onCancel, onSave }) {
         </button>
         <button type="button" style={s.ghostBtn} onClick={onCancel}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// BLOCK B — PLAY TAB
+// Daily Five + Duel + weekly trivia standings. Open to every
+// team-visible role. No wager/speed-clock (both off on these two
+// modes per the seeded quiz_modes rows) — flat 10-per-correct
+// scoring, computed server-side by quiz_finish_attempt. This tab
+// never calls quiz_record_serve; finish handles item stats once.
+// ============================================================
+
+async function loadItemsWithOptions(ids) {
+  const cleanIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (cleanIds.length === 0) return {};
+  const [itemsRes, optsRes] = await Promise.all([
+    supabase.from("quiz_items").select("*").in("id", cleanIds),
+    supabase.from("quiz_item_options").select("*").in("item_id", cleanIds).order("sort_order", { ascending: true }),
+  ]);
+  if (itemsRes.error) throw itemsRes.error;
+  if (optsRes.error) throw optsRes.error;
+  const optsByItem = {};
+  for (const o of (optsRes.data || [])) {
+    if (!optsByItem[o.item_id]) optsByItem[o.item_id] = [];
+    optsByItem[o.item_id].push(o);
+  }
+  const map = {};
+  for (const it of (itemsRes.data || [])) {
+    map[it.id] = { ...it, options: optsByItem[it.id] || [] };
+  }
+  return map;
+}
+
+function TriviaPlayTab({ userId }) {
+  const [modes, setModes] = useState({});
+  const [modesError, setModesError] = useState(null);
+  const [itemPool, setItemPool] = useState([]);
+  const [poolError, setPoolError] = useState(null);
+
+  // Daily Five
+  const [dfPhase, setDfPhase] = useState("checking"); // checking | not_started | in_progress | playing | finishing | finished | error
+  const [dfError, setDfError] = useState(null);
+  const [dfAttempt, setDfAttempt] = useState(null);
+  const [dfItemsById, setDfItemsById] = useState({});
+  const [dfRemainingIds, setDfRemainingIds] = useState([]);
+  const [dfResult, setDfResult] = useState(null);
+  const [dfStreak, setDfStreak] = useState(0);
+
+  // Duel
+  const [duelOpponents, setDuelOpponents] = useState([]);
+  const [pendingDuels, setPendingDuels] = useState([]);
+  const [ownDuels, setOwnDuels] = useState([]);
+  const [ownDuelResults, setOwnDuelResults] = useState({});
+  const [duelListError, setDuelListError] = useState(null);
+  const [duelMode, setDuelMode] = useState("idle"); // idle | picking | starting | playing | finished
+  const [duelError, setDuelError] = useState(null);
+  const [duelActiveAttempt, setDuelActiveAttempt] = useState(null);
+  const [duelActiveItemsById, setDuelActiveItemsById] = useState({});
+  const [duelActiveRemainingIds, setDuelActiveRemainingIds] = useState([]);
+  const [duelActiveOpponentName, setDuelActiveOpponentName] = useState(null);
+  const [duelResult, setDuelResult] = useState(null);
+
+  // Standings
+  const [standings, setStandings] = useState([]);
+  const [standingsNameById, setStandingsNameById] = useState({});
+  const [standingsError, setStandingsError] = useState(null);
+
+  // ── Loaders ──
+  const loadModesAndPool = useCallback(async () => {
+    try {
+      const [modesRes, poolRes] = await Promise.all([
+        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel"]),
+        supabase.from("quiz_items").select("id"),
+      ]);
+      if (modesRes.error) throw modesRes.error;
+      const modeMap = {};
+      for (const m of (modesRes.data || [])) modeMap[m.mode_key] = m;
+      setModes(modeMap);
+
+      if (poolRes.error) throw poolRes.error;
+      setItemPool((poolRes.data || []).map(r => r.id));
+    } catch (ex) {
+      setModesError(ex?.message || "Could not load trivia settings.");
+    }
+  }, []);
+
+  const loadDailyStatus = useCallback(async () => {
+    if (!userId) return;
+    setDfPhase("checking");
+    setDfError(null);
+    try {
+      const today = ctToday();
+      const [existingRes, historyRes] = await Promise.all([
+        supabase.from("quiz_attempts").select("*")
+          .eq("team_member_id", userId).eq("mode_key", "daily_five").eq("attempt_day", today)
+          .maybeSingle(),
+        supabase.from("quiz_attempts").select("attempt_day")
+          .eq("team_member_id", userId).eq("mode_key", "daily_five").not("finished_at", "is", null)
+          .order("attempt_day", { ascending: false }).limit(400),
+      ]);
+      if (existingRes.error) throw existingRes.error;
+      if (historyRes.error) throw historyRes.error;
+
+      setDfStreak(computeStreak((historyRes.data || []).map(r => r.attempt_day)));
+
+      const row = existingRes.data;
+      if (!row) {
+        setDfAttempt(null);
+        setDfPhase("not_started");
+      } else if (row.finished_at) {
+        setDfAttempt(row);
+        setDfResult({ correct_count: row.correct_count, question_count: row.question_count, points_earned: row.points_earned });
+        setDfPhase("finished");
+      } else {
+        setDfAttempt(row);
+        setDfPhase("in_progress");
+      }
+    } catch (ex) {
+      setDfError(ex?.message || "Could not check today's status.");
+      setDfPhase("error");
+    }
+  }, [userId]);
+
+  const loadDuelLists = useCallback(async () => {
+    if (!userId) return;
+    setDuelListError(null);
+    try {
+      const [oppRes, pendRes, ownRes] = await Promise.all([
+        supabase.rpc("quiz_duel_opponents"),
+        supabase.rpc("quiz_pending_duels"),
+        supabase.from("quiz_attempts").select("*")
+          .eq("team_member_id", userId).eq("mode_key", "duel")
+          .not("finished_at", "is", null).not("opponent_attempt_id", "is", null)
+          .order("finished_at", { ascending: false }).limit(10),
+      ]);
+      if (oppRes.error) throw oppRes.error;
+      if (pendRes.error) throw pendRes.error;
+      if (ownRes.error) throw ownRes.error;
+
+      setDuelOpponents(Array.isArray(oppRes.data) ? oppRes.data : []);
+      setPendingDuels(Array.isArray(pendRes.data) ? pendRes.data : []);
+      const ownRows = Array.isArray(ownRes.data) ? ownRes.data : [];
+      setOwnDuels(ownRows);
+
+      const results = {};
+      await Promise.all(ownRows.map(async (row) => {
+        const { data, error } = await supabase.rpc("quiz_duel_result", { p_attempt_id: row.id });
+        if (!error) results[row.id] = data;
+      }));
+      setOwnDuelResults(results);
+    } catch (ex) {
+      setDuelListError(ex?.message || "Could not load duels.");
+    }
+  }, [userId]);
+
+  const loadStandings = useCallback(async () => {
+    try {
+      const [lbRes, oppRes] = await Promise.all([
+        supabase.from("leaderboards").select("*")
+          .eq("agency_id", AGENCY_ID).eq("category", "trivia_week_points")
+          .order("tier", { ascending: true }),
+        supabase.rpc("quiz_duel_opponents"),
+      ]);
+      if (lbRes.error) throw lbRes.error;
+      setStandings(Array.isArray(lbRes.data) ? lbRes.data : []);
+
+      const nameMap = {};
+      if (!oppRes.error) {
+        for (const o of (oppRes.data || [])) nameMap[o.team_member_id] = o.first_name;
+      }
+      if (userId) {
+        const { data: ownRow } = await supabase.from("team").select("id, first_name").eq("id", userId).maybeSingle();
+        if (ownRow?.id) nameMap[ownRow.id] = ownRow.first_name;
+      }
+      setStandingsNameById(nameMap);
+    } catch (ex) {
+      setStandingsError(ex?.message || "Could not load standings.");
+    }
+  }, [userId]);
+
+  useEffect(() => { loadModesAndPool(); }, [loadModesAndPool]);
+  useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
+  useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
+  useEffect(() => { loadStandings(); }, [loadStandings]);
+
+  // ── Daily Five actions ──
+  const startFreshDaily = async () => {
+    setDfError(null);
+    setDfPhase("checking");
+    try {
+      const dailyCfg = modes.daily_five;
+      const ids = sampleN(itemPool, dailyCfg?.question_count || 5);
+      let attempt = null;
+      const { data: inserted, error: insErr } = await supabase
+        .from("quiz_attempts")
+        .insert({ agency_id: AGENCY_ID, team_member_id: userId, mode_key: "daily_five", context: { item_ids: ids } })
+        .select("*")
+        .maybeSingle();
+      if (insErr) {
+        // Unique-index hit (double-tap) — re-query and resume instead of erroring.
+        const today = ctToday();
+        const { data: retryRow, error: retryErr } = await supabase
+          .from("quiz_attempts").select("*")
+          .eq("team_member_id", userId).eq("mode_key", "daily_five").eq("attempt_day", today)
+          .maybeSingle();
+        if (retryErr || !retryRow) throw (retryErr || insErr);
+        attempt = retryRow;
+      } else {
+        attempt = inserted;
+      }
+      await beginPlayingDaily(attempt);
+    } catch (ex) {
+      setDfError(ex?.message || "Could not start today's five.");
+      setDfPhase("error");
+    }
+  };
+
+  const resumeDaily = async () => {
+    if (!dfAttempt) return;
+    setDfError(null);
+    setDfPhase("checking");
+    try {
+      await beginPlayingDaily(dfAttempt);
+    } catch (ex) {
+      setDfError(ex?.message || "Could not resume today's five.");
+      setDfPhase("error");
+    }
+  };
+
+  const beginPlayingDaily = async (attempt) => {
+    const allIds = (attempt?.context?.item_ids) || [];
+    const { data: answeredRows, error: ansErr } = await supabase
+      .from("quiz_answers").select("item_id").eq("attempt_id", attempt.id);
+    if (ansErr) throw ansErr;
+    const answeredIds = new Set((answeredRows || []).map(r => r.item_id));
+    const remaining = allIds.filter(id => !answeredIds.has(id));
+    const itemsMap = await loadItemsWithOptions(allIds);
+
+    setDfAttempt(attempt);
+    setDfItemsById(itemsMap);
+    setDfRemainingIds(remaining);
+
+    if (remaining.length === 0) {
+      setDfPhase("finishing");
+      await finishDaily(attempt.id);
+    } else {
+      setDfPhase("playing");
+    }
+  };
+
+  const submitDailyAnswer = async (itemId, chosenOptionId, secondsTaken) => {
+    const { error } = await supabase.from("quiz_answers").insert({
+      attempt_id: dfAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
+    });
+    if (error) throw error;
+  };
+
+  const finishDaily = async (attemptId) => {
+    setDfPhase("finishing");
+    const { data, error } = await supabase.rpc("quiz_finish_attempt", { p_attempt_id: attemptId });
+    if (error) {
+      setDfError(error.message || "Could not finish — try again.");
+      setDfPhase("error");
+      return;
+    }
+    setDfResult(data);
+    setDfPhase("finished");
+    await loadDailyStatus();
+  };
+
+  // ── Duel actions ──
+  const startDuelChallenge = async (opponent) => {
+    setDuelError(null);
+    setDuelMode("starting");
+    try {
+      const duelCfg = modes.duel;
+      const ids = sampleN(itemPool, duelCfg?.question_count || 7);
+      const { data: inserted, error } = await supabase
+        .from("quiz_attempts")
+        .insert({
+          agency_id: AGENCY_ID, team_member_id: userId, mode_key: "duel",
+          context: { item_ids: ids, duel_opponent_team_member_id: opponent.team_member_id },
+        })
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      const itemsMap = await loadItemsWithOptions(ids);
+      setDuelActiveAttempt(inserted);
+      setDuelActiveItemsById(itemsMap);
+      setDuelActiveRemainingIds(ids);
+      setDuelActiveOpponentName(opponent.first_name);
+      setDuelResult(null);
+      setDuelMode("playing");
+    } catch (ex) {
+      setDuelError(ex?.message || "Could not start the duel.");
+      setDuelMode("idle");
+    }
+  };
+
+  const acceptDuel = async (pending) => {
+    setDuelError(null);
+    setDuelMode("starting");
+    try {
+      const { data: newAttemptId, error } = await supabase.rpc("quiz_accept_duel", { p_challenge_attempt_id: pending.challenge_attempt_id });
+      if (error) throw error;
+      const { data: newRow, error: fetchErr } = await supabase
+        .from("quiz_attempts").select("*").eq("id", newAttemptId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      const ids = (newRow?.context?.item_ids) || [];
+      const itemsMap = await loadItemsWithOptions(ids);
+      setDuelActiveAttempt(newRow);
+      setDuelActiveItemsById(itemsMap);
+      setDuelActiveRemainingIds(ids);
+      setDuelActiveOpponentName(pending.challenger_name);
+      setDuelResult(null);
+      setDuelMode("playing");
+    } catch (ex) {
+      setDuelError(ex?.message || "Could not accept the duel.");
+      setDuelMode("idle");
+    }
+  };
+
+  const submitDuelAnswer = async (itemId, chosenOptionId, secondsTaken) => {
+    const { error } = await supabase.from("quiz_answers").insert({
+      attempt_id: duelActiveAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
+    });
+    if (error) throw error;
+  };
+
+  const finishDuel = async () => {
+    if (!duelActiveAttempt) return;
+    const attemptId = duelActiveAttempt.id;
+    const { data, error } = await supabase.rpc("quiz_finish_attempt", { p_attempt_id: attemptId });
+    if (error) {
+      setDuelError(error.message || "Could not finish — try again.");
+      return;
+    }
+    const { data: resultData, error: resErr } = await supabase.rpc("quiz_duel_result", { p_attempt_id: attemptId });
+    if (resErr) {
+      setDuelError(resErr.message || "Finished, but could not load the result.");
+    } else {
+      setDuelResult(resultData);
+    }
+    setDuelMode("finished");
+    await loadDuelLists();
+    await loadStandings();
+  };
+
+  // ── Render ──
+  const dailyCfg = modes.daily_five;
+  const duelCfg = modes.duel;
+
+  return (
+    <div>
+      {(modesError || poolError) && <div style={s.errorBanner}>{modesError || poolError}</div>}
+
+      <div style={s.playGrid}>
+        {/* ── Daily Five card ── */}
+        <div style={s.playCard}>
+          <div style={s.playCardTitle}>Daily Five</div>
+          <div style={s.playCardDesc}>{dailyCfg?.description || "Five questions a day. Keep your streak going."}</div>
+
+          {dfError && <div style={s.errorBanner}>{dfError}</div>}
+
+          {dfPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking today's status…</div>}
+
+          {dfPhase === "not_started" && (
+            <button type="button" style={s.primaryBtn} onClick={startFreshDaily}>Play today's five</button>
+          )}
+
+          {dfPhase === "in_progress" && (
+            <button type="button" style={s.primaryBtn} onClick={resumeDaily}>Resume</button>
+          )}
+
+          {dfPhase === "finishing" && <div style={{ fontSize: 13, color: T.slate500 }}>Finishing up…</div>}
+
+          {dfPhase === "playing" && dfAttempt && (
+            <QuestionRunner
+              itemIds={dfRemainingIds}
+              itemsById={dfItemsById}
+              secondsPerQuestion={dailyCfg?.seconds_per_question || 30}
+              onSubmitAnswer={submitDailyAnswer}
+              onAllDone={() => finishDaily(dfAttempt.id)}
+            />
+          )}
+
+          {dfPhase === "finished" && dfResult && (
+            <div>
+              <div style={s.bigStat}>{dfResult.correct_count}/{dfResult.question_count}</div>
+              <div style={s.smallLabel}>{dfResult.points_earned} points earned today</div>
+              <div style={s.smallLabel}>Streak: {dfStreak} day{dfStreak === 1 ? "" : "s"}</div>
+              {dfResult.on_leaderboard && (
+                <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Duel card ── */}
+        <div style={s.playCard}>
+          <div style={s.playCardTitle}>Duel</div>
+          <div style={s.playCardDesc}>{duelCfg?.description || "Challenge a teammate. Same questions, play when you have a minute."}</div>
+
+          {duelError && <div style={s.errorBanner}>{duelError}</div>}
+          {duelListError && <div style={s.errorBanner}>{duelListError}</div>}
+
+          {duelMode === "playing" && duelActiveAttempt && (
+            <div>
+              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 8 }}>vs {duelActiveOpponentName || "teammate"}</div>
+              <QuestionRunner
+                itemIds={duelActiveRemainingIds}
+                itemsById={duelActiveItemsById}
+                secondsPerQuestion={duelCfg?.seconds_per_question || 20}
+                onSubmitAnswer={submitDuelAnswer}
+                onAllDone={finishDuel}
+              />
+            </div>
+          )}
+
+          {duelMode === "starting" && <div style={{ fontSize: 13, color: T.slate500 }}>Setting up…</div>}
+
+          {duelMode === "finished" && duelResult && (
+            <div style={{ marginBottom: 12 }}>
+              {duelResult.both_finished ? (
+                <>
+                  <div style={s.bigStat}>
+                    {duelResult.my_points} – {duelResult.opponent_points}
+                  </div>
+                  <div style={s.smallLabel}>
+                    {duelResult.my_points > duelResult.opponent_points
+                      ? "You win!"
+                      : duelResult.my_points < duelResult.opponent_points
+                      ? `${duelResult.opponent_name || "Opponent"} wins`
+                      : "Tie"}
+                  </div>
+                </>
+              ) : (
+                <div style={s.smallLabel}>Waiting on {duelActiveOpponentName || "your opponent"}</div>
+              )}
+            </div>
+          )}
+
+          {(duelMode === "idle" || duelMode === "picking") && (
+            <>
+              <button type="button" style={s.ghostBtn} onClick={() => setDuelMode(duelMode === "picking" ? "idle" : "picking")}>
+                Challenge a teammate
+              </button>
+              {duelMode === "picking" && (
+                <div style={{ marginTop: 10 }}>
+                  {duelOpponents.length === 0 && <div style={{ fontSize: 12, color: T.slate500 }}>No teammates available to challenge.</div>}
+                  {duelOpponents.map(o => (
+                    <div key={o.team_member_id} style={s.opponentPickRow}>
+                      <span>{o.first_name}</span>
+                      <button type="button" style={s.ghostBtn} onClick={() => startDuelChallenge(o)}>Challenge</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {pendingDuels.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={s.groupTitle}>Duels against you</div>
+                  {pendingDuels.map(p => (
+                    <div key={p.challenge_attempt_id} style={s.duelListRow}>
+                      <div style={{ marginBottom: 6 }}>{p.challenger_name} challenged you</div>
+                      <button type="button" style={s.primaryBtn} onClick={() => acceptDuel(p)}>Accept</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {ownDuels.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={s.groupTitle}>Your recent duels</div>
+                  {ownDuels.map(row => {
+                    const res = ownDuelResults[row.id];
+                    if (!res) return null;
+                    let line;
+                    if (!res.both_finished) {
+                      line = `Waiting on ${res.opponent_name || "opponent"}`;
+                    } else if (res.my_points > res.opponent_points) {
+                      line = `Won ${res.my_points} – ${res.opponent_points} vs ${res.opponent_name || "opponent"}`;
+                    } else if (res.my_points < res.opponent_points) {
+                      line = `Lost ${res.my_points} – ${res.opponent_points} vs ${res.opponent_name || "opponent"}`;
+                    } else {
+                      line = `Tied ${res.my_points} – ${res.opponent_points} vs ${res.opponent_name || "opponent"}`;
+                    }
+                    return <div key={row.id} style={s.duelListRow}>{line}</div>;
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Standings strip ── */}
+      <div style={s.playCard}>
+        <div style={s.playCardTitle}>This week's trivia standings</div>
+        {standingsError && <div style={s.errorBanner}>{standingsError}</div>}
+        {standings.length === 0 && !standingsError && (
+          <div style={{ fontSize: 12, color: T.slate500 }}>No records yet this week.</div>
+        )}
+        {standings.map(row => (
+          <div key={row.id} style={s.standingsRow}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={s.standingsTier(row.tier)}>{row.tier}</span>
+              <span>{standingsNameById[row.team_member_id] || "—"}</span>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontWeight: 700 }}>{row.record_value} pts</div>
+              <div style={{ fontSize: 10, color: T.slate500 }}>{row.record_period_label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared question-loop runner for Daily Five + Duel ───
+function QuestionRunner({ itemIds, itemsById, secondsPerQuestion, onSubmitAnswer, onAllDone }) {
+  const [idx, setIdx] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(secondsPerQuestion);
+  const [revealed, setRevealed] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
+  const firingRef = useRef(false);
+
+  const currentId = itemIds[idx];
+  const currentItem = itemsById[currentId];
+
+  const advanceOrFinish = useCallback(() => {
+    firingRef.current = false;
+    if (idx + 1 < itemIds.length) {
+      setIdx(i => i + 1);
+      setTimeLeft(secondsPerQuestion);
+      setRevealed(false);
+      setSelectedId(null);
+    } else {
+      onAllDone();
+    }
+  }, [idx, itemIds.length, secondsPerQuestion, onAllDone]);
+
+  const handleTimeout = useCallback(async () => {
+    if (firingRef.current || revealed) return;
+    firingRef.current = true;
+    try {
+      await onSubmitAnswer(currentId, null, secondsPerQuestion);
+    } catch (ex) {
+      setSubmitError(ex?.message || "Could not submit — moving on.");
+    }
+    advanceOrFinish();
+  }, [currentId, secondsPerQuestion, onSubmitAnswer, advanceOrFinish, revealed]);
+
+  useEffect(() => {
+    if (revealed) return undefined;
+    if (timeLeft <= 0) {
+      handleTimeout();
+      return undefined;
+    }
+    const t = setTimeout(() => setTimeLeft(tl => tl - 1), 1000);
+    return () => clearTimeout(t);
+  }, [timeLeft, revealed, handleTimeout]);
+
+  if (!currentItem) {
+    return <div style={{ fontSize: 13, color: T.slate500 }}>Loading question…</div>;
+  }
+
+  const handleSelect = async (optionId) => {
+    if (revealed || firingRef.current) return;
+    firingRef.current = true;
+    const secondsTaken = Math.max(0, secondsPerQuestion - timeLeft);
+    setSelectedId(optionId);
+    setRevealed(true);
+    try {
+      await onSubmitAnswer(currentId, optionId, secondsTaken);
+    } catch (ex) {
+      setSubmitError(ex?.message || "Could not submit that answer.");
+    }
+    firingRef.current = false;
+  };
+
+  const handleNext = () => advanceOrFinish();
+
+  const urgent = timeLeft <= 5;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: T.slate500 }}>{idx + 1} of {itemIds.length}</span>
+        {!revealed && <span style={s.timerPill(urgent)}>{timeLeft}s</span>}
+      </div>
+      {submitError && <div style={s.errorBanner}>{submitError}</div>}
+      <div style={s.qStem}>{currentItem.stem}</div>
+      {(currentItem.options || []).map(o => {
+        let state = "default";
+        if (revealed) {
+          if (o.id === selectedId && o.is_correct) state = "selectedCorrect";
+          else if (o.id === selectedId && !o.is_correct) state = "selectedWrong";
+          else if (o.is_correct) state = "revealCorrect";
+          else state = "revealDim";
+        }
+        return (
+          <button
+            key={o.id}
+            type="button"
+            style={s.qOptionBtn(state)}
+            onClick={() => handleSelect(o.id)}
+            disabled={revealed}
+          >
+            {o.option_text}
+          </button>
+        );
+      })}
+      {revealed && (
+        <>
+          {currentItem.explanation && <div style={s.explanationBox}>{currentItem.explanation}</div>}
+          <div style={s.actionsRow}>
+            <button type="button" style={s.primaryBtn} onClick={handleNext}>
+              {idx + 1 < itemIds.length ? "Next" : "Finish"}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
