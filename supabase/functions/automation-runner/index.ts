@@ -102,11 +102,51 @@ function jsonResponse(body: any, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// TIMEOUT HANDLING added 2026-08-11. This wrapper had NO time limit of any
+// kind, which is the same exposure that killed two document-processor runs on
+// 2026-08-06: an external call that hangs is not an error the code can catch —
+// it runs until the platform's own wall-clock limit kills the whole invocation
+// as an uncaught exception (status 546). On a cron path that is close to
+// invisible: the run simply never reports. document-processor got fetchWithTimeout
+// on 2026-08-06; this function was missed because it deploys from index.ts
+// directly and so cannot import ../_shared/composio.ts (relative imports do not
+// resolve through the single-file file_url deploy path). That is exactly why an
+// inline copy exists here at all.
+//
+// STRUCTURAL FIX STILL OWED: move this function onto scripts/bundle_edge_fn.py
+// so it can bundle _shared/composio.ts and this duplicate can be deleted.
+// _shared/composio.ts currently claims to be "the one true copy" and is not —
+// it has no timeout handling either, and document-processor/lib/composio.ts is
+// a third, divergent fork that does. Until that is consolidated, a fix has to
+// be applied in three places, which is how this one got missed.
+const COMPOSIO_TIMEOUT_MS = 25000;
+
 async function callComposio(opts: { apiKey: string; userId: string; connectedAccountId: string; toolSlug: string; toolArguments: Record<string, any>; }): Promise<{ ok: boolean; data: any; error: string | null; httpStatus: number }> {
-  const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
-    method: "POST", headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: opts.userId, connected_account_id: opts.connectedAccountId, arguments: opts.toolArguments }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), COMPOSIO_TIMEOUT_MS);
+  const startedAt = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
+      method: "POST", headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: opts.userId, connected_account_id: opts.connectedAccountId, arguments: opts.toolArguments }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    const elapsedMs = Date.now() - startedAt;
+    const timedOut = e instanceof Error && e.name === "AbortError";
+    // Returned as a normal failed result, never rethrown — the caller already
+    // records recipe failures to automation_run_log and Telegram, so a hung
+    // tool now shows up there instead of taking the whole tick down silently.
+    return {
+      ok: false, data: null, httpStatus: 0,
+      error: timedOut
+        ? `Composio ${opts.toolSlug} did not respond within ${elapsedMs}ms and was aborted`
+        : `Composio ${opts.toolSlug} fetch threw after ${elapsedMs}ms: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
   const text = await res.text();
   let parsed: any = {};
   try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
