@@ -3,9 +3,10 @@ import { T } from "../lib/theme.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // Month-view calendar for interview scheduling blackouts, styled after the
-// Team > PTO weekly calendar (TimeOffRequests.jsx HistoryView). Blackouts
-// have no per-person dimension, so this is a simple month grid rather than
-// a roster grid: click any day to add or manage blackouts on it.
+// Team > PTO weekly calendar (TimeOffRequests.jsx HistoryView). Supports
+// one-off dated blackouts (hiring_interview_blackouts) and standing weekly
+// rules (hiring_interview_recurring_blackouts) — both are checked by the
+// hiring-interview-scheduler edge function when it offers slots.
 
 function isoDayLocal(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -28,6 +29,7 @@ function buildMonthGrid(monthDate) {
 }
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // Mirrors FIXED_TIMES_BY_WEEKDAY in the hiring-interview-scheduler edge
 // function — the actual predefined interview times. Keep these two in sync
@@ -50,21 +52,36 @@ function addMinutesToTime(h, m, mins) {
   const total = h * 60 + m + mins;
   return { h: Math.floor(total / 60) % 24, m: total % 60 };
 }
+function labelForTime(h, m) {
+  const match = Object.values(FIXED_TIMES_BY_WEEKDAY).flat().find((s) => s.h === h && s.m === m);
+  if (match) return match.label;
+  const period = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${pad2(m)} ${period}`;
+}
 
-function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
+function recurringAppliesOn(r, dateISO, weekday) {
+  return r.weekday === weekday && dateISO >= r.starts_on && (!r.ends_on || dateISO <= r.ends_on);
+}
+
+function DayModal({ dateISO, existing, recurring, onAdd, onDelete, onAddRecurring, onDeleteRecurring, onClose }) {
   const [showCustom, setShowCustom] = useState(false);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("17:00");
   const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(null); // key of thing currently saving
+  const [saving, setSaving] = useState(null);
   const dateObj = new Date(dateISO + "T12:00:00");
   const displayDate = dateObj.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const weekday = dateObj.getDay();
+  const weekdayLabel = DOW_FULL[weekday];
 
   const wholeDayRow = existing.find((r) => !r.start_time);
+  const wholeDayRecurring = recurring.find((r) => !r.start_time && recurringAppliesOn(r, dateISO, weekday));
   const isFridayExcluded = isThirdFriday(dateObj);
-  const daySlots = isFridayExcluded ? [] : (FIXED_TIMES_BY_WEEKDAY[dateObj.getDay()] || []);
+  const daySlots = isFridayExcluded ? [] : (FIXED_TIMES_BY_WEEKDAY[weekday] || []);
 
   const findExistingForSlot = (h, m) => existing.find((r) => r.start_time === timeToHHMMSS(h, m));
+  const findRecurringForSlot = (h, m) => recurring.find((r) => r.start_time === timeToHHMMSS(h, m) && recurringAppliesOn(r, dateISO, weekday));
 
   const handleBlockSlot = async (slot) => {
     setSaving(`slot-${slot.h}-${slot.m}`);
@@ -72,14 +89,24 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
     await onAdd({ blackout_date: dateISO, start_time: timeToHHMMSS(slot.h, slot.m), end_time: timeToHHMMSS(end.h, end.m), note: null });
     setSaving(null);
   };
-
+  const handleBlockSlotRecurring = async (slot) => {
+    setSaving(`slotrec-${slot.h}-${slot.m}`);
+    const end = addMinutesToTime(slot.h, slot.m, INTERVIEW_MINUTES);
+    await onAddRecurring({ weekday, start_time: timeToHHMMSS(slot.h, slot.m), end_time: timeToHHMMSS(end.h, end.m), starts_on: dateISO, note: null });
+    setSaving(null);
+  };
   const handleBlockWholeDay = async () => {
     setSaving("whole");
     await onAdd({ blackout_date: dateISO, start_time: null, end_time: null, note: note || null });
     setSaving(null);
     setNote("");
   };
-
+  const handleBlockWholeDayRecurring = async () => {
+    setSaving("wholerec");
+    await onAddRecurring({ weekday, start_time: null, end_time: null, starts_on: dateISO, note: note || null });
+    setSaving(null);
+    setNote("");
+  };
   const handleAddCustom = async () => {
     setSaving("custom");
     await onAdd({ blackout_date: dateISO, start_time: startTime, end_time: endTime, note: note || null });
@@ -87,18 +114,27 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
     setNote("");
   };
 
+  const otherBlocked = existing.filter((r) => r.start_time && !daySlots.some((s) => timeToHHMMSS(s.h, s.m) === r.start_time));
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1000 }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: "min(440px, 100%)", maxHeight: "92vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: "min(460px, 100%)", maxHeight: "92vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <h3 style={{ margin: 0, fontSize: 16 }}>{displayDate}</h3>
           <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: T.slate400, lineHeight: 1 }}>×</button>
         </div>
 
-        {wholeDayRow ? (
+        {(wholeDayRow || wholeDayRecurring) ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fecaca", borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
-            <div style={{ fontSize: 13, color: "#7c2d12" }}>Whole day blocked{wholeDayRow.note ? ` — ${wholeDayRow.note}` : ""}</div>
-            <button onClick={() => onDelete(wholeDayRow.id)} style={{ border: "none", background: "transparent", color: "#7c2d12", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Unblock</button>
+            <div style={{ fontSize: 13, color: "#7c2d12" }}>
+              Whole day blocked{wholeDayRecurring ? ` — every ${weekdayLabel}` : ""}{(wholeDayRow?.note || wholeDayRecurring?.note) ? ` — ${wholeDayRow?.note || wholeDayRecurring?.note}` : ""}
+            </div>
+            <button
+              onClick={() => wholeDayRow ? onDelete(wholeDayRow.id) : onDeleteRecurring(wholeDayRecurring.id)}
+              style={{ border: "none", background: "transparent", color: "#7c2d12", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+            >
+              {wholeDayRecurring ? "Stop recurring" : "Unblock"}
+            </button>
           </div>
         ) : (
           <>
@@ -115,15 +151,34 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
                   {daySlots.map((slot) => {
                     const key = `slot-${slot.h}-${slot.m}`;
                     const existingRow = findExistingForSlot(slot.h, slot.m);
+                    const recurringRow = findRecurringForSlot(slot.h, slot.m);
+                    const blocked = existingRow || recurringRow;
                     return (
-                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${existingRow ? "#fca5a5" : T.slate200}`, background: existingRow ? "#fef2f2" : "#fff", borderRadius: 8, padding: "8px 12px" }}>
-                        <div style={{ fontSize: 13, color: existingRow ? "#991b1b" : T.slate700 }}>{slot.label}{existingRow ? " — blocked" : ""}</div>
-                        {existingRow ? (
-                          <button onClick={() => onDelete(existingRow.id)} style={{ border: "none", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Unblock</button>
-                        ) : (
-                          <button onClick={() => handleBlockSlot(slot)} disabled={saving === key} style={{ border: "none", background: T.slate100 || "#f1f5f9", color: T.slate700 || "#334155", cursor: saving === key ? "default" : "pointer", fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6 }}>
-                            {saving === key ? "Blocking…" : "Block"}
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${blocked ? "#fca5a5" : T.slate200}`, background: blocked ? "#fef2f2" : "#fff", borderRadius: 8, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 13, color: blocked ? "#991b1b" : T.slate700 }}>
+                          {slot.label}{recurringRow ? ` — blocked (every ${weekdayLabel})` : existingRow ? " — blocked" : ""}
+                        </div>
+                        {blocked ? (
+                          <button
+                            onClick={() => existingRow ? onDelete(existingRow.id) : onDeleteRecurring(recurringRow.id)}
+                            style={{ border: "none", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                          >
+                            {recurringRow ? "Stop recurring" : "Unblock"}
                           </button>
+                        ) : (
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => handleBlockSlot(slot)} disabled={saving === key} style={{ border: "none", background: T.slate100 || "#f1f5f9", color: T.slate700 || "#334155", cursor: saving === key ? "default" : "pointer", fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6 }}>
+                              {saving === key ? "…" : "Block"}
+                            </button>
+                            <button
+                              onClick={() => handleBlockSlotRecurring(slot)}
+                              disabled={saving === `slotrec-${slot.h}-${slot.m}`}
+                              title={`Block every ${weekdayLabel} at ${slot.label}, going forward`}
+                              style={{ border: `1px solid ${T.slate200}`, background: "#fff", color: T.slate500, cursor: "pointer", fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6 }}
+                            >
+                              🔁 Every {weekdayLabel}
+                            </button>
+                          </div>
                         )}
                       </div>
                     );
@@ -132,10 +187,10 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
               </div>
             )}
 
-            {existing.filter((r) => r.start_time && !daySlots.some((s) => timeToHHMMSS(s.h, s.m) === r.start_time)).length > 0 && (
+            {otherBlocked.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T.slate600 }}>Other blocked windows</div>
-                {existing.filter((r) => r.start_time && !daySlots.some((s) => timeToHHMMSS(s.h, s.m) === r.start_time)).map((r) => (
+                {otherBlocked.map((r) => (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: T.slate50 || "#f8fafc", border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px" }}>
                     <div style={{ fontSize: 13 }}>{r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}{r.note ? ` — ${r.note}` : ""}</div>
                     <button onClick={() => onDelete(r.id)} style={{ border: "none", background: "transparent", color: T.slate400, cursor: "pointer", fontSize: 12 }}>Remove</button>
@@ -147,6 +202,9 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={handleBlockWholeDay} disabled={saving === "whole"} style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${T.slate200}`, background: "#fff", color: "#991b1b", fontSize: 13, fontWeight: 600, cursor: saving === "whole" ? "default" : "pointer" }}>
                 {saving === "whole" ? "Blocking…" : "Block whole day"}
+              </button>
+              <button onClick={handleBlockWholeDayRecurring} disabled={saving === "wholerec"} title={`Block every ${weekdayLabel}, going forward`} style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${T.slate200}`, background: "#fff", color: T.slate500, fontSize: 13, fontWeight: 600, cursor: saving === "wholerec" ? "default" : "pointer" }}>
+                {saving === "wholerec" ? "…" : `🔁 Every ${weekdayLabel}`}
               </button>
               <button onClick={() => setShowCustom((v) => !v)} style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${T.slate200}`, background: "#fff", color: T.slate600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                 {showCustom ? "Hide custom range" : "Custom time range"}
@@ -174,7 +232,7 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
                   disabled={saving === "custom"}
                   style={{ padding: "8px 16px", borderRadius: 7, border: "none", background: saving === "custom" ? T.slate200 : (T.blue600 || "#2563eb"), color: "#fff", fontSize: 13, fontWeight: 600, cursor: saving === "custom" ? "default" : "pointer", alignSelf: "flex-start" }}
                 >
-                  {saving === "custom" ? "Adding…" : "Add custom blackout"}
+                  {saving === "custom" ? "Adding…" : "Add custom blackout (this day only)"}
                 </button>
               </div>
             )}
@@ -185,9 +243,29 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
   );
 }
 
+function RecurringRulesList({ recurring, onDelete }) {
+  if (recurring.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: T.slate600 }}>Standing (recurring) blackouts</div>
+      {recurring.map((r) => (
+        <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px" }}>
+          <div style={{ fontSize: 13 }}>
+            Every {DOW_FULL[r.weekday]} — {r.start_time ? labelForTime(...r.start_time.split(":").map(Number)) : "whole day"}
+            {r.ends_on ? ` (through ${r.ends_on})` : ""}
+            {r.note ? ` — ${r.note}` : ""}
+          </div>
+          <button onClick={() => onDelete(r.id)} style={{ border: "none", background: "transparent", color: T.slate400, cursor: "pointer", fontSize: 12 }}>Remove</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function InterviewBlackoutManager() {
   const [monthDate, setMonthDate] = useState(() => startOfMonth(new Date()));
   const [rows, setRows] = useState([]);
+  const [recurringRows, setRecurringRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
 
@@ -198,14 +276,22 @@ export default function InterviewBlackoutManager() {
     gridStart.setDate(1 - gridStart.getDay());
     const gridEnd = new Date(gridStart);
     gridEnd.setDate(gridStart.getDate() + 41);
-    const { data, error } = await supabase
-      .from("hiring_interview_blackouts")
-      .select("id, blackout_date, start_time, end_time, note")
-      .eq("agency_id", AGENCY_ID)
-      .gte("blackout_date", isoDayLocal(gridStart))
-      .lte("blackout_date", isoDayLocal(gridEnd))
-      .order("blackout_date", { ascending: true });
-    if (!error) setRows(data || []);
+    const [oneOff, standing] = await Promise.all([
+      supabase
+        .from("hiring_interview_blackouts")
+        .select("id, blackout_date, start_time, end_time, note")
+        .eq("agency_id", AGENCY_ID)
+        .gte("blackout_date", isoDayLocal(gridStart))
+        .lte("blackout_date", isoDayLocal(gridEnd))
+        .order("blackout_date", { ascending: true }),
+      supabase
+        .from("hiring_interview_recurring_blackouts")
+        .select("id, weekday, start_time, end_time, note, starts_on, ends_on")
+        .eq("agency_id", AGENCY_ID)
+        .order("weekday", { ascending: true }),
+    ]);
+    if (!oneOff.error) setRows(oneOff.data || []);
+    if (!standing.error) setRecurringRows(standing.data || []);
     setLoading(false);
   }, [monthDate]);
 
@@ -220,12 +306,37 @@ export default function InterviewBlackoutManager() {
     return m;
   }, [rows]);
 
+  // Effective blocks per visible day = one-off rows + any recurring rule
+  // that applies on that date. Used only for calendar-cell display.
+  const effectiveByDate = useMemo(() => {
+    const m = new Map();
+    for (const [dateISO, list] of byDate) m.set(dateISO, [...list]);
+    const days = buildMonthGrid(monthDate);
+    for (const d of days) {
+      const iso = isoDayLocal(d);
+      const weekday = d.getDay();
+      const applicable = recurringRows.filter((r) => recurringAppliesOn(r, iso, weekday));
+      if (applicable.length === 0) continue;
+      const existingList = m.get(iso) || [];
+      m.set(iso, [...existingList, ...applicable]);
+    }
+    return m;
+  }, [byDate, recurringRows, monthDate]);
+
   const handleAdd = async (payload) => {
     await supabase.from("hiring_interview_blackouts").insert({ agency_id: AGENCY_ID, ...payload });
     await load();
   };
   const handleDelete = async (id) => {
     await supabase.from("hiring_interview_blackouts").delete().eq("id", id);
+    await load();
+  };
+  const handleAddRecurring = async (payload) => {
+    await supabase.from("hiring_interview_recurring_blackouts").insert({ agency_id: AGENCY_ID, ...payload });
+    await load();
+  };
+  const handleDeleteRecurring = async (id) => {
+    await supabase.from("hiring_interview_recurring_blackouts").delete().eq("id", id);
     await load();
   };
 
@@ -236,7 +347,7 @@ export default function InterviewBlackoutManager() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 13, color: T.slate500 }}>
-        Click a day to block it (whole day or a specific window) or manage blackouts already on it. Anything on your calendar is checked automatically — this is for anything not on there yet.
+        Click a day to block it — a single time, the whole day, or every occurrence of that weekday going forward. Anything already on your calendar is checked automatically; this is for anything not on there yet.
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -256,27 +367,30 @@ export default function InterviewBlackoutManager() {
         {days.map((d) => {
           const iso = isoDayLocal(d);
           const inMonth = d.getMonth() === thisMonth;
-          const blackouts = byDate.get(iso) || [];
-          const isWholeDay = blackouts.some((r) => !r.start_time);
-          const isPartial = !isWholeDay && blackouts.length > 0;
+          const blocks = effectiveByDate.get(iso) || [];
+          const isWholeDay = blocks.some((r) => !r.start_time);
           return (
             <div
               key={iso}
               onClick={() => setOpenDay(iso)}
               style={{
-                minHeight: 64, borderRadius: 8, padding: 6, cursor: "pointer",
+                minHeight: 72, borderRadius: 8, padding: 6, cursor: "pointer",
                 border: `1px solid ${iso === todayIso ? (T.blue600 || "#2563eb") : T.slate200}`,
-                background: isWholeDay ? "#fecaca" : isPartial ? "#fed7aa" : "#fff",
+                background: isWholeDay ? "#fecaca" : blocks.length > 0 ? "#fed7aa" : "#fff",
                 opacity: inMonth ? 1 : 0.4,
               }}
             >
               <div style={{ fontSize: 12, fontWeight: iso === todayIso ? 700 : 500, color: iso === todayIso ? (T.blue600 || "#2563eb") : T.slate600 }}>
                 {d.getDate()}
               </div>
-              {blackouts.length > 0 && (
-                <div style={{ fontSize: 10, color: "#7c2d12", marginTop: 4, lineHeight: 1.3 }}>
-                  {isWholeDay ? "Blacked out" : `${blackouts.length} window${blackouts.length > 1 ? "s" : ""}`}
-                </div>
+              {isWholeDay ? (
+                <div style={{ fontSize: 10, color: "#7c2d12", marginTop: 4, lineHeight: 1.3 }}>Whole day</div>
+              ) : (
+                blocks.slice(0, 3).map((b, i) => (
+                  <div key={i} style={{ fontSize: 9.5, color: "#7c2d12", marginTop: 2, lineHeight: 1.2 }}>
+                    {labelForTime(...b.start_time.split(":").map(Number))}
+                  </div>
+                ))
               )}
             </div>
           );
@@ -285,12 +399,17 @@ export default function InterviewBlackoutManager() {
 
       {loading && <div style={{ fontSize: 12, color: T.slate400 }}>Loading…</div>}
 
+      <RecurringRulesList recurring={recurringRows} onDelete={handleDeleteRecurring} />
+
       {openDay && (
         <DayModal
           dateISO={openDay}
           existing={byDate.get(openDay) || []}
+          recurring={recurringRows}
           onAdd={handleAdd}
           onDelete={handleDelete}
+          onAddRecurring={handleAddRecurring}
+          onDeleteRecurring={handleDeleteRecurring}
           onClose={() => setOpenDay(null)}
         />
       )}
