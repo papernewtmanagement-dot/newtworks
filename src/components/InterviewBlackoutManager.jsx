@@ -244,20 +244,23 @@ function DayModal({ dateISO, existing, recurring, onAdd, onDelete, onAddRecurrin
 }
 
 function RecurringRulesList({ recurring, onDelete }) {
-  if (recurring.length === 0) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: T.slate600 }}>Standing (recurring) blackouts</div>
-      {recurring.map((r) => (
-        <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px" }}>
-          <div style={{ fontSize: 13 }}>
-            Every {DOW_FULL[r.weekday]} — {r.start_time ? labelForTime(...r.start_time.split(":").map(Number)) : "whole day"}
-            {r.ends_on ? ` (through ${r.ends_on})` : ""}
-            {r.note ? ` — ${r.note}` : ""}
+      {recurring.length === 0 ? (
+        <div style={{ fontSize: 12, color: T.slate400 }}>None yet — click a day above and use "🔁 Every [weekday]" to add one.</div>
+      ) : (
+        recurring.map((r) => (
+          <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px" }}>
+            <div style={{ fontSize: 13 }}>
+              Every {DOW_FULL[r.weekday]} — {r.start_time ? labelForTime(...r.start_time.split(":").map(Number)) : "whole day"}
+              {r.ends_on ? ` (through ${r.ends_on})` : ""}
+              {r.note ? ` — ${r.note}` : ""}
+            </div>
+            <button onClick={() => onDelete(r.id)} style={{ border: "none", background: "transparent", color: T.slate400, cursor: "pointer", fontSize: 12 }}>Remove</button>
           </div>
-          <button onClick={() => onDelete(r.id)} style={{ border: "none", background: "transparent", color: T.slate400, cursor: "pointer", fontSize: 12 }}>Remove</button>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 }
