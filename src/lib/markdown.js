@@ -11,6 +11,10 @@
 //       { status: 'empty' }            — target exists but has no content
 //       { status: 'missing' }          — target not found in any book
 //     If not provided (or returns null), markers pass through unchanged.
+//   options.markTransclusions — when true, drops a small floated pencil
+//     button in front of every resolved include/excerpt block (admin
+//     edit-affordance; see Manual.jsx's included-section quick editor).
+//     Read-only content is unaffected either way.
 //
 // Handles:
 //   - Headings #..######
@@ -33,6 +37,13 @@ export function escapeHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// Same as escapeHtml plus quote-escaping, for use inside a double-quoted
+// HTML attribute value (escapeHtml alone leaves " and ' untouched, which is
+// fine for element text but not safe to drop into an attribute).
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, "&quot;");
 }
 
 // ─── Script-voice + placeholder styling ───────────────────────
@@ -234,7 +245,31 @@ function bannerCycle(target, kind) {
   );
 }
 
-function expandIncludes(md, resolveInclude, visited, depth) {
+// ─── Admin edit-affordance: pencil button at each transcluded block ───
+// When markEdit is true, every resolved [Included from:] / [Embedded
+// excerpt from:] block gets a small floated pencil-button dropped in front
+// of it. The button is a single self-contained HTML line (`<div ...><button
+// ...>...</button></div>` all on one line), so the block-passthrough scanner
+// in mdToHtml treats it as a raw single-line HTML block and pushes it
+// through untouched (see PASSTHROUGH_TAGS handling) — it never gets wrapped
+// in a <p> or run through inline markdown processing. The included content
+// itself is NOT wrapped in any element, so its own headings/lists/etc.
+// keep parsing exactly as before. Manual.jsx attaches one delegated click
+// listener on the rendered body and matches clicks by the
+// data-transclusion-kind / data-transclusion-title attributes below.
+function transclusionEditButton(kind, title) {
+  const safeTitle = escapeAttr(title);
+  const kindLabel = kind === "excerpt" ? "shared excerpt" : "included page";
+  return (
+    `<div class="nw-transclusion-edit-btn-wrap"><button type="button" ` +
+    `class="nw-transclusion-edit-btn" data-transclusion-kind="${kind}" ` +
+    `data-transclusion-title="${safeTitle}" ` +
+    `title="Edit &quot;${safeTitle}&quot; (${kindLabel})" ` +
+    `aria-label="Edit included section">✎</button></div>`
+  );
+}
+
+function expandIncludes(md, resolveInclude, visited, depth, markEdit) {
   if (!resolveInclude) return md;
   if (depth > MAX_INCLUDE_DEPTH) return md;
   return md.replace(INCLUDE_LINE_RE, (_match, rawTarget) => {
@@ -257,7 +292,8 @@ function expandIncludes(md, resolveInclude, visited, depth) {
 
     const nextVisited = new Set(visited);
     nextVisited.add(key);
-    return expandIncludes(resolved.md, resolveInclude, nextVisited, depth + 1);
+    const expanded = expandIncludes(resolved.md, resolveInclude, nextVisited, depth + 1, markEdit);
+    return markEdit ? `${transclusionEditButton("include", target)}\n\n${expanded}` : expanded;
   });
 }
 
@@ -298,7 +334,7 @@ export function extractTransclusionMarkers(md) {
 // the consumer (see Manual.jsx). Cycle guard + banner reuse the include
 // machinery with a "excerpt" kind label.
 
-function expandExcerpts(md, resolveExcerpt, visited, depth) {
+function expandExcerpts(md, resolveExcerpt, visited, depth, markEdit) {
   if (!resolveExcerpt) return md;
   if (depth > MAX_INCLUDE_DEPTH) return md;
   return md.replace(EXCERPT_LINE_RE, (_match, rawTarget) => {
@@ -320,7 +356,8 @@ function expandExcerpts(md, resolveExcerpt, visited, depth) {
 
     const nextVisited = new Set(visited);
     nextVisited.add(key);
-    return expandExcerpts(resolved.md, resolveExcerpt, nextVisited, depth + 1);
+    const expanded = expandExcerpts(resolved.md, resolveExcerpt, nextVisited, depth + 1, markEdit);
+    return markEdit ? `${transclusionEditButton("excerpt", target)}\n\n${expanded}` : expanded;
   });
 }
 
@@ -774,13 +811,14 @@ function expandCharts(md) {
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
   let src = String(md || "");
+  const markEdit = !!(options && options.markTransclusions);
 
   if (options && typeof options.resolveInclude === "function") {
-    src = expandIncludes(src, options.resolveInclude, new Set(), 0);
+    src = expandIncludes(src, options.resolveInclude, new Set(), 0, markEdit);
   }
 
   if (options && typeof options.resolveExcerpt === "function") {
-    src = expandExcerpts(src, options.resolveExcerpt, new Set(), 0);
+    src = expandExcerpts(src, options.resolveExcerpt, new Set(), 0, markEdit);
   }
 
   if (options && typeof options.resolveGlossary === "function") {

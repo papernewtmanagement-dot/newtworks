@@ -1238,25 +1238,27 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     () => makeFaqResolver(buildFaqLookup(faqRows || [])),
     [faqRows]
   );
+  // markTransclusions only turned on for admins actively viewing (not
+  // editing raw markdown) — the pencil buttons it injects are an edit
+  // affordance, not something a non-admin or the raw editor should see.
   const html = useMemo(
-    () => mdToHtml(page?.content || "", { resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq }),
-    [page?.content, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq]
+    () => mdToHtml(page?.content || "", {
+      resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq,
+      markTransclusions: isAdmin && mode === "view",
+    }),
+    [page?.content, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode]
   );
 
   // ── Included-section quick editor ─────────────────────────────
-  // Every [Included from: X] / [Embedded excerpt from: X] marker on THIS
-  // page's raw content, resolved to a live row so it can be edited without
-  // hunting for it in the tree — excerpt rows are deliberately hidden from
-  // tree nav. findFragmentRow follows the same two-row-set rule the
-  // renderer itself uses: 'include' targets live in allRows (this manual's
-  // own rows), 'excerpt' targets live in excerptRows (the shared,
-  // cross-manual namespace). fragmentStack is a stack, not a single value,
-  // so drilling into a marker nested inside a fragment (FIT Conversations
-  // chains several deep) opens on top rather than replacing the view.
-  const transclusionRefs = useMemo(
-    () => extractTransclusionMarkers(page?.content),
-    [page?.content]
-  );
+  // Edit affordance now lives inline, as a pencil button markTransclusions
+  // drops in front of each rendered include/excerpt block (see the `html`
+  // memo above + handleBodyClick below) — no separate marker scan needed
+  // here. findFragmentRow follows the same two-row-set rule the renderer
+  // itself uses: 'include' targets live in allRows (this manual's own
+  // rows), 'excerpt' targets live in excerptRows (the shared, cross-manual
+  // namespace). fragmentStack is a stack, not a single value, so drilling
+  // into a marker nested inside a fragment (FIT Conversations chains
+  // several deep) opens on top rather than replacing the view.
   const findFragmentRow = useCallback((kind, title) => {
     const key = String(title || "").trim().toLowerCase();
     const pool = kind === "excerpt" ? excerptRows : allRows;
@@ -1272,6 +1274,19 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
+  // Single delegated click handler for the pencil buttons markTransclusions
+  // drops in front of every included/excerpt block (see markdown.js). The
+  // buttons are raw HTML (rendered via dangerouslySetInnerHTML), so this is
+  // the only way to hook them up to openFragment.
+  const handleBodyClick = useCallback((e) => {
+    const btn = e.target?.closest?.(".nw-transclusion-edit-btn");
+    if (!btn) return;
+    e.preventDefault();
+    const kind = btn.getAttribute("data-transclusion-kind");
+    const title = btn.getAttribute("data-transclusion-title");
+    if (!kind || !title) return;
+    openFragment({ kind, title });
+  }, [openFragment]);
   const askContext = useMemo(() => {
     return `I\'m looking at this page from ${cfg.askContextLabel}:
 
@@ -1416,6 +1431,22 @@ What I\'d like to discuss:
            it above that rule or it becomes dead CSS. */
         .newtworks-handbook-body details[open] > :is(ul, ol) { padding-left: 54px; }
         .newtworks-handbook-body img { max-width: 100%; height: auto; border-radius: 6px; }
+        /* Included-section quick-edit pencil — dropped in front of every
+           resolved [Included from:] / [Embedded excerpt from:] block when
+           markTransclusions is on (admins, view mode only). Floated so it
+           sits at the top-right of the block it belongs to without wrapping
+           the block's own markdown in an element (see markdown.js). */
+        .newtworks-handbook-body .nw-transclusion-edit-btn-wrap { float: right; margin: 2px 0 6px 10px; }
+        .newtworks-handbook-body .nw-transclusion-edit-btn {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 22px; height: 22px; padding: 0; border-radius: 50%;
+          border: 1px solid ${T.blue}55; background: ${T.blueLt}; color: ${T.blue};
+          font-size: 12px; line-height: 1; cursor: pointer;
+        }
+        .newtworks-handbook-body .nw-transclusion-edit-btn:hover,
+        .newtworks-handbook-body .nw-transclusion-edit-btn:focus-visible {
+          background: ${T.blue}33; border-color: ${T.blue}; outline: none;
+        }
         /* ─── BODY CONTENT INDENT — MUST STAY LAST IN THIS BLOCK ───
            Peter 2026-08-08. Body content sits 12px in from its header so it
            stands apart; headers stay flush.
@@ -1466,43 +1497,6 @@ What I\'d like to discuss:
 
       {/* Accent bar */}
       <div style={{ height: 4, background: T.blue, borderRadius: 2, marginBottom: 24, opacity: 0.85 }} />
-
-      {/* Included sections on this page — admin-only quick-edit chips.
-          Excerpt rows never appear in the tree, so this is often the only
-          way to reach them at all. */}
-      {isAdmin && mode === "view" && transclusionRefs.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{
-            fontSize: 11, fontWeight: 700, color: T.slate500,
-            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6,
-          }}>
-            Included sections on this page
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {transclusionRefs.map((ref) => {
-              const row = findFragmentRow(ref.kind, ref.title);
-              return (
-                <button
-                  key={ref.kind + "::" + ref.title}
-                  type="button"
-                  disabled={!row}
-                  onClick={() => openFragment(ref)}
-                  title={row
-                    ? `Edit "${ref.title}" (${ref.kind === "excerpt" ? "shared excerpt" : "included page"})`
-                    : `"${ref.title}" not found — check the marker`}
-                  style={{
-                    padding: "5px 10px", borderRadius: 999, border: `1px solid ${T.blue}55`,
-                    background: row ? T.blueLt : T.slate100, color: row ? T.blue : T.slate400,
-                    fontSize: 12, fontWeight: 700, cursor: row ? "pointer" : "not-allowed",
-                  }}
-                >
-                  ✎ {ref.title}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Action row — admin-only edit controls */}
       {isAdmin && mode === "view" && (
@@ -1595,7 +1589,7 @@ What I\'d like to discuss:
             <GlossaryList manualType={manualType} parentId={cfg.glossaryParentId} />
           </div>
         ) : (page?.content || "").trim() ? (
-          <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} ref={bodyRef} />
+          <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} ref={bodyRef} onClick={handleBodyClick} />
         ) : (
           <div style={{ color: T.slate500, fontStyle: "italic", fontSize: 13 }}>
             This page has no text content.
