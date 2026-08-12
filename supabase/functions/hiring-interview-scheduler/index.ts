@@ -35,13 +35,27 @@ import { escHtml } from "../_shared/html.ts";
 const TZ = "America/Chicago";
 const CALENDAR_ID = "primary";
 const INTERVIEW_MINUTES = 35;
-const SLOT_GRID_MINUTES = 45; // interview + buffer
-const DAY_START_HOUR = 9;     // 9:00 AM local
-const DAY_END_HOUR = 16;      // last slot STARTS at 16:00 (ends 16:35)
-const LOOKAHEAD_BUSINESS_DAYS = 10;
-const SLOTS_TO_OFFER = 6;
+const LOOKAHEAD_DAYS = 45; // calendar days scanned forward for eligible slots
 const BOOKING_WINDOW_DAYS = 7; // link expiry
 const BOOKING_BASE_URL = "https://newtworks.vercel.app/schedule";
+
+// Fixed weekly interview schedule (Chicago local time), per Peter directive
+// 2026-08-12. getUTCDay()-style weekday numbering (0=Sun..6=Sat) applied to
+// a date built from Chicago-local Y/M/D — same convention isWeekend() uses.
+// Each day lists its offered start times in chronological order.
+const FIXED_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
+  1: [{ h: 10, m: 0 }, { h: 15, m: 30 }], // Monday
+  2: [{ h: 10, m: 0 }, { h: 15, m: 30 }], // Tuesday
+  3: [{ h: 10, m: 0 }],                   // Wednesday
+  4: [{ h: 15, m: 30 }],                  // Thursday
+  5: [{ h: 12, m: 30 }],                  // Friday (see isThirdFriday exclusion)
+};
+
+function isThirdFriday(y: number, m: number, d: number): boolean {
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  if (dow !== 5) return false;
+  return Math.ceil(d / 7) === 3;
+}
 
 function newToken(): string {
   const bytes = new Uint8Array(24);
@@ -78,36 +92,34 @@ function isWeekend(y: number, m: number, d: number): boolean {
 // -------------------------------------------------------------------------
 // Slot computation
 // -------------------------------------------------------------------------
-interface Slot { start: string; end: string; } // ISO UTC
+interface Slot { start: string; end: string; dateKey: string; } // dateKey = Chicago YYYY-MM-DD
 
-function candidateSlotGrid(startFrom: Date): Slot[] {
+// Every fixed-schedule slot across the lookahead window, before filtering
+// for blackouts or calendar busy — one row per (eligible day x fixed time).
+function fixedScheduleGrid(startFrom: Date): Slot[] {
   const grid: Slot[] = [];
   const nowChicago = new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
     .formatToParts(startFrom).reduce((acc: any, p) => { acc[p.type] = p.value; return acc; }, {});
-  let y = +nowChicago.year, m = +nowChicago.month, d = +nowChicago.day;
-  // start tomorrow, local
-  let cursor = new Date(Date.UTC(y, m - 1, d + 1));
-  let daysAdded = 0;
-  while (daysAdded < LOOKAHEAD_BUSINESS_DAYS) {
+  const y0 = +nowChicago.year, m0 = +nowChicago.month, d0 = +nowChicago.day;
+  let cursor = new Date(Date.UTC(y0, m0 - 1, d0 + 1)); // start tomorrow, local
+  for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
     const cy = cursor.getUTCFullYear(), cm = cursor.getUTCMonth() + 1, cd = cursor.getUTCDate();
-    if (!isWeekend(cy, cm, cd)) {
-      const dayStartMin = DAY_START_HOUR * 60;
-      const dayEndMin = DAY_END_HOUR * 60; // last slot STARTS at this minute
-      for (let minuteOfDay = dayStartMin; minuteOfDay <= dayEndMin; minuteOfDay += SLOT_GRID_MINUTES) {
-        const actualHour = Math.floor(minuteOfDay / 60);
-        const actualMinute = minuteOfDay % 60;
-        const start = chicagoLocalToUtc(cy, cm, cd, actualHour, actualMinute);
+    const dow = cursor.getUTCDay();
+    const times = FIXED_TIMES_BY_WEEKDAY[dow];
+    if (times && !isThirdFriday(cy, cm, cd)) {
+      const dateKey = `${cy}-${String(cm).padStart(2, "0")}-${String(cd).padStart(2, "0")}`;
+      for (const t of times) {
+        const start = chicagoLocalToUtc(cy, cm, cd, t.h, t.m);
         const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
-        grid.push({ start: start.toISOString(), end: end.toISOString() });
+        grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey });
       }
-      daysAdded++;
     }
     cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
   }
   return grid;
 }
 
-function overlapsBusy(slot: Slot, busy: { start: string; end: string }[]): boolean {
+function overlapsBusy(slot: { start: string; end: string }, busy: { start: string; end: string }[]): boolean {
   const s = new Date(slot.start).getTime();
   const e = new Date(slot.end).getTime();
   return busy.some((b) => {
@@ -115,6 +127,64 @@ function overlapsBusy(slot: Slot, busy: { start: string; end: string }[]): boole
     const be = new Date(b.end).getTime();
     return s < be && bs < e;
   });
+}
+
+interface Blackout { blackout_date: string; start_time: string | null; end_time: string | null; }
+
+async function fetchBlackouts(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Blackout[]> {
+  const { data, error } = await sb
+    .from("hiring_interview_blackouts")
+    .select("blackout_date, start_time, end_time")
+    .eq("agency_id", agencyId)
+    .gte("blackout_date", fromDateKey)
+    .lte("blackout_date", throughDateKey);
+  if (error) return [];
+  return (data ?? []) as Blackout[];
+}
+
+function isBlackedOut(slot: Slot, blackouts: Blackout[]): boolean {
+  for (const b of blackouts) {
+    if (b.blackout_date !== slot.dateKey) continue;
+    if (!b.start_time || !b.end_time) return true; // whole-day blackout
+    // Compare local time-of-day. b.start_time/end_time are "HH:MM:SS" local.
+    const slotLocalTime = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit" }).format(new Date(slot.start));
+    const [sh, sm] = slotLocalTime.split(":").map(Number);
+    const slotMin = sh * 60 + sm;
+    const [bsh, bsm] = b.start_time.split(":").map(Number);
+    const [beh, bem] = b.end_time.split(":").map(Number);
+    const blackStart = bsh * 60 + bsm;
+    const blackEnd = beh * 60 + bem;
+    if (slotMin >= blackStart && slotMin < blackEnd) return true;
+  }
+  return false;
+}
+
+// Peter directive 2026-08-12: offer exactly three times, spaced out —
+// first available day, skip a day, second offer, skip two days, final offer.
+// "Skip N days" = N full calendar days pass untouched before resuming the
+// search on day N+1 after the previous offer.
+function pickThreeOffers(perDayEarliest: Slot[]): Slot[] {
+  const byDateAsc = [...perDayEarliest].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const findOnOrAfter = (dateKey: string): Slot | null =>
+    byDateAsc.find((s) => s.dateKey >= dateKey) || null;
+  const addDays = (dateKey: string, days: number): string => {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + days));
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+  };
+
+  const offers: Slot[] = [];
+  const offer1 = byDateAsc[0];
+  if (!offer1) return offers;
+  offers.push(offer1);
+
+  const offer2 = findOnOrAfter(addDays(offer1.dateKey, 2)); // skip 1 day
+  if (offer2) {
+    offers.push(offer2);
+    const offer3 = findOnOrAfter(addDays(offer2.dateKey, 3)); // skip 2 days
+    if (offer3) offers.push(offer3);
+  }
+  return offers;
 }
 
 async function fetchBusy(creds: { apiKey: string; userId: string; accountId: string }, timeMin: string, timeMax: string): Promise<{ start: string; end: string }[]> {
@@ -147,29 +217,26 @@ async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
   const creds = await getCalendarCreds(agencyId);
   if (!creds) return null;
   const now = new Date();
-  const grid = candidateSlotGrid(now);
+  const grid = fixedScheduleGrid(now);
   if (grid.length === 0) return [];
+
   const timeMin = grid[0].start;
   const timeMax = grid[grid.length - 1].end;
-  const busy = await fetchBusy(creds, timeMin, timeMax);
-  const free = grid.filter((s) => !overlapsBusy(s, busy));
+  const [busy, blackouts] = await Promise.all([
+    fetchBusy(creds, timeMin, timeMax),
+    fetchBlackouts(agencyId, grid[0].dateKey, grid[grid.length - 1].dateKey),
+  ]);
 
-  // Spread across distinct days: take up to 2 per day until we have enough.
-  const byDay = new Map<string, Slot[]>();
+  const free = grid.filter((s) => !overlapsBusy(s, busy) && !isBlackedOut(s, blackouts));
+
+  // Earliest available time per day (a day may offer two fixed times).
+  const earliestPerDay = new Map<string, Slot>();
   for (const s of free) {
-    const dayKey = s.start.slice(0, 10);
-    if (!byDay.has(dayKey)) byDay.set(dayKey, []);
-    byDay.get(dayKey)!.push(s);
+    const existing = earliestPerDay.get(s.dateKey);
+    if (!existing || s.start < existing.start) earliestPerDay.set(s.dateKey, s);
   }
-  const offered: Slot[] = [];
-  for (const [, daySlots] of byDay) {
-    for (const s of daySlots.slice(0, 2)) {
-      offered.push(s);
-      if (offered.length >= SLOTS_TO_OFFER) break;
-    }
-    if (offered.length >= SLOTS_TO_OFFER) break;
-  }
-  return offered;
+
+  return pickThreeOffers(Array.from(earliestPerDay.values()));
 }
 
 // -------------------------------------------------------------------------
@@ -182,10 +249,12 @@ function declineEmailHtml(firstName: string): string {
 <p>Sincerely,<br/>Story Agency</p>`;
 }
 
+const PREP_LINE = "This is an Interview AMA — please take some time beforehand to research Story Agency and State Farm, and come ready with your own questions for us.";
+
 function inviteEmailHtml(firstName: string, bookingUrl: string): string {
   return `<p>Hi ${escHtml(firstName)},</p>
-<p>Thank you for completing our assessment — we'd like to move forward with an interview.</p>
-<p>The interview is a video call (about 35 minutes) over Google Meet. Please pick a time that works for you:</p>
+<p>Thank you for completing our assessment — we'd like to move forward with an Interview AMA.</p>
+<p>It's a video call (about 35 minutes) over Google Meet. Please pick a time that works for you:</p>
 <p><a href="${escHtml(bookingUrl)}">${escHtml(bookingUrl)}</a></p>
 <p>This link is valid for the next 7 days. Once you pick a time, you'll get a confirmation email with the Google Meet link.</p>
 <p>Looking forward to speaking with you.</p>
@@ -196,6 +265,7 @@ function confirmationEmailHtml(firstName: string, startLocal: string, meetUrl: s
   return `<p>Hi ${escHtml(firstName)},</p>
 <p>You're confirmed for <strong>${escHtml(startLocal)}</strong> (Central time).</p>
 <p>This will be a video call over Google Meet: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a></p>
+<p>${escHtml(PREP_LINE)}</p>
 <p>A calendar invite is on its way to this email address as well. Looking forward to speaking with you.</p>
 <p>Sincerely,<br/>Story Agency</p>`;
 }
@@ -299,7 +369,7 @@ async function processAssessed(agencyId: string): Promise<Response> {
         const sendRes = await sendGmail({
           creds: gmailCreds.creds,
           to: c.email,
-          subject: "Next step: schedule your interview — Story Agency",
+          subject: "Next step: schedule your Interview AMA — Story Agency",
           html: inviteEmailHtml(firstName, bookingUrl),
         });
         emailSent = sendRes.ok;
@@ -333,6 +403,7 @@ async function getOffer(token: string): Promise<Response> {
       scheduled_start: c.interview_scheduled_start,
       scheduled_start_display: formatChicago(c.interview_scheduled_start),
       meet_url: c.interview_meet_url,
+      prep_line: PREP_LINE,
     });
   }
 
@@ -344,6 +415,7 @@ async function getOffer(token: string): Promise<Response> {
     expired,
     first_name: c.first_name || (c.candidate_name || "").split(" ")[0] || "there",
     position: c.position || null,
+    prep_line: PREP_LINE,
     slots: expired ? [] : slots.map((s) => ({ start: s.start, end: s.end, display: formatChicago(s.start) })),
   });
 }
@@ -370,9 +442,14 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
   const creds = await getCalendarCreds(agencyId);
   if (!creds) return corsJson({ ok: false, error: "calendar_unavailable" }, 500);
 
-  // Re-check live — closes the race if this slot filled between offer and claim.
-  const busy = await fetchBusy(creds, chosen.start, chosen.end);
-  if (overlapsBusy(chosen, busy)) {
+  // Re-check live — closes the race if this slot filled, or got blacked out,
+  // between offer and claim.
+  const dateKey = chosen.dateKey || chosen.start.slice(0, 10);
+  const [busy, blackouts] = await Promise.all([
+    fetchBusy(creds, chosen.start, chosen.end),
+    fetchBlackouts(agencyId, dateKey, dateKey),
+  ]);
+  if (overlapsBusy(chosen, busy) || isBlackedOut({ ...chosen, dateKey }, blackouts)) {
     const freshSlots = await computeOfferedSlots(agencyId);
     if (freshSlots) {
       await sb.from("hiring_candidates").update({ interview_slots_offered: freshSlots }).eq("id", c.id);
@@ -390,8 +467,8 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
     toolSlug: "GOOGLECALENDAR_CREATE_EVENT",
     toolArguments: {
       calendar_id: CALENDAR_ID,
-      summary: `Interview — ${c.candidate_name || firstName}${c.position ? " (" + c.position + ")" : ""}`,
-      description: `Candidate interview scheduled via Newtworks self-booking.\nCandidate: ${c.candidate_name || firstName}\nPosition: ${c.position || "n/a"}`,
+      summary: `Interview AMA — ${c.candidate_name || firstName}${c.position ? " (" + c.position + ")" : ""}`,
+      description: `Candidate Interview AMA scheduled via Newtworks self-booking.\nCandidate: ${c.candidate_name || firstName}\nPosition: ${c.position || "n/a"}`,
       start_datetime: toChicagoNaive(chosen.start),
       timezone: TZ,
       event_duration_hour: 0,
@@ -425,13 +502,13 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
       await sendGmail({
         creds: gmailCreds.creds,
         to: c.email,
-        subject: "You're confirmed — interview scheduled",
+        subject: "You're confirmed — Interview AMA scheduled",
         html: confirmationEmailHtml(firstName, startLocalStr, meetUrl || ""),
       });
     }
   }
 
-  return corsJson({ ok: true, scheduled_start: chosen.start, scheduled_start_display: startLocalStr, meet_url: meetUrl });
+  return corsJson({ ok: true, scheduled_start: chosen.start, scheduled_start_display: startLocalStr, meet_url: meetUrl, prep_line: PREP_LINE });
 }
 
 // -------------------------------------------------------------------------
