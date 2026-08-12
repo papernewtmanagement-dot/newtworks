@@ -130,6 +130,7 @@ function overlapsBusy(slot: { start: string; end: string }, busy: { start: strin
 }
 
 interface Blackout { blackout_date: string; start_time: string | null; end_time: string | null; }
+interface RecurringBlackout { weekday: number; start_time: string | null; end_time: string | null; starts_on: string; ends_on: string | null; }
 
 async function fetchBlackouts(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Blackout[]> {
   const { data, error } = await sb
@@ -142,19 +143,40 @@ async function fetchBlackouts(agencyId: string, fromDateKey: string, throughDate
   return (data ?? []) as Blackout[];
 }
 
-function isBlackedOut(slot: Slot, blackouts: Blackout[]): boolean {
+async function fetchRecurringBlackouts(agencyId: string, throughDateKey: string): Promise<RecurringBlackout[]> {
+  const { data, error } = await sb
+    .from("hiring_interview_recurring_blackouts")
+    .select("weekday, start_time, end_time, starts_on, ends_on")
+    .eq("agency_id", agencyId)
+    .lte("starts_on", throughDateKey);
+  if (error) return [];
+  return (data ?? []) as RecurringBlackout[];
+}
+
+function matchesTimeWindow(slotLocalTimeStr: string, startTime: string | null, endTime: string | null): boolean {
+  if (!startTime || !endTime) return true; // whole-day rule
+  const [sh, sm] = slotLocalTimeStr.split(":").map(Number);
+  const slotMin = sh * 60 + sm;
+  const [bsh, bsm] = startTime.split(":").map(Number);
+  const [beh, bem] = endTime.split(":").map(Number);
+  return slotMin >= bsh * 60 + bsm && slotMin < beh * 60 + bem;
+}
+
+function isBlackedOut(slot: Slot, blackouts: Blackout[], recurring: RecurringBlackout[]): boolean {
+  const slotLocalTime = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit" }).format(new Date(slot.start));
   for (const b of blackouts) {
     if (b.blackout_date !== slot.dateKey) continue;
-    if (!b.start_time || !b.end_time) return true; // whole-day blackout
-    // Compare local time-of-day. b.start_time/end_time are "HH:MM:SS" local.
-    const slotLocalTime = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit" }).format(new Date(slot.start));
-    const [sh, sm] = slotLocalTime.split(":").map(Number);
-    const slotMin = sh * 60 + sm;
-    const [bsh, bsm] = b.start_time.split(":").map(Number);
-    const [beh, bem] = b.end_time.split(":").map(Number);
-    const blackStart = bsh * 60 + bsm;
-    const blackEnd = beh * 60 + bem;
-    if (slotMin >= blackStart && slotMin < blackEnd) return true;
+    if (matchesTimeWindow(slotLocalTime, b.start_time, b.end_time)) return true;
+  }
+  const weekday = ((): number => {
+    const [y, m, d] = slot.dateKey.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  })();
+  for (const r of recurring) {
+    if (r.weekday !== weekday) continue;
+    if (slot.dateKey < r.starts_on) continue;
+    if (r.ends_on && slot.dateKey > r.ends_on) continue;
+    if (matchesTimeWindow(slotLocalTime, r.start_time, r.end_time)) return true;
   }
   return false;
 }
@@ -226,12 +248,13 @@ async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
 
   const timeMin = grid[0].start;
   const timeMax = grid[grid.length - 1].end;
-  const [busy, blackouts] = await Promise.all([
+  const [busy, blackouts, recurring] = await Promise.all([
     fetchBusy(creds, timeMin, timeMax),
     fetchBlackouts(agencyId, grid[0].dateKey, grid[grid.length - 1].dateKey),
+    fetchRecurringBlackouts(agencyId, grid[grid.length - 1].dateKey),
   ]);
 
-  const free = grid.filter((s) => !overlapsBusy(s, busy) && !isBlackedOut(s, blackouts));
+  const free = grid.filter((s) => !overlapsBusy(s, busy) && !isBlackedOut(s, blackouts, recurring));
 
   // Earliest available time per day (a day may offer two fixed times).
   const earliestPerDay = new Map<string, Slot>();
@@ -449,11 +472,12 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
   // Re-check live — closes the race if this slot filled, or got blacked out,
   // between offer and claim.
   const dateKey = chosen.dateKey || chosen.start.slice(0, 10);
-  const [busy, blackouts] = await Promise.all([
+  const [busy, blackouts, recurring] = await Promise.all([
     fetchBusy(creds, chosen.start, chosen.end),
     fetchBlackouts(agencyId, dateKey, dateKey),
+    fetchRecurringBlackouts(agencyId, dateKey),
   ]);
-  if (overlapsBusy(chosen, busy) || isBlackedOut({ ...chosen, dateKey }, blackouts)) {
+  if (overlapsBusy(chosen, busy) || isBlackedOut({ ...chosen, dateKey }, blackouts, recurring)) {
     const freshSlots = await computeOfferedSlots(agencyId);
     if (freshSlots) {
       await sb.from("hiring_candidates").update({ interview_slots_offered: freshSlots }).eq("id", c.id);
