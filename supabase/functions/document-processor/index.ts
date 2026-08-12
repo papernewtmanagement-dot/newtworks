@@ -57,6 +57,7 @@ import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
+import { processPaypalPrintSalesMode } from "./parsers/paypal_print_sales.ts";
 import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
 
 interface RunCtx {
@@ -2267,6 +2268,12 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processWrapupMode(wupCtx, body);
     return jsonResponse({ ok: true, mode: "wrapup", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "paypal_print_sales") {
+    const ppCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processPaypalPrintSalesMode(ppCtx, body);
+    return jsonResponse({ ok: true, mode: "paypal_print_sales", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "resume_text_recovery") {
     // Re-run forwarded resumes that failed for lack of readable text, pushing

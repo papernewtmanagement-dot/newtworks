@@ -77,6 +77,7 @@ ORDER = [
     "parsers/resume_manual_batch.ts",
     "parsers/wrapup_ingest.ts",
     "parsers/wrapup_no_send.ts",
+    "parsers/paypal_print_sales.ts",
     "index.ts",
 ]
 
