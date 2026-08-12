@@ -380,10 +380,19 @@ export default function InterviewSlotsManager() {
                 <div
                   key={i}
                   style={{
-                    fontSize: 9.5, marginTop: 2, lineHeight: 1.25,
-                    color: s.status === "open" ? "#166534" : s.status === "scheduled" ? "#1e40af" : T.slate400,
+                    fontSize: 9.5, marginTop: 2, lineHeight: 1.4,
+                    padding: s.status === "removed" ? 0 : "1px 4px",
+                    borderRadius: 4,
+                    display: "inline-block",
+                    background: s.status === "open" ? "#bbf7d0" : s.status === "scheduled" ? "#2563eb" : "transparent",
+                    color: s.status === "open" ? "#14532d" : s.status === "scheduled" ? "#ffffff" : T.slate400,
                     textDecoration: s.status === "removed" ? "line-through" : "none",
-                    fontWeight: s.status === "scheduled" ? 600 : 400,
+                    fontWeight: s.status === "scheduled" ? 700 : s.status === "open" ? 600 : 400,
+                    width: "fit-content",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {labelForTime(s.h, s.m)}{s.status === "scheduled" ? ` ${s.candidate.name.split(" ")[0]}` : ""}
