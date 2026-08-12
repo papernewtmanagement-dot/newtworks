@@ -5,7 +5,7 @@ import { T } from "../lib/theme.js";
 import { useTabParam } from "../lib/routing.jsx";
 
 // ============================================================
-// Newtworks TRIVIA MODULE — Wave 4 part 1 (The Grid) shipped
+// Newtworks TRIVIA MODULE — Wave 5 (Trivia Night) shipped
 //
 // SCOPE: Block A — review/approve/retire quiz items, browse
 // approved items, work the bad-question report queue, switch a
@@ -18,11 +18,14 @@ import { useTabParam } from "../lib/routing.jsx";
 // attachments, per-teammate status + owner override). Wave 4 part
 // 1 — The Grid: a server-drawn, content-adaptive 3-5 column board
 // on Play, once per Central-time day like Daily Five, with
-// server-authoritative per-cell point values. Per-attempt option
-// shuffling is live across every play runner (Daily Five, Duel,
-// Training, The Grid). Review/Approved/Reports/Gates stay
-// admin-gated in-module. The planning thread authors items
-// separately; no question-writing UI lives here.
+// server-authoritative per-cell point values. Wave 5 — Trivia
+// Night: a host-run live session on Play, every phone on the same
+// question and the same server-side clock, polling quiz_night_state
+// every two seconds rather than a realtime subscription. Per-attempt
+// option shuffling is live across every play runner (Daily Five,
+// Duel, Training, The Grid, Trivia Night). Review/Approved/Reports/
+// Gates stay admin-gated in-module. The planning thread authors
+// items separately; no question-writing UI lives here.
 // ============================================================
 
 const s = {
@@ -671,7 +674,7 @@ export default function Trivia({ userRole, userId }) {
             {banner.text.split("\n").map((line, idx) => <div key={idx}>{line}</div>)}
           </div>
         )}
-        {tab === "play" && <TriviaPlayTab userId={userId} />}
+        {tab === "play" && <TriviaPlayTab userId={userId} isAdmin={isAdmin} />}
         {isAdmin && loading && <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Loading…</div>}
         {isAdmin && !loading && tab === "review" && reviewTab}
         {isAdmin && !loading && tab === "approved" && approvedTab}
@@ -795,7 +798,7 @@ function formatGridCategoryLabel(category) {
   return prefix + label;
 }
 
-function TriviaPlayTab({ userId }) {
+function TriviaPlayTab({ userId, isAdmin }) {
   const [modes, setModes] = useState({});
   const [modesError, setModesError] = useState(null);
   const [itemPool, setItemPool] = useState([]);
@@ -852,6 +855,21 @@ function TriviaPlayTab({ userId }) {
   const [gridPointsSoFar, setGridPointsSoFar] = useState(0);
   const [gridActiveCell, setGridActiveCell] = useState(null); // { category, item_id, points } when in clue view
   const [gridResult, setGridResult] = useState(null);
+
+  // Trivia Night (Wave 5)
+  const [nightActive, setNightActive] = useState(undefined); // undefined = not yet checked; null = nothing running
+  const [nightState, setNightState] = useState(null); // full quiz_night_state poll result
+  const [nightError, setNightError] = useState(null);
+  const [nightSecondsLeft, setNightSecondsLeft] = useState(0);
+  const [nightAnswered, setNightAnswered] = useState(false);
+  const [nightTimedOut, setNightTimedOut] = useState(false);
+  const [nightStandings, setNightStandings] = useState([]);
+  const [nightStandingsError, setNightStandingsError] = useState(null);
+  const [nightFinishResult, setNightFinishResult] = useState(null);
+  const [nightFinishError, setNightFinishError] = useState(null);
+  const nightFinishFiredRef = useRef(false);
+  const nightAnswerFiredRef = useRef(false);
+  const nightQuestionIndexRef = useRef(null);
 
   // ── Loaders ──
   const loadModesAndPool = useCallback(async () => {
@@ -1024,6 +1042,46 @@ function TriviaPlayTab({ userId }) {
     }
   }, [userId]);
 
+  // Is a night running, and where do I stand with it.
+  const loadNightActive = useCallback(async () => {
+    setNightError(null);
+    try {
+      const { data, error } = await supabase.rpc("quiz_night_active");
+      if (error) throw error;
+      setNightActive(data || null);
+      if (!data) setNightState(null);
+    } catch (ex) {
+      setNightError(ex?.message || "Could not check trivia night.");
+      setNightActive(null);
+    }
+  }, []);
+
+  const nightSessionId = nightActive?.session_id || null;
+  const nightLiveStatus = nightState?.status || nightActive?.status || null;
+  const nightShouldPoll = !!nightSessionId && ["lobby", "question", "reveal"].includes(nightLiveStatus);
+
+  const refreshNightState = useCallback(async () => {
+    if (!nightSessionId) return;
+    try {
+      const { data, error } = await supabase.rpc("quiz_night_state", { p_session_id: nightSessionId });
+      if (error) throw error;
+      setNightState(data);
+    } catch (ex) {
+      setNightError(ex?.message || "Could not refresh trivia night.");
+    }
+  }, [nightSessionId]);
+
+  const loadNightStandings = useCallback(async (sid) => {
+    setNightStandingsError(null);
+    try {
+      const { data, error } = await supabase.rpc("quiz_night_standings", { p_session_id: sid });
+      if (error) throw error;
+      setNightStandings(Array.isArray(data) ? data : []);
+    } catch (ex) {
+      setNightStandingsError(ex?.message || "Could not load standings.");
+    }
+  }, []);
+
   useEffect(() => { loadModesAndPool(); }, [loadModesAndPool]);
   useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
   useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
@@ -1031,6 +1089,85 @@ function TriviaPlayTab({ userId }) {
   useEffect(() => { loadGates(); }, [loadGates]);
   useEffect(() => { loadGridAvailability(); }, [loadGridAvailability]);
   useEffect(() => { loadGridStatus(); }, [loadGridStatus]);
+  useEffect(() => { loadNightActive(); }, [loadNightActive]);
+
+  // Poll quiz_night_state every 2s while a session is known and live.
+  // Cleared on unmount, and stopped the moment status is finished/abandoned
+  // because nightShouldPoll then evaluates false and this effect re-runs.
+  useEffect(() => {
+    if (!nightShouldPoll) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { data, error } = await supabase.rpc("quiz_night_state", { p_session_id: nightSessionId });
+        if (error) throw error;
+        if (!cancelled) setNightState(data);
+      } catch (ex) {
+        if (!cancelled) setNightError(ex?.message || "Could not refresh trivia night.");
+      }
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [nightShouldPoll, nightSessionId]);
+
+  // Local smoothing tick between polls — each poll overwrites this.
+  useEffect(() => {
+    if (nightState?.seconds_left != null) setNightSecondsLeft(nightState.seconds_left);
+  }, [nightState?.seconds_left]);
+  useEffect(() => {
+    if (nightLiveStatus !== "question") return undefined;
+    const t = setInterval(() => setNightSecondsLeft(s => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [nightLiveStatus]);
+
+  // Reset the per-question answer lock when the question index advances.
+  useEffect(() => {
+    const idx = nightState?.current_index;
+    if (idx == null) return;
+    if (nightQuestionIndexRef.current !== idx) {
+      nightQuestionIndexRef.current = idx;
+      setNightAnswered(false);
+      setNightTimedOut(false);
+      nightAnswerFiredRef.current = false;
+    }
+  }, [nightState?.current_index]);
+
+  // Standings load once on entering reveal, and once on entering finished.
+  const nightPrevStatusRef = useRef(null);
+  useEffect(() => {
+    if (!nightSessionId) return;
+    if ((nightLiveStatus === "reveal" || nightLiveStatus === "finished")
+        && nightPrevStatusRef.current !== nightLiveStatus) {
+      loadNightStandings(nightSessionId);
+    }
+    nightPrevStatusRef.current = nightLiveStatus;
+  }, [nightSessionId, nightLiveStatus, loadNightStandings]);
+
+  // Finish my own attempt exactly once when the night ends.
+  useEffect(() => {
+    if (nightLiveStatus !== "finished") return;
+    if (!nightState?.my_attempt_id) return;
+    if (nightFinishFiredRef.current) return;
+    nightFinishFiredRef.current = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase.rpc("quiz_finish_attempt", { p_attempt_id: nightState.my_attempt_id });
+        if (error) {
+          if (!/already finished/i.test(error.message || "")) setNightFinishError(error.message);
+          return;
+        }
+        setNightFinishResult(data);
+      } catch (ex) {
+        if (!/already finished/i.test(ex?.message || "")) {
+          setNightFinishError(ex?.message || "Could not finish.");
+        }
+      }
+    })();
+  }, [nightLiveStatus, nightState?.my_attempt_id]);
 
   // ── Training gate actions ──
   const startGate = async (gate) => {
@@ -1210,6 +1347,102 @@ function TriviaPlayTab({ userId }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridAnsweredByItem, gridBoard, gridPhase, gridAttempt]);
+
+  // ── Trivia Night actions ──
+  const nightStartSession = async () => {
+    setNightError(null);
+    try {
+      const { error } = await supabase.rpc("quiz_night_create_session");
+      if (error) { setNightError(error.message); return; }
+      await loadNightActive();
+    } catch (ex) {
+      setNightError(ex?.message || "Could not start trivia night.");
+    }
+  };
+
+  const nightJoinSession = async () => {
+    if (!nightSessionId) return;
+    setNightError(null);
+    try {
+      const { error } = await supabase.rpc("quiz_night_join", { p_session_id: nightSessionId });
+      if (error) { setNightError(error.message); return; }
+      await loadNightActive();
+    } catch (ex) {
+      setNightError(ex?.message || "Could not join.");
+    }
+  };
+
+  const nightStartTheNight = async () => {
+    if (!nightSessionId) return;
+    setNightError(null);
+    try {
+      const { error } = await supabase.rpc("quiz_night_start", { p_session_id: nightSessionId });
+      if (error) { setNightError(error.message); return; }
+      await refreshNightState();
+    } catch (ex) {
+      setNightError(ex?.message || "Could not start the night.");
+    }
+  };
+
+  const nightAdvance = async () => {
+    if (!nightSessionId) return;
+    setNightError(null);
+    try {
+      const { error } = await supabase.rpc("quiz_night_advance", { p_session_id: nightSessionId });
+      if (error) { setNightError(error.message); return; }
+      await refreshNightState();
+    } catch (ex) {
+      setNightError(ex?.message || "Could not advance.");
+    }
+  };
+
+  const nightAbandonSession = async () => {
+    if (!nightSessionId) return;
+    setNightError(null);
+    try {
+      const { error } = await supabase.rpc("quiz_night_abandon", { p_session_id: nightSessionId });
+      if (error) { setNightError(error.message); return; }
+      await refreshNightState();
+    } catch (ex) {
+      setNightError(ex?.message || "Could not call it off.");
+    }
+  };
+
+  const submitNightAnswer = async (optionId) => {
+    if (!nightSessionId || nightAnswerFiredRef.current) return;
+    nightAnswerFiredRef.current = true;
+    setNightAnswered(true);
+    if (optionId == null) setNightTimedOut(true);
+    try {
+      const { error } = await supabase.rpc("quiz_night_answer", {
+        p_session_id: nightSessionId, p_option_id: optionId,
+      });
+      if (error) setNightError(error.message);
+    } catch (ex) {
+      setNightError(ex?.message || "Could not submit your answer.");
+    }
+  };
+
+  // Timer hits zero with no answer → send once, automatically.
+  useEffect(() => {
+    if (nightLiveStatus !== "question") return;
+    if (nightSecondsLeft > 0) return;
+    if (!nightState?.my_attempt_id) return;
+    if (nightAnswerFiredRef.current) return;
+    submitNightAnswer(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nightSecondsLeft, nightLiveStatus, nightState?.my_attempt_id]);
+
+  const nightDone = () => {
+    setNightActive(null);
+    setNightState(null);
+    setNightStandings([]);
+    setNightFinishResult(null);
+    setNightFinishError(null);
+    nightFinishFiredRef.current = false;
+    nightAnswerFiredRef.current = false;
+    nightQuestionIndexRef.current = null;
+  };
 
   // ── Daily Five actions ──
   const startFreshDaily = async () => {
@@ -1398,6 +1631,8 @@ function TriviaPlayTab({ userId }) {
       .map(([cat]) => cat);
   }, [gridCatCounts]);
   const gridAvailable = gridQualifyingCats.length >= 3;
+  const nightJoined = nightState?.players?.some(p => p.is_me) ?? nightActive?.joined ?? false;
+  const nightIsHost = nightState?.is_host ?? nightActive?.is_host ?? false;
 
   return (
     <div>
@@ -1701,6 +1936,202 @@ function TriviaPlayTab({ userId }) {
               {gridResult.on_leaderboard && (
                 <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Trivia Night card ── */}
+        <div style={s.playCard}>
+          <div style={s.playCardTitle}>Trivia Night</div>
+          <div style={s.playCardDesc}>Everyone plays the same questions at the same time, live.</div>
+
+          {nightError && <div style={s.errorBanner}>{nightError}</div>}
+
+          {nightActive === undefined && (
+            <div style={{ fontSize: 13, color: T.slate500 }}>Checking…</div>
+          )}
+
+          {nightActive === null && (
+            isAdmin ? (
+              <button type="button" style={s.primaryBtn} onClick={nightStartSession}>Start trivia night</button>
+            ) : (
+              <div style={{ fontSize: 13, color: T.slate500 }}>
+                No trivia night running right now. An owner starts these live.
+              </div>
+            )
+          )}
+
+          {nightActive && !(nightIsHost || nightJoined) && nightLiveStatus === "lobby" && (
+            <button type="button" style={s.primaryBtn} onClick={nightJoinSession}>Join</button>
+          )}
+
+          {nightActive && !(nightIsHost || nightJoined)
+            && (nightLiveStatus === "question" || nightLiveStatus === "reveal") && (
+            <div style={{ fontSize: 13, color: T.slate500 }}>This one already started — catch the next.</div>
+          )}
+
+          {nightActive && (nightIsHost || nightJoined) && nightLiveStatus === "lobby" && (
+            <div>
+              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 8 }}>Players in the lobby:</div>
+              {(nightState?.players || []).length === 0 && (
+                <div style={{ fontSize: 13, color: T.slate500 }}>Nobody has joined yet.</div>
+              )}
+              {(nightState?.players || []).map(p => (
+                <div key={p.team_member_id} style={s.duelListRow}>{p.name || "—"}</div>
+              ))}
+
+              {!nightJoined && (
+                <div style={{ marginTop: 10 }}>
+                  <button type="button" style={s.primaryBtn} onClick={nightJoinSession}>Join</button>
+                </div>
+              )}
+
+              {nightIsHost && (
+                <>
+                  <div style={s.actionsRow}>
+                    <button
+                      type="button"
+                      style={s.primaryBtn}
+                      onClick={nightStartTheNight}
+                      disabled={(nightState?.players || []).length === 0}
+                    >
+                      Start the night
+                    </button>
+                    <button type="button" style={s.ghostBtn} onClick={nightAbandonSession}>Call it off</button>
+                  </div>
+                  {(nightState?.players || []).length === 0 && (
+                    <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
+                      Waiting for players to join before you can start.
+                    </div>
+                  )}
+                </>
+              )}
+              {!nightIsHost && nightJoined && (
+                <div style={{ fontSize: 13, color: T.slate500, marginTop: 8 }}>You're in — waiting on the host.</div>
+              )}
+            </div>
+          )}
+
+          {nightActive && (nightIsHost || nightJoined) && nightLiveStatus === "question" && (
+            <div>
+              <div style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>
+                {formatGridCategoryLabel(nightState?.question?.category)}
+              </div>
+              <div style={s.qStem}>{nightState?.question?.stem}</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={s.timerPill(nightSecondsLeft <= 5)}>{nightSecondsLeft}s</span>
+                <span style={{ fontSize: 11, color: T.slate500 }}>
+                  {(nightState?.players || []).filter(p => p.answered_current).length} of {(nightState?.players || []).length} answered
+                </span>
+              </div>
+
+              {nightState?.my_attempt_id ? (
+                nightAnswered ? (
+                  <div style={{ fontSize: 13, color: T.slate500 }}>
+                    {nightTimedOut ? "Time — no answer." : "Locked in — waiting on the room."}
+                  </div>
+                ) : (
+                  orderedOptions(nightState?.question?.options, nightState?.my_attempt_id, nightState?.question?.item_id).map(o => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      style={s.qOptionBtn("default")}
+                      onClick={() => submitNightAnswer(o.id)}
+                    >
+                      {o.option_text}
+                    </button>
+                  ))
+                )
+              ) : (
+                <div style={{ fontSize: 13, color: T.slate500 }}>Watching — you're not in this one.</div>
+              )}
+
+              {nightIsHost && (
+                <div style={s.actionsRow}>
+                  <button type="button" style={s.primaryBtn} onClick={nightAdvance}>Reveal the answer</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {nightActive && (nightIsHost || nightJoined) && nightLiveStatus === "reveal" && (
+            <div>
+              <div style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>
+                {formatGridCategoryLabel(nightState?.question?.category)}
+              </div>
+              <div style={s.qStem}>{nightState?.question?.stem}</div>
+              {orderedOptions(nightState?.question?.options, nightState?.my_attempt_id, nightState?.question?.item_id).map(o => (
+                <div key={o.id} style={s.qOptionBtn(o.is_correct ? "revealCorrect" : "revealDim")}>
+                  {o.option_text}
+                </div>
+              ))}
+              {nightState?.question?.explanation && <div style={s.explanationBox}>{nightState.question.explanation}</div>}
+
+              <div style={{ marginTop: 12, fontSize: 12, color: T.slate500 }}>Standings so far:</div>
+              {nightStandingsError && <div style={s.errorBanner}>{nightStandingsError}</div>}
+              {nightStandings.map(row => (
+                <div key={row.team_member_id} style={s.standingsRow}>
+                  <span>{row.name || "—"}{row.is_me ? " (you)" : ""}</span>
+                  <span>{row.correct_count} correct — {row.points == null ? "—" : row.points} pts</span>
+                </div>
+              ))}
+
+              {nightIsHost && (
+                <div style={s.actionsRow}>
+                  <button type="button" style={s.primaryBtn} onClick={nightAdvance}>
+                    {(nightState?.current_index ?? 0) + 1 < (nightState?.question_total ?? 0) ? "Next question" : "Finish"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {nightActive && (nightIsHost || nightJoined) && nightLiveStatus === "finished" && (
+            <div>
+              {nightFinishError && <div style={s.errorBanner}>{nightFinishError}</div>}
+              {nightState?.my_attempt_id ? (
+                nightFinishResult ? (
+                  <div>
+                    <div style={s.bigStat}>{nightFinishResult.correct_count}/{nightFinishResult.question_count}</div>
+                    <div style={s.smallLabel}>{nightFinishResult.points_earned} points earned</div>
+                    {nightFinishResult.week_points != null && (
+                      <div style={s.smallLabel}>{nightFinishResult.week_points} points this week</div>
+                    )}
+                    {nightFinishResult.on_leaderboard && (
+                      <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: T.slate500 }}>Finishing up…</div>
+                )
+              ) : (
+                <div style={{ fontSize: 13, color: T.slate500 }}>The night is over.</div>
+              )}
+
+              <div style={{ marginTop: 12, fontSize: 12, color: T.slate500 }}>Final standings:</div>
+              {nightStandingsError && <div style={s.errorBanner}>{nightStandingsError}</div>}
+              {nightStandings.map(row => (
+                <div
+                  key={row.team_member_id}
+                  style={row.is_me ? { ...s.standingsRow, fontWeight: 700 } : s.standingsRow}
+                >
+                  <span>{row.name || "—"}{row.is_me ? " (you)" : ""}</span>
+                  <span>{row.correct_count} correct — {row.points == null ? "—" : row.points} pts</span>
+                </div>
+              ))}
+
+              <div style={s.actionsRow}>
+                <button type="button" style={s.ghostBtn} onClick={nightDone}>Done</button>
+              </div>
+            </div>
+          )}
+
+          {nightActive && (nightIsHost || nightJoined) && nightLiveStatus === "abandoned" && (
+            <div>
+              <div style={{ fontSize: 13, color: T.slate500 }}>That trivia night was called off.</div>
+              <div style={s.actionsRow}>
+                <button type="button" style={s.ghostBtn} onClick={nightDone}>Done</button>
+              </div>
             </div>
           )}
         </div>
