@@ -172,7 +172,18 @@ const s = {
 };
 
 // ─── Root component ─────────────────────────────────────────
-export default function ContentEditor() {
+// SECURITY: this is an unrestricted write surface over every row in
+// public.manuals (see header above) — the real enforcement boundary is the
+// admin_insert/update/delete_manuals RLS policies (role IN owner, manager),
+// and the ModuleRouter route guard in NewtworksApp.jsx already keeps
+// non-admins from ever reaching this module. This check is a third,
+// component-level backstop matching the isAdmin pattern used everywhere
+// else in the app (Manual.jsx, etc.) — belt-and-suspenders, not the
+// authority. Never remove without removing the other two layers too.
+const EDITOR_ADMIN_ROLES = ["owner", "manager"];
+
+export default function ContentEditor({ userRole }) {
+  const isAdmin = EDITOR_ADMIN_ROLES.includes(userRole);
   const vp = useViewport();
   const isPhone = vp.isPhone;
 
@@ -410,6 +421,29 @@ export default function ContentEditor() {
       })}
     </div>
   );
+
+  // Backstop — see the SECURITY note above the component signature. Placed
+  // after every hook call (rule-of-hooks: no early return above a hook),
+  // before the real render.
+  if (!isAdmin) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        flex: 1, gap: 12, padding: 40, textAlign: "center", minHeight: 300,
+      }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 16, background: T.slate100,
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24,
+        }}>
+          🔒
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate700 }}>Admins only</div>
+        <div style={{ fontSize: 13, color: T.slate500, maxWidth: 320 }}>
+          This page editor is restricted to owners and managers.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={s.page}>

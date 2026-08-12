@@ -691,7 +691,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
-    editor:      <ErrorBoundary name="Editor"><ContentEditor /></ErrorBoundary>,
+    editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
     trivia:      <ErrorBoundary name="Trivia"><Trivia userRole={userRole} userId={userId} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
