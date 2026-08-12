@@ -15,7 +15,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 //
 // SECTIONS:
 //   1. Overview      — Pipeline summary, team snapshot, alerts
-//   2. Recruiting    — Kanban: Applied→AssessmentSent→Assessed→EmailScreen (Interview moved to Finalists)
+//   2. Recruiting    — Kanban: Applied→AssessmentSent→Assessed→Interview (Team Meet & Greet onward moved to Finalists)
 //   3. Candidate Detail — assessment scores, resume, scorecards (new: click a card)
 //   4. Staff         — Current team directory with licensing status
 //   5. Performance   — Monthly KPI tracking per staff member
@@ -47,8 +47,8 @@ const STAGES = {
   applied:          { label:"Applied",          color:T.slate500, bg:T.slate100, order:0 },
   assessment_sent:  { label:"Assessment Sent",  color:T.slate600, bg:T.slate100, order:1 },
   assessed:         { label:"Assessed",         color:T.slate500, bg:T.slate100, order:2 },
-  email_screen:     { label:"Email Screen",     color:T.slate600, bg:T.slate100, order:3 },
-  interview:        { label:"Interview",        color:T.amber,    bg:T.amberLt,  order:4 },
+  interview:        { label:"Interview",        color:T.amber,    bg:T.amberLt,  order:3 },
+  team_meet_and_greet: { label:"Team Meet & Greet", color:T.teal, bg:T.tealLt,   order:4 },
   reference_check:  { label:"Ref Check",        color:T.blue,     bg:T.blueLt,   order:5 },
   offer:            { label:"Offer",            color:T.purple,   bg:T.purpleLt, order:6 },
   hired:            { label:"Hired",            color:T.green,    bg:T.greenLt,  order:7 },
@@ -473,7 +473,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
   const [selected, setSelected] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
-  const stages = stagesProp || ["applied","assessment_sent","assessed","email_screen","interview","reference_check","offer","hired"]; // declined + former hidden by default
+  const stages = stagesProp || ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired"]; // declined + former hidden by default
 
 
   const selectedApp = applicants.find(a => a.id === selected);
@@ -2812,8 +2812,8 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
     );
   }
   // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
-  const RECRUITING_STAGES = ["applied","assessment_sent","assessed","email_screen"];
-  const CLOSING_STAGES    = ["interview","reference_check","offer","hired"];
+  const RECRUITING_STAGES = ["applied","assessment_sent","assessed","interview"];
+  const CLOSING_STAGES    = ["team_meet_and_greet","reference_check","offer","hired"];
   const recruitingApps = applicants.filter(a => RECRUITING_STAGES.includes(a.status));
   const closingApps    = applicants.filter(a => CLOSING_STAGES.includes(a.status));
   const subs = [
@@ -2899,7 +2899,7 @@ export default function Team() {
         .from("v_hiring_candidates")
         .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, assertiveness, compassion, resume_document_id, resume_url, reliability, response_distortion")
         .eq("agency_id", AGENCY_ID)
-        .in("status", ["applied","assessment_sent","assessed","email_screen","interview","reference_check","offer","hired","declined","former"])
+        .in("status", ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired","declined","former"])
         .order("created_at", { ascending: false });
 
       if (cancelled) return;

@@ -140,8 +140,8 @@ const competencyBand = (v) => {
 
 const STAGE_LABELS = {
   assessed:        "Assessed",
-  email_screen:    "Email Screen",
   interview:       "Interview",
+  team_meet_and_greet: "Team Meet & Greet",
   reference_check: "Ref Check",
   offer:           "Offer",
   hired:           "Hired",
@@ -165,8 +165,8 @@ const BUCKET_CONFIG = {
 // is hidden — the framework read is comprehensive by design.
 const STAGE_TO_RELEVANT_RULE_STAGES = {
   assessed:        ["assessment_review", "resume_review"],
-  email_screen:    ["assessment_review", "interview"],
   interview:       ["interview", "reference_check"],
+  team_meet_and_greet: ["culture_check", "interview"],
   reference_check: ["reference_check", "interview"],
   offer:           ["reference_check", "onboarding"],
   hired:           ["onboarding", "retention"],
