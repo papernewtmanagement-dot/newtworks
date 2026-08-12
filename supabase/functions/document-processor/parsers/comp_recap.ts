@@ -32,7 +32,7 @@
 //   ...repeating per state, ending with Texas (no explicit "TEXAS CODE" header)
 // =========================================================================
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 
 export interface CompRecapRow {
   period_year: number;

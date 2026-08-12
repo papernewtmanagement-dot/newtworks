@@ -42,7 +42,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 import { callComposio } from "../lib/composio.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 

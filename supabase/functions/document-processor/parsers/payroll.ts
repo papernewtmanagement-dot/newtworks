@@ -7,7 +7,7 @@
 // Detail-only — no GL posts. GL Entry Writer reconciles payroll separately.
 // =========================================================================
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 
 export interface PayrollDetailRow {

@@ -16,7 +16,7 @@
 // matching the target month).
 // =========================================================================
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 
 interface PfaStatementLine {

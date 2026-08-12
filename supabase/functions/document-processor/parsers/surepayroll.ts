@@ -10,7 +10,7 @@
 // source email. Consolidated from standalone `payroll-email-parser` v9 (2026-07-07).
 // =========================================================================
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 import { callComposio } from "../lib/composio.ts";
 
 interface SPItem { period: number; ytd: number; hours?: number; }

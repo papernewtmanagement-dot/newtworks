@@ -24,7 +24,7 @@
 //   "1 TOTAL DEDUCTIONS 1,286.56 9,969.74"     <- summary, skip
 // =========================================================================
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 
 export interface DeductionRow {
   period_year: number;

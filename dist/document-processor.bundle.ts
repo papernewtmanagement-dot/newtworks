@@ -10,21 +10,43 @@ import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { BlobReader, ZipReader, Uint8ArrayWriter } from "jsr:@zip-js/zip-js@2";
 
-// ==================== lib/supabase.ts ====================
+// ==================== ../_shared/supabase.ts ====================
 // =========================================================================
-// lib/supabase.ts
+// _shared/supabase.ts
 // =========================================================================
-// Shared Supabase client for the document-processor Edge Function.
-// Service role key — bypasses RLS.
+// Canonical Supabase client + settings + response helpers for ALL Newtworks
+// edge functions. Source of truth for code that used to be copy-pasted into
+// every function (client creation, getSetting, jsonResponse, stripFences).
+//
+// Edge functions deploy as single-file bundles: `scripts/bundle_edge_fn.py`
+// inlines this file into each function's bundle. Never edit a bundle by hand;
+// edit here and rebundle every consumer.
 // =========================================================================
 
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+export const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+export const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+// Service role — bypasses RLS. Same client options every function used.
 export const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+
+// Single-agency install. Functions that accept agency_id in the request body
+// should still prefer the body value; this is the fallback.
+export const AGENCY_ID_DEFAULT = "126794dd-25ff-47d2-a436-724499733365";
+
+// -------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------
+// Two variants on purpose — they preserve the two behaviors that existed in
+// the wild before consolidation:
+//   getSetting        — THROWS if the settings table read itself errors
+//                       (infra failure ≠ missing row). Use on critical paths.
+//   getSettingOrNull  — swallows read errors, returns null. Use where the
+//                       caller treats "can't read" the same as "not set".
+// Both return null when the row simply doesn't exist.
+// -------------------------------------------------------------------------
 
 export async function getSetting(
   agencyId: string,
@@ -44,6 +66,48 @@ export async function getSetting(
   return data?.setting_value ?? null;
 }
 
+export async function getSettingOrNull(
+  agencyId: string,
+  key: string,
+): Promise<string | null> {
+  try {
+    const { data } = await sb
+      .from("settings")
+      .select("setting_value")
+      .eq("agency_id", agencyId)
+      .eq("setting_key", key)
+      .maybeSingle();
+    return (data?.setting_value as string | null) ?? null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// Batch read — one query for N keys. Missing keys come back as null.
+export async function getSettings(
+  agencyId: string,
+  keys: string[],
+): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {};
+  for (const k of keys) out[k] = null;
+  const { data, error } = await sb
+    .from("settings")
+    .select("setting_key,setting_value")
+    .eq("agency_id", agencyId)
+    .in("setting_key", keys);
+  if (error) {
+    throw new Error(`settings batch read failed for agency ${agencyId}: ${error.message}`);
+  }
+  for (const row of data ?? []) {
+    out[(row as any).setting_key] = (row as any).setting_value ?? null;
+  }
+  return out;
+}
+
+// -------------------------------------------------------------------------
+// HTTP responses
+// -------------------------------------------------------------------------
+
 export function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
@@ -51,349 +115,179 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+export const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+export function corsJson(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+// -------------------------------------------------------------------------
+// Text helpers
+// -------------------------------------------------------------------------
+
+// Strip ```json fences an LLM wrapped around its output.
 export function stripFences(s: string): string {
   return s
     .trim()
     .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
+    .replace(/\s*```\s*$/i, "")
     .trim();
 }
 
-// ==================== ../_shared/statement_writer.ts ====================
+// ==================== ../_shared/alerts.ts ====================
 // =========================================================================
-// _shared/statement_writer.ts
+// _shared/alerts.ts
 // =========================================================================
-// THE single statement ingestion writer. Both intake paths call this:
-//   - document-processor handleBankStatement (synchronous parse)
-//   - llm-queue-drainer drainBankStatementItem (queued parse)
-// Collapsed 2026-08-11 from two hand-maintained copies (see open question
-// "Collapse the twin statement ingestion writers into one shared function").
-// What rides on the agreement between the two paths is money-sign
-// correctness and cross-path duplicate detection — so there is now exactly
-// one copy.
+// Canonical alerts writer for ALL Newtworks edge functions.
 //
-// Guarantees, in order of evaluation:
-//   1. DUPLICATE-INGEST GUARD (document/period grain). The same statement
-//      file historically arrived through two intake doors (email attachment
-//      + Drive library sweep), producing two documents rows that were each
-//      parsed. statement_balances has a unique index so balances collided;
-//      statements has NO unique constraint so transactions doubled. Guard:
-//      if another document already wrote transactions for this account +
-//      statement period, stamp this document 'duplicate_ingest', emit a
-//      low-severity alert, write NOTHING. Deliberately NOT a unique index
-//      at the transaction grain — two genuinely distinct transactions can
-//      share account, date, amount AND description (account 2110 has two
-//      real 250.00 EVERQUOTE charges on 2026-05-10; the window ties with
-//      both present).
-//   2. RECONCILIATION GUARD. closing == opening + sum(signedAmount) within
-//      STMT_RECON_EPSILON. Missing balances or a mismatch → stamp the
-//      document 'held_reconciliation_mismatch', stash the parsed payload in
-//      documents.notes, emit a high-severity alert, write NOTHING. This is
-//      the deterministic backstop for silently dropped lines: the 2026-08-05
-//      manual pass dropped repeated identical same-day charges (13 rows /
-//      286.93 on AMEX 2141) and nothing checked the tie. Any dropped line —
-//      whatever layer drops it — now breaks the tie loudly instead of
-//      landing short.
-//   3. BALANCE UPSERT keyed (agency_id, account_code, statement_period_end).
-//      account_kind comes from the resolved accounts row — never inferred
-//      from the account code string (the old '-CC-' inference can never
-//      match numeric chart codes).
-//   4. TRANSACTIONS with per-parse occurrence counting. Repeated identical
-//      (account, date, amount, payee) lines within one parsed statement each
-//      get their own occurrence number, carried on BOTH reference_number and
-//      dedup_fingerprint (dp:<code>:<date>:<cents>:<payee20>[:N], N omitted
-//      for the first occurrence). Any insert error → ok:false so callers do
-//      NOT stamp the document processed (R2 silent-failure rule preserved
-//      for both paths).
-//
-// Sign convention (D15): parser emits positive = money in, negative = money
-// out, regardless of account kind. Bank rows keep the parser sign. Credit
-// rows flip: a charge lands positive (balance owed goes up), a payment or
-// refund lands negative. Derived only from account_kind, never from the
-// amount's own sign.
+// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
+// title, message, module_reference, related_id, is_resolved). Hand-written
+// inserts have shipped with a `body:` column that does not exist and with
+// alert_type missing — both fail silently when the insert result isn't
+// checked. Going through this helper makes that class of bug impossible.
 // =========================================================================
 
 
-const STMT_RECON_EPSILON = 0.01;
-
-export interface ParsedStatementTxn {
-  date: string;          // ISO transaction date (date charged, not posted)
-  payee: string;
-  memo: string;
-  signedAmount: number;  // parser convention: + money in, - money out
-}
-
-export interface WriteParsedStatementOpts {
+export async function insertAlert(opts: {
   agencyId: string;
-  documentId: string;
-  accountCode: string;               // chart code, e.g. "2141"
-  account: {
-    id: string;                      // accounts.id
-    businessEntityId: string;
-    accountKind: string;             // 'bank' | 'credit'
+  alertType: string;
+  severity: "info" | "warning" | "high" | "critical" | string;
+  title: string;
+  message: string;
+  moduleReference?: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; error: string | null }> {
+  const row: Record<string, unknown> = {
+    agency_id: opts.agencyId,
+    alert_type: opts.alertType,
+    severity: opts.severity,
+    title: opts.title,
+    message: opts.message,
+    is_read: false,
+    is_resolved: false,
   };
-  accountLast4: string | null;
-  period: { start: string; end: string };
-  openingBalance: number | null;
-  closingBalance: number | null;
-  transactions: ParsedStatementTxn[];
-  source: "document_processor" | "llm_queue_drainer";
+  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
+  if (opts.relatedId != null) row.related_id = opts.relatedId;
+
+  const { error } = await sb.from("alerts").insert(row);
+  if (error) {
+    // Never throw — alerting must not mask the underlying failure being
+    // reported. But do surface the miss to whoever reads the function logs.
+    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, error: null };
 }
 
-export type WriteParsedStatementResult =
-  | { ok: true; inserted: number }
-  | { ok: false; held: "duplicate_ingest"; reason: string; priorDocumentId: string }
-  | { ok: false; held: "reconciliation_mismatch"; reason: string; delta: number | null }
-  | { ok: false; held?: undefined; error: string; inserted: number };
-
-function moduleRef(source: WriteParsedStatementOpts["source"]): string {
-  return source === "llm_queue_drainer" ? "llm-queue-drainer" : "document-processor";
-}
-
-export async function writeParsedStatement(
-  opts: WriteParsedStatementOpts,
-): Promise<WriteParsedStatementResult> {
-  const nowIso = () => new Date().toISOString();
-
-  // ---- 1. Duplicate-ingest guard (document/period grain) ------------------
-  const { data: priorBal } = await sb
-    .from("statement_balances")
-    .select("id, source_document_id")
+// Resolve all open alerts carrying a given module_reference (the standard
+// "this condition cleared" pattern used by surepayroll + pfa flows).
+export async function resolveAlerts(opts: {
+  agencyId: string;
+  moduleReference: string;
+}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
+  const { data, error } = await sb
+    .from("alerts")
+    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
     .eq("agency_id", opts.agencyId)
-    .eq("account_code", opts.accountCode)
-    .eq("statement_period_end", opts.period.end)
-    .maybeSingle();
-
-  if (priorBal?.source_document_id && priorBal.source_document_id !== opts.documentId) {
-    const { count } = await sb
-      .from("statements")
-      .select("id", { count: "exact", head: true })
-      .eq("agency_id", opts.agencyId)
-      .eq("source_document_id", priorBal.source_document_id);
-    if ((count ?? 0) > 0) {
-      const reason =
-        `duplicate_ingest: document ${priorBal.source_document_id} already wrote ` +
-        `${count} transactions for account ${opts.accountCode} period ending ${opts.period.end}. ` +
-        `Nothing written from this document.`;
-      await sb.from("documents").update({
-        processing_status: "duplicate_ingest",
-        notes: reason,
-        processed_at: nowIso(),
-      }).eq("id", opts.documentId);
-      await sb.from("alerts").insert({
-        agency_id: opts.agencyId,
-        alert_type: "duplicate_statement_ingest",
-        severity: "low",
-        title: `Duplicate statement skipped — ${opts.accountCode} period ending ${opts.period.end}`,
-        message: reason,
-        module_reference: moduleRef(opts.source),
-        related_id: opts.documentId,
-        is_read: false,
-        is_resolved: false,
-        created_at: nowIso(),
-      });
-      return { ok: false, held: "duplicate_ingest", reason, priorDocumentId: priorBal.source_document_id };
-    }
-  }
-
-  // ---- 2. Reconciliation guard --------------------------------------------
-  const openBal = opts.openingBalance;
-  const closeBal = opts.closingBalance;
-  let reconDelta: number | null = null;
-  let reconHeldReason: string | null = null;
-
-  if (openBal === null || closeBal === null) {
-    reconHeldReason =
-      `missing balance from parser: opening=${openBal === null ? "null" : openBal}, ` +
-      `closing=${closeBal === null ? "null" : closeBal}`;
-  } else {
-    const txnSum = opts.transactions.reduce((acc, t) => acc + t.signedAmount, 0);
-    const expected = openBal + txnSum;
-    reconDelta = Math.round((closeBal - expected) * 100) / 100;
-    if (Math.abs(reconDelta) > STMT_RECON_EPSILON) {
-      reconHeldReason =
-        `delta=$${reconDelta.toFixed(2)} exceeds epsilon $${STMT_RECON_EPSILON.toFixed(2)} ` +
-        `(opening=$${openBal.toFixed(2)}, sum_txns=$${txnSum.toFixed(2)}, ` +
-        `expected_close=$${expected.toFixed(2)}, actual_close=$${closeBal.toFixed(2)}, ` +
-        `${opts.transactions.length} txns)`;
-    }
-  }
-
-  if (reconHeldReason !== null) {
-    const heldNotes = JSON.stringify({
-      held: "reconciliation_mismatch",
-      reason: reconHeldReason,
-      reconciliation_delta: reconDelta,
-      source_account_code: opts.accountCode,
-      account_last4: opts.accountLast4,
-      statement_period: opts.period,
-      opening_balance: openBal,
-      closing_balance: closeBal,
-      txn_count: opts.transactions.length,
-      parsed_transactions: opts.transactions.map((t) => ({
-        date: t.date, payee: t.payee, memo: t.memo, amount: t.signedAmount,
-      })),
-    });
-    await sb.from("documents").update({
-      processing_status: "held_reconciliation_mismatch",
-      reconciliation_delta: reconDelta,
-      notes: heldNotes,
-      processed_at: nowIso(),
-    }).eq("id", opts.documentId);
-    await sb.from("alerts").insert({
-      agency_id: opts.agencyId,
-      alert_type: "reconciliation_mismatch",
-      severity: "high",
-      title: `Statement reconciliation mismatch — ${opts.accountCode} period ending ${opts.period.end}`,
-      message:
-        `Parsed statement for account ${opts.accountCode} does not tie to the printed ` +
-        `statement summary. ${reconHeldReason}. Held for review — nothing written.`,
-      module_reference: moduleRef(opts.source),
-      related_id: opts.documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: nowIso(),
-    });
-    console.warn(`[statement_writer] reconciliation_mismatch doc=${opts.documentId} account=${opts.accountCode}: ${reconHeldReason}`);
-    return { ok: false, held: "reconciliation_mismatch", reason: reconHeldReason, delta: reconDelta };
-  }
-
-  // Success path: record near-zero delta for the audit trail.
-  await sb.from("documents").update({ reconciliation_delta: reconDelta }).eq("id", opts.documentId);
-
-  // ---- 3. Balance upsert (agency_id, account_code, statement_period_end) --
-  const balPayload = {
-    business_entity_id: opts.account.businessEntityId,
-    account_last4: opts.accountLast4,
-    account_kind: opts.account.accountKind,
-    statement_period_start: opts.period.start,
-    opening_balance: openBal,
-    closing_balance: closeBal,
-    source_document_id: opts.documentId,
-    source: opts.source,
-    updated_at: nowIso(),
-  };
-  const upd = await sb
-    .from("statement_balances")
-    .update(balPayload)
-    .eq("agency_id", opts.agencyId)
-    .eq("account_code", opts.accountCode)
-    .eq("statement_period_end", opts.period.end)
+    .eq("module_reference", opts.moduleReference)
+    .eq("is_resolved", false)
     .select("id");
-  if (upd.error) {
-    return { ok: false, error: `statement_balances update failed: ${upd.error.message}`, inserted: 0 };
+  if (error) {
+    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
+    return { ok: false, resolved: 0, error: error.message };
   }
-  if (!upd.data || upd.data.length === 0) {
-    const ins = await sb.from("statement_balances").insert({
-      agency_id: opts.agencyId,
-      account_code: opts.accountCode,
-      statement_period_end: opts.period.end,
-      ...balPayload,
-    });
-    if (ins.error) {
-      return { ok: false, error: `statement_balances insert failed: ${ins.error.message}`, inserted: 0 };
-    }
-  }
-
-  // ---- 4. Transactions with per-parse occurrence counting -----------------
-  // legacy_source_table intentionally omitted — NULL is the correct value for
-  // live intake (finrebuild_e1_statements_legacy_source_table_nullable).
-  const refCounters = new Map<string, number>();
-  let inserted = 0;
-  const errors: string[] = [];
-
-  for (const t of opts.transactions) {
-    const amount = opts.account.accountKind === "credit" ? -t.signedAmount : t.signedAmount;
-    const transactionType = opts.account.accountKind === "credit"
-      ? (amount >= 0 ? "charge" : "payment_or_credit")
-      : (amount >= 0 ? "deposit" : "withdrawal");
-    const description = t.memo ? `${t.payee} — ${t.memo}` : t.payee;
-
-    const payeeShort = t.payee.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
-    const amtCents = Math.round(Math.abs(amount) * 100);
-    const fpBase = `dp:${opts.accountCode}:${t.date}:${amtCents}:${payeeShort}`;
-    const occ = (refCounters.get(fpBase) ?? 0) + 1;
-    refCounters.set(fpBase, occ);
-    const withOcc = occ === 1 ? fpBase : `${fpBase}:${occ}`;
-
-    const { error: stErr } = await sb.from("statements").insert({
-      id: crypto.randomUUID(),
-      agency_id: opts.agencyId,
-      business_entity_id: opts.account.businessEntityId,
-      account_id: opts.account.id,
-      account_kind: opts.account.accountKind,
-      transaction_date: t.date,
-      description,
-      amount,
-      transaction_type: transactionType,
-      reference_number: withOcc,
-      dedup_fingerprint: withOcc,
-      source_document_id: opts.documentId,
-    });
-    if (stErr) { errors.push(`tx ${t.date}: ${stErr.message}`); continue; }
-    inserted += 1;
-  }
-
-  if (errors.length > 0) {
-    return {
-      ok: false,
-      error: `${errors.length}/${opts.transactions.length} transaction inserts failed: ${errors.slice(0, 5).join(" | ")}`,
-      inserted,
-    };
-  }
-
-  return { ok: true, inserted };
+  return { ok: true, resolved: (data ?? []).length, error: null };
 }
 
-// ==================== lib/composio.ts ====================
+// ==================== ../_shared/composio.ts ====================
 // =========================================================================
-// lib/composio.ts
+// _shared/composio.ts
 // =========================================================================
-// Composio HTTP wrapper. Mirrors callComposio() from automation-runner so
-// behavior stays identical — same auth shape, same response unwrapping.
+// Canonical Composio HTTP wrapper for Newtworks edge functions.
 //
-// TIMEOUT HANDLING added 2026-08-06 (Task 4, build-instructions 2026-08-06).
-// Two document-processor invocations hung ~105-113s then died as an
-// uncaught exception (Supabase status 546) rather than a clean error --
-// the signature of an external call stuck until the platform's own
-// wall-clock limit killed the whole function. Every fetch() here now has
-// an explicit timeout well below that limit, so a stuck call fails fast
-// and CATCHABLY instead of taking the whole invocation down with it. On
-// timeout: write an alerts row (service, elapsed ms, tool/context) and
-// return a normal {ok:false} result -- never let it surface as an
-// uncaught exception. No retry logic added here on purpose: retrying a
-// hang just doubles the wait and can push an otherwise-fine invocation
-// over the platform limit too. Retry is a separate decision.
+// This file used to CLAIM to be "the one true copy" while three others
+// existed: document-processor/lib/composio.ts (a fork that had timeout
+// handling this one lacked), plus inline copies in automation-runner and
+// generate-custom-probes. The 2026-08-06 fix for hung calls therefore landed
+// in exactly one of the four, and automation-runner — which drives every
+// scheduled Gmail parser — went five days still able to die as an uncaught
+// exception. Consolidated 2026-08-11: the timeout handling lives HERE now, so
+// a fix applied once is a fix applied everywhere.
+//
+// TIMEOUTS, and why they are not optional. An external call that hangs is not
+// an error the calling code can catch. It runs until the Supabase platform's
+// own wall-clock limit kills the whole invocation, surfacing as status 546
+// with no stack and no log line. On a cron path that is close to invisible:
+// the run simply never reports. Every call through this file is bounded, and a
+// timeout comes back as an ordinary {ok:false} result the caller can handle.
+//
+// NO RETRIES here, on purpose. Retrying a hang doubles the wait and can push
+// an otherwise-healthy invocation over the platform limit too. Retry is a
+// separate decision belonging to the caller.
 // =========================================================================
 
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
-const COMPOSIO_TIMEOUT_MS = 25000;
+
+/** Default ceiling for any single Composio call. Well under the platform
+ *  wall-clock limit so a stuck call fails fast AND catchably. */
+export const COMPOSIO_TIMEOUT_MS = 25000;
+
+/** Same number, separate name: storage/S3 downloads are a distinct concern
+ *  that happens to want the same ceiling. Kept apart so changing one does not
+ *  silently change the other. */
 export const S3_FETCH_TIMEOUT_MS = 25000;
 
-export async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
+/** Where a timeout should be reported, if anywhere. Omit entirely and a
+ *  timeout returns a clean failed result without writing an alert — correct
+ *  for callers that already record their own failures (automation-runner logs
+ *  every recipe failure to automation_run_log and Telegram). */
+export interface TimeoutAlertTarget {
+  agencyId?: string;
+  moduleReference: string;
+  context: string;
+}
+
+export async function writeTimeoutAlert(
+  service: string,
+  elapsedMs: number,
+  target: TimeoutAlertTarget,
+): Promise<void> {
   try {
-    await sb.from("alerts").insert({
-      alert_type: "external_call_timeout",
+    await insertAlert({
+      agencyId: target.agencyId ?? AGENCY_ID_DEFAULT,
+      alertType: "external_call_timeout",
       severity: "warning",
       title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
-      module_reference: `document-processor:${service}_timeout`,
-      is_read: false,
-      is_resolved: false,
+      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`,
+      moduleReference: target.moduleReference,
     });
   } catch (_e) {
-    // Alert-writing is best-effort. Never let a failed alert insert mask
-    // the original timeout or throw a second uncaught exception.
+    // Best-effort. Must never mask the original timeout or throw a second
+    // uncaught exception on the way out.
   }
 }
 
-export async function fetchWithTimeout(
+/**
+ * fetch() with a hard time limit. Returns res:null on timeout or throw, never
+ * rejects. Use this for ANY outbound call in an edge function, not just
+ * Composio ones — a bare fetch() to Google, Groq or storage carries exactly
+ * the same hang risk.
+ */
+export async function _sharedFetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
   service: string,
   context: string,
+  alertTarget?: TimeoutAlertTarget,
 ): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -404,11 +298,37 @@ export async function fetchWithTimeout(
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut) await writeTimeoutAlert(service, elapsedMs, context);
+    if (timedOut && alertTarget) {
+      await writeTimeoutAlert(service, elapsedMs, alertTarget);
+    } else if (!timedOut) {
+      console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
+    }
     return { res: null, timedOut, elapsedMs };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function unwrapComposio(text: string, httpOk: boolean, status: number): ComposioCallResult {
+  let parsed: any = {};
+  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+  const ok = httpOk && !!parsed?.successful;
+  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
+  const error = ok
+    ? null
+    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
+  return { ok, data, error, httpStatus: status };
+}
+
+function composioTimeoutResult(slug: string, timedOut: boolean, elapsedMs: number): ComposioCallResult {
+  return {
+    ok: false,
+    data: null,
+    httpStatus: 0,
+    error: timedOut
+      ? `Composio ${slug} did not respond within ${elapsedMs}ms and was aborted`
+      : `Composio ${slug} fetch failed after ${elapsedMs}ms`,
+  };
 }
 
 export interface ComposioCallResult {
@@ -418,7 +338,7 @@ export interface ComposioCallResult {
   httpStatus: number;
 }
 
-export async function callComposio(opts: {
+export async function _sharedCallComposio(opts: {
   apiKey: string;
   userId: string;
   connectedAccountId: string;
@@ -443,8 +363,10 @@ export async function callComposio(opts: {
    * one flip changing everything at once.
    */
   toolkitVersion?: string;
+  timeoutMs?: number;
+  alertTarget?: TimeoutAlertTarget;
 }): Promise<ComposioCallResult> {
-  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
+  const { res, timedOut, elapsedMs } = await _sharedFetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
     {
       method: "POST",
@@ -459,34 +381,24 @@ export async function callComposio(opts: {
         ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
       }),
     },
-    COMPOSIO_TIMEOUT_MS,
-    "composio",
+    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
+    `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug}`,
+    opts.alertTarget,
   );
-  if (!res) {
-    const error = timedOut
-      ? `Composio call timed out after ${elapsedMs}ms (tool: ${opts.toolSlug})`
-      : `Composio fetch failed (tool: ${opts.toolSlug})`;
-    return { ok: false, data: null, error, httpStatus: 0 };
-  }
-  const text = await res.text();
-  let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = res.ok && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok
-    ? null
-    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
-  return { ok, data, error, httpStatus: res.status };
+  if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
+  return unwrapComposio(await res.text(), res.ok, res.status);
 }
 
-export async function callComposioNoAuth(opts: {
+export async function _sharedCallComposioNoAuth(opts: {
   apiKey: string;
   userId: string;
   toolSlug: string;
   toolArguments: Record<string, any>;
+  timeoutMs?: number;
+  alertTarget?: TimeoutAlertTarget;
 }): Promise<ComposioCallResult> {
-  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
+  const { res, timedOut, elapsedMs } = await _sharedFetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
     {
       method: "POST",
@@ -499,25 +411,83 @@ export async function callComposioNoAuth(opts: {
         arguments: opts.toolArguments,
       }),
     },
-    COMPOSIO_TIMEOUT_MS,
-    "composio",
-    `tool=${opts.toolSlug}`,
+    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
+    `composio:${opts.toolSlug}`,
+    `tool=${opts.toolSlug} (no connected account)`,
+    opts.alertTarget,
   );
-  if (!res) {
-    const error = timedOut
-      ? `Composio call timed out after ${elapsedMs}ms (tool: ${opts.toolSlug})`
-      : `Composio fetch failed (tool: ${opts.toolSlug})`;
-    return { ok: false, data: null, error, httpStatus: 0 };
-  }
-  const text = await res.text();
-  let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = res.ok && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok
-    ? null
-    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
-  return { ok, data, error, httpStatus: res.status };
+  if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
+  return unwrapComposio(await res.text(), res.ok, res.status);
+}
+
+// ==================== lib/composio.ts ====================
+// =========================================================================
+// lib/composio.ts — document-processor-local shim over _shared/composio.ts
+// =========================================================================
+// Consolidated 2026-08-11. The HTTP request, timeout, and response-unwrapping
+// logic used to be fully duplicated here (this file used to be ~150 lines
+// mirroring _shared/composio.ts almost exactly, plus a hand-rolled
+// writeTimeoutAlert). That duplication is why the 2026-08-06 timeout fix
+// landed here first and took five more days to reach automation-runner. The
+// mechanism now lives in exactly one place: _shared/composio.ts.
+//
+// WHY THIS FILE STILL EXISTS AT ALL: document-processor has always written an
+// alerts-table row on EVERY timeout, unconditionally — that was the original
+// fork's behavior since 2026-08-06. _shared/composio.ts makes alerting
+// opt-in per call (alertTarget?), because other consumers (automation-runner)
+// deliberately do NOT want a duplicate alerts-table row on top of their own
+// automation_run_log + Telegram failure recording. Rather than touch this
+// function's 30+ call sites to pass an alertTarget by hand, this shim
+// supplies the same default the old duplicated implementation hardcoded, so
+// deleting the duplication changed NOTHING about runtime alerting behavior.
+// Every existing `callComposio(...)`, `callComposioNoAuth(...)` and
+// `fetchWithTimeout(...)` call in this function keeps working with its
+// existing arguments, unchanged.
+// =========================================================================
+
+
+// S3_FETCH_TIMEOUT_MS, COMPOSIO_TIMEOUT_MS and the ComposioCallResult type
+// carry no document-processor-specific behavior — they are plain constants
+// and a type, nothing to shim. Import them straight from _shared/composio.ts
+// at the call sites that need them, not through here. (An earlier version of
+// this file re-exported them, which is correct for the real multi-file
+// source but breaks the bundle: the bundler strips the import line above and
+// leaves a bare `export { S3_FETCH_TIMEOUT_MS };` standing next to the
+// identical `export const S3_FETCH_TIMEOUT_MS` already declared by the
+// _shared/composio.ts entry earlier in the bundle — two top-level exports of
+// the same name, a boot failure esbuild caught and the project's own
+// validator does not, since it only checks `const`, not `export {}`.)
+
+function dpAlertTarget(service: string, context: string): TimeoutAlertTarget {
+  return { moduleReference: `document-processor:${service}_timeout`, context };
+}
+
+export async function callComposio(
+  opts: Parameters<typeof _sharedCallComposio>[0],
+): ReturnType<typeof _sharedCallComposio> {
+  return _sharedCallComposio({
+    ...opts,
+    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+  });
+}
+
+export async function callComposioNoAuth(
+  opts: Parameters<typeof _sharedCallComposioNoAuth>[0],
+): ReturnType<typeof _sharedCallComposioNoAuth> {
+  return _sharedCallComposioNoAuth({
+    ...opts,
+    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+  });
+}
+
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  service: string,
+  context: string,
+): ReturnType<typeof _sharedFetchWithTimeout> {
+  return _sharedFetchWithTimeout(url, init, timeoutMs, service, context, dpAlertTarget(service, context));
 }
 
 // ==================== lib/llm.ts ====================
@@ -1536,11 +1506,6 @@ Rules:
 - Combine multi-line transaction descriptions into the single payee/memo pair;
   "raw_line" is a best-effort verbatim capture of the source line(s) for that
   transaction and may include the original date/amount text as printed.
-- If the statement prints multiple transaction lines with the SAME date,
-  payee, and amount, output one JSON object for EACH printed line. NEVER
-  merge, collapse, or deduplicate repeated identical lines — repeated small
-  identical charges (game stores, app stores, subscriptions) are real
-  separate transactions and every printed line must appear in the output.
 - Use ISO dates only.
 - All amounts as JSON numbers, never strings.
 - Output raw JSON, never wrap it in code fences.
@@ -1562,7 +1527,7 @@ export async function parseBankStatement(opts: {
     userContent: opts.statementText,
     documentId: opts.documentId,
     purpose: "parse_bank_statement",
-    maxTokens: 8000,
+    maxTokens: 6000,
   });
 
   if (!result.ok) {
@@ -5151,52 +5116,6 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     identity.phone = identity.phone ?? det.phone;
   }
 
-  // ---- 3b. Email cross-check via Drive OCR ------------------------------
-  // Found 2026-08-11: direct PDF text extraction can silently misread
-  // characters when a resume uses a subsetted/custom-encoded font. Two real
-  // candidates' resumes (Tatyana McCullough, Yzabel Lugo) displayed correctly
-  // on screen but extracted with v/y and l/1 swapped in the email address —
-  // garbage-in-garbage-out through BOTH the deterministic regex and the LLM
-  // identity pass, since neither ever sees the rendered page, only the
-  // extracted text. That bad address then bounced an assessment invitation
-  // with nothing catching it. Google Drive's OCR path (already built for
-  // scanned files, see lib/text_recovery.ts) reads rendered glyphs instead
-  // of the font's own encoding table, so it doesn't share this failure mode.
-  // Cross-check whenever the text came from the direct PDF layer — a file
-  // that already went through text_recognition doesn't need re-checking
-  // against itself — and we have what's needed to re-fetch the original
-  // attachment. Costs one extra Drive round trip per resume; worth it on a
-  // pipeline that auto-sends invitations with no human in the loop.
-  let emailUncertain = false;
-  let emailUncertainDetail: string | null = null;
-  if (identity.email && textSource === "pdf" && args.recovery && args.gmailAttachmentId) {
-    try {
-      const ocrCheck = await recoverTextFromScannedFile({
-        deps: args.recovery,
-        messageId: args.messageId,
-        attachmentId: args.gmailAttachmentId,
-        fileName: args.fileName,
-      });
-      if (ocrCheck.ok) {
-        const ocrEmail = ocrCheck.text.match(RMB_EMAIL_RE)?.[0]?.toLowerCase() ?? null;
-        if (ocrEmail && ocrEmail !== identity.email.toLowerCase()) {
-          emailUncertain = true;
-          emailUncertainDetail = `PDF text layer read "${identity.email}"; Drive OCR read "${ocrEmail}". Confirm the real address before this candidate is auto-invited.`;
-          console.warn(`[resume_manual_batch] ${args.fileName}: email mismatch between PDF text (${identity.email}) and OCR (${ocrEmail})`);
-        }
-      }
-      // ocrCheck.ok === false just means no independent check was possible
-      // this time (e.g. the file also fails OCR) — not itself an error. The
-      // candidate proceeds on the PDF-text reading, same as before this fix.
-      // The converted Drive doc this call may have created is deliberately
-      // NOT reused as the candidate's resume copy — resumeText and
-      // recoveredDriveFileId already hold the real extraction from earlier
-      // in this function; this call exists purely to cross-check the email.
-    } catch (e) {
-      console.warn(`[resume_manual_batch] ${args.fileName}: email OCR cross-check threw (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   let candidateName = [identity.first_name, identity.last_name].filter(Boolean).join(" ") || null;
 
   // hiring_candidates carries team_assessments_identity_check, which demands
@@ -5253,25 +5172,6 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
 
   // ---- 5. Resume text onto the candidate row ---------------------------
   await writeResumeTextIfEmpty(candidateId, resumeText);
-
-  // upsert_candidate_from_careerplug doesn't know about email_uncertain (it's
-  // a shared RPC other callers also use) — set it directly here instead of
-  // touching that routine. This is what keeps this candidate out of the
-  // auto-invite send until the address is confirmed (see the resume-score-
-  // style gate added to send_v1_assessment_invitations, 2026-08-11).
-  if (emailUncertain && candidateId) {
-    try {
-      await sb.from("hiring_candidates")
-        .update({ email_uncertain: true, email_uncertain_detail: emailUncertainDetail })
-        .eq("id", candidateId);
-    } catch (e) {
-      console.warn(`[resume_manual_batch] ${args.fileName}: failed to persist email_uncertain flag (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
-    }
-    await rmbAlert(
-      args,
-      `Email extracted from this resume is uncertain — ${emailUncertainDetail} This candidate is held back from the automatic assessment invite until the email is confirmed on the candidate record.`,
-    );
-  }
 
   // The row landed, but under a stand-in name. Say so, so it gets corrected.
   if (nameFromEmail) {
@@ -7257,10 +7157,50 @@ async function extractText(
 
 // ---- Bank handler ----------------------------------------------------------
 
+// Statement-native sign per D15 (finance rebuild spec, 2026-08-07):
+// bank: deposit positive / withdrawal negative. credit: charge positive /
+// credit-refund negative. The LLM parser (bank.ts) always returns
+// "positive = money in, negative = money out" regardless of account kind —
+// that is a fixed, documented source convention, not a guess from magnitude,
+// so flipping it for credit accounts here is a mechanical transform, not a
+// judgment call. Bank needs no flip (money-in/out already matches
+// deposit/withdrawal). Credit needs a flip: a charge is money paid out by
+// the cardholder (negative in parser convention) but must land positive
+// (increases what's owed); a credit/refund is money "in" (parser positive)
+// but must land negative (reduces what's owed). Never derived from the
+// amount's own sign or magnitude — only from the known account_kind. This
+// is the exact bug class behind the 2026-08-05 cc_gl_writer sign incident;
+// flagging it explicitly rather than letting it pass silently.
+function toStatementNativeAmount(accountKind: string, parsedSignedAmount: number): number {
+  return accountKind === "credit" ? -parsedSignedAmount : parsedSignedAmount;
+}
+
+// Same dedup-fingerprint scheme gl-poster.ts used for journal_entries
+// idempotency (base = account:date:amount:payee, :N suffix for same-day
+// repeats). Per D16, statements has no unique index and duplicates are
+// flagged, not blocked — so this is no longer a pre-insert existence check,
+// just a traceable identifier carried onto the row.
+const statementRefCounters = new Map<string, number>();
+function resetStatementRefCounters(): void {
+  statementRefCounters.clear();
+}
+function makeStatementReference(accountCode: string, txnDate: string, payee: string, amountAbs: number): { base: string; reference: string } {
+  const payeeShort = payee.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
+  const amtCents = Math.round(amountAbs * 100);
+  const base = `dp:${accountCode}:${txnDate}:${amtCents}:${payeeShort}`;
+  const count = (statementRefCounters.get(base) ?? 0) + 1;
+  statementRefCounters.set(base, count);
+  return { base, reference: count === 1 ? base : `${base}:${count}` };
+}
+
 async function handleBankStatement(
   ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
-): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string; held?: boolean; duplicate?: boolean }> {
+): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string; held?: boolean }> {
+  // Reset per-doc reference counter so identical-fingerprint txns across
+  // different documents don't leak :N suffixes to each other.
+  resetStatementRefCounters();
+
   // Resolve the full accounts row (id, business_entity_id, account_kind) —
   // not just the chart code sourceAccountCode already carries. See
   // resolveSourceAccountEntry: same match logic as resolveSourceAccount, so
@@ -7290,42 +7230,135 @@ async function handleBankStatement(
     return { jeCount: 0, suspenseCount: 0, error: parsed.error };
   }
 
-  // ---- Shared statement writer (guards + balances + transactions) -------
-  // Duplicate-ingest guard, reconciliation guard, statement_balances upsert
-  // and the occurrence-counted statements loop all live in
-  // _shared/statement_writer.ts — one copy for this path and the drainer.
-  const w = await writeParsedStatement({
+  // ---- Reconciliation guard (Step 6 of reconciliation guard build) ----
+  // Same identity as llm-queue-drainer v5: closing == opening +
+  // sum(txn.signedAmount) +/- RECON_EPSILON. Mismatch OR missing balances ->
+  // hold: no statement_balances write, no JE posts. Handler internally
+  // flips documents.processing_status to 'held_reconciliation_mismatch',
+  // stashes parsed JSON in documents.notes, records reconciliation_delta,
+  // and emits a high-severity alert. Successful parses also record the
+  // near-zero delta for audit trail.
+  const RECON_EPSILON = 0.01;
+  const openBal = parsed.openingBalance;
+  const closeBal = parsed.closingBalance;
+  let reconDelta: number | null = null;
+  let reconHeldReason: string | null = null;
+
+  if (openBal === null || closeBal === null) {
+    reconHeldReason = `missing balance from parser: opening=${openBal === null ? "null" : openBal}, closing=${closeBal === null ? "null" : closeBal}`;
+  } else {
+    const txnSum = parsed.transactions.reduce((acc, r) => acc + r.txn.signedAmount, 0);
+    const expected = openBal + txnSum;
+    reconDelta = Math.round((closeBal - expected) * 100) / 100;
+    if (Math.abs(reconDelta) > RECON_EPSILON) {
+      reconHeldReason = `delta=$${reconDelta.toFixed(2)} exceeds epsilon $${RECON_EPSILON.toFixed(2)} (opening=$${openBal.toFixed(2)}, sum_txns=$${txnSum.toFixed(2)}, expected_close=$${expected.toFixed(2)}, actual_close=$${closeBal.toFixed(2)}, ${parsed.transactions.length} txns)`;
+    }
+  }
+
+  if (reconHeldReason !== null) {
+    const heldNotes = JSON.stringify({
+      held: "reconciliation_mismatch",
+      reason: reconHeldReason,
+      reconciliation_delta: reconDelta,
+      source_account_code: sourceAccountCode,
+      account_last4: parsed.accountLast4,
+      statement_period: parsed.statementPeriod,
+      opening_balance: openBal,
+      closing_balance: closeBal,
+      txn_count: parsed.transactions.length,
+      parsed_transactions: parsed.transactions.map((r) => ({
+        date: r.date,
+        payee: r.txn.payee,
+        memo: r.txn.memo,
+        amount: r.txn.signedAmount,
+      })),
+    });
+    await sb.from("documents").update({
+      processing_status: "held_reconciliation_mismatch",
+      reconciliation_delta: reconDelta,
+      notes: heldNotes,
+      processed_at: new Date().toISOString(),
+    }).eq("id", documentId);
+    await sb.from("alerts").insert({
+      agency_id: ctx.agencyId,
+      alert_type: "reconciliation_mismatch",
+      severity: "high",
+      title: `Statement reconciliation mismatch — ${att.fileName}`,
+      message: `Parsed ${att.fileName} for account ${sourceAccountCode} does not tie to the printed statement summary. ${reconHeldReason}. Held for review — no journal entries posted, no statement_balances written.`,
+      module_reference: "document-processor",
+      related_id: documentId,
+      is_read: false,
+      is_resolved: false,
+      created_at: new Date().toISOString(),
+    });
+    console.warn(`[document-processor] reconciliation_mismatch doc=${documentId} account=${sourceAccountCode}: ${reconHeldReason}`);
+    return { jeCount: 0, suspenseCount: 0, held: true, error: `held_reconciliation_mismatch: ${reconHeldReason}` };
+  }
+
+  // Success path: record near-zero delta for audit trail.
+  await sb.from("documents").update({ reconciliation_delta: reconDelta }).eq("id", documentId);
+
+  // Write the statement header (opening/closing balance, period) to
+  // statement_balances first — independent of per-txn GL posting so the
+  // balance snapshot lands even if a downstream JE hiccups. Failures here
+  // are logged but non-fatal; the JE loop still runs.
+  const balWrite = await writeStatementBalance({
     agencyId: ctx.agencyId,
     documentId,
     accountCode: sourceAccountCode,
-    account: {
-      id: account.id,
-      businessEntityId: account.businessEntityId,
-      accountKind: account.accountKind,
-    },
     accountLast4: parsed.accountLast4,
-    period: parsed.statementPeriod,
+    statementPeriodStart: parsed.statementPeriod.start,
+    statementPeriodEnd: parsed.statementPeriod.end,
     openingBalance: parsed.openingBalance,
     closingBalance: parsed.closingBalance,
-    transactions: parsed.transactions.map((r) => ({
-      date: r.date,
-      payee: r.txn.payee,
-      memo: r.txn.memo,
-      signedAmount: r.txn.signedAmount,
-    })),
-    source: "document_processor",
   });
-
-  if (!w.ok) {
-    if (w.held === "reconciliation_mismatch") {
-      return { jeCount: 0, suspenseCount: 0, held: true, error: `held_reconciliation_mismatch: ${w.reason}` };
-    }
-    if (w.held === "duplicate_ingest") {
-      return { jeCount: 0, suspenseCount: 0, duplicate: true, error: w.reason };
-    }
-    return { jeCount: w.inserted, suspenseCount: 0, error: w.error };
+  if (!balWrite.ok) {
+    console.warn(`[document-processor] statement_balance_write_failed doc=${documentId} account=${sourceAccountCode}: ${balWrite.error}`);
   }
-  return { jeCount: w.inserted, suspenseCount: 0 };
+
+  // ---- Write to statements (canon), NOT to a journal / ledger table -------
+  // D3 (finance rebuild, 2026-08-07): the ledger no longer gets written from
+  // here at all. This function's only job is landing raw statement rows in
+  // statements. Classification into the profit-and-loss ledger is a
+  // separate, later step (statement_gl_writer, built in Phase 3) that reads
+  // statements — it is not triggered inline per document. No suspense
+  // account, no classification, no journal entry, from this function.
+  let jeCount = 0;
+  const suspenseCount = 0; // no suspense concept in the new design (D3/D13)
+  for (const row of parsed.transactions) {
+    const amount = toStatementNativeAmount(account.accountKind, row.txn.signedAmount);
+    const { base, reference } = makeStatementReference(
+      sourceAccountCode, row.date, row.txn.payee, Math.abs(amount),
+    );
+    const description = row.txn.memo
+      ? `${row.txn.payee} — ${row.txn.memo}`
+      : row.txn.payee;
+
+    // legacy_source_table intentionally omitted. Migration
+    // finrebuild_e1_statements_legacy_source_table_nullable (2026-08-07)
+    // dropped its NOT NULL constraint with no default; NULL is the correct,
+    // intended value for live intake (means "not from the 2026-08-07
+    // merge"), not a sentinel to be filled in.
+    const { error: insErr } = await sb.from("statements").insert({
+      id: crypto.randomUUID(),
+      agency_id: ctx.agencyId,
+      business_entity_id: account.businessEntityId,
+      account_id: account.id,
+      account_kind: account.accountKind,
+      transaction_date: row.date,
+      description,
+      amount,
+      transaction_type: account.accountKind === "credit"
+        ? (amount >= 0 ? "charge" : "payment_or_credit")
+        : (amount >= 0 ? "deposit" : "withdrawal"),
+      reference_number: reference,
+      dedup_fingerprint: base,
+      source_document_id: documentId,
+    });
+    if (insErr) throw new Error(`statements insert failed: ${insErr.message}`);
+    jeCount += 1;
+  }
+  return { jeCount, suspenseCount };
 }
 
 // Prefix for statements whose account cannot be determined. The chart of
@@ -7536,6 +7569,87 @@ async function resolveSourceAccount(
 ): Promise<string> {
   const r = await resolveSourceAccountEntry(agencyId, fromEmail, subject, fileName);
   return "entry" in r ? (r.entry.code as string) : r.unmapped;
+}
+
+// ---- statement_balances writer --------------------------------------------
+// Called after a bank statement parses successfully. Upserts one row per
+// (agency_id, account_code, statement_period_end) so re-processing the same
+// statement PDF overwrites in place rather than duplicating. Business entity
+// comes from chart_of_accounts; account kind is inferred from the COA code
+// prefix (CC → credit, else bank). Added 2026-07-27 alongside the Alvi zip
+// classifier fallback — this is what makes statement_balances actually populate
+// from ingested statements rather than needing a manual backfill.
+async function writeStatementBalance(opts: {
+  agencyId: string;
+  documentId: string;
+  accountCode: string;
+  accountLast4: string | null;
+  statementPeriodStart: string;
+  statementPeriodEnd: string;
+  openingBalance: number | null;
+  closingBalance: number | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  // Look up the business entity from chart_of_accounts.
+  const { data: coa, error: coaErr } = await sb
+    .from("chart_of_accounts")
+    .select("business_entity_id, account_subtype")
+    .eq("agency_id", opts.agencyId)
+    .eq("account_code", opts.accountCode)
+    .maybeSingle();
+  if (coaErr) {
+    return { ok: false, error: `chart_of_accounts lookup failed: ${coaErr.message}` };
+  }
+  const businessEntityId = coa?.business_entity_id ?? null;
+  if (!businessEntityId) {
+    return { ok: false, error: `no chart_of_accounts row for ${opts.accountCode}` };
+  }
+  // Infer kind: any code with "-CC-" in it is a credit card; everything else
+  // is a bank account. Matches the existing statement_balances.account_kind
+  // convention (values already in the table: "bank", "credit").
+  const accountKind = /-CC-/i.test(opts.accountCode) ? "credit" : "bank";
+
+  // Upsert-by-natural-key: (agency_id, account_code, statement_period_end).
+  // No explicit unique constraint exists, so do it in two steps: try UPDATE
+  // by that key, INSERT if nothing was touched. Both branches use the same
+  // source label so we can tell downstream that this row came from the
+  // document-processor pipeline (vs. manual backfill or gl-cutover).
+  const upd = await sb
+    .from("statement_balances")
+    .update({
+      business_entity_id: businessEntityId,
+      account_last4: opts.accountLast4,
+      account_kind: accountKind,
+      statement_period_start: opts.statementPeriodStart,
+      opening_balance: opts.openingBalance,
+      closing_balance: opts.closingBalance,
+      source_document_id: opts.documentId,
+      source: "document_processor",
+      notes: `auto-ingested via document-processor from statement PDF`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("agency_id", opts.agencyId)
+    .eq("account_code", opts.accountCode)
+    .eq("statement_period_end", opts.statementPeriodEnd)
+    .select("id");
+  if (upd.error) return { ok: false, error: `statement_balances update failed: ${upd.error.message}` };
+  if (upd.data && upd.data.length > 0) return { ok: true };
+
+  const ins = await sb.from("statement_balances").insert({
+    agency_id: opts.agencyId,
+    business_entity_id: businessEntityId,
+    account_code: opts.accountCode,
+    account_last4: opts.accountLast4,
+    account_kind: accountKind,
+    statement_period_start: opts.statementPeriodStart,
+    statement_period_end: opts.statementPeriodEnd,
+    opening_balance: opts.openingBalance,
+    closing_balance: opts.closingBalance,
+    source_document_id: opts.documentId,
+    source: "document_processor",
+    notes: `auto-ingested via document-processor from statement PDF`,
+  });
+  if (ins.error) return { ok: false, error: `statement_balances insert failed: ${ins.error.message}` };
+  return { ok: true };
 }
 
 // ---- Gmail thread archive --------------------------------------------------
@@ -7848,18 +7962,6 @@ async function processOneAttachment(
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
             docType, status: "error", jeCount: 0, suspenseCount: 0,
             error: r.error, sourceLabel: uploadSource,
-          });
-        } else if (r.duplicate) {
-          // Shared writer stamped documents.processing_status='duplicate_ingest'
-          // and emitted a low-severity alert. Nothing was written to the books.
-          // Do NOT call markDocument (it would overwrite the stamp). Archive the
-          // thread — a re-arriving copy of an already-booked statement needs no
-          // human review; the alert is the record.
-          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "skipped_duplicate", jeCount: 0, suspenseCount: 0,
-            sourceLabel: uploadSource,
           });
         } else if (r.error) {
           await markDocument(documentId, "error", 0, [], r.error);

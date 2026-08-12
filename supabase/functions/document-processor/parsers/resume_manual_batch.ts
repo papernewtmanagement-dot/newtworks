@@ -54,7 +54,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
 import { reformatResumeSeparators } from "./resume_reformat.ts";
@@ -333,52 +333,6 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     identity.phone = identity.phone ?? det.phone;
   }
 
-  // ---- 3b. Email cross-check via Drive OCR ------------------------------
-  // Found 2026-08-11: direct PDF text extraction can silently misread
-  // characters when a resume uses a subsetted/custom-encoded font. Two real
-  // candidates' resumes (Tatyana McCullough, Yzabel Lugo) displayed correctly
-  // on screen but extracted with v/y and l/1 swapped in the email address —
-  // garbage-in-garbage-out through BOTH the deterministic regex and the LLM
-  // identity pass, since neither ever sees the rendered page, only the
-  // extracted text. That bad address then bounced an assessment invitation
-  // with nothing catching it. Google Drive's OCR path (already built for
-  // scanned files, see lib/text_recovery.ts) reads rendered glyphs instead
-  // of the font's own encoding table, so it doesn't share this failure mode.
-  // Cross-check whenever the text came from the direct PDF layer — a file
-  // that already went through text_recognition doesn't need re-checking
-  // against itself — and we have what's needed to re-fetch the original
-  // attachment. Costs one extra Drive round trip per resume; worth it on a
-  // pipeline that auto-sends invitations with no human in the loop.
-  let emailUncertain = false;
-  let emailUncertainDetail: string | null = null;
-  if (identity.email && textSource === "pdf" && args.recovery && args.gmailAttachmentId) {
-    try {
-      const ocrCheck = await recoverTextFromScannedFile({
-        deps: args.recovery,
-        messageId: args.messageId,
-        attachmentId: args.gmailAttachmentId,
-        fileName: args.fileName,
-      });
-      if (ocrCheck.ok) {
-        const ocrEmail = ocrCheck.text.match(RMB_EMAIL_RE)?.[0]?.toLowerCase() ?? null;
-        if (ocrEmail && ocrEmail !== identity.email.toLowerCase()) {
-          emailUncertain = true;
-          emailUncertainDetail = `PDF text layer read "${identity.email}"; Drive OCR read "${ocrEmail}". Confirm the real address before this candidate is auto-invited.`;
-          console.warn(`[resume_manual_batch] ${args.fileName}: email mismatch between PDF text (${identity.email}) and OCR (${ocrEmail})`);
-        }
-      }
-      // ocrCheck.ok === false just means no independent check was possible
-      // this time (e.g. the file also fails OCR) — not itself an error. The
-      // candidate proceeds on the PDF-text reading, same as before this fix.
-      // The converted Drive doc this call may have created is deliberately
-      // NOT reused as the candidate's resume copy — resumeText and
-      // recoveredDriveFileId already hold the real extraction from earlier
-      // in this function; this call exists purely to cross-check the email.
-    } catch (e) {
-      console.warn(`[resume_manual_batch] ${args.fileName}: email OCR cross-check threw (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   let candidateName = [identity.first_name, identity.last_name].filter(Boolean).join(" ") || null;
 
   // hiring_candidates carries team_assessments_identity_check, which demands
@@ -435,25 +389,6 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
 
   // ---- 5. Resume text onto the candidate row ---------------------------
   await writeResumeTextIfEmpty(candidateId, resumeText);
-
-  // upsert_candidate_from_careerplug doesn't know about email_uncertain (it's
-  // a shared RPC other callers also use) — set it directly here instead of
-  // touching that routine. This is what keeps this candidate out of the
-  // auto-invite send until the address is confirmed (see the resume-score-
-  // style gate added to send_v1_assessment_invitations, 2026-08-11).
-  if (emailUncertain && candidateId) {
-    try {
-      await sb.from("hiring_candidates")
-        .update({ email_uncertain: true, email_uncertain_detail: emailUncertainDetail })
-        .eq("id", candidateId);
-    } catch (e) {
-      console.warn(`[resume_manual_batch] ${args.fileName}: failed to persist email_uncertain flag (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
-    }
-    await rmbAlert(
-      args,
-      `Email extracted from this resume is uncertain — ${emailUncertainDetail} This candidate is held back from the automatic assessment invite until the email is confirmed on the candidate record.`,
-    );
-  }
 
   // The row landed, but under a stand-in name. Say so, so it gets corrected.
   if (nameFromEmail) {

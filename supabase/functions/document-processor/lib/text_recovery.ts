@@ -41,7 +41,8 @@
 
 // deno-lint-ignore-file no-explicit-any
 
-import { callComposio, fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "./composio.ts";
+import { callComposio, fetchWithTimeout } from "./composio.ts";
+import { S3_FETCH_TIMEOUT_MS } from "../../_shared/composio.ts";
 
 /** Everything this module needs to reach Gmail and Drive. */
 export interface TextRecoveryDeps {

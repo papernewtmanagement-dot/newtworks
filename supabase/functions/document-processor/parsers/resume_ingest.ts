@@ -17,8 +17,9 @@
 
 import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
 import { reformatResumeSeparators } from "./resume_reformat.ts";
-import { sb } from "../lib/supabase.ts";
-import { fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "../lib/composio.ts";
+import { sb } from "../../_shared/supabase.ts";
+import { fetchWithTimeout } from "../lib/composio.ts";
+import { S3_FETCH_TIMEOUT_MS } from "../../_shared/composio.ts";
 
 /**
  * Fetch a resume PDF from the given Composio s3url, extract text

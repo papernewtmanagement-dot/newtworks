@@ -18,7 +18,7 @@
 // (AIPP = 5% of qualifying NEW P&C production.)
 // =========================================================================
 
-import { sb } from "../lib/supabase.ts";
+import { sb } from "../../_shared/supabase.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 
 const CANONICAL_LOB = ["auto", "fire", "life", "health", "bank", "annuity", "other"] as const;

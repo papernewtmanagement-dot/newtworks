@@ -15,7 +15,7 @@
 // The queue path is now a true last resort, not the steady-state.
 // =========================================================================
 
-import { sb, stripFences, getSetting } from "./supabase.ts";
+import { sb, stripFences, getSetting } from "../../_shared/supabase.ts";
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";

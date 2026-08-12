@@ -43,8 +43,16 @@ from pathlib import Path
 # Canonical concat order — earlier files define symbols used by later files.
 # Do NOT reorder without understanding the dependency chain.
 ORDER = [
-    "lib/supabase.ts",
-    "../_shared/statement_writer.ts",
+    # 2026-08-11: document-processor's own lib/supabase.ts and the timeout
+    # mechanics inside lib/composio.ts were forks of ../_shared. Both are now
+    # bundled from the shared source so a fix applied once reaches every
+    # consumer; lib/composio.ts is a ~60-line shim over the shared functions
+    # that preserves this function's always-alert-on-timeout behavior (see
+    # that file's header) and is still bundled from ITS OWN path since it is
+    # genuinely document-processor-specific, not a duplicate.
+    "../_shared/supabase.ts",
+    "../_shared/alerts.ts",
+    "../_shared/composio.ts",
     "lib/composio.ts",
     "lib/llm.ts",
     "lib/text_recovery.ts",
@@ -78,7 +86,24 @@ SYSTEM_PROMPT_RENAMES = {
 # Per-file extra renames for other module-scoped symbols that collide across
 # parsers. Applied after SYSTEM_PROMPT rename. Values are (old, new) tuples so
 # all references within the same file are rewritten consistently.
-EXTRA_RENAMES = {}
+# 2026-08-11: lib/composio.ts is a thin shim that DECLARES the public names
+# `callComposio`, `callComposioNoAuth`, `fetchWithTimeout` (see that file).
+# The shared implementation those forward to must therefore be renamed at the
+# point it's bundled in, or the flattened file ends up with two declarations
+# of the same name and fails to boot. "callComposio" as a plain-text find is
+# safe here: it is a PREFIX of "callComposioNoAuth" too, so one rename tuple
+# correctly relabels both the auth and no-auth functions and every call
+# within _shared/composio.ts that references either. Checked before adding:
+# neither substring collides with any other identifier in that file
+# (ComposioCallResult, composioTimeoutResult, unwrapComposio, COMPOSIO_BASE,
+# COMPOSIO_TIMEOUT_MS all fail to match "callComposio" or "fetchWithTimeout"
+# case-sensitively) or anywhere else in document-processor's source.
+EXTRA_RENAMES = {
+    "../_shared/composio.ts": [
+        ("callComposio", "_sharedCallComposio"),
+        ("fetchWithTimeout", "_sharedFetchWithTimeout"),
+    ],
+}
 
 BANNER = (
     "// =========================================================================\n"

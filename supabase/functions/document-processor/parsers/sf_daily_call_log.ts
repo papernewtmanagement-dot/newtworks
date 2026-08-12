@@ -26,8 +26,9 @@
 // =========================================================================
 
 // deno-lint-ignore-file no-explicit-any
-import { sb } from "../lib/supabase.ts";
-import { callComposio, fetchWithTimeout, S3_FETCH_TIMEOUT_MS } from "../lib/composio.ts";
+import { sb } from "../../_shared/supabase.ts";
+import { callComposio, fetchWithTimeout } from "../lib/composio.ts";
+import { S3_FETCH_TIMEOUT_MS } from "../../_shared/composio.ts";
 
 interface CallLogBody {
   agency_id?: string;

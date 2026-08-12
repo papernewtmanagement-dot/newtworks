@@ -1,44 +1,66 @@
 // =========================================================================
-// lib/composio.ts
+// lib/composio.ts — document-processor-local shim over _shared/composio.ts
 // =========================================================================
-// Composio HTTP wrapper. Mirrors callComposio() from automation-runner so
-// behavior stays identical — same auth shape, same response unwrapping.
+// Consolidated 2026-08-11. The HTTP request, timeout, and response-unwrapping
+// logic used to be fully duplicated here (this file used to be ~150 lines
+// mirroring _shared/composio.ts almost exactly, plus a hand-rolled
+// writeTimeoutAlert). That duplication is why the 2026-08-06 timeout fix
+// landed here first and took five more days to reach automation-runner. The
+// mechanism now lives in exactly one place: _shared/composio.ts.
 //
-// TIMEOUT HANDLING added 2026-08-06 (Task 4, build-instructions 2026-08-06).
-// Two document-processor invocations hung ~105-113s then died as an
-// uncaught exception (Supabase status 546) rather than a clean error --
-// the signature of an external call stuck until the platform's own
-// wall-clock limit killed the whole function. Every fetch() here now has
-// an explicit timeout well below that limit, so a stuck call fails fast
-// and CATCHABLY instead of taking the whole invocation down with it. On
-// timeout: write an alerts row (service, elapsed ms, tool/context) and
-// return a normal {ok:false} result -- never let it surface as an
-// uncaught exception. No retry logic added here on purpose: retrying a
-// hang just doubles the wait and can push an otherwise-fine invocation
-// over the platform limit too. Retry is a separate decision.
+// WHY THIS FILE STILL EXISTS AT ALL: document-processor has always written an
+// alerts-table row on EVERY timeout, unconditionally — that was the original
+// fork's behavior since 2026-08-06. _shared/composio.ts makes alerting
+// opt-in per call (alertTarget?), because other consumers (automation-runner)
+// deliberately do NOT want a duplicate alerts-table row on top of their own
+// automation_run_log + Telegram failure recording. Rather than touch this
+// function's 30+ call sites to pass an alertTarget by hand, this shim
+// supplies the same default the old duplicated implementation hardcoded, so
+// deleting the duplication changed NOTHING about runtime alerting behavior.
+// Every existing `callComposio(...)`, `callComposioNoAuth(...)` and
+// `fetchWithTimeout(...)` call in this function keeps working with its
+// existing arguments, unchanged.
 // =========================================================================
 
-import { sb } from "./supabase.ts";
+import {
+  callComposio as _sharedCallComposio,
+  callComposioNoAuth as _sharedCallComposioNoAuth,
+  fetchWithTimeout as _sharedFetchWithTimeout,
+  type TimeoutAlertTarget,
+} from "../../_shared/composio.ts";
 
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
-const COMPOSIO_TIMEOUT_MS = 25000;
-export const S3_FETCH_TIMEOUT_MS = 25000;
+// S3_FETCH_TIMEOUT_MS, COMPOSIO_TIMEOUT_MS and the ComposioCallResult type
+// carry no document-processor-specific behavior — they are plain constants
+// and a type, nothing to shim. Import them straight from _shared/composio.ts
+// at the call sites that need them, not through here. (An earlier version of
+// this file re-exported them, which is correct for the real multi-file
+// source but breaks the bundle: the bundler strips the import line above and
+// leaves a bare `export { S3_FETCH_TIMEOUT_MS };` standing next to the
+// identical `export const S3_FETCH_TIMEOUT_MS` already declared by the
+// _shared/composio.ts entry earlier in the bundle — two top-level exports of
+// the same name, a boot failure esbuild caught and the project's own
+// validator does not, since it only checks `const`, not `export {}`.)
 
-export async function writeTimeoutAlert(service: string, elapsedMs: number, context: string): Promise<void> {
-  try {
-    await sb.from("alerts").insert({
-      alert_type: "external_call_timeout",
-      severity: "warning",
-      title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
-      module_reference: `document-processor:${service}_timeout`,
-      is_read: false,
-      is_resolved: false,
-    });
-  } catch (_e) {
-    // Alert-writing is best-effort. Never let a failed alert insert mask
-    // the original timeout or throw a second uncaught exception.
-  }
+function dpAlertTarget(service: string, context: string): TimeoutAlertTarget {
+  return { moduleReference: `document-processor:${service}_timeout`, context };
+}
+
+export async function callComposio(
+  opts: Parameters<typeof _sharedCallComposio>[0],
+): ReturnType<typeof _sharedCallComposio> {
+  return _sharedCallComposio({
+    ...opts,
+    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+  });
+}
+
+export async function callComposioNoAuth(
+  opts: Parameters<typeof _sharedCallComposioNoAuth>[0],
+): ReturnType<typeof _sharedCallComposioNoAuth> {
+  return _sharedCallComposioNoAuth({
+    ...opts,
+    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+  });
 }
 
 export async function fetchWithTimeout(
@@ -47,128 +69,6 @@ export async function fetchWithTimeout(
   timeoutMs: number,
   service: string,
   context: string,
-): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const startedAt = Date.now();
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    return { res, timedOut: false, elapsedMs: Date.now() - startedAt };
-  } catch (e) {
-    const elapsedMs = Date.now() - startedAt;
-    const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut) await writeTimeoutAlert(service, elapsedMs, context);
-    return { res: null, timedOut, elapsedMs };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export interface ComposioCallResult {
-  ok: boolean;
-  data: any;
-  error: string | null;
-  httpStatus: number;
-}
-
-export async function callComposio(opts: {
-  apiKey: string;
-  userId: string;
-  connectedAccountId: string;
-  toolSlug: string;
-  toolArguments: Record<string, any>;
-  /**
-   * Which published set of tools to use. LEAVE THIS UNSET unless you have a
-   * reason not to.
-   *
-   * Composio publishes its tools in dated sets. A request that does not name a
-   * set gets the oldest one, which holds far fewer tools than the account
-   * actually has — 51 Google Drive tools instead of 90. Anything missing from
-   * that oldest set answers "Tool ... not found", which reads exactly like a
-   * permission problem and is not one. Two months of Drive filing and every
-   * scanned resume were lost to this, and four rounds of fixing went at the
-   * wrong layer, because a tool tested by hand goes through a connection that
-   * DOES name a set and therefore always worked.
-   *
-   * It is set per request on purpose. Naming a newer set changes the shape of
-   * what comes back, and the payroll, bank statement and comp parsers all read
-   * those shapes. So each caller opts in where it has been checked, rather than
-   * one flip changing everything at once.
-   */
-  toolkitVersion?: string;
-}): Promise<ComposioCallResult> {
-  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
-    `${COMPOSIO_BASE}/${opts.toolSlug}`,
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": opts.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        user_id: opts.userId,
-        connected_account_id: opts.connectedAccountId,
-        arguments: opts.toolArguments,
-        ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
-      }),
-    },
-    COMPOSIO_TIMEOUT_MS,
-    "composio",
-    `tool=${opts.toolSlug}`,
-  );
-  if (!res) {
-    const error = timedOut
-      ? `Composio call timed out after ${elapsedMs}ms (tool: ${opts.toolSlug})`
-      : `Composio fetch failed (tool: ${opts.toolSlug})`;
-    return { ok: false, data: null, error, httpStatus: 0 };
-  }
-  const text = await res.text();
-  let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = res.ok && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok
-    ? null
-    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
-  return { ok, data, error, httpStatus: res.status };
-}
-
-export async function callComposioNoAuth(opts: {
-  apiKey: string;
-  userId: string;
-  toolSlug: string;
-  toolArguments: Record<string, any>;
-}): Promise<ComposioCallResult> {
-  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
-    `${COMPOSIO_BASE}/${opts.toolSlug}`,
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": opts.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        user_id: opts.userId,
-        arguments: opts.toolArguments,
-      }),
-    },
-    COMPOSIO_TIMEOUT_MS,
-    "composio",
-    `tool=${opts.toolSlug}`,
-  );
-  if (!res) {
-    const error = timedOut
-      ? `Composio call timed out after ${elapsedMs}ms (tool: ${opts.toolSlug})`
-      : `Composio fetch failed (tool: ${opts.toolSlug})`;
-    return { ok: false, data: null, error, httpStatus: 0 };
-  }
-  const text = await res.text();
-  let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = res.ok && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok
-    ? null
-    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
-  return { ok, data, error, httpStatus: res.status };
+): ReturnType<typeof _sharedFetchWithTimeout> {
+  return _sharedFetchWithTimeout(url, init, timeoutMs, service, context, dpAlertTarget(service, context));
 }

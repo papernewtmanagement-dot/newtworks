@@ -10,7 +10,7 @@
 //    without sender context.
 // =========================================================================
 
-import { sb } from "./lib/supabase.ts";
+import { sb } from "../_shared/supabase.ts";
 
 export interface BankTxn {
   payee: string;
