@@ -618,6 +618,21 @@ const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extrac
 
 // Thin adapter over the shared Groq caller so the drain call sites keep their
 // positional signature. temperature 0.1 preserved from the original inline copy.
+// The org's Groq tier caps EVERY request (prompt + completion together) at a
+// fixed token budget — currently 8000 for openai/gpt-oss-120b. A hardcoded
+// maxTokens blows that ceiling the moment prompt tokens alone get close to
+// it (seen live: a 13.7K-char bank statement + system prompt = ~4.2K prompt
+// tokens, then maxTokens:8000 requested 11.3K total -> HTTP 413). Size the
+// completion budget to what's actually left after the prompt, every call.
+const GROQ_REQUEST_TOKEN_CAP = 8000;
+const GROQ_SAFETY_MARGIN = 300; // token-estimate is a 4-chars/token approximation, not exact
+
+function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor: number): number {
+  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / 4);
+  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
+  return Math.max(floor, Math.min(ceiling, available));
+}
+
 async function callGroq(apiKey: string, model: string, systemPrompt: string, userContent: string, maxTokens = 8000): Promise<{ ok: boolean; raw: string; error?: string }> {
   const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1 });
   return { ok: r.ok, raw: r.raw, error: r.error ?? undefined };
@@ -664,7 +679,8 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // retried on the next tick), so trading a little more TPM pressure for no
   // truncation is strictly the better failure mode: a throttled item drains
   // later, a truncated item never drains at all.
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, 8000);
+  const bankMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 6000, 1200);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, bankMaxTokens);
   if (!llm.ok) return { ok: false, error: llm.error };
 
   // 2. Parse JSON
@@ -806,7 +822,8 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
 async function drainCareerplugItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
   // 1. Call Groq. Careerplug messages are small; 1500 max_tokens covers the
   // biggest daily digest we've observed.
-  const llm = await callGroq(groqKey, CAREERPLUG_MODEL, item.system_prompt, item.user_content, 1500);
+  const careerplugMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 1500, 600);
+  const llm = await callGroq(groqKey, CAREERPLUG_MODEL, item.system_prompt, item.user_content, careerplugMaxTokens);
   if (!llm.ok) return { ok: false, error: llm.error };
 
   // 2. Parse JSON. Expect { "applicants": [ {...}, ... ] }
@@ -924,7 +941,8 @@ async function drainWrapupOrganizeItem(item: QueueItem, groqKey: string, dryRun:
     return { ok: false, error: "target_ref.detail_id missing — job predates target_ref (2026-08-07) or was enqueued without a write target; cannot resolve which weekly_cpr_team_detail row to write" };
   }
 
-  const llm = await callGroq(groqKey, WRAPUP_MODEL, item.system_prompt, item.user_content, 2500);
+  const wrapupMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 2500, 800);
+  const llm = await callGroq(groqKey, WRAPUP_MODEL, item.system_prompt, item.user_content, wrapupMaxTokens);
   if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
 
   let parsed: any;
