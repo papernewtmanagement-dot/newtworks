@@ -29,18 +29,61 @@ function buildMonthGrid(monthDate) {
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// Mirrors FIXED_TIMES_BY_WEEKDAY in the hiring-interview-scheduler edge
+// function — the actual predefined interview times. Keep these two in sync
+// if the schedule ever changes.
+const FIXED_TIMES_BY_WEEKDAY = {
+  1: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 15, m: 30, label: "3:30 PM" }], // Mon
+  2: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 15, m: 30, label: "3:30 PM" }], // Tue
+  3: [{ h: 10, m: 0, label: "10:00 AM" }],                                     // Wed
+  4: [{ h: 15, m: 30, label: "3:30 PM" }],                                     // Thu
+  5: [{ h: 12, m: 30, label: "12:30 PM" }],                                    // Fri
+};
+const INTERVIEW_MINUTES = 35;
+
+function isThirdFriday(d) {
+  return d.getDay() === 5 && Math.ceil(d.getDate() / 7) === 3;
+}
+function pad2(n) { return String(n).padStart(2, "0"); }
+function timeToHHMMSS(h, m) { return `${pad2(h)}:${pad2(m)}:00`; }
+function addMinutesToTime(h, m, mins) {
+  const total = h * 60 + m + mins;
+  return { h: Math.floor(total / 60) % 24, m: total % 60 };
+}
+
 function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
-  const [wholeDay, setWholeDay] = useState(existing.length === 0);
+  const [showCustom, setShowCustom] = useState(false);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("17:00");
   const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  const displayDate = new Date(dateISO + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const [saving, setSaving] = useState(null); // key of thing currently saving
+  const dateObj = new Date(dateISO + "T12:00:00");
+  const displayDate = dateObj.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
-  const handleAdd = async () => {
-    setSaving(true);
-    await onAdd({ blackout_date: dateISO, start_time: wholeDay ? null : startTime, end_time: wholeDay ? null : endTime, note: note || null });
-    setSaving(false);
+  const wholeDayRow = existing.find((r) => !r.start_time);
+  const isFridayExcluded = isThirdFriday(dateObj);
+  const daySlots = isFridayExcluded ? [] : (FIXED_TIMES_BY_WEEKDAY[dateObj.getDay()] || []);
+
+  const findExistingForSlot = (h, m) => existing.find((r) => r.start_time === timeToHHMMSS(h, m));
+
+  const handleBlockSlot = async (slot) => {
+    setSaving(`slot-${slot.h}-${slot.m}`);
+    const end = addMinutesToTime(slot.h, slot.m, INTERVIEW_MINUTES);
+    await onAdd({ blackout_date: dateISO, start_time: timeToHHMMSS(slot.h, slot.m), end_time: timeToHHMMSS(end.h, end.m), note: null });
+    setSaving(null);
+  };
+
+  const handleBlockWholeDay = async () => {
+    setSaving("whole");
+    await onAdd({ blackout_date: dateISO, start_time: null, end_time: null, note: note || null });
+    setSaving(null);
+    setNote("");
+  };
+
+  const handleAddCustom = async () => {
+    setSaving("custom");
+    await onAdd({ blackout_date: dateISO, start_time: startTime, end_time: endTime, note: note || null });
+    setSaving(null);
     setNote("");
   };
 
@@ -52,53 +95,90 @@ function DayModal({ dateISO, existing, onAdd, onDelete, onClose }) {
           <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: T.slate400, lineHeight: 1 }}>×</button>
         </div>
 
-        {existing.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-            {existing.map((r) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: T.slate50 || "#f8fafc", border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px" }}>
-                <div style={{ fontSize: 13 }}>
-                  {r.start_time && r.end_time ? `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}` : "Whole day"}
-                  {r.note ? ` — ${r.note}` : ""}
-                </div>
-                <button onClick={() => onDelete(r.id)} style={{ border: "none", background: "transparent", color: T.slate400, cursor: "pointer", fontSize: 12 }}>Remove</button>
-              </div>
-            ))}
+        {wholeDayRow ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fecaca", borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+            <div style={{ fontSize: 13, color: "#7c2d12" }}>Whole day blocked{wholeDayRow.note ? ` — ${wholeDayRow.note}` : ""}</div>
+            <button onClick={() => onDelete(wholeDayRow.id)} style={{ border: "none", background: "transparent", color: "#7c2d12", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Unblock</button>
           </div>
-        )}
+        ) : (
+          <>
+            {isFridayExcluded && (
+              <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
+                This is the 3rd Friday of the month — no interviews are ever offered on this day.
+              </div>
+            )}
 
-        <div style={{ fontSize: 12, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>
-          {existing.some((r) => !r.start_time) ? "Whole day already blacked out" : "Add a blackout"}
-        </div>
-        {!existing.some((r) => !r.start_time) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.slate600 }}>
-              <input type="checkbox" checked={wholeDay} onChange={(e) => setWholeDay(e.target.checked)} />
-              Whole day
-            </label>
-            {!wholeDay && (
-              <div style={{ display: "flex", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>From</div>
-                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 13 }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>To</div>
-                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 13 }} />
+            {daySlots.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Interview times this day</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {daySlots.map((slot) => {
+                    const key = `slot-${slot.h}-${slot.m}`;
+                    const existingRow = findExistingForSlot(slot.h, slot.m);
+                    return (
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${existingRow ? "#fca5a5" : T.slate200}`, background: existingRow ? "#fef2f2" : "#fff", borderRadius: 8, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 13, color: existingRow ? "#991b1b" : T.slate700 }}>{slot.label}{existingRow ? " — blocked" : ""}</div>
+                        {existingRow ? (
+                          <button onClick={() => onDelete(existingRow.id)} style={{ border: "none", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Unblock</button>
+                        ) : (
+                          <button onClick={() => handleBlockSlot(slot)} disabled={saving === key} style={{ border: "none", background: T.slate100 || "#f1f5f9", color: T.slate700 || "#334155", cursor: saving === key ? "default" : "pointer", fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6 }}>
+                            {saving === key ? "Blocking…" : "Block"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
-            <div>
-              <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>Note (optional)</div>
-              <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. out of office" style={{ width: "100%", padding: "6px 8px", border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
+
+            {existing.filter((r) => r.start_time && !daySlots.some((s) => timeToHHMMSS(s.h, s.m) === r.start_time)).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T.slate600 }}>Other blocked windows</div>
+                {existing.filter((r) => r.start_time && !daySlots.some((s) => timeToHHMMSS(s.h, s.m) === r.start_time)).map((r) => (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: T.slate50 || "#f8fafc", border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ fontSize: 13 }}>{r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}{r.note ? ` — ${r.note}` : ""}</div>
+                    <button onClick={() => onDelete(r.id)} style={{ border: "none", background: "transparent", color: T.slate400, cursor: "pointer", fontSize: 12 }}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={handleBlockWholeDay} disabled={saving === "whole"} style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${T.slate200}`, background: "#fff", color: "#991b1b", fontSize: 13, fontWeight: 600, cursor: saving === "whole" ? "default" : "pointer" }}>
+                {saving === "whole" ? "Blocking…" : "Block whole day"}
+              </button>
+              <button onClick={() => setShowCustom((v) => !v)} style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${T.slate200}`, background: "#fff", color: T.slate600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                {showCustom ? "Hide custom range" : "Custom time range"}
+              </button>
             </div>
-            <button
-              onClick={handleAdd}
-              disabled={saving}
-              style={{ padding: "8px 16px", borderRadius: 7, border: "none", background: saving ? T.slate200 : (T.blue600 || "#2563eb"), color: "#fff", fontSize: 13, fontWeight: 600, cursor: saving ? "default" : "pointer" }}
-            >
-              {saving ? "Adding…" : "Add blackout"}
-            </button>
-          </div>
+
+            {showCustom && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.slate200}` }}>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>From</div>
+                    <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>To</div>
+                    <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>Note (optional)</div>
+                  <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. out of office" style={{ width: "100%", padding: "6px 8px", border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
+                </div>
+                <button
+                  onClick={handleAddCustom}
+                  disabled={saving === "custom"}
+                  style={{ padding: "8px 16px", borderRadius: 7, border: "none", background: saving === "custom" ? T.slate200 : (T.blue600 || "#2563eb"), color: "#fff", fontSize: 13, fontWeight: 600, cursor: saving === "custom" ? "default" : "pointer", alignSelf: "flex-start" }}
+                >
+                  {saving === "custom" ? "Adding…" : "Add custom blackout"}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
