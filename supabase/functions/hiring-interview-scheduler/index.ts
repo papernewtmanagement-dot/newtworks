@@ -94,9 +94,23 @@ function isWeekend(y: number, m: number, d: number): boolean {
 // -------------------------------------------------------------------------
 interface Slot { start: string; end: string; dateKey: string; } // dateKey = Chicago YYYY-MM-DD
 
+interface ManualSlot { slot_date: string; start_time: string; end_time: string; }
+
+async function fetchManualSlots(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<ManualSlot[]> {
+  const { data, error } = await sb
+    .from("hiring_interview_manual_slots")
+    .select("slot_date, start_time, end_time")
+    .eq("agency_id", agencyId)
+    .gte("slot_date", fromDateKey)
+    .lte("slot_date", throughDateKey);
+  if (error) return [];
+  return (data ?? []) as ManualSlot[];
+}
+
 // Every fixed-schedule slot across the lookahead window, before filtering
-// for blackouts or calendar busy — one row per (eligible day x fixed time).
-function fixedScheduleGrid(startFrom: Date): Slot[] {
+// for blackouts or calendar busy — one row per (eligible day x fixed time),
+// plus any manually-added one-off slots in the same window.
+async function fixedScheduleGrid(startFrom: Date, agencyId: string): Promise<Slot[]> {
   const grid: Slot[] = [];
   const nowChicago = new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
     .formatToParts(startFrom).reduce((acc: any, p) => { acc[p.type] = p.value; return acc; }, {});
@@ -116,6 +130,22 @@ function fixedScheduleGrid(startFrom: Date): Slot[] {
     }
     cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
   }
+
+  if (grid.length > 0) {
+    const fromKey = grid[0].dateKey;
+    const throughKey = grid[grid.length - 1].dateKey;
+    const manual = await fetchManualSlots(agencyId, fromKey, throughKey);
+    for (const m of manual) {
+      const [h, min] = m.start_time.split(":").map(Number);
+      const [eh, emin] = m.end_time.split(":").map(Number);
+      const [y, mo, d] = m.slot_date.split("-").map(Number);
+      const start = chicagoLocalToUtc(y, mo, d, h, min);
+      const end = chicagoLocalToUtc(y, mo, d, eh, emin);
+      grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey: m.slot_date });
+    }
+    grid.sort((a, b) => a.start.localeCompare(b.start));
+  }
+
   return grid;
 }
 
@@ -243,7 +273,7 @@ async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
   const creds = await getCalendarCreds(agencyId);
   if (!creds) return null;
   const now = new Date();
-  const grid = fixedScheduleGrid(now);
+  const grid = await fixedScheduleGrid(now, agencyId);
   if (grid.length === 0) return [];
 
   const timeMin = grid[0].start;
