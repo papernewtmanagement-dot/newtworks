@@ -53,6 +53,11 @@ ORDER = [
     "../_shared/supabase.ts",
     "../_shared/alerts.ts",
     "../_shared/composio.ts",
+    # 2026-08-11 (second half): handleBankStatement's reconciliation guard,
+    # balance write, and per-transaction insert moved onto this same shared
+    # file llm-queue-drainer's drainBankStatementItem already uses — the two
+    # hand-maintained statement-writer twins are now one function.
+    "../_shared/statement_writer.ts",
     "lib/composio.ts",
     "lib/llm.ts",
     "lib/text_recovery.ts",

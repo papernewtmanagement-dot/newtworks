@@ -40,6 +40,7 @@ import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3
 import { sb, getSetting, jsonResponse } from "../_shared/supabase.ts";
 import { callComposio, fetchWithTimeout } from "./lib/composio.ts";
 import { S3_FETCH_TIMEOUT_MS } from "../_shared/composio.ts";
+import { writeParsedStatement } from "../_shared/statement_writer.ts";
 import {
   classifyDocument,
   inferDateFromFilename,
@@ -747,46 +748,16 @@ async function extractText(
 // bank: deposit positive / withdrawal negative. credit: charge positive /
 // credit-refund negative. The LLM parser (bank.ts) always returns
 // "positive = money in, negative = money out" regardless of account kind —
-// that is a fixed, documented source convention, not a guess from magnitude,
-// so flipping it for credit accounts here is a mechanical transform, not a
-// judgment call. Bank needs no flip (money-in/out already matches
-// deposit/withdrawal). Credit needs a flip: a charge is money paid out by
-// the cardholder (negative in parser convention) but must land positive
-// (increases what's owed); a credit/refund is money "in" (parser positive)
-// but must land negative (reduces what's owed). Never derived from the
-// amount's own sign or magnitude — only from the known account_kind. This
-// is the exact bug class behind the 2026-08-05 cc_gl_writer sign incident;
-// flagging it explicitly rather than letting it pass silently.
-function toStatementNativeAmount(accountKind: string, parsedSignedAmount: number): number {
-  return accountKind === "credit" ? -parsedSignedAmount : parsedSignedAmount;
-}
-
-// Same dedup-fingerprint scheme gl-poster.ts used for journal_entries
-// idempotency (base = account:date:amount:payee, :N suffix for same-day
-// repeats). Per D16, statements has no unique index and duplicates are
-// flagged, not blocked — so this is no longer a pre-insert existence check,
-// just a traceable identifier carried onto the row.
-const statementRefCounters = new Map<string, number>();
-function resetStatementRefCounters(): void {
-  statementRefCounters.clear();
-}
-function makeStatementReference(accountCode: string, txnDate: string, payee: string, amountAbs: number): { base: string; reference: string } {
-  const payeeShort = payee.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
-  const amtCents = Math.round(amountAbs * 100);
-  const base = `dp:${accountCode}:${txnDate}:${amtCents}:${payeeShort}`;
-  const count = (statementRefCounters.get(base) ?? 0) + 1;
-  statementRefCounters.set(base, count);
-  return { base, reference: count === 1 ? base : `${base}:${count}` };
-}
+// toStatementNativeAmount, makeStatementReference, and the ref-counter
+// bookkeeping that used to live here were deleted 2026-08-11: their only
+// caller, handleBankStatement, now delegates to _shared/statement_writer.ts,
+// which carries the same sign-flip rule and fingerprint scheme (see that
+// file's "Sign convention (D15)" comment — identical logic, one copy).
 
 async function handleBankStatement(
   ctx: RunCtx, att: AttachmentInput, documentId: string,
   bytesB64: string, sourceAccountCode: string,
 ): Promise<{ jeCount: number; suspenseCount: number; queueId?: string; error?: string; held?: boolean }> {
-  // Reset per-doc reference counter so identical-fingerprint txns across
-  // different documents don't leak :N suffixes to each other.
-  resetStatementRefCounters();
-
   // Resolve the full accounts row (id, business_entity_id, account_kind) —
   // not just the chart code sourceAccountCode already carries. See
   // resolveSourceAccountEntry: same match logic as resolveSourceAccount, so
@@ -816,135 +787,50 @@ async function handleBankStatement(
     return { jeCount: 0, suspenseCount: 0, error: parsed.error };
   }
 
-  // ---- Reconciliation guard (Step 6 of reconciliation guard build) ----
-  // Same identity as llm-queue-drainer v5: closing == opening +
-  // sum(txn.signedAmount) +/- RECON_EPSILON. Mismatch OR missing balances ->
-  // hold: no statement_balances write, no JE posts. Handler internally
-  // flips documents.processing_status to 'held_reconciliation_mismatch',
-  // stashes parsed JSON in documents.notes, records reconciliation_delta,
-  // and emits a high-severity alert. Successful parses also record the
-  // near-zero delta for audit trail.
-  const RECON_EPSILON = 0.01;
-  const openBal = parsed.openingBalance;
-  const closeBal = parsed.closingBalance;
-  let reconDelta: number | null = null;
-  let reconHeldReason: string | null = null;
-
-  if (openBal === null || closeBal === null) {
-    reconHeldReason = `missing balance from parser: opening=${openBal === null ? "null" : openBal}, closing=${closeBal === null ? "null" : closeBal}`;
-  } else {
-    const txnSum = parsed.transactions.reduce((acc, r) => acc + r.txn.signedAmount, 0);
-    const expected = openBal + txnSum;
-    reconDelta = Math.round((closeBal - expected) * 100) / 100;
-    if (Math.abs(reconDelta) > RECON_EPSILON) {
-      reconHeldReason = `delta=$${reconDelta.toFixed(2)} exceeds epsilon $${RECON_EPSILON.toFixed(2)} (opening=$${openBal.toFixed(2)}, sum_txns=$${txnSum.toFixed(2)}, expected_close=$${expected.toFixed(2)}, actual_close=$${closeBal.toFixed(2)}, ${parsed.transactions.length} txns)`;
-    }
-  }
-
-  if (reconHeldReason !== null) {
-    const heldNotes = JSON.stringify({
-      held: "reconciliation_mismatch",
-      reason: reconHeldReason,
-      reconciliation_delta: reconDelta,
-      source_account_code: sourceAccountCode,
-      account_last4: parsed.accountLast4,
-      statement_period: parsed.statementPeriod,
-      opening_balance: openBal,
-      closing_balance: closeBal,
-      txn_count: parsed.transactions.length,
-      parsed_transactions: parsed.transactions.map((r) => ({
-        date: r.date,
-        payee: r.txn.payee,
-        memo: r.txn.memo,
-        amount: r.txn.signedAmount,
-      })),
-    });
-    await sb.from("documents").update({
-      processing_status: "held_reconciliation_mismatch",
-      reconciliation_delta: reconDelta,
-      notes: heldNotes,
-      processed_at: new Date().toISOString(),
-    }).eq("id", documentId);
-    await sb.from("alerts").insert({
-      agency_id: ctx.agencyId,
-      alert_type: "reconciliation_mismatch",
-      severity: "high",
-      title: `Statement reconciliation mismatch — ${att.fileName}`,
-      message: `Parsed ${att.fileName} for account ${sourceAccountCode} does not tie to the printed statement summary. ${reconHeldReason}. Held for review — no journal entries posted, no statement_balances written.`,
-      module_reference: "document-processor",
-      related_id: documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: new Date().toISOString(),
-    });
-    console.warn(`[document-processor] reconciliation_mismatch doc=${documentId} account=${sourceAccountCode}: ${reconHeldReason}`);
-    return { jeCount: 0, suspenseCount: 0, held: true, error: `held_reconciliation_mismatch: ${reconHeldReason}` };
-  }
-
-  // Success path: record near-zero delta for audit trail.
-  await sb.from("documents").update({ reconciliation_delta: reconDelta }).eq("id", documentId);
-
-  // Write the statement header (opening/closing balance, period) to
-  // statement_balances first — independent of per-txn GL posting so the
-  // balance snapshot lands even if a downstream JE hiccups. Failures here
-  // are logged but non-fatal; the JE loop still runs.
-  const balWrite = await writeStatementBalance({
+  // ---- Reconciliation guard, duplicate-ingest guard, balance write, and
+  // per-transaction insert all live in _shared/statement_writer.ts as of
+  // 2026-08-11 (see that file's header). This is the second of the two
+  // hand-maintained twins to move onto it — llm-queue-drainer's
+  // drainBankStatementItem moved first, in the same piece of work. The
+  // duplicate-ingest guard below is NEW for this function: the old inline
+  // code here only ever checked reconciliation, never duplicate ingestion,
+  // so a statement that arrived twice (email attachment + Drive sweep, the
+  // two intake doors this guard exists for) could double-post transactions
+  // through THIS path even though llm-queue-drainer was already protected.
+  // Moving onto the shared writer closes that gap as a side effect of
+  // removing the duplication, not as a separate fix.
+  const w = await writeParsedStatement({
     agencyId: ctx.agencyId,
     documentId,
     accountCode: sourceAccountCode,
+    account: {
+      id: account.id,
+      businessEntityId: account.businessEntityId,
+      accountKind: account.accountKind,
+    },
     accountLast4: parsed.accountLast4,
-    statementPeriodStart: parsed.statementPeriod.start,
-    statementPeriodEnd: parsed.statementPeriod.end,
+    period: { start: parsed.statementPeriod.start, end: parsed.statementPeriod.end },
     openingBalance: parsed.openingBalance,
     closingBalance: parsed.closingBalance,
+    transactions: parsed.transactions.map((r) => ({
+      date: r.date,
+      payee: r.txn.payee,
+      memo: r.txn.memo,
+      signedAmount: r.txn.signedAmount,
+    })),
+    source: "document_processor",
   });
-  if (!balWrite.ok) {
-    console.warn(`[document-processor] statement_balance_write_failed doc=${documentId} account=${sourceAccountCode}: ${balWrite.error}`);
-  }
 
-  // ---- Write to statements (canon), NOT to a journal / ledger table -------
-  // D3 (finance rebuild, 2026-08-07): the ledger no longer gets written from
-  // here at all. This function's only job is landing raw statement rows in
-  // statements. Classification into the profit-and-loss ledger is a
-  // separate, later step (statement_gl_writer, built in Phase 3) that reads
-  // statements — it is not triggered inline per document. No suspense
-  // account, no classification, no journal entry, from this function.
-  let jeCount = 0;
-  const suspenseCount = 0; // no suspense concept in the new design (D3/D13)
-  for (const row of parsed.transactions) {
-    const amount = toStatementNativeAmount(account.accountKind, row.txn.signedAmount);
-    const { base, reference } = makeStatementReference(
-      sourceAccountCode, row.date, row.txn.payee, Math.abs(amount),
-    );
-    const description = row.txn.memo
-      ? `${row.txn.payee} — ${row.txn.memo}`
-      : row.txn.payee;
-
-    // legacy_source_table intentionally omitted. Migration
-    // finrebuild_e1_statements_legacy_source_table_nullable (2026-08-07)
-    // dropped its NOT NULL constraint with no default; NULL is the correct,
-    // intended value for live intake (means "not from the 2026-08-07
-    // merge"), not a sentinel to be filled in.
-    const { error: insErr } = await sb.from("statements").insert({
-      id: crypto.randomUUID(),
-      agency_id: ctx.agencyId,
-      business_entity_id: account.businessEntityId,
-      account_id: account.id,
-      account_kind: account.accountKind,
-      transaction_date: row.date,
-      description,
-      amount,
-      transaction_type: account.accountKind === "credit"
-        ? (amount >= 0 ? "charge" : "payment_or_credit")
-        : (amount >= 0 ? "deposit" : "withdrawal"),
-      reference_number: reference,
-      dedup_fingerprint: base,
-      source_document_id: documentId,
-    });
-    if (insErr) throw new Error(`statements insert failed: ${insErr.message}`);
-    jeCount += 1;
+  if (!w.ok) {
+    if (w.held === "reconciliation_mismatch") {
+      return { jeCount: 0, suspenseCount: 0, held: true, error: `held_reconciliation_mismatch: ${w.reason}` };
+    }
+    if (w.held === "duplicate_ingest") {
+      return { jeCount: 0, suspenseCount: 0, held: true, error: `duplicate_ingest: ${w.reason}` };
+    }
+    throw new Error(`statements insert failed: ${w.error}`);
   }
-  return { jeCount, suspenseCount };
+  return { jeCount: w.inserted, suspenseCount: 0 };
 }
 
 // Prefix for statements whose account cannot be determined. The chart of
