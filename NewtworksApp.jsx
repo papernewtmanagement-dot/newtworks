@@ -29,6 +29,7 @@ import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
 import Onboarding from "./src/modules/Onboarding.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
+import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
 import Trivia from "./src/modules/Trivia.jsx";
 import CourseGradebook from "./src/modules/CourseGradebook.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
@@ -765,6 +766,17 @@ export default function NewtworksApp() {
       })()
     : null;
 
+  // /schedule/<token> — public candidate interview self-booking page.
+  // Same access model as _assessRoute above: no auth gate, edge fn
+  // hiring-interview-scheduler is the sole DB gateway, token is the auth.
+  const _scheduleRoute = (typeof window !== "undefined")
+    ? (() => {
+        const p = (window.location.pathname || "").replace(/\/+$/, "") || "/";
+        const m = /^\/schedule\/([A-Za-z0-9._-]+)$/.exec(p);
+        return m ? { token: m[1] } : null;
+      })()
+    : null;
+
   // ── Auth gate state (Path 1) ──────────────────────────────────────────────
   // authState: "checking" | "out" | "in"
   const [authState, setAuthState] = useState("checking");
@@ -987,6 +999,10 @@ export default function NewtworksApp() {
   // the background — harmless, we render the assessment either way.
   if (_assessRoute) {
     return <CandidateAssessment candidateId={_assessRoute.candidateId} token={_assessRoute.token} />;
+  }
+
+  if (_scheduleRoute) {
+    return <InterviewScheduler token={_scheduleRoute.token} />;
   }
 
   // ── Auth gate render ───────────────────────────────────────────────────────
