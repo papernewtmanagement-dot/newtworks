@@ -88,7 +88,21 @@ function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurri
   const wholeDayRemoved = oneOffRemovals.some((r) => !r.start_time) ||
     recurring.some((r) => !r.start_time && recurringAppliesOn(r, dateISO, weekday));
 
-  return [...fixed, ...manual].map((slot) => {
+  const templated = [...fixed, ...manual];
+  const templatedKeys = new Set(templated.map((s) => timeToHHMMSS(s.h, s.m).slice(0, 5)));
+
+  // Any booked interview whose time doesn't match a fixed/manual slot
+  // (e.g. booked before the schedule was fixed) still needs to show up.
+  const extraScheduled = [];
+  for (const [key, candidate] of scheduledByKey) {
+    if (!key.startsWith(`${dateISO}|`)) continue;
+    const hm = key.split("|")[1];
+    if (templatedKeys.has(hm)) continue;
+    const [h, m] = hm.split(":").map(Number);
+    extraScheduled.push({ h, m, label: labelForTime(h, m), source: "scheduled-only", status: "scheduled", candidate });
+  }
+
+  const resolved = templated.map((slot) => {
     const key = `${dateISO}|${timeToHHMMSS(slot.h, slot.m).slice(0, 5)}`;
     const scheduled = scheduledByKey.get(key);
     if (scheduled) return { ...slot, status: "scheduled", candidate: scheduled };
@@ -99,6 +113,8 @@ function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurri
     if (recurringMatch) return { ...slot, status: "removed", recurringId: recurringMatch.id };
     return { ...slot, status: "open" };
   });
+
+  return [...resolved, ...extraScheduled].sort((a, b) => (a.h * 60 + a.m) - (b.h * 60 + b.m));
 }
 
 function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualSlot, onAddManualSlot, onClose }) {
