@@ -1,6 +1,7 @@
 import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CandidateDetail from "../components/CandidateDetail.jsx";
+import InterviewBlackoutManager from "../components/InterviewBlackoutManager.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
 import { fmtMoney } from "../lib/format.jsx";
 
@@ -2820,6 +2821,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
     { id:"finalists",  label:`Finalists (${closingApps.length})` },
     { id:"declined",   label:`Declined (${declined.length})` },
     { id:"former",     label:`Former (${former.length})` },
+    { id:"blackouts",  label:"Interview Blackouts" },
   ];
   return (
     <div>
@@ -2862,6 +2864,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
       )}
       {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
       {view === "former"     && <DeclinedTable declined={former}   onUpdate={onUpdate} emptyLabel="No former team members on file." />}
+      {view === "blackouts"  && <InterviewBlackoutManager />}
     </div>
   );
 };

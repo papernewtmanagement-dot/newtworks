@@ -153,7 +153,12 @@ export default function InterviewScheduler({ token }) {
             Join Google Meet link
           </a>
         )}
-        <p style={{ fontSize: 13, color: T?.slate500 || "#64748b", marginTop: 20 }}>
+        {payload?.prep_line && (
+          <p style={{ fontSize: 13, color: T?.slate600 || "#475569", marginTop: 20, background: T?.slate50 || "#f8fafc", padding: "10px 14px", borderRadius: 8 }}>
+            {payload.prep_line}
+          </p>
+        )}
+        <p style={{ fontSize: 13, color: T?.slate500 || "#64748b", marginTop: 12 }}>
           A confirmation email is on its way to you with these details. We look forward to speaking with you.
         </p>
       </>
@@ -167,9 +172,14 @@ export default function InterviewScheduler({ token }) {
       <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
         Hi {payload?.first_name || "there"} — pick a time
       </h2>
-      <p style={{ fontSize: 14, color: T?.slate500 || "#64748b", marginBottom: 20 }}>
+      <p style={{ fontSize: 14, color: T?.slate500 || "#64748b", marginBottom: 12 }}>
         About 35 minutes, over Google Meet. All times are Central.
       </p>
+      {payload?.prep_line && (
+        <p style={{ fontSize: 13, color: T?.slate600 || "#475569", marginBottom: 20, background: T?.slate50 || "#f8fafc", padding: "10px 14px", borderRadius: 8 }}>
+          {payload.prep_line}
+        </p>
+      )}
       {errorMsg && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", fontSize: 13, padding: "8px 12px", borderRadius: 8, marginBottom: 16 }}>
           {errorMsg}
