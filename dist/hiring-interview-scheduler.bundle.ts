@@ -756,6 +756,10 @@ async function getCalendarCreds(agencyId: string) {
   return { apiKey, userId, accountId };
 }
 
+async function getForwardEmail(agencyId: string): Promise<string | null> {
+  return await getSettingOrNull(agencyId, "interview_calendar_forward_email");
+}
+
 async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
   const creds = await getCalendarCreds(agencyId);
   if (!creds) return null;
@@ -1003,6 +1007,9 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
   const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
   const startLocalStr = formatChicago(chosen.start);
 
+  const forwardEmail = await getForwardEmail(agencyId);
+  const attendees = [...(c.email ? [c.email] : []), ...(forwardEmail ? [forwardEmail] : [])];
+
   const createRes = await callComposio({
     apiKey: creds.apiKey,
     userId: creds.userId,
@@ -1016,7 +1023,7 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
       timezone: TZ,
       event_duration_hour: 0,
       event_duration_minutes: INTERVIEW_MINUTES,
-      attendees: c.email ? [c.email] : [],
+      attendees,
       create_meeting_room: true,
       exclude_organizer: false,
       send_updates: true,
@@ -1055,6 +1062,40 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
 }
 
 // -------------------------------------------------------------------------
+// mode=refresh_offer  (internal, shared_secret gated)
+// -------------------------------------------------------------------------
+// Recomputes and overwrites interview_slots_offered for candidates whose
+// invite already went out under an older slot-selection algorithm — same
+// booking link/token, no new email, just corrected options if they haven't
+// booked yet. Extends the booking-link expiry from the refresh point.
+async function refreshOffer(agencyId: string, candidateIds: string[]): Promise<Response> {
+  const results: any[] = [];
+  for (const id of candidateIds) {
+    const { data: c, error } = await sb
+      .from("hiring_candidates")
+      .select("id, candidate_name, interview_invite_token, interview_booked_at")
+      .eq("id", id)
+      .eq("agency_id", agencyId)
+      .maybeSingle();
+    if (error || !c) { results.push({ id, action: "not_found" }); continue; }
+    if (!c.interview_invite_token) { results.push({ id, name: c.candidate_name, action: "skipped_no_invite" }); continue; }
+    if (c.interview_booked_at) { results.push({ id, name: c.candidate_name, action: "skipped_already_booked" }); continue; }
+
+    const slots = await computeOfferedSlots(agencyId);
+    if (!slots) { results.push({ id, name: c.candidate_name, action: "skipped_calendar_unavailable" }); continue; }
+
+    const { error: updErr } = await sb.from("hiring_candidates").update({
+      interview_slots_offered: slots,
+      interview_booking_expires_at: new Date(Date.now() + BOOKING_WINDOW_DAYS * 24 * 3600 * 1000).toISOString(),
+    }).eq("id", id);
+    if (updErr) { results.push({ id, name: c.candidate_name, action: "update_failed", error: updErr.message }); continue; }
+
+    results.push({ id, name: c.candidate_name, action: "refreshed", slots });
+  }
+  return jsonResponse({ ok: true, results });
+}
+
+// -------------------------------------------------------------------------
 // Router
 // -------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
@@ -1069,6 +1110,15 @@ Deno.serve(async (req: Request) => {
     const denied = await requireSharedSecret(agencyId, body.shared_secret);
     if (denied) return denied;
     return await processAssessed(agencyId);
+  }
+
+  if (mode === "refresh_offer") {
+    const denied = await requireSharedSecret(agencyId, body.shared_secret);
+    if (denied) return denied;
+    if (!Array.isArray(body.candidate_ids) || body.candidate_ids.length === 0) {
+      return jsonResponse({ ok: false, error: "missing candidate_ids array" }, 400);
+    }
+    return await refreshOffer(agencyId, body.candidate_ids);
   }
 
   if (mode === "get_offer") {
