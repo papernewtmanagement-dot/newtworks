@@ -971,6 +971,26 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
         </div>
       )}
 
+      {/* Answer trust chip + explainer — protocol-validity weighting,
+          2026-08-13. Reads protocol_validity_v/_label straight off
+          v_hiring_candidates (select * already includes them). */}
+      {detail?.protocol_validity_label && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", background: T.slate50, borderRadius: 6, boxSizing: "border-box" }}>
+          <span
+            style={{
+              fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, flexShrink: 0,
+              background: detail.protocol_validity_label === "low" ? T.redLt : detail.protocol_validity_label === "reduced" ? T.amberLt : T.slate200,
+              color: detail.protocol_validity_label === "low" ? T.red : detail.protocol_validity_label === "reduced" ? T.amber : T.slate700,
+            }}
+          >
+            Answer trust: {detail.protocol_validity_label === "low" ? "Low" : detail.protocol_validity_label === "reduced" ? "Reduced" : "High"}
+          </span>
+          <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.4 }}>
+            How much this candidate's self-description can be trusted, based on exaggeration and consistency checks. Puzzle (GMA) and scenario (SJT) sections are unaffected.
+          </div>
+        </div>
+      )}
+
       {/* Two-column layout: facets | role fit. Explicit grid-template-areas
           per breakpoint (see CD_ASSESS_GRID_CSS above) — single-column
           stack (facets above rolefit) on phone, side by side (facets left,
@@ -1104,7 +1124,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
               )}
               {bf.best_churn_risk && (
                 <div style={{ padding: "6px 10px", background: T.slate100, borderRadius: 6, marginBottom: 4, fontSize: 11, fontWeight: 600, color: T.slate700 }}>
-                  Churn-risk flag on best-fit role — reasoning ceiling exceeded, performance unaffected
+                  {Array.isArray(bf.best_gates_fired) && bf.best_gates_fired.includes("gma_above_band")
+                    ? "May be under-challenged in this seat — retention risk to probe in interview."
+                    : "Churn-risk flag on best-fit role — reasoning ceiling exceeded, performance unaffected"}
                 </div>
               )}
               {roleRows.map((r) => {
