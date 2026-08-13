@@ -1,0 +1,31 @@
+-- Close a real-data exposure found 2026-08-13 while root-causing the Growth
+-- tab timeout: v_hiring_candidates was not security_invoker, so it ran as
+-- its owner (postgres) and ignored the admin-only RLS policies
+-- (hiring_candidates_admin_read, staff_hiring_candidates_select) on the
+-- underlying hiring_candidates table. The view's own GRANT (SELECT to
+-- authenticated) meant any logged-in account — not just owner/manager —
+-- could read all candidate records through it: names, emails, phones,
+-- resume extracted text, notes, decline reasons.
+--
+-- Nothing was actually leaking through the app: every consumer of this view
+-- (Team.jsx Growth tab, CandidateDetail.jsx) is reached only through
+-- NewtworksApp's ADMIN_ROLES gate. The base table itself was already
+-- correctly locked to admins. The view was the only place the restriction
+-- wasn't enforced.
+--
+-- Consumer audit before applying (2026-08-13):
+--   - Team.jsx: 2 reads (res_composite, assessment_composite badges) —
+--     admin-gated route, RLS-consistent after this change.
+--   - CandidateDetail.jsx: 6 single-row reads by id — same gate.
+--   - InterviewScheduler.jsx, v1-assessment edge function (candidate-facing,
+--     token/public flow): confirmed to run on SERVICE_ROLE_KEY, which
+--     bypasses RLS regardless of view invoker settings — unaffected.
+--   - anon has NO grant on v_hiring_candidates at all (only on the base
+--     hiring_candidates table, for the service-role-mediated public flow) —
+--     confirmed via information_schema.role_table_grants — so no
+--     unauthenticated path touches this view either way.
+--
+-- Verified post-change: a real non-admin staff login (role='staff') now
+-- gets 0 rows from the view; the owner login still gets all 299 rows with
+-- both composite columns intact.
+ALTER VIEW public.v_hiring_candidates SET (security_invoker = true);
