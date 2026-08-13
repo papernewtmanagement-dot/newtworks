@@ -2784,7 +2784,7 @@ const HypotheticalHireForecast = () => {
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry }) => {
-  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former"]);
+  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots"]);
 
   // Distinguish "still fetching" and "fetch failed" from a genuinely empty
   // pipeline — all three used to render as the same blank board.
@@ -2880,32 +2880,107 @@ export default function Team() {
   const [applicantsError,   setApplicantsError]   = useState(false);
   const [applicantsRetryTick, setApplicantsRetryTick] = useState(0);
 
-  // Load applicants from live Supabase table. Empty result (no error) yields
-  // empty pipeline — that's a legitimate state. A FAILED fetch is not: prior
-  // version silently swallowed any error and left `applicants` at its initial
-  // [] forever with no loading/error indicator, so the kanban looked exactly
-  // like "no candidates" whether the query genuinely returned zero rows or
-  // just failed. One retry is attempted automatically; if that also fails,
-  // applicantsError flips true so the Growth tab shows a retry affordance
-  // instead of a blank board. (Root-caused 2026-08-05 — bug report: "growth
-  // tab kanban often loads empty, refresh fixes it.")
+  // Load applicants in TWO passes so the board can never be held hostage by
+  // scoring math.
+  //
+  // Pass 1 (board rows) reads the BASE table hiring_candidates — stored
+  // columns only, no computed scores, ~5ms. This is the pass that clears
+  // `loading`, so the kanban draws immediately. It also runs under the
+  // table's own admin-only read rule, which the view does not enforce.
+  //
+  // Pass 2 (score badges) fetches the two computed composites off
+  // v_hiring_candidates and merges them into the rows already on screen.
+  // res_composite is cheap for everyone. assessment_composite is NOT, so it
+  // is requested ONLY for candidates who actually finished an assessment
+  // (assessment_completed_at IS NOT NULL) — every other row is structurally
+  // guaranteed to be null there anyway, so asking for it was pure waste.
+  //
+  // WHY, root-caused 2026-08-13: the previous single query asked
+  // v_hiring_candidates for assessment_composite across every candidate on
+  // file. That column is not stored — reading it runs the full seven-role fit
+  // engine for that candidate. Measured: the 271 candidates with no
+  // assessment data cost 18ms in total, while the 28 with a COMPLETED
+  // assessment cost 841ms — about 30ms and 3,700 shared buffer pages each.
+  // Whole query 1.54s warm, and past PostgREST's 8s statement ceiling
+  // whenever the cache was cold, which came back as HTTP 500. Confirmed in
+  // the logs: repeated "GET | 500 | .../v_hiring_candidates?select=...
+  // assessment_composite..." paired with "canceling statement due to
+  // statement timeout" in postgres_logs at matching timestamps.
+  //
+  // The 2026-08-05 auto-retry (kept below) masked this rather than fixing it:
+  // the retry sometimes landed on a warm cache, which is exactly the "loads
+  // empty, refresh fixes it" symptom. The real cost grew ~30ms per assessment
+  // completed and would have killed the tab outright at roughly 270 of them.
+  // 169 candidates currently sit at assessment_sent, so this was on a clock.
+  //
+  // Failure behavior: a failed pass 1 still raises the retry affordance. A
+  // failed pass 2 leaves the badges blank and logs — it never breaks the board.
   useEffect(() => {
     if (!supabase || !AGENCY_ID) return;
     let cancelled = false;
 
+    const PIPELINE_STATUSES = ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired","declined","former"];
+
+    // Pass 2 — computed score badges, merged in when they land.
+    const loadScoreBadges = async () => {
+      const [resumeRes, assessRes] = await Promise.allSettled([
+        supabase
+          .from("v_hiring_candidates")
+          .select("id, res_composite")
+          .eq("agency_id", AGENCY_ID)
+          .in("status", PIPELINE_STATUSES),
+        supabase
+          .from("v_hiring_candidates")
+          .select("id, assessment_composite")
+          .eq("agency_id", AGENCY_ID)
+          .in("status", PIPELINE_STATUSES)
+          .not("assessment_completed_at", "is", null),
+      ]);
+      if (cancelled) return;
+
+      const patch = {};
+      const collect = (settled, key) => {
+        if (settled.status !== "fulfilled") {
+          console.error(`Failed to load ${key} badges:`, settled.reason);
+          return;
+        }
+        if (settled.value.error) {
+          console.error(`Failed to load ${key} badges:`, settled.value.error);
+          return;
+        }
+        (settled.value.data || []).forEach(r => {
+          if (r?.id == null) return;
+          if (!patch[r.id]) patch[r.id] = {};
+          patch[r.id][key] = r[key];
+        });
+      };
+      collect(resumeRes, "res_composite");
+      collect(assessRes, "assessment_composite");
+
+      if (Object.keys(patch).length === 0) return;
+      setApplicants(prev => prev.map(a => (patch[a.id] ? { ...a, ...patch[a.id] } : a)));
+    };
+
+    // Pass 1 — board rows. Empty result (no error) yields an empty pipeline;
+    // that is a legitimate state. A FAILED fetch is not: an older version
+    // silently swallowed the error and left `applicants` at [] forever with no
+    // loading or error indicator, so the kanban looked exactly like "no
+    // candidates" whether the query returned zero rows or just failed. One
+    // retry is attempted automatically; if that also fails, applicantsError
+    // flips true so the Growth tab shows a retry affordance, not a blank board.
     const fetchApplicants = async (isRetry) => {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
-        .from("v_hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assessment_composite, res_composite, assertiveness, compassion, resume_document_id, resume_url, reliability, response_distortion")
+        .from("hiring_candidates")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assertiveness, compassion, resume_document_id, resume_url, reliability, response_distortion")
         .eq("agency_id", AGENCY_ID)
-        .in("status", ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired","declined","former"])
+        .in("status", PIPELINE_STATUSES)
         .order("created_at", { ascending: false });
 
       if (cancelled) return;
 
       if (error) {
-        console.error("Failed to load hiring pipeline (v_hiring_candidates):", error);
+        console.error("Failed to load hiring pipeline (hiring_candidates):", error);
         if (!isRetry) {
           // One automatic retry after a beat — covers transient network/session
           // blips without making the user do anything.
@@ -2923,12 +2998,17 @@ export default function Team() {
         first_name: a.first_name || (a.candidate_name ? a.candidate_name.split(" ")[0] : "Unknown"),
         last_name:  a.last_name  || (a.candidate_name ? a.candidate_name.split(" ").slice(1).join(" ") : ""),
         position:   a.position || "—",
+        // Filled by pass 2. Declared here so the badge render and the Declined
+        // table sort see the key rather than undefined.
+        res_composite: null,
+        assessment_composite: null,
         interview_notes: null,
         rating: null,
       }));
       setApplicants(normalized);
       setApplicantsLoading(false);
       setApplicantsError(false);
+      loadScoreBadges();
     };
 
     fetchApplicants(false);
