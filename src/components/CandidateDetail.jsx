@@ -2585,6 +2585,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                 // Assessment layer sources composite/capability/character/commitment from v_hiring_candidates
                 // (populated by role-fit click). Score is 0-100 like Resume. Verdict computed by layerVerdict.
                 { key: "assessment", label: "Assessment", score: assessmentLayerScore, verdict: null },
+                // Screen layer (5th scored layer, added 2026-08-13) — stint-5 free-text
+                // scoring. No capability term (structurally absent — writing quality is
+                // never scored). Score/verdict come straight off verdict_overall; the
+                // generic cell-rendering branch below reads matrix.<construct>.screen,
+                // which naturally renders the capability cell as an em-dash since
+                // matrix.capability.screen is always null.
+                { key: "screen",     label: "Screen",     score: threeConstruct.screen_score,     verdict: threeConstruct.screen_verdict },
                 { key: "interview",  label: "Interview",  score: detail?.iv_composite,           verdict: detail?.interview_analysis?.verdict },
                 { key: "reference",  label: "Reference",  score: threeConstruct.reference_score,  verdict: threeConstruct.reference_verdict },
               ];
@@ -2808,6 +2815,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     generateCustomProbes, probesGenerating, probesError,
                                     buildInterviewPlan, planBuilding, planError,
                                   })}
+                                  {layer.key === "screen" && (
+                                    <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+                                      Screen layer scores the written stint-5 answers above (see the
+                                      Assessment layer's screen answers section) for job-history candor,
+                                      accountability, role-interest specificity, and challenge realism.
+                                      No capability score — writing quality is never scored here.
+                                    </div>
+                                  )}
                                   {layer.key === "reference" && (
                                     <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
                                       Reference layer detail — coming next.
