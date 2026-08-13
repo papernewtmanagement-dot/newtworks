@@ -1,7 +1,18 @@
 // deno-lint-ignore-file no-explicit-any
-// Edge function: generate-custom-probes  (v12.0 — facet-direct "Areas to press on")
+// Edge function: generate-custom-probes  (v13.0)
+// framework-matches layer retired 2026-08-13 — engine (hiregauge_evaluate_candidate)
+// dropped in CTS purge; facet-direct press-on system supersedes it.
 //
-// Changes from v11.0:
+// Changes from v12.0:
+//   - Removed the hiregauge_evaluate_candidate RPC call, framework_readout
+//     construction, the FRAMEWORK MATCHES block in the user message prompt,
+//     the framework_matches_n output stamp, and the "Archetype probes" /
+//     "Motivation probe" / "Structure fit" sections (all fed only by that
+//     dropped engine) from SYSTEM_PROMPT and SECTION_PRIORITY. "Areas to
+//     press on" (facet-direct) and "Validity follow-up" (reliability, read
+//     directly off the candidate row) are unaffected and stay exactly as is.
+//
+// Changes from v11.0 (historical, retained for context):
 //   - Migration F re-key (planning-authorized 2026-08-07, F.1 of the F
 //     companion package). The two-hop selection this function used --
 //     competency weight (hiregauge_competency_weights) -> hand-copied
@@ -68,9 +79,6 @@ const SECTION_PRIORITY: Record<string, number> = {
   "Resume signals":                100,
   "Character floor verification":   90,
   "Validity follow-up":             70,
-  "Archetype probes":               60,
-  "Motivation probe":               50,
-  "Structure fit":                  40,
 };
 
 
@@ -257,16 +265,12 @@ Rules for the probes you produce:
    2. "Character floor verification" — only fire for character areas the framework flagged concerning. If nothing is concerning, skip this section entirely. Target 0-3.
    3. "Areas to press on" — see the AREAS TO PRESS ON block in the user message, if present. These are FOLLOW-UP probes only, appended after the fixed core question set — never a substitute for it. One probe per listed facet, up to the number listed. If the block is absent, skip this section entirely — do not invent one. Target 0-4.
    4. "Validity follow-up" — moderate/low reliability. Target 0-2.
-   5. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
-   6. "Motivation probe" — money_motivator match. Target 0-1.
-   7. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
-3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:reliability=moderate", "resume:self-superiority-language"). ALL FOUR FIELDS ARE REQUIRED on every probe.
+3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "validity:reliability=moderate", "resume:self-superiority-language"). ALL FOUR FIELDS ARE REQUIRED on every probe.
 4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age). This applies to EVERY section, including Areas to press on — a facet flag is never grounds to ask about a protected characteristic, and none of the facets in that block relate to one.
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
-6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate's actual numbers and situation.
-7. If resume text IS provided: Resume signals section MUST be included AND MUST be the top-priority section. Reference the exact resume phrasing when you can. Never collapse the entire output down to only resume signals — trait triggers and character floor concerns still need to be probed.
-8. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
-9. DO NOT include warm-up questions ("tell me about your last role", "why insurance", "why our agency"). Those are asked before the deep-dive. Your output is the deep-dive only.
+6. If resume text IS provided: Resume signals section MUST be included AND MUST be the top-priority section. Reference the exact resume phrasing when you can. Never collapse the entire output down to only resume signals — trait triggers and character floor concerns still need to be probed.
+7. If resume text is unavailable, do NOT invent resume-specific probes. Note it in "notes" instead.
+8. DO NOT include warm-up questions ("tell me about your last role", "why insurance", "why our agency"). Those are asked before the deep-dive. Your output is the deep-dive only.
 
 AREAS TO PRESS ON — how to use (if the block appears in the user message):
 - Each entry is a role-relevant facet where this candidate scored at or below the 20th percentile or at or above the 80th percentile against typical adults, in a direction the specific role weights.
@@ -307,10 +311,7 @@ VALIDITY (band label; framework validity_rule matches will fire if concerning):
   reliability: ${context.a.reliability ?? "—"}
 
 CLAUDE RESUME SUMMARY (from intake analysis):
-${context.a.claude_summary || "(no resume summary on file)"}
-
-FRAMEWORK MATCHES (from hiregauge_evaluate_candidate):
-${context.framework_readout}${pressOnBlock}
+${context.a.claude_summary || "(no resume summary on file)"}${pressOnBlock}
 
 RESUME TEXT: ${context.resume_text ? context.resume_text : "(not available — do not fabricate resume-specific probes, note this in output.notes)"}
 
@@ -346,11 +347,6 @@ Deno.serve(async (req: Request) => {
     const { data: a, error: aErr } = await supa.from("hiring_candidates").select("*").eq("id", assessmentId).maybeSingle();
     if (aErr) return json({ error: "load candidate: " + aErr.message }, 500);
     if (!a)   return json({ error: "candidate not found" }, 404);
-    const { data: fw, error: fwErr } = await supa.rpc("hiregauge_evaluate_candidate", { p_assessment_id: assessmentId });
-    if (fwErr) console.warn("framework rpc error:", fwErr.message);
-    const framework_readout = (Array.isArray(fw) && fw.length > 0)
-      ? fw.map((r: any) => `  - [${r.out_rule_type}] ${r.out_rule_name} (${r.out_match_confidence || "?"}): ${r.out_short_label || ""}\n      probe: ${r.out_interview_probe || "(none)"}`).join("\n")
-      : "(no framework rules matched)";
     const resumeFetch = await fetchResumeText(a.agency_id, a.resume_url, a.resume_extracted_text);
 
     // MIGRATION F re-key: facet-direct "Areas to press on". best-fit role ->
@@ -377,7 +373,7 @@ Deno.serve(async (req: Request) => {
 
     const context = {
       candidate_name: [a.first_name, a.last_name].filter(Boolean).join(" ") || a.candidate_name || "Candidate",
-      position: a.position, framework_readout,
+      position: a.position,
       resume_text: resumeFetch.text, a, press_on_facets: pressOnFacets,
     };
     const groqKey = await getSettingOrNull(a.agency_id, "groq_api_key");
@@ -388,12 +384,11 @@ Deno.serve(async (req: Request) => {
     const probes = capped.trimmed;
 
     // Stamp metadata
-    probes.version              = 12.0;
+    probes.version              = 13.0;
     probes.model                = model;
     probes.resume_analyzed      = Boolean(context.resume_text);
     probes.resume_source        = resumeFetch.source;
     probes.resume_length_chars  = context.resume_text?.length ?? 0;
-    probes.framework_matches_n  = Array.isArray(fw) ? fw.length : 0;
     probes.time_budget_minutes  = TIME_BUDGET_MINUTES;
     probes.probe_count_target   = PROBE_COUNT_TARGET;
     probes.probe_count_hard_max = PROBE_COUNT_HARD_MAX;
