@@ -2763,18 +2763,30 @@ const BankSection = ({ data }) => {
   }
 
   // Group accounts by owning entity in BFS order from currentEntityId.
+  // PaperNewt LLC + Peter Story State Farm (PSS) share one "Business" header
+  // on this tab per Peter directive 2026-08-12 — they already carry per-card
+  // entity tags, so nothing scans as ambiguous even though the header is
+  // shared. Personal / Eriosto / Steward keep their own entity headers.
+  const BUSINESS_GROUP_ENTITY_IDS = new Set([BUSINESS_ENTITY_ID, "b2222222-2222-2222-2222-222222222222"]);
+  const groupKeyFor = (eid) => BUSINESS_GROUP_ENTITY_IDS.has(eid) ? "business" : eid;
+  const groupLabelFor = (key) => key === "business" ? "Business" : (entitiesById[key]?.name || "Unknown entity");
   const order = orderedDescendants(ctx.currentEntityId, allEntities);
   const groups = new Map();
-  for (const eid of order) groups.set(eid, []);
+  const groupOrder = [];
+  for (const eid of order) {
+    const key = groupKeyFor(eid);
+    if (!groups.has(key)) { groups.set(key, []); groupOrder.push(key); }
+  }
   const orphans = [];  // accounts with a stamp we can't resolve (defensive)
   for (const a of bankAccounts) {
-    if (a.businessEntityId && groups.has(a.businessEntityId)) {
-      groups.get(a.businessEntityId).push(a);
+    const key = a.businessEntityId ? groupKeyFor(a.businessEntityId) : null;
+    if (key && groups.has(key)) {
+      groups.get(key).push(a);
     } else {
       orphans.push(a);
     }
   }
-  const nonEmpty = Array.from(groups.entries()).filter(([, accts]) => accts.length > 0);
+  const nonEmpty = groupOrder.map(k => [k, groups.get(k)]).filter(([, accts]) => accts.length > 0);
 
   const GroupHeader = ({ label, count, subtotal }) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 2px", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
@@ -2789,11 +2801,10 @@ const BankSection = ({ data }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {nonEmpty.map(([eid, accts]) => {
-        const e = entitiesById[eid];
         const subtotal = accts.reduce((s, a) => s + (a?.balance || 0), 0);
         return (
           <div key={eid} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <GroupHeader label={e?.name || "Unknown entity"} count={accts.length} subtotal={subtotal} />
+            <GroupHeader label={groupLabelFor(eid)} count={accts.length} subtotal={subtotal} />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10 }}>
               {accts.map(renderCard)}
             </div>
