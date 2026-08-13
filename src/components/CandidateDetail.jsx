@@ -957,40 +957,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
         </div>
       )}
 
-      {/* Faking-good caveat — Ones, Viswesvaran & Reiss 1996: never adjust
-          scores for impression management, flag for interview/reference
-          verification instead. Step 8, 2026-08-07. */}
-      {(imBand === "elevated" || imBand === "very_elevated") && (
-        <div style={{
-          padding: "10px 12px", background: T.amberLt, borderRadius: 6,
-          borderLeft: `4px solid ${T.amber}`, boxSizing: "border-box",
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>
-            Self-ratings ran high — verify flagged areas in interview and references.
-          </div>
-        </div>
-      )}
-
-      {/* Answer trust chip + explainer — protocol-validity weighting,
-          2026-08-13. Reads protocol_validity_v/_label straight off
-          v_hiring_candidates (select * already includes them). */}
-      {detail?.protocol_validity_label && (
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", background: T.slate50, borderRadius: 6, boxSizing: "border-box" }}>
-          <span
-            style={{
-              fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, flexShrink: 0,
-              background: detail.protocol_validity_label === "low" ? T.redLt : detail.protocol_validity_label === "reduced" ? T.amberLt : T.slate200,
-              color: detail.protocol_validity_label === "low" ? T.red : detail.protocol_validity_label === "reduced" ? T.amber : T.slate700,
-            }}
-          >
-            Answer trust: {detail.protocol_validity_label === "low" ? "Low" : detail.protocol_validity_label === "reduced" ? "Reduced" : "High"}
-          </span>
-          <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.4 }}>
-            How much this candidate's self-description can be trusted, based on exaggeration and consistency checks. Puzzle (GMA) and scenario (SJT) sections are unaffected.
-          </div>
-        </div>
-      )}
-
       {/* Two-column layout: facets | role fit. Explicit grid-template-areas
           per breakpoint (see CD_ASSESS_GRID_CSS above) — single-column
           stack (facets above rolefit) on phone, side by side (facets left,
@@ -1014,71 +980,16 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
               const nItems = row?.n_items_scored;
               const insufficient = nItems != null && nItems < 4;
               const pct = pctByFacet[trait];
-              const reworded = !!rewordedByFacet[trait];
-              const pool = poolByFacet[trait]; // undefined until pool_n >= 2
 
-              // WHEN items_reworded_after_norm = false — unchanged from today.
-              if (!reworded) {
-                return (
-                  <AssessRow
-                    key={trait}
-                    label={label}
-                    value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
-                    band="none"
-                  />
-                );
-              }
-
-              if (insufficient) {
-                return (
-                  <AssessRow key={trait} label={label} value="insufficient data" band="none" />
-                );
-              }
-
-              const poolLine = pool
-                ? `${pool.pool_position} of ${pool.pool_n} applicants` +
-                  (pool.pool_n >= 30 ? ` · ${pool.pool_percentile}th in our pool` : "")
-                : null;
-
-              // WHEN items_reworded_after_norm = true AND pool_is_primary = true —
-              // pool position leads, published-norm percentile is the secondary line.
-              if (pool?.pool_is_primary) {
-                return (
-                  <AssessRow
-                    key={trait}
-                    label={label}
-                    value={pool.pool_percentile == null ? "—" : `${pool.pool_percentile}th in our applicant pool (${pool.pool_position} of ${pool.pool_n})`}
-                    band="none"
-                    subline={pct == null ? undefined : `${pct}th percentile (published average, shifted)`}
-                  />
-                );
-              }
-
-              // WHEN items_reworded_after_norm = true AND pool_is_primary = false
-              // (includes no pool data yet, pool_n < 2) — published-norm percentile
-              // leads with the shifted-label suffix; pool line (if any) is secondary.
               return (
                 <AssessRow
                   key={trait}
                   label={label}
-                  value={pct == null ? "—" : pct}
-                  extra={pct == null ? undefined : "(shifted — see note)"}
+                  value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
                   band="none"
-                  subline={poolLine || undefined}
                 />
               );
             })}
-          </div>
-        )}
-        {/* Neutralization note — shown once per facet section, never per
-            facet. Batch 0 / 0E copy, verbatim per planning-thread spec. */}
-        {!pctRowsLoading && facetRows != null && anyRewordedVisible && (
-          <div style={{ fontSize: 10, color: T.slate500, marginTop: 8, lineHeight: 1.4 }}>
-            Questions for these facets were reworded so candidates can't guess the preferred answer.
-            That makes scores run lower than the published adult averages they're compared against,
-            so treat the percentile as a way to rank candidates against each other, not as a statement
-            about where someone sits among adults generally. Applicant-pool position becomes the main
-            number once we have 100 completed assessments.
           </div>
         )}
       </div>
@@ -1171,24 +1082,32 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
           );
         })()}
 
-        {/* Reliability / GMA / SJT — moved under the Role Fit rows and
-            color-coded (Peter directive 2026-08-13). Previously rendered
-            uncolored above the two-column grid (T4, Step 8, 2026-08-07).
-            Reliability bands off detail.reliability (canonical band source
-            — the same field V2_RELIABILITY_BAND already used elsewhere for
-            this fired-count-derived score). GMA/SJT are percent-correct
-            scores banded with the same >=50 green / 40-49 yellow / <40 red
-            thresholds already used for SJT (2026-08-06 session) and for
-            role-fit/competency scores generally on this page — provisional
-            the same way those are (see OQ 12ba414d), not yet locally
-            validated for GMA specifically. */}
-        {(reliabilityScore != null || gmaPct != null || sjtScore != null) && (
+        {/* Reliability / GMA / SJT / Impression Management — moved under the
+            Role Fit rows and color-coded (Peter directive 2026-08-13). GMA
+            sits above Reliability, and Impression Management (labeled here
+            for what it measures — self-report faking-good, formerly shown
+            as a standalone callout box) sits below Reliability as a plain
+            row in the same format, per Peter directive 2026-08-13. Reads
+            detail.impression_management (0-100 raw) with
+            IM_BAND_COLOR(imBand) for the typical/elevated/very_elevated
+            coloring. Reliability bands off detail.reliability (canonical
+            band source — the same field V2_RELIABILITY_BAND already used
+            elsewhere for this fired-count-derived score). GMA/SJT are
+            percent-correct scores banded with the same >=50 green / 40-49
+            yellow / <40 red thresholds already used for SJT (2026-08-06
+            session) and for role-fit/competency scores generally on this
+            page — provisional the same way those are (see OQ 12ba414d),
+            not yet locally validated for GMA specifically. */}
+        {(reliabilityScore != null || gmaPct != null || sjtScore != null || detail?.impression_management != null) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+            {gmaPct != null && (
+              <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} />
+            )}
             {reliabilityScore != null && (
               <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} max={100} />
             )}
-            {gmaPct != null && (
-              <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} />
+            {detail?.impression_management != null && (
+              <AssessRow label="Impression Management" value={detail.impression_management} band={IM_BAND_COLOR(imBand)} max={100} />
             )}
             {sjtScore != null && (
               <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
