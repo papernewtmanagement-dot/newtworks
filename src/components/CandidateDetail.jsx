@@ -903,8 +903,10 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
   }
   // Facet percentiles vs typical adults — hiregauge_candidate_facet_percentiles,
   // computed on read, never stored. Replaces raw facet_score display (Step 8,
-  // 2026-08-07). A parked facet (no seeded norm, e.g. competitiveness) returns
-  // percentile null and renders as an em dash.
+  // 2026-08-07). Any facet with no row in hiregauge_facet_norms returns
+  // percentile null and renders as an em dash — as of 2026-08-13 all facets,
+  // including competitiveness (Houston et al. 2002 Revised Competitiveness
+  // Index), have a seeded norm.
   const pctRowsLoading = v2Percentiles == null;
   const pctRows = Array.isArray(v2Percentiles) ? v2Percentiles : null;
   const pctByFacet = {};
