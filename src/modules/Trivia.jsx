@@ -26,6 +26,12 @@ import { useTabParam } from "../lib/routing.jsx";
 // Duel, Training, The Grid, Trivia Night). Review/Approved/Reports/
 // Gates stay admin-gated in-module. The planning thread authors
 // items separately; no question-writing UI lives here.
+//
+// Spin & Solve wave step 3 — the seventh mode: a hidden coverage term guessed
+// letter by letter, then the meaning question. It has its OWN runner
+// (PhraseRunner) and its own server-drawn selection path
+// (quiz_start_spin_attempt), once per Central-time day. The shared
+// multiple-choice QuestionRunner is untouched by it.
 // ============================================================
 
 const s = {
@@ -193,6 +199,43 @@ const s = {
     };
   },
   gridRunningTotal: { fontSize: 13, fontWeight: 700, color: T.slate800, marginTop: 10, textAlign: "right" },
+  phraseBoard: {
+    display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center",
+    padding: "14px 8px", marginBottom: 12, background: T.slate50,
+    border: `1px solid ${T.slate200}`, borderRadius: 8, boxSizing: "border-box",
+  },
+  phraseWord: { display: "flex", gap: 4, flexWrap: "nowrap" },
+  phraseTile: (shown) => ({
+    width: 24, height: 32, display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 15, fontWeight: 700, borderRadius: 4, boxSizing: "border-box",
+    color: shown ? T.slate900 : T.slate400,
+    background: shown ? T.white : "transparent",
+    border: `1px solid ${shown ? T.slate300 : "transparent"}`,
+    borderBottom: `2px solid ${T.slate400}`,
+  }),
+  phrasePunct: {
+    width: 12, height: 32, display: "flex", alignItems: "flex-end", justifyContent: "center",
+    fontSize: 15, fontWeight: 700, color: T.slate600, boxSizing: "border-box",
+  },
+  phraseStatusRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    gap: 8, flexWrap: "wrap", marginBottom: 8, fontSize: 12, color: T.slate600,
+  },
+  solveRow: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 },
+  letterGrid: {
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(38px, 1fr))",
+    gap: 6, marginBottom: 10,
+  },
+  letterBtn: (state) => {
+    const base = {
+      padding: "10px 0", fontSize: 14, fontWeight: 700, borderRadius: 6,
+      cursor: "pointer", fontFamily: "inherit", boxSizing: "border-box",
+      background: T.white, color: T.slate800, border: `1px solid ${T.slate300}`,
+    };
+    if (state === "hit") return { ...base, background: T.greenLt, borderColor: T.green, color: T.green, cursor: "default" };
+    if (state === "miss") return { ...base, background: T.slate100, borderColor: T.slate200, color: T.slate400, cursor: "default" };
+    return base;
+  },
 };
 
 const DIFFICULTY_TINT = { basic: T.green, intermediate: T.amber, advanced: T.red };
@@ -871,11 +914,20 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const nightAnswerFiredRef = useRef(false);
   const nightQuestionIndexRef = useRef(null);
 
+  // Spin & Solve (Spin and Solve wave, step 3)
+  const [spinPhase, setSpinPhase] = useState("checking"); // checking | not_started | in_progress | playing | finishing | finished | error
+  const [spinError, setSpinError] = useState(null);
+  const [spinAttempt, setSpinAttempt] = useState(null);
+  const [spinItemsById, setSpinItemsById] = useState({});
+  const [spinRemainingIds, setSpinRemainingIds] = useState([]);
+  const [spinResult, setSpinResult] = useState(null);
+  const [spinTermCount, setSpinTermCount] = useState(null);
+
   // ── Loaders ──
   const loadModesAndPool = useCallback(async () => {
     try {
       const [modesRes, poolRes] = await Promise.all([
-        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final", "the_grid"]),
+        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final", "the_grid", "spin_and_solve"]),
         supabase.from("quiz_items").select("id, shape")
           .eq("agency_id", AGENCY_ID).eq("status", "approved").eq("report_blocked", false),
       ]);
@@ -1101,6 +1153,51 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   }, []);
 
+  // How many hidden-term questions are approved right now. Scoped explicitly
+  // rather than through the row rules, for the same reason The Grid's count is:
+  // an agency admin's row rules are unfiltered, so leaning on them would count
+  // retired and draft terms too. quiz_start_spin_attempt stays the authority —
+  // this is only the card's hint.
+  const loadSpinAvailability = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from("quiz_items").select("id")
+        .eq("agency_id", AGENCY_ID).eq("status", "approved")
+        .eq("report_blocked", false).eq("shape", "phrase")
+        .not("phrase_answer", "is", null);
+      if (error) throw error;
+      setSpinTermCount((data || []).length);
+    } catch (ex) {
+      // non-fatal — the card reads "not enough terms yet" if this stays null
+    }
+  }, []);
+
+  const loadSpinStatus = useCallback(async () => {
+    if (!userId) return;
+    setSpinPhase("checking");
+    setSpinError(null);
+    try {
+      const today = ctToday();
+      const { data: row, error } = await supabase.from("quiz_attempts").select("*")
+        .eq("team_member_id", userId).eq("mode_key", "spin_and_solve").eq("attempt_day", today)
+        .maybeSingle();
+      if (error) throw error;
+      if (!row) {
+        setSpinAttempt(null);
+        setSpinPhase("not_started");
+      } else if (row.finished_at) {
+        setSpinAttempt(row);
+        setSpinResult({ correct_count: row.correct_count, question_count: row.question_count, points_earned: row.points_earned });
+        setSpinPhase("finished");
+      } else {
+        setSpinAttempt(row);
+        setSpinPhase("in_progress");
+      }
+    } catch (ex) {
+      setSpinError(ex?.message || "Could not check today's game.");
+      setSpinPhase("error");
+    }
+  }, [userId]);
+
   useEffect(() => { loadModesAndPool(); }, [loadModesAndPool]);
   useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
   useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
@@ -1109,6 +1206,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
   useEffect(() => { loadGridAvailability(); }, [loadGridAvailability]);
   useEffect(() => { loadGridStatus(); }, [loadGridStatus]);
   useEffect(() => { loadNightActive(); }, [loadNightActive]);
+  useEffect(() => { loadSpinAvailability(); }, [loadSpinAvailability]);
+  useEffect(() => { loadSpinStatus(); }, [loadSpinStatus]);
 
   // Poll quiz_night_state every 2s while a session is known and live.
   // Cleared on unmount, and stopped the moment status is finished/abandoned
@@ -1366,6 +1465,89 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridAnsweredByItem, gridBoard, gridPhase, gridAttempt]);
+
+  // ── Spin & Solve actions ──
+  const beginPlayingSpin = async (attempt) => {
+    const allIds = (attempt?.context?.item_ids) || [];
+    const [ansRes, itemsMap] = await Promise.all([
+      supabase.from("quiz_answers").select("item_id").eq("attempt_id", attempt.id),
+      loadItemsWithOptions(allIds),
+    ]);
+    if (ansRes.error) throw ansRes.error;
+
+    const done = new Set((ansRes.data || []).map(r => r.item_id));
+    const remaining = allIds.filter(id => !done.has(id));
+
+    setSpinAttempt(attempt);
+    setSpinItemsById(itemsMap);
+    setSpinRemainingIds(remaining);
+
+    if (remaining.length === 0) {
+      await finishSpin(attempt.id);
+    } else {
+      setSpinPhase("playing");
+    }
+  };
+
+  const startSpin = async () => {
+    setSpinError(null);
+    setSpinPhase("checking");
+    try {
+      const { data: attemptId, error } = await supabase.rpc("quiz_start_spin_attempt");
+      if (error) {
+        setSpinError(error.message);
+        setSpinPhase("not_started");
+        return;
+      }
+      const { data: row, error: fetchErr } = await supabase
+        .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      await beginPlayingSpin(row);
+    } catch (ex) {
+      setSpinError(ex?.message || "Could not start the game.");
+      setSpinPhase("error");
+    }
+  };
+
+  const resumeSpin = async () => {
+    if (!spinAttempt) return;
+    setSpinError(null);
+    setSpinPhase("checking");
+    try {
+      await beginPlayingSpin(spinAttempt);
+    } catch (ex) {
+      setSpinError(ex?.message || "Could not resume the game.");
+      setSpinPhase("error");
+    }
+  };
+
+  // The browser reports FACTS about the hidden-term half — solved or not, and
+  // how many wrong guesses it took. quiz_finish_attempt turns those into the
+  // solve bonus. No point total is ever sent up from here.
+  const submitSpinAnswer = async (itemId, chosenOptionId, secondsTaken, phraseSolved, phraseMisses) => {
+    const { error } = await supabase.from("quiz_answers").insert({
+      attempt_id: spinAttempt.id,
+      item_id: itemId,
+      chosen_option_id: chosenOptionId,
+      seconds_taken: secondsTaken,
+      phrase_solved: !!phraseSolved,
+      phrase_misses: Number.isFinite(phraseMisses) ? Math.max(0, Math.min(5, phraseMisses)) : 5,
+    });
+    if (error) throw error;
+  };
+
+  const finishSpin = async (attemptId) => {
+    setSpinPhase("finishing");
+    const { data, error } = await supabase.rpc("quiz_finish_attempt", { p_attempt_id: attemptId });
+    if (error) {
+      setSpinError(error.message || "Could not finish — try again.");
+      setSpinPhase("playing");
+      return;
+    }
+    setSpinResult(data);
+    setSpinPhase("finished");
+    await loadStandings();
+  };
 
   // ── Trivia Night actions ──
   const nightStartSession = async () => {
@@ -1643,6 +1825,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const dailyCfg = modes.daily_five;
   const duelCfg = modes.duel;
   const gridCfg = modes.the_grid;
+  const spinCfg = modes.spin_and_solve;
+  const spinAvailable = Number.isFinite(spinTermCount)
+    && spinTermCount >= (spinCfg?.question_count || 6);
   const gridQualifyingCats = useMemo(() => {
     return Object.entries(gridCatCounts)
       .filter(([, n]) => n >= 5)
@@ -1953,6 +2138,54 @@ function TriviaPlayTab({ userId, isAdmin }) {
               <div style={s.smallLabel}>{gridResult.points_earned} points earned</div>
               <div style={s.smallLabel}>once a day — back tomorrow.</div>
               {gridResult.on_leaderboard && (
+                <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Spin & Solve card ── */}
+        <div style={s.playCard}>
+          <div style={s.playCardTitle}>Spin &amp; Solve</div>
+          <div style={s.playCardDesc}>Solve the hidden coverage term, then say what it means.</div>
+
+          {spinError && <div style={s.errorBanner}>{spinError}</div>}
+
+          {spinPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking today's game…</div>}
+
+          {spinPhase === "not_started" && (
+            !spinAvailable ? (
+              <div style={{ fontSize: 13, color: T.slate500 }}>
+                Not enough terms yet — this one needs {spinCfg?.question_count || 6} approved terms.
+              </div>
+            ) : (
+              <button type="button" style={s.primaryBtn} onClick={startSpin}>Play Spin &amp; Solve</button>
+            )
+          )}
+
+          {spinPhase === "in_progress" && (
+            <button type="button" style={s.primaryBtn} onClick={resumeSpin}>Resume the game</button>
+          )}
+
+          {spinPhase === "finishing" && <div style={{ fontSize: 13, color: T.slate500 }}>Finishing up…</div>}
+
+          {spinPhase === "playing" && spinAttempt && spinRemainingIds.length > 0 && (
+            <PhraseRunner
+              itemIds={spinRemainingIds}
+              itemsById={spinItemsById}
+              attemptId={spinAttempt.id}
+              secondsPerPhase={spinCfg?.seconds_per_question || 60}
+              onSubmitAnswer={submitSpinAnswer}
+              onAllDone={() => finishSpin(spinAttempt.id)}
+            />
+          )}
+
+          {spinPhase === "finished" && spinResult && (
+            <div>
+              <div style={s.bigStat}>{spinResult.correct_count}/{spinResult.question_count}</div>
+              <div style={s.smallLabel}>{spinResult.points_earned} points earned</div>
+              <div style={s.smallLabel}>once a day — back tomorrow.</div>
+              {spinResult.on_leaderboard && (
                 <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
               )}
             </div>
@@ -2831,6 +3064,285 @@ function TriviaGatesTab({ userId }) {
 }
 
 // ─── Shared question-loop runner for Daily Five + Duel ───
+// Spin & Solve's own runner. The five multiple-choice modes share
+// QuestionRunner below; this one deliberately does not, because a Spin & Solve
+// item plays in two halves — guess the hidden coverage term, then answer what
+// it means. Nothing here touches QuestionRunner or any of its four call sites.
+//
+// Four wrong guesses are allowed per term. A wrong letter and a wrong
+// whole-term guess cost the same. The fifth miss ends the guessing, reveals the
+// term and pays no solve bonus. The meaning question is asked either way, so
+// every game records exactly one answer row per item and scores stay
+// comparable across attempts.
+//
+// One clock per half, both the mode's own seconds_per_question. There is no
+// wheel and no chance element anywhere in here, on purpose.
+const PHRASE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const PHRASE_MAX_MISSES = 5;
+
+function normalizePhrase(text) {
+  return (text || "").toUpperCase().replace(/\s+/g, " ").trim();
+}
+
+function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmitAnswer, onAllDone }) {
+  const [idx, setIdx] = useState(0);
+  const [half, setHalf] = useState("term"); // term | meaning
+  const [guessed, setGuessed] = useState([]);
+  const [misses, setMisses] = useState(0);
+  const [solved, setSolved] = useState(false);
+  const [termOver, setTermOver] = useState(false);
+  const [solveOpen, setSolveOpen] = useState(false);
+  const [solveText, setSolveText] = useState("");
+  const [solveWrong, setSolveWrong] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(secondsPerPhase);
+  const [revealed, setRevealed] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
+  const firingRef = useRef(false);
+
+  const currentId = itemIds[idx];
+  const currentItem = itemsById[currentId];
+  const phrase = normalizePhrase(currentItem?.phrase_answer);
+  const displayOptions = useMemo(
+    () => orderedOptions(currentItem?.options, attemptId, currentId),
+    [currentItem, attemptId, currentId]
+  );
+  const guessedSet = useMemo(() => new Set(guessed), [guessed]);
+  const termLetters = useMemo(
+    () => new Set(phrase.split("").filter(ch => ch >= "A" && ch <= "Z")),
+    [phrase]
+  );
+
+  const resetForNext = useCallback(() => {
+    setHalf("term");
+    setGuessed([]);
+    setMisses(0);
+    setSolved(false);
+    setTermOver(false);
+    setSolveOpen(false);
+    setSolveText("");
+    setSolveWrong(false);
+    setRevealed(false);
+    setSelectedId(null);
+    setTimeLeft(secondsPerPhase);
+  }, [secondsPerPhase]);
+
+  const advanceOrFinish = useCallback(() => {
+    firingRef.current = false;
+    if (idx + 1 < itemIds.length) {
+      setIdx(i => i + 1);
+      resetForNext();
+    } else {
+      onAllDone();
+    }
+  }, [idx, itemIds.length, onAllDone, resetForNext]);
+
+  const submitMeaning = useCallback(async (optionId, secondsTaken) => {
+    try {
+      await onSubmitAnswer(currentId, optionId, secondsTaken, solved, misses);
+    } catch (ex) {
+      setSubmitError(ex?.message || "Could not submit that answer.");
+    }
+  }, [currentId, onSubmitAnswer, solved, misses]);
+
+  const handleMeaningTimeout = useCallback(async () => {
+    if (firingRef.current || revealed) return;
+    firingRef.current = true;
+    setRevealed(true);
+    await submitMeaning(null, secondsPerPhase);
+    firingRef.current = false;
+  }, [revealed, submitMeaning, secondsPerPhase]);
+
+  useEffect(() => {
+    if (half === "term" && termOver) return undefined;
+    if (half === "meaning" && revealed) return undefined;
+    if (timeLeft <= 0) {
+      if (half === "term") setTermOver(true);
+      else handleMeaningTimeout();
+      return undefined;
+    }
+    const t = setTimeout(() => setTimeLeft(tl => tl - 1), 1000);
+    return () => clearTimeout(t);
+  }, [timeLeft, half, termOver, revealed, handleMeaningTimeout]);
+
+  if (!currentItem) {
+    return <div style={{ fontSize: 13, color: T.slate500 }}>Loading question…</div>;
+  }
+
+  const registerMiss = () => {
+    const next = misses + 1;
+    setMisses(next);
+    if (next >= PHRASE_MAX_MISSES) setTermOver(true);
+  };
+
+  const tapLetter = (letter) => {
+    if (half !== "term" || termOver || guessedSet.has(letter)) return;
+    const nextGuessed = [...guessed, letter];
+    setGuessed(nextGuessed);
+    if (termLetters.has(letter)) {
+      const allFound = [...termLetters].every(ch => nextGuessed.includes(ch));
+      if (allFound) {
+        setSolved(true);
+        setTermOver(true);
+      }
+    } else {
+      registerMiss();
+    }
+  };
+
+  const submitSolve = () => {
+    if (half !== "term" || termOver) return;
+    if (phrase.length > 0 && normalizePhrase(solveText) === phrase) {
+      setGuessed([...termLetters]);
+      setSolved(true);
+      setTermOver(true);
+      setSolveOpen(false);
+      setSolveWrong(false);
+    } else {
+      setSolveText("");
+      setSolveWrong(true);
+      registerMiss();
+    }
+  };
+
+  const goToMeaning = () => {
+    setHalf("meaning");
+    setSolveOpen(false);
+    setTimeLeft(secondsPerPhase);
+  };
+
+  const chooseMeaning = async (optionId) => {
+    if (revealed || firingRef.current) return;
+    firingRef.current = true;
+    const secondsTaken = Math.max(0, secondsPerPhase - timeLeft);
+    setSelectedId(optionId);
+    setRevealed(true);
+    await submitMeaning(optionId, secondsTaken);
+    firingRef.current = false;
+  };
+
+  const solveBonus = solved ? 10 + Math.max(0, 4 - Math.min(misses, 4)) : 0;
+  const guessesLeft = Math.max(0, (PHRASE_MAX_MISSES - 1) - misses);
+  const clockRunning = half === "term" ? !termOver : !revealed;
+  const urgent = timeLeft <= 5;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: T.slate500 }}>{idx + 1} of {itemIds.length}</span>
+        {clockRunning && <span style={s.timerPill(urgent)}>{timeLeft}s</span>}
+      </div>
+      {submitError && <div style={s.errorBanner}>{submitError}</div>}
+      <div style={s.qStem}>{currentItem.stem}</div>
+
+      <div style={s.phraseBoard}>
+        {phrase.split(" ").map((word, wi) => (
+          <div key={wi} style={s.phraseWord}>
+            {word.split("").map((ch, ci) => {
+              const isLetter = ch >= "A" && ch <= "Z";
+              if (!isLetter) return <span key={ci} style={s.phrasePunct}>{ch}</span>;
+              const shown = termOver || guessedSet.has(ch);
+              return <span key={ci} style={s.phraseTile(shown)}>{shown ? ch : ""}</span>;
+            })}
+          </div>
+        ))}
+      </div>
+
+      {half === "term" && !termOver && (
+        <>
+          <div style={s.phraseStatusRow}>
+            <span>{guessesLeft} wrong {guessesLeft === 1 ? "guess" : "guesses"} left</span>
+            <button type="button" style={s.ghostBtn} onClick={() => setSolveOpen(o => !o)}>
+              {solveOpen ? "Back to letters" : "Solve it"}
+            </button>
+          </div>
+          {solveWrong && (
+            <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>Not it — that cost a guess.</div>
+          )}
+          {solveOpen ? (
+            <div style={s.solveRow}>
+              <input
+                type="text"
+                value={solveText}
+                onChange={(e) => setSolveText(e.target.value)}
+                placeholder="Type the whole term"
+                style={{ ...s.editInput, flex: 1, minWidth: 150 }}
+              />
+              <button type="button" style={s.primaryBtn} onClick={submitSolve} disabled={!solveText.trim()}>
+                Submit
+              </button>
+            </div>
+          ) : (
+            <div style={s.letterGrid}>
+              {PHRASE_LETTERS.map(letter => {
+                let state = "default";
+                if (guessedSet.has(letter)) state = termLetters.has(letter) ? "hit" : "miss";
+                return (
+                  <button
+                    key={letter}
+                    type="button"
+                    style={s.letterBtn(state)}
+                    onClick={() => tapLetter(letter)}
+                    disabled={guessedSet.has(letter)}
+                  >
+                    {letter}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {half === "term" && termOver && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: solved ? T.green : T.slate600 }}>
+            {solved ? `Solved — ${solveBonus} points for the term.` : "Out of guesses — here it is."}
+          </div>
+          <div style={s.actionsRow}>
+            <button type="button" style={s.primaryBtn} onClick={goToMeaning}>Now, what does it mean?</button>
+          </div>
+        </div>
+      )}
+
+      {half === "meaning" && (
+        <>
+          {(displayOptions || []).map(o => {
+            let state = "default";
+            if (revealed) {
+              if (o.id === selectedId && o.is_correct) state = "selectedCorrect";
+              else if (o.id === selectedId && !o.is_correct) state = "selectedWrong";
+              else if (o.is_correct) state = "revealCorrect";
+              else state = "revealDim";
+            }
+            return (
+              <button
+                key={o.id}
+                type="button"
+                style={s.qOptionBtn(state)}
+                onClick={() => chooseMeaning(o.id)}
+                disabled={revealed}
+              >
+                {o.option_text}
+              </button>
+            );
+          })}
+          {revealed && (
+            <>
+              {currentItem.explanation && <div style={s.explanationBox}>{currentItem.explanation}</div>}
+              <div style={s.actionsRow}>
+                <button type="button" style={s.primaryBtn} onClick={advanceOrFinish}>
+                  {idx + 1 < itemIds.length ? "Next term" : "Finish"}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onSubmitAnswer, onAllDone }) {
   const [idx, setIdx] = useState(0);
   const [timeLeft, setTimeLeft] = useState(secondsPerQuestion);
