@@ -6,7 +6,6 @@
 // =========================================================================
 
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
 
 // ==================== _shared/supabase.ts ====================
@@ -505,7 +504,18 @@ const json = (o: any, s = 200) => new Response(JSON.stringify(o), {
   headers: { "Content-Type": "application/json", ...CORS_HEADERS },
 });
 
-const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+// Reuses the shared client (_shared/supabase.ts exports `sb`) instead of
+// creating a second one -- this file used to import its own createClient
+// from a different module specifier (esm.sh) than the shared one (jsr:),
+// which the bundler could not dedupe since they are different specifiers
+// resolving to the same symbol name. Two top-level `createClient` imports
+// in one bundled module is a SyntaxError at boot ("Identifier createClient
+// has already been declared"), so this was a latent boot-breaking bug in
+// every bundle built from this file, independent of and pre-dating the
+// 2026-08-13 CTS purge / v13.0 framework-matches removal. Found while
+// smoke-testing v13.0 -- fixed here rather than left in place, since it
+// blocks the function booting at all, not just this session's edit.
+const supa = sb;
 
 
 
