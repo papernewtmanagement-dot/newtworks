@@ -516,6 +516,18 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
                       {app.res_composite == null && app.assessment_composite == null && (
                         <span style={{ fontSize:9, color:T.slate400 }}>—</span>
                       )}
+                      {app.protocol_validity_label && app.protocol_validity_label !== "high" && (
+                        <span
+                          title="Answer trust"
+                          style={{
+                            fontSize:9, fontWeight:700, padding:"1px 5px", borderRadius:8,
+                            background: app.protocol_validity_label === "low" ? T.redLt : T.amberLt,
+                            color: app.protocol_validity_label === "low" ? T.red : T.amber,
+                          }}
+                        >
+                          {app.protocol_validity_label === "low" ? "Trust: Low" : "Trust: Reduced"}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2918,7 +2930,7 @@ export default function Team() {
           .in("status", PIPELINE_STATUSES),
         supabase
           .from("v_hiring_candidates")
-          .select("id, assessment_composite")
+          .select("id, assessment_composite, protocol_validity_v, protocol_validity_label")
           .eq("agency_id", AGENCY_ID)
           .in("status", PIPELINE_STATUSES)
           .not("assessment_completed_at", "is", null),
@@ -2943,6 +2955,8 @@ export default function Team() {
       };
       collect(resumeRes, "res_composite");
       collect(assessRes, "assessment_composite");
+      collect(assessRes, "protocol_validity_v");
+      collect(assessRes, "protocol_validity_label");
 
       if (Object.keys(patch).length === 0) return;
       setApplicants(prev => prev.map(a => (patch[a.id] ? { ...a, ...patch[a.id] } : a)));
