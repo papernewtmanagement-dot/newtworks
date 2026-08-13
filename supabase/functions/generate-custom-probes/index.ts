@@ -246,7 +246,7 @@ HARD CONSTRAINTS on your output:
 - Never produce a generic probe just to fill a slot. If the data doesn't warrant a probe, don't invent one.
 
 Framework context:
-- The agency uses HireGauge (Story Agency calibration). Two personality traits with ideal ranges are still on file for every candidate: assertiveness and compassion. Reliability + response_distortion are validity band indicators (values: very high / high / moderate / low / very low). Do not ask for, refer to, or reason about any other trait score — no other trait data exists on the record.
+- The agency uses HireGauge (Story Agency calibration). Two personality traits with ideal ranges are still on file for every candidate: assertiveness and compassion. Reliability is a validity band indicator (values: very high / high / moderate / low / very low). Do not ask for, refer to, or reason about any other trait score — no other trait data exists on the record.
 - Character floor is non-negotiable at 7/10 across Honesty, Concern for Others, Hard Work Ethic, Personal Responsibility (measured in interview scorecards).
 - Every hire participates in selling — even reception/retention seats. Every team member carries image-bearer dignity (Genesis 1:27) — probes should be direct but never demeaning.
 
@@ -256,11 +256,11 @@ Rules for the probes you produce:
    1. "Resume signals" — specific claims on the resume that need verification (biggest-account, promotion claims, gaps, self-superiority language). Highest per-probe leverage — only this candidate can answer these. Target 3-4.
    2. "Character floor verification" — only fire for character areas the framework flagged concerning. If nothing is concerning, skip this section entirely. Target 0-3.
    3. "Areas to press on" — see the AREAS TO PRESS ON block in the user message, if present. These are FOLLOW-UP probes only, appended after the fixed core question set — never a substitute for it. One probe per listed facet, up to the number listed. If the block is absent, skip this section entirely — do not invent one. Target 0-4.
-   4. "Validity follow-up" — moderate/low reliability or elevated distortion. Target 0-2.
+   4. "Validity follow-up" — moderate/low reliability. Target 0-2.
    5. "Archetype probes" — archetype rule matches with high confidence. Target 0-2.
    6. "Motivation probe" — money_motivator match. Target 0-1.
    7. "Structure fit" — strategic_seat_pattern or clear autonomy/directive mismatch. Target 0-1.
-3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:distortion=moderate", "resume:self-superiority-language"). ALL FOUR FIELDS ARE REQUIRED on every probe.
+3. Each probe object has: question (the exact question to ask), listen_for (what a genuine, encouraging answer sounds like), concern (what would signal a red flag or watch), source (a short tag pointing at the signal — e.g. "trait:assertiveness=32(low)", "framework:archetype:Warm Non-Starter", "validity:reliability=moderate", "resume:self-superiority-language"). ALL FOUR FIELDS ARE REQUIRED on every probe.
 4. Do NOT include Title VII protected-class questions (race, religion, national origin, marital status, family status, disability, age). This applies to EVERY section, including Areas to press on — a facet flag is never grounds to ask about a protected characteristic, and none of the facets in that block relate to one.
 5. Do NOT include SF compliance-restricted topics (specific product names, prices, internal SF processes like Scorecard/AIPP).
 6. If the framework returned interview_probe strings for matched rules, use them as the starting anchor — personalize wording to this specific candidate's actual numbers and situation.
@@ -303,9 +303,8 @@ async function generateProbes(context: any, groqKey: string, model: string): Pro
   const userMsg = `CANDIDATE: ${context.candidate_name}
 POSITION APPLIED FOR: ${context.position || "(not specified)"}
 
-VALIDITY (band labels; framework validity_rule matches will fire if concerning):
+VALIDITY (band label; framework validity_rule matches will fire if concerning):
   reliability: ${context.a.reliability ?? "—"}
-  response_distortion: ${context.a.response_distortion ?? "—"}
 
 CLAUDE RESUME SUMMARY (from intake analysis):
 ${context.a.claude_summary || "(no resume summary on file)"}

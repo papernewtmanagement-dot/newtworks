@@ -36,7 +36,6 @@ interface PersonCtx {
 interface AssessmentCtx {
   overall_score: number | null;
   reliability: string | null;
-  response_distortion: string | null;
   notes: string | null;
   traits: Record<string, number | null>;
 }
@@ -79,11 +78,8 @@ function buildPrompt(p: PersonCtx, a: AssessmentCtx | null, notes: NoteCtx[]): {
     if (a.overall_score != null) {
       rows.push(`Assessment: overall ${a.overall_score}/100.`);
     }
-    if (a.reliability || a.response_distortion) {
-      const parts: string[] = [];
-      if (a.reliability) parts.push(`reliability=${a.reliability}`);
-      if (a.response_distortion) parts.push(`distortion=${a.response_distortion}`);
-      rows.push(`Assessment meta: ${parts.join(" · ")}.`);
+    if (a.reliability) {
+      rows.push(`Assessment meta: reliability=${a.reliability}.`);
     }
     if (traitLines.length > 0) {
       rows.push(`Trait scores (out of 100):\n${traitLines.join("\n")}`);
@@ -147,10 +143,11 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
     assessment = {
       overall_score: asmt.overall_score,
       reliability: asmt.reliability,
-      response_distortion: asmt.response_distortion,
       notes: asmt.notes,
       // Pruned 2026-08-06: the other seven trait columns were dropped from
       // hiring_candidates (migration 20260806170033), so only these two remain.
+      // response_distortion dropped 2026-08-13 (dead legacy CTS field, never
+      // populated by the current v2 ingestion path).
       traits: {
         assertiveness: asmt.assertiveness,
         compassion: asmt.compassion,

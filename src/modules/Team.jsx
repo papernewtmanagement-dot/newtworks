@@ -359,7 +359,6 @@ const generateCoachingHints = (seat, assessment) => {
   // a function-based projection (see assessment_best_fit_role).
   const cat    = seat?.role_category || null;
   const reliability = (assessment.reliability || "").toLowerCase();
-  const distortion  = (assessment.response_distortion || "").toLowerCase();
   // intelligence_composite / intelligence_floor come from assessment_intelligence_fit
   // (role-specific, live from hiregauge_role_ideal_ranges). Replaces the dropped
   // lss_total_ideal_min flat raw-item-count column — Step 7, 2026-08-01.
@@ -402,13 +401,8 @@ const generateCoachingHints = (seat, assessment) => {
   // ─── Cross-cutting patterns ───
   // (Prior "High-touch profile" hint keyed off recommended_coaching_hours_max — column dropped.
   //  Coaching-effort guidance is now delivered contextually per candidate.)
-  if (distortion === "high") {
-    hints.push({
-      severity:"info",
-      title:"Trust behavior over self-report",
-      detail:`Response distortion tagged high — assessment scores may be inflated. Weight behavioral evidence over the numbers on this row.`,
-    });
-  }
+  // (Prior "Trust behavior over self-report" hint keyed off response_distortion —
+  //  column dropped 2026-08-13, was dead: only 4/31 live-v2 candidates ever had it.)
   if (reliability === "low") {
     hints.push({
       severity:"info",
@@ -2063,18 +2057,11 @@ const StaffDirectory = ({ staff }) => {
                         {asmt.assessment_date && <span style={{ color:T.slate600 }}>{asmt.assessment_date}</span>}
                         {asmt.overall_score != null && <span>{asmt.assessment_date ? " · " : ""}Overall <strong style={{ color:T.slate900 }}>{asmt.overall_score}/100</strong></span>}
                       </div>
-                      {(asmt.reliability || asmt.response_distortion) && (
+                      {asmt.reliability && (
                         <div style={{ marginBottom:8, display:"flex", gap:6, flexWrap:"wrap" }}>
-                          {asmt.reliability && (
-                            <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.white, border:`1px solid ${T.slate200}`, color:T.slate700 }}>
-                              Reliability: <strong style={{ color:T.slate900 }}>{asmt.reliability}</strong>
-                            </span>
-                          )}
-                          {asmt.response_distortion && (
-                            <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.white, border:`1px solid ${T.slate200}`, color:T.slate700 }}>
-                              Distortion: <strong style={{ color:T.slate900 }}>{asmt.response_distortion}</strong>
-                            </span>
-                          )}
+                          <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.white, border:`1px solid ${T.slate200}`, color:T.slate700 }}>
+                            Reliability: <strong style={{ color:T.slate900 }}>{asmt.reliability}</strong>
+                          </span>
                         </div>
                       )}
                       {(() => {
@@ -2972,7 +2959,7 @@ export default function Team() {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
         .from("hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assertiveness, compassion, resume_document_id, resume_url, reliability, response_distortion")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assertiveness, compassion, resume_document_id, resume_url, reliability")
         .eq("agency_id", AGENCY_ID)
         .in("status", PIPELINE_STATUSES)
         .order("created_at", { ascending: false });

@@ -114,19 +114,13 @@ const ROLE_LABELS = {
   aspirant:             "Aspirant",
 };
 
-// Validity bands — reliability higher-is-better, distortion lower-is-better.
+// Validity band — reliability higher-is-better.
 // Values are text: 'very_low' | 'low' | 'moderate' | 'high' | 'very_high'.
 const RELIABILITY_BAND = (v) => {
   if (v == null) return "none";
   if (v === "very_high" || v === "high") return "green";
   if (v === "moderate") return "yellow";
   return "red"; // low, very_low
-};
-const DISTORTION_BAND = (v) => {
-  if (v == null) return "none";
-  if (v === "very_low" || v === "low") return "green";
-  if (v === "moderate") return "yellow";
-  return "red"; // high, very_high
 };
 
 // Competency band — green ≥ 50, yellow 40–49, red < 40. Same threshold across
@@ -989,9 +983,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 4 }}>
           Personality Facets
         </div>
-        <div style={{ fontSize: 9, color: T.slate500, marginBottom: 6, marginTop: -2 }}>
-          Percentile vs. typical adults
-        </div>
         {(facetRows == null || pctRowsLoading) ? (
           <div style={{ fontSize: 11, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
             Loading facet detail…
@@ -1172,13 +1163,13 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
         {(reliabilityScore != null || gmaPct != null || sjtScore != null) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
             {reliabilityScore != null && (
-              <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} subline="attention & consistency checks" max={100} />
+              <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} max={100} />
             )}
             {gmaPct != null && (
-              <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} subline="percent correct" />
+              <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} />
             )}
             {sjtScore != null && (
-              <AssessRow label="Situational Judgement Test" value={sjtScore} band={competencyBand(sjtScore)} subline="percent correct" />
+              <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
             )}
           </div>
         )}
@@ -1293,7 +1284,6 @@ function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, se
               matching speed columns) was dropped from hiring_candidates. The
               cognitive read for current candidates is the GMA section. */}
           <AssessRow label="Reliability" value={detail?.reliability} band={RELIABILITY_BAND(detail?.reliability)} />
-          <AssessRow label="Distortion" value={detail?.response_distortion} band={DISTORTION_BAND(detail?.response_distortion)} />
 
           <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
 
