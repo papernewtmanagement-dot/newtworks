@@ -171,7 +171,7 @@ function useFinancialsData(entity) {
             // contract (statement_balances.source/notes are not exposed by v_bank_balances
             // per Phase 5 spec, which forbids adding columns to accommodate the frontend) —
             // dropped from select and downstream reads; flagged for Peter's call.
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
+            .select("business_entity_id, account_name, account_kind, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
@@ -645,6 +645,7 @@ function useFinancialsData(entity) {
             type: b.account_type,
             last4: b.account_number_last4,
             institution: b.institution,
+            accountKind: b.account_kind,   // 'bank' | 'investment' — investment kind gets its own cross-entity group on the Bank Accounts tab
             businessEntityId: b.business_entity_id,   // Phase 4: entity badge + subtree filter
             lastStmtDate:    b.last_statement_period_end || null,
             lastStmtBalance: b.current_balance != null ? parseFloat(b.current_balance) : null,
@@ -2762,14 +2763,22 @@ const BankSection = ({ data }) => {
     );
   }
 
-  // Group accounts by owning entity in BFS order from currentEntityId.
+  // Investment-kind accounts (Fidelity HSA, CDs & Short-Term Investments) get
+  // their own cross-entity "Investments" group per Peter directive 2026-08-12
+  // — they're a different animal from checking/savings regardless of which
+  // entity technically owns them, so they're pulled out before the
+  // entity-based grouping below runs on what's left.
+  const investmentAccounts = bankAccounts.filter(a => a.accountKind === "investment");
+  const nonInvestmentAccounts = bankAccounts.filter(a => a.accountKind !== "investment");
+
+  // Group remaining accounts by owning entity in BFS order from currentEntityId.
   // PaperNewt LLC + Peter Story State Farm (PSS) share one "Business" header
   // on this tab per Peter directive 2026-08-12 — they already carry per-card
   // entity tags, so nothing scans as ambiguous even though the header is
   // shared. Personal / Eriosto / Steward keep their own entity headers.
   const BUSINESS_GROUP_ENTITY_IDS = new Set([BUSINESS_ENTITY_ID, "b2222222-2222-2222-2222-222222222222"]);
   const groupKeyFor = (eid) => BUSINESS_GROUP_ENTITY_IDS.has(eid) ? "business" : eid;
-  const groupLabelFor = (key) => key === "business" ? "Business" : (entitiesById[key]?.name || "Unknown entity");
+  const groupLabelFor = (key) => key === "investments" ? "Investments" : key === "business" ? "Business" : (entitiesById[key]?.name || "Unknown entity");
   const order = orderedDescendants(ctx.currentEntityId, allEntities);
   const groups = new Map();
   const groupOrder = [];
@@ -2778,13 +2787,18 @@ const BankSection = ({ data }) => {
     if (!groups.has(key)) { groups.set(key, []); groupOrder.push(key); }
   }
   const orphans = [];  // accounts with a stamp we can't resolve (defensive)
-  for (const a of bankAccounts) {
+  for (const a of nonInvestmentAccounts) {
     const key = a.businessEntityId ? groupKeyFor(a.businessEntityId) : null;
     if (key && groups.has(key)) {
       groups.get(key).push(a);
     } else {
       orphans.push(a);
     }
+  }
+  // Investments group appended after the entity groups, ahead of Unassigned/total.
+  if (investmentAccounts.length > 0) {
+    groups.set("investments", investmentAccounts);
+    groupOrder.push("investments");
   }
   const nonEmpty = groupOrder.map(k => [k, groups.get(k)]).filter(([, accts]) => accts.length > 0);
 
