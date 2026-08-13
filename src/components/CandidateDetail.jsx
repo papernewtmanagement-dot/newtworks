@@ -97,6 +97,15 @@ const IM_BAND_COLOR = (band) => {
   return "none";
 };
 
+// Protocol validity band — high/reduced/low, per _newtworks_protocol_validity
+// (im_mult * rel_mult, floored at 0.30). Higher = more trustworthy self-report.
+const PROTOCOL_VALIDITY_BAND = (label) => {
+  if (label === "high") return "green";
+  if (label === "reduced") return "yellow";
+  if (label === "low") return "red";
+  return "none";
+};
+
 // TRAIT_BAND removed 2026-07-24 — the nine primary CTS trait tiles now render
 // neutral because their ideal bands are role-dependent, and coloring them
 // against a generic sales-seat band was misleading. Role-aware judgment lives
@@ -1082,35 +1091,44 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
           );
         })()}
 
-        {/* Reliability / GMA / SJT / Impression Management — moved under the
-            Role Fit rows and color-coded (Peter directive 2026-08-13). GMA
-            sits above Reliability, and Impression Management (labeled here
-            for what it measures — self-report faking-good, formerly shown
-            as a standalone callout box) sits below Reliability as a plain
-            row in the same format, per Peter directive 2026-08-13. Reads
+        {/* GMA / SJT / Protocol Validity / Reliability / Impression Management
+            — moved under the Role Fit rows and color-coded (Peter directive
+            2026-08-13). Order per Peter directive 2026-08-13 (second pass):
+            GMA, SJT (the two capability/aptitude measures) first, then
+            Protocol Validity as the headline trust summary, then Reliability
+            and Impression Management as its two drill-down components (the
+            same order they've always computed in — see
+            _newtworks_protocol_validity: v = im_mult * rel_mult). Protocol
+            Validity replaces the old "Answer trust" chip as a plain data
+            row in the same format as the others; value is
+            detail.protocol_validity_v * 100 (v ranges 0.30-1.00), banded via
+            PROTOCOL_VALIDITY_BAND(detail.protocol_validity_label). Reliability
+            bands off detail.reliability (canonical band source — the same
+            field V2_RELIABILITY_BAND already used elsewhere for this
+            fired-count-derived score). Impression Management reads
             detail.impression_management (0-100 raw) with
-            IM_BAND_COLOR(imBand) for the typical/elevated/very_elevated
-            coloring. Reliability bands off detail.reliability (canonical
-            band source — the same field V2_RELIABILITY_BAND already used
-            elsewhere for this fired-count-derived score). GMA/SJT are
-            percent-correct scores banded with the same >=50 green / 40-49
-            yellow / <40 red thresholds already used for SJT (2026-08-06
-            session) and for role-fit/competency scores generally on this
-            page — provisional the same way those are (see OQ 12ba414d),
-            not yet locally validated for GMA specifically. */}
-        {(reliabilityScore != null || gmaPct != null || sjtScore != null || detail?.impression_management != null) && (
+            IM_BAND_COLOR(imBand). GMA/SJT are percent-correct scores banded
+            with the same >=50 green / 40-49 yellow / <40 red thresholds
+            already used for SJT (2026-08-06 session) and for role-fit/
+            competency scores generally on this page — provisional the same
+            way those are (see OQ 12ba414d), not yet locally validated for
+            GMA specifically. */}
+        {(reliabilityScore != null || gmaPct != null || sjtScore != null || detail?.impression_management != null || detail?.protocol_validity_v != null) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
             {gmaPct != null && (
               <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} />
+            )}
+            {sjtScore != null && (
+              <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
+            )}
+            {detail?.protocol_validity_v != null && (
+              <AssessRow label="Protocol Validity" value={Math.round(Number(detail.protocol_validity_v) * 100)} band={PROTOCOL_VALIDITY_BAND(detail.protocol_validity_label)} max={100} />
             )}
             {reliabilityScore != null && (
               <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} max={100} />
             )}
             {detail?.impression_management != null && (
               <AssessRow label="Impression Management" value={detail.impression_management} band={IM_BAND_COLOR(imBand)} max={100} />
-            )}
-            {sjtScore != null && (
-              <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
             )}
           </div>
         )}
