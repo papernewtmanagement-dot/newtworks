@@ -1,0 +1,12 @@
+-- Mirrored 2026-08-13 during the un-mirrored-migration audit.
+-- This migration was applied live on 2026-07-09 17:11:55 UTC (ledger name: drop_amazon_order_notices) but was never
+-- committed to this repo at the time. Content below is copied verbatim
+-- from supabase_migrations.schema_migrations.statements for version 20260709171155.
+-- No live change is made by adding this file — it only brings the repo
+-- mirror into sync with what is already running in production, so a
+-- fresh `supabase db reset` from this repo reproduces live state.
+-- Drop amazon_order_notices. Recipe 5f77ebfd Amazon Order Notice Ingestor was
+-- deactivated 2026-07-09 after Peter clarified Amazon emails should be archived
+-- via Gmail Label_12 only, never ingested to DB or Drive. Table had one outbound
+-- FK to bank_register_preliminary (matched_register_id) and no inbound refs.
+DROP TABLE IF EXISTS public.amazon_order_notices;
