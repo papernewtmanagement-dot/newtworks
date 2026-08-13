@@ -516,6 +516,20 @@ export default function CandidateAssessment({ candidateId, token }) {
             before moving on. Plan on about 30 minutes. You can refresh the
             page and pick up where you left off.
           </div>
+          <div
+            style={{
+              color: T.slate700,
+              lineHeight: 1.6,
+              marginBottom: 28,
+              fontSize: 15,
+              fontWeight: 600,
+            }}
+          >
+            Answer honestly. This assessment includes built-in checks that
+            detect exaggerated or inconsistent answering, and results are
+            weighted accordingly. Straightforward answers give you the most
+            accurate — and best — result.
+          </div>
           <button style={btnPrimary} onClick={runServe}>
             Begin
           </button>
@@ -613,6 +627,20 @@ export default function CandidateAssessment({ candidateId, token }) {
           >
             {bodyCount}
           </div>
+          {stint === 2 ? (
+            <div
+              style={{
+                color: T.slate700,
+                lineHeight: 1.5,
+                marginBottom: 20,
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              Reminder: consistency and exaggeration checks are active
+              throughout. Honest answers score best.
+            </div>
+          ) : null}
           <div
             style={{
               color: T.slate500,
