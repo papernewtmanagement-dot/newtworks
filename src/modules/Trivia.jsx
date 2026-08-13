@@ -876,7 +876,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
     try {
       const [modesRes, poolRes] = await Promise.all([
         supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final", "the_grid"]),
-        supabase.from("quiz_items").select("id"),
+        supabase.from("quiz_items").select("id, shape")
+          .eq("agency_id", AGENCY_ID).eq("status", "approved").eq("report_blocked", false),
       ]);
       if (modesRes.error) throw modesRes.error;
       const modeMap = {};
@@ -884,7 +885,21 @@ function TriviaPlayTab({ userId, isAdmin }) {
       setModes(modeMap);
 
       if (poolRes.error) throw poolRes.error;
-      setItemPool((poolRes.data || []).map(r => r.id));
+      // Daily Five and Duel share this pool, so it carries only the question
+      // shapes those two modes allow. Filtering here rather than leaning on the
+      // row rules matters twice over: an agency admin's row rules are
+      // unfiltered, so without this an admin gets dealt retired and draft
+      // questions; and any future question shape would otherwise land inside a
+      // multiple-choice runner that cannot render it.
+      const playShapes = new Set();
+      for (const key of ["daily_five", "duel"]) {
+        for (const s of (modeMap[key]?.allowed_shapes || ["choice"])) playShapes.add(s);
+      }
+      setItemPool(
+        (poolRes.data || [])
+          .filter(r => playShapes.has(r.shape || "choice"))
+          .map(r => r.id)
+      );
     } catch (ex) {
       setModesError(ex?.message || "Could not load trivia settings.");
     }
@@ -998,11 +1013,15 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   }, []);
 
-  // Category counts for The Grid's client-side availability check — same
-  // approved/unblocked scope the rest of Play relies on via RLS.
+  // Category counts for The Grid's client-side availability check. Scoped
+  // explicitly rather than via row rules, and to multiple-choice questions
+  // only, so the count matches what quiz_start_grid_attempt will actually
+  // find. That function stays the authority; this is only the card's hint.
   const loadGridAvailability = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from("quiz_items").select("category");
+      const { data, error } = await supabase.from("quiz_items").select("category")
+        .eq("agency_id", AGENCY_ID).eq("status", "approved")
+        .eq("report_blocked", false).eq("shape", "choice");
       if (error) throw error;
       const counts = {};
       for (const row of (data || [])) {
@@ -2251,7 +2270,11 @@ function TriviaGatesTab({ userId }) {
 
   const loadCategories = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from("quiz_items").select("category").eq("agency_id", AGENCY_ID);
+      // Topic sets feed the two gated exams, which are multiple-choice only,
+      // so offer categories that actually have servable questions in them.
+      const { data, error } = await supabase.from("quiz_items").select("category")
+        .eq("agency_id", AGENCY_ID).eq("status", "approved")
+        .eq("report_blocked", false).eq("shape", "choice");
       if (error) throw error;
       const set = new Set((data || []).map(r => r.category).filter(Boolean));
       setCategories([...set].sort());
@@ -2452,6 +2475,7 @@ function TriviaGatesTab({ userId }) {
     try {
       const { data, error } = await supabase.from("quiz_items")
         .select("id, stem, category").eq("agency_id", AGENCY_ID).eq("status", "approved")
+        .eq("shape", "choice")
         .ilike("stem", `%${q.trim()}%`).limit(10);
       if (error) throw error;
       setPinnedResults(Array.isArray(data) ? data : []);
