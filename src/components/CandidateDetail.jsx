@@ -977,24 +977,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
         </div>
       )}
 
-      {/* Restores the 2026-08-06 directive (reliability shown as a number,
-          not just a band word) that was computed but never rendered; GMA
-          and SJT are the two ability inputs to role fit. T4, Step 8,
-          2026-08-07. */}
-      {(reliabilityScore != null || gmaPct != null || sjtScore != null) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {reliabilityScore != null && (
-            <AssessRow label="Reliability" value={reliabilityScore} band="none" subline="attention & consistency checks" max={100} />
-          )}
-          {gmaPct != null && (
-            <AssessRow label="GMA" value={gmaPct} band="none" subline="percent correct" />
-          )}
-          {sjtScore != null && (
-            <AssessRow label="SJT" value={sjtScore} band="none" subline="percent correct" />
-          )}
-        </div>
-      )}
-
       {/* Two-column layout: facets | role fit. Explicit grid-template-areas
           per breakpoint (see CD_ASSESS_GRID_CSS above) — single-column
           stack (facets above rolefit) on phone, side by side (facets left,
@@ -1175,6 +1157,31 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
             </>
           );
         })()}
+
+        {/* Reliability / GMA / SJT — moved under the Role Fit rows and
+            color-coded (Peter directive 2026-08-13). Previously rendered
+            uncolored above the two-column grid (T4, Step 8, 2026-08-07).
+            Reliability bands off detail.reliability (canonical band source
+            — the same field V2_RELIABILITY_BAND already used elsewhere for
+            this fired-count-derived score). GMA/SJT are percent-correct
+            scores banded with the same >=50 green / 40-49 yellow / <40 red
+            thresholds already used for SJT (2026-08-06 session) and for
+            role-fit/competency scores generally on this page — provisional
+            the same way those are (see OQ 12ba414d), not yet locally
+            validated for GMA specifically. */}
+        {(reliabilityScore != null || gmaPct != null || sjtScore != null) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+            {reliabilityScore != null && (
+              <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} subline="attention & consistency checks" max={100} />
+            )}
+            {gmaPct != null && (
+              <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} subline="percent correct" />
+            )}
+            {sjtScore != null && (
+              <AssessRow label="Situational Judgement Test" value={sjtScore} band={competencyBand(sjtScore)} subline="percent correct" />
+            )}
+          </div>
+        )}
       </div>
 
       </div>
