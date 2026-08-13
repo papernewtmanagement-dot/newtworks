@@ -755,7 +755,7 @@ const StaffDirectory = ({ staff }) => {
       if (activeIds.length === 0) return;
       try {
         const [asRes, prRes, bnRes, trRes] = await Promise.all([
-          supabase.from("hiring_candidates").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("assessment_date", { ascending: false }),
+          supabase.from("hiring_candidates").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("created_at", { ascending: false }),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, premium_issued, policies_issued").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
           supabase.from("team_behavioral_notes").select("id, team_member_id, observation_date, observation_text, pattern_type, is_resolved").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).neq("pattern_type", "termination").order("observation_date", { ascending: false }).limit(120),
           supabase.from("team_trajectory_summaries").select("team_member_id, summary, notes_analyzed_count, notes_range_start, notes_range_end, model_used, updated_at").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
@@ -2973,7 +2973,7 @@ export default function Team() {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
         .from("hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, overall_score, assertiveness, compassion, resume_document_id, resume_url, reliability")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability")
         .eq("agency_id", AGENCY_ID)
         .in("status", PIPELINE_STATUSES)
         .order("created_at", { ascending: false });
