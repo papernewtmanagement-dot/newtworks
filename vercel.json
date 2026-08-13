@@ -15,7 +15,7 @@
     },
     {
       "source": "/jobs.xml",
-      "destination": "https://vulhdujhbwvibbojiimi.supabase.co/functions/v1/jobs-xml-feed"
+      "destination": "/api/jobs-xml"
     },
     {
       "source": "/webhooks/indeed",

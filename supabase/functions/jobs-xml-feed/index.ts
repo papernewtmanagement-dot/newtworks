@@ -63,10 +63,24 @@ function descriptionToHtml(text: string): string {
   return paragraphs.filter(Boolean).join("");
 }
 
+// The description is delivered as HTML inside a CDATA section. Inside
+// CDATA the parser hands the consumer the bytes verbatim, so escaping here
+// DOUBLE-encodes: Indeed received the literal text "don&#39;t" instead of
+// "don't", and "Training &amp; development" instead of "Training &
+// development". That is the escape-character problem Indeed's feed team
+// flagged 2026-08-13.
+//
+// Only two characters genuinely have to be escaped, because the CDATA payload
+// is HTML and these would otherwise be read as markup: "<" and ">".
+// Apostrophes and quotation marks never need escaping in an HTML text node.
+// An ampersand needs escaping only when the text right after it would make it
+// look like a character reference -- the HTML "ambiguous ampersand" case, as
+// in "AT&T;". A plain "Training & development" stays raw.
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]!));
+  return s
+    .replace(/&(?=(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#[xX][0-9a-fA-F]+);)/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function formatSalary(min: number | null, max: number | null, period: string | null): string {
