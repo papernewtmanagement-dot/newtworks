@@ -368,9 +368,64 @@ async function loadStint3Targets(supa: any, candidateId: string) {
   return capped;
 }
 
+// Which stint-2 personality section (Likert or FC) a candidate's items come
+// from. Added 2026-08-14 at the FC go-live flip, same-day incident: a
+// candidate (Sara Burke-Cruz) was actively answering the Likert stint-2
+// section at the exact moment is_active flipped from Likert to FC.
+// loadStintItems(2) alone would have started reporting stint 2 as
+// NOT done for her (it only counts currently-ACTIVE items, and her 110
+// answers were all against items that had just gone inactive), which would
+// have re-served her stint 2 a second time, now as forced-choice pairs, on
+// top of an already-completed section. Fix: once a candidate has answered
+// ANY stint-2 item in a section, they are locked to that section's full
+// item list (is_active filter dropped) for the rest of their sitting --
+// never switched mid-stream just because is_active changed underneath
+// them. A candidate who hasn't touched stint 2 yet still gets whichever
+// section is currently active, unchanged from before.
+const STINT2_PERSONALITY_SECTIONS = ["newtworks_v2_personality", "newtworks_v2_personality_fc"];
+
+async function loadStint2Items(supa: any, candidateId: string) {
+  for (const section of STINT2_PERSONALITY_SECTIONS) {
+    const { data: ids, error: idsErr } = await supa
+      .from("hiregauge_instrument_items")
+      .select("id")
+      .eq("section", section)
+      .eq("stint", 2);
+    if (idsErr) throw new Error(`stint2_${section}_ids_fetch: ${idsErr.message}`);
+    const idList = (ids || []).map((r: any) => r.id);
+    if (idList.length === 0) continue;
+
+    const { count, error: cntErr } = await supa
+      .from("hiregauge_candidate_responses")
+      .select("item_id", { count: "exact", head: true })
+      .eq("candidate_id", candidateId)
+      .eq("sitting", 1)
+      .in("item_id", idList);
+    if (cntErr) throw new Error(`stint2_${section}_answered_check: ${cntErr.message}`);
+
+    if ((count ?? 0) > 0) {
+      // Already started this section -- serve its full item list regardless
+      // of current is_active, so a candidate mid-sitting when the switch
+      // flips still sees (and gets counted against) everything they need to
+      // finish what they started.
+      const { data, error } = await supa
+        .from("hiregauge_instrument_items")
+        .select(ITEM_SELECT)
+        .eq("stint", 2)
+        .eq("section", section)
+        .order("item_number", { ascending: true });
+      if (error) throw new Error(`stint2_locked_items_fetch: ${error.message}`);
+      return data || [];
+    }
+  }
+
+  // Not started yet -- normal behavior, whichever section is currently active.
+  return loadStintItems(supa, 2);
+}
+
 async function loadProgress(supa: any, candidateId: string) {
   const stint1Items = await loadStintItems(supa, 1);
-  const stint2Items = await loadStintItems(supa, 2);
+  const stint2Items = await loadStint2Items(supa, candidateId);
   const stint4Items = await loadStintItems(supa, 4);
   const stint5Items = await loadStintItems(supa, 5);
   const answered = await loadAnswered(supa, candidateId);
