@@ -2058,6 +2058,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       }
       setDetail(data);
       setDetailError(false);
+      // Fire-and-forget: heal this candidate's Kanban board scoring cache if
+      // it's behind the current scoring version. No-ops server-side (touches
+      // nothing) when already current -- see
+      // hiregauge_refresh_candidate_cache_if_stale. This is a supplementary
+      // safety net alongside the Kanban board's own hourly background
+      // refresh: it catches candidates outside that refresh's active-pipeline
+      // scope (e.g. reopening someone already declined) essentially for free,
+      // since it's one candidate, not the whole pool.
+      supabase.rpc("hiregauge_refresh_candidate_cache_if_stale", { p_candidate_id: candidate.id })
+        .then(({ error: healError }) => {
+          if (healError) console.error("Candidate scoring-cache heal failed:", healError);
+        });
     };
 
     fetchDetail(false);
