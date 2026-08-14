@@ -2786,6 +2786,28 @@ const HypotheticalHireForecast = () => {
 // lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry, userRole }) => {
   const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots"]);
+  // Admin-only manual override on top of the automatic hourly background
+  // refresh (see Team's useEffect above) — forces every candidate with a
+  // completed assessment (not just the active pipeline) to recompute right
+  // now, useful mid-session while actively tuning weights/norms and wanting
+  // the board to reflect a change immediately rather than waiting on the
+  // throttle window.
+  const isAdminForRefresh = userRole === "owner" || userRole === "manager";
+  const [refreshingAll, setRefreshingAll] = useState(false);
+  const [refreshAllResult, setRefreshAllResult] = useState(null); // { count } | { failed: true } | null
+  const handleRefreshAll = async () => {
+    setRefreshingAll(true);
+    setRefreshAllResult(null);
+    const { data, error: rpcError } = await supabase.rpc("hiregauge_refresh_scoring_cache", { p_agency_id: AGENCY_ID, p_scope: "all" });
+    setRefreshingAll(false);
+    if (rpcError) {
+      console.error("Refresh All failed:", rpcError);
+      setRefreshAllResult({ failed: true });
+      return;
+    }
+    setRefreshAllResult({ count: data });
+    if (onRetry) onRetry();
+  };
 
   // Distinguish "still fetching" and "fetch failed" from a genuinely empty
   // pipeline — all three used to render as the same blank board.
@@ -2830,27 +2852,56 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
       <GrowthBudgetHeader />
 
       {/* Sub-nav */}
-      <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:8, padding:3, marginBottom:16 }}>
-        {subs.map(s => (
-          <button
-            key={s.id}
-            onClick={() => setView(s.id)}
-            style={{
-              padding:"6px 12px",
-              fontSize:11,
-              fontWeight: view === s.id ? 600 : 400,
-              color: view === s.id ? T.slate900 : T.slate500,
-              background: view === s.id ? T.white : "transparent",
-              border:"none",
-              borderRadius:6,
-              cursor:"pointer",
-              transition:"all 0.12s",
-              boxShadow: view === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-            }}
-          >
-            {s.label}
-          </button>
-        ))}
+      <div style={{ display:"flex", flexWrap:"wrap", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:16 }}>
+        <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:8, padding:3 }}>
+          {subs.map(s => (
+            <button
+              key={s.id}
+              onClick={() => setView(s.id)}
+              style={{
+                padding:"6px 12px",
+                fontSize:11,
+                fontWeight: view === s.id ? 600 : 400,
+                color: view === s.id ? T.slate900 : T.slate500,
+                background: view === s.id ? T.white : "transparent",
+                border:"none",
+                borderRadius:6,
+                cursor:"pointer",
+                transition:"all 0.12s",
+                boxShadow: view === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {isAdminForRefresh && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+            {refreshAllResult && !refreshAllResult.failed && (
+              <span style={{ fontSize:10, color:T.slate500 }}>{refreshAllResult.count} updated</span>
+            )}
+            {refreshAllResult?.failed && (
+              <span style={{ fontSize:10, color:T.red }}>Refresh failed</span>
+            )}
+            <button
+              onClick={handleRefreshAll}
+              disabled={refreshingAll}
+              style={{
+                padding:"6px 12px",
+                fontSize:11,
+                fontWeight:600,
+                color:T.slate700,
+                background:T.white,
+                border:`1px solid ${T.slate200}`,
+                borderRadius:6,
+                cursor: refreshingAll ? "default" : "pointer",
+                opacity: refreshingAll ? 0.6 : 1,
+              }}
+            >
+              {refreshingAll ? "Refreshing…" : "Refresh All"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Sub-view content */}
@@ -2888,78 +2939,62 @@ export default function Team({ userRole }) {
   // columns only, no computed scores, ~5ms. This is the pass that clears
   // `loading`, so the kanban draws immediately. It also runs under the
   // table's own admin-only read rule, which the view does not enforce.
+  // assessment_composite / protocol_validity_* now come off pass 1 directly
+  // (hiring_candidates.cached_assessment_composite etc., see below) — pass 2
+  // below only fills res_composite, which was always cheap.
   //
-  // Pass 2 (score badges) fetches the two computed composites off
-  // v_hiring_candidates and merges them into the rows already on screen.
-  // res_composite is cheap for everyone. assessment_composite is NOT, so it
-  // is requested ONLY for candidates who actually finished an assessment
-  // (assessment_completed_at IS NOT NULL) — every other row is structurally
-  // guaranteed to be null there anyway, so asking for it was pure waste.
+  // WHY THE CACHE EXISTS, root-caused 2026-08-13: a single query asking
+  // v_hiring_candidates for assessment_composite across every candidate ran
+  // the full seven-role fit engine per candidate — 271 candidates with no
+  // assessment data cost 18ms total, the 28 with a COMPLETED assessment cost
+  // 841ms, growing ~30ms per additional completed assessment, past
+  // PostgREST's 8s statement ceiling at roughly 270 of them. Splitting into
+  // two passes that same day only delayed that wall, it didn't remove it.
   //
-  // WHY, root-caused 2026-08-13: the previous single query asked
-  // v_hiring_candidates for assessment_composite across every candidate on
-  // file. That column is not stored — reading it runs the full seven-role fit
-  // engine for that candidate. Measured: the 271 candidates with no
-  // assessment data cost 18ms in total, while the 28 with a COMPLETED
-  // assessment cost 841ms — about 30ms and 3,700 shared buffer pages each.
-  // Whole query 1.54s warm, and past PostgREST's 8s statement ceiling
-  // whenever the cache was cold, which came back as HTTP 500. Confirmed in
-  // the logs: repeated "GET | 500 | .../v_hiring_candidates?select=...
-  // assessment_composite..." paired with "canceling statement due to
-  // statement timeout" in postgres_logs at matching timestamps.
-  //
-  // The 2026-08-05 auto-retry (kept below) masked this rather than fixing it:
-  // the retry sometimes landed on a warm cache, which is exactly the "loads
-  // empty, refresh fixes it" symptom. The real cost grew ~30ms per assessment
-  // completed and would have killed the tab outright at roughly 270 of them.
-  // 169 candidates currently sit at assessment_sent, so this was on a clock.
+  // FIX, 2026-08-14: hiring_candidates now carries cached_assessment_composite
+  // / cached_protocol_validity_v / cached_protocol_validity_label, written by
+  // the hiregauge_refresh_scoring_cache Supabase function. The cache goes
+  // stale only when something that actually changes candidates' scores
+  // changes — role/facet weights, facet norms (this is also where a
+  // pool-composition shift shows up: gma/sjt/gma_speed are normed against the
+  // local applicant pool, not fixed external norms, and that norm table gets
+  // refreshed as the pool grows), or role ideal ranges. DB triggers on those
+  // three tables bump a per-agency version counter
+  // (hiregauge_scoring_version); a candidate's cache is stale exactly when
+  // its cached_scoring_version doesn't match. See the background-refresh
+  // effect below (checks + fires a scoped batch refresh at most once an
+  // hour, active pipeline only) and the admin-only Refresh All button in
+  // GrowthTab (forces the same batch refresh across every candidate with a
+  // completed assessment, not just the active pipeline).
   //
   // Failure behavior: a failed pass 1 still raises the retry affordance. A
-  // failed pass 2 leaves the badges blank and logs — it never breaks the board.
+  // failed pass 2 leaves the res_composite badge blank and logs — it never
+  // breaks the board.
   useEffect(() => {
     if (!supabase || !AGENCY_ID) return;
     let cancelled = false;
 
     const PIPELINE_STATUSES = ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired","declined","former"];
 
-    // Pass 2 — computed score badges, merged in when they land.
+    // Pass 2 — res_composite only now. Cheap for everyone (plain resume
+    // scoring, no facet-norm lookups involved), unlike assessment_composite
+    // which pass 1 covers straight off the cache above.
     const loadScoreBadges = async () => {
-      const [resumeRes, assessRes] = await Promise.allSettled([
-        supabase
-          .from("v_hiring_candidates")
-          .select("id, res_composite")
-          .eq("agency_id", AGENCY_ID)
-          .in("status", PIPELINE_STATUSES),
-        supabase
-          .from("v_hiring_candidates")
-          .select("id, assessment_composite, protocol_validity_v, protocol_validity_label")
-          .eq("agency_id", AGENCY_ID)
-          .in("status", PIPELINE_STATUSES)
-          .not("assessment_completed_at", "is", null),
-      ]);
+      const { data, error } = await supabase
+        .from("v_hiring_candidates")
+        .select("id, res_composite")
+        .eq("agency_id", AGENCY_ID)
+        .in("status", PIPELINE_STATUSES);
       if (cancelled) return;
-
+      if (error) {
+        console.error("Failed to load res_composite badges:", error);
+        return;
+      }
       const patch = {};
-      const collect = (settled, key) => {
-        if (settled.status !== "fulfilled") {
-          console.error(`Failed to load ${key} badges:`, settled.reason);
-          return;
-        }
-        if (settled.value.error) {
-          console.error(`Failed to load ${key} badges:`, settled.value.error);
-          return;
-        }
-        (settled.value.data || []).forEach(r => {
-          if (r?.id == null) return;
-          if (!patch[r.id]) patch[r.id] = {};
-          patch[r.id][key] = r[key];
-        });
-      };
-      collect(resumeRes, "res_composite");
-      collect(assessRes, "assessment_composite");
-      collect(assessRes, "protocol_validity_v");
-      collect(assessRes, "protocol_validity_label");
-
+      (data || []).forEach(r => {
+        if (r?.id == null) return;
+        patch[r.id] = { res_composite: r.res_composite };
+      });
       if (Object.keys(patch).length === 0) return;
       setApplicants(prev => prev.map(a => (patch[a.id] ? { ...a, ...patch[a.id] } : a)));
     };
@@ -2975,7 +3010,7 @@ export default function Team({ userRole }) {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
         .from("hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability, cached_assessment_composite, cached_protocol_validity_v, cached_protocol_validity_label")
         .eq("agency_id", AGENCY_ID)
         .in("status", PIPELINE_STATUSES)
         .order("created_at", { ascending: false });
@@ -3001,10 +3036,15 @@ export default function Team({ userRole }) {
         first_name: a.first_name || (a.candidate_name ? a.candidate_name.split(" ")[0] : "Unknown"),
         last_name:  a.last_name  || (a.candidate_name ? a.candidate_name.split(" ").slice(1).join(" ") : ""),
         position:   a.position || "—",
-        // Filled by pass 2. Declared here so the badge render and the Declined
-        // table sort see the key rather than undefined.
+        // res_composite filled by pass 2 (cheap live query off v_hiring_candidates).
+        // assessment_composite / protocol_validity_* come straight off this row's
+        // own cached_* columns above -- no scoring engine touched on board load.
+        // Cache is kept current by the background refresh effect below plus the
+        // admin-only Refresh All button.
         res_composite: null,
-        assessment_composite: null,
+        assessment_composite: a.cached_assessment_composite,
+        protocol_validity_v: a.cached_protocol_validity_v,
+        protocol_validity_label: a.cached_protocol_validity_label,
         interview_notes: null,
         rating: null,
       }));
@@ -3017,6 +3057,34 @@ export default function Team({ userRole }) {
     fetchApplicants(false);
     return () => { cancelled = true; };
   }, [applicantsRetryTick]);
+
+  // Background scoring-cache refresh, throttled client-side to roughly once
+  // an hour per browser. Fire-and-forget — never blocks the board, which
+  // already rendered off pass 1's cached columns. Scoped to 'active'
+  // (in-progress pipeline statuses only); hired/declined/former candidates
+  // don't need a live-fresh score, their decision's already made. The RPC
+  // itself no-ops (touches zero rows) when nothing has actually gone stale
+  // — see hiregauge_refresh_scoring_cache — so this stays cheap even though
+  // the throttle window is generous.
+  useEffect(() => {
+    if (!supabase || !AGENCY_ID) return;
+    const THROTTLE_KEY = "hiregauge_scoring_refresh_last_check";
+    const THROTTLE_MS = 60 * 60 * 1000;
+    let last = 0;
+    try { last = Number(window.localStorage.getItem(THROTTLE_KEY)) || 0; } catch { /* private mode / no storage */ }
+    if (Date.now() - last < THROTTLE_MS) return;
+    try { window.localStorage.setItem(THROTTLE_KEY, String(Date.now())); } catch { /* ignore */ }
+    supabase.rpc("hiregauge_refresh_scoring_cache", { p_agency_id: AGENCY_ID, p_scope: "active" })
+      .then(({ error }) => {
+        if (error) { console.error("Background scoring-cache refresh failed:", error); return; }
+        // Pull any newly-healed cached values for the next paint — cheap,
+        // base-table-only refetch, same as a manual retry.
+        setApplicantsRetryTick(t => t + 1);
+      });
+    // Deliberately no cleanup/cancel — this is a fire-and-forget background
+    // task gated to once/hour; a stray extra tick if the component unmounts
+    // mid-flight is harmless.
+  }, [supabase, AGENCY_ID]);
 
   const retryApplicants = () => setApplicantsRetryTick(t => t + 1);
 
