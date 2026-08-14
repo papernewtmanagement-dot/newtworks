@@ -41,12 +41,13 @@
 // deno-lint-ignore-file no-explicit-any
 
 import { sb } from "../../_shared/supabase.ts";
+import { KNOWN_HEADERS } from "./resume_reformat.ts";
 
 // -------------------------------------------------------------------------
 // Date parsing
 // -------------------------------------------------------------------------
 
-const MONTHS: Record<string, number> = {
+const RESUME_MONTH_NAMES: Record<string, number> = {
   jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
   may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
   september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
@@ -68,7 +69,7 @@ function parseDateToken(tok: string): DateTokenResult {
   const t = tok.trim().toLowerCase();
   if (/^(present|current|now|ongoing)$/.test(t)) return "present";
   let m = t.match(/^([a-z]+)\.?\s+(\d{4})$/);
-  if (m && MONTHS[m[1]]) return { year: parseInt(m[2], 10), month: MONTHS[m[1]] };
+  if (m && RESUME_MONTH_NAMES[m[1]]) return { year: parseInt(m[2], 10), month: RESUME_MONTH_NAMES[m[1]] };
   m = t.match(/^(\d{1,2})\/(\d{4})$/);
   if (m) {
     const mo = parseInt(m[1], 10);
@@ -87,28 +88,11 @@ function monthsBetween(start: MonthYear | null, end: DateTokenResult, asOf: Mont
 }
 
 // -------------------------------------------------------------------------
-// Section isolation — reuses the same header list resume_reformat.ts uses,
-// so the boundary we detect here matches the divider it already inserted.
+// Section isolation — reuses KNOWN_HEADERS from resume_reformat.ts (single
+// source of truth for the header list) so the boundary detected here
+// matches the divider that module already inserted.
 // -------------------------------------------------------------------------
 
-const KNOWN_HEADERS: ReadonlySet<string> = new Set([
-  "objective", "career objective", "summary", "professional summary", "profile",
-  "profile summary", "about me", "experience", "work experience",
-  "professional experience", "employment history", "relevant experience",
-  "work history", "skills", "skills & abilities", "skills & competencies",
-  "skills and competencies", "skills and abilities", "technical skills",
-  "technical proficiencies", "core competencies", "expertise", "key skills",
-  "key skills and characteristics", "areas of strength", "courses & skills",
-  "education", "educational background", "education/professional development",
-  "education & credentials", "certifications", "licenses",
-  "certifications & licenses", "certifications and licenses",
-  "licenses & certifications", "languages", "language", "references",
-  "awards", "honors", "awards & recognition", "projects",
-  "volunteer experience", "activities", "assessments", "contact", "contacts",
-  "contact information", "interests", "hobbies", "publications",
-  "affiliations", "key achievements", "achievements",
-  "additional information", "professional development",
-]);
 const EXPERIENCE_HEADERS: ReadonlySet<string> = new Set([
   "experience", "work experience", "professional experience",
   "employment history", "relevant experience", "work history",
