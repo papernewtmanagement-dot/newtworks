@@ -17,7 +17,7 @@
 // dividers.
 // =========================================================================
 
-const KNOWN_HEADERS: ReadonlySet<string> = new Set([
+export const KNOWN_HEADERS: ReadonlySet<string> = new Set([
   // summary / objective
   "objective", "career objective",
   "summary", "professional summary", "profile", "profile summary", "about me",
