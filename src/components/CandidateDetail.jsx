@@ -2080,34 +2080,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
     setThreeConstruct(null);
     setV1Extras(null);
     setV1InvitedAt(null);
-    // v2 candidates: assessment_best_fit_role was rewired onto the v2
-    // architecture (*Ass Comp Build 2) and stays live for both paths. The
-    // other three legacy RPCs below (assessment_all_competencies,
-    // hiregauge_composite_recommendation, hiregauge_evaluate_candidate) read
-    // the old rules-narrative engine and retired trait columns — gated to
-    // v1/CTS only so they never fire against a v2 candidate.
-    const isV2 = detail?.assessment_source === "v2";
+    // assessment_best_fit_role was rewired onto the v2 architecture
+    // (*Ass Comp Build 2) and stays live for both paths. The three legacy
+    // v1/CTS rules-narrative RPCs that used to be gated below
+    // (assessment_all_competencies, hiregauge_composite_recommendation,
+    // hiregauge_evaluate_candidate) were dropped in the 2026-08-13 CTS purge;
+    // their calls were removed the same day. Their panels already rendered
+    // nothing on null state, which is unchanged.
     supabase.rpc("assessment_best_fit_role", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!cancelled && !error) setBestFit(data); })
       .catch(() => {});
-    if (!isV2) {
-      // Competencies for all four role fits (single RPC returning JSONB keyed by role)
-      supabase.rpc("assessment_all_competencies", { p_assessment_id: detail.id })
-        .then(({ data, error }) => { if (!cancelled && !error) setCompetencies(data); })
-        .catch(() => {});
-      // HireGauge framework read — composite verdict + all matched rules.
-      // Both RPCs are read-only, IMMUTABLE per candidate, safe to call every mount.
-      supabase.rpc("hiregauge_composite_recommendation", { p_assessment_id: detail.id })
-        .then(({ data, error }) => {
-          if (!cancelled && !error && Array.isArray(data) && data[0]) setComposite(data[0]);
-        })
-        .catch(() => {});
-      supabase.rpc("hiregauge_evaluate_candidate", { p_assessment_id: detail.id })
-        .then(({ data, error }) => {
-          if (!cancelled && !error && Array.isArray(data)) setFrameworkRules(data);
-        })
-        .catch(() => {});
-    }
     // Intelligence composite for the headline signal — thin wrapper around
     // hiregauge_lss_delta_v2 so the frontend keeps the p_assessment_id calling
     // convention used by every other RPC on this page.
