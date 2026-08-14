@@ -304,6 +304,12 @@ function useFinancialsData(entity) {
             const ytd = rows.reduce((s,r) => s + parseFloat(r.amount || 0), 0);
             const mtd = rows.filter(r => r.month === currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
             const qtd = rows.filter(r => r.month >= quarterStart && r.month <= currentMonth).reduce((s,r) => s + parseFloat(r.amount || 0), 0);
+            // Cash-register confirmation flags (finrebuild cash-register-first,
+            // 2026-08-14): any current-year row for this line carrying either
+            // flag surfaces it on the line as a whole — amber/red dot in
+            // PLSection, per line, not per month.
+            const awaitingStatement = rows.some(r => r.awaiting_statement === true);
+            const notOnStatement    = rows.some(r => r.not_on_statement === true);
             return {
               name,
               section,
@@ -315,6 +321,8 @@ function useFinancialsData(entity) {
               perMonthByYear: Object.fromEntries(
                 Object.entries(perMonthByYear).map(([y, arr]) => [y, arr.map(Math.round)])
               ),
+              awaitingStatement,
+              notOnStatement,
             };
           });
         };
@@ -1365,6 +1373,12 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
                       {row.account_code && <span style={{ padding: "1px 5px", background: T.slate100, borderRadius: 3 }}>{row.account_code}</span>}
                       {isPrior && <span style={{ padding: "1px 5px", background: "#fef3c7", color: "#92400e", borderRadius: 3 }}>prior books</span>}
                       {row.classification_status === "pending_review" && <span style={{ padding: "1px 5px", background: "#fee2e2", color: "#991b1b", borderRadius: 3 }}>suspense</span>}
+                      {row.confirmation === "awaiting_statement" && (
+                        <span title="Seen in the bank alerts, not yet on a statement." style={{ padding: "1px 5px", background: "#fef3c7", color: "#92400e", borderRadius: 3 }}>awaiting statement</span>
+                      )}
+                      {row.confirmation === "not_on_statement" && (
+                        <span title="A statement covering this date has arrived and this transaction was not on it." style={{ padding: "1px 5px", background: "#fee2e2", color: "#991b1b", borderRadius: 3 }}>not on statement</span>
+                      )}
                       {row.je_source && <span style={{ opacity: 0.65 }}>{row.je_source}</span>}
                       {row.reference_number && <span style={{ opacity: 0.65 }}>ref: {row.reference_number}</span>}
                     </div>
@@ -1734,7 +1748,33 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
   // onLabelClick are passed, corresponding surfaces render with a
   // pointer cursor + hover underline. Section headers, subtotals,
   // and Total/Net rows leave these unset and stay non-clickable.
-  const DataRow = ({ label, indent, bold, isTotal, values, priors, opts, onCellClick, onLabelClick }) => (
+  // Cash-register confirmation dot (finrebuild 2026-08-14): amber = seen in
+  // the bank alerts, not yet on a statement (normal intra-month state). Red =
+  // a statement covering this date arrived and this transaction was NOT on
+  // it — the real flag worth a second look. Plain-English tooltip only.
+  const ConfirmationDot = ({ awaitingStatement, notOnStatement }) => {
+    if (!awaitingStatement && !notOnStatement) return null;
+    const color = notOnStatement ? (T.red || "#dc2626") : (T.amber || "#d97706");
+    const label = notOnStatement
+      ? "A statement covering this date has arrived and this transaction was not on it."
+      : "Seen in the bank alerts, not yet on a statement.";
+    return (
+      <span
+        title={label}
+        style={{
+          display: "inline-block",
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: color,
+          marginLeft: 6,
+          verticalAlign: "middle",
+        }}
+      />
+    );
+  };
+
+  const DataRow = ({ label, indent, bold, isTotal, values, priors, opts, onCellClick, onLabelClick, awaitingStatement, notOnStatement }) => (
     <tr style={{ background: isTotal ? T.slate50 : "transparent" }}>
       <td
         onClick={onLabelClick}
@@ -1752,6 +1792,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
         {onLabelClick
           ? <span style={{ borderBottom: `1px dotted ${T.slate400}` }}>{label}</span>
           : label}
+        <ConfirmationDot awaitingStatement={awaitingStatement} notOnStatement={notOnStatement} />
       </td>
       {columns.flatMap((c, i) => [
         <td
@@ -1878,7 +1919,8 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
           }
           return any ? sum : null;
         });
-        // Section header — NOT clickable (individual-account grain only)
+        // Section header — NOT clickable (individual-account grain only).
+        // Dot reflects whether ANY leaf underneath carries the flag.
         nodes.push(
           <DataRow
             key={`sec-${sec}`}
@@ -1887,6 +1929,8 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
             values={sectionValues}
             priors={sectionPriors}
             opts={opts}
+            awaitingStatement={grpLines.some(l => l.awaitingStatement)}
+            notOnStatement={grpLines.some(l => l.notOnStatement)}
           />
         );
       }
@@ -1902,6 +1946,8 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
             values={lineValues(line)}
             priors={linePriors(line)}
             opts={opts}
+            awaitingStatement={line.awaitingStatement}
+            notOnStatement={line.notOnStatement}
             onLabelClick={() => openDrill(line.name, sec, accountType, visibleFrom, visibleTo)}
             onCellClick={(colIdx) => {
               const c = columns[colIdx];
