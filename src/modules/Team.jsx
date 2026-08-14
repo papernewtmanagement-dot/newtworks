@@ -460,7 +460,7 @@ const StageBadge = ({ status }) => {
 };
 
 // ─── Section: Recruiting Pipeline ──────────────────────────── 
-const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
+const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole }) => {
   // Persist selected candidate in URL query (?candidate=<uuid>) so refresh
   // returns to the same detail view. useTabParam without an allowlist just
   // syncs the value bidirectionally with the URL query string.
@@ -479,6 +479,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
         candidate={selectedApp}
         onBack={() => setSelected(null)}
         onUpdate={onUpdate}
+        userRole={userRole}
       />
     );
   }
@@ -565,7 +566,7 @@ const overallBandColor = (v) => {
   return T.red;
 };
 
-const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidates on file." }) => {
+const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidates on file.", userRole }) => {
   // URL-persisted candidate selection so refresh keeps the same candidate open.
   // Same param name as RecruitingPipeline uses; the two are conditionally
   // rendered (gtab picks one) so there's no collision.
@@ -600,6 +601,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
         candidate={selectedApp}
         onBack={() => setSelected(null)}
         onUpdate={onUpdate}
+        userRole={userRole}
       />
     );
   }
@@ -2782,7 +2784,7 @@ const HypotheticalHireForecast = () => {
 // visible. Sub-nav toggles between Recruiting and Declined. Onboarding
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
-const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry }) => {
+const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry, userRole }) => {
   const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots"]);
 
   // Distinguish "still fetching" and "fetch failed" from a genuinely empty
@@ -2854,15 +2856,15 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
       {/* Sub-view content */}
       {view === "recruiting" && (
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <RecruitingPipeline applicants={recruitingApps} onUpdate={onUpdate} stages={RECRUITING_STAGES} />
+          <RecruitingPipeline applicants={recruitingApps} onUpdate={onUpdate} stages={RECRUITING_STAGES} userRole={userRole} />
           <HypotheticalHireForecast />
         </div>
       )}
       {view === "finalists" && (
-        <RecruitingPipeline applicants={closingApps} onUpdate={onUpdate} stages={CLOSING_STAGES} />
+        <RecruitingPipeline applicants={closingApps} onUpdate={onUpdate} stages={CLOSING_STAGES} userRole={userRole} />
       )}
-      {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} />}
-      {view === "former"     && <DeclinedTable declined={former}   onUpdate={onUpdate} emptyLabel="No former team members on file." />}
+      {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} userRole={userRole} />}
+      {view === "former"     && <DeclinedTable declined={former}   onUpdate={onUpdate} emptyLabel="No former team members on file." userRole={userRole} />}
       {view === "slots"       && <InterviewSlotsManager />}
     </div>
   );
@@ -2871,7 +2873,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 
 
-export default function Team() {
+export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
   const [section, setSection] = useTabParam("tab", "members", ["members","growth"]);
   const [applicants,  setApplicants]  = useState([]);
@@ -3066,7 +3068,7 @@ export default function Team() {
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
-      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} />}
+      {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} userRole={userRole} />}
     </div>
   );
 }

@@ -55,6 +55,15 @@ const V2_FACET_LABELS = {
   greed_avoidance:            "Greed-Avoidance",
 };
 
+// Role Fit input labels — the 27 weighted inputs behind every
+// newtworks_all_role_fits() role score (25 facets + gma + sjt). Used only by
+// the admin-only Role Fit breakdown expander (Peter directive 2026-08-14).
+const ROLE_FIT_INPUT_LABELS = {
+  ...V2_FACET_LABELS,
+  gma: "General Mental Ability",
+  sjt: "Situational Judgment",
+};
+
 // SJT (situational judgement test) topics — hypothesized_trait values on
 // newtworks_v2_sjt items, keys into sjt_topic_detail jsonb.
 const SJT_TOPIC_LABELS = {
@@ -391,6 +400,39 @@ const AssessRow = ({ label, value, extra, band, subline, lssDelta, max, noBar })
       </div>
       {subline && (
         <div style={{ fontSize: 10, color: T.slate500, fontWeight: 400 }}>{subline}</div>
+      )}
+    </div>
+  );
+};
+
+// Admin-only collapsible breakdown, meant to sit directly under an AssessRow
+// (or a Role Fit button). Renders nothing at all for non-admin roles — not
+// just hidden via CSS, actually absent from the DOM, since this is scoring
+// detail Peter wants for himself only (2026-08-14 directive). Closed by
+// default. Deliberately quiet styling (small, slate400 toggle text) so it
+// reads as a light admin affordance, not a headline UI element.
+const AdminBreakdown = ({ isAdmin, children }) => {
+  const [open, setOpen] = useState(false);
+  if (!isAdmin) return null;
+  return (
+    <div style={{ marginTop: -2, marginBottom: 2 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "flex", alignItems: "center", gap: 4,
+          fontSize: 9, fontWeight: 600, color: T.slate400,
+          background: "none", border: "none", padding: "3px 10px",
+          cursor: "pointer", fontFamily: "inherit", textTransform: "uppercase", letterSpacing: 0.3,
+        }}
+      >
+        <span style={{ display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.12s" }}>▸</span>
+        Admin breakdown
+      </button>
+      {open && (
+        <div style={{ padding: "8px 10px", marginTop: 2, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6, fontSize: 10, color: T.slate600, display: "flex", flexDirection: "column", gap: 4 }}>
+          {children}
+        </div>
       )}
     </div>
   );
@@ -861,7 +903,7 @@ const CD_ASSESS_GRID_CSS = `
 .cd-col-rolefit { grid-area: rolefit; min-width: 0; }
 `;
 
-function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers }) {
+function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers, isAdmin }) {
   const exitGate = detail?.assessment_exit_gate;
   const exitDetail = detail?.assessment_exit_detail || {};
   const exitedAt = detail?.assessment_exited_at;
@@ -991,14 +1033,25 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
               const nItems = row?.n_items_scored;
               const insufficient = nItems != null && nItems < 4;
               const pct = pctByFacet[trait];
+              const pool = poolByFacet[trait];
+              const reworded = !!rewordedByFacet[trait];
 
               return (
-                <AssessRow
-                  key={trait}
-                  label={label}
-                  value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
-                  band="none"
-                />
+                <div key={trait}>
+                  <AssessRow
+                    label={label}
+                    value={insufficient ? "insufficient data" : (pct == null ? "—" : pct)}
+                    band="none"
+                  />
+                  <AdminBreakdown isAdmin={isAdmin}>
+                    <div>Raw facet score: {row?.facet_score ?? "—"}</div>
+                    <div>Items scored: {nItems ?? "—"}</div>
+                    {pool && (
+                      <div>Pool position: {pool.pool_position ?? "—"} of {pool.pool_n ?? "—"}{pool.pool_percentile != null ? ` (${pool.pool_percentile} pctile)` : ""}</div>
+                    )}
+                    {reworded && <div>Item(s) reworded after norm was set — percentile may be imprecise.</div>}
+                  </AdminBreakdown>
+                </div>
               );
             })}
           </div>
@@ -1063,30 +1116,52 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
                 const gaugeBg = Number.isFinite(numFit)
                   ? `linear-gradient(to right, ${baseBg} 0%, ${baseBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} 100%)`
                   : (colors ? baseBg : restBg);
+                const roleFitDetail = gmaRoleFits?.[r.key];
+                const inputRows = roleFitDetail?.inputs && typeof roleFitDetail.inputs === "object"
+                  ? Object.entries(roleFitDetail.inputs).sort((a, b) => Math.abs(Number(b[1]?.effective_weight) || 0) - Math.abs(Number(a[1]?.effective_weight) || 0))
+                  : [];
                 return (
-                  <button
-                    key={r.key}
-                    type="button"
-                    onClick={() => setSelectedRole(r.key)}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      padding: "6px 10px", background: gaugeBg, borderRadius: 6,
-                      borderTop: "none", borderRight: "none", borderBottom: "none",
-                      borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
-                      outline: isSelected ? `1px solid ${T.slate400}` : "none",
-                      boxSizing: "border-box", gap: 8, cursor: "pointer",
-                      fontFamily: "inherit", textAlign: "left", width: "100%",
-                      marginBottom: 2,
-                    }}
-                    title={isSelected ? "Selected — the score matrix Capability row uses this role" : "Click to score Capability against this role"}
-                  >
-                    <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
-                      {ROLE_LABELS[r.key] || r.key} Fit
-                    </span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
-                      {r.fitScore ?? "—"}
-                    </span>
-                  </button>
+                  <div key={r.key}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRole(r.key)}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "6px 10px", background: gaugeBg, borderRadius: 6,
+                        borderTop: "none", borderRight: "none", borderBottom: "none",
+                        borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
+                        outline: isSelected ? `1px solid ${T.slate400}` : "none",
+                        boxSizing: "border-box", gap: 8, cursor: "pointer",
+                        fontFamily: "inherit", textAlign: "left", width: "100%",
+                        marginBottom: 2,
+                      }}
+                      title={isSelected ? "Selected — the score matrix Capability row uses this role" : "Click to score Capability against this role"}
+                    >
+                      <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
+                        {ROLE_LABELS[r.key] || r.key} Fit
+                      </span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
+                        {r.fitScore ?? "—"}
+                      </span>
+                    </button>
+                    <AdminBreakdown isAdmin={isAdmin}>
+                      {inputRows.length === 0 ? (
+                        <div>No input detail available.</div>
+                      ) : (
+                        inputRows.map(([key, inp]) => (
+                          <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                            <span>
+                              {ROLE_FIT_INPUT_LABELS[key] || key}
+                              {inp?.basis && <span style={{ color: T.slate400 }}> — {inp.basis}</span>}
+                            </span>
+                            <span style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                              {inp?.value ?? "—"} × {inp?.weight ?? "—"} = {inp?.effective ?? "—"}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </AdminBreakdown>
+                  </div>
                 );
               })}
             </>
@@ -1117,20 +1192,58 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
             GMA specifically. */}
         {(reliabilityScore != null || gmaPct != null || sjtScore != null || detail?.impression_management != null || detail?.protocol_validity_v != null) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
-            {gmaPct != null && (
-              <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} />
-            )}
-            {sjtScore != null && (
-              <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
-            )}
+            {gmaPct != null && (() => {
+              const gmaInput = gmaRoleFits?.[gmaBestRoleKey]?.inputs?.gma;
+              return (
+                <div>
+                  <AssessRow label="General Mental Ability" value={gmaPct} band={competencyBand(gmaPct)} />
+                  <AdminBreakdown isAdmin={isAdmin}>
+                    <div>Accuracy: {gmaInput?.raw_0_100 ?? "—"}%{gmaInput?.accuracy_percentile != null ? ` (${gmaInput.accuracy_percentile} pctile)` : ""}</div>
+                    <div>Speed: {gmaInput?.correct_items_per_minute ?? "—"} correct items/min{gmaInput?.speed_percentile != null ? ` (${gmaInput.speed_percentile} pctile)` : ""}</div>
+                    {gmaInput?.basis && <div style={{ color: T.slate400 }}>{gmaInput.basis}</div>}
+                  </AdminBreakdown>
+                </div>
+              );
+            })()}
+            {sjtScore != null && (() => {
+              const topicRows = detail?.sjt_topic_detail && typeof detail.sjt_topic_detail === "object"
+                ? Object.entries(detail.sjt_topic_detail) : [];
+              return (
+                <div>
+                  <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
+                  <AdminBreakdown isAdmin={isAdmin}>
+                    {topicRows.length === 0 ? (
+                      <div>No topic detail available.</div>
+                    ) : (
+                      topicRows.map(([topic, t]) => (
+                        <div key={topic} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <span>{SJT_TOPIC_LABELS[topic] || topic}</span>
+                          <span style={{ fontWeight: 600 }}>{t?.correct ?? "—"} / {t?.n ?? "—"}</span>
+                        </div>
+                      ))
+                    )}
+                  </AdminBreakdown>
+                </div>
+              );
+            })()}
             {detail?.protocol_validity_v != null && (
-              <AssessRow label="Validity" value={Math.round(Number(detail.protocol_validity_v) * 100)} band={PROTOCOL_VALIDITY_BAND(detail.protocol_validity_label)} max={100} />
-            )}
-            {reliabilityScore != null && (
-              <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} max={100} />
-            )}
-            {detail?.impression_management != null && (
-              <AssessRow label="Impression Management" value={detail.impression_management} band={IM_BAND_COLOR(imBand)} max={100} />
+              <div>
+                <AssessRow label="Validity (Reliability + Faking)" value={Math.round(Number(detail.protocol_validity_v) * 100)} band={PROTOCOL_VALIDITY_BAND(detail.protocol_validity_label)} max={100} />
+                <AdminBreakdown isAdmin={isAdmin}>
+                  <div style={{ fontWeight: 700, color: T.slate700 }}>Reliability {reliabilityScore != null ? `— ${reliabilityScore}/100 (${reliability || "—"})` : ""}</div>
+                  {Object.entries(RELIABILITY_METHOD_LABELS).map(([key, mLabel]) => {
+                    const m = detail?.reliability_detail?.[key];
+                    if (!m) return null;
+                    return (
+                      <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: m.fired ? T.red : T.slate600 }}>
+                        <span>{mLabel}{m.fired ? " — flagged" : ""}</span>
+                        <span style={{ textAlign: "right", maxWidth: "60%" }}>{m.detail || "—"}</span>
+                      </div>
+                    );
+                  })}
+                  <div style={{ fontWeight: 700, color: T.slate700, marginTop: 4 }}>Faking (Impression Management) {detail?.impression_management != null ? `— ${detail.impression_management}/100 (${imBand || "—"})` : ""}</div>
+                </AdminBreakdown>
+              </div>
             )}
           </div>
         )}
@@ -1186,9 +1299,9 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
   );
 }
 
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, facetRewordedFlags, v2PoolPosition, screenAnswers }) {
+function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, facetRewordedFlags, v2PoolPosition, screenAnswers, isAdmin }) {
   if (detail?.assessment_source === "v2") {
-    return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers });
+    return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers, isAdmin });
   }
   return (
     <div>
@@ -1835,7 +1948,11 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
 
 // ─── Main component ────────────────────────────────────────────────
 
-export default function CandidateDetail({ candidate, onBack, onUpdate }) {
+export default function CandidateDetail({ candidate, onBack, onUpdate, userRole }) {
+  // App-wide admin convention (Manual.jsx, FitScorecards.jsx, Onboarding.jsx,
+  // Licensing.jsx, PFA.jsx all use the same ["owner","manager"] check). Gates
+  // the admin-only assessment breakdown expanders (Peter directive 2026-08-14).
+  const isAdmin = ["owner", "manager"].includes(userRole);
   const { isPhone } = useViewport();
   const verdictThresh = useVerdictThresholds();
   const [detail, setDetail] = useState(candidate || {});
@@ -2747,7 +2864,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate }) {
                                     intelligence, roleIdealRange,
                                     v2Facets, v2Percentiles, v2RoleFits,
                                     facetRewordedFlags, v2PoolPosition,
-                                    screenAnswers,
+                                    screenAnswers, isAdmin,
                                   })}
                                   {layer.key === "interview" && renderInterviewLayer({
                                     detail, T,

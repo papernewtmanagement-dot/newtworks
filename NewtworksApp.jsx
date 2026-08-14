@@ -687,7 +687,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     social:      <ErrorBoundary name="Social Media"><SocialMedia /></ErrorBoundary>,
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals userRole={userRole} userId={userId} /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
-    hr:          <ErrorBoundary name="Team"><Team /></ErrorBoundary>,
+    hr:          <ErrorBoundary name="Team"><Team userRole={userRole} /></ErrorBoundary>,
     book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
