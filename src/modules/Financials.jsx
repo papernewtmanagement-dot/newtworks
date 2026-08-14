@@ -1121,7 +1121,7 @@ const _drillBtnDanger = { padding: "4px 10px", fontSize: 11, background: "#fff",
 const _drillLabel = { fontSize: 11, fontWeight: 500, color: T.slate600, display: "flex", flexDirection: "column", gap: 3 };
 const _drillInput = { padding: "6px 8px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 5, color: T.slate800, background: "#fff" };
 
-const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
+const PLDrillPanel = ({ ctx, onClose, onDataChanged, allEntities }) => {
   const [rows, setRows]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
@@ -1159,7 +1159,7 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
       // Not filtered to ctx.accountType: Peter needs to move transactions
       // between income and expense, so both types must be selectable here.
       const { data } = await supabase.from("chart_of_accounts")
-        .select("id, account_code, account_name, account_type")
+        .select("id, account_code, account_name, account_type, business_entity_id")
         .in("account_type", ["income", "expense"])
         .eq("is_active", true)
         .order("account_type").order("account_code");
@@ -1201,7 +1201,19 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
       account_name: row.account_name || "",
       section_type: ctx.accountType === "income" ? "Income" : "Expense",
       flip_sign:    false,
+      entity_id:    row.business_entity_id || ctx.entityId,
     });
+  };
+
+  // Switching entity re-scopes the Account dropdown to that entity's chart
+  // of accounts. Auto-picks the first account of the same income/expense
+  // type in the new entity so the change isn't silently dropped on Save;
+  // clears to "" (forcing an explicit pick) only when the new entity has
+  // no accounts of that type.
+  const onEntityChange = (row, newEntityId) => {
+    const currentType = coaOptions.find(a => a.id === editDraft.account_id)?.account_type || ctx.accountType;
+    const match = coaOptions.find(a => a.business_entity_id === newEntityId && a.account_type === currentType);
+    setEditDraft({ ...editDraft, entity_id: newEntityId, account_id: match ? match.id : "" });
   };
 
   const cancelEdit = () => { setEditingKey(null); setEditDraft({}); };
@@ -1258,6 +1270,9 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
         const pypUpdates = {};
         if (editDraft.account_name && editDraft.account_name !== row.account_name) {
           pypUpdates.account_name = editDraft.account_name;
+        }
+        if (editDraft.entity_id && editDraft.entity_id !== row.business_entity_id) {
+          pypUpdates.business_entity_id = editDraft.entity_id;
         }
         // prior_year_pl.amount is a stored value, never derived from
         // section_type, so moving it between Income and Expense here
@@ -1399,20 +1414,32 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged }) => {
                     <label style={_drillLabel}>Date
                       <input type="date" value={editDraft.entry_date || ""} onChange={(e) => setEditDraft({ ...editDraft, entry_date: e.target.value })} style={_drillInput} />
                     </label>
+                    {Array.isArray(allEntities) && allEntities.length > 0 && (
+                      <label style={_drillLabel}>Entity
+                        <select value={editDraft.entity_id || ""} onChange={(e) => onEntityChange(row, e.target.value)} style={_drillInput}>
+                          {[...allEntities].sort((a, b) => a.name.localeCompare(b.name)).map(en => (
+                            <option key={en.id} value={en.id}>{en.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     {!isPrior && (
                       <label style={_drillLabel}>Account
                         <select value={editDraft.account_id || ""} onChange={(e) => setEditDraft({ ...editDraft, account_id: e.target.value })} style={_drillInput}>
                           <optgroup label="Income">
-                            {coaOptions.filter(a => a.account_type === "income").map(a => (
+                            {coaOptions.filter(a => a.account_type === "income" && (!editDraft.entity_id || a.business_entity_id === editDraft.entity_id)).map(a => (
                               <option key={a.id} value={a.id}>{a.account_code} · {a.account_name}</option>
                             ))}
                           </optgroup>
                           <optgroup label="Expense">
-                            {coaOptions.filter(a => a.account_type === "expense").map(a => (
+                            {coaOptions.filter(a => a.account_type === "expense" && (!editDraft.entity_id || a.business_entity_id === editDraft.entity_id)).map(a => (
                               <option key={a.id} value={a.id}>{a.account_code} · {a.account_name}</option>
                             ))}
                           </optgroup>
                         </select>
+                        {!editDraft.account_id && (
+                          <span style={{ color: "#b91c1c" }}>No income/expense accounts for this entity — pick a different entity or account type.</span>
+                        )}
                       </label>
                     )}
                     {!isPrior && (
@@ -1482,7 +1509,7 @@ const _eomDrill = (y, m) => {
   return d.toISOString().split("T")[0];
 };
 
-const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directChildren }) => {
+const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directChildren, allEntities }) => {
   const pl = data?.pl || { income: [], expenses: [], subsidiaries: [] };
   const incomeRows     = Array.isArray(pl.income)       ? pl.income       : [];
   const expenseRows    = Array.isArray(pl.expenses)     ? pl.expenses     : [];
@@ -2138,6 +2165,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
           ctx={drill}
           onClose={closeDrill}
           onDataChanged={onDataChanged}
+          allEntities={allEntities}
         />
       )}
     </Card>
@@ -3464,6 +3492,7 @@ export default function Financials() {
           setEntity={setEntity}
           breadcrumb={MOCK?.entityContext?.breadcrumb || []}
           directChildren={MOCK?.entityContext?.directChildren || []}
+          allEntities={MOCK?.entityContext?.allEntities || []}
         />
       )}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
