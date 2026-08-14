@@ -133,6 +133,21 @@ const s = {
   playCard: {
     background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 16,
   },
+  // When a game is actually being played it takes the whole width on its own
+  // instead of sitting in one narrow column of the lobby grid. Everything a
+  // player needs — the board, the phrase, the options — gets the full screen.
+  stageWrap: { marginBottom: 16 },
+  stageCard: {
+    background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 10,
+    padding: 18, maxWidth: 900, margin: "0 auto", boxSizing: "border-box",
+  },
+  stageHeader: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    gap: 10, flexWrap: "wrap", marginBottom: 14,
+    paddingBottom: 10, borderBottom: `1px solid ${T.slate200}`,
+  },
+  stageTitle: { fontSize: 16, fontWeight: 700, color: T.slate900, letterSpacing: "-0.01em" },
+  stageSub: { fontSize: 12, color: T.slate500 },
   playCardTitle: { fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 4 },
   playCardDesc: { fontSize: 12, color: T.slate500, marginBottom: 12 },
   bigStat: { fontSize: 22, fontWeight: 700, color: T.slate900 },
@@ -205,17 +220,30 @@ const s = {
     border: `1px solid ${T.slate200}`, borderRadius: 8, boxSizing: "border-box",
   },
   phraseWord: { display: "flex", gap: 4, flexWrap: "nowrap" },
-  phraseTile: (shown) => ({
-    width: 24, height: 32, display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 15, fontWeight: 700, borderRadius: 4, boxSizing: "border-box",
-    color: shown ? T.slate900 : T.slate400,
-    background: shown ? T.white : "transparent",
-    border: `1px solid ${shown ? T.slate300 : "transparent"}`,
-    borderBottom: `2px solid ${T.slate400}`,
+  // Tile size is passed in rather than fixed. A fixed 24px tile made the longest
+  // term in the bank ("PROFESSIONAL SERVICES EXCLUSION", a 14-letter word) 388px
+  // wide inside a card only 280-400px wide, so the blanks ran off the edge and
+  // looked like they were missing. Every unrevealed tile is now a visible white
+  // blank rather than an almost-invisible underline.
+  phraseTile: (shown, w, h) => ({
+    width: w, height: h, display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: Math.max(11, Math.round(w * 0.62)), fontWeight: 700,
+    borderRadius: 3, boxSizing: "border-box", flexShrink: 0,
+    color: shown ? T.slate900 : "transparent",
+    background: T.white,
+    border: `1px solid ${T.slate300}`,
+    borderBottom: `3px solid ${shown ? T.blue : T.slate400}`,
   }),
-  phrasePunct: {
-    width: 12, height: 32, display: "flex", alignItems: "flex-end", justifyContent: "center",
-    fontSize: 15, fontWeight: 700, color: T.slate600, boxSizing: "border-box",
+  phrasePunct: (w, h) => ({
+    width: Math.max(8, Math.round(w * 0.5)), height: h, display: "flex",
+    alignItems: "flex-end", justifyContent: "center", flexShrink: 0,
+    fontSize: Math.max(11, Math.round(w * 0.62)), fontWeight: 700,
+    color: T.slate600, boxSizing: "border-box",
+  }),
+  phraseCategoryPill: {
+    display: "inline-block", marginBottom: 12, padding: "4px 12px", borderRadius: 12,
+    background: T.blueLt, color: T.blue, fontSize: 11, fontWeight: 700,
+    textTransform: "uppercase", letterSpacing: "0.05em",
   },
   phraseStatusRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -261,15 +289,6 @@ function computeStreak(attemptDays) {
     cursor = shiftDateStr(cursor, -1);
   }
   return streak;
-}
-function sampleN(pool, n) {
-  const arr = Array.isArray(pool) ? [...pool] : [];
-  const count = Math.min(n || 0, arr.length);
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr.slice(0, count);
 }
 
 // Deterministic per-attempt option order. The same attempt and item
@@ -829,7 +848,19 @@ async function loadItemsWithOptions(ids) {
 // "State Farm ", replace underscores with spaces, capitalise each
 // word. sf_auto -> "State Farm Auto", fire -> "Fire",
 // commercial_auto -> "Commercial Auto".
+//
+// Two categories get a hand-written label because the automatic rule reads
+// wrong. All 29 questions filed under sf_lending are general mortgage knowledge
+// - discount points, debt-to-income, Texas cash-out rules - with nothing State
+// Farm specific in them, so "State Farm Lending" on a board header was
+// misleading. The stored category keys are untouched; only the words shown to a
+// player change.
+const CATEGORY_LABEL_OVERRIDES = {
+  sf_lending: "Mortgages",
+};
+
 function formatGridCategoryLabel(category) {
+  if (CATEGORY_LABEL_OVERRIDES[category]) return CATEGORY_LABEL_OVERRIDES[category];
   let label = category || "";
   let prefix = "";
   if (label.startsWith("sf_")) {
@@ -869,6 +900,10 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const [duelActiveRemainingIds, setDuelActiveRemainingIds] = useState([]);
   const [duelActiveOpponentName, setDuelActiveOpponentName] = useState(null);
   const [duelResult, setDuelResult] = useState(null);
+
+  // Today's standings per solo mode — Daily Five, The Grid, Spin & Solve are all
+  // once-a-day games, so everyone's score for the day is directly comparable.
+  const [dayStandings, setDayStandings] = useState({});
 
   // Standings
   const [standings, setStandings] = useState([]);
@@ -993,6 +1028,19 @@ function TriviaPlayTab({ userId, isAdmin }) {
       setDfPhase("error");
     }
   }, [userId]);
+
+  // Pulled after a mode finishes, and again when the lobby loads, so a player who
+  // has already had their turn can see where they landed without replaying.
+  const loadDayStandings = useCallback(async (modeKey) => {
+    try {
+      const { data, error } = await supabase.rpc("quiz_mode_day_standings", { p_mode_key: modeKey });
+      if (error) throw error;
+      setDayStandings(prev => ({ ...prev, [modeKey]: Array.isArray(data) ? data : [] }));
+    } catch (ex) {
+      // A missing readout is not worth an error banner over a finished game.
+      setDayStandings(prev => ({ ...prev, [modeKey]: [] }));
+    }
+  }, []);
 
   const loadDuelLists = useCallback(async () => {
     if (!userId) return;
@@ -1202,6 +1250,11 @@ function TriviaPlayTab({ userId, isAdmin }) {
   useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
   useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
   useEffect(() => { loadStandings(); }, [loadStandings]);
+  useEffect(() => {
+    loadDayStandings("daily_five");
+    loadDayStandings("the_grid");
+    loadDayStandings("spin_and_solve");
+  }, [loadDayStandings]);
   useEffect(() => { loadGates(); }, [loadGates]);
   useEffect(() => { loadGridAvailability(); }, [loadGridAvailability]);
   useEffect(() => { loadGridStatus(); }, [loadGridStatus]);
@@ -1452,6 +1505,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
     setGridResult(data);
     setGridPhase("finished");
+    await loadDayStandings("the_grid");
     await loadStandings();
   };
 
@@ -1546,6 +1600,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
     setSpinResult(data);
     setSpinPhase("finished");
+    await loadDayStandings("spin_and_solve");
     await loadStandings();
   };
 
@@ -1646,36 +1701,29 @@ function TriviaPlayTab({ userId, isAdmin }) {
   };
 
   // ── Daily Five actions ──
+  // The screen used to insert the attempt row itself, passing the signed-in
+  // person's id from the users table. The security rule on that table checks
+  // against the person's id from the team table, and those two ids differ for
+  // every person here, so every start was refused with "new row violates row
+  // level security policy". Starting now goes through a server-side function
+  // that resolves the person and draws the questions itself, the same way The
+  // Grid and Spin & Solve already did. A double-tap resumes rather than erroring
+  // because the function returns the unfinished attempt it already found.
   const startFreshDaily = async () => {
     setDfError(null);
     setDfPhase("checking");
     try {
-      const dailyCfg = modes.daily_five;
-      const ids = sampleN(itemPool, dailyCfg?.question_count || 5);
-      if (ids.length < (dailyCfg?.question_count || 5)) {
-        setDfError("Not enough questions available yet.");
+      const { data: attemptId, error } = await supabase.rpc("quiz_start_daily_attempt");
+      if (error) {
+        setDfError(error.message);
         setDfPhase("not_started");
         return;
       }
-      let attempt = null;
-      const { data: inserted, error: insErr } = await supabase
-        .from("quiz_attempts")
-        .insert({ agency_id: AGENCY_ID, team_member_id: userId, mode_key: "daily_five", context: { item_ids: ids } })
-        .select("*")
-        .maybeSingle();
-      if (insErr) {
-        // Unique-index hit (double-tap) — re-query and resume instead of erroring.
-        const today = ctToday();
-        const { data: retryRow, error: retryErr } = await supabase
-          .from("quiz_attempts").select("*")
-          .eq("team_member_id", userId).eq("mode_key", "daily_five").eq("attempt_day", today)
-          .maybeSingle();
-        if (retryErr || !retryRow) throw (retryErr || insErr);
-        attempt = retryRow;
-      } else {
-        attempt = inserted;
-      }
-      await beginPlayingDaily(attempt);
+      const { data: row, error: fetchErr } = await supabase
+        .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!row) throw new Error("Started, but could not read today's five back.");
+      await beginPlayingDaily(row);
     } catch (ex) {
       setDfError(ex?.message || "Could not start today's five.");
       setDfPhase("error");
@@ -1735,6 +1783,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
     setDfResult(data);
     setDfPhase("finished");
+    await loadDayStandings("daily_five");
     await loadDailyStatus();
   };
 
@@ -1743,22 +1792,23 @@ function TriviaPlayTab({ userId, isAdmin }) {
     setDuelError(null);
     setDuelMode("starting");
     try {
-      const duelCfg = modes.duel;
-      const ids = sampleN(itemPool, duelCfg?.question_count || 7);
-      if (ids.length < (duelCfg?.question_count || 7)) {
-        setDuelError("Not enough questions available yet.");
+      // Same fix as Daily Five: the id the screen holds is the users-table id,
+      // and the security rule wants the team-table id. The server resolves the
+      // challenger itself, checks the opponent is a live teammate, and draws the
+      // questions, so no id crosses the wire.
+      const { data: attemptId, error } = await supabase.rpc("quiz_start_duel_challenge", {
+        p_opponent_team_member_id: opponent.team_member_id,
+      });
+      if (error) {
+        setDuelError(error.message);
         setDuelMode("idle");
         return;
       }
-      const { data: inserted, error } = await supabase
-        .from("quiz_attempts")
-        .insert({
-          agency_id: AGENCY_ID, team_member_id: userId, mode_key: "duel",
-          context: { item_ids: ids, duel_opponent_team_member_id: opponent.team_member_id },
-        })
-        .select("*")
-        .maybeSingle();
-      if (error) throw error;
+      const { data: inserted, error: fetchErr } = await supabase
+        .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!inserted) throw new Error("Started, but could not read the duel back.");
+      const ids = (inserted?.context?.item_ids) || [];
       const itemsMap = await loadItemsWithOptions(ids);
       setDuelActiveAttempt(inserted);
       setDuelActiveItemsById(itemsMap);
@@ -1838,12 +1888,44 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const nightJoined = nightState?.players?.some(p => p.is_me) ?? nightActive?.joined ?? false;
   const nightIsHost = nightState?.is_host ?? nightActive?.is_host ?? false;
 
+  // Whichever game is mid-play takes the whole width to itself and everything
+  // else on the page steps out of the way. Before this, a live board or a hidden
+  // phrase had to squeeze into one narrow column of the lobby grid alongside
+  // five idle cards, which is what made the formatting fall apart. Only one game
+  // can be in play at a time, so the first match wins; a live trivia night
+  // outranks everything because the whole room is waiting on it.
+  const nightInPlay = !!nightActive && (nightIsHost || nightJoined)
+    && ["lobby", "question", "reveal", "finished", "abandoned"].includes(nightLiveStatus);
+  const activeGame =
+      nightInPlay ? "night"
+    : (!gatesError && activeGate && gatePhase !== "idle") ? "gate"
+    : (gridPhase === "board" || gridPhase === "finishing") ? "grid"
+    : (spinPhase === "playing" || spinPhase === "finishing") ? "spin"
+    : (duelMode === "playing" || duelMode === "starting") ? "duel"
+    : (dfPhase === "playing" || dfPhase === "finishing") ? "daily"
+    : null;
+  const stageTitles = {
+    night: "Trivia Night", gate: "Training", grid: "The Grid",
+    spin: "Spin & Solve", duel: "Duel", daily: "Daily Five",
+  };
+  const shows = (key) => !activeGame || activeGame === key;
+  const boxStyle = (key) => (activeGame === key ? s.stageCard : s.playCard);
+
   return (
     <div>
       {(modesError || poolError) && <div style={s.errorBanner}>{modesError || poolError}</div>}
 
-      {!gatesLoading && (gatesError || gates.length > 0) && (
-        <div style={s.playCard}>
+      {activeGame && (
+        <div style={s.stageHeader}>
+          <div>
+            <div style={s.stageTitle}>{stageTitles[activeGame]}</div>
+            <div style={s.stageSub}>in play</div>
+          </div>
+        </div>
+      )}
+
+      {!gatesLoading && shows("gate") && (gatesError || gates.length > 0) && (
+        <div style={boxStyle("gate")}>
           <div style={s.playCardTitle}>Training</div>
           {gatesError && <div style={s.errorBanner}>{gatesError}</div>}
 
@@ -1919,9 +2001,10 @@ function TriviaPlayTab({ userId, isAdmin }) {
         </div>
       )}
 
-      <div style={s.playGrid}>
+      <div style={activeGame ? s.stageWrap : s.playGrid}>
         {/* ── Daily Five card ── */}
-        <div style={s.playCard}>
+        {shows("daily") && (
+        <div style={boxStyle("daily")}>
           <div style={s.playCardTitle}>Daily Five</div>
           <div style={s.playCardDesc}>{dailyCfg?.description || "Five questions a day. Keep your streak going."}</div>
 
@@ -1962,12 +2045,19 @@ function TriviaPlayTab({ userId, isAdmin }) {
               {dfResult.on_leaderboard && (
                 <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
               )}
+              <DayStandings rows={dayStandings.daily_five} label="Today's five — the team" />
             </div>
           )}
+
+          {dfPhase !== "finished" && dfPhase !== "playing" && (
+            <DayStandings rows={dayStandings.daily_five} label="Today's five — the team" />
+          )}
         </div>
+        )}
 
         {/* ── Duel card ── */}
-        <div style={s.playCard}>
+        {shows("duel") && (
+        <div style={boxStyle("duel")}>
           <div style={s.playCardTitle}>Duel</div>
           <div style={s.playCardDesc}>{duelCfg?.description || "Challenge a teammate. Same questions, play when you have a minute."}</div>
 
@@ -2008,6 +2098,15 @@ function TriviaPlayTab({ userId, isAdmin }) {
               ) : (
                 <div style={s.smallLabel}>Waiting on {duelActiveOpponentName || "your opponent"}</div>
               )}
+              <div style={s.actionsRow}>
+                <button
+                  type="button"
+                  style={s.ghostBtn}
+                  onClick={() => { setDuelMode("idle"); setDuelResult(null); setDuelActiveAttempt(null); }}
+                >
+                  Done
+                </button>
+              </div>
             </div>
           )}
 
@@ -2067,9 +2166,11 @@ function TriviaPlayTab({ userId, isAdmin }) {
             </>
           )}
         </div>
+        )}
 
         {/* ── The Grid card ── */}
-        <div style={s.playCard}>
+        {shows("grid") && (
+        <div style={boxStyle("grid")}>
           <div style={s.playCardTitle}>The Grid</div>
           <div style={s.playCardDesc}>Pick a square, answer the question — higher rows are worth more.</div>
 
@@ -2140,12 +2241,19 @@ function TriviaPlayTab({ userId, isAdmin }) {
               {gridResult.on_leaderboard && (
                 <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
               )}
+              <DayStandings rows={dayStandings.the_grid} label="Today's board — the team" />
             </div>
           )}
+
+          {gridPhase !== "finished" && gridPhase !== "board" && (
+            <DayStandings rows={dayStandings.the_grid} label="Today's board — the team" />
+          )}
         </div>
+        )}
 
         {/* ── Spin & Solve card ── */}
-        <div style={s.playCard}>
+        {shows("spin") && (
+        <div style={boxStyle("spin")}>
           <div style={s.playCardTitle}>Spin &amp; Solve</div>
           <div style={s.playCardDesc}>Solve the hidden coverage term, then say what it means.</div>
 
@@ -2175,6 +2283,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
               itemsById={spinItemsById}
               attemptId={spinAttempt.id}
               secondsPerPhase={spinCfg?.seconds_per_question || 60}
+              secondsFirstPhase={spinCfg?.seconds_first_phase || 150}
               onSubmitAnswer={submitSpinAnswer}
               onAllDone={() => finishSpin(spinAttempt.id)}
             />
@@ -2188,12 +2297,19 @@ function TriviaPlayTab({ userId, isAdmin }) {
               {spinResult.on_leaderboard && (
                 <div style={{ ...s.smallLabel, color: T.gold, fontWeight: 700, marginTop: 4 }}>made the board! 🏆</div>
               )}
+              <DayStandings rows={dayStandings.spin_and_solve} label="Today's terms — the team" />
             </div>
           )}
+
+          {spinPhase !== "finished" && spinPhase !== "playing" && (
+            <DayStandings rows={dayStandings.spin_and_solve} label="Today's terms — the team" />
+          )}
         </div>
+        )}
 
         {/* ── Trivia Night card ── */}
-        <div style={s.playCard}>
+        {shows("night") && (
+        <div style={boxStyle("night")}>
           <div style={s.playCardTitle}>Trivia Night</div>
           <div style={s.playCardDesc}>Everyone plays the same questions at the same time, live.</div>
 
@@ -2387,9 +2503,11 @@ function TriviaPlayTab({ userId, isAdmin }) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* ── Standings strip ── */}
+      {!activeGame && (
       <div style={s.playCard}>
         <div style={s.playCardTitle}>This week's trivia standings</div>
         {standingsError && <div style={s.errorBanner}>{standingsError}</div>}
@@ -2409,6 +2527,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -3084,7 +3203,48 @@ function normalizePhrase(text) {
   return (text || "").toUpperCase().replace(/\s+/g, " ").trim();
 }
 
-function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmitAnswer, onAllDone }) {
+// The two halves of Spin & Solve are not the same job. Guessing a coverage term
+// out of blanks with twenty-six letters to try through is far slower than picking
+// one of four meanings, so each half carries its own clock: secondsFirstPhase for
+// the letters, secondsPerPhase for the meaning.
+// Today's scoreboard for a once-a-day mode. Every solo game gets one, so finishing
+// tells you where you landed against the rest of the team instead of just handing
+// back a number with no context.
+function DayStandings({ rows, label }) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return null;
+  const mine = list.find(r => r.is_me);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ ...s.groupTitle, marginBottom: 6 }}>{label}</div>
+      {mine && (
+        <div style={{ fontSize: 12, color: T.slate600, marginBottom: 6 }}>
+          {list.length === 1
+            ? "First one in today."
+            : `You're ${mine.place} of ${list.length} so far today.`}
+        </div>
+      )}
+      {list.map(r => (
+        <div
+          key={r.team_member_id}
+          style={r.is_me ? { ...s.standingsRow, fontWeight: 700, background: T.blueLt } : s.standingsRow}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={s.standingsTier(r.place > 3 ? 3 : r.place)}>{r.place}</span>
+            <span>{r.name}{r.is_me ? " (you)" : ""}</span>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontWeight: 700 }}>{r.points} pts</div>
+            <div style={{ fontSize: 10, color: T.slate500 }}>{r.correct_count}/{r.question_count} right</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsFirstPhase, onSubmitAnswer, onAllDone }) {
+  const _vp = useViewport();
   const [idx, setIdx] = useState(0);
   const [half, setHalf] = useState("term"); // term | meaning
   const [guessed, setGuessed] = useState([]);
@@ -3094,7 +3254,8 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmit
   const [solveOpen, setSolveOpen] = useState(false);
   const [solveText, setSolveText] = useState("");
   const [solveWrong, setSolveWrong] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(secondsPerPhase);
+  const termSeconds = secondsFirstPhase || secondsPerPhase;
+  const [timeLeft, setTimeLeft] = useState(termSeconds);
   const [revealed, setRevealed] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [submitError, setSubmitError] = useState(null);
@@ -3113,6 +3274,18 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmit
     [phrase]
   );
 
+  // The board used to draw every letter at a fixed 24px with word wrapping off,
+  // so a long word simply ran past the edge of the card and the blanks vanished.
+  // Tiles are sized to the longest word in the term against the width actually
+  // available, so the whole phrase always fits on screen.
+  const { tileW, tileH } = useMemo(() => {
+    const longestWord = phrase.split(" ").reduce((m, w) => Math.max(m, w.length), 0);
+    const avail = Math.max(240, Math.min((_vp.width || 1024) - 96, 860));
+    const raw = Math.floor((avail - 24 - Math.max(0, longestWord - 1) * 3) / Math.max(1, longestWord));
+    const w = Math.max(13, Math.min(34, raw));
+    return { tileW: w, tileH: Math.round(w * 1.35) };
+  }, [phrase, _vp.width]);
+
   const resetForNext = useCallback(() => {
     setHalf("term");
     setGuessed([]);
@@ -3124,8 +3297,8 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmit
     setSolveWrong(false);
     setRevealed(false);
     setSelectedId(null);
-    setTimeLeft(secondsPerPhase);
-  }, [secondsPerPhase]);
+    setTimeLeft(termSeconds);
+  }, [termSeconds]);
 
   const advanceOrFinish = useCallback(() => {
     firingRef.current = false;
@@ -3233,16 +3406,28 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmit
         {clockRunning && <span style={s.timerPill(urgent)}>{timeLeft}s</span>}
       </div>
       {submitError && <div style={s.errorBanner}>{submitError}</div>}
-      <div style={s.qStem}>{currentItem.stem}</div>
+
+      {/* The stem is not a clue, it is the definition — and the correct meaning
+          option is a paraphrase of it. Showing it during the letter half handed
+          over both halves at once. While the term is still hidden the player
+          gets the category and nothing else; the definition appears only after
+          the meaning has been answered. */}
+      {half === "term" ? (
+        <div style={s.phraseCategoryPill}>{formatGridCategoryLabel(currentItem.category)}</div>
+      ) : (
+        <div style={{ ...s.phraseCategoryPill, marginBottom: 8 }}>
+          {formatGridCategoryLabel(currentItem.category)}
+        </div>
+      )}
 
       <div style={s.phraseBoard}>
         {phrase.split(" ").map((word, wi) => (
           <div key={wi} style={s.phraseWord}>
             {word.split("").map((ch, ci) => {
               const isLetter = ch >= "A" && ch <= "Z";
-              if (!isLetter) return <span key={ci} style={s.phrasePunct}>{ch}</span>;
+              if (!isLetter) return <span key={ci} style={s.phrasePunct(tileW, tileH)}>{ch}</span>;
               const shown = termOver || guessedSet.has(ch);
-              return <span key={ci} style={s.phraseTile(shown)}>{shown ? ch : ""}</span>;
+              return <span key={ci} style={s.phraseTile(shown, tileW, tileH)}>{shown ? ch : ""}</span>;
             })}
           </div>
         ))}
@@ -3307,6 +3492,7 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmit
 
       {half === "meaning" && (
         <>
+          <div style={s.qStem}>What does it mean?</div>
           {(displayOptions || []).map(o => {
             let state = "default";
             if (revealed) {
@@ -3329,6 +3515,11 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, onSubmit
           })}
           {revealed && (
             <>
+              {currentItem.stem && (
+                <div style={{ ...s.explanationBox, background: T.blueLt, color: T.slate800 }}>
+                  <strong>{phrase}</strong> — {currentItem.stem}
+                </div>
+              )}
               {currentItem.explanation && <div style={s.explanationBox}>{currentItem.explanation}</div>}
               <div style={s.actionsRow}>
                 <button type="button" style={s.primaryBtn} onClick={advanceOrFinish}>
