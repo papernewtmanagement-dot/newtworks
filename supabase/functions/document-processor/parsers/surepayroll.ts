@@ -544,7 +544,36 @@ export async function processSurePayrollParsed(opts: {
   }
 
   const cprWeekEnd = spTargetCprWeekEnding(parsed.check_date);
-  const { data: cprReport } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
+  let { data: cprReport } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
+  if (!cprReport?.id && Object.keys(cprBreakdownByTeamId).length > 0) {
+    // Fix 2026-08-14: payroll runs are frequently ingested BEFORE the week's CPR
+    // report row exists (report row is otherwise only created on-demand by a
+    // teammate's first Telegram check-in or CPR form touch that week). Without
+    // this, the whole CPR-write block below was silently skipped for every
+    // eligible employee in the run -- not just teammates without another path
+    // onto the report (e.g. unlicensed staff who never check in via Telegram).
+    // Root-caused 2026-08-14: Cassandra Alves missing from the week-ending
+    // 2026-08-15 CPR report because the 08-10 payroll run landed 75 minutes
+    // before the report row was created by another teammate's check-in --
+    // every eligible employee in that run, not just her, silently lost their
+    // payroll YTD write. Create the report row here so the payroll import
+    // never depends on being ingested after someone else's check-in.
+    const { data: newReport, error: reportErr } = await sb
+      .from("weekly_cpr_reports")
+      .insert({ agency_id: opts.agencyId, week_ending_date: cprWeekEnd })
+      .select("id")
+      .maybeSingle();
+    if (reportErr && (reportErr as any).code !== "23505") {
+      // Non-conflict error: leave cprReport unset, CPR write below is skipped
+      // for this run same as before -- payroll_detail rows above are unaffected.
+    } else if (newReport?.id) {
+      cprReport = newReport;
+    } else {
+      // 23505 = created concurrently between our select and insert; re-select.
+      const { data: refetched } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
+      cprReport = refetched ?? null;
+    }
+  }
   if (cprReport?.id) {
     // upsert, not update: if a team member's weekly_cpr_team_detail row for this
     // report hasn't been created yet (it's created on-demand as each teammate's
