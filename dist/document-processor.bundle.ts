@@ -3255,7 +3255,36 @@ export async function processSurePayrollParsed(opts: {
   }
 
   const cprWeekEnd = spTargetCprWeekEnding(parsed.check_date);
-  const { data: cprReport } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
+  let { data: cprReport } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
+  if (!cprReport?.id && Object.keys(cprBreakdownByTeamId).length > 0) {
+    // Fix 2026-08-14: payroll runs are frequently ingested BEFORE the week's CPR
+    // report row exists (report row is otherwise only created on-demand by a
+    // teammate's first Telegram check-in or CPR form touch that week). Without
+    // this, the whole CPR-write block below was silently skipped for every
+    // eligible employee in the run -- not just teammates without another path
+    // onto the report (e.g. unlicensed staff who never check in via Telegram).
+    // Root-caused 2026-08-14: Cassandra Alves missing from the week-ending
+    // 2026-08-15 CPR report because the 08-10 payroll run landed 75 minutes
+    // before the report row was created by another teammate's check-in --
+    // every eligible employee in that run, not just her, silently lost their
+    // payroll YTD write. Create the report row here so the payroll import
+    // never depends on being ingested after someone else's check-in.
+    const { data: newReport, error: reportErr } = await sb
+      .from("weekly_cpr_reports")
+      .insert({ agency_id: opts.agencyId, week_ending_date: cprWeekEnd })
+      .select("id")
+      .maybeSingle();
+    if (reportErr && (reportErr as any).code !== "23505") {
+      // Non-conflict error: leave cprReport unset, CPR write below is skipped
+      // for this run same as before -- payroll_detail rows above are unaffected.
+    } else if (newReport?.id) {
+      cprReport = newReport;
+    } else {
+      // 23505 = created concurrently between our select and insert; re-select.
+      const { data: refetched } = await sb.from("weekly_cpr_reports").select("id").eq("agency_id", opts.agencyId).eq("week_ending_date", cprWeekEnd).maybeSingle();
+      cprReport = refetched ?? null;
+    }
+  }
   if (cprReport?.id) {
     // upsert, not update: if a team member's weekly_cpr_team_detail row for this
     // report hasn't been created yet (it's created on-demand as each teammate's
@@ -4382,7 +4411,7 @@ const RESUME_MONTH_NAMES: Record<string, number> = {
 
 const MONTH_NAME_RE =
   "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
-const DATE_TOKEN_RE = `(?:${MONTH_NAME_RE}\\.?\\s+\\d{4}|\\d{1,2}\\/\\d{4}|\\d{4})`;
+const DATE_TOKEN_RE = `(?:${MONTH_NAME_RE}\\.?\\s+\\d{4}|\\d{1,2}\\/\\d{4}|(?<!\\d)\\d{4}(?!\\d))`;
 const PRESENT_RE = "(?:present|current|now|ongoing)";
 const RANGE_RE = new RegExp(
   `(${DATE_TOKEN_RE})\\s*(?:to|thru|through|[\u2013\u2014-])\\s*(${DATE_TOKEN_RE}|${PRESENT_RE})`,
@@ -4403,7 +4432,16 @@ function parseDateToken(tok: string): DateTokenResult {
     if (mo >= 1 && mo <= 12) return { year: parseInt(m[2], 10), month: mo };
   }
   m = t.match(/^(\d{4})$/);
-  if (m) return { year: parseInt(m[1], 10), month: 1 }; // bare year, month unknown -> Jan floor
+  if (m) {
+    const y = parseInt(m[1], 10);
+    // Plausible working-life year range only -- a bare 4-digit token is the
+    // weakest signal this parser accepts (no month name, no slash), and
+    // without this guard it can match digits embedded in a phone number,
+    // zip code, or ID (e.g. "(210274-1570" reads as years 274 and 1570 --
+    // real incident, Autumn Verkaik-Bushby resume, caught 2026-08-14).
+    if (y >= 1950 && y <= new Date().getUTCFullYear() + 1) return { year: y, month: 1 };
+    return null;
+  }
   return null;
 }
 
@@ -4411,6 +4449,9 @@ function monthsBetween(start: MonthYear | null, end: DateTokenResult, asOf: Mont
   if (!start || !end) return null;
   const e = end === "present" ? asOf : end;
   const months = (e.year - start.year) * 12 + (e.month - start.month);
+  // Hard backstop regardless of upstream parsing: 50 years is far beyond
+  // any real single-job tenure. Discard rather than trust a corrupted value.
+  if (months > 600) return null;
   return Math.max(0, months);
 }
 
