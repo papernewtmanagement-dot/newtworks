@@ -634,7 +634,7 @@ function renderResumeLayer(detail, T, resumeThresh) {
           <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
             How we got here — construct rollups
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, alignItems: "start" }}>
             {CONSTRUCTS.map((c) => {
               const cpct = pct(c.score);
               const scoredSignals = c.signals
