@@ -55,6 +55,7 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 // structure) when new sections come online.
 const SECTIONS = [
   "newtworks_v2_personality",
+  "newtworks_v2_personality_fc",
   "newtworks_v2_cognitive_gma",
   "newtworks_v2_sjt",
   "newtworks_v2_screen",
@@ -802,10 +803,29 @@ async function handleFinalize(supa: any, cand: any) {
     // _newtworks_role_fit_core, newtworks_role_fit_*, assessment_best_fit_role)
     // reading these columns live at request time — nothing derived gets
     // written here.
-    const { data: facetRows, error: facetErr } = await supa.rpc(
-      "compute_newtworks_v2_facets_as_row",
-      { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 }
+    //
+    // SOURCE DETECTION (added 2026-08-14, Phase 3 forced-choice personality):
+    // whichever personality section this candidate actually has stint-2
+    // responses in decides both the scoring function called here and the
+    // assessment_source written below. This is data-driven (checked via
+    // hiregauge_candidate_used_fc_personality), not a per-candidate flag set
+    // at invite time -- there is still exactly ONE assessment being served
+    // at any given moment (whichever section is_active), consistent with
+    // the 2026-08-02 v1-assessment directive against a dual-path switch.
+    // compute_newtworks_v2_stint3_triggers already hardcodes section =
+    // 'newtworks_v2_personality', so it naturally returns zero rows for an
+    // FC candidate -- stint 3 needs no separate skip logic here.
+    const { data: usedFc, error: fcCheckErr } = await supa.rpc(
+      "hiregauge_candidate_used_fc_personality",
+      { p_candidate_id: cand.id }
     );
+    if (fcCheckErr) {
+      return json({ error: "fc_source_check_failed", detail: fcCheckErr.message }, 500);
+    }
+
+    const { data: facetRows, error: facetErr } = usedFc
+      ? await supa.rpc("compute_newtworks_v2fc_facets_as_row", { p_candidate_id: cand.id, p_sitting: 1 })
+      : await supa.rpc("compute_newtworks_v2_facets_as_row", { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 });
     if (facetErr) {
       return json({ error: "facet_compute_failed", detail: facetErr.message }, 500);
     }
@@ -829,7 +849,7 @@ async function handleFinalize(supa: any, cand: any) {
     let update_skip_reason: string | null = null;
     if (Object.keys(updatePayload).length > 0) {
       const finalized_at_iso = new Date().toISOString();
-      updatePayload.assessment_source = "v2";
+      updatePayload.assessment_source = usedFc ? "v2fc" : "v2";
       updatePayload.assessment_date = finalized_at_iso.slice(0, 10);
       updatePayload.assessment_completed_at = finalized_at_iso;
 
