@@ -4465,19 +4465,31 @@ function splitHeaderIntoTitleEmployer(headerLines: string[]): { title: string | 
   if (headerLines.length === 1) {
     const line = headerLines[0].replace(/[,:]\s*$/, "").trim();
 
-    if (line.includes("|")) {
-      const parts = line.split(/\s*\|\s*/).filter((p) => p.trim());
-      if (parts.length >= 2) {
-        return { title: parts[1]?.trim() || null, employer: parts[0]?.trim() || null };
+    // Leftmost separator wins — a header can carry multiple separators for
+    // different purposes (e.g. "Title — Employer - SubDept | Location"),
+    // and the FIRST one is reliably the title/employer boundary. Dash
+    // requires surrounding whitespace so hyphenated names ("Tru-Fit") do
+    // not false-trigger; pipe and comma never appear inside a word so no
+    // such guard is needed for them.
+    const pipeMatch = line.match(/\s*\|\s*/);
+    const dashMatch = line.match(/\s+[\u2013\u2014-]\s+/);
+    const commaIdx = line.indexOf(",");
+
+    const seps = [
+      pipeMatch ? { idx: pipeMatch.index!, len: pipeMatch[0].length, kind: "pipe" as const } : null,
+      dashMatch ? { idx: dashMatch.index!, len: dashMatch[0].length, kind: "dash" as const } : null,
+      commaIdx >= 0 ? { idx: commaIdx, len: 1, kind: "comma" as const } : null,
+    ].filter((s): s is { idx: number; len: number; kind: "pipe" | "dash" | "comma" } => s !== null)
+      .sort((a, b) => a.idx - b.idx);
+
+    if (seps.length > 0) {
+      const s = seps[0];
+      const left = line.slice(0, s.idx).trim();
+      const right = line.slice(s.idx + s.len).trim();
+      if (left && right) {
+        // Dash convention: left=title. Pipe/comma convention: left=employer.
+        return s.kind === "dash" ? { title: left, employer: right } : { title: right, employer: left };
       }
-    }
-    const dashMatch = line.match(/^(.*?)\s*[\u2013\u2014-]\s*(.*)$/);
-    if (dashMatch && dashMatch[1].trim() && dashMatch[2].trim()) {
-      return { title: dashMatch[1].trim(), employer: dashMatch[2].trim() };
-    }
-    const commaSplit = line.split(",").filter((p) => p.trim());
-    if (commaSplit.length >= 2) {
-      return { title: commaSplit[1]?.trim() || null, employer: commaSplit[0]?.trim() || null };
     }
     return { title: line || null, employer: null };
   }
@@ -4542,12 +4554,24 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
         const bl = section[back];
         if (bl.trim() === "" || isBullet(bl)) break;
         if (RANGE_RE.test(bl)) break;
+        // Wrapped bullet continuation lines carry no leading marker but are
+        // mid-sentence prose, not a header — recognizable by ending in a
+        // lowercase letter + period/comma, which job titles/employers do not.
+        if (/[a-z][.,]\s*$/.test(bl.trim())) { back--; continue; }
         headerLines.unshift(bl.trim());
         back--;
       }
     }
 
-    const { title, employer } = splitHeaderIntoTitleEmployer(headerLines);
+    let { title, employer } = splitHeaderIntoTitleEmployer(headerLines);
+    // Sanity filter: a real job title/employer is never a lowercase-started
+    // sentence fragment or a run-on phrase. Better to leave the label blank
+    // than write garbled prose into a candidate factual record — this never
+    // affects tenure_months, which is computed independently of this filter.
+    const looksLikeBadProse = (s: string | null) =>
+      !s || /^[a-z]/.test(s.trim()) || s.length > 80 || (s.match(/,/g) ?? []).length >= 2;
+    if (looksLikeBadProse(title)) title = null;
+    if (looksLikeBadProse(employer)) employer = null;
     const tenure_months = monthsBetween(startMY, end, now);
     if (tenure_months !== null) {
       roles.push({ title, employer, tenure_months, start_raw: m[1], end_raw: m[2] });
