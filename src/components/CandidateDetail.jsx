@@ -1124,7 +1124,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
               <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
             )}
             {detail?.protocol_validity_v != null && (
-              <AssessRow label="Protocol Validity" value={Math.round(Number(detail.protocol_validity_v) * 100)} band={PROTOCOL_VALIDITY_BAND(detail.protocol_validity_label)} max={100} />
+              <AssessRow label="Validity" value={Math.round(Number(detail.protocol_validity_v) * 100)} band={PROTOCOL_VALIDITY_BAND(detail.protocol_validity_label)} max={100} />
             )}
             {reliabilityScore != null && (
               <AssessRow label="Reliability" value={reliabilityScore} band={V2_RELIABILITY_BAND(reliability)} max={100} />
