@@ -10,13 +10,20 @@
 //   3. Reformat with section-divider separators
 //   4. Write to hiring_candidates.resume_extracted_text ONLY when empty
 //      (never clobbers hand-corrected text on a re-run)
+//   5. Deterministically parse work-experience date ranges and merge
+//      tenure_months into resume_analysis.qualifications.prior_similar_role
+//      .roles[] (added 2026-08-14 — see resume_tenure_extract.ts for why).
+//      Runs every call, independent of whether step 4 actually wrote
+//      anything, so tenure data stays current even on a re-run of an
+//      already-stored resume.
 //
-// Both mode parsers call these two functions instead of inlining the block.
+// Both mode parsers call these functions instead of inlining the block.
 // Any future extraction/formatting improvements happen here once.
 // =========================================================================
 
 import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
 import { reformatResumeSeparators } from "./resume_reformat.ts";
+import { extractAndWriteWorkExperienceTenure } from "./resume_tenure_extract.ts";
 import { sb } from "../../_shared/supabase.ts";
 import { fetchWithTimeout } from "../lib/composio.ts";
 import { S3_FETCH_TIMEOUT_MS } from "../../_shared/composio.ts";
@@ -90,4 +97,8 @@ export async function writeResumeTextIfEmpty(
   } catch (e) {
     console.warn(`resume_extracted_text update threw for ${candidateId}:`, e);
   }
+
+  // Deterministic tenure extraction — non-fatal, runs regardless of whether
+  // the text write above actually changed anything. See resume_tenure_extract.ts.
+  await extractAndWriteWorkExperienceTenure(candidateId, resumeText);
 }
