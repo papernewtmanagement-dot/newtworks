@@ -72,6 +72,7 @@ ORDER = [
     "parsers/pfa_statement.ts",
     "parsers/pdf_columnar.ts",
     "parsers/resume_reformat.ts",
+    "parsers/resume_tenure_extract.ts",
     "parsers/resume_ingest.ts",
     "parsers/careerplug_applicant.ts",
     "parsers/resume_manual_batch.ts",
