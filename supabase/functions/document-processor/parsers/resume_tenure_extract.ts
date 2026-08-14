@@ -55,7 +55,7 @@ const RESUME_MONTH_NAMES: Record<string, number> = {
 
 const MONTH_NAME_RE =
   "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
-const DATE_TOKEN_RE = `(?:${MONTH_NAME_RE}\\.?\\s+\\d{4}|\\d{1,2}\\/\\d{4}|\\d{4})`;
+const DATE_TOKEN_RE = `(?:${MONTH_NAME_RE}\\.?\\s+\\d{4}|\\d{1,2}\\/\\d{4}|(?<!\\d)\\d{4}(?!\\d))`;
 const PRESENT_RE = "(?:present|current|now|ongoing)";
 const RANGE_RE = new RegExp(
   `(${DATE_TOKEN_RE})\\s*(?:to|thru|through|[\u2013\u2014-])\\s*(${DATE_TOKEN_RE}|${PRESENT_RE})`,
@@ -76,7 +76,16 @@ function parseDateToken(tok: string): DateTokenResult {
     if (mo >= 1 && mo <= 12) return { year: parseInt(m[2], 10), month: mo };
   }
   m = t.match(/^(\d{4})$/);
-  if (m) return { year: parseInt(m[1], 10), month: 1 }; // bare year, month unknown -> Jan floor
+  if (m) {
+    const y = parseInt(m[1], 10);
+    // Plausible working-life year range only -- a bare 4-digit token is the
+    // weakest signal this parser accepts (no month name, no slash), and
+    // without this guard it can match digits embedded in a phone number,
+    // zip code, or ID (e.g. "(210274-1570" reads as years 274 and 1570 --
+    // real incident, Autumn Verkaik-Bushby resume, caught 2026-08-14).
+    if (y >= 1950 && y <= new Date().getUTCFullYear() + 1) return { year: y, month: 1 };
+    return null;
+  }
   return null;
 }
 
@@ -84,6 +93,9 @@ function monthsBetween(start: MonthYear | null, end: DateTokenResult, asOf: Mont
   if (!start || !end) return null;
   const e = end === "present" ? asOf : end;
   const months = (e.year - start.year) * 12 + (e.month - start.month);
+  // Hard backstop regardless of upstream parsing: 50 years is far beyond
+  // any real single-job tenure. Discard rather than trust a corrupted value.
+  if (months > 600) return null;
   return Math.max(0, months);
 }
 
