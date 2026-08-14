@@ -525,7 +525,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp }) => {
                             color: app.protocol_validity_label === "low" ? T.red : T.amber,
                           }}
                         >
-                          {Trust}
+                          Trust
                         </span>
                       )}
                     </div>
