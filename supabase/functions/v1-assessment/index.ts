@@ -404,10 +404,25 @@ async function loadStint2Items(supa: any, candidateId: string) {
     if (cntErr) throw new Error(`stint2_${section}_answered_check: ${cntErr.message}`);
 
     if ((count ?? 0) > 0) {
-      // Already started this section -- serve its full item list regardless
-      // of current is_active, so a candidate mid-sitting when the switch
-      // flips still sees (and gets counted against) everything they need to
-      // finish what they started.
+      // Already started this section -- serve every currently-ACTIVE item
+      // in it, PLUS whatever this candidate has already answered even if
+      // since deactivated (so completed work is never un-done). Do NOT
+      // drop the is_active filter entirely: this section can carry items
+      // retired for ordinary content reasons unrelated to the FC cutover
+      // (confirmed live 2026-08-14: 56 of this candidate's section's items
+      // were already inactive before today, on top of the 110 the cutover
+      // just deactivated) -- serving all of them regardless of history
+      // would incorrectly inflate the completion total and re-open a
+      // finished stint.
+      const { data: answeredRows, error: ansErr } = await supa
+        .from("hiregauge_candidate_responses")
+        .select("item_id")
+        .eq("candidate_id", candidateId)
+        .eq("sitting", 1)
+        .in("item_id", idList);
+      if (ansErr) throw new Error(`stint2_${section}_answered_ids_fetch: ${ansErr.message}`);
+      const answeredIdSet = new Set((answeredRows || []).map((r: any) => r.item_id));
+
       const { data, error } = await supa
         .from("hiregauge_instrument_items")
         .select(ITEM_SELECT)
@@ -415,7 +430,7 @@ async function loadStint2Items(supa: any, candidateId: string) {
         .eq("section", section)
         .order("item_number", { ascending: true });
       if (error) throw new Error(`stint2_locked_items_fetch: ${error.message}`);
-      return data || [];
+      return (data || []).filter((it: any) => it.is_active || answeredIdSet.has(it.id));
     }
   }
 
