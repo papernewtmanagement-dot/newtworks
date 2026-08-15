@@ -3233,8 +3233,8 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                               </span>
                             ) : "—"}
                           </Td>
-                          <Td align="right" style={{ color: buyback > 0 ? T.green : T.slate500, fontWeight: buyback > 0 ? 700 : 400 }}>
-                            {buyback > 0 ? "= " : ""}{fmtQty(netTrue)}
+                          <Td align="right" style={{ color: T.slate500 }}>
+                            {fmtQty(netTrue)}
                           </Td>
                         </Fragment>
                       );
@@ -3327,8 +3327,8 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 <Td align="right" style={{ fontWeight: 700, color: teamPoolRestored > 0 ? T.green : T.slate800 }}>
                   {teamPoolRestored > 0 ? `+${teamPoolRestored}` : "—"}
                 </Td>
-                <Td align="right" style={{ fontWeight: 700, color: teamPoolRestored > 0 ? T.green : T.slate800 }}>
-                  {teamPoolRestored > 0 ? "= " : ""}{fmtQty(teamNetQuotesTotal)}
+                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>
+                  {fmtQty(teamNetQuotesTotal)}
                 </Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
                 <Td align="right" style={{ background: _TINT_1PCT }}></Td>
