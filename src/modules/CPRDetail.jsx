@@ -485,7 +485,7 @@ function useCPRData(weekDate) {
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
     cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
-    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, net_quotes, quotes_discussed, personal_misses, team_misses}}
+    runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, buyback, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
     section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
     leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
@@ -884,6 +884,7 @@ function useCPRData(weekDate) {
             quotes_discussed: Number(r.quotes_discussed) || 0,
             paid: Number(r.paid) || 0,
             owed: Number(r.owed) || 0,
+            buyback: Number(r.buyback) || 0,
             net_quotes: Number(r.net_quotes) || 0,
           };
         });
@@ -3108,18 +3109,17 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
   }
   const sorted = sortByTenure(details, team);
 
-  // Team Net Quotes Total = sum of per-person Net Quotes shown above (quotes_discussed − paid),
-  // PLUS whatever the WtW requirements-adjustment buy-back restored (locked 2026-08-15). Individual
-  // restorations (a person buying back their own personal-minimum shortfall) are already folded
-  // into each person's displayed cell below, so summing those cells gets that part automatically;
-  // the team-pool remainder (wtw_requirements_adjustment_quotes) isn't attributable to one person,
-  // so it's added on top here — same total the server used to decide won_the_week.
+  // Team Net Quotes Total = sum of per-person Net Quotes shown above. As of 2026-08-15,
+  // runtimeReqs[id].net_quotes already includes each person's individual WtW requirements
+  // buy-back (get_weekly_cpr_requirements folds it in canonically now — see that function).
+  // Only the team-pool-funded remainder (wtw_requirements_adjustment_quotes) isn't attributable
+  // to one person, so it's the only thing added on top here — same total the server used to
+  // decide won_the_week.
   const teamPoolRestored = Number(report?.wtw_requirements_adjustment_quotes) || 0;
-  const teamNetQuotesTotal = sorted.reduce((acc, d) => {
-    const base = Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0;
-    const restored = Number(d.residual_pool_diag?.wtw_requirements_adjustment?.individual_quotes_under) || 0;
-    return acc + base + restored;
-  }, 0) + teamPoolRestored;
+  const teamNetQuotesTotal = sorted.reduce(
+    (acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0),
+    0
+  ) + teamPoolRestored;
   const teamSalesPtsTotal = report?.quarterly_sales_points_qtd != null
     ? Number(report.quarterly_sales_points_qtd)
     : sorted.reduce((acc, d) => acc + (Number(d.sales_points) || 0), 0);
@@ -3166,6 +3166,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
               <tr>
                 <Th align="left">Person</Th>
                 <Th align="right">Quotes</Th>
+                <Th align="right">Buyback</Th>
                 <Th align="right">Net Quotes</Th>
                 <Th align="right">Q Sales Pts</Th>
                 <Th align="right" style={{ background: _TINT_1PCT }}>↑ 1% vs 13-wk</Th>
@@ -3186,7 +3187,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 const paidNow = Number(r.paid) || 0;
                 const netPreview = quotesNow - paidNow;
                 // Per-person expansion (cycle-view weekly production table).
-                const totalCols = 5 + quarterList.length;
+                const totalCols = 6 + quarterList.length;
                 const isExpanded = expandedPersonId === d.team_member_id;
                 const hasCycleData = (cycleWeeklyDetails || []).some(x => x.team_member_id === d.team_member_id);
                 const canExpand = !editMode && cycleWeeks.length > 0 && hasCycleData;
@@ -3217,23 +3218,25 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                       <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
                     )}
                     {(() => {
-                      // Requirements-adjustment buy-back (locked 2026-08-15): this person paid
-                      // $10/quote to buy back their own personal-minimum shortfall — show the
-                      // restored quote(s) as a green boost, not just a silent recompute.
-                      const restoredByPerson = Number(d.residual_pool_diag?.wtw_requirements_adjustment?.individual_quotes_under) || 0;
-                      const netDisplay = netPreview + restoredByPerson;
+                      // Requirements-adjustment buy-back (locked 2026-08-15): folded directly
+                      // into net_quotes at the source now (get_weekly_cpr_requirements), so
+                      // this is just a display of the server-truth 'buyback' field — this
+                      // person paid $10/quote to buy back their own personal-minimum shortfall.
+                      const buyback = Number(r.buyback) || 0;
+                      const netTrue = editMode ? netPreview : (Number(r.net_quotes) || 0);
                       return (
-                        <Td align="right" style={{ color: restoredByPerson > 0 ? T.green : T.slate500, fontWeight: restoredByPerson > 0 ? 700 : 400 }}>
-                          {fmtQty(netDisplay)}
-                          {restoredByPerson > 0 && (
-                            <span
-                              style={{ marginLeft: 4, fontSize: 11, fontWeight: 700, color: T.green }}
-                              title={`${restoredByPerson} quote${restoredByPerson === 1 ? "" : "s"} bought back at $10 each — Requirements Adjustment`}
-                            >
-                              +{restoredByPerson}
-                            </span>
-                          )}
-                        </Td>
+                        <Fragment>
+                          <Td align="right" style={{ color: buyback > 0 ? T.green : T.slate400, fontWeight: buyback > 0 ? 700 : 400 }}>
+                            {buyback > 0 ? (
+                              <span title={`${buyback} quote${buyback === 1 ? "" : "s"} bought back at $10 each — Requirements Adjustment`}>
+                                +{buyback}
+                              </span>
+                            ) : "—"}
+                          </Td>
+                          <Td align="right" style={{ color: buyback > 0 ? T.green : T.slate500, fontWeight: buyback > 0 ? 700 : 400 }}>
+                            {buyback > 0 ? "= " : ""}{fmtQty(netTrue)}
+                          </Td>
+                        </Fragment>
                       );
                     })()}
                     {editMode ? (
@@ -3322,15 +3325,10 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Team Total</Td>
                 <Td align="right"></Td>
                 <Td align="right" style={{ fontWeight: 700, color: teamPoolRestored > 0 ? T.green : T.slate800 }}>
-                  {fmtQty(teamNetQuotesTotal)}
-                  {teamPoolRestored > 0 && (
-                    <span
-                      style={{ marginLeft: 4, fontSize: 11, fontWeight: 700, color: T.green }}
-                      title={`${teamPoolRestored} quote${teamPoolRestored === 1 ? "" : "s"} bought back from the team bonus pool at $10 each — Requirements Adjustment`}
-                    >
-                      +{teamPoolRestored}
-                    </span>
-                  )}
+                  {teamPoolRestored > 0 ? `+${teamPoolRestored}` : "—"}
+                </Td>
+                <Td align="right" style={{ fontWeight: 700, color: teamPoolRestored > 0 ? T.green : T.slate800 }}>
+                  {teamPoolRestored > 0 ? "= " : ""}{fmtQty(teamNetQuotesTotal)}
                 </Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
                 <Td align="right" style={{ background: _TINT_1PCT }}></Td>
@@ -3346,6 +3344,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                   </span>
                 </Td>
                 <Td align="right"></Td>
+                <Td align="right"></Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{quoteGoal}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{salesPtsGoal.toFixed(2)}</Td>
                 <Td align="right" style={{ background: _TINT_1PCT }}></Td>
@@ -3358,7 +3357,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                   Right-aligned per Peter directive 2026-07-12 pm5. */}
               <tr>
                 <Td
-                  colSpan={4}
+                  colSpan={5}
                   align="right"
                   style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red, paddingRight: 10 }}
                 >
