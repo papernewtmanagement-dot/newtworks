@@ -3108,15 +3108,18 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
   }
   const sorted = sortByTenure(details, team);
 
-  // Team Net Quotes Total = sum of per-person Net Quotes shown above (quotes_discussed − paid).
-  // We compute at runtime so the team-total cell always equals the sum of the per-person cells.
-  // Note: weekly_cpr_reports.quotes_total_net stores the team's GROSS quotes for the week
-  // (sum of latest team_checkins.quotes_week per member, written by weekly_cpr_compute_outcome)
-  // and is used by the Win-the-Week pass/fail math. It is NOT the Net Quotes display value.
-  const teamNetQuotesTotal = sorted.reduce(
-    (acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0),
-    0
-  );
+  // Team Net Quotes Total = sum of per-person Net Quotes shown above (quotes_discussed − paid),
+  // PLUS whatever the WtW requirements-adjustment buy-back restored (locked 2026-08-15). Individual
+  // restorations (a person buying back their own personal-minimum shortfall) are already folded
+  // into each person's displayed cell below, so summing those cells gets that part automatically;
+  // the team-pool remainder (wtw_requirements_adjustment_quotes) isn't attributable to one person,
+  // so it's added on top here — same total the server used to decide won_the_week.
+  const teamPoolRestored = Number(report?.wtw_requirements_adjustment_quotes) || 0;
+  const teamNetQuotesTotal = sorted.reduce((acc, d) => {
+    const base = Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0;
+    const restored = Number(d.residual_pool_diag?.wtw_requirements_adjustment?.individual_quotes_under) || 0;
+    return acc + base + restored;
+  }, 0) + teamPoolRestored;
   const teamSalesPtsTotal = report?.quarterly_sales_points_qtd != null
     ? Number(report.quarterly_sales_points_qtd)
     : sorted.reduce((acc, d) => acc + (Number(d.sales_points) || 0), 0);
@@ -3213,7 +3216,26 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                     ) : (
                       <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
                     )}
-                    <Td align="right" style={{ color: T.slate500 }}>{fmtQty(netPreview)}</Td>
+                    {(() => {
+                      // Requirements-adjustment buy-back (locked 2026-08-15): this person paid
+                      // $10/quote to buy back their own personal-minimum shortfall — show the
+                      // restored quote(s) as a green boost, not just a silent recompute.
+                      const restoredByPerson = Number(d.residual_pool_diag?.wtw_requirements_adjustment?.individual_quotes_under) || 0;
+                      const netDisplay = netPreview + restoredByPerson;
+                      return (
+                        <Td align="right" style={{ color: restoredByPerson > 0 ? T.green : T.slate500, fontWeight: restoredByPerson > 0 ? 700 : 400 }}>
+                          {fmtQty(netDisplay)}
+                          {restoredByPerson > 0 && (
+                            <span
+                              style={{ marginLeft: 4, fontSize: 11, fontWeight: 700, color: T.green }}
+                              title={`${restoredByPerson} quote${restoredByPerson === 1 ? "" : "s"} bought back at $10 each — Requirements Adjustment`}
+                            >
+                              +{restoredByPerson}
+                            </span>
+                          )}
+                        </Td>
+                      );
+                    })()}
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
                         <NumberInput
@@ -3299,7 +3321,17 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
               <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Team Total</Td>
                 <Td align="right"></Td>
-                <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{fmtQty(teamNetQuotesTotal)}</Td>
+                <Td align="right" style={{ fontWeight: 700, color: teamPoolRestored > 0 ? T.green : T.slate800 }}>
+                  {fmtQty(teamNetQuotesTotal)}
+                  {teamPoolRestored > 0 && (
+                    <span
+                      style={{ marginLeft: 4, fontSize: 11, fontWeight: 700, color: T.green }}
+                      title={`${teamPoolRestored} quote${teamPoolRestored === 1 ? "" : "s"} bought back from the team bonus pool at $10 each — Requirements Adjustment`}
+                    >
+                      +{teamPoolRestored}
+                    </span>
+                  )}
+                </Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate800 }}>{teamSalesPtsTotal.toFixed(2)}</Td>
                 <Td align="right" style={{ background: _TINT_1PCT }}></Td>
                 {quarterList.map(q => <Td key={q} align="right" style={{ background: _TINT_HIST }}></Td>)}
