@@ -952,6 +952,48 @@ function ResponseControls({ item, candidateId, onAnswer, selected, saving, vp })
     return <GmaNumericalItem item={item} onAnswer={onAnswer} selected={selected} saving={saving} vp={vp} />;
   }
 
+  // Forced-choice pair item (Phase 3 personality section, added 2026-08-14).
+  // choices is an OBJECT ({ A: {text, facet, desirability}, B: {...} }), not
+  // an array of strings and not a scale -- must be checked before the
+  // Array.isArray multi-choice branch and the Likert-scale fallback below,
+  // same reason the GMA object-shaped items above are checked first. Missed
+  // originally (the backend/scoring work never touched this file); caught
+  // live via a real test send -- the stem rendered correctly but the choices
+  // silently fell through to a 1-5 "Strongly disagree...Strongly agree"
+  // scale instead of the two options.
+  if (item?.response_format === "forced_choice_pair" && item?.choices?.A && item?.choices?.B) {
+    const options = [
+      { key: "A", text: item.choices.A.text },
+      { key: "B", text: item.choices.B.text },
+    ];
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {options.map((opt) => (
+          <button
+            key={`${item?.id ?? "x"}-${opt.key}`}
+            disabled={saving}
+            onClick={() => onAnswer({ label: opt.key })}
+            style={{
+              padding: "14px 16px",
+              background: selected?.label === opt.key ? T.blueLt : T.white,
+              border: `1px solid ${selected?.label === opt.key ? T.blue : T.slate200}`,
+              borderRadius: 8,
+              textAlign: "left",
+              fontSize: 15,
+              color: T.slate900,
+              cursor: saving ? "wait" : "pointer",
+              transition: "background 0.15s, border-color 0.15s",
+              lineHeight: 1.4,
+              boxSizing: "border-box",
+            }}
+          >
+            {opt.text}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   // Multi-choice item (choices is a JSONB array).
   if (Array.isArray(item?.choices) && item.choices.length > 0) {
     const choices = orderChoices(
