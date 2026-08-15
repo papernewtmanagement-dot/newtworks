@@ -920,8 +920,13 @@ async function handleFinalize(supa: any, cand: any) {
     if (Object.keys(updatePayload).length > 0) {
       const finalized_at_iso = new Date().toISOString();
       updatePayload.assessment_source = usedFc ? "v2fc" : "v2";
-      updatePayload.assessment_date = finalized_at_iso.slice(0, 10);
       updatePayload.assessment_completed_at = finalized_at_iso;
+      // NOTE: assessment_date was dropped from hiring_candidates by migration
+      // 20260813223315 (2026-08-13) -- this write was never removed here, so
+      // finalize has been throwing flat_update_failed for every candidate
+      // since then. Nobody hit it live until Alvi's test completion on
+      // 2026-08-14, because no real candidate finished the full assessment
+      // in between. Sara Burke-Cruz was about to hit the identical wall.
 
       const { error: upErr } = await supa
         .from("hiring_candidates")
