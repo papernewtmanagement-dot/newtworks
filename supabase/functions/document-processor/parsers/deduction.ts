@@ -2,16 +2,16 @@
 // parsers/deduction.ts (v2 — deterministic regex parser)
 // =========================================================================
 // Parses State Farm semi-monthly deduction statements into comp_recap rows
-// with negative amounts.
+// with positive amounts.
 //
 // REPLACES the prior LLM-based parser (v1, 2026-05). Key bug it fixes:
 // the LLM consistently extracted the YEAR-TO-DATE column instead of CURRENT,
 // producing 22x overstatement of period deductions.
 //
 // VERIFIED RECONCILIATIONS:
-//   - June 1-15 2026: 3 rows, total -$457.17 (matches comp PDF
+//   - June 1-15 2026: 3 rows, total $457.17 (matches comp PDF
 //     "LESS DEDUCTIONS 457.17-").
-//   - May 16-31 2026: 5 rows, total -$1,286.56 (matches comp PDF
+//   - May 16-31 2026: 5 rows, total $1,286.56 (matches comp PDF
 //     "LESS DEDUCTIONS 1,286.56-").
 //
 // FORMAT REFERENCE (real example):
@@ -33,7 +33,7 @@ export interface DeductionRow {
   comp_type: string;
   comp_category: string;
   description: string;
-  amount: number;  // always negative
+  amount: number;  // always positive -- comp_gl_writer debits deductions on positive amount
 }
 
 export type ParseDeductionResult =
@@ -100,7 +100,7 @@ export function parseDeductionText(text: string): {
     const description = m[1].trim();
     const current = parseAmt(m[2]);
     if (current === null || current === 0) continue;
-    const amount = -Math.abs(current);  // always negative
+    const amount = Math.abs(current);  // always positive -- see sign-convention note above
     rows.push({
       period_year: period.year,
       period_month: period.month,
