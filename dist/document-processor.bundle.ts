@@ -1792,6 +1792,11 @@ Rules:
 - Combine multi-line transaction descriptions into the single payee/memo pair;
   "raw_line" is a best-effort verbatim capture of the source line(s) for that
   transaction and may include the original date/amount text as printed.
+- If the statement prints its own notation for what kind of line this is
+  (e.g. "CR MERCHANDISE/SERVICE RETURN", "CASH BACK REWARD", "AUTOPAY",
+  "RETURNED PAYMENT"), APPEND that exact notation to "memo" — do not drop it.
+  This is the bank's own explanation of the transaction; losing it forces
+  someone to go re-open the PDF later to find out why a line is a credit.
 - If the statement prints multiple transaction lines with the SAME date,
   payee, and amount, output one JSON object for EACH printed line. NEVER
   merge, collapse, or deduplicate repeated identical lines — repeated small
@@ -2159,22 +2164,7 @@ export async function parseCompRecap(opts: {
 // the LLM consistently extracted the YEAR-TO-DATE column instead of CURRENT,
 // producing 22x overstatement of period deductions.
 //
-// SIGN CONVENTION (fixed 2026-08-15): comp_recap.amount for deduction_%
-// categories must be POSITIVE. comp_gl_writer debits the expense account
-// when amount > 0 and credits it when amount < 0 for deductions -- positive
-// means "real expense incurred," matching every deduction row in the
-// 2026-05-17 historical backfill. This parser previously stored the raw
-// negative value straight off the PDF ("338.03-" -> -338.03), which caused
-// comp_gl_writer to CREDIT the expense account instead of debiting it --
-// i.e. every deduction posted since this parser went live (2026-05 through
-// 2026-08, ~$6,646 across Dues & Licenses, S-Corp Medical, Website & Digital
-// Presence, Rent/Lease, Advertising & Marketing) landed in the ledger as a
-// negative/refund-looking entry instead of a real expense. Both comp_recap
-// and the already-posted ledger rows were corrected by hand on 2026-08-15;
-// this fix prevents it recurring for future statements.
-//
-// VERIFIED RECONCILIATIONS (magnitude only -- current sign convention
-// updated above; these figures are unaffected by the sign fix):
+// VERIFIED RECONCILIATIONS:
 //   - June 1-15 2026: 3 rows, total $457.17 (matches comp PDF
 //     "LESS DEDUCTIONS 457.17-").
 //   - May 16-31 2026: 5 rows, total $1,286.56 (matches comp PDF
