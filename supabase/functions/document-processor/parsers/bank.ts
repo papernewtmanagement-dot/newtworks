@@ -72,6 +72,11 @@ Rules:
 - Combine multi-line transaction descriptions into the single payee/memo pair;
   "raw_line" is a best-effort verbatim capture of the source line(s) for that
   transaction and may include the original date/amount text as printed.
+- If the statement prints its own notation for what kind of line this is
+  (e.g. "CR MERCHANDISE/SERVICE RETURN", "CASH BACK REWARD", "AUTOPAY",
+  "RETURNED PAYMENT"), APPEND that exact notation to "memo" -- do not drop it.
+  This is the bank's own explanation of the transaction; losing it forces
+  someone to go re-open the PDF later to find out why a line is a credit.
 - If the statement prints multiple transaction lines with the SAME date,
   payee, and amount, output one JSON object for EACH printed line. NEVER
   merge, collapse, or deduplicate repeated identical lines — repeated small
