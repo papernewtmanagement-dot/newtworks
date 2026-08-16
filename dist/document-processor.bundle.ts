@@ -2153,16 +2153,31 @@ export async function parseCompRecap(opts: {
 // parsers/deduction.ts (v2 — deterministic regex parser)
 // =========================================================================
 // Parses State Farm semi-monthly deduction statements into comp_recap rows
-// with negative amounts.
+// with positive amounts.
 //
 // REPLACES the prior LLM-based parser (v1, 2026-05). Key bug it fixes:
 // the LLM consistently extracted the YEAR-TO-DATE column instead of CURRENT,
 // producing 22x overstatement of period deductions.
 //
-// VERIFIED RECONCILIATIONS:
-//   - June 1-15 2026: 3 rows, total -$457.17 (matches comp PDF
+// SIGN CONVENTION (fixed 2026-08-15): comp_recap.amount for deduction_%
+// categories must be POSITIVE. comp_gl_writer debits the expense account
+// when amount > 0 and credits it when amount < 0 for deductions -- positive
+// means "real expense incurred," matching every deduction row in the
+// 2026-05-17 historical backfill. This parser previously stored the raw
+// negative value straight off the PDF ("338.03-" -> -338.03), which caused
+// comp_gl_writer to CREDIT the expense account instead of debiting it --
+// i.e. every deduction posted since this parser went live (2026-05 through
+// 2026-08, ~$6,646 across Dues & Licenses, S-Corp Medical, Website & Digital
+// Presence, Rent/Lease, Advertising & Marketing) landed in the ledger as a
+// negative/refund-looking entry instead of a real expense. Both comp_recap
+// and the already-posted ledger rows were corrected by hand on 2026-08-15;
+// this fix prevents it recurring for future statements.
+//
+// VERIFIED RECONCILIATIONS (magnitude only -- current sign convention
+// updated above; these figures are unaffected by the sign fix):
+//   - June 1-15 2026: 3 rows, total $457.17 (matches comp PDF
 //     "LESS DEDUCTIONS 457.17-").
-//   - May 16-31 2026: 5 rows, total -$1,286.56 (matches comp PDF
+//   - May 16-31 2026: 5 rows, total $1,286.56 (matches comp PDF
 //     "LESS DEDUCTIONS 1,286.56-").
 //
 // FORMAT REFERENCE (real example):
@@ -2183,7 +2198,7 @@ export interface DeductionRow {
   comp_type: string;
   comp_category: string;
   description: string;
-  amount: number;  // always negative
+  amount: number;  // always positive -- comp_gl_writer debits deductions on positive amount
 }
 
 export type ParseDeductionResult =
@@ -2250,7 +2265,7 @@ export function parseDeductionText(text: string): {
     const description = m[1].trim();
     const current = parseAmt(m[2]);
     if (current === null || current === 0) continue;
-    const amount = -Math.abs(current);  // always negative
+    const amount = Math.abs(current);  // always positive -- see sign-convention note above
     rows.push({
       period_year: period.year,
       period_month: period.month,
