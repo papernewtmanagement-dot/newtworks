@@ -1308,22 +1308,63 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged, allEntities }) => {
 
   const deleteRow = async (row) => {
     const label = row.description || row.account_name || "(no description)";
+    if (row.source === "journal") {
+      // 2026-08-15: "delete" on a posted ledger row no longer hard-deletes.
+      // It posts a REVERSAL row instead (established GL-correction convention --
+      // op-rule "GL corrections -- reverse, never delete"). The original row is
+      // left in place on purpose: its statement_id / cash_register_id /
+      // payroll_run_id / comp_recap_id are what every writer's idempotency
+      // check tests (EXISTS ledger WHERE statement_id = X, etc.), so leaving it
+      // there is what permanently blocks that source row from being re-posted.
+      // A hard delete removed that guard silently -- the next writer run would
+      // recreate the very row Peter just removed.
+      const reason = prompt(
+        `Reverse this transaction?\n\n${label}\nAmount: $${Number(row.amount).toLocaleString()}\nDate: ${row.entry_date}\n\n` +
+        `This posts a REVERSAL entry rather than deleting the row: the original stays for the audit trail, ` +
+        `the two net to $0 on the P&L, and the source statement / cash register / payroll / comp-recap row ` +
+        `it came from is permanently blocked from posting again.\n\nReason for reversal (required):`
+      );
+      if (reason === null) return;
+      if (!reason.trim()) { alert("A reason is required for a GL reversal."); return; }
+      setSaving(true);
+      try {
+        const { data: orig, error: origErr } = await supabase.from("ledger")
+          .select("id, account_id, debit, credit, entry_date, description")
+          .eq("id", row.je_id).single();
+        if (origErr) throw origErr;
+        const today = new Date();
+        const stamp = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+        const { data, error } = await supabase.from("ledger").insert({
+          agency_id: AGENCY_ID,
+          account_id: orig.account_id,
+          debit: orig.credit,
+          credit: orig.debit,
+          entry_date: orig.entry_date,
+          entry_type: "correction",
+          source: `gl_correction_${stamp}`,
+          description: `REVERSAL: ${orig.description || label}`,
+          memo: `Reversed ledger row ${orig.id} via P&L delete on ${today.toISOString().slice(0, 10)}. Reason: ${reason.trim()}`,
+          classification_status: "classified",
+        }).select("id");
+        if (error) throw error;
+        if (!data || data.length === 0) throw new Error("Reversal insert returned no rows (RLS?)");
+        await load();
+        onDataChanged && onDataChanged();
+      } catch (e) {
+        console.error("PLDrillPanel reversal error:", e);
+        alert("Reversal failed: " + (e.message || String(e)));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     if (!confirm(`Delete this transaction?\n\n${label}\nAmount: $${Number(row.amount).toLocaleString()}\nDate: ${row.entry_date}\n\nThis cannot be undone.`)) return;
     setSaving(true);
     try {
-      if (row.source === "journal") {
-        // 2026-08-08: journal_lines/journal_entries merged into public.ledger (finrebuild) --
-        // one row per leg now, no cascade needed, delete the ledger row directly.
-        const { data, error } = await supabase.from("ledger")
-          .delete().eq("id", row.je_id).select("id");
-        if (error) throw error;
-        if (!data || data.length === 0) throw new Error("Ledger row delete returned no rows (RLS?)");
-      } else if (row.source === "prior_year_pl") {
-        const { data, error } = await supabase.from("prior_year_pl")
-          .delete().eq("id", row.pyp_id).select("id");
-        if (error) throw error;
-        if (!data || data.length === 0) throw new Error("Prior_year_pl delete returned no rows (RLS?)");
-      }
+      const { data, error } = await supabase.from("prior_year_pl")
+        .delete().eq("id", row.pyp_id).select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error("Prior_year_pl delete returned no rows (RLS?)");
       await load();
       onDataChanged && onDataChanged();
     } catch (e) {
