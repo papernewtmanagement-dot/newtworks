@@ -160,32 +160,6 @@ const STAGE_LABELS = {
   archived:        "Archived",
 };
 
-// Rules from hiregauge_evaluate_candidate get bucketed by cross-referencing
-// their short_label against the arrays returned by
-// hiregauge_composite_recommendation. Order in UI: failed floors first
-// (most decision-relevant), then decline / consider / hire, then informational.
-const BUCKET_CONFIG = {
-  failed_floor:  { title: "Character floors failed", tone: "red" },
-  soft_decline:  { title: "Decline signals",         tone: "red" },
-  consider:      { title: "Consider signals",        tone: "amber" },
-  hire:          { title: "Hire signals",            tone: "green" },
-  informational: { title: "Informational",           tone: "slate" },
-};
-
-// Candidate.status → which hiring_stage rules are most relevant right now.
-// Used only for a small chip that highlights stage-relevant rules; nothing
-// is hidden — the framework read is comprehensive by design.
-const STAGE_TO_RELEVANT_RULE_STAGES = {
-  assessed:        ["assessment_review", "resume_review"],
-  interview:       ["interview", "reference_check"],
-  team_meet_and_greet: ["culture_check", "interview"],
-  reference_check: ["reference_check", "interview"],
-  offer:           ["reference_check", "onboarding"],
-  hired:           ["onboarding", "retention"],
-  declined:        [],
-  archived:        [],
-};
-
 // ─── Helpers ───────────────────────────────────────────────────────
 
 const bandColor = (band) => {
@@ -438,54 +412,6 @@ const AdminBreakdown = ({ isAdmin, children }) => {
   );
 };
 
-// Intelligence headline — the top-of-column signal for the Assessment layer.
-// Composite (0-100 scale, mean ~50 / SD ~15) comes from hiregauge_lss_delta_v2
-// via the assessment_intelligence_composite RPC wrapper. Band is role-specific,
-// pulled live from hiregauge_role_ideal_ranges (floor/ceiling for the currently
-// selected role) — NOT a hardcoded threshold. Below floor = red (2c comp-side
-// penalty engages). Within range = green. Above ceiling = amber — not a penalty
-// on the candidate, a fit note per Ganzach 1998 / Maltarich et al. 2010
-// (cognitively over-qualified for this specific seat, may fit a higher-ceiling
-// role better). Replaces the old hardcoded greenT=15/yellowT=12 raw-item-count
-// bands (Step 6, 2026-08-01).
-const IntelligenceHeadline = ({ composite, floor, ceiling, roleLabel, T }) => {
-  const c = composite == null ? null : Number(composite);
-  const hasRange = floor != null && ceiling != null;
-  const band = c == null || !hasRange ? "none"
-    : c < floor ? "red"
-    : c > ceiling ? "yellow"
-    : "green";
-  const colors = bandColor(band);
-  const fillPct = c == null ? 0 : Math.max(0, Math.min(100, c));
-  const fitNote = band === "red" ? "Below role floor"
-    : band === "yellow" ? "Above role ceiling — over-qualified for this seat"
-    : band === "green" ? "Within ideal range"
-    : null;
-  const rangeNote = hasRange
-    ? `Ideal range for ${roleLabel || "this role"}: ${floor}\u2013${ceiling}`
-    : roleLabel ? `No calibrated range yet for ${roleLabel}` : null;
-  return (
-    <div style={{
-      padding: "14px 16px", background: colors.bg, borderRadius: 8,
-      borderLeft: `4px solid ${colors.fg}`, boxSizing: "border-box",
-      display: "flex", flexDirection: "column", gap: 6, marginBottom: 4,
-    }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600 }}>
-          Intelligence
-        </span>
-        <span style={{ fontSize: 26, fontWeight: 800, color: band === "none" ? T.slate500 : colors.fg }}>
-          {c != null ? Math.round(c) : "—"}
-        </span>
-      </div>
-      <div style={{ height: 6, background: T.slate200, borderRadius: 3, overflow: "hidden", boxSizing: "border-box" }}>
-        <div style={{ height: "100%", width: `${fillPct}%`, background: band === "none" ? T.slate300 : colors.fg, borderRadius: 3 }} />
-      </div>
-      {fitNote && <div style={{ fontSize: 11, fontWeight: 600, color: colors.fg }}>{fitNote}</div>}
-      {rangeNote && <div style={{ fontSize: 10, color: T.slate500 }}>{rangeNote}</div>}
-    </div>
-  );
-};
 
 
 // Resume layer expansion body — plain-text extracted resume, scrollable.
@@ -1300,365 +1226,20 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
   );
 }
 
-function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, facetRewordedFlags, v2PoolPosition, screenAnswers, isAdmin }) {
-  // v2fc (Phase 3 forced-choice personality, added 2026-08-14) shares this
-  // entire layer with v2 -- same facet columns, same role-fit chain, same
-  // percentile function (a different norm-key branch under the hood,
-  // invisible here). Gap found live 2026-08-16: this dispatch, and every
-  // v2-only data-fetch effect below it, checked assessment_source === "v2"
-  // literally, so a v2fc candidate fell through to the legacy v1/CTS layout
-  // with no facets, no role fit, nothing -- caught via Alvi Story's second
-  // test completion.
-  if (detail?.assessment_source === "v2" || detail?.assessment_source === "v2fc") {
-    return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers, isAdmin });
-  }
-  return (
-    <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
-
-        {/* LEFT COLUMN — LSS + traits */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <IntelligenceHeadline
-            composite={intelligence?.intelligence_composite}
-            floor={roleIdealRange?.intelligence_ideal_min}
-            ceiling={roleIdealRange?.intelligence_ideal_max}
-            roleLabel={ROLE_LABELS[roleIdealRange?.role_category] || roleIdealRange?.role_category}
-            T={T}
-          />
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-            Traits & LSS
-          </div>
-          {detail?.assessment_timing?.invited_at && detail?.assessment_timing?.cts?.started_at && (() => {
-            const invited = new Date(detail.assessment_timing.invited_at);
-            const started = new Date(detail.assessment_timing.cts.started_at);
-            const ms = started - invited;
-            if (!Number.isFinite(ms) || ms < 0) return null;
-            const totalMin = Math.floor(ms / 60000);
-            const totalHrs = Math.floor(ms / 3600000);
-            const days = Math.floor(ms / 86400000);
-            const leftoverHrs = totalHrs - days * 24;
-            const label = totalMin < 60
-              ? `${totalMin}m`
-              : totalHrs < 24
-                ? `${totalHrs}h`
-                : leftoverHrs === 0
-                  ? `${days}d`
-                  : `${days}d ${leftoverHrs}h`;
-            return (
-              <div style={{
-                padding: "8px 10px", background: T.slate50, borderRadius: 6,
-                borderLeft: `3px solid ${T.slate200}`, boxSizing: "border-box",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>Response latency</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>
-                    {label}
-                    <span style={{ fontSize: 10, color: T.slate600, fontWeight: 400, marginLeft: 6 }}>
-                      invited → started
-                    </span>
-                  </span>
-                </div>
-              </div>
-            );
-          })()}
-          {/* The LSS accuracy + speed rows were removed 2026-08-06: every column
-              they read (lss_math_accuracy, lss_verbal_accuracy,
-              lss_problem_solving_accuracy, lss_total_accuracy and the three
-              matching speed columns) was dropped from hiring_candidates. The
-              cognitive read for current candidates is the GMA section. */}
-          <AssessRow label="Reliability" value={detail?.reliability} band={RELIABILITY_BAND(detail?.reliability)} />
-
-          <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-          {Object.entries(TRAIT_LABELS).map(([trait, label]) => {
-            const value = detail?.[trait];
-            // No band: primary CTS traits render neutral. Role-dependent
-            // ideals are surfaced via Role Fit + Competencies (right column).
-            return <AssessRow key={trait} label={label} value={value} />;
-          })}
-        </div>
-
-        {/* RIGHT COLUMN — Role Fit selector (clickable, sorted by OS descending)
-            then Competencies filtered to the selected role. Best Fit box +
-            "OS" label removed per Peter 2026-07-17: sort order already tells
-            you which is best; the number carries no user-facing meaning as
-            "OS" so we just show the number. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-            Role Fit
-          </div>
-
-          {(() => {
-            const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
-            if (!bf) {
-              return (
-                <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
-                  Best-fit role computes from traits — awaiting assessment.
-                </div>
-              );
-            }
-            const roleRows = [
-              { key: "sales_outbound",       fitScore: bf.sales_outbound_fit_score },
-              { key: "sales_inbound",        fitScore: bf.sales_inbound_fit_score },
-              { key: "sales_in_book",        fitScore: bf.sales_in_book_fit_score },
-              { key: "retention_reception",  fitScore: bf.retention_reception_fit_score },
-              { key: "retention_escalation", fitScore: bf.retention_escalation_fit_score },
-              { key: "retention_support",    fitScore: bf.retention_support_fit_score },
-              { key: "aspirant",             fitScore: bf.aspirant_fit_score },
-            ].sort((a, b) => (Number(b.fitScore) || -Infinity) - (Number(a.fitScore) || -Infinity));
-            const bestKey = bf.best_role;
-            const currentSelected = selectedRole || bestKey || roleRows[0]?.key;
-            return (
-              <>
-                {roleRows.map((r) => {
-                  const isSelected = r.key === currentSelected;
-                  const isBest = r.key === bestKey;
-                  const colors = isBest ? bandColor("green") : null;
-                  const baseBg = colors ? colors.bg : (T.slate200 || "#e2e8f0");
-                  const baseStripe = colors ? colors.fg : T.slate200;
-                  const valueColor = isBest ? colors.fg : T.slate900;
-                  // Gauge fill: OS/100 of row width. Best-fit fills in greenLt, others fill in
-                  // muted slate200 so the gauge is visible without implying "best." Rest is slate50.
-                  const numFit = Number(r.fitScore);
-                  const restBg = T.slate50 || "#f8fafc";
-                  const gaugeBg = Number.isFinite(numFit)
-                    ? `linear-gradient(to right, ${baseBg} 0%, ${baseBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} ${Math.max(0, Math.min(100, numFit))}%, ${restBg} 100%)`
-                    : (colors ? baseBg : restBg);
-                  return (
-                    <button
-                      key={r.key}
-                      type="button"
-                      onClick={() => setSelectedRole(r.key)}
-                      style={{
-                        display: "flex", alignItems: "center", justifyContent: "space-between",
-                        padding: "6px 10px", background: gaugeBg, borderRadius: 6,
-                        borderTop: "none", borderRight: "none", borderBottom: "none",
-                        borderLeft: `3px solid ${isSelected ? T.slate700 : baseStripe}`,
-                        outline: isSelected ? `1px solid ${T.slate400}` : "none",
-                        boxSizing: "border-box", gap: 8, cursor: "pointer",
-                        fontFamily: "inherit", textAlign: "left", width: "100%",
-                      }}
-                      title={isSelected ? "Selected — competencies below" : "Click to show this role's competencies"}
-                    >
-                      <span style={{ fontSize: 11, color: T.slate700, fontWeight: 600 }}>
-                        {ROLE_LABELS[r.key] || r.key} Fit
-                      </span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor, whiteSpace: "nowrap" }}>
-                        {r.fitScore ?? "—"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </>
-            );
-          })()}
-
-          <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
-
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 2 }}>
-            Competencies
-          </div>
-
-          {(() => {
-            const bf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
-            const bestKey = bf?.best_role;
-            const currentSelected = selectedRole || bestKey || "sales_outbound";
-            const roleC = (competencies && competencies[currentSelected]) || {};
-            const roleDeltas = (competencies && competencies._lss_deltas && competencies._lss_deltas[currentSelected]) || {};
-            const entries = Object.entries(roleC).sort(([a], [b]) => a.localeCompare(b));
-            const formatCompLabel = (k) =>
-              k.replace(/_/g, " ").replace(/\w/g, (c) => c.toUpperCase());
-            if (entries.length === 0) {
-              return (
-                <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", padding: "4px 10px" }}>
-                  {competencies ? `No competencies for ${ROLE_LABELS[currentSelected] || currentSelected}.` : "Competencies computed at runtime from traits."}
-                </div>
-              );
-            }
-            return (
-              <>
-                <div style={{ fontSize: 10, color: T.slate500, fontStyle: "italic", marginBottom: 2, padding: "0 10px" }}>
-                  Showing {ROLE_LABELS[currentSelected] || currentSelected} — click any role fit above to swap.
-                </div>
-                {entries.map(([k, v]) => {
-                  const band = competencyBand(v);
-                  const d = roleDeltas[k];
-                  const lssDelta = typeof d === "number" ? d : (d != null ? Number(d) : null);
-                  return <AssessRow key={k} label={formatCompLabel(k)} value={v} band={band} lssDelta={lssDelta} />;
-                })}
-              </>
-            );
-          })()}
-        </div>
-      </div>
-
-      {/* Newtworks v1 diagnostics — timing, reliability by trait, distortion
-          signals. Panel hides silently when the candidate has no v1 scoring
-          data (n_items_scored == 0 or v1Extras missing). Legacy CTS-source
-          candidates never trigger this section. */}
-      {v1Extras && (v1Extras.n_items_scored || 0) > 0 && (() => {
-        const started = detail?.assessment_started_at ? new Date(detail.assessment_started_at) : null;
-        const completed = detail?.assessment_completed_at ? new Date(detail.assessment_completed_at) : null;
-        const invited = v1InvitedAt ? new Date(v1InvitedAt) : null;
-
-        const fmtDuration = (ms) => {
-          if (!Number.isFinite(ms) || ms < 0) return null;
-          const totalMin = Math.floor(ms / 60000);
-          const totalHrs = Math.floor(ms / 3600000);
-          const days = Math.floor(ms / 86400000);
-          const leftoverHrs = totalHrs - days * 24;
-          if (totalMin < 60) return `${totalMin}m`;
-          if (totalHrs < 24) return `${totalHrs}h ${totalMin - totalHrs * 60}m`;
-          return leftoverHrs === 0 ? `${days}d` : `${days}d ${leftoverHrs}h`;
-        };
-        const inviteLag = invited && started ? fmtDuration(started - invited) : null;
-        const takingDur = started && completed ? fmtDuration(completed - started) : null;
-
-        const reliabilityMap = v1Extras.reliability_by_trait || {};
-        // Pruned 2026-08-06 to the two traits that still exist as columns.
-        const traitOrder = [
-          ["assertiveness", "Assertiveness"],
-          ["compassion", "Compassion"],
-        ];
-
-        const flagBadge = (fires, label) => (
-          <span style={{
-            display: "inline-block",
-            padding: "2px 8px",
-            fontSize: 10,
-            fontWeight: 700,
-            borderRadius: 999,
-            background: fires ? "#fee2e2" : "#dcfce7",
-            color: fires ? "#991b1b" : "#166534",
-          }}>{fires ? label : `${label} OK`}</span>
-        );
-
-        const strLine = v1Extras.distortion_straight_line_flag;
-        const acq = v1Extras.distortion_acquiescence_flag;
-        const strThrough = v1Extras.distortion_straight_through_flag;
-        const nTimed = v1Extras.distortion_n_timed_items ?? 0;
-        const meanMs = v1Extras.distortion_mean_response_ms;
-        const minMs = v1Extras.distortion_min_response_ms;
-
-        return (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
-              V1 Diagnostics
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
-
-              {/* Timing */}
-              <div style={{ padding: "10px 12px", background: T.slate50, borderRadius: 6, borderLeft: `3px solid ${T.slate200}` }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>Timing</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: T.slate600 }}>Invite → start</span>
-                    <span style={{ fontWeight: 600, color: T.slate900 }}>{inviteLag ?? "—"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: T.slate600 }}>Start → complete</span>
-                    <span style={{ fontWeight: 600, color: T.slate900 }}>{takingDur ?? "—"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: T.slate600 }}>Mean per item</span>
-                    <span style={{ fontWeight: 600, color: T.slate900 }}>{meanMs != null ? `${(Number(meanMs) / 1000).toFixed(1)}s` : "—"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: T.slate600 }}>Fastest item</span>
-                    <span style={{ fontWeight: 600, color: T.slate900 }}>{minMs != null ? `${(Number(minMs) / 1000).toFixed(1)}s` : "—"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: T.slate600 }}>Timed items</span>
-                    <span style={{ fontWeight: 600, color: T.slate900 }}>{nTimed}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Distortion signals */}
-              <div style={{ padding: "10px 12px", background: T.slate50, borderRadius: 6, borderLeft: `3px solid ${T.slate200}` }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>Response quality</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ color: T.slate900, fontWeight: 600 }}>Straight-line</span>
-                      <span style={{ fontSize: 10, color: T.slate500 }}>max run {v1Extras.distortion_max_consecutive_run ?? "—"} · sd {v1Extras.distortion_overall_sd ?? "—"}</span>
-                    </div>
-                    {flagBadge(strLine, "Flag")}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ color: T.slate900, fontWeight: 600 }}>Acquiescence</span>
-                      <span style={{ fontSize: 10, color: T.slate500 }}>mean {v1Extras.distortion_acquiescence_mean ?? "—"} · bias {v1Extras.distortion_acquiescence_bias ?? "—"}</span>
-                    </div>
-                    {flagBadge(acq, "Flag")}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ color: T.slate900, fontWeight: 600 }}>Straight-through</span>
-                      <span style={{ fontSize: 10, color: T.slate500 }}>{nTimed >= 5 && meanMs != null ? `mean ${(Number(meanMs) / 1000).toFixed(1)}s · <2s = flag` : "n < 5 timed items"}</span>
-                    </div>
-                    {nTimed >= 5 ? flagBadge(strThrough, "Flag") : (
-                      <span style={{ fontSize: 10, color: T.slate400, fontStyle: "italic" }}>—</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Reliability by trait */}
-              <div style={{ padding: "10px 12px", background: T.slate50, borderRadius: 6, borderLeft: `3px solid ${T.slate200}`, gridColumn: "span 1" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>Reliability by trait</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
-                  {traitOrder.map(([k, label]) => {
-                    const r = reliabilityMap[k];
-                    if (!r) {
-                      return (
-                        <div key={k} style={{ display: "flex", justifyContent: "space-between", color: T.slate500 }}>
-                          <span>{label}</span>
-                          <span style={{ fontStyle: "italic" }}>—</span>
-                        </div>
-                      );
-                    }
-                    const nItems = r.n_items ?? 0;
-                    const sd = r.within_trait_sd;
-                    const rd = r.retest_divergence;
-                    const nPairs = r.n_retest_pairs ?? 0;
-                    return (
-                      <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ color: T.slate700 }}>{label}</span>
-                        <span style={{ color: T.slate900, fontVariantNumeric: "tabular-nums" }}>
-                          <span title="within-trait SD">sd {sd ?? "—"}</span>
-                          <span style={{ color: T.slate400, margin: "0 4px" }}>·</span>
-                          <span title="items scored">n {nItems}</span>
-                          <span style={{ color: T.slate400, margin: "0 4px" }}>·</span>
-                          <span title="retest divergence" style={{ color: nPairs > 0 && rd != null ? (Number(rd) > 1.5 ? "#991b1b" : T.slate900) : T.slate400 }}>
-                            {nPairs > 0 && rd != null ? `Δ ${rd}` : "no retest"}
-                          </span>
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-            </div>
-          </div>
-        );
-      })()}
-    </div>
-  );
+// Assessment layer — every candidate renders through this single function,
+// regardless of assessment_source / version. The legacy v1/CTS-specific
+// layout (separate LSS/traits column, IntelligenceHeadline, v1 reliability +
+// distortion panel) was retired 2026-08-16 per Peter directive: the
+// candidate detail page must render identically for every candidate, with
+// no version-conditional branching anywhere on the page. Candidates without
+// v2 facet/role-fit/reliability data (old CTS-source candidates, or anyone
+// mid-assessment) simply show "insufficient data" / em-dashes in those
+// slots — same convention already used for any candidate missing a
+// particular score, not a separate code path.
+function renderAssessmentLayer({ detail, bestFit, selectedRole, setSelectedRole, T, v2Facets, v2Percentiles, v2RoleFits, facetRewordedFlags, v2PoolPosition, screenAnswers, isAdmin }) {
+  return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers, isAdmin });
 }
 
-// Interview layer expander — full 60-min interview capture surface.
-// Was previously a standalone top-level Section; consolidated 2026-07-17 per
-// Peter directive: one home for interview capture, not two. Renders:
-//   - 60-min flow legend (5 rapport / 10 warm-up / 30 deep-dive / 10 candidate Qs / 5 close)
-//   - Warm-Up (3 fixed Qs — FROGS / Why insurance / Why our agency)
-//   - Deep-Dive (LLM probes, flat list, origin pill on top of each)
-//   - Candidate Questions (they-asked-us capture)
-//   - Save button + Generate/Regenerate button + probe error surface
-// interview_answers jsonb keys: warmup:frogs, warmup:why_insurance, warmup:why_agency,
-// custom_probes[*].source (manual:*, trait:*, character_floor:*, resume:*, behavioral_tell:*),
-// candidate_questions.
 function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnswers, answersLastSavedAt, generateCustomProbes, probesGenerating, probesError, buildInterviewPlan, planBuilding, planError }) {
   return (
     <div>
@@ -1971,23 +1552,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   const [probesError, setProbesError] = useState(null);
   const [planBuilding, setPlanBuilding] = useState(false);
   const [planError, setPlanError] = useState(null);
-  const [composite, setComposite] = useState(null);
-  const [frameworkRules, setFrameworkRules] = useState([]);
-  const [competencies, setCompetencies] = useState(null);
-  // Intelligence composite (0-100, from hiregauge_lss_delta_v2) + the currently
-  // selected role's ideal range (floor/ceiling from hiregauge_role_ideal_ranges).
-  // Both feed the IntelligenceHeadline at the top of the Assessment layer. See
-  // Step 6, 2026-08-01.
-  const [intelligence, setIntelligence] = useState(null);
-  const [roleIdealRange, setRoleIdealRange] = useState(null);
-  // Newtworks v1 assessment extras: reliability_by_trait + distortion signals +
-  // timing come from compute_newtworks_v1_traits_as_row RPC (not stored on the
-  // v_hiring_candidates view). Populated even for legacy CTS-source candidates
-  // if they happen to have v1 responses; otherwise n_items_scored is 0 and the
-  // panel hides. See op-rule "HireGauge trait interpretation" for the
-  // trait-label vs psychometric-construct mismatch caveats.
-  const [v1Extras, setV1Extras] = useState(null);
-  const [v1InvitedAt, setV1InvitedAt] = useState(null);
   // Newtworks v2 facet detail — {hypothesized_trait, facet_score, n_items_scored}
   // per facet, fetched fresh via RPC (item counts aren't stored on the flat
   // hiring_candidates columns). Only fetched for v2 candidates. Used to grey out
@@ -2101,7 +1665,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   useEffect(() => {
     if (!detail?.id || !supabase) return;
     const src = detail?.assessment_source;
-    if (src !== "v2" && src !== "v2fc") return;
     let cancelled = false;
     const rpcName = src === "v2fc" ? "compute_newtworks_v2fc_facets_as_row" : "compute_newtworks_v2_facets_as_row";
     const rpcArgs = src === "v2fc"
@@ -2121,7 +1684,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // 2026-08-07).
   useEffect(() => {
     if (!detail?.id || !supabase) return;
-    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     setV2Percentiles(null);
     let cancelled = false;
     supabase
@@ -2157,7 +1719,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // is set (0C) and enough post-cutover assessments exist (0D thresholds).
   useEffect(() => {
     if (!detail?.id || !supabase) return;
-    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     setV2PoolPosition(null);
     let cancelled = false;
     supabase
@@ -2174,7 +1735,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // to v2fc 2026-08-16 (same role-fit chain, see incident note above).
   useEffect(() => {
     if (!detail?.id || !supabase) return;
-    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     let cancelled = false;
     supabase
       .rpc("newtworks_all_role_fits", { p_assessment_id: detail.id })
@@ -2189,7 +1749,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // shared, unaffected by which personality format stint 2 used).
   useEffect(() => {
     if (!detail?.id || !supabase) return;
-    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     let cancelled = false;
     (async () => {
       const [itemsRes, respRes] = await Promise.all([
@@ -2235,28 +1794,17 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     // slow-to-resolve fetch can't leave a previous candidate's verdict/score
     // visible against the new candidate's page.
     setBestFit(null);
-    setCompetencies(null);
-    setComposite(null);
-    setFrameworkRules(null);
-    setIntelligence(null);
     setThreeConstruct(null);
-    setV1Extras(null);
-    setV1InvitedAt(null);
     // assessment_best_fit_role was rewired onto the v2 architecture
-    // (*Ass Comp Build 2) and stays live for both paths. The three legacy
-    // v1/CTS rules-narrative RPCs that used to be gated below
-    // (assessment_all_competencies, hiregauge_composite_recommendation,
-    // hiregauge_evaluate_candidate) were dropped in the 2026-08-13 CTS purge;
-    // their calls were removed the same day. Their panels already rendered
-    // nothing on null state, which is unchanged.
+    // (*Ass Comp Build 2) and stays live for every candidate. The legacy
+    // v1/CTS rules-narrative RPCs (assessment_all_competencies,
+    // hiregauge_composite_recommendation, hiregauge_evaluate_candidate,
+    // assessment_intelligence_composite, compute_newtworks_v1_traits_as_row)
+    // and the "HireGauge Framework Read" panel they fed were dropped in the
+    // 2026-08-13 CTS purge / 2026-08-16 version-separation cleanup — no
+    // candidate page calls them anymore.
     supabase.rpc("assessment_best_fit_role", { p_assessment_id: detail.id })
       .then(({ data, error }) => { if (!cancelled && !error) setBestFit(data); })
-      .catch(() => {});
-    // Intelligence composite for the headline signal — thin wrapper around
-    // hiregauge_lss_delta_v2 so the frontend keeps the p_assessment_id calling
-    // convention used by every other RPC on this page.
-    supabase.rpc("assessment_intelligence_composite", { p_assessment_id: detail.id })
-      .then(({ data, error }) => { if (!cancelled && !error && data) setIntelligence(data); })
       .catch(() => {});
     // Three-construct verdict: Capability/Character/Commitment per-layer verdicts +
     // pre-hire framework prediction + retrospective observation + calibration.
@@ -2265,29 +1813,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
         if (!cancelled && !error && Array.isArray(data) && data[0]) setThreeConstruct(data[0]);
       })
       .catch(() => {});
-    // Newtworks v1 assessment extras (reliability + distortion + timing signals).
-    // Merged read (p_stint = NULL) scores stint 1 + stint 2 items together on
-    // sitting=1 — same call the finalize path uses to write flat trait cols.
-    supabase.rpc("compute_newtworks_v1_traits_as_row", {
-      p_candidate_id: detail.id, p_stint: null, p_sitting: 1,
-    })
-      .then(({ data, error }) => {
-        if (!cancelled && !error && Array.isArray(data) && data[0]) setV1Extras(data[0]);
-      })
-      .catch(() => {});
-    // Earliest invitation sent_at drives invite→start lag calculation for v1
-    // candidates. Multiple invites (initial + reminders) → take MIN so the lag
-    // reflects the earliest outreach, not the last nudge.
-    supabase
-      .from("assessment_invitations")
-      .select("sent_at")
-      .eq("candidate_id", detail.id)
-      .order("sent_at", { ascending: true })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (!cancelled && !error && data?.sent_at) setV1InvitedAt(data.sent_at);
-      });
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
 
@@ -2301,66 +1826,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     if (!bfBestRole) return;
     setSelectedRoleLocal(bfBestRole);
   }, [detail?.id, selectedRole, bestFit]);
-
-  // Role-specific intelligence ideal range for the IntelligenceHeadline band.
-  // Live from hiregauge_role_ideal_ranges — never hardcoded. Refetches whenever
-  // the selected role changes (selector click) or best-fit resolves for the
-  // first time. role_level is always 'default' — no per-agent variants exist yet.
-  useEffect(() => {
-    const bfBestRole = Array.isArray(bestFit) && bestFit[0]?.best_role;
-    const roleKey = selectedRole || bfBestRole;
-    if (!roleKey) { setRoleIdealRange(null); return; }
-    let cancelled = false;
-    supabase
-      .from("hiregauge_role_ideal_ranges")
-      .select("role_category, intelligence_ideal_min, intelligence_ideal_max")
-      .eq("agency_id", AGENCY_ID)
-      .eq("role_category", roleKey)
-      .eq("role_level", "default")
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (!cancelled && !error) setRoleIdealRange(data);
-      });
-    return () => { cancelled = true; };
-  }, [selectedRole, bestFit]);
-
-  // Bucket evaluate_candidate rows by verdict impact using composite's signal
-  // arrays as the routing table. Composite's decline_signals annotate unverified
-  // floors with " (unverified)" suffix — strip before matching. Rules with no
-  // match land in "informational" as a safe default.
-  const rulesByImpact = useMemo(() => {
-    const buckets = { failed_floor: [], soft_decline: [], consider: [], hire: [], informational: [] };
-    if (!composite) return buckets;
-    const strip = (s) => (s || "").replace(/\s*\(unverified\)\s*$/, "").trim();
-    const declineSet  = new Set((composite.decline_signals  || []).map(strip));
-    const considerSet = new Set(composite.consider_signals || []);
-    const hireSet     = new Set(composite.hire_signals     || []);
-    const infoSet     = new Set(composite.informational_signals || []);
-    (frameworkRules || []).forEach((r) => {
-      const label = r.out_short_label;
-      if (r.out_match_confidence === "floor_failed") {
-        buckets.failed_floor.push(r);
-      } else if (hireSet.has(label)) {
-        buckets.hire.push(r);
-      } else if (declineSet.has(label)) {
-        buckets.soft_decline.push(r);
-      } else if (considerSet.has(label)) {
-        buckets.consider.push(r);
-      } else if (infoSet.has(label)) {
-        buckets.informational.push(r);
-      } else {
-        buckets.informational.push(r);
-      }
-    });
-    return buckets;
-  }, [composite, frameworkRules]);
-
-  // Which hiring stages are most relevant given candidate's current status.
-  // Rules whose out_hiring_stage intersects this list get a subtle highlight.
-  const relevantRuleStages = useMemo(
-    () => new Set(STAGE_TO_RELEVANT_RULE_STAGES[detail?.status] || []),
-    [detail?.status]
-  );
 
   // Most recent saved_at across all captured probe answers.
   const answersLastSavedAt = useMemo(() => {
@@ -2636,10 +2101,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
               const cw = threeConstruct.meta?.construct_weights || {};
               // The old "composite" column this layer used to read does not exist on
               // hiring_candidates (verified against information_schema) — dropped
-              // entirely. v2 candidates source the Assessment layer score from the
-              // selected role's fit_score in v2RoleFits. v1/CTS falls back to
-              // overall_score, same as it always did.
-              const isV2Matrix = detail?.assessment_source === "v2" || detail?.assessment_source === "v2fc";
+              // entirely. Every candidate — regardless of assessment_source /
+              // version — sources the Assessment layer score the same way: the
+              // selected role's fit_score in v2RoleFits. Candidates with no v2
+              // role-fit data (old CTS-source candidates) simply show "—" here,
+              // same as any other missing score (Peter directive 2026-08-16, no
+              // version-conditional branching on this page).
               const matrixBf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
               const matrixCurrentRole = selectedRole || matrixBf?.best_role || "sales_outbound";
               // v2 facet percentile lookup — hiregauge_candidate_facet_percentiles
@@ -2666,9 +2133,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
               // within_construct — the same hiregauge_layer_composite_weights row the
               // DB-side verdict_assessment RPC uses for the assessment layer, so the two
               // can never drift apart. Fixed 2026-08-05.
-              const assessmentCapForTotal = isV2Matrix
-                ? (v2RoleFits ? v2RoleFits[matrixCurrentRole]?.fit_score ?? null : null)
-                : (detail?.assessment_capability ?? null);
+              const assessmentCapForTotal = v2RoleFits ? v2RoleFits[matrixCurrentRole]?.fit_score ?? null : null;
               const assessmentChrForTotal = detail?.assessment_character ?? null;
               const assessmentComForTotal = detail?.assessment_commitment ?? null;
               const aLayerCapW = weights?.capability?.assessment;
@@ -2847,32 +2312,19 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                     {layer.key === "assessment" && c.key === "commitment" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
-                                        title={isV2Matrix
-                                          ? "IPIP-sourced commitment facets: Ach = Achievement striving · Comp = Competitiveness · Prv = Prove-goal orientation · Lrn = Learning-goal orientation · Avd = Avoid-goal orientation (reversed before averaging) · Ent = Enterprising interest."
-                                          : "Suggs motivation drivers measurable via CTS: Achievement (deadline motivation) · Recognition (recognition drive) · Autonomy (independent spirit). Six other Suggs driver types not measurable via CTS."}
+                                        title="IPIP-sourced commitment facets: Ach = Achievement striving · Comp = Competitiveness · Prv = Prove-goal orientation · Lrn = Learning-goal orientation · Avd = Avoid-goal orientation (reversed before averaging) · Ent = Enterprising interest."
                                       >
-                                        {isV2Matrix ? (
-                                          <>
-                                            Ach {commitPct("achievement_striving")}
-                                            {" · "}
-                                            Comp {commitPct("competitiveness")}
-                                            {" · "}
-                                            Prv {commitPct("prove_goal_orientation")}
-                                            {" · "}
-                                            Lrn {commitPct("learning_goal_orientation")}
-                                            {" · "}
-                                            Avd(rev) {commitPct("avoid_goal_orientation", true)}
-                                            {" · "}
-                                            Ent {commitPct("enterprising")}
-                                          </>
-                                        ) : (
-                                          <>
-                                            {/* Old-path motivation chips removed 2026-08-06 —
-                                                deadline_motivation, recognition_drive and
-                                                independent_spirit were dropped as columns. */}
-                                            No motivation detail on file
-                                          </>
-                                        )}
+                                        Ach {commitPct("achievement_striving")}
+                                        {" · "}
+                                        Comp {commitPct("competitiveness")}
+                                        {" · "}
+                                        Prv {commitPct("prove_goal_orientation")}
+                                        {" · "}
+                                        Lrn {commitPct("learning_goal_orientation")}
+                                        {" · "}
+                                        Avd(rev) {commitPct("avoid_goal_orientation", true)}
+                                        {" · "}
+                                        Ent {commitPct("enterprising")}
                                       </div>
                                     )}
                                   </td>
@@ -2903,10 +2355,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                 <td colSpan={5} style={{ padding: "14px 16px", background: T.slate50 }}>
                                   {layer.key === "resume" && renderResumeLayer(detail, T, verdictThresh.resume)}
                                   {layer.key === "assessment" && renderAssessmentLayer({
-                                    detail, competencies, bestFit,
+                                    detail, bestFit,
                                     selectedRole, setSelectedRole, T,
-                                    v1Extras, v1InvitedAt,
-                                    intelligence, roleIdealRange,
                                     v2Facets, v2Percentiles, v2RoleFits,
                                     facetRewordedFlags, v2PoolPosition,
                                     screenAnswers, isAdmin,
@@ -2972,199 +2422,30 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
         )}
       </Section>
 
-      {/* HireGauge Framework Read — narrative walkthrough (Claude's synthesis
-          from hiring_candidates.notes) on top, then the auto-computed verdict
-          + every matched rule from hiregauge_evaluate_candidate, bucketed by
-          verdict impact via hiregauge_composite_recommendation's signal arrays.
-          Walkthrough renders independently — may exist even without composite
-          (e.g. former-team retrospective reads pre-CTS). Customized Interview
-          Probes below is the LLM-crafted, candidate-specific probe list built
-          from this same input. */}
-      {/* v1/CTS only. This panel is fed by the legacy rules-narrative engine
-          (hiregauge_composite_recommendation + hiregauge_evaluate_candidate),
-          which reads retired trait columns (recognition_drive,
-          deadline_motivation) that v2 never fills. Deliberately not rebuilt
-          for v2 — mechanical combination beats configural judgment (Kuncel
-          et al. 2013). The v2 role-fit + gate display is the verdict
-          surface for v2 candidates. */}
-      {detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc" && (
-      <Section title="HireGauge Framework Read">
-        {/* Walkthrough — Claude's per-candidate narrative synthesis. Preserved-
-            whitespace prose with ALL-CAPS section labels, bullets, dividers.
-            Resume-specific analysis lives in the Resume layer expander in
-            Results (composite + 10 sub-signals + rules fired) — do not
-            duplicate resume prose here going forward. */}
-        {detail?.notes && detail.notes.trim().length > 0 && (
+      {/* Notes — free-text narrative (Claude's synthesis or manual notes) on
+          hiring_candidates.notes. Renders for every candidate, regardless of
+          assessment version — same field, same display, no gate. The legacy
+          "HireGauge Framework Read" rules-narrative panel (fed by
+          hiregauge_composite_recommendation + hiregauge_evaluate_candidate,
+          gated to v1/CTS candidates only) was removed 2026-08-16: those RPCs
+          were already dropped in the 2026-08-13 CTS purge, so the panel could
+          never show real content again for anyone — permanent dead weight
+          gated on version, the opposite of what this page should do. The v2
+          role-fit + gate display in the Assessment layer above is the verdict
+          surface now, for every candidate. */}
+      {detail?.notes && detail.notes.trim().length > 0 && (
+        <Section title="Notes">
           <div style={{
-            marginBottom: 14, padding: "12px 14px", background: T.slate50,
-            borderRadius: 8, borderLeft: `3px solid ${T.slate300}`,
+            fontSize: 12.5,
+            lineHeight: 1.55,
+            color: T.slate800,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           }}>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
-              Walkthrough
-            </div>
-            <div style={{
-              fontSize: 12.5,
-              lineHeight: 1.55,
-              color: T.slate800,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>
-              {detail.notes}
-            </div>
+            {detail.notes}
           </div>
-        )}
-
-        {!composite ? (
-          <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
-            {frameworkRules?.length === 0
-              ? "No trait data yet — framework read waits for assessment scores."
-              : "Loading framework read..."}
-          </div>
-        ) : (detail?.overall_score == null) ? (
-          // Pre-assessment: composite may fire "unverified" floor signals off the resume
-          // alone, but rendering those as "Floors failed" reads as a scoring failure
-          // when the candidate hasn't answered anything yet. Clean pill instead of the
-          // misleading chip cascade — framework read waits for real assessment scores.
-          <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: T.slate100, borderLeft: `4px solid ${T.slate500}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: T.slate500, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                Assessment not started
-              </span>
-              <span style={{ fontSize: 12, color: T.slate700 }}>
-                HireGauge scores will populate here once the candidate completes the assessment.
-              </span>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Verdict banner */}
-            {(() => {
-              const v = composite.verdict;
-              const ctx = composite.retrospective_context;
-              const isRetro = v === "retrospective_read";
-              const bg = isRetro ? T.blueLt : v === "decline" ? T.redLt : v === "hire" ? T.greenLt : T.amberLt;
-              const fg = isRetro ? T.blue   : v === "decline" ? T.red   : v === "hire" ? T.green   : T.amber;
-              const label = isRetro ? "RETROSPECTIVE READ" : (v || "unknown");
-              return (
-                <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: bg, borderLeft: `4px solid ${fg}` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-                    <span style={{ padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: T.white, background: fg, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                      {label}
-                    </span>
-                    {ctx === "former_team" && (
-                      <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, color: T.slate700, background: T.slate100, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                        Former team
-                      </span>
-                    )}
-                    <span style={{ fontSize: 11, color: T.slate600 }}>
-                      {composite.matched_rules_count ?? 0} rules matched · {composite.floor_failures_count ?? 0} floor failure(s)
-                    </span>
-                  </div>
-                  {composite.primary_reason && (
-                    <div style={{ fontSize: 12, color: T.slate800, lineHeight: 1.5 }}>{composite.primary_reason}</div>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* Signal counts row */}
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, fontSize: 11 }}>
-              {[
-                { label: "Floors failed",       count: composite.character_floors_failed?.length || 0, fg: T.red },
-                { label: "Decline signals",     count: composite.decline_signals?.length || 0,        fg: T.red },
-                { label: "Consider signals",    count: composite.consider_signals?.length || 0,       fg: T.amber },
-                { label: "Hire signals",        count: composite.hire_signals?.length || 0,           fg: T.green },
-                { label: "Informational",       count: composite.informational_signals?.length || 0,  fg: T.slate500 },
-              ].filter((s) => s.count > 0).map((s) => (
-                <span key={s.label} style={{
-                  padding: "3px 8px", borderRadius: 4, background: T.white,
-                  border: `1px solid ${s.fg}`, color: s.fg, fontWeight: 600,
-                }}>
-                  {s.count} × {s.label}
-                </span>
-              ))}
-            </div>
-
-            {/* Rules by bucket */}
-            {["failed_floor", "soft_decline", "consider", "hire", "informational"].map((bucketKey) => {
-              const rules = rulesByImpact[bucketKey] || [];
-              if (rules.length === 0) return null;
-              const cfg = BUCKET_CONFIG[bucketKey];
-              const bucketFg = cfg.tone === "red" ? T.red : cfg.tone === "amber" ? T.amber : cfg.tone === "green" ? T.green : T.slate500;
-              return (
-                <div key={bucketKey} style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: bucketFg, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-                    {cfg.title} ({rules.length})
-                  </div>
-                  {rules.map((r) => {
-                    const stageMatch = Array.isArray(r.out_hiring_stage)
-                      && r.out_hiring_stage.some((s) => relevantRuleStages.has(s));
-                    return (
-                      <div key={r.out_rule_id} style={{
-                        padding: 10, marginBottom: 6, background: T.white, borderRadius: 7,
-                        borderLeft: `3px solid ${bucketFg}`,
-                        boxShadow: stageMatch ? `0 0 0 1px ${bucketFg}22` : "none",
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-                          <div style={{ flex: 1, minWidth: 220 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>
-                              {r.out_short_label ? <>{r.out_short_label} · </> : null}{r.out_rule_name}
-                            </div>
-                            <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>
-                              {(r.out_rule_type || "").replace(/_/g, " ")}
-                              {r.out_calibration_status ? ` · ${r.out_calibration_status.replace(/_/g, " ")}` : ""}
-                              {r.out_n_count > 0 ? ` · n=${r.out_n_count}` : ""}
-                              {Array.isArray(r.out_hiring_stage) && r.out_hiring_stage.length > 0
-                                ? ` · stage: ${r.out_hiring_stage.join(", ")}`
-                                : ""}
-                              {stageMatch ? " · relevant now" : ""}
-                            </div>
-                          </div>
-                          {r.out_match_confidence && (
-                            <span style={{ fontSize: 10, color: T.slate500, fontFamily: "monospace" }}>{r.out_match_confidence}</span>
-                          )}
-                        </div>
-                        {r.out_description && (
-                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>{r.out_description}</div>
-                        )}
-                        {r.out_recommendation && (
-                          <div style={{ fontSize: 11, color: T.slate800, marginTop: 6, lineHeight: 1.5 }}>
-                            <strong>Recommendation: </strong>{r.out_recommendation}
-                          </div>
-                        )}
-                        {r.out_diagnostic_action && (
-                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>
-                            <strong>Diagnostic: </strong>{r.out_diagnostic_action}
-                          </div>
-                        )}
-                        {r.out_interview_probe && (
-                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>
-                            <strong>Interview probe: </strong>{r.out_interview_probe}
-                          </div>
-                        )}
-                        {r.out_coaching_prescription && (
-                          <div style={{ fontSize: 11, color: T.slate700, marginTop: 4, lineHeight: 1.5 }}>
-                            <strong>Coaching: </strong>{r.out_coaching_prescription}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-
-            {(!rulesByImpact.failed_floor.length && !rulesByImpact.soft_decline.length
-              && !rulesByImpact.consider.length && !rulesByImpact.hire.length
-              && !rulesByImpact.informational.length) && (
-              <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
-                No framework rules matched this candidate's profile.
-              </div>
-            )}
-          </>
-        )}
-      </Section>
+        </Section>
       )}
 
       {/* Reference Check */}
