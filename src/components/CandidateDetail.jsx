@@ -2085,17 +2085,30 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     return () => { cancelled = true; };
   }, [candidate?.id, detailRetryTick]);
 
-  // v2 facet detail (item counts) — v2 and v2fc. This RPC is Likert-only, so
-  // it deliberately returns nothing for v2fc (the FC scoring path is a
-  // separate function); harmless to call, keeps the hook shape identical for
-  // both sources. Widened from v2-only 2026-08-16 (see renderAssessmentLayer
-  // comment above for the incident).
+  // v2 facet detail (item counts) — v2 and v2fc, but NOT the same RPC.
+  // CORRECTION 2026-08-16 (same day as the widening above): my first pass
+  // assumed compute_newtworks_v2_facets_as_row (Likert-only) would just
+  // return nothing for a v2fc candidate and was harmless to call. Wrong --
+  // v2fc candidates still have Stint 1 responses in the SAME section
+  // ('newtworks_v2_personality'), including each facet's lone within-sitting
+  // retest item. The Likert-only function picks that single stray response
+  // up, reports n_items_scored=1 for that one facet, and the "insufficient
+  // data" threshold below (< 4) then incorrectly hides an otherwise fully
+  // valid forced-choice score. Caught live: Alvi Story's dutifulness showed
+  // "insufficient data" despite a real, valid 5-item forced-choice read.
+  // Fix: call the matching scoring function for whichever source this
+  // candidate actually used.
   useEffect(() => {
     if (!detail?.id || !supabase) return;
-    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
+    const src = detail?.assessment_source;
+    if (src !== "v2" && src !== "v2fc") return;
     let cancelled = false;
+    const rpcName = src === "v2fc" ? "compute_newtworks_v2fc_facets_as_row" : "compute_newtworks_v2_facets_as_row";
+    const rpcArgs = src === "v2fc"
+      ? { p_candidate_id: detail.id, p_sitting: 1 }
+      : { p_candidate_id: detail.id, p_stint: null, p_sitting: 1 };
     supabase
-      .rpc("compute_newtworks_v2_facets_as_row", { p_candidate_id: detail.id, p_stint: null, p_sitting: 1 })
+      .rpc(rpcName, rpcArgs)
       .then(({ data, error }) => {
         if (cancelled || error) return;
         setV2Facets(Array.isArray(data) ? data : []);
