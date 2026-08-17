@@ -823,25 +823,33 @@ function EditForm({ item, options, onCancel, onSave }) {
 // never calls quiz_record_serve; finish handles item stats once.
 // ============================================================
 
-async function loadItemsWithOptions(ids) {
-  const cleanIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
-  if (cleanIds.length === 0) return {};
-  const [itemsRes, optsRes] = await Promise.all([
-    supabase.from("quiz_items").select("*").in("id", cleanIds),
-    supabase.from("quiz_item_options").select("*").in("item_id", cleanIds).order("sort_order", { ascending: true }),
-  ]);
-  if (itemsRes.error) throw itemsRes.error;
-  if (optsRes.error) throw optsRes.error;
-  const optsByItem = {};
-  for (const o of (optsRes.data || [])) {
-    if (!optsByItem[o.item_id]) optsByItem[o.item_id] = [];
-    optsByItem[o.item_id].push(o);
+// Play data no longer comes from the question tables. It used to: the screen
+// read every column of every question and every option, which meant the answer
+// key - which option is right, the written explanation, and the hidden term
+// itself - sat in the browser before a single answer had been given. Every
+// signed-in teammate could read it. That was tolerable while these games were
+// solo and cosmetic and stopped being tolerable the moment all three carried a
+// same-day team scoreboard.
+//
+// quiz_play_state serves one game's questions with the answers taken out, plus,
+// for any question already answered, that question's reveal - which is what
+// makes resuming a half-finished game work without handing anything over early.
+async function loadPlayState(attemptId) {
+  const { data, error } = await supabase.rpc("quiz_play_state", { p_attempt_id: attemptId });
+  if (error) throw error;
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const itemsById = {};
+  const answeredIds = new Set();
+  for (const it of items) {
+    itemsById[it.item_id] = it;
+    if (it.answered) answeredIds.add(it.item_id);
   }
-  const map = {};
-  for (const it of (itemsRes.data || [])) {
-    map[it.id] = { ...it, options: optsByItem[it.id] || [] };
-  }
-  return map;
+  return {
+    itemsById,
+    orderedIds: items.map(it => it.item_id),
+    answeredIds,
+    remainingIds: items.filter(it => !it.answered).map(it => it.item_id),
+  };
 }
 
 // The Grid column header rule: strip a leading "sf_" and prefix
@@ -875,7 +883,7 @@ function formatGridCategoryLabel(category) {
 function TriviaPlayTab({ userId, isAdmin }) {
   const [modes, setModes] = useState({});
   const [modesError, setModesError] = useState(null);
-  const [itemPool, setItemPool] = useState([]);
+  const [poolCount, setPoolCount] = useState(0);
   const [poolError, setPoolError] = useState(null);
 
   // Daily Five
@@ -959,36 +967,35 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const [spinTermCount, setSpinTermCount] = useState(null);
 
   // ── Loaders ──
-  const loadModesAndPool = useCallback(async () => {
+  const loadModes = useCallback(async () => {
     try {
-      const [modesRes, poolRes] = await Promise.all([
-        supabase.from("quiz_modes").select("*").eq("agency_id", AGENCY_ID).in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final", "the_grid", "spin_and_solve"]),
-        supabase.from("quiz_items").select("id, shape")
-          .eq("agency_id", AGENCY_ID).eq("status", "approved").eq("report_blocked", false),
-      ]);
-      if (modesRes.error) throw modesRes.error;
+      const { data, error } = await supabase.from("quiz_modes").select("*")
+        .eq("agency_id", AGENCY_ID)
+        .in("mode_key", ["daily_five", "duel", "gauntlet", "phase_final", "the_grid", "spin_and_solve"]);
+      if (error) throw error;
       const modeMap = {};
-      for (const m of (modesRes.data || [])) modeMap[m.mode_key] = m;
+      for (const m of (data || [])) modeMap[m.mode_key] = m;
       setModes(modeMap);
-
-      if (poolRes.error) throw poolRes.error;
-      // Daily Five and Duel share this pool, so it carries only the question
-      // shapes those two modes allow. Filtering here rather than leaning on the
-      // row rules matters twice over: an agency admin's row rules are
-      // unfiltered, so without this an admin gets dealt retired and draft
-      // questions; and any future question shape would otherwise land inside a
-      // multiple-choice runner that cannot render it.
-      const playShapes = new Set();
-      for (const key of ["daily_five", "duel"]) {
-        for (const s of (modeMap[key]?.allowed_shapes || ["choice"])) playShapes.add(s);
-      }
-      setItemPool(
-        (poolRes.data || [])
-          .filter(r => playShapes.has(r.shape || "choice"))
-          .map(r => r.id)
-      );
     } catch (ex) {
       setModesError(ex?.message || "Could not load trivia settings.");
+    }
+  }, []);
+
+  // How much material each mode has to work with, for the lobby cards. This was
+  // three separate counts the browser read straight off the question table. That
+  // read is gone, and it was wrong for an agency admin anyway - an admin's row
+  // rules are unfiltered, so their counts quietly included draft and retired
+  // questions. One server call now, filtered the same way the start functions
+  // filter, so the card and the start function agree.
+  const loadAvailability = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.rpc("quiz_play_availability");
+      if (error) throw error;
+      setPoolCount(Number(data?.pool_count) || 0);
+      setSpinTermCount(Number(data?.phrase_count) || 0);
+      setGridCatCounts(data?.grid_category_counts || {});
+    } catch (ex) {
+      // non-fatal - each card reads "not enough questions yet" on its own
     }
   }, []);
 
@@ -1113,27 +1120,6 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   }, []);
 
-  // Category counts for The Grid's client-side availability check. Scoped
-  // explicitly rather than via row rules, and to multiple-choice questions
-  // only, so the count matches what quiz_start_grid_attempt will actually
-  // find. That function stays the authority; this is only the card's hint.
-  const loadGridAvailability = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.from("quiz_items").select("category")
-        .eq("agency_id", AGENCY_ID).eq("status", "approved")
-        .eq("report_blocked", false).eq("shape", "choice");
-      if (error) throw error;
-      const counts = {};
-      for (const row of (data || [])) {
-        if (!row.category) continue;
-        counts[row.category] = (counts[row.category] || 0) + 1;
-      }
-      setGridCatCounts(counts);
-    } catch (ex) {
-      // non-fatal — the card will read "not enough questions yet" if this stays empty
-    }
-  }, []);
-
   const loadGridStatus = useCallback(async () => {
     if (!userId) return;
     setGridPhase("checking");
@@ -1201,24 +1187,6 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   }, []);
 
-  // How many hidden-term questions are approved right now. Scoped explicitly
-  // rather than through the row rules, for the same reason The Grid's count is:
-  // an agency admin's row rules are unfiltered, so leaning on them would count
-  // retired and draft terms too. quiz_start_spin_attempt stays the authority —
-  // this is only the card's hint.
-  const loadSpinAvailability = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.from("quiz_items").select("id")
-        .eq("agency_id", AGENCY_ID).eq("status", "approved")
-        .eq("report_blocked", false).eq("shape", "phrase")
-        .not("phrase_answer", "is", null);
-      if (error) throw error;
-      setSpinTermCount((data || []).length);
-    } catch (ex) {
-      // non-fatal — the card reads "not enough terms yet" if this stays null
-    }
-  }, []);
-
   const loadSpinStatus = useCallback(async () => {
     if (!userId) return;
     setSpinPhase("checking");
@@ -1246,7 +1214,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   }, [userId]);
 
-  useEffect(() => { loadModesAndPool(); }, [loadModesAndPool]);
+  useEffect(() => { loadModes(); }, [loadModes]);
+  useEffect(() => { loadAvailability(); }, [loadAvailability]);
   useEffect(() => { loadDailyStatus(); }, [loadDailyStatus]);
   useEffect(() => { loadDuelLists(); }, [loadDuelLists]);
   useEffect(() => { loadStandings(); }, [loadStandings]);
@@ -1256,10 +1225,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
     loadDayStandings("spin_and_solve");
   }, [loadDayStandings]);
   useEffect(() => { loadGates(); }, [loadGates]);
-  useEffect(() => { loadGridAvailability(); }, [loadGridAvailability]);
   useEffect(() => { loadGridStatus(); }, [loadGridStatus]);
   useEffect(() => { loadNightActive(); }, [loadNightActive]);
-  useEffect(() => { loadSpinAvailability(); }, [loadSpinAvailability]);
   useEffect(() => { loadSpinStatus(); }, [loadSpinStatus]);
 
   // Poll quiz_night_state every 2s while a session is known and live.
@@ -1340,6 +1307,22 @@ function TriviaPlayTab({ userId, isAdmin }) {
     })();
   }, [nightLiveStatus, nightState?.my_attempt_id]);
 
+  // Every mode records an answer the same way, and the reveal for that one
+  // question comes back as the return value of the write. That is the whole
+  // trick: the screen learns which option was right at the moment it can no
+  // longer change its mind, and the one-answer-per-question rule in the
+  // database means it only gets one moment.
+  const submitAnswer = async (attemptId, itemId, chosenOptionId, secondsTaken) => {
+    const { data, error } = await supabase.rpc("quiz_submit_answer", {
+      p_attempt_id: attemptId,
+      p_item_id: itemId,
+      p_chosen_option_id: chosenOptionId || null,
+      p_seconds_taken: Number.isFinite(secondsTaken) ? secondsTaken : 0,
+    });
+    if (error) throw error;
+    return data;
+  };
+
   // ── Training gate actions ──
   const startGate = async (gate) => {
     setGateError(null);
@@ -1357,11 +1340,10 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { data: attemptRow, error: fetchErr } = await supabase
         .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
       if (fetchErr) throw fetchErr;
-      const ids = (attemptRow?.context?.item_ids) || [];
-      const itemsMap = await loadItemsWithOptions(ids);
+      const state = await loadPlayState(attemptId);
       setGateAttempt(attemptRow);
-      setGateItemsById(itemsMap);
-      setGateRemainingIds(ids);
+      setGateItemsById(state.itemsById);
+      setGateRemainingIds(state.remainingIds);
       setGateResult(null);
       setGatePhase("playing");
     } catch (ex) {
@@ -1371,10 +1353,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
   };
 
   const submitGateAnswer = async (itemId, chosenOptionId, secondsTaken) => {
-    const { error } = await supabase.from("quiz_answers").insert({
-      attempt_id: gateAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
-    });
-    if (error) throw error;
+    return submitAnswer(gateAttempt.id, itemId, chosenOptionId, secondsTaken);
   };
 
   const finishGate = async () => {
@@ -1406,19 +1385,16 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // ── The Grid actions ──
   const beginPlayingGrid = async (attempt) => {
     const board = attempt?.context?.board || [];
-    const allIds = (attempt?.context?.item_ids) || [];
-    const [ansRes, itemsMap] = await Promise.all([
-      supabase.from("quiz_answers").select("item_id, chosen_option_id").eq("attempt_id", attempt.id),
-      loadItemsWithOptions(allIds),
-    ]);
-    if (ansRes.error) throw ansRes.error;
+    const state = await loadPlayState(attempt.id);
 
+    // Which cells are already spent, and what they were worth. The server
+    // reports right-or-wrong per answered question, so the running total no
+    // longer needs the answer key sitting in the browser to be worked out.
     const answeredMap = {};
     let pts = 0;
-    for (const r of (ansRes.data || [])) {
-      const item = itemsMap[r.item_id];
-      const opt = (item?.options || []).find(o => o.id === r.chosen_option_id);
-      answeredMap[r.item_id] = { chosen_option_id: r.chosen_option_id, is_correct: !!opt?.is_correct };
+    for (const id of state.answeredIds) {
+      const it = state.itemsById[id];
+      answeredMap[id] = { chosen_option_id: it?.chosen_option_id || null, is_correct: !!it?.was_correct };
     }
     for (const col of board) {
       for (const clue of (col.clues || [])) {
@@ -1429,7 +1405,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
     setGridAttempt(attempt);
     setGridBoard(board);
-    setGridItemsById(itemsMap);
+    setGridItemsById(state.itemsById);
     setGridAnsweredByItem(answeredMap);
     setGridPointsSoFar(pts);
     setGridActiveCell(null);
@@ -1482,17 +1458,13 @@ function TriviaPlayTab({ userId, isAdmin }) {
   };
 
   const submitGridAnswer = async (itemId, chosenOptionId, secondsTaken) => {
-    const { error } = await supabase.from("quiz_answers").insert({
-      attempt_id: gridAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
-    });
-    if (error) throw error;
-    const item = gridItemsById[itemId];
-    const opt = (item?.options || []).find(o => o.id === chosenOptionId);
-    const isCorrect = !!opt?.is_correct;
+    const reveal = await submitAnswer(gridAttempt.id, itemId, chosenOptionId, secondsTaken);
+    const isCorrect = !!reveal?.was_correct;
     setGridAnsweredByItem(prev => ({ ...prev, [itemId]: { chosen_option_id: chosenOptionId, is_correct: isCorrect } }));
     if (isCorrect && gridActiveCell && gridActiveCell.item_id === itemId) {
       setGridPointsSoFar(prev => prev + gridActiveCell.points);
     }
+    return reveal;
   };
 
   const finishGrid = async (attemptId) => {
@@ -1522,18 +1494,11 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
   // ── Spin & Solve actions ──
   const beginPlayingSpin = async (attempt) => {
-    const allIds = (attempt?.context?.item_ids) || [];
-    const [ansRes, itemsMap] = await Promise.all([
-      supabase.from("quiz_answers").select("item_id").eq("attempt_id", attempt.id),
-      loadItemsWithOptions(allIds),
-    ]);
-    if (ansRes.error) throw ansRes.error;
-
-    const done = new Set((ansRes.data || []).map(r => r.item_id));
-    const remaining = allIds.filter(id => !done.has(id));
+    const state = await loadPlayState(attempt.id);
+    const remaining = state.remainingIds;
 
     setSpinAttempt(attempt);
-    setSpinItemsById(itemsMap);
+    setSpinItemsById(state.itemsById);
     setSpinRemainingIds(remaining);
 
     if (remaining.length === 0) {
@@ -1575,19 +1540,39 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   };
 
-  // The browser reports FACTS about the hidden-term half — solved or not, and
-  // how many wrong guesses it took. quiz_finish_attempt turns those into the
-  // solve bonus. No point total is ever sent up from here.
-  const submitSpinAnswer = async (itemId, chosenOptionId, secondsTaken, phraseSolved, phraseMisses) => {
-    const { error } = await supabase.from("quiz_answers").insert({
-      attempt_id: spinAttempt.id,
-      item_id: itemId,
-      chosen_option_id: chosenOptionId,
-      seconds_taken: secondsTaken,
-      phrase_solved: !!phraseSolved,
-      phrase_misses: Number.isFinite(phraseMisses) ? Math.max(0, Math.min(5, phraseMisses)) : 5,
+  // The browser no longer reports anything about the hidden-term half. It used
+  // to send up solved-or-not and the miss count as facts, and those two numbers
+  // are exactly what the solve bonus is calculated from. The server keeps its
+  // own record of the guessing and reads the bonus off that instead.
+  const submitSpinAnswer = async (itemId, chosenOptionId, secondsTaken) => {
+    return submitAnswer(spinAttempt.id, itemId, chosenOptionId, secondsTaken);
+  };
+
+  const guessSpinLetter = async (itemId, letter) => {
+    const { data, error } = await supabase.rpc("quiz_phrase_guess", {
+      p_attempt_id: spinAttempt.id, p_item_id: itemId, p_letter: letter,
     });
     if (error) throw error;
+    return data;
+  };
+
+  const solveSpinTerm = async (itemId, text) => {
+    const { data, error } = await supabase.rpc("quiz_phrase_solve", {
+      p_attempt_id: spinAttempt.id, p_item_id: itemId, p_text: text,
+    });
+    if (error) throw error;
+    return data;
+  };
+
+  // The letter half has its own clock. When it runs out the term is shown and
+  // the solve bonus is gone. The screen used to reveal a term it was holding;
+  // it holds nothing now, so ending the half is a request.
+  const giveUpSpinTerm = async (itemId) => {
+    const { data, error } = await supabase.rpc("quiz_phrase_give_up", {
+      p_attempt_id: spinAttempt.id, p_item_id: itemId,
+    });
+    if (error) throw error;
+    return data;
   };
 
   const finishSpin = async (attemptId) => {
@@ -1743,16 +1728,12 @@ function TriviaPlayTab({ userId, isAdmin }) {
   };
 
   const beginPlayingDaily = async (attempt) => {
-    const allIds = (attempt?.context?.item_ids) || [];
-    const { data: answeredRows, error: ansErr } = await supabase
-      .from("quiz_answers").select("item_id").eq("attempt_id", attempt.id);
-    if (ansErr) throw ansErr;
-    const answeredIds = new Set((answeredRows || []).map(r => r.item_id));
-    const remaining = allIds.filter(id => !answeredIds.has(id));
-    const itemsMap = await loadItemsWithOptions(allIds);
+    const state = await loadPlayState(attempt.id);
+    const remaining = state.remainingIds;
+    const answeredIds = state.answeredIds;
 
     setDfAttempt(attempt);
-    setDfItemsById(itemsMap);
+    setDfItemsById(state.itemsById);
     setDfRemainingIds(remaining);
 
     if (remaining.length === 0 && answeredIds.size > 0) {
@@ -1767,10 +1748,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
   };
 
   const submitDailyAnswer = async (itemId, chosenOptionId, secondsTaken) => {
-    const { error } = await supabase.from("quiz_answers").insert({
-      attempt_id: dfAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
-    });
-    if (error) throw error;
+    return submitAnswer(dfAttempt.id, itemId, chosenOptionId, secondsTaken);
   };
 
   const finishDaily = async (attemptId) => {
@@ -1808,11 +1786,10 @@ function TriviaPlayTab({ userId, isAdmin }) {
         .from("quiz_attempts").select("*").eq("id", attemptId).maybeSingle();
       if (fetchErr) throw fetchErr;
       if (!inserted) throw new Error("Started, but could not read the duel back.");
-      const ids = (inserted?.context?.item_ids) || [];
-      const itemsMap = await loadItemsWithOptions(ids);
+      const state = await loadPlayState(attemptId);
       setDuelActiveAttempt(inserted);
-      setDuelActiveItemsById(itemsMap);
-      setDuelActiveRemainingIds(ids);
+      setDuelActiveItemsById(state.itemsById);
+      setDuelActiveRemainingIds(state.remainingIds);
       setDuelActiveOpponentName(opponent.first_name);
       setDuelResult(null);
       setDuelMode("playing");
@@ -1831,11 +1808,10 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { data: newRow, error: fetchErr } = await supabase
         .from("quiz_attempts").select("*").eq("id", newAttemptId).maybeSingle();
       if (fetchErr) throw fetchErr;
-      const ids = (newRow?.context?.item_ids) || [];
-      const itemsMap = await loadItemsWithOptions(ids);
+      const state = await loadPlayState(newAttemptId);
       setDuelActiveAttempt(newRow);
-      setDuelActiveItemsById(itemsMap);
-      setDuelActiveRemainingIds(ids);
+      setDuelActiveItemsById(state.itemsById);
+      setDuelActiveRemainingIds(state.remainingIds);
       setDuelActiveOpponentName(pending.challenger_name);
       setDuelResult(null);
       setDuelMode("playing");
@@ -1846,10 +1822,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
   };
 
   const submitDuelAnswer = async (itemId, chosenOptionId, secondsTaken) => {
-    const { error } = await supabase.from("quiz_answers").insert({
-      attempt_id: duelActiveAttempt.id, item_id: itemId, chosen_option_id: chosenOptionId, seconds_taken: secondsTaken,
-    });
-    if (error) throw error;
+    return submitAnswer(duelActiveAttempt.id, itemId, chosenOptionId, secondsTaken);
   };
 
   const finishDuel = async () => {
@@ -2013,7 +1986,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
           {dfPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking today's status…</div>}
 
           {dfPhase === "not_started" && (
-            itemPool.length < (dailyCfg?.question_count || 5) ? (
+            poolCount < (dailyCfg?.question_count || 5) ? (
               <div style={{ fontSize: 13, color: T.slate500 }}>Questions are coming soon — check back after review.</div>
             ) : (
               <button type="button" style={s.primaryBtn} onClick={startFreshDaily}>Play today's five</button>
@@ -2112,7 +2085,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {(duelMode === "idle" || duelMode === "picking") && (
             <>
-              {itemPool.length < (duelCfg?.question_count || 7) ? (
+              {poolCount < (duelCfg?.question_count || 7) ? (
                 <div style={{ fontSize: 13, color: T.slate500 }}>Questions are coming soon — check back after review.</div>
               ) : (
                 <button type="button" style={s.ghostBtn} onClick={() => setDuelMode(duelMode === "picking" ? "idle" : "picking")}>
@@ -2285,6 +2258,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
               secondsPerPhase={spinCfg?.seconds_per_question || 60}
               secondsFirstPhase={spinCfg?.seconds_first_phase || 150}
               onSubmitAnswer={submitSpinAnswer}
+              onGuessLetter={guessSpinLetter}
+              onSolveTerm={solveSpinTerm}
+              onTermTimeout={giveUpSpinTerm}
               onAllDone={() => finishSpin(spinAttempt.id)}
             />
           )}
@@ -3199,10 +3175,6 @@ function TriviaGatesTab({ userId }) {
 const PHRASE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const PHRASE_MAX_MISSES = 5;
 
-function normalizePhrase(text) {
-  return (text || "").toUpperCase().replace(/\s+/g, " ").trim();
-}
-
 // The two halves of Spin & Solve are not the same job. Guessing a coverage term
 // out of blanks with twenty-six letters to try through is far slower than picking
 // one of four meanings, so each half carries its own clock: secondsFirstPhase for
@@ -3243,14 +3215,16 @@ function DayStandings({ rows, label }) {
   );
 }
 
-function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsFirstPhase, onSubmitAnswer, onAllDone }) {
+// The letter guessing runs on the server now. It has to: the board cannot be
+// drawn without the term, so as long as the browser did the guessing it needed
+// the term, and the term is the answer. What comes back from each guess is the
+// board as the player has earned it - letters found in place, everything else
+// still a blank - plus the running miss count. The term itself only arrives once
+// it is solved or the guesses have run out.
+function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsFirstPhase, onSubmitAnswer, onGuessLetter, onSolveTerm, onTermTimeout, onAllDone }) {
   const _vp = useViewport();
   const [idx, setIdx] = useState(0);
   const [half, setHalf] = useState("term"); // term | meaning
-  const [guessed, setGuessed] = useState([]);
-  const [misses, setMisses] = useState(0);
-  const [solved, setSolved] = useState(false);
-  const [termOver, setTermOver] = useState(false);
   const [solveOpen, setSolveOpen] = useState(false);
   const [solveText, setSolveText] = useState("");
   const [solveWrong, setSolveWrong] = useState(false);
@@ -3258,20 +3232,48 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
   const [timeLeft, setTimeLeft] = useState(termSeconds);
   const [revealed, setRevealed] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  const [reveal, setReveal] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+  const [guessError, setGuessError] = useState(null);
+  const [busyLetter, setBusyLetter] = useState(null);
   const firingRef = useRef(false);
+  const termFiringRef = useRef(false);
 
   const currentId = itemIds[idx];
   const currentItem = itemsById[currentId];
-  const phrase = normalizePhrase(currentItem?.phrase_answer);
+
+  // Starting board for this term, as the server last left it. A resumed game
+  // comes back with the letters already found still showing.
+  const serverPhrase = currentItem?.phrase || null;
+  const [progress, setProgress] = useState(null);
+  useEffect(() => {
+    setProgress(serverPhrase
+      ? {
+          display: serverPhrase.display || "",
+          guessed: Array.isArray(serverPhrase.guessed) ? serverPhrase.guessed : [],
+          misses: Number(serverPhrase.misses) || 0,
+          solved: !!serverPhrase.solved,
+          over: !!serverPhrase.over,
+          answer: serverPhrase.answer || null,
+        }
+      : null);
+  }, [currentId, serverPhrase]);
+
+  const display = progress?.display || "";
+  const guessed = progress?.guessed || [];
+  const misses = progress?.misses || 0;
+  const solved = !!progress?.solved;
+  const termOver = !!progress?.over;
   const displayOptions = useMemo(
     () => orderedOptions(currentItem?.options, attemptId, currentId),
     [currentItem, attemptId, currentId]
   );
   const guessedSet = useMemo(() => new Set(guessed), [guessed]);
-  const termLetters = useMemo(
-    () => new Set(phrase.split("").filter(ch => ch >= "A" && ch <= "Z")),
-    [phrase]
+  // Which tapped letters turned out to be in the term - taken from the board
+  // itself, because a letter showing on the board is a letter that hit.
+  const hitLetters = useMemo(
+    () => new Set(display.split("").filter(ch => ch >= "A" && ch <= "Z")),
+    [display]
   );
 
   // The board used to draw every letter at a fixed 24px with word wrapping off,
@@ -3279,24 +3281,23 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
   // Tiles are sized to the longest word in the term against the width actually
   // available, so the whole phrase always fits on screen.
   const { tileW, tileH } = useMemo(() => {
-    const longestWord = phrase.split(" ").reduce((m, w) => Math.max(m, w.length), 0);
+    const longestWord = display.split(" ").reduce((m, w) => Math.max(m, w.length), 0);
     const avail = Math.max(240, Math.min((_vp.width || 1024) - 96, 860));
     const raw = Math.floor((avail - 24 - Math.max(0, longestWord - 1) * 3) / Math.max(1, longestWord));
     const w = Math.max(13, Math.min(34, raw));
     return { tileW: w, tileH: Math.round(w * 1.35) };
-  }, [phrase, _vp.width]);
+  }, [display, _vp.width]);
 
   const resetForNext = useCallback(() => {
+    termFiringRef.current = false;
     setHalf("term");
-    setGuessed([]);
-    setMisses(0);
-    setSolved(false);
-    setTermOver(false);
     setSolveOpen(false);
     setSolveText("");
     setSolveWrong(false);
     setRevealed(false);
     setSelectedId(null);
+    setReveal(null);
+    setGuessError(null);
     setTimeLeft(termSeconds);
   }, [termSeconds]);
 
@@ -3312,11 +3313,12 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
 
   const submitMeaning = useCallback(async (optionId, secondsTaken) => {
     try {
-      await onSubmitAnswer(currentId, optionId, secondsTaken, solved, misses);
+      const r = await onSubmitAnswer(currentId, optionId, secondsTaken);
+      setReveal(r || null);
     } catch (ex) {
       setSubmitError(ex?.message || "Could not submit that answer.");
     }
-  }, [currentId, onSubmitAnswer, solved, misses]);
+  }, [currentId, onSubmitAnswer]);
 
   const handleMeaningTimeout = useCallback(async () => {
     if (firingRef.current || revealed) return;
@@ -3326,56 +3328,85 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
     firingRef.current = false;
   }, [revealed, submitMeaning, secondsPerPhase]);
 
+  const handleTermTimeout = useCallback(async () => {
+    if (termFiringRef.current) return;
+    termFiringRef.current = true;
+    try {
+      const p = await onTermTimeout(currentId);
+      if (p) {
+        setProgress({
+          display: p.display || "",
+          guessed: Array.isArray(p.guessed) ? p.guessed : [],
+          misses: Number(p.misses) || 0,
+          solved: !!p.solved,
+          over: true,
+          answer: p.answer || null,
+        });
+      }
+    } catch (ex) {
+      setGuessError(ex?.message || "The clock ran out — tap through to the meaning.");
+    }
+    termFiringRef.current = false;
+  }, [currentId, onTermTimeout]);
+
   useEffect(() => {
     if (half === "term" && termOver) return undefined;
     if (half === "meaning" && revealed) return undefined;
     if (timeLeft <= 0) {
-      if (half === "term") setTermOver(true);
+      if (half === "term") handleTermTimeout();
       else handleMeaningTimeout();
       return undefined;
     }
     const t = setTimeout(() => setTimeLeft(tl => tl - 1), 1000);
     return () => clearTimeout(t);
-  }, [timeLeft, half, termOver, revealed, handleMeaningTimeout]);
+  }, [timeLeft, half, termOver, revealed, handleMeaningTimeout, handleTermTimeout]);
 
   if (!currentItem) {
     return <div style={{ fontSize: 13, color: T.slate500 }}>Loading question…</div>;
   }
 
-  const registerMiss = () => {
-    const next = misses + 1;
-    setMisses(next);
-    if (next >= PHRASE_MAX_MISSES) setTermOver(true);
+  const applyProgress = (p) => {
+    if (!p) return;
+    setProgress({
+      display: p.display || "",
+      guessed: Array.isArray(p.guessed) ? p.guessed : [],
+      misses: Number(p.misses) || 0,
+      solved: !!p.solved,
+      over: !!p.over,
+      answer: p.answer || null,
+    });
   };
 
-  const tapLetter = (letter) => {
-    if (half !== "term" || termOver || guessedSet.has(letter)) return;
-    const nextGuessed = [...guessed, letter];
-    setGuessed(nextGuessed);
-    if (termLetters.has(letter)) {
-      const allFound = [...termLetters].every(ch => nextGuessed.includes(ch));
-      if (allFound) {
-        setSolved(true);
-        setTermOver(true);
+  const tapLetter = async (letter) => {
+    if (half !== "term" || termOver || guessedSet.has(letter) || busyLetter) return;
+    setBusyLetter(letter);
+    setGuessError(null);
+    try {
+      applyProgress(await onGuessLetter(currentId, letter));
+    } catch (ex) {
+      setGuessError(ex?.message || "That guess did not register — try again.");
+    }
+    setBusyLetter(null);
+  };
+
+  const submitSolve = async () => {
+    if (half !== "term" || termOver || busyLetter) return;
+    setBusyLetter("SOLVE");
+    setGuessError(null);
+    try {
+      const p = await onSolveTerm(currentId, solveText);
+      applyProgress(p);
+      if (p?.correct) {
+        setSolveOpen(false);
+        setSolveWrong(false);
+      } else {
+        setSolveText("");
+        setSolveWrong(true);
       }
-    } else {
-      registerMiss();
+    } catch (ex) {
+      setGuessError(ex?.message || "That guess did not register — try again.");
     }
-  };
-
-  const submitSolve = () => {
-    if (half !== "term" || termOver) return;
-    if (phrase.length > 0 && normalizePhrase(solveText) === phrase) {
-      setGuessed([...termLetters]);
-      setSolved(true);
-      setTermOver(true);
-      setSolveOpen(false);
-      setSolveWrong(false);
-    } else {
-      setSolveText("");
-      setSolveWrong(true);
-      registerMiss();
-    }
+    setBusyLetter(null);
   };
 
   const goToMeaning = () => {
@@ -3420,14 +3451,16 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
         </div>
       )}
 
+      {/* The board is exactly what the server sent: letters found in place,
+          everything still hidden as a blank tile. */}
       <div style={s.phraseBoard}>
-        {phrase.split(" ").map((word, wi) => (
+        {display.split(" ").map((word, wi) => (
           <div key={wi} style={s.phraseWord}>
             {word.split("").map((ch, ci) => {
+              const isBlank = (ch === "_");
               const isLetter = ch >= "A" && ch <= "Z";
-              if (!isLetter) return <span key={ci} style={s.phrasePunct(tileW, tileH)}>{ch}</span>;
-              const shown = termOver || guessedSet.has(ch);
-              return <span key={ci} style={s.phraseTile(shown, tileW, tileH)}>{shown ? ch : ""}</span>;
+              if (!isBlank && !isLetter) return <span key={ci} style={s.phrasePunct(tileW, tileH)}>{ch}</span>;
+              return <span key={ci} style={s.phraseTile(!isBlank, tileW, tileH)}>{isBlank ? "" : ch}</span>;
             })}
           </div>
         ))}
@@ -3444,6 +3477,7 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
           {solveWrong && (
             <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>Not it — that cost a guess.</div>
           )}
+          {guessError && <div style={s.errorBanner}>{guessError}</div>}
           {solveOpen ? (
             <div style={s.solveRow}>
               <input
@@ -3453,7 +3487,7 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
                 placeholder="Type the whole term"
                 style={{ ...s.editInput, flex: 1, minWidth: 150 }}
               />
-              <button type="button" style={s.primaryBtn} onClick={submitSolve} disabled={!solveText.trim()}>
+              <button type="button" style={s.primaryBtn} onClick={submitSolve} disabled={!solveText.trim() || !!busyLetter}>
                 Submit
               </button>
             </div>
@@ -3461,14 +3495,14 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
             <div style={s.letterGrid}>
               {PHRASE_LETTERS.map(letter => {
                 let state = "default";
-                if (guessedSet.has(letter)) state = termLetters.has(letter) ? "hit" : "miss";
+                if (guessedSet.has(letter)) state = hitLetters.has(letter) ? "hit" : "miss";
                 return (
                   <button
                     key={letter}
                     type="button"
                     style={s.letterBtn(state)}
                     onClick={() => tapLetter(letter)}
-                    disabled={guessedSet.has(letter)}
+                    disabled={guessedSet.has(letter) || !!busyLetter}
                   >
                     {letter}
                   </button>
@@ -3482,8 +3516,9 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
       {half === "term" && termOver && (
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: solved ? T.green : T.slate600 }}>
-            {solved ? `Solved — ${solveBonus} points for the term.` : "Out of guesses — here it is."}
+            {solved ? `Solved — ${solveBonus} points for the term.` : "That is the term — no bonus this time."}
           </div>
+          {guessError && <div style={s.errorBanner}>{guessError}</div>}
           <div style={s.actionsRow}>
             <button type="button" style={s.primaryBtn} onClick={goToMeaning}>Now, what does it mean?</button>
           </div>
@@ -3496,9 +3531,10 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
           {(displayOptions || []).map(o => {
             let state = "default";
             if (revealed) {
-              if (o.id === selectedId && o.is_correct) state = "selectedCorrect";
-              else if (o.id === selectedId && !o.is_correct) state = "selectedWrong";
-              else if (o.is_correct) state = "revealCorrect";
+              const right = reveal ? (o.id === reveal.correct_option_id) : false;
+              if (o.id === selectedId && right) state = "selectedCorrect";
+              else if (o.id === selectedId && !right) state = "selectedWrong";
+              else if (right) state = "revealCorrect";
               else state = "revealDim";
             }
             return (
@@ -3515,12 +3551,12 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
           })}
           {revealed && (
             <>
-              {currentItem.stem && (
+              {reveal?.stem && (
                 <div style={{ ...s.explanationBox, background: T.blueLt, color: T.slate800 }}>
-                  <strong>{phrase}</strong> — {currentItem.stem}
+                  <strong>{reveal.phrase_answer || progress?.answer || ""}</strong> — {reveal.stem}
                 </div>
               )}
-              {currentItem.explanation && <div style={s.explanationBox}>{currentItem.explanation}</div>}
+              {reveal?.explanation && <div style={s.explanationBox}>{reveal.explanation}</div>}
               <div style={s.actionsRow}>
                 <button type="button" style={s.primaryBtn} onClick={advanceOrFinish}>
                   {idx + 1 < itemIds.length ? "Next term" : "Finish"}
@@ -3534,11 +3570,16 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
   );
 }
 
+// The colouring used to read is_correct off each option, which meant the answer
+// key had to be in the browser before the question was answered. It is not any
+// more. onSubmitAnswer hands back which option was right, and that arrives at
+// the only moment it is safe to know: after the answer has been recorded.
 function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onSubmitAnswer, onAllDone }) {
   const [idx, setIdx] = useState(0);
   const [timeLeft, setTimeLeft] = useState(secondsPerQuestion);
   const [revealed, setRevealed] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  const [reveal, setReveal] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const firingRef = useRef(false);
 
@@ -3556,6 +3597,7 @@ function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onS
       setTimeLeft(secondsPerQuestion);
       setRevealed(false);
       setSelectedId(null);
+      setReveal(null);
     } else {
       onAllDone();
     }
@@ -3593,7 +3635,8 @@ function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onS
     setSelectedId(optionId);
     setRevealed(true);
     try {
-      await onSubmitAnswer(currentId, optionId, secondsTaken);
+      const r = await onSubmitAnswer(currentId, optionId, secondsTaken);
+      setReveal(r || null);
     } catch (ex) {
       setSubmitError(ex?.message || "Could not submit that answer.");
     }
@@ -3615,9 +3658,10 @@ function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onS
       {(displayOptions || []).map(o => {
         let state = "default";
         if (revealed) {
-          if (o.id === selectedId && o.is_correct) state = "selectedCorrect";
-          else if (o.id === selectedId && !o.is_correct) state = "selectedWrong";
-          else if (o.is_correct) state = "revealCorrect";
+          const right = reveal ? (o.id === reveal.correct_option_id) : false;
+          if (o.id === selectedId && right) state = "selectedCorrect";
+          else if (o.id === selectedId && !right) state = "selectedWrong";
+          else if (right) state = "revealCorrect";
           else state = "revealDim";
         }
         return (
@@ -3634,7 +3678,7 @@ function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onS
       })}
       {revealed && (
         <>
-          {currentItem.explanation && <div style={s.explanationBox}>{currentItem.explanation}</div>}
+          {reveal?.explanation && <div style={s.explanationBox}>{reveal.explanation}</div>}
           <div style={s.actionsRow}>
             <button type="button" style={s.primaryBtn} onClick={handleNext}>
               {idx + 1 < itemIds.length ? "Next" : "Finish"}
