@@ -877,7 +877,8 @@ function renderResumeLayer(detail, T, resumeThresh) {
 // from newtworks_all_role_fits (uuid RPC). The competency layer no longer
 // drives role fit or display here and is slated for removal in Migration F.
 // v1/CTS candidates keep the legacy renderAssessmentLayer below — this
-// function only renders when detail.assessment_source === "v2".
+// function renders for detail.assessment_source "v2" or "v2fc" (widened
+// 2026-08-16, see the dispatch function's own comment for the incident).
 // Explicit grid-template-areas per breakpoint (rather than plain CSS Grid
 // auto-fit) so Role Fit always lands under Traits at the 2-column width,
 // never under Facets. auto-fit's implicit placement fills the first open
