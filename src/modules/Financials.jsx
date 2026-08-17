@@ -171,12 +171,12 @@ function useFinancialsData(entity) {
             // contract (statement_balances.source/notes are not exposed by v_bank_balances
             // per Phase 5 spec, which forbids adding columns to accommodate the frontend) —
             // dropped from select and downstream reads; flagged for Peter's call.
-            .select("business_entity_id, account_name, account_kind, current_balance:current_balance_derived, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
+            .select("business_entity_id, account_name, account_kind, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
             // finrebuild 2026-08-08: same remap as v_bank_balances above.
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
+            .select("business_entity_id, account_name, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
           // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
           // filter; expose business_entity_id so GLSection can filter to the
@@ -484,7 +484,7 @@ function useFinancialsData(entity) {
           dueDay:  c.payment_due_day,
           businessEntityId: c.business_entity_id,     // Phase 4: entity badge + subtree filter
           lastStmtDate:    c.last_statement_period_end || null,
-          lastStmtBalance: c.current_balance != null ? parseFloat(c.current_balance) : null,
+          lastStmtBalance: c.last_statement_closing_balance != null ? parseFloat(c.last_statement_closing_balance) : null,
           lastStmtSource:  null,   // finrebuild 2026-08-08: no equivalent column — flagged
           lastStmtNotes:   null,   // finrebuild 2026-08-08: no equivalent column — flagged
           stmtCloseDay:    c.statement_close_day || null,
@@ -656,7 +656,7 @@ function useFinancialsData(entity) {
             accountKind: b.account_kind,   // 'bank' | 'investment' — investment kind gets its own cross-entity group on the Bank Accounts tab
             businessEntityId: b.business_entity_id,   // Phase 4: entity badge + subtree filter
             lastStmtDate:    b.last_statement_period_end || null,
-            lastStmtBalance: b.current_balance != null ? parseFloat(b.current_balance) : null,
+            lastStmtBalance: b.last_statement_closing_balance != null ? parseFloat(b.last_statement_closing_balance) : null,
             lastStmtSource:  null,   // finrebuild 2026-08-08: no equivalent column — flagged
             lastStmtNotes:   null,   // finrebuild 2026-08-08: no equivalent column — flagged
             stmtCloseDay:    b.statement_close_day || null,
