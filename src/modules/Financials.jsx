@@ -2835,7 +2835,7 @@ const BankSection = ({ data }) => {
         )}
         <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>Last Statement</div>
         <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>
-          {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending upload</span> : hasStmt ? fmtMoneyR(a.lastStmtBalance) : "—"}
+          {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending upload</span> : hasStmt ? fmtMoneyR(a.lastStmtBalance, { decimals: 2 }) : "—"}
         </div>
         <div style={{ fontSize: 9, color: T.slate400, marginTop: 1 }}>
           {stmtIsAwaiting ? "Statement not on hand" :
@@ -2845,13 +2845,13 @@ const BankSection = ({ data }) => {
         <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />
         <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Register Now</div>
         <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-          {fmtMoneyR(a.balance)}
+          {fmtMoneyR(a.balance, { decimals: 2 })}
         </div>
         <div style={{ fontSize: 9, color: deltaColor, marginTop: 2 }}>
           {a.needsStatement ? "No balance yet" :
             delta == null ? (a.asOf ? `As of ${a.asOf}` : "Ledger-derived") :
             deltaSmall ? "Matches statement" :
-            `${delta > 0 ? "+" : ""}${fmt(delta)} since statement`}
+            `${delta > 0 ? "+" : ""}${fmtMoney(delta, { decimals: 2 })} since statement`}
         </div>
         {a.nextStmtExpected && (
           <div style={{ fontSize: 9, color: T.slate500, marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${T.slate200}`, letterSpacing: "0.02em" }}>
@@ -2871,7 +2871,7 @@ const BankSection = ({ data }) => {
         </div>
         <Card style={{ background: T.slate900, border: "none" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
-          <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmtMoneyR(totalCash)}</div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmtMoneyR(totalCash, { decimals: 2 })}</div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>All accounts combined</div>
         </Card>
       </div>
@@ -2923,7 +2923,7 @@ const BankSection = ({ data }) => {
         <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, letterSpacing: "-0.01em" }}>{label}</div>
         <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>{count} account{count === 1 ? "" : "s"}</div>
       </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotal)}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800, letterSpacing: "-0.02em" }}>{fmtMoneyR(subtotal, { decimals: 2 })}</div>
     </div>
   );
 
@@ -2950,7 +2950,7 @@ const BankSection = ({ data }) => {
       )}
       <Card style={{ background: T.slate900, border: "none" }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Total Cash Position</div>
-        <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmtMoneyR(totalCash)}</div>
+        <div style={{ fontSize: 26, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" }}>{fmtMoneyR(totalCash, { decimals: 2 })}</div>
         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
           {bankAccounts.length === allBankAccounts.length ? "All accounts combined" : `${bankAccounts.length} of ${allBankAccounts.length} accounts (subtree)`}
         </div>
@@ -3037,15 +3037,15 @@ const CreditSection = ({ data }) => {
         <div style={{ minWidth: 105, flex: "0 1 auto" }}>
           <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Stmt</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>
-            {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmtMoneyR(a.lastStmtBalance) : "—"}
+            {stmtIsAwaiting ? <span style={{ color: T.amber }}>Pending</span> : hasStmt ? fmtMoneyR(a.lastStmtBalance, { decimals: 2 }) : "—"}
           </div>
           <div style={{ fontSize: 9, color: T.slate400 }}>
             {stmtIsAwaiting ? "Not on hand" : hasStmt ? (stmtIsEstimate ? `${stmtDateLabel} · est` : stmtDateLabel) : ""}
           </div>
         </div>
-        <Field label="Balance" value={fmtMoneyR(a.balance)} color={T.red} />
-        <Field label="Available" value={a.limit ? fmtMoneyR(a.limit - a.balance) : "—"} color={a.limit ? T.green : T.slate400} />
-        {a.payment ? <Field label="Min Pmt" value={fmtMoneyR(a.payment)} color={T.amber} /> : null}
+        <Field label="Balance" value={fmtMoneyR(a.balance, { decimals: 2 })} color={T.red} />
+        <Field label="Available" value={a.limit ? fmtMoneyR(a.limit - a.balance, { decimals: 2 }) : "—"} color={a.limit ? T.green : T.slate400} />
+        {a.payment ? <Field label="Min Pmt" value={fmtMoneyR(a.payment, { decimals: 2 })} color={T.amber} /> : null}
         {a.dueDay ? <Field label="Due" value={`Day ${a.dueDay}`} color={T.slate700} minWidth={60} /> : null}
         <div style={{ minWidth: 110, flex: "0 1 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.slate500, marginBottom: 2, letterSpacing: "0.04em", textTransform: "uppercase" }}>
