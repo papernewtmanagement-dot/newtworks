@@ -225,3 +225,8 @@ BEGIN
       v_checkin_type, CASE WHEN v_is_recovery THEN ' [RECOVERY]' ELSE '' END, v_missing_count));
 END;
 $function$;
+
+-- Postgres treats adding a trailing parameter as a new overload, not a replace.
+-- Drop the stale 3-arg version so every call resolves to the one function above
+-- (3-arg callers get p_checkin_type=NULL via the default, which is correct for them).
+DROP FUNCTION IF EXISTS public.get_expected_teammates(uuid, text, date);
