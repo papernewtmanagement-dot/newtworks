@@ -1300,7 +1300,15 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
 }
 
 function renderAssessmentLayer({ detail, competencies, bestFit, selectedRole, setSelectedRole, T, v1Extras, v1InvitedAt, intelligence, roleIdealRange, v2Facets, v2Percentiles, v2RoleFits, facetRewordedFlags, v2PoolPosition, screenAnswers, isAdmin }) {
-  if (detail?.assessment_source === "v2") {
+  // v2fc (Phase 3 forced-choice personality, added 2026-08-14) shares this
+  // entire layer with v2 -- same facet columns, same role-fit chain, same
+  // percentile function (a different norm-key branch under the hood,
+  // invisible here). Gap found live 2026-08-16: this dispatch, and every
+  // v2-only data-fetch effect below it, checked assessment_source === "v2"
+  // literally, so a v2fc candidate fell through to the legacy v1/CTS layout
+  // with no facets, no role fit, nothing -- caught via Alvi Story's second
+  // test completion.
+  if (detail?.assessment_source === "v2" || detail?.assessment_source === "v2fc") {
     return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers, isAdmin });
   }
   return (
@@ -2076,9 +2084,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     return () => { cancelled = true; };
   }, [candidate?.id, detailRetryTick]);
 
-  // v2 facet detail (item counts) — only for v2 candidates.
+  // v2 facet detail (item counts) — v2 and v2fc. This RPC is Likert-only, so
+  // it deliberately returns nothing for v2fc (the FC scoring path is a
+  // separate function); harmless to call, keeps the hook shape identical for
+  // both sources. Widened from v2-only 2026-08-16 (see renderAssessmentLayer
+  // comment above for the incident).
   useEffect(() => {
-    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    if (!detail?.id || !supabase) return;
+    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     let cancelled = false;
     supabase
       .rpc("compute_newtworks_v2_facets_as_row", { p_candidate_id: detail.id, p_stint: null, p_sitting: 1 })
@@ -2093,7 +2106,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // on read via hiregauge_candidate_facet_percentiles, never stored (Step 8,
   // 2026-08-07).
   useEffect(() => {
-    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    if (!detail?.id || !supabase) return;
+    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     setV2Percentiles(null);
     let cancelled = false;
     supabase
@@ -2128,7 +2142,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // Returns zero rows for every facet until the neutralization cutover marker
   // is set (0C) and enough post-cutover assessments exist (0D thresholds).
   useEffect(() => {
-    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    if (!detail?.id || !supabase) return;
+    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     setV2PoolPosition(null);
     let cancelled = false;
     supabase
@@ -2140,10 +2155,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
 
-  // v2 role fit + competency detail — only for v2 candidates. Replaces
-  // assessment_all_competencies for the v2 path (Step 8, 2026-08-03).
+  // v2 role fit + competency detail — v2 and v2fc. Replaces
+  // assessment_all_competencies for the v2 path (Step 8, 2026-08-03); widened
+  // to v2fc 2026-08-16 (same role-fit chain, see incident note above).
   useEffect(() => {
-    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    if (!detail?.id || !supabase) return;
+    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     let cancelled = false;
     supabase
       .rpc("newtworks_all_role_fits", { p_assessment_id: detail.id })
@@ -2154,9 +2171,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
 
-  // Written screen (stint 5, "Part 2") answers — v2 candidates only.
+  // Written screen (stint 5, "Part 2") answers — v2 and v2fc (stint 5 is
+  // shared, unaffected by which personality format stint 2 used).
   useEffect(() => {
-    if (!detail?.id || !supabase || detail?.assessment_source !== "v2") return;
+    if (!detail?.id || !supabase) return;
+    if (detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc") return;
     let cancelled = false;
     (async () => {
       const [itemsRes, respRes] = await Promise.all([
@@ -2606,7 +2625,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
               // entirely. v2 candidates source the Assessment layer score from the
               // selected role's fit_score in v2RoleFits. v1/CTS falls back to
               // overall_score, same as it always did.
-              const isV2Matrix = detail?.assessment_source === "v2";
+              const isV2Matrix = detail?.assessment_source === "v2" || detail?.assessment_source === "v2fc";
               const matrixBf = Array.isArray(bestFit) && bestFit.length > 0 ? bestFit[0] : null;
               const matrixCurrentRole = selectedRole || matrixBf?.best_role || "sales_outbound";
               // v2 facet percentile lookup — hiregauge_candidate_facet_percentiles
@@ -2954,7 +2973,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
           for v2 — mechanical combination beats configural judgment (Kuncel
           et al. 2013). The v2 role-fit + gate display is the verdict
           surface for v2 candidates. */}
-      {detail?.assessment_source !== "v2" && (
+      {detail?.assessment_source !== "v2" && detail?.assessment_source !== "v2fc" && (
       <Section title="HireGauge Framework Read">
         {/* Walkthrough — Claude's per-candidate narrative synthesis. Preserved-
             whitespace prose with ALL-CAPS section labels, bullets, dividers.
