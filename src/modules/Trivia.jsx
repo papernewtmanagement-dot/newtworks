@@ -313,8 +313,9 @@ function orderedOptions(options, attemptId, itemId) {
 export default function Trivia({ userRole, userId }) {
   const vp = useViewport();
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
-  const tab = isAdmin ? tabRaw : "play"; // non-admins always land on Play regardless of URL param
+  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "sharedgrid", "review", "approved", "reports", "gates"]);
+  // non-admins can land on Play or Shared Grid; every other tab forces them back to Play
+  const tab = isAdmin ? tabRaw : (tabRaw === "sharedgrid" ? "sharedgrid" : "play");
 
   const [items, setItems] = useState([]);
   const [optionsByItem, setOptionsByItem] = useState({});
@@ -718,6 +719,7 @@ export default function Trivia({ userRole, userId }) {
       </div>
       <div style={s.tabBar}>
         <button type="button" style={s.tabBtn(tab === "play")} onClick={() => setTabRaw("play")}>Play</button>
+        <button type="button" style={s.tabBtn(tab === "sharedgrid")} onClick={() => setTabRaw("sharedgrid")}>Shared Grid</button>
         {isAdmin && (
           <>
             <button type="button" style={s.tabBtn(tab === "review")} onClick={() => setTabRaw("review")}>Review</button>
@@ -737,6 +739,7 @@ export default function Trivia({ userRole, userId }) {
           </div>
         )}
         {tab === "play" && <TriviaPlayTab userId={userId} isAdmin={isAdmin} />}
+        {tab === "sharedgrid" && <TriviaSharedGridTab userId={userId} />}
         {isAdmin && loading && <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Loading…</div>}
         {isAdmin && !loading && tab === "review" && reviewTab}
         {isAdmin && !loading && tab === "approved" && approvedTab}
@@ -2616,6 +2619,341 @@ function renderRuleLabel(rule, pinnedItemsById) {
   if (parts.length === 0) return "whole bank";
   return parts.join(" + ");
 }
+
+// ============================================================
+// SHARED GRID — one shared screen, named players (not signed-in
+// team members — just labels for whoever's in the room), turns,
+// per-player scoring. The host is the only one who needs to be
+// signed in; everyone else calls out answers and the host judges.
+// Points are server-authoritative (quiz_grid_sessions.board_points,
+// same as the solo Grid) — the client never reports a value.
+// ============================================================
+const gridShared = {
+  wrap: { background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 16, maxWidth: 900, margin: "0 auto" },
+  setupRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
+  nameInput: {
+    flex: 1, padding: "8px 10px", fontSize: 13, borderRadius: 6,
+    border: `1px solid ${T.slate300}`, fontFamily: "inherit",
+  },
+  playerStrip: {
+    display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14,
+  },
+  playerChip: (isTurn) => ({
+    display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20,
+    fontSize: 13, fontWeight: 700, border: `1px solid ${isTurn ? T.blue : T.slate200}`,
+    background: isTurn ? T.blueLt : T.slate50, color: isTurn ? T.blue : T.slate800,
+  }),
+  boardCol: { display: "flex", flexDirection: "column", gap: 6 },
+  clueBtn: (answered) => ({
+    width: "100%", padding: "12px 6px", borderRadius: 6, fontSize: 14, fontWeight: 700,
+    textAlign: "center", cursor: answered ? "default" : "pointer",
+    background: answered ? T.slate100 : "#fff",
+    border: `1px solid ${answered ? T.slate200 : T.slate300}`,
+    color: answered ? T.slate300 : T.slate800,
+  }),
+  clueCard: {
+    padding: 16, borderRadius: 8, background: T.slate50, border: `1px solid ${T.slate200}`, marginBottom: 12,
+  },
+  winnerBtn: (chosen) => ({
+    padding: "8px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: "pointer",
+    border: `1px solid ${chosen ? T.green : T.slate300}`,
+    background: chosen ? T.greenLt : "#fff", color: chosen ? T.green : T.slate800,
+  }),
+};
+
+function TriviaSharedGridTab({ userId }) {
+  const vp = useViewport();
+  const [gsSessionId, setGsSessionId] = useTabParam("gsession", null);
+  const [gsPhase, setGsPhase] = useState("checking"); // checking | setup | board | error
+  const [gsError, setGsError] = useState(null);
+  const [gsState, setGsState] = useState(null);
+  const [gsNames, setGsNames] = useState(["", ""]);
+  const [gsBusy, setGsBusy] = useState(false);
+  const [gsWinnerPick, setGsWinnerPick] = useState(null); // index chosen before scoring, or "none"
+
+  const loadState = useCallback(async (sid) => {
+    if (!sid) return;
+    const { data, error } = await supabase.rpc("quiz_shared_grid_state", { p_session_id: sid });
+    if (error) {
+      setGsError(error.message || "Could not load that game.");
+      setGsPhase("error");
+      return;
+    }
+    setGsState(data);
+    setGsWinnerPick(null);
+    setGsPhase("board");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (gsSessionId) {
+        await loadState(gsSessionId);
+        return;
+      }
+      setGsPhase("checking");
+      const { data, error } = await supabase.rpc("quiz_shared_grid_my_active_session");
+      if (cancelled) return;
+      if (!error && data) {
+        setGsSessionId(data);
+        await loadState(data);
+      } else {
+        setGsPhase("setup");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gsSessionId]);
+
+  const addNameField = () => {
+    if (gsNames.length >= 8) return;
+    setGsNames(prev => [...prev, ""]);
+  };
+  const updateName = (i, val) => {
+    setGsNames(prev => prev.map((n, idx) => (idx === i ? val : n)));
+  };
+  const removeNameField = (i) => {
+    setGsNames(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  const startGame = async () => {
+    const cleaned = gsNames.map(n => n.trim()).filter(Boolean);
+    if (cleaned.length === 0) {
+      setGsError("Name at least one player.");
+      return;
+    }
+    setGsBusy(true);
+    setGsError(null);
+    const { data, error } = await supabase.rpc("quiz_shared_grid_start", { p_player_names: cleaned });
+    setGsBusy(false);
+    if (error) {
+      setGsError(error.message || "Could not start the board.");
+      return;
+    }
+    setGsSessionId(data);
+    await loadState(data);
+  };
+
+  const pickSquare = async (itemId) => {
+    if (!gsState?.is_host || gsBusy) return;
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_pick", { p_session_id: gsSessionId, p_item_id: itemId });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not open that square."); return; }
+    await loadState(gsSessionId);
+  };
+
+  const revealAnswer = async () => {
+    if (!gsState?.is_host || gsBusy) return;
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_reveal", { p_session_id: gsSessionId });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not reveal the answer."); return; }
+    await loadState(gsSessionId);
+  };
+
+  const scoreSquare = async () => {
+    if (!gsState?.is_host || gsBusy || gsWinnerPick === null) return;
+    setGsBusy(true);
+    setGsError(null);
+    const winner = gsWinnerPick === "none" ? null : gsWinnerPick;
+    const { error } = await supabase.rpc("quiz_shared_grid_score", { p_session_id: gsSessionId, p_winner_index: winner });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not score that square."); return; }
+    await loadState(gsSessionId);
+  };
+
+  const endGame = async () => {
+    if (!gsState?.is_host) return;
+    if (!window.confirm("End this game? The board and scores will be closed out.")) return;
+    setGsBusy(true);
+    const { error } = await supabase.rpc("quiz_shared_grid_end", { p_session_id: gsSessionId });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not end the game."); return; }
+    setGsSessionId(null);
+    setGsState(null);
+    setGsNames(["", ""]);
+    setGsPhase("setup");
+  };
+
+  const startNewAfterFinish = () => {
+    setGsSessionId(null);
+    setGsState(null);
+    setGsNames(["", ""]);
+    setGsPhase("setup");
+  };
+
+  if (gsPhase === "checking") {
+    return <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Checking for a game in progress…</div>;
+  }
+
+  if (gsPhase === "setup") {
+    return (
+      <div style={gridShared.wrap}>
+        <div style={s.playCardTitle}>Shared Grid</div>
+        <div style={s.playCardDesc}>
+          One shared screen, everyone in the room. Type in who's playing, then the host
+          picks squares, reveals the answer, and taps who got it right.
+        </div>
+        {gsError && <div style={s.errorBanner}>{gsError}</div>}
+        {gsNames.map((n, i) => (
+          <div key={i} style={gridShared.setupRow}>
+            <input
+              type="text" style={gridShared.nameInput} placeholder={`Player ${i + 1} name`}
+              value={n} onChange={(e) => updateName(i, e.target.value)}
+            />
+            {gsNames.length > 1 && (
+              <button type="button" style={s.ghostBtn} onClick={() => removeNameField(i)}>Remove</button>
+            )}
+          </div>
+        ))}
+        <div style={s.actionsRow}>
+          {gsNames.length < 8 && (
+            <button type="button" style={s.ghostBtn} onClick={addNameField}>+ Add player</button>
+          )}
+          <button type="button" style={s.primaryBtn} disabled={gsBusy} onClick={startGame}>
+            {gsBusy ? "Building the board…" : "Start game"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (gsPhase === "error") {
+    return (
+      <div style={gridShared.wrap}>
+        <div style={s.errorBanner}>{gsError}</div>
+        <div style={s.actionsRow}>
+          <button type="button" style={s.ghostBtn} onClick={startNewAfterFinish}>Start a new game</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!gsState) return null;
+
+  const players = gsState.players || [];
+  const board = gsState.board || [];
+  const q = gsState.question;
+
+  return (
+    <div style={gridShared.wrap}>
+      <div style={s.stageHeader}>
+        <div>
+          <div style={s.stageTitle}>Shared Grid</div>
+          <div style={s.stageSub}>{gsState.status === "finished" ? "game over" : "in play"}</div>
+        </div>
+        {gsState.is_host && gsState.status !== "finished" && (
+          <button type="button" style={s.ghostBtn} onClick={endGame} disabled={gsBusy}>End game</button>
+        )}
+      </div>
+
+      {gsError && <div style={s.errorBanner}>{gsError}</div>}
+
+      <div style={gridShared.playerStrip}>
+        {players.map((p, i) => (
+          <div key={i} style={gridShared.playerChip(i === gsState.current_player_index && gsState.status !== "finished")}>
+            {p.name} — {p.score}
+          </div>
+        ))}
+      </div>
+
+      {gsState.status === "finished" && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, marginBottom: 10 }}>
+            Final: {[...players].sort((a, b) => b.score - a.score).map(p => `${p.name} (${p.score})`).join(" · ")}
+          </div>
+          <div style={s.actionsRow}>
+            <button type="button" style={s.primaryBtn} onClick={startNewAfterFinish}>New game</button>
+          </div>
+        </div>
+      )}
+
+      {gsState.status !== "finished" && !q && (
+        <div style={{ ...gridShared.boardCol, display: "grid", gridTemplateColumns: `repeat(${board.length}, 1fr)`, gap: 8 }}>
+          {board.map((col, ci) => (
+            <div key={ci}>
+              <div style={s.gridColumnHeader}>{formatGridCategoryLabel(col.category)}</div>
+              {col.clues.map((clue) => (
+                <button
+                  key={clue.item_id}
+                  type="button"
+                  disabled={clue.answered || !gsState.is_host || gsBusy}
+                  style={gridShared.clueBtn(clue.answered)}
+                  onClick={() => pickSquare(clue.item_id)}
+                >
+                  {clue.answered ? "—" : clue.points}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {q && (
+        <div>
+          <div style={s.smallLabel}>{formatGridCategoryLabel(q.category)} — {q.points} points</div>
+          <div style={gridShared.clueCard}>
+            <div style={s.qStem}>{q.stem}</div>
+            {(q.options || []).map((o) => (
+              <div
+                key={o.id}
+                style={s.qOptionBtn(gsState.active_revealed ? (o.is_correct ? "revealCorrect" : "revealDim") : "default")}
+              >
+                {o.option_text}
+              </div>
+            ))}
+            {gsState.active_revealed && q.explanation && (
+              <div style={s.explanationBox}>{q.explanation}</div>
+            )}
+          </div>
+
+          {gsState.is_host && !gsState.active_revealed && (
+            <div style={s.actionsRow}>
+              <button type="button" style={s.primaryBtn} disabled={gsBusy} onClick={revealAnswer}>Reveal answer</button>
+            </div>
+          )}
+
+          {gsState.is_host && gsState.active_revealed && (
+            <div>
+              <div style={s.smallLabel}>Who got it right?</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0" }}>
+                {players.map((p, i) => (
+                  <button
+                    key={i} type="button"
+                    style={gridShared.winnerBtn(gsWinnerPick === i)}
+                    onClick={() => setGsWinnerPick(i)}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  style={gridShared.winnerBtn(gsWinnerPick === "none")}
+                  onClick={() => setGsWinnerPick("none")}
+                >
+                  Nobody
+                </button>
+              </div>
+              <div style={s.actionsRow}>
+                <button type="button" style={s.primaryBtn} disabled={gsBusy || gsWinnerPick === null} onClick={scoreSquare}>
+                  Score it
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!gsState.is_host && (
+            <div style={{ fontSize: 12, color: T.slate500 }}>Waiting on the host…</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function TriviaGatesTab({ userId }) {
   const [topicSets, setTopicSets] = useState([]);
