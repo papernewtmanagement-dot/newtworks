@@ -7647,7 +7647,7 @@ async function processOneAmazonMessage(ctx: AmazonOrderEmailCtx, messageId: stri
   const orderId = orderIdMatch ? orderIdMatch[1].trim() : null;
 
   // Body: "Grand Total:\n27.24 USD"
-  const totalMatch = bodyText.match(/Grand Total:\r?\n([\d,]+\.\d{2})\s*USD/i);
+  const totalMatch = bodyText.match(/Grand Total:\r?\n([\d,]+\.\d+)\s*USD/i);
   const grandTotal = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, "")) : null;
 
   // Body: "Thomas - MACHIPONGO, VA" on its own line, followed (after blank
