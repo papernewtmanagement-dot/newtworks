@@ -14,15 +14,21 @@
 // The live emails carry no payment card and no per-item price — only
 // order #, ship-to name/city/state, a single grand total, a coarse
 // category from the subject line ("Ordered: 1 Bedding item"), and item
-// count. That is deliberately treated as ENOUGH: Peter does not want
-// periodic manual CSV re-uploads, and per-item categorization was judged
-// not worth that cost. Entity/card attribution instead comes from
-// match_amazon_orders_to_cash_register() (Postgres function, agency
-// migration 2026-08-18), which matches each order's grand_total + date
-// against cash_register_preliminary (exact amount, date window) and
-// resolves the matched row's card to a business_entity_id via the
-// accounts table (checking account_number_last4 and alternate_last4s).
-// This parser calls that function once per batch after upserting orders.
+// count. Peter does not want periodic manual CSV re-uploads, so this is
+// treated as the permanent data ceiling for live orders, not a temporary
+// gap: entity/card attribution comes from
+// match_amazon_orders_to_cash_register() (matches grand_total + date
+// against cash_register_preliminary, resolves the card via the accounts
+// table), and GL categorization comes from amazon_categorize_email_orders()
+// (matches the subject-line category text against
+// amazon_order_category_rules, entity-aware, then writes the account onto
+// the ledger row via the exact matched_cash_register_id -> ledger.
+// cash_register_id link). Both added 2026-08-18, both called at the end of
+// every batch below — safe to call every run, each only touches rows it
+// hasn't resolved yet. This is a coarser categorization than the
+// item-level system (amazon_apply_charge_categories) that runs against the
+// CSV-imported historical orders, which has actual product names to work
+// from — that's an accepted, permanent tradeoff, not a bug.
 //
 // Idempotency: STARRED is the processed marker (same convention as
 // call_log, careerplug, paypal_print_sales in this file set). A message
@@ -126,7 +132,25 @@ export async function processAmazonOrderEmailMode(ctx: AmazonOrderEmailCtx, body
     console.warn("match_amazon_orders_to_cash_register call threw (non-fatal):", e);
   }
 
-  return { ok: true, processed, skipped, errors, message_count: messages.length, matched, results };
+  // Now that entity attribution may have just resolved some orders, apply
+  // order-level GL categorization (from the subject-line category, since
+  // live orders have no item-level detail) to any newly-matched orders.
+  // Safe to call every run — only touches orders with a resolved entity,
+  // a resolved ledger row, and no existing item-level categorization.
+  let categorized = 0;
+  try {
+    const { data: catRows, error: catErr } = await sb.rpc("amazon_categorize_email_orders", {
+      p_agency_id: ctx.agencyId,
+      p_dry_run: false,
+    });
+    if (!catErr && Array.isArray(catRows)) {
+      categorized = catRows.filter((r: any) => typeof r.note === "string" && r.note.startsWith("moved to")).length;
+    }
+  } catch (e) {
+    console.warn("amazon_categorize_email_orders call threw (non-fatal):", e);
+  }
+
+  return { ok: true, processed, skipped, errors, message_count: messages.length, matched, categorized, results };
 }
 
 async function processOneAmazonMessage(ctx: AmazonOrderEmailCtx, messageId: string): Promise<OneAmazonResult> {
