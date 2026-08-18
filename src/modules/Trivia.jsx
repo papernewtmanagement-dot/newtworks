@@ -4226,9 +4226,6 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
             <span>{guessesLeft} wrong {guessesLeft === 1 ? "guess" : "guesses"} left</span>
             <span>Buy a vowel — {VOWEL_COST} pts</span>
           </div>
-          {solveWrong && (
-            <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>Not it — that cost a guess.</div>
-          )}
           {guessError && <div style={s.errorBanner}>{guessError}</div>}
           {solveOpen ? (
             <div style={s.solveRow}>
@@ -4272,7 +4269,11 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
       {half === "term" && termOver && (
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: solved ? T.green : T.slate600 }}>
-            {solved ? `Solved — ${solveBonus} points for the term.` : "That is the term — no bonus this time."}
+            {solved
+              ? `Solved — ${solveBonus} points for the term.`
+              : solveWrong
+                ? "Not it — one guess to solve, and that was it. No bonus this time."
+                : "Out of guesses — that is the term. No bonus this time."}
           </div>
           {guessError && <div style={s.errorBanner}>{guessError}</div>}
           <div style={s.actionsRow}>
