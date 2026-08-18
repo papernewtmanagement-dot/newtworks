@@ -2670,6 +2670,8 @@ function TriviaSharedGridTab({ userId }) {
   const [gsNames, setGsNames] = useState(["", ""]);
   const [gsBusy, setGsBusy] = useState(false);
   const [gsWinnerPick, setGsWinnerPick] = useState(null); // index chosen before scoring, or "none"
+  const [gsWagerInputs, setGsWagerInputs] = useState({}); // round 3: player index -> wager input string
+  const [gsCorrectSet, setGsCorrectSet] = useState(new Set()); // round 3: indexes marked correct on the finale
 
   const loadState = useCallback(async (sid) => {
     if (!sid) return;
@@ -2775,6 +2777,8 @@ function TriviaSharedGridTab({ userId }) {
     setGsSessionId(null);
     setGsState(null);
     setGsNames(["", ""]);
+    setGsWagerInputs({});
+    setGsCorrectSet(new Set());
     setGsPhase("setup");
   };
 
@@ -2782,7 +2786,78 @@ function TriviaSharedGridTab({ userId }) {
     setGsSessionId(null);
     setGsState(null);
     setGsNames(["", ""]);
+    setGsWagerInputs({});
+    setGsCorrectSet(new Set());
     setGsPhase("setup");
+  };
+
+  // ── Round two (doubled board) / round three (wager finale) ──
+  const startRound2 = async () => {
+    if (!gsState?.is_host || gsBusy) return;
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_start_round2", { p_session_id: gsSessionId });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not start round two."); return; }
+    await loadState(gsSessionId);
+  };
+
+  const startRound3 = async () => {
+    if (!gsState?.is_host || gsBusy) return;
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_start_round3", { p_session_id: gsSessionId });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not start the wager finale."); return; }
+    setGsWagerInputs({});
+    setGsCorrectSet(new Set());
+    await loadState(gsSessionId);
+  };
+
+  const submitWager = async (playerIndex) => {
+    if (!gsState?.is_host || gsBusy) return;
+    const raw = gsWagerInputs[playerIndex];
+    const amount = Math.max(0, Math.round(Number(raw)));
+    if (!Number.isFinite(amount)) { setGsError("Enter a whole-number wager."); return; }
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_set_wager", {
+      p_session_id: gsSessionId, p_player_index: playerIndex, p_amount: amount,
+    });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not save that wager."); return; }
+    await loadState(gsSessionId);
+  };
+
+  const lockWagers = async () => {
+    if (!gsState?.is_host || gsBusy) return;
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_lock_wagers", { p_session_id: gsSessionId });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not lock wagers — has everyone wagered?"); return; }
+    await loadState(gsSessionId);
+  };
+
+  const toggleCorrect = (i) => {
+    setGsCorrectSet(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  };
+
+  const scoreFinal = async () => {
+    if (!gsState?.is_host || gsBusy) return;
+    setGsBusy(true);
+    setGsError(null);
+    const { error } = await supabase.rpc("quiz_shared_grid_score_final", {
+      p_session_id: gsSessionId, p_correct_indexes: Array.from(gsCorrectSet),
+    });
+    setGsBusy(false);
+    if (error) { setGsError(error.message || "Could not score the finale."); return; }
+    setGsCorrectSet(new Set());
+    await loadState(gsSessionId);
   };
 
   if (gsPhase === "checking") {
@@ -2863,15 +2938,22 @@ function TriviaSharedGridTab({ userId }) {
       {gsState.status === "finished" && (
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, marginBottom: 10 }}>
-            Final: {[...players].sort((a, b) => b.score - a.score).map(p => `${p.name} (${p.score})`).join(" · ")}
+            {gsState.round === 3 ? "Final: " : `Round ${gsState.round} standings: `}
+            {[...players].sort((a, b) => b.score - a.score).map(p => `${p.name} (${p.score})`).join(" · ")}
           </div>
           <div style={s.actionsRow}>
-            <button type="button" style={s.primaryBtn} onClick={startNewAfterFinish}>New game</button>
+            {gsState.is_host && gsState.round === 1 && (
+              <button type="button" style={s.primaryBtn} disabled={gsBusy} onClick={startRound2}>Start round two</button>
+            )}
+            {gsState.is_host && gsState.round === 2 && (
+              <button type="button" style={s.primaryBtn} disabled={gsBusy} onClick={startRound3}>Start the wager finale</button>
+            )}
+            <button type="button" style={s.ghostBtn} onClick={startNewAfterFinish}>New game</button>
           </div>
         </div>
       )}
 
-      {gsState.status !== "finished" && !q && (
+      {gsState.status === "active" && !q && (
         <div style={{ ...gridShared.boardCol, display: "grid", gridTemplateColumns: `repeat(${board.length}, 1fr)`, gap: 8 }}>
           {board.map((col, ci) => (
             <div key={ci}>
@@ -2892,9 +2974,46 @@ function TriviaSharedGridTab({ userId }) {
         </div>
       )}
 
+      {gsState.status === "wagering" && (
+        <div>
+          <div style={s.smallLabel}>Final category: {formatGridCategoryLabel(gsState.final_category)}</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>
+            Everyone locks in a wager before the question shows.
+          </div>
+          {gsState.is_host && players.map((p, i) => {
+            const locked = gsState.final_wagers && Object.prototype.hasOwnProperty.call(gsState.final_wagers, String(i));
+            return (
+              <div key={i} style={gridShared.setupRow}>
+                <div style={{ width: 120, fontSize: 13, fontWeight: 700, color: T.slate800 }}>{p.name}</div>
+                <input
+                  type="number" min={0} max={Math.max(p.score, 0)} style={gridShared.nameInput}
+                  placeholder="wager"
+                  value={gsWagerInputs[i] ?? ""}
+                  onChange={(e) => setGsWagerInputs(prev => ({ ...prev, [i]: e.target.value }))}
+                />
+                <button type="button" style={s.ghostBtn} disabled={gsBusy} onClick={() => submitWager(i)}>
+                  {locked ? "Update" : "Lock in"}
+                </button>
+                {locked && <span style={{ fontSize: 12, color: T.green, marginLeft: 4 }}>✓ {gsState.final_wagers[String(i)]}</span>}
+              </div>
+            );
+          })}
+          {gsState.is_host && (
+            <div style={s.actionsRow}>
+              <button type="button" style={s.primaryBtn} disabled={gsBusy} onClick={lockWagers}>Reveal the question</button>
+            </div>
+          )}
+          {!gsState.is_host && (
+            <div style={{ fontSize: 12, color: T.slate500 }}>Waiting on the host to collect wagers…</div>
+          )}
+        </div>
+      )}
+
       {q && (
         <div>
-          <div style={s.smallLabel}>{formatGridCategoryLabel(q.category)} — {q.points} points</div>
+          <div style={s.smallLabel}>
+            {formatGridCategoryLabel(q.category)}{gsState.round !== 3 && q.points != null ? ` — ${q.points} points` : ""}
+          </div>
           <div style={gridShared.clueCard}>
             <div style={s.qStem}>{q.stem}</div>
             {(q.options || []).map((o) => (
@@ -2916,7 +3035,29 @@ function TriviaSharedGridTab({ userId }) {
             </div>
           )}
 
-          {gsState.is_host && gsState.active_revealed && (
+          {gsState.is_host && gsState.active_revealed && gsState.round === 3 && (
+            <div>
+              <div style={s.smallLabel}>Who got the finale right? Tap everyone who did.</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0" }}>
+                {players.map((p, i) => (
+                  <button
+                    key={i} type="button"
+                    style={gridShared.winnerBtn(gsCorrectSet.has(i))}
+                    onClick={() => toggleCorrect(i)}
+                  >
+                    {p.name} (wagered {gsState.final_wagers?.[String(i)] ?? 0})
+                  </button>
+                ))}
+              </div>
+              <div style={s.actionsRow}>
+                <button type="button" style={s.primaryBtn} disabled={gsBusy} onClick={scoreFinal}>
+                  Score the finale
+                </button>
+              </div>
+            </div>
+          )}
+
+          {gsState.is_host && gsState.active_revealed && gsState.round !== 3 && (
             <div>
               <div style={s.smallLabel}>Who got it right?</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0" }}>
