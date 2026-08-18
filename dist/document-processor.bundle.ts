@@ -4550,7 +4550,13 @@ function ym(my: MonthYear): string {
 // header happened to sit beside it (AWARDS, CONTACT, ...).
 // -------------------------------------------------------------------------
 
-type SectionKind = "experience" | "excluded" | "education" | "neutral";
+// experience: read freely. neutral (summary, awards, unknown): read freely —
+// two-column PDFs drop jobs under whatever header sat beside them.
+// filtered (education, skills, certifications, languages, contact): a date
+// range here is only a job if it clearly reads as one (title word, no
+// degree / school / licence words). excluded (volunteer, projects,
+// activities, references, ...): never paid work, skipped outright.
+type SectionKind = "experience" | "excluded" | "filtered" | "neutral";
 
 const EXPERIENCE_HEADERS: ReadonlySet<string> = new Set([
   "experience", "work experience", "professional experience", "employment history",
@@ -4565,36 +4571,37 @@ const EXPERIENCE_HEADERS: ReadonlySet<string> = new Set([
   "insurance experience", "related experience", "recent experience",
 ]);
 
-// Education sections are NOT hard-excluded: two-column PDFs routinely
-// collapse the work history under the EDUCATION header. Entries here are
-// kept only when they clearly read as a job (title word present, no
-// degree / school words) — see isNonJobEntry.
-const EDUCATION_HEADERS: ReadonlySet<string> = new Set([
+// Sections that CAN hold misfiled jobs (two-column collapse) but normally
+// hold degrees, certificates, skills lists or contact details. Entries here
+// must pass the stricter job test in isNonJobEntry.
+const FILTERED_HEADERS: ReadonlySet<string> = new Set([
   "education", "educational background", "academic background", "academic history",
   "education/professional development", "education & credentials", "education and credentials",
   "education and training", "education & training", "education & certifications",
   "education and certifications", "education & licenses", "education/certifications",
-  "education & licenses", "education and licenses", "academics", "academic",
-]);
-
-// Sections that never hold paid work. Date ranges here are certifications,
-// volunteer stints, project timelines — not jobs.
-const EXCLUDED_HEADERS: ReadonlySet<string> = new Set([
+  "education and licenses", "academics", "academic",
   "certifications", "certification", "licenses", "licenses & certifications",
   "certifications & licenses", "certifications and licenses", "licenses and certifications",
   "credentials", "professional certifications", "professional development",
   "training", "courses", "coursework", "relevant coursework", "courses & skills",
-  "languages", "language", "references", "professional references",
+  "languages", "language",
   "skills", "skills & abilities", "skills and abilities", "skills & competencies",
   "skills and competencies", "technical skills", "technical proficiencies",
   "core competencies", "core skills", "key skills", "expertise", "areas of strength",
   "key skills and characteristics", "skills summary", "computer skills", "software",
+  "contact", "contacts", "contact information", "contact info", "personal information",
+  "personal details",
+]);
+
+// Sections that never hold paid work. Date ranges here are volunteer
+// stints, project timelines, memberships — not jobs.
+const EXCLUDED_HEADERS: ReadonlySet<string> = new Set([
+  "references", "professional references",
   "volunteer", "volunteering", "volunteer experience", "volunteer work",
   "community service", "community involvement", "activities", "extracurricular activities",
   "extracurriculars", "school involvement", "leadership", "leadership experience",
   "projects", "interests", "hobbies", "publications", "affiliations",
-  "professional affiliations", "memberships", "contact", "contacts",
-  "contact information", "contact info", "personal information", "personal details",
+  "professional affiliations", "memberships",
 ]);
 
 // A designer template that letter-spaces its headers ("E X P E R I E N C E",
@@ -4618,7 +4625,7 @@ function normalizeHeaderText(line: string): string {
  */
 function headerKindOf(s: string): SectionKind | null {
   if (EXPERIENCE_HEADERS.has(s)) return "experience";
-  if (EDUCATION_HEADERS.has(s)) return "education";
+  if (FILTERED_HEADERS.has(s)) return "filtered";
   if (EXCLUDED_HEADERS.has(s)) return "excluded";
   if (KNOWN_HEADERS.has(s)) return "neutral";
   return null;
@@ -4634,7 +4641,7 @@ const NOSPACE_HEADER_KIND: ReadonlyMap<string, SectionKind> = (() => {
     }
   };
   add(EXPERIENCE_HEADERS, "experience");
-  add(EDUCATION_HEADERS, "education");
+  add(FILTERED_HEADERS, "filtered");
   add(EXCLUDED_HEADERS, "excluded");
   add(KNOWN_HEADERS, "neutral");
   return m;
@@ -5121,12 +5128,17 @@ function isNonJobEntry(headerText: string, dateLineText: string, sectionKind: Se
   const all = `${headerText} ${dateLineText}`;
   if (NOT_A_JOB_RE.test(all)) return true;
   if (DEGREE_RE.test(headerText)) return true;
-  if (sectionKind === "education") {
-    // Under an EDUCATION header, only an entry that clearly reads as a job
-    // survives: a title word, and no school words.
+  if (sectionKind === "filtered") {
+    // Under an EDUCATION / SKILLS / CERTIFICATIONS / CONTACT header, only an
+    // entry that clearly reads as a job survives: a title word, and no
+    // school or licence words.
     if (titleScore(headerText) === 0) return true;
     if (INSTITUTION_RE.test(headerText)) return true;
+    if (CERT_RE.test(headerText)) return true;
   }
+  // A certificate / licence line with dates anywhere ("Insurance Producer
+  // License 2021 - Present") — no job title word means it is not a job.
+  if (CERT_RE.test(headerText) && titleScore(headerText) === 0) return true;
   if (VOLUNTEER_RE.test(headerText) && !VOLUNTEER_JOB_RE.test(headerText)) return true;
   // certification / license lines with dates ("EKG Technician Certification 12/2025-12/2026")
   if (CERT_RE.test(headerText) && /\b(?:certif(?:icate|ication)|licen[sc]e|credential|course|bootcamp)\b\s*$/i.test(headerText.trim())) return true;
