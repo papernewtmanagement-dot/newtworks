@@ -2338,43 +2338,74 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                           nothing here auto-declines the candidate. Moved here under the Screen
                                           expander (was previously under Assessment) per Peter directive
                                           2026-08-18. */}
-                                      {Array.isArray(screenAnswers) && screenAnswers.length > 0 && (
-                                        <div>
-                                          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
-                                            Written Screen — Part 2
-                                          </div>
-                                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                            {screenAnswers.map((it) => {
-                                              const r = it.response;
-                                              const isGate = it.answer_key != null;
-                                              const gateFailed = isGate && r && r.is_correct === false;
-                                              const answered = r != null;
-                                              return (
-                                                <div key={it.id} style={{
-                                                  padding: "8px 10px", background: gateFailed ? T.redLt : T.slate50,
-                                                  borderRadius: 6, borderLeft: `3px solid ${gateFailed ? T.red : T.slate200}`,
-                                                  boxSizing: "border-box",
-                                                }}>
-                                                  <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 3 }}>
-                                                    {it.item_text}
-                                                    {gateFailed && (
-                                                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: T.red }}>
-                                                        GATE FAILED
-                                                      </span>
+                                      {Array.isArray(screenAnswers) && screenAnswers.length > 0 && (() => {
+                                        // Per-item "why this score" tags — maps each stint-5 question to the
+                                        // one signal it drives in screen_analysis.signals (set by the scoring
+                                        // pass; see hiring_candidates.screen_analysis). Items 4 and 6 are
+                                        // forced-choice compliance gates (already flagged via GATE FAILED,
+                                        // not signal-scored); item 7 is a reference request, not scored.
+                                        // Peter directive 2026-08-18: keep this to a small color tag, not
+                                        // the full narrative.
+                                        const SCREEN_SIGNAL_BY_ITEM = {
+                                          1: { key: "job_history_candor", label: "Job history candor" },
+                                          2: { key: "role_interest_specificity", label: "Role interest" },
+                                          3: { key: "challenge_realism", label: "Challenge realism" },
+                                          5: { key: "accountability", label: "Accountability" },
+                                        };
+                                        const signals = detail?.screen_analysis?.signals || null;
+                                        const sigColor = (v) => v == null ? null : v >= 75 ? T.green : v >= 55 ? T.amber : T.red;
+                                        return (
+                                          <div>
+                                            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
+                                              Written Screen — Part 2
+                                            </div>
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                              {screenAnswers.map((it) => {
+                                                const r = it.response;
+                                                const isGate = it.answer_key != null;
+                                                const gateFailed = isGate && r && r.is_correct === false;
+                                                const answered = r != null;
+                                                const sig = SCREEN_SIGNAL_BY_ITEM[it.item_number];
+                                                const sigVal = sig && signals ? signals[sig.key] : null;
+                                                const sigCol = sigColor(sigVal);
+                                                return (
+                                                  <div key={it.id} style={{
+                                                    padding: "8px 10px", background: gateFailed ? T.redLt : T.slate50,
+                                                    borderRadius: 6, borderLeft: `3px solid ${gateFailed ? T.red : T.slate200}`,
+                                                    boxSizing: "border-box",
+                                                  }}>
+                                                    <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 3 }}>
+                                                      {it.item_text}
+                                                      {gateFailed && (
+                                                        <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: T.red }}>
+                                                          GATE FAILED
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    <div style={{
+                                                      fontSize: 12, color: answered ? T.slate900 : T.slate400,
+                                                      fontStyle: answered ? "normal" : "italic", whiteSpace: "pre-wrap",
+                                                    }}>
+                                                      {answered ? r.response_label : "Not yet answered"}
+                                                    </div>
+                                                    {answered && sig && sigVal != null && (
+                                                      <div style={{ marginTop: 5 }}>
+                                                        <span style={{
+                                                          display: "inline-block", padding: "1px 6px", borderRadius: 3,
+                                                          fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                                                          letterSpacing: 0.3, color: T.white, background: sigCol,
+                                                        }}>
+                                                          {sig.label} · {Math.round(sigVal)}
+                                                        </span>
+                                                      </div>
                                                     )}
                                                   </div>
-                                                  <div style={{
-                                                    fontSize: 12, color: answered ? T.slate900 : T.slate400,
-                                                    fontStyle: answered ? "normal" : "italic", whiteSpace: "pre-wrap",
-                                                  }}>
-                                                    {answered ? r.response_label : "Not yet answered"}
-                                                  </div>
-                                                </div>
-                                              );
-                                            })}
+                                                );
+                                              })}
+                                            </div>
                                           </div>
-                                        </div>
-                                      )}
+                                        );
+                                      })()}
                                     </div>
                                   )}
                                   {layer.key === "reference" && (
