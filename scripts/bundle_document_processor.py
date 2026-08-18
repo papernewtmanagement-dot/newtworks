@@ -79,6 +79,7 @@ ORDER = [
     "parsers/wrapup_ingest.ts",
     "parsers/wrapup_no_send.ts",
     "parsers/paypal_print_sales.ts",
+    "parsers/amazon_order_email.ts",
     "index.ts",
 ]
 
