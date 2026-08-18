@@ -1,19 +1,20 @@
 // =========================================================================
 // gbp-review-checker
 // =========================================================================
-// v1 (2026-08-18): Weekly job. Pulls the 5 most recent Google Business
-// Profile reviews via Composio's Google Maps GET_PLACE_DETAILS tool,
-// diffs against gbp_review_tracker (keyed on place_id + google review
-// resource name), and for anything new: drafts a response with Groq
-// (compliance-guardrailed, varied against the last 10 drafted openings
-// so nothing echoes), inserts a `tasks` row for Peter to review and post
-// (Google's Business Profile reply API is invite-only — no auto-post),
-// and logs the review + draft to gbp_review_tracker so it's never
-// re-drafted.
-//
-// The 5-review cap is Google Maps API's ceiling per place, not something
-// this function can raise. Fine in practice — the agency does not receive
-// 6+ new reviews between weekly runs.
+// v2 (2026-08-18): Runs HOURLY (not weekly — the 5-review-per-call cap on
+// Google Maps' API means a weekly cadence could silently drop reviews on
+// weeks with 6+ new ones; hourly makes that a non-issue in practice).
+// Pulls the 5 most recent Google Business Profile reviews via Composio's
+// Google Maps GET_PLACE_DETAILS tool, diffs against gbp_review_tracker
+// (keyed on place_id + google review resource name), and for anything new:
+// drafts a response with Groq (compliance-guardrailed, varied against the
+// last 10 drafted openings so nothing echoes), posts it to the Paper Newt
+// Management Telegram group tagging Alvi (team record: Marie Story,
+// alvipelo@gmail.com — flagged once in commit history, not silently
+// assumed), AND inserts a `tasks` row as the durable paper trail. Google's
+// Business Profile reply API is invite-only, so posting is still manual —
+// this gets the draft in front of a human (fast, via Telegram) as soon as
+// possible after the review lands.
 //
 // Invoked by pg_cron via dispatch_gbp_review_checker (automation-runner's
 // INTERNAL/dispatch_ branch does a direct fetch to /functions/v1/gbp-
@@ -25,6 +26,41 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { callComposio } from "../_shared/composio.ts";
 import { sb, jsonResponse, getSetting, AGENCY_ID_DEFAULT } from "../_shared/supabase.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
+
+async function sendTelegramReviewAlert(opts: {
+  botToken: string;
+  chatId: string;
+  alviTelegramUserId: number | null;
+  authorName: string;
+  rating: number | null;
+  reviewText: string;
+  draftedResponse: string;
+}): Promise<void> {
+  const stars = opts.rating != null ? "★".repeat(Math.max(0, Math.min(5, Math.round(opts.rating)))) : "";
+  const tagHtml = opts.alviTelegramUserId
+    ? `<a href="tg://user?id=${opts.alviTelegramUserId}">Alvi</a>`
+    : "Alvi";
+  const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const text =
+    `🆕 <b>New Google review</b> — ${escape(opts.authorName)} (${stars})\n\n` +
+    `"${escape(opts.reviewText).slice(0, 400)}"\n\n` +
+    `<b>Drafted reply</b> (paste at business.google.com &gt; Reviews):\n${escape(opts.draftedResponse)}\n\n` +
+    `${tagHtml} — can you post this one?`;
+  try {
+    await fetch(`https://api.telegram.org/bot${opts.botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: opts.chatId,
+        text,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      }),
+    });
+  } catch (e) {
+    console.error(`Telegram send failed: ${(e as Error).message}`);
+  }
+}
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
@@ -92,6 +128,10 @@ Deno.serve(async (req: Request) => {
   const userId = await getSetting(agencyId, "composio_user_id");
   const mapsAccountId = await getSetting(agencyId, "composio_google_maps_account_id");
   const groqApiKey = await getSetting(agencyId, "groq_api_key");
+  const telegramBotToken = await getSetting(agencyId, "telegram_bot_token");
+  const telegramChatId = await getSetting(agencyId, "paper_newt_management_group_chat_id");
+  const alviTelegramUserIdRaw = await getSetting(agencyId, "marie_telegram_user_id"); // team record for alvipelo@gmail.com
+  const alviTelegramUserId = alviTelegramUserIdRaw ? parseInt(alviTelegramUserIdRaw, 10) : null;
   if (!apiKey || !userId || !mapsAccountId) {
     return jsonResponse({ ok: false, error: "missing Composio Google Maps credentials in settings" }, 500);
   }
@@ -174,6 +214,18 @@ Deno.serve(async (req: Request) => {
         .select("id")
         .single();
       if (!taskErr) taskId = task?.id ?? null;
+
+      if (telegramBotToken && telegramChatId) {
+        await sendTelegramReviewAlert({
+          botToken: telegramBotToken,
+          chatId: telegramChatId,
+          alviTelegramUserId,
+          authorName,
+          rating,
+          reviewText: text,
+          draftedResponse,
+        });
+      }
     }
 
     await sb.from("gbp_review_tracker").insert({
