@@ -4420,12 +4420,17 @@ export function reformatResumeSeparators(raw: string): string {
 
 const MONTH_NUM: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  // Spanish (bilingual applicant pool): enero, febrero, marzo, abril, mayo,
+  // junio, julio, agosto, septiembre/setiembre, octubre, noviembre, diciembre
+  ene: 1, abr: 4, ago: 8, set: 9, dic: 12,
   // seasons (internships etc.) — mapped to the season's start month
   spr: 3, sum: 6, fal: 9, aut: 9, win: 12,
 };
 
 const MONTH_NAME_RE =
-  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|spring|summer|fall|autumn|winter)";
+  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?" +
+  "|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre" +
+  "|spring|summer|fall|autumn|winter)";
 // "Jan 2020", "January 5, 2020", "Sept. 2020", "Jan, 2020", "Summer 2021"
 const MONTH_YEAR_RE = `${MONTH_NAME_RE}\\.?,?\\s*(?:\\d{1,2}(?:st|nd|rd|th)?,?\\s+)?\\d{4}`;
 // "Jan '19" — month name with an apostrophe two-digit year (only accepted when both ends use it)
@@ -4442,7 +4447,7 @@ const NUM_MYY_RE = `(?<!\\d)\\d{1,2}\\/\\d{2}(?!\\d)`;
 const YEAR_RE = `(?<!\\d)(?:19|20)\\d{2}(?!\\d)`;
 
 const DATE_TOKEN_RE = `(?:${MONTH_YEAR_RE}|${MONTH_YY_RE}|${NUM_DMY_RE}|${NUM_MY_RE}|${ISO_YM_RE}|${NUM_MYY_RE}|${YEAR_RE})`;
-const PRESENT_RE = "(?:present|current(?:ly)?|now|ongoing|today|to\\s+date|till\\s+date|til\\s+date)";
+const PRESENT_RE = "(?:present|current(?:ly)?|now|ongoing|today|to\\s+date|till\\s+date|til\\s+date|presente|actualmente|actualidad|actual|hasta\\s+la\\s+fecha)";
 // Separator between the two dates. Word separators, any dash-like glyph, an
 // arrow, or — new in this rewrite — plain whitespace ("Oct 2023 Present").
 const SEP_RE = `(?:\\s*(?:to|thru|through|until|till|[\\u2013\\u2014\\u2015\\u2010\\u2212\\-]|\\u2192)\\s*|\\s+)`;
@@ -4545,7 +4550,7 @@ function ym(my: MonthYear): string {
 // header happened to sit beside it (AWARDS, CONTACT, ...).
 // -------------------------------------------------------------------------
 
-type SectionKind = "experience" | "excluded" | "neutral";
+type SectionKind = "experience" | "excluded" | "education" | "neutral";
 
 const EXPERIENCE_HEADERS: ReadonlySet<string> = new Set([
   "experience", "work experience", "professional experience", "employment history",
@@ -4560,13 +4565,21 @@ const EXPERIENCE_HEADERS: ReadonlySet<string> = new Set([
   "insurance experience", "related experience", "recent experience",
 ]);
 
-// Sections that never hold paid work. Date ranges here are degrees,
-// certifications, volunteer stints, project timelines — not jobs.
-const EXCLUDED_HEADERS: ReadonlySet<string> = new Set([
+// Education sections are NOT hard-excluded: two-column PDFs routinely
+// collapse the work history under the EDUCATION header. Entries here are
+// kept only when they clearly read as a job (title word present, no
+// degree / school words) — see isNonJobEntry.
+const EDUCATION_HEADERS: ReadonlySet<string> = new Set([
   "education", "educational background", "academic background", "academic history",
   "education/professional development", "education & credentials", "education and credentials",
   "education and training", "education & training", "education & certifications",
   "education and certifications", "education & licenses", "education/certifications",
+  "education & licenses", "education and licenses", "academics", "academic",
+]);
+
+// Sections that never hold paid work. Date ranges here are certifications,
+// volunteer stints, project timelines — not jobs.
+const EXCLUDED_HEADERS: ReadonlySet<string> = new Set([
   "certifications", "certification", "licenses", "licenses & certifications",
   "certifications & licenses", "certifications and licenses", "licenses and certifications",
   "credentials", "professional certifications", "professional development",
@@ -4603,25 +4616,63 @@ function normalizeHeaderText(line: string): string {
  * Handles the two-column collapse "EXPERIENCE SKILLS" (two headers on one
  * line) by taking the leading header.
  */
+function headerKindOf(s: string): SectionKind | null {
+  if (EXPERIENCE_HEADERS.has(s)) return "experience";
+  if (EDUCATION_HEADERS.has(s)) return "education";
+  if (EXCLUDED_HEADERS.has(s)) return "excluded";
+  if (KNOWN_HEADERS.has(s)) return "neutral";
+  return null;
+}
+// Letter-spaced templates: "W O R K  E X P E R I E N C E" collapses to
+// "workexperience", so match against space-less keys too.
+const NOSPACE_HEADER_KIND: ReadonlyMap<string, SectionKind> = (() => {
+  const m = new Map<string, SectionKind>();
+  const add = (set: ReadonlySet<string>, kind: SectionKind) => {
+    for (const k of set) {
+      const ns = k.replace(/[^a-z&/]/g, "");
+      if (ns.length >= 5 && !m.has(ns)) m.set(ns, kind);
+    }
+  };
+  add(EXPERIENCE_HEADERS, "experience");
+  add(EDUCATION_HEADERS, "education");
+  add(EXCLUDED_HEADERS, "excluded");
+  add(KNOWN_HEADERS, "neutral");
+  return m;
+})();
 function classifyHeader(line: string): SectionKind | null {
   const raw = line.trim();
   if (!raw || raw.length > 60) return null;
   const s = normalizeHeaderText(raw);
   if (!s) return null;
-  if (EXPERIENCE_HEADERS.has(s)) return "experience";
-  if (EXCLUDED_HEADERS.has(s)) return "excluded";
-  if (KNOWN_HEADERS.has(s)) return "neutral";
-  // Two headers collapsed onto one line: "experience skills", "education skills".
+  const direct = headerKindOf(s);
+  if (direct) return direct;
+  // Letter-spaced single or double header ("C O N T A C T S U M M A R Y")
+  if (/^(?:[a-z&]\s){3,}[a-z]$/.test(s) || /^[a-z&/]+$/.test(s)) {
+    const ns = s.replace(/[^a-z&/]/g, "");
+    const k = NOSPACE_HEADER_KIND.get(ns);
+    if (k) return k;
+    // two headers letter-spaced together: try every split
+    for (let cut = 5; cut <= ns.length - 5; cut++) {
+      const a = NOSPACE_HEADER_KIND.get(ns.slice(0, cut));
+      const b = NOSPACE_HEADER_KIND.get(ns.slice(cut));
+      if (a && b) return a;
+    }
+  }
+  // Column collapse: a header followed by another header or by a bullet
+  // fragment on the same line — "experience skills", "Work History ● Cross-Functional".
+  const lead = s.split(/\s*[•●·|]\s*|\s{2,}/)[0].trim();
+  if (lead !== s) {
+    const k = headerKindOf(lead);
+    if (k) return k;
+  }
   const words = s.split(" ");
   if (words.length >= 2 && words.length <= 4) {
     for (let cut = words.length - 1; cut >= 1; cut--) {
       const left = words.slice(0, cut).join(" ");
       const right = words.slice(cut).join(" ");
-      const rightIsHeader = EXPERIENCE_HEADERS.has(right) || EXCLUDED_HEADERS.has(right) || KNOWN_HEADERS.has(right);
-      if (!rightIsHeader) continue;
-      if (EXPERIENCE_HEADERS.has(left)) return "experience";
-      if (EXCLUDED_HEADERS.has(left)) return "excluded";
-      if (KNOWN_HEADERS.has(left)) return "neutral";
+      if (!headerKindOf(right)) continue;
+      const k = headerKindOf(left);
+      if (k) return k;
     }
   }
   return null;
@@ -4658,13 +4709,13 @@ function looksLikeProse(s: string): boolean {
   if (/^(?:I|We|My|Our|This|These|The|A|An|In|On|At|As|To|For|With|While|During|Also|Currently|Responsible for)\b\s+[a-z]/.test(t)) return true;
   // an action verb followed by a lowercase word reads as a sentence
   if (ACTION_VERB_START_RE.test(t) && /^\S+\s+[a-z]/.test(t)) return true;
-  if (t.length > 95) return true;
-  const words = t.split(/\s+/);
-  if (words.length > 12) return true;
+  if (t.length > 110) return true;
+  if (wordCount(t) > 14) return true;
   return false;
 }
+// Counts word tokens that carry letters ("&", "|", "-" are not words).
 function wordCount(s: string): number {
-  return s.trim().split(/\s+/).filter(Boolean).length;
+  return s.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length;
 }
 
 // -------------------------------------------------------------------------
@@ -4692,7 +4743,7 @@ const TITLE_WORDS = [
   "partner", "principal", "apprentice", "trainee", "musician", "photographer", "videographer",
   "artist", "designer", "developer", "programmer", "cook", "chef", "dishwasher", "stocker",
   "picker", "packer", "courier", "dispatcher", "planner", "buyer", "purchasing", "recruiter",
-  "trainer", "coach", "therapist", "counselor", "advisor", "adviser", "broker", "realtor",
+  "trainer", "coach", "therapist", "counselor", "advisor", "adviser", "broker", "realtor", "keeper", "zookeeper",
   "processor", "examiner", "inspector", "auditor", "bookkeeper", "accountant", "controller",
   "paralegal", "attorney", "pharmacist", "phlebotomist", "hygienist", "aide", "caregiver",
   "nanny", "professional", "contractor", "freelance", "freelancer", "self-employed",
@@ -4919,7 +4970,7 @@ function cleanSegment(raw: string): string | null {
   if (isPunctOnly(s)) return null;
   if (isLocation(s)) return null;
   if (EMPLOYMENT_TYPE_RE.test(s) && s.split(/\s+/).length <= 2 && titleScore(s) === 0) return null;
-  if (/^(?:dates?|duration|period|role|position|title|company|employer|responsibilities|duties)$/i.test(s)) return null;
+  if (/^(?:dates?|duration|period|role|position|title|company|employer|responsibilities|duties|professional|experience|summary|objective|description|achievements|accomplishments|highlights|overview|profile|details|key responsibilities|responsibilities:|skills|education|references|present|current)$/i.test(s)) return null;
   s = stripTrailingLocation(s);
   if (!s || s.length < 2) return null;
   if (looksLikeProse(s)) return null;
@@ -4952,6 +5003,18 @@ function splitHeaderLine(line: string): string[] {
       out.push(atSplit[1].trim());
       p = atSplit[2].trim();
       if (isLocation(p)) continue;
+    }
+    // location glued into the middle: "Tifton, GA Store Manager",
+    // "Valdosta, GA Lead Sales Associate" -> drop the place, keep the title.
+    const mid = p.match(new RegExp(`^(.+?),\\s*(${US_STATE_ABBR})\\.?\\s+([A-Z][^,]*)$`));
+    if (mid) {
+      const leftPart = mid[1].trim();
+      const rest = mid[3].trim();
+      const leftIsCity = KNOWN_CITIES.has(leftPart.toLowerCase()) ||
+        (wordCount(leftPart) === 1 && titleScore(leftPart) === 0 && employerScore(leftPart) === 0);
+      if (!leftIsCity) out.push(leftPart);
+      if (rest) out.push(rest);
+      continue;
     }
     // trailing location by comma: "Best Buy, Round Rock, TX" -> "Best Buy"
     const stripped = stripTrailingLocation(p);
@@ -5004,8 +5067,9 @@ function assignTitleEmployer(labels: string[]): { title: string | null; employer
   // Two or more: score every segment, pick the strongest title and the
   // strongest employer among the rest.
   const scored = segs.map((s, i) => ({ s, i, ts: titleScore(s), es: employerScore(s) }));
-  const byTitle = [...scored].sort((a, b) => (b.ts - b.es) - (a.ts - a.es) || a.i - b.i);
-  const byEmp = [...scored].sort((a, b) => (b.es - b.ts) - (a.es - a.ts) || a.i - b.i);
+  // A segment with any title word outranks one with none, then net score, then reading order.
+  const byTitle = [...scored].sort((a, b) => (b.ts > 0 ? 1 : 0) - (a.ts > 0 ? 1 : 0) || (b.ts - b.es) - (a.ts - a.es) || a.i - b.i);
+  const byEmp = [...scored].sort((a, b) => (b.es > 0 ? 1 : 0) - (a.es > 0 ? 1 : 0) || (b.es - b.ts) - (a.es - a.ts) || a.i - b.i);
   const anyTitleSignal = scored.some((x) => x.ts > 0);
   const anyEmpSignal = scored.some((x) => x.es > 0);
   let title: string | null = null;
@@ -5051,10 +5115,18 @@ const CERT_RE = /\b(?:certif(?:icate|ication|ied)|licen[sc]e[sd]?|credential|tra
 const VOLUNTEER_RE = /\b(?:volunteer|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|habitat for humanity)\b/i;
 const VOLUNTEER_JOB_RE = /\b(?:coordinator|manager|director|specialist|supervisor|paid)\b/i;
 
-function isNonJobEntry(headerText: string, dateLineText: string): boolean {
+const INSTITUTION_RE = /\b(?:university|college|school|academy|institute|instituto|universidad|escuela|colegio|program|studies|campus)\b/i;
+
+function isNonJobEntry(headerText: string, dateLineText: string, sectionKind: SectionKind = "neutral"): boolean {
   const all = `${headerText} ${dateLineText}`;
   if (NOT_A_JOB_RE.test(all)) return true;
   if (DEGREE_RE.test(headerText)) return true;
+  if (sectionKind === "education") {
+    // Under an EDUCATION header, only an entry that clearly reads as a job
+    // survives: a title word, and no school words.
+    if (titleScore(headerText) === 0) return true;
+    if (INSTITUTION_RE.test(headerText)) return true;
+  }
   if (VOLUNTEER_RE.test(headerText) && !VOLUNTEER_JOB_RE.test(headerText)) return true;
   // certification / license lines with dates ("EKG Technician Certification 12/2025-12/2026")
   if (CERT_RE.test(headerText) && /\b(?:certif(?:icate|ication)|licen[sc]e|credential|course|bootcamp)\b\s*$/i.test(headerText.trim())) return true;
@@ -5158,19 +5230,24 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
 
     // ---- header assembly ----
     const before = line.slice(0, matchIndex).replace(/[\s\-–—|,;:(]+$/g, "").trim();
-    const after = line.slice(matchIndex + matchLen).trim();
+    // Text AFTER the dates on the same line is a header candidate too:
+    // "July 2025 - July 2026 | State Farm, Flower Mound, TX - Account Manager".
+    const after = line.slice(matchIndex + matchLen).replace(/^[\s\-–—|,;:)•·●]+/g, "").trim();
     const dateLineText = `${before} ${after}`;
 
+    const piecesOf = (hl: string[]) => hl.flatMap(splitHeaderLine).map(cleanSegment).filter((x): x is string => !!x);
     const headerLines: string[] = [];
     let beforeUsed = false;
     if (before.length >= 2 && cleanSegment(before) !== null) {
       headerLines.push(before);
       beforeUsed = true;
     }
+    if (after.length >= 2 && !looksLikeProse(after) && piecesOf([after]).length > 0) {
+      headerLines.push(after);
+    }
     // Look back for header lines above the date line. Stop as soon as the
     // collected lines yield two labels (title + employer) — anything above
     // that is the previous entry.
-    const piecesOf = (hl: string[]) => hl.flatMap(splitHeaderLine).map(cleanSegment).filter((x): x is string => !!x);
     const backLimit = beforeUsed ? 1 : 3;
     let back = i - 1;
     let collected = 0;
@@ -5180,6 +5257,8 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
       if (t === "" || isDivider(bl) || headerAt[back] || kinds[back] === "excluded") break;
       if (isBullet(bl)) break;
       if (isPunctOnly(bl)) { back--; continue; }
+      // a bare place line ("San Antonio, TX") is neither a header nor a stop
+      if (isLocation(t)) { back--; continue; }
       // another entry's date line, or a dated education/award line
       if (RANGE_RE.test(bl) || SINCE_RE.test(bl) || DATE_ANYWHERE_RE.test(bl)) break;
       if (looksLikeProse(t)) { back--; if (beforeUsed) break; continue; }
@@ -5187,38 +5266,47 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
       collected++;
       back--;
     }
-    // Look forward one line for a companion label when only one piece so far
-    // (e.g. "COMMUNICATION SPECIALIST  May 2020 - Aug 2025" with the employer
-    // on the next line). Accepted only if that line is short, is not itself a
-    // complete header (title AND employer = the next entry), and complements
-    // what we already have.
-    const piecesSoFar = piecesOf(headerLines);
-    if (piecesSoFar.length === 1) {
-      const haveTitle = titleScore(piecesSoFar[0]) > 0 && employerScore(piecesSoFar[0]) === 0;
-      const haveEmployer = employerScore(piecesSoFar[0]) > 0 && titleScore(piecesSoFar[0]) === 0;
+    // Look forward for header lines BELOW the date line — dates-first
+    // layouts ("APRIL 2022 – CURRENT" / "HILTON HILL COUNTRY RESORT, LEAD LINE
+    // COOK") and title-only lines whose employer sits on the next line
+    // ("COMMUNICATION SPECIALIST  May 2020 - Aug 2025" / "H.J.H. Consulting").
+    // Accepted lines are short, are not themselves a complete header of the
+    // next entry (title AND employer), and complement what we already have.
+    {
+      let piecesSoFar = piecesOf(headerLines);
+      let haveTitle = piecesSoFar.length === 1 && titleScore(piecesSoFar[0]) > 0 && employerScore(piecesSoFar[0]) === 0;
+      let haveEmployer = piecesSoFar.length === 1 && employerScore(piecesSoFar[0]) > 0 && titleScore(piecesSoFar[0]) === 0;
       let fwd = i + 1;
-      while (fwd < lines.length && fwd <= i + 2) {
+      let taken = 0;
+      while (piecesSoFar.length < 2 && taken < 2 && fwd < lines.length && fwd <= i + 4) {
         const fl = lines[fwd];
         const t = fl.trim();
         if (t === "" || isDivider(fl) || headerAt[fwd] || kinds[fwd] === "excluded") break;
         if (isPunctOnly(fl)) { fwd++; continue; }
+        if (isLocation(t)) { fwd++; continue; }
         if (isBullet(fl)) break;
         if (RANGE_RE.test(fl) || SINCE_RE.test(fl) || DATE_ANYWHERE_RE.test(fl)) break;
-        if (looksLikeProse(t) || wordCount(t) > 12) break;
+        if (looksLikeProse(t) || wordCount(t) > 14) break;
         const fp = piecesOf([t]);
-        if (fp.length === 0 || fp.length > 1) break;
-        const fts = titleScore(fp[0]);
-        const fes = employerScore(fp[0]);
-        // do not take a line that duplicates the kind of label we already have
-        if (haveTitle && fts > 0 && fes === 0) break;
-        if (haveEmployer && fes > 0 && fts === 0) break;
+        if (fp.length === 0) { fwd++; continue; } // junk word like "Professional"
+        if (piecesSoFar.length === 1 && fp.length > 1) break; // that is the next entry's header
+        if (fp.length === 1) {
+          const fts = titleScore(fp[0]);
+          const fes = employerScore(fp[0]);
+          if (haveTitle && fts > 0 && fes === 0) break;
+          if (haveEmployer && fes > 0 && fts === 0) break;
+        }
         headerLines.push(t);
-        break;
+        taken++;
+        fwd++;
+        piecesSoFar = piecesOf(headerLines);
+        haveTitle = piecesSoFar.length === 1 && titleScore(piecesSoFar[0]) > 0 && employerScore(piecesSoFar[0]) === 0;
+        haveEmployer = piecesSoFar.length === 1 && employerScore(piecesSoFar[0]) > 0 && titleScore(piecesSoFar[0]) === 0;
       }
     }
 
     const headerText = headerLines.join(" | ");
-    if (isNonJobEntry(headerText, dateLineText)) continue;
+    if (isNonJobEntry(headerText, dateLineText, kinds[i])) continue;
 
     const labels = headerLines.flatMap(splitHeaderLine).map(cleanSegment).filter((x): x is string => !!x);
     // De-duplicate identical labels (a header repeated on two lines)
