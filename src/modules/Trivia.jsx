@@ -944,7 +944,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
   // Trivia Night (Wave 5)
   const [nightActive, setNightActive] = useState(undefined); // undefined = not yet checked; null = nothing running
-  const [nightState, setNightState] = useState(null); // full quiz_night_state poll result
+  const [nightState, setNightState] = useState(null); // full quiz_night_state result
+  const nightChannelRef = useRef(null);      // this session's live channel
+  const nightLobbyChannelRef = useRef(null); // agency-wide "a night exists" channel
   const [nightError, setNightError] = useState(null);
   const [nightSecondsLeft, setNightSecondsLeft] = useState(0);
   const [nightAnswered, setNightAnswered] = useState(false);
@@ -1176,6 +1178,40 @@ function TriviaPlayTab({ userId, isAdmin }) {
     }
   }, [nightSessionId]);
 
+  // Telling the other screens something changed.
+  //
+  // This is deliberately a message with nothing in it. It does not say WHAT
+  // changed and it carries no game content - the other screens hear "refresh"
+  // and go re-read quiz_night_state, which stays the one thing that decides what
+  // each person is allowed to see. That matters: quiz_night_state hides which
+  // option is correct until the host flips to reveal, and a message carrying the
+  // actual change would have handed that over early.
+  //
+  // Losing a nudge is not an error worth showing anybody. The slow re-read below
+  // is the safety net.
+  const nightNudge = useCallback(() => {
+    const ch = nightChannelRef.current;
+    if (!ch) return;
+    try {
+      ch.send({ type: "broadcast", event: "refresh", payload: {} });
+    } catch (ex) {
+      /* the periodic re-read covers it */
+    }
+  }, []);
+
+  // Same thing, but for "a night has started" / "a night is over" - which the
+  // session channel cannot carry, because a teammate who has not joined yet is
+  // not listening to that session at all.
+  const nightLobbyNudge = useCallback(() => {
+    const ch = nightLobbyChannelRef.current;
+    if (!ch) return;
+    try {
+      ch.send({ type: "broadcast", event: "refresh", payload: {} });
+    } catch (ex) {
+      /* the periodic re-read covers it */
+    }
+  }, []);
+
   const loadNightStandings = useCallback(async (sid) => {
     setNightStandingsError(null);
     try {
@@ -1229,13 +1265,30 @@ function TriviaPlayTab({ userId, isAdmin }) {
   useEffect(() => { loadNightActive(); }, [loadNightActive]);
   useEffect(() => { loadSpinStatus(); }, [loadSpinStatus]);
 
-  // Poll quiz_night_state every 2s while a session is known and live.
-  // Cleared on unmount, and stopped the moment status is finished/abandoned
-  // because nightShouldPoll then evaluates false and this effect re-runs.
+  // Live updates for everyone watching this session.
+  //
+  // This asked the server for the whole state every 2 seconds, from every open
+  // screen, for the entire night. Now each screen is told when to look.
+  //
+  // The telling is done by the browsers, not by the database. The database
+  // cannot do it on this project: broadcasting from the database means writing a
+  // row to Supabase's realtime.messages, that table is split by day and has no
+  // day partitions at all, so every write there fails - and fails quietly,
+  // reporting success. So whoever just did something sends the nudge themselves,
+  // right after their own write comes back clean.
+  //
+  // Not a private channel, on purpose. A private channel checks whether you are
+  // allowed to send by attempting a write against that same broken table. And
+  // there is nothing here to protect - the message is the word "refresh" and an
+  // empty payload. Knowing that something changed is not knowing an answer.
+  //
+  // The periodic re-read stays, at 10 seconds instead of 2. It covers the one
+  // gap the nudges cannot: if the browser that just wrote something dies before
+  // it sends its nudge, nobody else would ever hear.
   useEffect(() => {
     if (!nightShouldPoll) return undefined;
     let cancelled = false;
-    const poll = async () => {
+    const pull = async () => {
       try {
         const { data, error } = await supabase.rpc("quiz_night_state", { p_session_id: nightSessionId });
         if (error) throw error;
@@ -1244,15 +1297,36 @@ function TriviaPlayTab({ userId, isAdmin }) {
         if (!cancelled) setNightError(ex?.message || "Could not refresh trivia night.");
       }
     };
-    poll();
-    const id = setInterval(poll, 2000);
+    pull();
+
+    const channel = supabase.channel(`quiz_night:${nightSessionId}`);
+    channel.on("broadcast", { event: "refresh" }, () => { pull(); }).subscribe();
+    nightChannelRef.current = channel;
+
+    const id = setInterval(pull, 10000);
     return () => {
       cancelled = true;
       clearInterval(id);
+      nightChannelRef.current = null;
+      supabase.removeChannel(channel);
     };
   }, [nightShouldPoll, nightSessionId]);
 
-  // Local smoothing tick between polls — each poll overwrites this.
+  // A teammate who has not joined anything is listening to no session, so they
+  // would never find out a night had started - their own check ran once when the
+  // page opened and never again. This is the one channel every screen holds, all
+  // night, whether or not its owner is playing.
+  useEffect(() => {
+    const ch = supabase.channel(`quiz_night_lobby:${AGENCY_ID}`);
+    ch.on("broadcast", { event: "refresh" }, () => { loadNightActive(); }).subscribe();
+    nightLobbyChannelRef.current = ch;
+    return () => {
+      nightLobbyChannelRef.current = null;
+      supabase.removeChannel(ch);
+    };
+  }, [loadNightActive]);
+
+  // Local smoothing tick between re-reads — each one overwrites this.
   useEffect(() => {
     if (nightState?.seconds_left != null) setNightSecondsLeft(nightState.seconds_left);
   }, [nightState?.seconds_left]);
@@ -1596,6 +1670,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { error } = await supabase.rpc("quiz_night_create_session");
       if (error) { setNightError(error.message); return; }
       await loadNightActive();
+      // the session channel does not exist yet on this screen, so this one goes
+      // out on the agency-wide channel to put the night on everybody's page
+      nightLobbyNudge();
     } catch (ex) {
       setNightError(ex?.message || "Could not start trivia night.");
     }
@@ -1608,6 +1685,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { error } = await supabase.rpc("quiz_night_join", { p_session_id: nightSessionId });
       if (error) { setNightError(error.message); return; }
       await loadNightActive();
+      nightNudge(); // the host's player list
     } catch (ex) {
       setNightError(ex?.message || "Could not join.");
     }
@@ -1620,6 +1698,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { error } = await supabase.rpc("quiz_night_start", { p_session_id: nightSessionId });
       if (error) { setNightError(error.message); return; }
       await refreshNightState();
+      nightNudge(); // everybody off the lobby and onto question one
     } catch (ex) {
       setNightError(ex?.message || "Could not start the night.");
     }
@@ -1632,6 +1711,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { error } = await supabase.rpc("quiz_night_advance", { p_session_id: nightSessionId });
       if (error) { setNightError(error.message); return; }
       await refreshNightState();
+      nightNudge(); // reveal, or the next question
     } catch (ex) {
       setNightError(ex?.message || "Could not advance.");
     }
@@ -1644,6 +1724,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { error } = await supabase.rpc("quiz_night_abandon", { p_session_id: nightSessionId });
       if (error) { setNightError(error.message); return; }
       await refreshNightState();
+      nightNudge();      // the players still on the question screen
+      nightLobbyNudge(); // and anybody who was only ever watching the lobby
     } catch (ex) {
       setNightError(ex?.message || "Could not call it off.");
     }
@@ -1659,6 +1741,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
         p_session_id: nightSessionId, p_option_id: optionId,
       });
       if (error) setNightError(error.message);
+      else nightNudge(); // the host's "3 of 5 answered" counter
     } catch (ex) {
       setNightError(ex?.message || "Could not submit your answer.");
     }
