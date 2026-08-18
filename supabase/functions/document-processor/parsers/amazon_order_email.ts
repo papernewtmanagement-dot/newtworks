@@ -150,16 +150,19 @@ async function processOneAmazonMessage(ctx: AmazonOrderEmailCtx, messageId: stri
 
   const bodyText = aoeExtractBestBody(msg, "text/plain");
 
-  // Subject: "Ordered: N <Category> item" or "... items"
+  // Subject: "Ordered: N <Category> item(s)" — the current live template.
+  // An OLDER template also exists in the mailbox backlog: 'Ordered: "Product
+  // title..."' or 'Ordered: N "Product title..." and M more items' (no
+  // category at all, just a truncated product name — sometimes itself
+  // starting with a digit, e.g. '7" Heirloom...', which makes a leading
+  // digit unreliable as an item count in this template). Category/item
+  // count are a nice-to-have, not a requirement: every message whose BODY
+  // yields an order_id and grand_total gets inserted and starred regardless
+  // of which subject template it used. Only a body-extraction failure is a
+  // hard error (see below).
   const subjMatch = subject.match(/Ordered:\s*(\d+)\s+(.+?)\s+items?\s*$/i);
   const itemCount = subjMatch ? parseInt(subjMatch[1], 10) : null;
   const category = subjMatch ? subjMatch[2].trim() : null;
-
-  if (!subjMatch) {
-    // Doesn't match the expected subject shape at all — leave un-starred so
-    // it surfaces for manual review rather than silently vanishing.
-    return { status: "error", message_id: messageId, order_id: null, grand_total: null, category: null, error: `subject did not match expected pattern: "${subject}"` };
-  }
 
   // Body: "Order #\n114-XXXXXXX-XXXXXXX"
   const orderIdMatch = bodyText.match(/Order #\r?\n(\S+)/);
