@@ -1,0 +1,12 @@
+-- quiz_night_can_watch was written to authorise listeners on a PRIVATE broadcast
+-- channel. The live updates shipped on an ordinary channel instead: a private
+-- channel decides whether you may send by attempting a write against
+-- realtime.messages, and that write is exactly what is broken on this project
+-- (partitioned by day, no partitions). The nudge carries no game content - the
+-- word "refresh" and an empty payload - so there was nothing for it to protect.
+--
+-- Nothing calls this function. Leaving it would put a plausible-looking
+-- permission check in the schema that guards nothing, which is worse than not
+-- having it, so it goes. If a private channel ever becomes workable, recreate it
+-- from the reverted broadcast migration.
+DROP FUNCTION IF EXISTS public.quiz_night_can_watch(uuid);
