@@ -60,6 +60,7 @@ import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
 import { processPaypalPrintSalesMode } from "./parsers/paypal_print_sales.ts";
 import { processAmazonOrderEmailMode } from "./parsers/amazon_order_email.ts";
 import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
+import { backfillWorkExperienceTenure } from "./parsers/resume_tenure_extract.ts";
 
 interface RunCtx {
   agencyId: string;
@@ -2315,6 +2316,29 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processComposioProbeMode(prCtx, body);
     return jsonResponse({ ok: true, mode: "composio_probe", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "resume_tenure_backfill") {
+    // Re-run the deterministic work-experience extractor over stored resume
+    // text (2026-08-18). One-time backfill after a parser change, or a
+    // targeted re-run for named candidates. Body: candidate_ids?: string[]
+    // OR limit/offset paging (default 50 per call, max 200); dry_run?: bool
+    // previews without writing; include_roles?: bool echoes parsed roles.
+    // Does NOT bump hiregauge_scoring_version — do that once after a full
+    // backfill (operational rule on scoring-cache invalidation).
+    const startedAt = new Date().toISOString();
+    try {
+      const result = await backfillWorkExperienceTenure({
+        agencyId,
+        candidateIds: Array.isArray(body?.candidate_ids) ? body.candidate_ids.map(String) : undefined,
+        limit: typeof body?.limit === "number" ? body.limit : undefined,
+        offset: typeof body?.offset === "number" ? body.offset : undefined,
+        dryRun: body?.dry_run === true,
+        includeRoles: body?.include_roles === true,
+      });
+      return jsonResponse({ ok: true, mode: "resume_tenure_backfill", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+    } catch (e) {
+      return jsonResponse({ ok: false, mode: "resume_tenure_backfill", error: e instanceof Error ? e.message : String(e) }, 500);
+    }
   }
   if (mode === "no_send_check") {
     // Wrap-up no-send check (2026-07-22). Fires once per week at Fri 7 PM CT.
