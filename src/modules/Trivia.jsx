@@ -254,7 +254,7 @@ const s = {
     display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(38px, 1fr))",
     gap: 6, marginBottom: 10,
   },
-  letterBtn: (state) => {
+  letterBtn: (state, isVowel) => {
     const base = {
       padding: "10px 0", fontSize: 14, fontWeight: 700, borderRadius: 6,
       cursor: "pointer", fontFamily: "inherit", boxSizing: "border-box",
@@ -262,7 +262,33 @@ const s = {
     };
     if (state === "hit") return { ...base, background: T.greenLt, borderColor: T.green, color: T.green, cursor: "default" };
     if (state === "miss") return { ...base, background: T.slate100, borderColor: T.slate200, color: T.slate400, cursor: "default" };
+    if (isVowel) return { ...base, background: T.goldLt, borderColor: T.gold, color: T.slate800 };
     return base;
+  },
+  wheelRow: {
+    display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+    marginBottom: 10, justifyContent: "center",
+  },
+  wheelSideCol: {
+    display: "flex", flexDirection: "column", gap: 8, minWidth: 160, flex: 1,
+  },
+  roundMoneyPill: {
+    display: "inline-block", padding: "4px 10px", borderRadius: 10,
+    background: T.slate100, color: T.slate800, fontSize: 12, fontWeight: 700,
+    textAlign: "center",
+  },
+  spinResultBanner: (kind) => {
+    const map = {
+      bankrupt: { background: T.redLt, color: T.red, border: `1px solid ${T.red}` },
+      lose_turn: { background: T.slate100, color: T.slate600, border: `1px solid ${T.slate300}` },
+      free_spin: { background: T.purpleLt, color: T.purple, border: `1px solid ${T.purple}` },
+      value: { background: T.greenLt, color: T.green, border: `1px solid ${T.green}` },
+    };
+    const chosen = map[kind] || map.value;
+    return {
+      padding: "8px 10px", borderRadius: 6, fontSize: 13, fontWeight: 700,
+      marginBottom: 8, textAlign: "center", boxSizing: "border-box", ...chosen,
+    };
   },
 };
 
@@ -1633,6 +1659,27 @@ function TriviaPlayTab({ userId, isAdmin }) {
     return data;
   };
 
+  // Full casino wheel: spin lands on a value / Bankrupt / Lose a Turn / Free
+  // Spin. A landed value must be spent on a consonant guess before the wheel
+  // can spin again (guessSpinLetter now enforces that server-side).
+  const spinSpinWheel = async (itemId) => {
+    const { data, error } = await supabase.rpc("quiz_wheel_spin", {
+      p_attempt_id: spinAttempt.id, p_item_id: itemId,
+    });
+    if (error) throw error;
+    return data;
+  };
+
+  // Vowels bypass the wheel entirely — fixed cost out of the term's banked
+  // money, no spin required, no value earned or lost either way.
+  const buySpinVowel = async (itemId, letter) => {
+    const { data, error } = await supabase.rpc("quiz_wheel_buy_vowel", {
+      p_attempt_id: spinAttempt.id, p_item_id: itemId, p_letter: letter,
+    });
+    if (error) throw error;
+    return data;
+  };
+
   const solveSpinTerm = async (itemId, text) => {
     const { data, error } = await supabase.rpc("quiz_phrase_solve", {
       p_attempt_id: spinAttempt.id, p_item_id: itemId, p_text: text,
@@ -2343,6 +2390,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
               attemptId={spinAttempt.id}
               secondsPerPhase={spinCfg?.seconds_per_question || 60}
               secondsFirstPhase={spinCfg?.seconds_first_phase || 150}
+              onSpinWheel={spinSpinWheel}
+              onBuyVowel={buySpinVowel}
               onSubmitAnswer={submitSpinAnswer}
               onGuessLetter={guessSpinLetter}
               onSolveTerm={solveSpinTerm}
@@ -3727,15 +3776,21 @@ function TriviaGatesTab({ userId }) {
 // it means. Nothing here touches QuestionRunner or any of its four call sites.
 //
 // Four wrong guesses are allowed per term. A wrong letter and a wrong
-// whole-term guess cost the same. The fifth miss ends the guessing, reveals the
-// term and pays no solve bonus. The meaning question is asked either way, so
-// every game records exactly one answer row per item and scores stay
+// whole-term guess cost the same. The fourth miss ends the guessing, reveals
+// the term and pays no solve bonus. The meaning question is asked either way,
+// so every game records exactly one answer row per item and scores stay
 // comparable across attempts.
 //
-// One clock per half, both the mode's own seconds_per_question. There is no
-// wheel and no chance element anywhere in here, on purpose.
+// One clock per half, both the mode's own seconds_per_question. Full casino
+// wheel mechanic as of 2026-08-18: spin for a consonant's value (or land on
+// Bankrupt / Lose a Turn / Free Spin), buy a vowel for a flat cost out of the
+// term's banked money, solve to bank whatever money is on the board. All
+// wheel math and randomness happens server-side (quiz_wheel_spin,
+// quiz_wheel_buy_vowel) — the visible wheel here is cosmetic only.
 const PHRASE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const PHRASE_MAX_MISSES = 5;
+const PHRASE_VOWELS = new Set(["A", "E", "I", "O", "U"]);
+const PHRASE_MAX_MISSES = 4;
+const VOWEL_COST = 25;
 
 // The two halves of Spin & Solve are not the same job. Guessing a coverage term
 // out of blanks with twenty-six letters to try through is far slower than picking
@@ -3777,13 +3832,49 @@ function DayStandings({ rows, label }) {
   );
 }
 
+// Decorative spin wheel for Spin & Solve. Deliberately NOT wired to land
+// precisely on the server's chosen wedge — rule 26 in the coding standards
+// exists because pixel-exact wheel/pointer math has broken this codebase
+// before (6 fix attempts chasing what turned out to be a box-sizing bug).
+// The wheel spins for several full turns to a random cosmetic angle; the
+// actual result is server-truth, shown in the banner underneath once the
+// spin settles. This wheel never determines game state, only the mood.
+function SpinWheel({ angle, spinning }) {
+  const wheelColors = [T.blue, T.gold, T.green, T.pink, T.blue, T.amber, T.green, T.purple];
+  const sliceDeg = 360 / wheelColors.length;
+  const gradient = wheelColors
+    .map((c, i) => `${c} ${i * sliceDeg}deg ${(i + 1) * sliceDeg}deg`)
+    .join(", ");
+  return (
+    <div style={{ position: "relative", width: 96, height: 96, flexShrink: 0, boxSizing: "border-box" }}>
+      <div
+        style={{
+          width: 96, height: 96, borderRadius: "50%", boxSizing: "border-box",
+          border: `3px solid ${T.slate700}`,
+          background: `conic-gradient(${gradient})`,
+          transform: `rotate(${angle}deg)`,
+          transition: spinning ? "transform 1.3s cubic-bezier(0.15, 0.65, 0.25, 1)" : "none",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute", top: -6, left: "50%", transform: "translateX(-50%)",
+          width: 0, height: 0, boxSizing: "border-box",
+          borderLeft: "7px solid transparent", borderRight: "7px solid transparent",
+          borderTop: `12px solid ${T.slate900}`,
+        }}
+      />
+    </div>
+  );
+}
+
 // The letter guessing runs on the server now. It has to: the board cannot be
 // drawn without the term, so as long as the browser did the guessing it needed
 // the term, and the term is the answer. What comes back from each guess is the
 // board as the player has earned it - letters found in place, everything else
 // still a blank - plus the running miss count. The term itself only arrives once
 // it is solved or the guesses have run out.
-function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsFirstPhase, onSubmitAnswer, onGuessLetter, onSolveTerm, onTermTimeout, onAllDone }) {
+function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsFirstPhase, onSpinWheel, onBuyVowel, onSubmitAnswer, onGuessLetter, onSolveTerm, onTermTimeout, onAllDone }) {
   const _vp = useViewport();
   const [idx, setIdx] = useState(0);
   const [half, setHalf] = useState("term"); // term | meaning
@@ -3801,6 +3892,16 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
   const firingRef = useRef(false);
   const termFiringRef = useRef(false);
 
+  // Wheel-specific UI state. spinning drives the cosmetic CSS spin — it is
+  // purely decorative (rule 26's lesson: pixel-exact wedge/pointer math has
+  // broken this codebase before), the actual outcome is whatever the server
+  // returns and is shown in a separate result banner once the spin settles.
+  const [spinning, setSpinning] = useState(false);
+  const [spinAngle, setSpinAngle] = useState(0);
+  const [spinResultBanner, setSpinResultBanner] = useState(null);
+  const [spinError, setSpinError] = useState(null);
+  const spinTimeoutRef = useRef(null);
+
   const currentId = itemIds[idx];
   const currentItem = itemsById[currentId];
 
@@ -3817,8 +3918,11 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
           solved: !!serverPhrase.solved,
           over: !!serverPhrase.over,
           answer: serverPhrase.answer || null,
+          roundMoney: Number(serverPhrase.round_money) || 0,
+          pendingSpin: serverPhrase.pending_spin || null,
         }
       : null);
+    setSpinResultBanner(null);
   }, [currentId, serverPhrase]);
 
   const display = progress?.display || "";
@@ -3826,6 +3930,9 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
   const misses = progress?.misses || 0;
   const solved = !!progress?.solved;
   const termOver = !!progress?.over;
+  const roundMoney = progress?.roundMoney || 0;
+  const pendingSpin = progress?.pendingSpin || null;
+  const hasPendingValue = !!pendingSpin && pendingSpin.type === "value";
   const displayOptions = useMemo(
     () => orderedOptions(currentItem?.options, attemptId, currentId),
     [currentItem, attemptId, currentId]
@@ -3861,6 +3968,10 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
     setReveal(null);
     setGuessError(null);
     setTimeLeft(termSeconds);
+    setSpinning(false);
+    setSpinResultBanner(null);
+    setSpinError(null);
+    if (spinTimeoutRef.current) { clearTimeout(spinTimeoutRef.current); spinTimeoutRef.current = null; }
   }, [termSeconds]);
 
   const advanceOrFinish = useCallback(() => {
@@ -3903,6 +4014,8 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
           solved: !!p.solved,
           over: true,
           answer: p.answer || null,
+          roundMoney: Number(p.round_money) || 0,
+          pendingSpin: null,
         });
       }
     } catch (ex) {
@@ -3929,24 +4042,78 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
 
   const applyProgress = (p) => {
     if (!p) return;
-    setProgress({
+    setProgress(prev => ({
       display: p.display || "",
       guessed: Array.isArray(p.guessed) ? p.guessed : [],
       misses: Number(p.misses) || 0,
       solved: !!p.solved,
       over: !!p.over,
       answer: p.answer || null,
-    });
+      roundMoney: p.round_money !== undefined ? (Number(p.round_money) || 0) : (prev?.roundMoney || 0),
+      pendingSpin: p.pending_spin !== undefined ? p.pending_spin : (prev?.pendingSpin || null),
+    }));
+  };
+
+  // Spin the wheel. Purely a data call — the visible wheel spin is cosmetic
+  // (see the `spinning`/`spinAngle` state above) and settles independently.
+  const doSpin = async () => {
+    if (half !== "term" || termOver || hasPendingValue || spinning || busyLetter) return;
+    setSpinError(null);
+    setSpinResultBanner(null);
+    setSpinning(true);
+    setSpinAngle(a => a + 1440 + Math.floor(Math.random() * 360)); // several full turns, cosmetic only
+    try {
+      const r = await onSpinWheel(currentId);
+      // Let the CSS spin transition play out before revealing the true result —
+      // an instant reveal under a still-spinning wheel looks broken.
+      spinTimeoutRef.current = setTimeout(() => {
+        setSpinning(false);
+        setProgress(prev => ({
+          ...prev,
+          misses: Number(r.misses) || 0,
+          guessed: Array.isArray(r.guessed) ? r.guessed : (prev?.guessed || []),
+          roundMoney: Number(r.round_money) || 0,
+          pendingSpin: r.pending_spin || null,
+        }));
+        if (r.result_type === "bankrupt") {
+          setSpinResultBanner({ kind: "bankrupt", text: "BANKRUPT — this term's board resets to 0. Spin again." });
+        } else if (r.result_type === "lose_turn") {
+          setSpinResultBanner({ kind: "lose_turn", text: "Lose a Turn — no change. Spin again." });
+        } else if (r.free_spin_resolved) {
+          setSpinResultBanner({ kind: "free_spin", text: `Free Spin! Landed on ${r.pending_spin?.amount ?? 0} — call a consonant.` });
+        } else {
+          setSpinResultBanner({ kind: "value", text: `Landed on ${r.pending_spin?.amount ?? 0} — call a consonant.` });
+        }
+      }, 1400);
+    } catch (ex) {
+      setSpinning(false);
+      setSpinError(ex?.message || "The wheel did not spin — try again.");
+    }
   };
 
   const tapLetter = async (letter) => {
     if (half !== "term" || termOver || guessedSet.has(letter) || busyLetter) return;
+    if (!hasPendingValue) { setGuessError("Spin the wheel before calling a consonant."); return; }
     setBusyLetter(letter);
     setGuessError(null);
+    setSpinResultBanner(null);
     try {
       applyProgress(await onGuessLetter(currentId, letter));
     } catch (ex) {
       setGuessError(ex?.message || "That guess did not register — try again.");
+    }
+    setBusyLetter(null);
+  };
+
+  const tapVowel = async (letter) => {
+    if (half !== "term" || termOver || guessedSet.has(letter) || busyLetter) return;
+    if (roundMoney < VOWEL_COST) { setGuessError(`Not enough on the board yet — a vowel costs ${VOWEL_COST}.`); return; }
+    setBusyLetter(letter);
+    setGuessError(null);
+    try {
+      applyProgress(await onBuyVowel(currentId, letter));
+    } catch (ex) {
+      setGuessError(ex?.message || "That purchase did not register — try again.");
     }
     setBusyLetter(null);
   };
@@ -3987,8 +4154,8 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
     firingRef.current = false;
   };
 
-  const solveBonus = solved ? 10 + Math.max(0, 4 - Math.min(misses, 4)) : 0;
-  const guessesLeft = Math.max(0, (PHRASE_MAX_MISSES - 1) - misses);
+  const solveBonus = solved ? roundMoney : 0;
+  const guessesLeft = Math.max(0, PHRASE_MAX_MISSES - misses);
   const clockRunning = half === "term" ? !termOver : !revealed;
   const urgent = timeLeft <= 5;
 
@@ -4030,11 +4197,34 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
 
       {half === "term" && !termOver && (
         <>
+          <div style={s.wheelRow}>
+            <SpinWheel angle={spinAngle} spinning={spinning} />
+            <div style={s.wheelSideCol}>
+              <div style={s.roundMoneyPill}>{roundMoney} on the board</div>
+              <button
+                type="button"
+                style={s.primaryBtn}
+                onClick={doSpin}
+                disabled={spinning || hasPendingValue || !!busyLetter}
+              >
+                {spinning ? "Spinning…" : hasPendingValue ? `Spun ${pendingSpin.amount} — call a consonant` : "Spin the wheel"}
+              </button>
+              <button
+                type="button"
+                style={s.ghostBtn}
+                onClick={() => setSolveOpen(o => !o)}
+              >
+                {solveOpen ? "Back to letters" : "Solve it"}
+              </button>
+            </div>
+          </div>
+          {spinResultBanner && (
+            <div style={s.spinResultBanner(spinResultBanner.kind)}>{spinResultBanner.text}</div>
+          )}
+          {spinError && <div style={s.errorBanner}>{spinError}</div>}
           <div style={s.phraseStatusRow}>
             <span>{guessesLeft} wrong {guessesLeft === 1 ? "guess" : "guesses"} left</span>
-            <button type="button" style={s.ghostBtn} onClick={() => setSolveOpen(o => !o)}>
-              {solveOpen ? "Back to letters" : "Solve it"}
-            </button>
+            <span>Buy a vowel — {VOWEL_COST} pts</span>
           </div>
           {solveWrong && (
             <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>Not it — that cost a guess.</div>
@@ -4058,13 +4248,17 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
               {PHRASE_LETTERS.map(letter => {
                 let state = "default";
                 if (guessedSet.has(letter)) state = hitLetters.has(letter) ? "hit" : "miss";
+                const isVowel = PHRASE_VOWELS.has(letter);
+                const disabled = guessedSet.has(letter) || !!busyLetter
+                  || (isVowel ? roundMoney < VOWEL_COST : !hasPendingValue);
                 return (
                   <button
                     key={letter}
                     type="button"
-                    style={s.letterBtn(state)}
-                    onClick={() => tapLetter(letter)}
-                    disabled={guessedSet.has(letter) || !!busyLetter}
+                    style={isVowel ? s.letterBtn(state, true) : s.letterBtn(state)}
+                    onClick={() => (isVowel ? tapVowel(letter) : tapLetter(letter))}
+                    disabled={disabled}
+                    title={isVowel ? `Buy for ${VOWEL_COST} pts` : "Spin first"}
                   >
                     {letter}
                   </button>
