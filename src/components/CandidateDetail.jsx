@@ -1178,50 +1178,6 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
 
       </div>
 
-      {/* Written screen (stint 5, "Part 2") -- plain-language application
-          questions moved in-app 2026-08-06. Displayed for read-only review;
-          writing quality is never scored (Peter directive 2026-08-05 -- see
-          Hiring Prep manual). Forced-choice gate items (comp structure,
-          insurance-move) flag GATE FAILED when answer_key does not match;
-          nothing here auto-declines the candidate. */}
-      {Array.isArray(screenAnswers) && screenAnswers.length > 0 && (
-        <div>
-          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
-            Written Screen — Part 2
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {screenAnswers.map((it) => {
-              const r = it.response;
-              const isGate = it.answer_key != null;
-              const gateFailed = isGate && r && r.is_correct === false;
-              const answered = r != null;
-              return (
-                <div key={it.id} style={{
-                  padding: "8px 10px", background: gateFailed ? T.redLt : T.slate50,
-                  borderRadius: 6, borderLeft: `3px solid ${gateFailed ? T.red : T.slate200}`,
-                  boxSizing: "border-box",
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 3 }}>
-                    {it.item_text}
-                    {gateFailed && (
-                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: T.red }}>
-                        GATE FAILED
-                      </span>
-                    )}
-                  </div>
-                  <div style={{
-                    fontSize: 12, color: answered ? T.slate900 : T.slate400,
-                    fontStyle: answered ? "normal" : "italic", whiteSpace: "pre-wrap",
-                  }}>
-                    {answered ? r.response_label : "Not yet answered"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
@@ -2368,11 +2324,57 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                     buildInterviewPlan, planBuilding, planError,
                                   })}
                                   {layer.key === "screen" && (
-                                    <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
-                                      Screen layer scores the written stint-5 answers above (see the
-                                      Assessment layer's screen answers section) for job-history candor,
-                                      accountability, role-interest specificity, and challenge realism.
-                                      No capability score — writing quality is never scored here.
+                                    <div>
+                                      <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic", marginBottom: 10 }}>
+                                        Screen layer scores the written stint-5 answers below for job-history
+                                        candor, accountability, role-interest specificity, and challenge realism.
+                                        No capability score — writing quality is never scored here.
+                                      </div>
+                                      {/* Written screen (stint 5, "Part 2") -- plain-language application
+                                          questions moved in-app 2026-08-06. Displayed for read-only review;
+                                          writing quality is never scored (Peter directive 2026-08-05 -- see
+                                          Hiring Prep manual). Forced-choice gate items (comp structure,
+                                          insurance-move) flag GATE FAILED when answer_key does not match;
+                                          nothing here auto-declines the candidate. Moved here under the Screen
+                                          expander (was previously under Assessment) per Peter directive
+                                          2026-08-18. */}
+                                      {Array.isArray(screenAnswers) && screenAnswers.length > 0 && (
+                                        <div>
+                                          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
+                                            Written Screen — Part 2
+                                          </div>
+                                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                            {screenAnswers.map((it) => {
+                                              const r = it.response;
+                                              const isGate = it.answer_key != null;
+                                              const gateFailed = isGate && r && r.is_correct === false;
+                                              const answered = r != null;
+                                              return (
+                                                <div key={it.id} style={{
+                                                  padding: "8px 10px", background: gateFailed ? T.redLt : T.slate50,
+                                                  borderRadius: 6, borderLeft: `3px solid ${gateFailed ? T.red : T.slate200}`,
+                                                  boxSizing: "border-box",
+                                                }}>
+                                                  <div style={{ fontSize: 11, fontWeight: 600, color: T.slate700, marginBottom: 3 }}>
+                                                    {it.item_text}
+                                                    {gateFailed && (
+                                                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: T.red }}>
+                                                        GATE FAILED
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <div style={{
+                                                    fontSize: 12, color: answered ? T.slate900 : T.slate400,
+                                                    fontStyle: answered ? "normal" : "italic", whiteSpace: "pre-wrap",
+                                                  }}>
+                                                    {answered ? r.response_label : "Not yet answered"}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                   {layer.key === "reference" && (
