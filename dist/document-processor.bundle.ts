@@ -1794,7 +1794,7 @@ Rules:
   transaction and may include the original date/amount text as printed.
 - If the statement prints its own notation for what kind of line this is
   (e.g. "CR MERCHANDISE/SERVICE RETURN", "CASH BACK REWARD", "AUTOPAY",
-  "RETURNED PAYMENT"), APPEND that exact notation to "memo" — do not drop it.
+  "RETURNED PAYMENT"), APPEND that exact notation to "memo" -- do not drop it.
   This is the bank's own explanation of the transaction; losing it forces
   someone to go re-open the PDF later to find out why a line is a credit.
 - If the statement prints multiple transaction lines with the SAME date,
@@ -9732,6 +9732,12 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processPaypalPrintSalesMode(ppCtx, body);
     return jsonResponse({ ok: true, mode: "paypal_print_sales", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "amazon_order_email") {
+    const aoeCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processAmazonOrderEmailMode(aoeCtx, body);
+    return jsonResponse({ ok: true, mode: "amazon_order_email", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "resume_text_recovery") {
     // Re-run forwarded resumes that failed for lack of readable text, pushing
