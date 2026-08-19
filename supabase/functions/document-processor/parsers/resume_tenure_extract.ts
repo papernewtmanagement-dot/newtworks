@@ -50,6 +50,12 @@
 
 // deno-lint-ignore-file no-explicit-any
 
+/**
+ * Bumped whenever the extraction rules change, so a stored row can be told
+ * apart from one written by an older parser without re-reading the resume.
+ */
+export const PARSER_VERSION = "v3_2026_08_19";
+
 import { sb } from "../../_shared/supabase.ts";
 import { KNOWN_HEADERS } from "./resume_reformat.ts";
 
@@ -375,6 +381,15 @@ const US_STATE_ABBR =
 
 const EMPLOYMENT_TYPE_RE =
   /\b(?:full[- ]?time|part[- ]?time|contract(?:or)?|seasonal|temporary|temp|internship|intern|remote|hybrid|on[- ]?site|per diem|prn|freelance|self[- ]employed|volunteer)\b/i;
+// Global twin of the above, for stripping every occurrence rather than testing.
+const EMPLOYMENT_TYPE_ALL_RE = new RegExp(EMPLOYMENT_TYPE_RE.source, "gi");
+// Employers whose stated range spans years but whose work happens in one
+// window each year. Read literally, "Sep 2016 to Nov 2025" at a Halloween
+// shop becomes a 110-month job and buries every other role on the resume.
+const SEASONAL_EMPLOYER_RE =
+  /\b(?:spirit\s*halloween|halloween\s*(?:city|express)|h\s*&\s*r\s*block|h\s+and\s+r\s+block|hr\s+block|jackson\s+hewitt|liberty\s+tax)\b/i;
+// An entry the resume itself marks seasonal.
+const SEASONAL_WORD_RE = /\bseasonal\b/i;
 
 const TITLE_WORDS = [
   "manager", "management", "representative", "rep", "reps", "associate", "specialist", "assistant",
@@ -498,6 +513,15 @@ const KNOWN_CITIES: ReadonlySet<string> = new Set([
   "greenville", "mount pleasant", "marshall", "henderson", "jacksonville", "palestine", "athens",
   "corsicana", "waxahachie", "ennis", "hillsboro", "gatesville", "copperas cove", "lampasas",
   "kingsland", "horseshoe bay", "wimberley", "dripping springs", "bee cave", "lakeway", "manor",
+  // Small Bexar-county-and-adjacent towns that show up as job locations in
+  // this applicant pool. Without them "Von Ormy, TX" is not recognised as a
+  // place and survives as a label, which cost Sarah Patlan both her titles.
+  "von ormy", "china grove", "elmendorf", "macdona", "atascosa", "lytle", "natalia", "devine",
+  "poteet", "jourdanton", "adkins", "saint hedwig", "st. hedwig", "la vernia", "marion",
+  "new berlin", "sutherland springs", "bulverde", "spring branch", "garden ridge",
+  "fair oaks ranch", "timberwood park", "stone oak", "somerset", "sabinal", "comfort",
+  "blanco", "johnson city", "dilley", "pearsall", "cotulla", "canyon lake", "bigfoot",
+  "charlotte", "falls city", "kenedy", "karnes city", "runge", "nixon", "smiley",
   "fort hood", "fort cavazos", "fort sam houston", "lackland", "randolph", "fort bliss",
   // other US
   "los angeles", "san diego", "san francisco", "san jose", "sacramento", "oakland", "fresno",
@@ -522,6 +546,7 @@ const KNOWN_CITIES: ReadonlySet<string> = new Set([
   "sioux falls", "anchorage", "honolulu", "hartford", "providence", "newark", "jersey city",
   "trenton", "dover", "manchester", "burlington", "skokie", "niles",
   "lynchburg", "overland park", "saratoga springs", "greenwich",
+  "zillah", "sunnyside", "yakima", "toppenish", "grandview", "prosser", "wapato",
 ]);
 const STATE_NAME_RE = new RegExp(`^(?:${US_STATE_NAMES})$`, "i");
 const STATE_CODE_RE = new RegExp(`^(?:${US_STATE_ABBR})$`); // case-sensitive: uppercase only
@@ -615,7 +640,12 @@ function cleanSegment(raw: string): string | null {
   if (s.length < 2) return null;
   if (isPunctOnly(s)) return null;
   if (isLocation(s)) return null;
-  if (EMPLOYMENT_TYPE_RE.test(s) && s.split(/\s+/).length <= 2 && titleScore(s) === 0) return null;
+  // Drop a segment only when it is NOTHING BUT employment-type words
+  // ("Part-time", "Seasonal", "Contract"). The old rule dropped any short
+  // segment CONTAINING one, which silently deleted real employer names:
+  // "ADECCO Temp.Svc" matched \btemp\b, the job lost its employer entirely,
+  // and the forward-look then stole the NEXT entry's title (Dogan, 2026-08-19).
+  if (titleScore(s) === 0 && s.replace(EMPLOYMENT_TYPE_ALL_RE, " ").replace(/[^A-Za-z0-9]/g, "") === "") return null;
   if (/^(?:dates?|duration|period|role|position|title|company|employer|responsibilities|duties|professional|experience|summary|objective|description|achievements|accomplishments|highlights|overview|profile|details|key responsibilities|responsibilities:|skills|education|references|present|current)$/i.test(s)) return null;
   s = stripTrailingLocation(s);
   if (!s || s.length < 2) return null;
@@ -685,6 +715,170 @@ function splitHeaderLine(line: string): string[] {
     out.push(p);
   }
   return out;
+}
+
+// -------------------------------------------------------------------------
+// Seasonal roles
+// -------------------------------------------------------------------------
+
+/**
+ * Decides whether a role is seasonal and, if so, which months of the year it
+ * actually covers.
+ *
+ * The season window is derived from the range the resume itself gives rather
+ * than from a hardcoded calendar: a Halloween shop written "September 2016 to
+ * November 2025" tells us the season runs month 9 through month 11, and a tax
+ * office written "January 2018 to April 2024" tells us months 1 through 4.
+ * That is both more accurate than a fixed guess and self-correcting for
+ * employers not on the list, so long as something flags the role as seasonal.
+ *
+ * Returns null for ordinary roles, which keep the plain span.
+ */
+function seasonalProfile(
+  title: string | null,
+  employer: string | null,
+  headerText: string,
+  dateLineText: string,
+  start: MonthYear,
+  end: MonthYear,
+  isCurrent: boolean,
+): { seasonMonths: number[]; months: number } | null {
+  if (isCurrent) return null; // an open-ended role has no closing season month
+  const hay = `${title ?? ""} ${employer ?? ""} ${headerText} ${dateLineText}`;
+  const flagged = SEASONAL_EMPLOYER_RE.test(hay) || SEASONAL_WORD_RE.test(hay);
+  if (!flagged) return null;
+  // Only meaningful when the stated range spans more than one year — a single
+  // genuine season ("Sep 2024 to Nov 2024") is already correct as written.
+  if (end.year <= start.year) return null;
+  if (monthsBetween(start, end) < 13) return null;
+  const seasonMonths: number[] = [];
+  if (start.month <= end.month) {
+    for (let m = start.month; m <= end.month; m++) seasonMonths.push(m);
+  } else {
+    // season wraps the new year (a holiday-retail "November to February")
+    for (let m = start.month; m <= 12; m++) seasonMonths.push(m);
+    for (let m = 1; m <= end.month; m++) seasonMonths.push(m);
+  }
+  if (seasonMonths.length === 0 || seasonMonths.length >= 12) return null;
+  const seasons = end.year - start.year + (start.month <= end.month ? 1 : 0);
+  const months = Math.max(seasonMonths.length, seasons * seasonMonths.length);
+  return { seasonMonths, months };
+}
+
+// -------------------------------------------------------------------------
+// Layout voting
+// -------------------------------------------------------------------------
+
+type Layout = "title-first" | "employer-first";
+
+function isStrongTitle(s: string): boolean {
+  return titleScore(s) > 0 && employerScore(s) === 0;
+}
+function isStrongEmployer(s: string): boolean {
+  return employerScore(s) > 0 && titleScore(s) === 0;
+}
+
+/**
+ * Works out whether THIS resume writes the job title above the employer or
+ * the other way round, by looking only at the entries where the keyword lists
+ * are unambiguous (one line clearly a title, another clearly an employer).
+ *
+ * WHY: the keyword lists cannot settle every entry on their own. "Health Care
+ * Provider" is a job title that contains an employer word ("health"); "Parts
+ * and Service" is a job title that contains an employer word ("service");
+ * "Aim Care", "Kent Powersports" and "Circle K" are employers that contain no
+ * employer word at all. Judged entry-by-entry those come out backwards. But a
+ * resume is internally consistent: whichever way round the entries WE CAN
+ * read are written, the rest are written the same way. Voting once per
+ * document and applying the result fixed eight confirmed swaps.
+ *
+ * Only multi-line entries vote. Two labels split off a single line carry no
+ * line-order information.
+ */
+function voteLayout(entriesLabels: string[][][]): Layout {
+  let titleFirst = 0;
+  let employerFirst = 0;
+  for (const lines of entriesLabels) {
+    if (lines.length < 2) continue;
+    const firstLine = lines[0];
+    const lastLine = lines[lines.length - 1];
+    const fT = firstLine.some(isStrongTitle);
+    const fE = firstLine.some(isStrongEmployer);
+    const lT = lastLine.some(isStrongTitle);
+    const lE = lastLine.some(isStrongEmployer);
+    if (fT && !fE && lE && !lT) titleFirst++;
+    else if (fE && !fT && lT && !lE) employerFirst++;
+  }
+  if (employerFirst > titleFirst) return "employer-first";
+  // Ties and no-evidence default to title-first, the more common convention
+  // and the same default the previous version used.
+  return "title-first";
+}
+
+/** Joins one line's labels back into a single readable label. */
+function joinLine(labels: string[]): string | null {
+  const uniq = labels.filter((l, i) => labels.findIndex((x) => x.toLowerCase() === l.toLowerCase()) === i);
+  if (uniq.length === 0) return null;
+  return uniq.join(" - ");
+}
+
+/**
+ * Decides title and employer for one entry, using keyword evidence first and
+ * the document's layout convention only where the keywords cannot separate
+ * the two.
+ */
+function assignTitleEmployerFromLines(
+  labelsPerLine: string[][],
+  layout: Layout,
+): { title: string | null; employer: string | null } {
+  const lines = labelsPerLine.filter((g) => g.length > 0);
+  if (lines.length === 0) return { title: null, employer: null };
+  const flat = lines.flatMap((g, li) => g.map((s) => ({ s, li })));
+
+  // 1. Unambiguous keyword evidence wins outright, on one line or across two.
+  const strongT = flat.filter((x) => isStrongTitle(x.s));
+  const strongE = flat.filter((x) => isStrongEmployer(x.s));
+  if (strongT.length > 0 && strongE.length > 0) {
+    const t = strongT[0];
+    // Prefer an employer on a DIFFERENT line to the title. "Manager, Customer
+    // Service" puts an employer-looking piece ("Service" is an employer word)
+    // on the very same line as the title, and taking it left the real employer
+    // one line below unread (Abraham Ochoa's current role).
+    const e = strongE.find((x) => x.li !== t.li) ?? strongE.find((x) => x.s !== t.s) ?? strongE[0];
+    if (e.s !== t.s) {
+      // With the employer on its own line, everything on the title's line
+      // belongs to the title, and vice versa.
+      const tLabel = t.li !== e.li ? joinLine(lines[t.li]) : t.s;
+      const eLabel = t.li !== e.li && lines[e.li].every((x) => !isStrongTitle(x))
+        ? joinLine(lines[e.li]) : e.s;
+      return { title: tLabel ?? t.s, employer: eLabel ?? e.s };
+    }
+  }
+
+  // 2. Keywords could not separate them. If the entry spans two or more
+  //    lines, the document's layout decides — this is the case the old
+  //    coin-flip got wrong roughly half the time.
+  if (lines.length >= 2) {
+    const firstLabel = joinLine(lines[0]);
+    const lastLabel = joinLine(lines[lines.length - 1]);
+    if (firstLabel && lastLabel && firstLabel !== lastLabel) {
+      return layout === "employer-first"
+        ? { title: lastLabel, employer: firstLabel }
+        : { title: firstLabel, employer: lastLabel };
+    }
+  }
+
+  // 3. Everything came off ONE line, so there is no line order to appeal to.
+  //    Fall back to keyword scoring — but only when SOMETHING on the line
+  //    carries title evidence at all. "H-E-B - Customer Service Associate" has
+  //    a real title in it even though that title also contains employer words,
+  //    whereas "CoreCivic - T. Don Hutto Residential Center" is one employer
+  //    written two ways and must not have a title invented for it.
+  const single = lines[0];
+  if (!single.some((x) => titleScore(x) > 0)) {
+    return { title: null, employer: joinLine(single) };
+  }
+  return assignTitleEmployer(single);
 }
 
 /**
@@ -761,12 +955,35 @@ const CERT_RE = /\b(?:certif(?:icate|ication|ied)|licen[sc]e[sd]?|credential|tra
 const VOLUNTEER_RE = /\b(?:volunteer|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|habitat for humanity)\b/i;
 const VOLUNTEER_JOB_RE = /\b(?:coordinator|manager|director|specialist|supervisor|paid)\b/i;
 
-const INSTITUTION_RE = /\b(?:university|college|school|academy|institute|instituto|universidad|escuela|colegio|program|studies|campus)\b/i;
+const INSTITUTION_RE =
+  /\b(?:university|univ\.?|college|school|academy|institute|instituto|universidad|escuela|colegio|program|studies|campus|seminary|conservatory)\b/i;
+// A parenthesised award marker — "(Associate)", "(Certificate)", "(Bachelor of
+// Science)" — is Indeed's education format, never a job title. Needed because
+// the word "associate" is also a legitimate job title, so scoring alone let
+// "Music Literacy (Associate) / Texas Southern Univ" through as a job
+// (Jennifer Dogan, 2026-08-19).
+const PARENTHESISED_AWARD_RE =
+  /\((?:\s*(?:associate|bachelor|master|doctor(?:ate)?|certificate|certification|diploma|high school(?: diploma)?|ged|some college|licence|license)[^)]*)\)/i;
+
+/**
+ * True while it is worth reading one more line above the date line.
+ *
+ * Counts LINES that produced labels, not labels. Judging by label content
+ * fails on the exact entries that need help: "Manager, Customer Service"
+ * splits into a title-looking piece and an employer-looking piece, so any
+ * content test concludes the header is complete and never reads the line above
+ * where the actual employer sits. Two lines is what the layout vote needs, so
+ * two lines is what we go and get.
+ */
+function needMoreLines(linesWithLabels: number): boolean {
+  return linesWithLabels < 2;
+}
 
 function isNonJobEntry(headerText: string, dateLineText: string, sectionKind: SectionKind = "neutral"): boolean {
   const all = `${headerText} ${dateLineText}`;
   if (NOT_A_JOB_RE.test(all)) return true;
   if (DEGREE_RE.test(headerText)) return true;
+  if (PARENTHESISED_AWARD_RE.test(headerText)) return true;
   if (sectionKind === "filtered") {
     // Under an EDUCATION / SKILLS / CERTIFICATIONS / CONTACT header, only an
     // entry that clearly reads as a job survives: a title word, and no
@@ -799,6 +1016,55 @@ export interface ParsedRole {
   tenure_months: number;
   start_raw: string;
   end_raw: string;
+  /** Present and true only for roles judged seasonal (see seasonalProfile). */
+  is_seasonal?: boolean;
+  /**
+   * Which months of the year a seasonal role actually covers, e.g. [9,10,11].
+   * public.resume_experience_months counts ONLY these months inside the span,
+   * instead of every month between start and end — keep the two in sync.
+   */
+  season_months?: number[];
+}
+
+// A line whose LAST thing is a date followed by a dangling range separator:
+// "Allstate / National General - Customer Service Representative | 2025 -"
+const DANGLING_RANGE_END_RE = new RegExp(
+  `(?:${DATE_TOKEN_RE})\\s*(?:to|thru|through|until|till|[\\u2013\\u2014\\u2015\\u2010\\u2212\\-]|\\u2192)\\s*$`,
+  "i",
+);
+// The continuation: a line that OPENS with the closing date and nothing else
+// of substance.
+const LEADING_DATE_ONLY_RE = new RegExp(
+  `^\\s*(${DATE_TOKEN_RE}|${PRESENT_RE})\\s*[.,;)|]*\\s*$`,
+  "i",
+);
+
+/**
+ * Rejoins a date range that a PDF broke across two lines, in place.
+ *
+ * A narrow column wraps "... | 2025 - 2026" so the closing year lands alone on
+ * the next line. RANGE_RE only ever looks at one line, so the whole entry was
+ * dropped without trace — Josh Olivas lost both of his insurance jobs this
+ * way, the two most relevant roles on the resume.
+ *
+ * Deliberately narrow: the first line must END with a date plus a separator
+ * and the second must consist of NOTHING BUT the closing date. That keeps a
+ * bullet like "2021 - revenue grew 14%" from being welded onto the line above.
+ */
+function joinWrappedDateRanges(lines: string[]): void {
+  for (let i = 0; i < lines.length - 1; i++) {
+    const cur = lines[i];
+    if (!cur.trim()) continue;
+    if (!DANGLING_RANGE_END_RE.test(cur)) continue;
+    // look past a single blank line, which column wrapping also produces
+    let j = i + 1;
+    if (!lines[j].trim() && j + 1 < lines.length) j++;
+    const nxt = lines[j];
+    if (!nxt || !nxt.trim()) continue;
+    if (!LEADING_DATE_ONLY_RE.test(nxt)) continue;
+    lines[i] = `${cur} ${nxt.trim()}`;
+    lines[j] = "";
+  }
 }
 
 /**
@@ -811,6 +1077,7 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
   const now = asOf ?? nowMonthYear();
   const rawLines = resumeText.replace(/\\n/g, "\n").split(/\r?\n|\r/);
   const lines = rawLines.map((l) => l.replace(/\s+$/g, ""));
+  joinWrappedDateRanges(lines);
 
   // Pass 1: section kinds
   const kinds: SectionKind[] = new Array(lines.length);
@@ -825,8 +1092,21 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
     kinds[i] = current;
   }
 
-  const roles: ParsedRole[] = [];
-  const seen = new Set<string>();
+  // Pass 2 collects entries WITHOUT labelling them. Labelling waits until
+  // every entry is known, because the title/employer decision for the hard
+  // entries depends on how the easy ones are laid out (see voteLayout).
+  type RawEntry = {
+    labelsPerLine: string[][];
+    headerText: string;
+    dateLineText: string;
+    startMY: MonthYear;
+    endMY: MonthYear;
+    isCurrent: boolean;
+    months: number;
+    startRaw: string;
+    endRaw: string;
+  };
+  const entries: RawEntry[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     if (kinds[i] === "excluded") continue;
@@ -902,10 +1182,31 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
     const backLimit = beforeUsed ? 1 : 3;
     let back = i - 1;
     let collected = 0;
-    while (back >= 0 && collected < backLimit && headerLines.length < 3 && piecesOf(headerLines).length < 2) {
+    let blanksSkipped = 0;
+    // Keep looking until we have BOTH a title-ish and an employer-ish label,
+    // not merely two labels. A single line that splits into two title-ish
+    // pieces ("CSR - Customer Service Representative", "Manager, Customer
+    // Service") used to satisfy the old count and the employer line one row
+    // further up was never read at all — that is what lost Skyplace FBO and
+    // Mesilla Valley Transportation.
+    while (
+      back >= 0 && collected < backLimit && headerLines.length < 3 &&
+      needMoreLines(headerLines.filter((hl) => piecesOf([hl]).length > 0).length)
+    ) {
       const bl = lines[back];
       const t = bl.trim();
-      if (t === "" || isDivider(bl) || headerAt[back] || kinds[back] === "excluded") break;
+      if (isDivider(bl) || headerAt[back] || kinds[back] === "excluded") break;
+      if (t === "") {
+        // Column wrapping sometimes leaves ONE blank line between an entry's
+        // employer line and its date line (Cynthia Martinez's concurrent SA
+        // Youth role was dropped entirely because of this). Step over a single
+        // blank, but never a second — two blanks is a real break between
+        // entries.
+        if (blanksSkipped >= 1 || collected >= 2) break;
+        blanksSkipped++;
+        back--;
+        continue;
+      }
       if (isBullet(bl)) break;
       if (isPunctOnly(bl)) { back--; continue; }
       // a bare place line ("San Antonio, TX") is neither a header nor a stop
@@ -959,28 +1260,52 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
     const headerText = headerLines.join(" | ");
     if (isNonJobEntry(headerText, dateLineText, kinds[i])) continue;
 
-    const labels = headerLines.flatMap(splitHeaderLine).map(cleanSegment).filter((x): x is string => !!x);
-    // De-duplicate identical labels (a header repeated on two lines)
-    const uniqLabels = labels.filter((l, idx) => labels.findIndex((x) => x.toLowerCase() === l.toLowerCase()) === idx);
-    let { title, employer } = assignTitleEmployer(uniqLabels);
+    // Labels are kept PER LINE so pass 3 can use line order.
+    const seenLabel = new Set<string>();
+    const labelsPerLine = headerLines
+      .map((hl) =>
+        splitHeaderLine(hl)
+          .map(cleanSegment)
+          .filter((x): x is string => !!x)
+          .filter((x) => {
+            const k = x.toLowerCase();
+            if (seenLabel.has(k)) return false;
+            seenLabel.add(k);
+            return true;
+          })
+      )
+      .filter((g) => g.length > 0);
+    // A stray date range in prose with no label at all is not a job.
+    if (labelsPerLine.length === 0) continue;
+
+    entries.push({ labelsPerLine, headerText, dateLineText, startMY, endMY, isCurrent, months, startRaw, endRaw });
+  }
+
+  // ---- Pass 3: learn the layout once, then label and emit every entry ----
+  const layout = voteLayout(entries.map((e) => e.labelsPerLine));
+  const roles: ParsedRole[] = [];
+  const seen = new Set<string>();
+  for (const e of entries) {
+    let { title, employer } = assignTitleEmployerFromLines(e.labelsPerLine, layout);
     if (title && title.length > 120) title = title.slice(0, 120);
     if (employer && employer.length > 120) employer = employer.slice(0, 120);
-    // A stray date range in prose with no label at all is not a job.
     if (!title && !employer) continue;
 
-    const key = `${normalizeName(employer)}|${normalizeName(title)}|${ym(startMY)}`;
+    const key = `${normalizeName(employer)}|${normalizeName(title)}|${ym(e.startMY)}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
+    const seasonal = seasonalProfile(title, employer, e.headerText, e.dateLineText, e.startMY, e.endMY, e.isCurrent);
     roles.push({
       title,
       employer,
-      start: ym(startMY),
-      end: isCurrent ? null : ym(endMY),
-      is_current: isCurrent,
-      tenure_months: months,
-      start_raw: startRaw,
-      end_raw: endRaw,
+      start: ym(e.startMY),
+      end: e.isCurrent ? null : ym(e.endMY),
+      is_current: e.isCurrent,
+      tenure_months: seasonal ? seasonal.months : e.months,
+      start_raw: e.startRaw,
+      end_raw: e.endRaw,
+      ...(seasonal ? { is_seasonal: true, season_months: seasonal.seasonMonths } : {}),
     });
   }
   return roles;
@@ -1005,7 +1330,14 @@ export function totalWorkMonths(roles: any[], asOf?: MonthYear): number | null {
       const sIdx = parseInt(s[1], 10) * 12 + (parseInt(s[2], 10) - 1);
       const e = typeof r?.end === "string" ? r.end.match(/^(\d{4})-(\d{2})$/) : null;
       const eIdx = e ? parseInt(e[1], 10) * 12 + (parseInt(e[2], 10) - 1) : now.year * 12 + (now.month - 1);
-      for (let k = sIdx; k < eIdx; k++) months.add(k);
+      // A seasonal role covers only its own months of the year inside the span.
+      const season: number[] | null = Array.isArray(r?.season_months) && r.season_months.length > 0
+        ? r.season_months.map((x: any) => Number(x)).filter((x: number) => x >= 1 && x <= 12)
+        : null;
+      for (let k = sIdx; k < eIdx; k++) {
+        if (season && season.length > 0 && !season.includes((k % 12) + 1)) continue;
+        months.add(k);
+      }
     } else if (typeof r?.tenure_months === "number" && Number.isFinite(r.tenure_months)) {
       any = true;
       undated += Math.max(0, r.tenure_months);
@@ -1136,7 +1468,20 @@ export function mergeParsedRolesIntoResumeAnalysis(
   qualifications.prior_similar_role = priorSimilarRole;
   base.qualifications = qualifications;
 
-  const changed = JSON.stringify(existingRoles) !== JSON.stringify(mergedRoles);
+  // A resume the parser could read nothing out of still gets a row. Before,
+  // an empty parse of an untouched candidate compared empty-to-empty, reported
+  // no change, and wrote NOTHING — so resume_analysis stayed NULL and the
+  // candidate fell out of every queue that looks for missing signals rather
+  // than for a null row (Kersten Smith's resume carries no dates anywhere).
+  // The stub says "this was parsed and came back empty", which is a different
+  // fact from "never parsed".
+  const hadAnalysis = existing && typeof existing === "object";
+  base.tenure_parser = {
+    version: PARSER_VERSION,
+    roles_found: parsedRoles.length,
+    dates_found: parsedRoles.length > 0,
+  };
+  const changed = JSON.stringify(existingRoles) !== JSON.stringify(mergedRoles) || !hadAnalysis;
   return { updated: base, changed };
 }
 
