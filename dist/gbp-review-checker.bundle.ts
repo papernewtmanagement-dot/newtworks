@@ -591,6 +591,7 @@ Deno.serve(async (req: Request) => {
     connectedAccountId: mapsAccountId,
     toolSlug: "GOOGLE_MAPS_GET_PLACE_DETAILS",
     toolArguments: { name: `places/${PLACE_ID}`, fieldMask: "id,displayName,rating,userRatingCount,reviews" },
+    toolkitVersion: "latest",
   });
 
   if (!composioResult.ok) {
