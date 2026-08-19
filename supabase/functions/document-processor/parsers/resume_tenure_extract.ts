@@ -369,10 +369,11 @@ function looksLikeProse(s: string): boolean {
   // Job titles and employer names are rarely seven words and almost never end
   // with punctuation. ("INTELLIGENCE SPECIALIST,U.S. NAVY RESERVE FORCE" is
   // six words and ends on a word, so it survives as the header it is.)
-  if (!/[a-z]/.test(t) && /[A-Z]/.test(t)) {
-    if (wordCount(t) >= 7) return true;
-    if (/[,.]$/.test(t)) return true;
-  }
+  // Judge an ALL-CAPS line only on trailing punctuation. Length is NOT safe
+  // evidence: plenty of all-caps resumes put the whole job on one long line
+  // ("US & TEXAS HISTORY TEACHER/HERITAGE MIDDLE SCHOOL EAST CENTRAL ISD"),
+  // and a word-count rule threw four real jobs away (Tabitha Graciano).
+  if (!/[a-z]/.test(t) && /[A-Z]/.test(t) && /[,.]$/.test(t)) return true;
   return false;
 }
 // Counts word tokens that carry letters ("&", "|", "-" are not words).
@@ -1219,7 +1220,11 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
     // Mesilla Valley Transportation.
     while (
       back >= 0 && collected < backLimit && headerLines.length < 3 &&
-      scanned < 6 &&
+      // The budget applies ONLY to a dates-first layout, where the header is
+      // below and a long climb upward is always wrong. When the header is
+      // above, a scrambled PDF can legitimately bury the dates ten lines under
+      // it behind bullets and duty text (Megan Buentello), so let it climb.
+      (!forwardHeaderBelow || scanned < 6) &&
       needMoreLines(headerLines.filter((hl) => piecesOf([hl]).length > 0).length)
     ) {
       scanned++;
