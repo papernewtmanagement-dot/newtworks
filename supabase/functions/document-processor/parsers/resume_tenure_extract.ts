@@ -363,6 +363,16 @@ function looksLikeProse(s: string): boolean {
   if (ACTION_VERB_START_RE.test(t) && /^\S+\s+[a-z]/.test(t)) return true;
   if (t.length > 110) return true;
   if (wordCount(t) > 14) return true;
+  // An ALL-CAPS resume defeats every test above: nothing starts lowercase, so
+  // whole sentences of duty text read as headers. Judge those on shape instead
+  // — a long all-caps line, or one ending in a comma or full stop, is prose.
+  // Job titles and employer names are rarely seven words and almost never end
+  // with punctuation. ("INTELLIGENCE SPECIALIST,U.S. NAVY RESERVE FORCE" is
+  // six words and ends on a word, so it survives as the header it is.)
+  if (!/[a-z]/.test(t) && /[A-Z]/.test(t)) {
+    if (wordCount(t) >= 7) return true;
+    if (/[,.]$/.test(t)) return true;
+  }
   return false;
 }
 // Counts word tokens that carry letters ("&", "|", "-" are not words).
@@ -1180,9 +1190,27 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
     // collected lines yield two labels (title + employer) — anything above
     // that is the previous entry.
     const backLimit = beforeUsed ? 1 : 3;
+    // Is there a plausible header on the line just BELOW the dates? That is a
+    // dates-first layout, and in one the blank line above the date line is the
+    // gap BETWEEN entries, not a gap inside this one. Stepping over it climbs
+    // into the previous job's duty text (Robyn Vasquez, all-caps dates-first).
+    const forwardHeaderBelow = (() => {
+      const fl = lines[i + 1];
+      if (fl === undefined) return false;
+      const t = fl.trim();
+      if (!t || isBullet(fl) || isDivider(fl) || headerAt[i + 1]) return false;
+      if (RANGE_RE.test(fl) || SINCE_RE.test(fl) || DATE_ANYWHERE_RE.test(fl)) return false;
+      if (looksLikeProse(t) || isLocation(t)) return false;
+      return piecesOf([t]).length > 0;
+    })();
     let back = i - 1;
     let collected = 0;
     let blanksSkipped = 0;
+    // Budget on lines LOOKED AT, not just lines kept. Description text is
+    // stepped over rather than stopped on, so without a budget the search
+    // walks up through a dozen duty lines and lands on the PREVIOUS job's
+    // header. Three lines of real header is the most any layout needs.
+    let scanned = 0;
     // Keep looking until we have BOTH a title-ish and an employer-ish label,
     // not merely two labels. A single line that splits into two title-ish
     // pieces ("CSR - Customer Service Representative", "Manager, Customer
@@ -1191,8 +1219,10 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
     // Mesilla Valley Transportation.
     while (
       back >= 0 && collected < backLimit && headerLines.length < 3 &&
+      scanned < 6 &&
       needMoreLines(headerLines.filter((hl) => piecesOf([hl]).length > 0).length)
     ) {
+      scanned++;
       const bl = lines[back];
       const t = bl.trim();
       if (isDivider(bl) || headerAt[back] || kinds[back] === "excluded") break;
@@ -1202,7 +1232,7 @@ export function parseWorkExperienceRoles(resumeText: string, asOf?: MonthYear): 
         // Youth role was dropped entirely because of this). Step over a single
         // blank, but never a second — two blanks is a real break between
         // entries.
-        if (blanksSkipped >= 1 || collected >= 2) break;
+        if (blanksSkipped >= 1 || collected >= 2 || forwardHeaderBelow) break;
         blanksSkipped++;
         back--;
         continue;
