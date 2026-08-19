@@ -158,9 +158,10 @@ const s = {
   }),
   qStem: { fontSize: 15, fontWeight: 600, color: T.slate900, lineHeight: 1.4, marginBottom: 12 },
   qOptionBtn: (state) => {
-    // state: "default" | "selectedCorrect" | "selectedWrong" | "revealCorrect" | "revealDim"
+    // state: "default" | "static" | "selectedCorrect" | "selectedWrong" | "revealCorrect" | "revealDim"
     const map = {
       default: { background: "#fff", border: `1px solid ${T.slate300}`, color: T.slate800 },
+      static: { background: "#fff", border: `1px solid ${T.slate300}`, color: T.slate800, cursor: "default" },
       selectedCorrect: { background: T.greenLt, border: `1px solid ${T.green}`, color: T.green },
       selectedWrong: { background: T.redLt, border: `1px solid ${T.red}`, color: T.red },
       revealCorrect: { background: T.greenLt, border: `1px solid ${T.green}`, color: T.green },
@@ -894,6 +895,7 @@ async function loadPlayState(attemptId) {
 // player change.
 const CATEGORY_LABEL_OVERRIDES = {
   sf_lending: "Mortgages",
+  sf_flood: "Dover Bay",
 };
 
 function formatGridCategoryLabel(category) {
@@ -3068,7 +3070,7 @@ function TriviaSharedGridTab({ userId }) {
             {(q.options || []).map((o) => (
               <div
                 key={o.id}
-                style={s.qOptionBtn(gsState.active_revealed ? (o.is_correct ? "revealCorrect" : "revealDim") : "default")}
+                style={s.qOptionBtn(gsState.active_revealed ? (o.is_correct ? "revealCorrect" : "revealDim") : "static")}
               >
                 {o.option_text}
               </div>
@@ -4287,8 +4289,14 @@ function PhraseRunner({ itemIds, itemsById, attemptId, secondsPerPhase, secondsF
           <div style={s.qStem}>What does it mean?</div>
           {(displayOptions || []).map(o => {
             let state = "default";
-            if (revealed) {
-              const right = reveal ? (o.id === reveal.correct_option_id) : false;
+            // Wait for the actual server response before coloring anything —
+            // setRevealed(true) fires synchronously on click, before the
+            // await resolves, so gating on `revealed` alone briefly renders
+            // every option (including the correct one) as reveal ? in the
+            // one frame where reveal is still null. That is the red-then-
+            // green flash: gate on reveal being present instead.
+            if (revealed && reveal) {
+              const right = o.id === reveal.correct_option_id;
               if (o.id === selectedId && right) state = "selectedCorrect";
               else if (o.id === selectedId && !right) state = "selectedWrong";
               else if (right) state = "revealCorrect";
@@ -4414,8 +4422,11 @@ function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onS
       <div style={s.qStem}>{currentItem.stem}</div>
       {(displayOptions || []).map(o => {
         let state = "default";
-        if (revealed) {
-          const right = reveal ? (o.id === reveal.correct_option_id) : false;
+        // Same fix as PhraseRunner's meaning phase: gate on reveal being
+        // present, not just revealed, so a correct answer never renders red
+        // for the one frame before the server response lands.
+        if (revealed && reveal) {
+          const right = o.id === reveal.correct_option_id;
           if (o.id === selectedId && right) state = "selectedCorrect";
           else if (o.id === selectedId && !right) state = "selectedWrong";
           else if (right) state = "revealCorrect";
