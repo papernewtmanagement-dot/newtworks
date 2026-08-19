@@ -399,8 +399,12 @@ const EMPLOYMENT_TYPE_ALL_RE = new RegExp(EMPLOYMENT_TYPE_RE.source, "gi");
 // shop becomes a 110-month job and buries every other role on the resume.
 const SEASONAL_EMPLOYER_RE =
   /\b(?:spirit\s*halloween|halloween\s*(?:city|express)|h\s*&\s*r\s*block|h\s+and\s+r\s+block|hr\s+block|jackson\s+hewitt|liberty\s+tax)\b/i;
-// An entry the resume itself marks seasonal.
-const SEASONAL_WORD_RE = /\bseasonal\b/i;
+// NOTE: the word "seasonal" appearing anywhere in an entry is NOT a usable
+// trigger and was removed after it produced two false positives on the first
+// full pass. A Starbucks shift supervisor of nine years mentioned "seasonal"
+// in her duties and was cut to ten months; a kitchen job was cut in half the
+// same way. Erasing real experience is far worse than missing a seasonal
+// employer, so only the curated employer list flags a role now.
 
 const TITLE_WORDS = [
   "manager", "management", "representative", "rep", "reps", "associate", "specialist", "assistant",
@@ -756,8 +760,7 @@ function seasonalProfile(
 ): { seasonMonths: number[]; months: number } | null {
   if (isCurrent) return null; // an open-ended role has no closing season month
   const hay = `${title ?? ""} ${employer ?? ""} ${headerText} ${dateLineText}`;
-  const flagged = SEASONAL_EMPLOYER_RE.test(hay) || SEASONAL_WORD_RE.test(hay);
-  if (!flagged) return null;
+  if (!SEASONAL_EMPLOYER_RE.test(hay)) return null;
   // Only meaningful when the stated range spans more than one year — a single
   // genuine season ("Sep 2024 to Nov 2024") is already correct as written.
   if (end.year <= start.year) return null;
@@ -770,7 +773,11 @@ function seasonalProfile(
     for (let m = start.month; m <= 12; m++) seasonMonths.push(m);
     for (let m = 1; m <= end.month; m++) seasonMonths.push(m);
   }
-  if (seasonMonths.length === 0 || seasonMonths.length >= 12) return null;
+  // Sanity-check the derived window. A one-month "season" is almost always a
+  // coincidence — a multi-year job that happens to start and end in the same
+  // month of the year — and treating it as seasonal destroys the tenure. A
+  // window of nine months or more is not a season either.
+  if (seasonMonths.length < 2 || seasonMonths.length > 8) return null;
   const seasons = end.year - start.year + (start.month <= end.month ? 1 : 0);
   const months = Math.max(seasonMonths.length, seasons * seasonMonths.length);
   return { seasonMonths, months };
