@@ -184,6 +184,78 @@ function dedupeLeadingWords(desc: string): string {
   return desc;
 }
 
+// --- Payment-section EXPENSE REIMBURSEMENTS ---------------------------------
+// The main line loop deliberately skips everything after the
+// "* * * P A Y M E N T  S E C T I O N * * *" marker, because that section
+// restates production ("PER SCHEDULES OF PAYMENT"), and re-reading it would
+// double-count every commission. One real credit lives in there and only
+// there: the EXPENSE REIMBURSEMENTS block.
+//
+//   1 EXPENSE REIMBURSEMENTS: 1 VPN INTERNET STIPEND 200.00 400.00
+//   TOTAL EXPENSE REIMBURSEMENTS: ******** 200.00 *** 400.00
+//
+// Missed for the whole life of the parser. Caught 2026-08-18 when the 7/31/2026
+// VPN Internet Stipend ($200.00 current, $400.00 year-to-date) was absent from
+// comp_recap while the statement plainly showed it.
+//
+// Runs as a separate pass over the full text rather than as another branch in
+// the line loop, for two reasons:
+//   1. It cannot regress production parsing -- it never touches that code path.
+//   2. Extracted PDF text arrives in two shapes depending on the extractor:
+//      one row per line, or a whole section collapsed onto a single line. A
+//      whitespace-normalised scan of the full text handles both; the line loop
+//      would only handle the first.
+//
+// SCOPE NOTE -- deliberately NOT extended to the adjacent AWARDS & BONUSES
+// block in the same section. Scorecard and AIPP payouts land in comp_recap
+// under state_farm_bonuses via another path, and parsing them here as well
+// would double-count them into the AIPP and Scorecard bases. Reimbursements
+// only. Do not widen this without first establishing what writes the bonus
+// rows.
+function parseExpenseReimbursements(text: string, period: PeriodInfo): CompRecapRow[] {
+  // Normalise: drop backslash escapes some extractors put before '*', then
+  // flatten every run of whitespace (including newlines) to single spaces.
+  const flat = text.replace(/\\(?=[*&])/g, "").replace(/\s+/g, " ");
+  const rows: CompRecapRow[] = [];
+  const seen = new Set<string>();
+
+  const blockRe = /EXPENSE\s+REIMBURSEMENTS\s*:(.*?)TOTAL\s+EXPENSE\s+REIMBURSEMENTS/gi;
+  let block: RegExpExecArray | null;
+  while ((block = blockRe.exec(flat)) !== null) {
+    // Items are separated by the leading "1" column marker.
+    for (const chunk of block[1].split(/\s+1\s+|^\s*1\s+/)) {
+      const item = chunk.trim();
+      if (!item) continue;
+      // Same money contract as production: two amounts = CURRENT then
+      // YEAR-TO-DATE, one amount = year-to-date only and carries no
+      // current-period value.
+      const m = item.match(/^(.+?)\s+([\d,]*\.\d{2}-?)(?:\s+([\d,]*\.\d{2}-?))?$/);
+      if (!m || !m[3]) continue;
+      const current = parseAmount(m[2]);
+      if (current === null || current === 0) continue;
+      const description = m[1].trim();
+      if (!description) continue;
+      const key = `${description}|${current}`;
+      if (seen.has(key)) continue;   // same block repeated across state pages
+      seen.add(key);
+      rows.push({
+        period_year: period.year,
+        period_month: period.month,
+        period_day: period.day,
+        comp_type: period.comp_type,
+        comp_category: "expense_reimbursement",
+        description,
+        amount: current,
+        // A reimbursement is a cost being repaid, not produced commission.
+        // It must never enter the AIPP base or the Scorecard base.
+        is_aipp_eligible: false,
+        is_scorecard_eligible: false,
+      });
+    }
+  }
+  return rows;
+}
+
 // --- Main parser ------------------------------------------------------------
 export function parseCompRecapText(text: string): {
   rows: CompRecapRow[];
@@ -242,6 +314,10 @@ export function parseCompRecapText(text: string): {
     });
     if (statePrefix === "") texasTotal += line.current;
   }
+
+  // Additive pass: the EXPENSE REIMBURSEMENTS block inside the payment section,
+  // which the loop above skips along with the rest of that section.
+  for (const r of parseExpenseReimbursements(text, period)) rows.push(r);
 
   return { rows, period, texas_current_total: texasTotal };
 }
