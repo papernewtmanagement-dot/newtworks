@@ -895,7 +895,15 @@ async function loadPlayState(attemptId) {
 // player change.
 const CATEGORY_LABEL_OVERRIDES = {
   sf_lending: "Mortgages",
-  sf_flood: "Dover Bay",
+  // Six of sf_flood's eleven questions wrongly reference "Dover Bay flood"
+  // as a named product — Peter has confirmed Dover Bay is coastal home
+  // insurance and does not do flood, so it is not that either. Neither
+  // "Dover Bay" nor the auto-generated "State Farm Flood" (same "sf_" ->
+  // "State Farm " prefix bug fixed for Mortgages) is accurate. Using the
+  // plain, unbranded "Flood" until Peter says what these six questions
+  // should actually reference — do not relabel again without that answer.
+  // See open_questions.
+  sf_flood: "Flood",
 };
 
 function formatGridCategoryLabel(category) {
