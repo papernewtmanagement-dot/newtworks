@@ -1,0 +1,31 @@
+-- Peter directive 2026-08-19, three parts.
+-- (Full body as applied via Supabase MCP migration
+--  pets_to_groceries_amazon_officesupplies_retire_usbank_consolidate)
+--
+-- 1. PET SPENDING -> Groceries (9200). No new category, per Peter.
+--    Pet buys at H-E-B / Costco / Sam's / Sprouts already land in Groceries
+--    because those rules match the whole basket. Only Amazon pet items were
+--    orphaned, so routing them to Groceries keeps pet spend in one place.
+--    Keywords are deliberately narrow: bare "cat" is excluded because it
+--    matches catalog / category / cable.
+--
+-- 2. Retired "AMEX Discretionary - Amazon (Marketplace / .com) -> 6910 Office
+--    Supplies". Peter's test was: kill it if it is a catch-all, keep it if it
+--    is a real targeted rule. Its pattern covered essentially every Amazon
+--    description on the AMEX card, so it was a catch-all in three variants,
+--    and at priority 6 it beat the giveaways catch-all (priority 60) Peter
+--    added later for the same card. Newer instruction wins.
+--    LEFT ALONE on purpose: "Amazon Prime -> 6310 Software" (a named
+--    subscription, genuinely specific) and the broader Retail rule (other
+--    merchants entirely).
+--
+-- 3. Retired 4200 "US Bank (originations)" in favour of 4018 "US Bank".
+--    4200 was the account actually wired up, which is why it held 7 rows /
+--    $390.00 while 4018 sat at zero. Moved the postings, repointed both
+--    comp_category_map rows (bank_new and the US BANK|USBANK "other"
+--    pattern), carried the 'sales' subtype onto 4018 so the profit-and-loss
+--    section logic behaves identically, then deactivated 4200 and renamed it
+--    to point at its replacement.
+--    The chart of accounts is locked by trigger by design; this used the
+--    drop / change / recreate procedure the lock's own error message
+--    prescribes, and the trigger was verified back on afterwards.
