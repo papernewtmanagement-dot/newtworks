@@ -1428,6 +1428,28 @@ function roleMatchScore(parsed: ParsedRole, existing: any): number {
   return 0;
 }
 
+/**
+ * Copies the seasonal verdict onto a merged entry, and CLEARS it when the role
+ * is no longer judged seasonal so a stale flag cannot survive a reparse.
+ *
+ * This module owns these two fields the same way it owns start/end/tenure.
+ * Leaving them out of the merge is exactly what broke the first backfill
+ * attempt: the seasonal correction was computed and then silently discarded,
+ * the merged entry came out identical to what was stored, and so nothing was
+ * written at all (Steven Valdez stayed at an inflated 117 months).
+ */
+function withSeasonalFields(entry: any, parsed: ParsedRole): any {
+  const out = { ...entry };
+  if (parsed.is_seasonal && Array.isArray(parsed.season_months) && parsed.season_months.length > 0) {
+    out.is_seasonal = true;
+    out.season_months = parsed.season_months;
+  } else {
+    delete out.is_seasonal;
+    delete out.season_months;
+  }
+  return out;
+}
+
 function hasQualitativeContent(entry: any): boolean {
   const cat = entry?.category;
   const notes = entry?.notes;
@@ -1471,7 +1493,7 @@ export function mergeParsedRolesIntoResumeAnalysis(
     if (bestIdx >= 0 && bestScore >= 0.5) {
       usedExistingIdx.add(bestIdx);
       const existingRole = existingRoles[bestIdx];
-      mergedRoles.push({
+      mergedRoles.push(withSeasonalFields({
         ...existingRole,
         employer: parsed.employer ?? existingRole.employer ?? null,
         title: parsed.title ?? existingRole.title ?? null,
@@ -1479,9 +1501,9 @@ export function mergeParsedRolesIntoResumeAnalysis(
         end: parsed.end,
         is_current: parsed.is_current,
         tenure_months: parsed.tenure_months,
-      });
+      }, parsed));
     } else {
-      mergedRoles.push({
+      mergedRoles.push(withSeasonalFields({
         employer: parsed.employer,
         title: parsed.title,
         start: parsed.start,
@@ -1490,7 +1512,7 @@ export function mergeParsedRolesIntoResumeAnalysis(
         tenure_months: parsed.tenure_months,
         category: null,
         notes: null,
-      });
+      }, parsed));
     }
   }
   // Carry over hand-written entries this parse did not touch (undated jobs).
