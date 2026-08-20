@@ -2377,10 +2377,48 @@ async function run(req: Request): Promise<Response> {
     allResults.push(...results);
   }
 
+  // ARCHIVE SWEEP — added 2026-08-19.
+  //
+  // maybeArchiveThread declines while any document from a thread is still
+  // unfinished, which is right — but documents that finish LATER, outside this
+  // function's run, never got a second look. The LLM parse queue is exactly
+  // that path: the AMEX 26-08 email was captured on 8/18, its document sat
+  // unfinished for two days, and when the drainer finally completed it there
+  // was nothing left to come back for the email. It stayed in the inbox until
+  // it was archived by hand.
+  //
+  // So every run now re-offers archiving to any thread that has finished
+  // documents but no archive stamp. maybeArchiveThread keeps all its own
+  // rules — it still declines if anything on the thread is genuinely pending —
+  // this only guarantees late finishers get looked at again.
+  let sweepArchived = 0;
+  try {
+    const { data: unarchived } = await sb
+      .from("documents")
+      .select("gmail_thread_id, doc_type, source_account_code")
+      .eq("agency_id", ctx.agencyId)
+      .is("gmail_archived_at", null)
+      .not("gmail_thread_id", "is", null)
+      .in("processing_status", ["processed", "error", "skipped"])
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const seen = new Set<string>();
+    for (const d of unarchived ?? []) {
+      const tid = (d as any).gmail_thread_id as string;
+      if (!tid || seen.has(tid)) continue;
+      seen.add(tid);
+      await maybeArchiveThread(ctx, tid, (d as any).doc_type ?? undefined, (d as any).source_account_code ?? null);
+      sweepArchived += 1;
+    }
+  } catch (e) {
+    console.error(`[archive-sweep] failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   const summary = {
     started_at: startedAt,
     finished_at: new Date().toISOString(),
     attachments_seen: attachments.length,
+    archive_sweep_threads: sweepArchived,
     items_total: allResults.length, // includes inner files from zips
     processed: allResults.filter((p) => p.status === "processed").length,
     skipped: allResults.filter((p) => p.status === "skipped").length,
