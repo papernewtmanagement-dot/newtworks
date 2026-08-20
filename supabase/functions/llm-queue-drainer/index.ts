@@ -833,8 +833,59 @@ Deno.serve(async (req) => {
     .limit(maxItems);
 
   if (qErr) return jsonResponse({ ok: false, error: `queue read failed: ${qErr.message}` }, 500);
-  if (!items || items.length === 0) {
+
+  // Rows stuck in "processing" belong to a run that died without finishing
+  // (crash, platform kill). Offer them back after a generous timeout — a live
+  // statement run takes 2-3 minutes, so 10 is safely past any honest run.
+  const STALE_PROCESSING_MINUTES = 10;
+  const staleCutoff = new Date(Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000).toISOString();
+  const { data: staleItems } = await sb
+    .from("llm_parse_queue")
+    .select("id, agency_id, document_id, purpose, system_prompt, user_content, model, attempts, target_ref")
+    .eq("agency_id", agencyId)
+    .eq("status", "processing")
+    .lt("last_attempt_at", staleCutoff)
+    .in("purpose", SUPPORTED_PURPOSES)
+    .lt("attempts", 3)
+    .order("created_at", { ascending: true })
+    .limit(maxItems);
+
+  const pool = [...(items ?? []), ...(staleItems ?? [])];
+  if (pool.length === 0) {
     return jsonResponse({ ok: true, drained: 0, message: "no pending items" });
+  }
+
+  // ATOMIC CLAIM — added 2026-08-19 after the duplicate storm.
+  //
+  // A row used to stay "pending" the whole time it was being worked, so every
+  // overlapping invocation — the 2-minute cron, a manual dispatch, or simply a
+  // run that outlives one cron interval — claimed the SAME row and processed it
+  // again. On AMEX 26-08 that wrote 66 statements rows in four minutes
+  // (05:48–05:52) and the GL writer posted 63 of them to the ledger before it
+  // was caught; every row had to be hand-deleted.
+  //
+  // Each row is now taken with one conditional update: pending -> processing.
+  // Whoever flips it first owns it; every other run matches zero rows and moves
+  // on. Dry runs never claim, so they cannot strand a row in "processing".
+  const claimed: QueueItem[] = [];
+  if (dryRun) {
+    claimed.push(...(pool as QueueItem[]));
+  } else {
+    for (const cand of pool as QueueItem[]) {
+      const fromStale = (staleItems ?? []).some((s) => s.id === cand.id);
+      let claimQ = sb
+        .from("llm_parse_queue")
+        .update({ status: "processing", last_attempt_at: new Date().toISOString() })
+        .eq("id", cand.id);
+      claimQ = fromStale
+        ? claimQ.eq("status", "processing").lt("last_attempt_at", staleCutoff)
+        : claimQ.eq("status", "pending");
+      const { data: got } = await claimQ.select("id");
+      if ((got?.length ?? 0) === 1) claimed.push(cand);
+    }
+  }
+  if (claimed.length === 0) {
+    return jsonResponse({ ok: true, drained: 0, message: "all candidates claimed by another run" });
   }
 
   const results: any[] = [];
@@ -844,7 +895,7 @@ Deno.serve(async (req) => {
   let failures = 0;
   let byPurpose: Record<string, { drained: number; ok: number; err: number }> = {};
 
-  for (const item of items as QueueItem[]) {
+  for (const item of claimed) {
     const purposeStats = byPurpose[item.purpose] ??= { drained: 0, ok: 0, err: 0 };
     purposeStats.drained += 1;
 
