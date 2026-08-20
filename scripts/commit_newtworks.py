@@ -180,7 +180,13 @@ def fetch_file_at(path, ref):
         die(f"Fetch failed ({status}) for {path}: {json.dumps(data)[:400]}")
     if data.get("encoding") != "base64":
         die(f"Unexpected encoding for {path}: {data.get('encoding')}")
-    content = base64.b64decode(data["content"].replace("\n", "")).decode("utf-8")
+    raw = base64.b64decode(data["content"].replace("\n", ""))
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # Not a text file (a PDF, an image). Returned as raw bytes so a binary
+        # batch entry can still compare against it and see whether it changed.
+        content = raw
     return {"sha": data["sha"], "content": content}
 
 
@@ -264,7 +270,13 @@ def run_batch(manifest_path, message, branch, dry_run):
             new_content = apply_replacements(current["content"], reps)
         elif "content_file" in entry:
             with open(entry["content_file"], "rb") as f:
-                new_content = f.read().decode("utf-8")
+                raw = f.read()
+            if entry.get("binary"):
+                # Kept as raw bytes all the way to the blob upload. Needed for
+                # PDFs and images, which cannot survive a text decode.
+                new_content = raw
+            else:
+                new_content = raw.decode("utf-8")
         else:
             die(f"{path}: entry needs 'replace', 'content_file', or 'delete': true.")
 
@@ -292,7 +304,9 @@ def run_batch(manifest_path, message, branch, dry_run):
             tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
             continue
         blob = gh_post_json("/git/blobs", {
-            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            "content": base64.b64encode(
+                content.encode("utf-8") if isinstance(content, str) else content
+            ).decode("ascii"),
             "encoding": "base64",
         })
         tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})

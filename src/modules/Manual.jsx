@@ -1620,25 +1620,23 @@ What I\'d like to discuss:
       {/* Accent bar */}
       <div className="nw-print-hide" style={{ height: 4, background: T.blue, borderRadius: 2, marginBottom: 24, opacity: 0.85 }} />
 
-      {/* Print — available to everyone, not just admins. Hidden on the printed
-          sheet itself. Ctrl/Cmd-P produces exactly the same output. */}
-      <div className="nw-print-hide" style={{ display: "flex", marginBottom: 18 }}>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          title="Print this page (title and content only)"
-          style={{
-            padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.slate300}`,
-            background: T.white, color: T.slate700, fontSize: 13, fontWeight: 600, cursor: "pointer",
-          }}
-        >
-          Print
-        </button>
-      </div>
-
-      {/* Action row — admin-only edit controls */}
-      {isAdmin && mode === "view" && (
+      {/* Action row. Print shares the row with the edit controls: Print shows for
+          everyone, the edit controls only for admins, so a non-admin still sees
+          the row with Print alone on it. The whole row is dropped when printing. */}
+      {mode === "view" && (
         <div className="nw-print-hide" style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            title="Print this page (title and content only)"
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.slate300}`,
+              background: T.white, color: T.slate700, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            Print
+          </button>
+          {isAdmin && (
           <button
             type="button"
             onClick={enterEdit}
@@ -1649,6 +1647,8 @@ What I\'d like to discuss:
           >
             ✎ Edit page
           </button>
+          )}
+          {isAdmin && (
           <button
             type="button"
             onClick={enterNewChild}
@@ -1659,6 +1659,8 @@ What I\'d like to discuss:
           >
             + New page under this
           </button>
+          )}
+          {isAdmin && (
           <button
             type="button"
             onClick={deletePage}
@@ -1671,6 +1673,7 @@ What I\'d like to discuss:
           >
             Delete
           </button>
+          )}
         </div>
       )}
       {isAdmin && (mode === "edit" || mode === "new-child") && (
