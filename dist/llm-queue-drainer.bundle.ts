@@ -713,6 +713,112 @@ function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number
   return Math.max(floor, Math.min(ceiling, available));
 }
 
+// Compact statement prompt used by drainBankStatementItem. See the long note at
+// its call site for why this exists instead of the queued JSON prompt.
+const BANK_STATEMENT_PROMPT_COMPACT = `You are a parser for U.S. bank and credit card statements. You will be given the
+text of one statement covering a single account.
+
+Output PLAIN TEXT LINES ONLY. No JSON, no prose, no markdown, no code fences.
+Emit exactly these line types, pipe-delimited, in this order:
+
+PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
+LAST4|<last 4 digits of the account, or NULL>
+OPEN|<opening/beginning/previous balance as a number, or NULL>
+CLOSE|<closing/ending/new balance as a number, or NULL>
+TXN|<YYYY-MM-DD>|<payee>|<memo>|<amount>
+TXN|<YYYY-MM-DD>|<payee>|<memo>|<amount>
+...one TXN line per transaction...
+
+Rules:
+- Emit PERIOD, LAST4, OPEN and CLOSE exactly once each, before any TXN line.
+- Balances come from the account summary section. Credit card statements may
+  call them "Previous Balance" and "New Balance". Report a credit card's
+  outstanding balance as a POSITIVE number (the amount owed).
+- amount: NEGATIVE for money out (purchases, fees, interest charged),
+  POSITIVE for money in (payments toward the balance, refunds, credits).
+- date MUST be the TRANSACTION date — the date the purchase or payment actually
+  occurred. If a line prints both a transaction date and a separate posting
+  date, use the transaction date, never the posting date.
+- Skip beginning-balance, ending-balance and "Total" summary lines. They belong
+  in OPEN/CLOSE, not as TXN lines. Skip non-transactional informational lines.
+- Combine a multi-line transaction description into the single payee/memo pair.
+- If the statement prints its own notation for what kind of line this is
+  (for example "CR MERCHANDISE/SERVICE RETURN", "CASH BACK REWARD", "AUTOPAY",
+  "RETURNED PAYMENT"), APPEND that exact notation to memo. Never drop it — it is
+  the bank's own explanation of why a line is a credit, and losing it forces
+  someone to re-open the PDF later.
+- If memo would be empty, leave it empty: TXN|2026-07-04|COSTCO||-84.12
+- Never put a "|" character inside payee or memo. Replace any with a space.
+- If the statement prints multiple lines with the SAME date, payee and amount,
+  emit one TXN line for EACH printed line. NEVER merge, collapse or deduplicate
+  repeated identical lines — repeated small identical charges (game stores, app
+  stores, subscriptions) are real separate transactions and every printed line
+  must appear in the output.
+- ISO dates only. Amounts as bare numbers: no currency symbols, no thousands
+  separators, no parentheses. Use a leading minus for money out.`;
+
+// Parses the compact line format above into the same shape the rest of
+// drainBankStatementItem already expects, so nothing downstream changes.
+// Returns null when no transactions were recovered.
+function parseCompactStatement(raw: string): {
+  statement_period: { start: string; end: string } | null;
+  account_last4: string | null;
+  opening_balance: number | null;
+  closing_balance: number | null;
+  transactions: { date: string; payee: string; memo: string; amount: number }[];
+} | null {
+  const num = (s: string): number | null => {
+    const t = (s ?? "").trim();
+    if (!t || t.toUpperCase() === "NULL") return null;
+    const v = Number(t.replace(/[$,]/g, ""));
+    return Number.isFinite(v) ? v : null;
+  };
+
+  let period: { start: string; end: string } | null = null;
+  let last4: string | null = null;
+  let open: number | null = null;
+  let close: number | null = null;
+  const txns: { date: string; payee: string; memo: string; amount: number }[] = [];
+
+  for (const line of stripFences(raw).split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const parts = t.split("|");
+    const tag = (parts[0] ?? "").trim().toUpperCase();
+
+    if (tag === "PERIOD" && parts.length >= 3) {
+      const s = parts[1].trim(), e = parts[2].trim();
+      if (s && e && s.toUpperCase() !== "NULL" && e.toUpperCase() !== "NULL") period = { start: s, end: e };
+    } else if (tag === "LAST4" && parts.length >= 2) {
+      const v = parts[1].trim();
+      last4 = (!v || v.toUpperCase() === "NULL") ? null : v;
+    } else if (tag === "OPEN" && parts.length >= 2) {
+      open = num(parts[1]);
+    } else if (tag === "CLOSE" && parts.length >= 2) {
+      close = num(parts[1]);
+    } else if (tag === "TXN" && parts.length >= 5) {
+      // amount is ALWAYS last and date ALWAYS first, so a stray "|" that slipped
+      // into the memo despite the instruction gets folded back into the memo
+      // rather than shifting the amount out of position.
+      const date = parts[1].trim();
+      const amount = num(parts[parts.length - 1]);
+      const payee = parts[2].trim();
+      const memo = parts.slice(3, parts.length - 1).join(" ").trim();
+      if (!date || amount === null || !payee) continue;
+      txns.push({ date, payee, memo, amount });
+    }
+  }
+
+  if (txns.length === 0) return null;
+  return {
+    statement_period: period,
+    account_last4: last4,
+    opening_balance: open,
+    closing_balance: close,
+    transactions: txns,
+  };
+}
+
 async function callGroq(
   apiKey: string,
   model: string,
@@ -776,24 +882,45 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // cannot outrun that; the thinking scales with the budget you hand it.
   // Statement parsing is mechanical transcription, so thinking buys nothing:
   // reasoning_effort "low" hands essentially the whole budget to the answer.
-  const bankMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, bankMaxTokens, "low");
+  //
+  // ANSWER SIZE, same date. Capping the thinking was still not enough: the
+  // retry produced 6931 chars and hit the wall again. The reason is the queued
+  // prompt asks for pretty-printed JSON carrying "raw_line" (a verbatim echo of
+  // the source line) and "section" for EVERY transaction — so the answer copies
+  // the statement back out at roughly double size. Neither field is stored:
+  // the statements table has no column for either, and the cleanTxns loop below
+  // reads only date/payee/memo/amount. They were pure cost.
+  //
+  // So this path sends its OWN prompt instead of item.system_prompt, asking for
+  // one compact line per transaction and only the four fields that get stored.
+  // Every rule that affects STORED data is carried over verbatim in intent:
+  // transaction date over posting date, the bank's own notation appended to
+  // memo, repeated identical lines never merged, summary lines skipped, money
+  // out negative. Roughly 17 tokens per transaction instead of ~90, which puts
+  // a 60-transaction statement at about a third of the available budget.
+  //
+  // The drainer already overrides the queued MODEL (BANK_STATEMENT_MODEL), so
+  // overriding the queued PROMPT follows the same precedent. document-processor's
+  // synchronous path is untouched and still uses its own JSON prompt.
+  const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, item.user_content, 6000, 1200);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, item.user_content, bankMaxTokens, "low");
   if (!llm.ok) return { ok: false, error: llm.error };
 
-  // 2. Parse JSON. Check truncation FIRST — a cut-off answer is a budget
-  // problem, and calling it "JSON parse failed" sent three sessions looking at
-  // the wrong layer. Name it plainly so the next failure is diagnosable.
+  // 2. Check truncation FIRST — a cut-off answer is a budget problem, and
+  // calling it "JSON parse failed" sent three sessions looking at the wrong
+  // layer. Name it plainly so the next failure is diagnosable.
   if (llm.finishReason === "length") {
     return {
       ok: false,
       error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
-        + `(prompt ~${Math.ceil((item.system_prompt.length + item.user_content.length) / 4)} tokens, `
+        + `(prompt ~${Math.ceil((BANK_STATEMENT_PROMPT_COMPACT.length + item.user_content.length) / 4)} tokens, `
         + `${llm.raw.length} chars returned). Statement is too long for one pass — split it or shrink the prompt.`,
     };
   }
-  let json: any;
-  try { json = JSON.parse(stripFences(llm.raw)); }
-  catch (e) { return { ok: false, error: `JSON parse failed: ${e}. Head: ${llm.raw.slice(0, 200)}` }; }
+  const json = parseCompactStatement(llm.raw);
+  if (!json) {
+    return { ok: false, error: `compact parse produced no transactions. Head: ${llm.raw.slice(0, 200)}` };
+  }
 
   const period = json?.statement_period;
   if (!period?.start || !period?.end) {
