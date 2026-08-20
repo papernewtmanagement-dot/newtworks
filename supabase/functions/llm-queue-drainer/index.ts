@@ -91,35 +91,22 @@ from. Decide this BEFORE you decide the sign — it is what keeps the sign right
   C = merchant refund, return, rebate, or credit   -> amount POSITIVE
   O = none of the above (use only if genuinely unclear)
 
-SECTIONS ARE THE AUTHORITY ON KIND. Statements are organised under headings such
-as "Payments", "Credits", "New Charges", "Purchases", "Fees", "Interest Charged".
-Track which heading you are underneath as you read down, and take KIND from that
-heading — NEVER from the merchant name. Every line after a heading belongs to it
-until the next heading appears.
-
-This is the single most common way this task is got wrong: a refund from a
-merchant you also buy from looks exactly like a purchase. An AMAZON.COM line
-sitting under "Credits" is C, even though AMAZON.COM lines under "New Charges"
-are P. Same merchant, same wording, opposite sign — the heading decides. Before
-you emit a line, ask which heading it is under and let that set KIND.
+SECTIONS ARE THE AUTHORITY ON KIND. Statements group lines under headings such as
+"Payments", "Credits", "New Charges", "Fees", "Interest Charged". Track which
+heading you are under and take KIND from it, NEVER from the merchant name: an
+AMAZON.COM line under "Credits" is C, while AMAZON.COM under "New Charges" is P.
+A refund from a merchant you also buy from is the most common thing got wrong.
 
 Rules:
 - Emit PERIOD, LAST4, OPEN and CLOSE exactly once each, before any TXN line.
+- Emit one TXN line for EVERY transaction line printed on the statement. Do not
+  summarise, sample, or stop early. Completeness matters more than anything else
+  here: a dropped line breaks the books.
 - Balances come from the account summary section. Credit card statements may
   call them "Previous Balance" and "New Balance". Report a credit card's
   outstanding balance as a POSITIVE number (the amount owed).
-- CHECKSUM. Many statements print a "Payments and Credits Summary" giving a
-  "Total Payments and Credits" figure, and often a per-cardmember breakdown. The
-  magnitudes of all your Y and C lines must add up to that total. If they fall
-  short, you have left a credit in the purchases — the usual culprit is a group
-  of lines under "Credits" from a merchant that also appears under charges.
-  A per-cardmember credit subtotal is a SUMMARY figure: use it to check your
-  work, never emit it as its own TXN line.
-- SELF-CHECK before you output, and fix signs if it fails: for a credit card,
-  OPEN + (sum of all P amounts, as positive magnitudes) - (sum of all Y and C
-  amounts, as positive magnitudes) must equal CLOSE. For a bank account,
-  OPEN + (sum of every amount, with its sign) must equal CLOSE. If it does not
-  tie, you have mis-signed or missed a line — re-read and correct it.
+- A per-cardmember credit subtotal in a summary block is a SUMMARY figure, not a
+  transaction. Never emit one as a TXN line.
 - amount: NEGATIVE for money out, POSITIVE for money in, per KIND above.
 - date MUST be the TRANSACTION date — the date the purchase or payment actually
   occurred. If a line prints both a transaction date and a separate posting
@@ -303,7 +290,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // overriding the queued PROMPT follows the same precedent. document-processor's
   // synchronous path is untouched and still uses its own JSON prompt.
   const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, item.user_content, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, item.user_content, bankMaxTokens, "low");
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, item.user_content, bankMaxTokens, "medium");
   if (!llm.ok) return { ok: false, error: llm.error };
 
   // 2. Check truncation FIRST — a cut-off answer is a budget problem, and
