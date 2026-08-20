@@ -340,9 +340,10 @@ function orderedOptions(options, attemptId, itemId) {
 export default function Trivia({ userRole, userId }) {
   const vp = useViewport();
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "sharedgrid", "review", "approved", "reports", "gates"]);
-  // non-admins can land on Play or Shared Grid; every other tab forces them back to Play
-  const tab = isAdmin ? tabRaw : (tabRaw === "sharedgrid" ? "sharedgrid" : "play");
+  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
+  // Shared Grid is no longer a tab of its own — it is a mode inside Play, like
+  // every other game. Non-admins only ever see Play.
+  const tab = isAdmin ? tabRaw : "play";
 
   const [items, setItems] = useState([]);
   const [optionsByItem, setOptionsByItem] = useState({});
@@ -746,7 +747,6 @@ export default function Trivia({ userRole, userId }) {
       </div>
       <div style={s.tabBar}>
         <button type="button" style={s.tabBtn(tab === "play")} onClick={() => setTabRaw("play")}>Play</button>
-        <button type="button" style={s.tabBtn(tab === "sharedgrid")} onClick={() => setTabRaw("sharedgrid")}>Shared Grid</button>
         {isAdmin && (
           <>
             <button type="button" style={s.tabBtn(tab === "review")} onClick={() => setTabRaw("review")}>Review</button>
@@ -766,7 +766,6 @@ export default function Trivia({ userRole, userId }) {
           </div>
         )}
         {tab === "play" && <TriviaPlayTab userId={userId} isAdmin={isAdmin} />}
-        {tab === "sharedgrid" && <TriviaSharedGridTab userId={userId} />}
         {isAdmin && loading && <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Loading…</div>}
         {isAdmin && !loading && tab === "review" && reviewTab}
         {isAdmin && !loading && tab === "approved" && approvedTab}
@@ -922,6 +921,10 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const [modesError, setModesError] = useState(null);
   const [poolCount, setPoolCount] = useState(0);
   const [poolError, setPoolError] = useState(null);
+
+  // Shared Grid runs inside Play now. It owns its own state, so it tells us
+  // when a game is actually running and we treat it like any other live game.
+  const [sharedActive, setSharedActive] = useState(false);
 
   // Daily Five
   const [dfPhase, setDfPhase] = useState("checking"); // checking | not_started | in_progress | playing | finishing | finished | error
@@ -2017,10 +2020,12 @@ function TriviaPlayTab({ userId, isAdmin }) {
     : (spinPhase === "playing" || spinPhase === "finishing") ? "spin"
     : (duelMode === "playing" || duelMode === "starting") ? "duel"
     : (dfPhase === "playing" || dfPhase === "finishing") ? "daily"
+    : sharedActive ? "shared"
     : null;
   const stageTitles = {
     night: "Trivia Night", gate: "Training", grid: "The Grid",
     spin: "Spin & Solve", duel: "Duel", daily: "Daily Five",
+    shared: "Shared Grid",
   };
   const shows = (key) => !activeGame || activeGame === key;
   const boxStyle = (key) => (activeGame === key ? s.stageCard : s.playCard);
@@ -2029,7 +2034,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
     <div>
       {(modesError || poolError) && <div style={s.errorBanner}>{modesError || poolError}</div>}
 
-      {activeGame && (
+      {activeGame && activeGame !== "shared" && (
         <div style={s.stageHeader}>
           <div>
             <div style={s.stageTitle}>{stageTitles[activeGame]}</div>
@@ -2623,6 +2628,11 @@ function TriviaPlayTab({ userId, isAdmin }) {
           )}
         </div>
         )}
+
+        {/* ── Shared Grid card ── */}
+        {shows("shared") && (
+          <TriviaSharedGridTab userId={userId} onActiveChange={setSharedActive} />
+        )}
       </div>
 
       {/* ── Standings strip ── */}
@@ -2718,10 +2728,16 @@ const gridShared = {
   }),
 };
 
-function TriviaSharedGridTab({ userId }) {
+function TriviaSharedGridTab({ userId, onActiveChange }) {
   const vp = useViewport();
   const [gsSessionId, setGsSessionId] = useTabParam("gsession", null);
   const [gsPhase, setGsPhase] = useState("checking"); // checking | setup | board | error
+
+  // Play owns the stage. Tell it when a shared game is genuinely running so the
+  // other mode cards step aside, exactly the way the built-in modes behave.
+  useEffect(() => {
+    if (typeof onActiveChange === "function") onActiveChange(gsPhase === "board");
+  }, [gsPhase, onActiveChange]);
   const [gsError, setGsError] = useState(null);
   const [gsState, setGsState] = useState(null);
   const [gsNames, setGsNames] = useState(["", ""]);
