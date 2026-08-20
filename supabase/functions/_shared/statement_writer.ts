@@ -146,7 +146,22 @@ export async function writeParsedStatement(
       `missing balance from parser: opening=${openBal === null ? "null" : openBal}, ` +
       `closing=${closeBal === null ? "null" : closeBal}`;
   } else {
-    const txnSum = opts.transactions.reduce((acc, t) => acc + t.signedAmount, 0);
+    // The guard must compare like with like. Parser convention (D15) is
+    // + money in / - money out regardless of account kind, but a CREDIT
+    // statement's balances are amounts OWED: a purchase (parser negative)
+    // makes the balance go UP, and a payment (parser positive) makes it go
+    // DOWN. So the sum has to carry the same account_kind flip the row writer
+    // applies below, or every card statement mis-ties by twice its own
+    // activity. Bank balances move with the parser sign and need no flip.
+    //
+    // Found 2026-08-19 on AMEX Discretionary 26-08: opening 5460.25, closing
+    // 3304.71, parser sum +2022.78. Unflipped the guard expected 7483.03 and
+    // reported a $4178.32 break. Flipped it expects 3437.47, leaving exactly
+    // -132.76 — which is 2 x 66.38, the single Amazon refund the parser had
+    // read as a purchase. Flipping the guard is what made the residual
+    // diagnostic instead of noise.
+    const kindSign = opts.account.accountKind === "credit" ? -1 : 1;
+    const txnSum = opts.transactions.reduce((acc, t) => acc + kindSign * t.signedAmount, 0);
     const expected = openBal + txnSum;
     reconDelta = Math.round((closeBal - expected) * 100) / 100;
     if (Math.abs(reconDelta) > STMT_RECON_EPSILON) {

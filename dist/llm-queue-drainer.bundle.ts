@@ -445,7 +445,22 @@ async function writeParsedStatement(
       `missing balance from parser: opening=${openBal === null ? "null" : openBal}, ` +
       `closing=${closeBal === null ? "null" : closeBal}`;
   } else {
-    const txnSum = opts.transactions.reduce((acc, t) => acc + t.signedAmount, 0);
+    // The guard must compare like with like. Parser convention (D15) is
+    // + money in / - money out regardless of account kind, but a CREDIT
+    // statement's balances are amounts OWED: a purchase (parser negative)
+    // makes the balance go UP, and a payment (parser positive) makes it go
+    // DOWN. So the sum has to carry the same account_kind flip the row writer
+    // applies below, or every card statement mis-ties by twice its own
+    // activity. Bank balances move with the parser sign and need no flip.
+    //
+    // Found 2026-08-19 on AMEX Discretionary 26-08: opening 5460.25, closing
+    // 3304.71, parser sum +2022.78. Unflipped the guard expected 7483.03 and
+    // reported a $4178.32 break. Flipped it expects 3437.47, leaving exactly
+    // -132.76 — which is 2 x 66.38, the single Amazon refund the parser had
+    // read as a purchase. Flipping the guard is what made the residual
+    // diagnostic instead of noise.
+    const kindSign = opts.account.accountKind === "credit" ? -1 : 1;
+    const txnSum = opts.transactions.reduce((acc, t) => acc + kindSign * t.signedAmount, 0);
     const expected = openBal + txnSum;
     reconDelta = Math.round((closeBal - expected) * 100) / 100;
     if (Math.abs(reconDelta) > STMT_RECON_EPSILON) {
@@ -725,17 +740,33 @@ PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
 LAST4|<last 4 digits of the account, or NULL>
 OPEN|<opening/beginning/previous balance as a number, or NULL>
 CLOSE|<closing/ending/new balance as a number, or NULL>
-TXN|<YYYY-MM-DD>|<payee>|<memo>|<amount>
-TXN|<YYYY-MM-DD>|<payee>|<memo>|<amount>
+TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
+TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
 ...one TXN line per transaction...
+
+KIND is exactly one letter classifying which part of the statement the line came
+from. Decide this BEFORE you decide the sign — it is what keeps the sign right:
+  P = purchase / charge / fee / interest charged   -> amount NEGATIVE
+  Y = payment made toward the account balance      -> amount POSITIVE
+  C = merchant refund, return, rebate, or credit   -> amount POSITIVE
+  O = none of the above (use only if genuinely unclear)
 
 Rules:
 - Emit PERIOD, LAST4, OPEN and CLOSE exactly once each, before any TXN line.
 - Balances come from the account summary section. Credit card statements may
   call them "Previous Balance" and "New Balance". Report a credit card's
   outstanding balance as a POSITIVE number (the amount owed).
-- amount: NEGATIVE for money out (purchases, fees, interest charged),
-  POSITIVE for money in (payments toward the balance, refunds, credits).
+- A refund or return is NOT a purchase, even when the merchant name is
+  identical to a purchase elsewhere on the statement and even when it sits in
+  the same list. Look for the statement's own credit markers — a trailing CR,
+  a minus sign, a separate "Credits" section heading, or wording like RETURN,
+  REFUND, CREDIT, REBATE. Those lines are C, and C is POSITIVE.
+- SELF-CHECK before you output, and fix signs if it fails: for a credit card,
+  OPEN + (sum of all P amounts, as positive magnitudes) - (sum of all Y and C
+  amounts, as positive magnitudes) must equal CLOSE. For a bank account,
+  OPEN + (sum of every amount, with its sign) must equal CLOSE. If it does not
+  tie, you have mis-signed or missed a line — re-read and correct it.
+- amount: NEGATIVE for money out, POSITIVE for money in, per KIND above.
 - date MUST be the TRANSACTION date — the date the purchase or payment actually
   occurred. If a line prints both a transaction date and a separate posting
   date, use the transaction date, never the posting date.
@@ -747,7 +778,7 @@ Rules:
   "RETURNED PAYMENT"), APPEND that exact notation to memo. Never drop it — it is
   the bank's own explanation of why a line is a credit, and losing it forces
   someone to re-open the PDF later.
-- If memo would be empty, leave it empty: TXN|2026-07-04|COSTCO||-84.12
+- If memo would be empty, leave it empty: TXN|2026-07-04|P|COSTCO||-84.12
 - Never put a "|" character inside payee or memo. Replace any with a space.
 - If the statement prints multiple lines with the SAME date, payee and amount,
   emit one TXN line for EACH printed line. NEVER merge, collapse or deduplicate
@@ -796,15 +827,30 @@ function parseCompactStatement(raw: string): {
       open = num(parts[1]);
     } else if (tag === "CLOSE" && parts.length >= 2) {
       close = num(parts[1]);
-    } else if (tag === "TXN" && parts.length >= 5) {
+    } else if (tag === "TXN" && parts.length >= 6) {
       // amount is ALWAYS last and date ALWAYS first, so a stray "|" that slipped
       // into the memo despite the instruction gets folded back into the memo
       // rather than shifting the amount out of position.
       const date = parts[1].trim();
-      const amount = num(parts[parts.length - 1]);
-      const payee = parts[2].trim();
-      const memo = parts.slice(3, parts.length - 1).join(" ").trim();
-      if (!date || amount === null || !payee) continue;
+      const kind = (parts[2] ?? "").trim().toUpperCase().charAt(0);
+      const rawAmt = num(parts[parts.length - 1]);
+      const payee = parts[3].trim();
+      const memo = parts.slice(4, parts.length - 1).join(" ").trim();
+      if (!date || rawAmt === null || !payee) continue;
+
+      // KIND is authoritative over the minus sign the model typed. It classifies
+      // the statement SECTION, which is a much easier judgement than the sign
+      // convention, and it is the whole reason KIND is asked for: on AMEX 26-08
+      // an Amazon RETURN was written with a purchase's minus sign, which put the
+      // statement out by twice the line. Deriving the sign from the section
+      // removes that failure mode. "O" is left exactly as the model signed it —
+      // an unclassified line is one for a human to look at, not to coerce.
+      const mag = Math.abs(rawAmt);
+      let amount: number;
+      if (kind === "P") amount = -mag;
+      else if (kind === "Y" || kind === "C") amount = mag;
+      else amount = rawAmt;
+
       txns.push({ date, payee, memo, amount });
     }
   }
