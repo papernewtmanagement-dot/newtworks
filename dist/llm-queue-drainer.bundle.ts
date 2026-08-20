@@ -740,6 +740,8 @@ PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
 LAST4|<last 4 digits of the account, or NULL>
 OPEN|<opening/beginning/previous balance as a number, or NULL>
 CLOSE|<closing/ending/new balance as a number, or NULL>
+SUMCHARGES|<Account Summary "New Charges" + "Fees" + "Interest Charged", or NULL>
+SUMCREDITS|<Account Summary "Payments/Credits" total as a POSITIVE number, or NULL>
 TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
 TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
 ...one TXN line per transaction...
@@ -758,7 +760,12 @@ AMAZON.COM line under "Credits" is C, while AMAZON.COM under "New Charges" is P.
 A refund from a merchant you also buy from is the most common thing got wrong.
 
 Rules:
-- Emit PERIOD, LAST4, OPEN and CLOSE exactly once each, before any TXN line.
+- Emit PERIOD, LAST4, OPEN, CLOSE, SUMCHARGES and SUMCREDITS exactly once each,
+  before any TXN line.
+- SUMCHARGES and SUMCREDITS come from the "Account Summary" block, which prints
+  authoritative totals (Previous Balance, Payments/Credits, New Charges, Fees,
+  Interest Charged). Copy those figures as printed — do not add them up yourself
+  from the transaction lines. They are used to check your work.
 - Emit one TXN line for EVERY transaction line printed on the statement. Do not
   summarise, sample, or stop early. Completeness matters more than anything else
   here: a dropped line breaks the books.
@@ -797,6 +804,8 @@ function parseCompactStatement(raw: string): {
   account_last4: string | null;
   opening_balance: number | null;
   closing_balance: number | null;
+  declared_charges: number | null;
+  declared_credits: number | null;
   transactions: { date: string; payee: string; memo: string; amount: number }[];
 } | null {
   const num = (s: string): number | null => {
@@ -810,6 +819,8 @@ function parseCompactStatement(raw: string): {
   let last4: string | null = null;
   let open: number | null = null;
   let close: number | null = null;
+  let declCharges: number | null = null;
+  let declCredits: number | null = null;
   const txns: { date: string; payee: string; memo: string; amount: number }[] = [];
 
   for (const line of stripFences(raw).split("\n")) {
@@ -828,6 +839,12 @@ function parseCompactStatement(raw: string): {
       open = num(parts[1]);
     } else if (tag === "CLOSE" && parts.length >= 2) {
       close = num(parts[1]);
+    } else if (tag === "SUMCHARGES" && parts.length >= 2) {
+      const v = num(parts[1]);
+      declCharges = v === null ? null : Math.abs(v);
+    } else if (tag === "SUMCREDITS" && parts.length >= 2) {
+      const v = num(parts[1]);
+      declCredits = v === null ? null : Math.abs(v);
     } else if (tag === "TXN" && parts.length >= 6) {
       // amount is ALWAYS last and date ALWAYS first, so a stray "|" that slipped
       // into the memo despite the instruction gets folded back into the memo
@@ -862,8 +879,58 @@ function parseCompactStatement(raw: string): {
     account_last4: last4,
     opening_balance: open,
     closing_balance: close,
+    declared_charges: declCharges,
+    declared_credits: declCredits,
     transactions: txns,
   };
+}
+
+// Deterministic sign repair, driven by the statement text rather than the model.
+//
+// The failure this exists for: a refund from a merchant you also buy from is
+// indistinguishable from a purchase by name alone. On AMEX 26-08 three
+// AMAZON.COM lines dated 08/14 sat under the "Credits" heading and were read as
+// charges, putting the books out by twice their value. The model cannot be
+// relied on to track headings, but the TEXT knows — so find the credits block
+// and let it decide.
+//
+// Self-validating: the caller only keeps the result if it makes the statement's
+// own Account Summary totals tie. If it does not, the flips are discarded and
+// the statement is held, so a bad guess can never reach the books.
+function reclassifyCreditsFromText(
+  statementText: string,
+  txns: { date: string; payee: string; memo: string; amount: number }[],
+): { flipped: number; txns: typeof txns } {
+  // The detail credits block starts at a "Credits" heading and ends at the next
+  // section heading. Both spellings appear across AMEX layouts.
+  const startRe = /Credits\s+Amount|^\s*Credits\s*$/im;
+  const startM = startRe.exec(statementText);
+  if (!startM) return { flipped: 0, txns };
+  const from = startM.index + startM[0].length;
+
+  const endRe = /New Charges|Total New Charges|Fees\s+Amount|Interest Charged/i;
+  const endM = endRe.exec(statementText.slice(from));
+  const span = endM
+    ? statementText.slice(from, from + endM.index)
+    : statementText.slice(from, from + 4000);
+
+  let flipped = 0;
+  const out = txns.map((t) => {
+    if (t.amount >= 0) return t;              // already a credit or payment
+    const mag = Math.abs(t.amount).toFixed(2);
+    // Match the amount as printed, with or without a thousands separator, and
+    // require the line's own date nearby so an identical amount elsewhere in
+    // the block cannot claim it.
+    const amtPat = mag.replace(".", "\\.");
+    const dayPat = t.date.slice(8, 10) + "\\/";
+    const near = new RegExp(`${dayPat}[^|\\n]{0,120}?\\$?${amtPat}`);
+    if (near.test(span)) {
+      flipped += 1;
+      return { ...t, amount: Math.abs(t.amount) };
+    }
+    return t;
+  });
+  return { flipped, txns: out };
 }
 
 async function callGroq(
@@ -973,6 +1040,49 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   const json = parseCompactStatement(llm.raw);
   if (!json) {
     return { ok: false, error: `compact parse produced no transactions. Head: ${llm.raw.slice(0, 200)}` };
+  }
+
+  // CONTROL-TOTAL CHECK. The Account Summary block states what the charges and
+  // the payments/credits add up to. Those figures are independent of how the
+  // model classified any individual line, which makes them the one reliable
+  // way to catch a sign misclassification — and to locate it, since the gap
+  // equals the value of the mis-signed lines.
+  //
+  // When they do not agree, try the text-driven repair and keep it ONLY if the
+  // totals then tie exactly. Anything less and the parse is left as-is for the
+  // reconciliation guard to hold, because a partial guess on money is worse
+  // than a clean stop.
+  let controlNote = "";
+  if (json.declared_charges !== null || json.declared_credits !== null) {
+    const sumOf = (ts: typeof json.transactions) => ({
+      charges: ts.filter((t) => t.amount < 0).reduce((a, t) => a + Math.abs(t.amount), 0),
+      credits: ts.filter((t) => t.amount > 0).reduce((a, t) => a + t.amount, 0),
+    });
+    const off = (s: { charges: number; credits: number }) =>
+      Math.abs(s.charges - (json.declared_charges ?? s.charges))
+      + Math.abs(s.credits - (json.declared_credits ?? s.credits));
+
+    const before = sumOf(json.transactions);
+    const offBefore = Math.round(off(before) * 100) / 100;
+
+    if (offBefore > 0.01) {
+      const rc = reclassifyCreditsFromText(item.user_content, json.transactions);
+      const after = sumOf(rc.txns);
+      const offAfter = Math.round(off(after) * 100) / 100;
+      if (rc.flipped > 0 && offAfter <= 0.01) {
+        json.transactions = rc.txns;
+        controlNote = `control totals: repaired ${rc.flipped} line(s) misread as charges, `
+          + `using the statement's own credits block; charges ${after.charges.toFixed(2)} and `
+          + `credits ${after.credits.toFixed(2)} now match the Account Summary exactly`;
+        console.log(`[drainer] ${controlNote}`);
+      } else {
+        controlNote = `control totals DISAGREE by $${offBefore.toFixed(2)}: parsed charges `
+          + `${before.charges.toFixed(2)} vs declared ${json.declared_charges ?? "n/a"}, parsed credits `
+          + `${before.credits.toFixed(2)} vs declared ${json.declared_credits ?? "n/a"}. `
+          + `Text repair flipped ${rc.flipped} line(s), still off by $${offAfter.toFixed(2)} — not applied.`;
+        console.warn(`[drainer] ${controlNote}`);
+      }
+    }
   }
 
   const period = json?.statement_period;
