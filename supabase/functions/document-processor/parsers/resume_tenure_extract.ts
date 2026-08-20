@@ -1419,20 +1419,125 @@ function nameSimilarity(a: string | null | undefined, b: string | null | undefin
 }
 
 /**
- * How well a parsed role matches an existing entry. Employer agreement is
- * decisive (checked against BOTH fields, since the previous parser swapped
- * them). A title alone matches many jobs ("Manager"), so it only counts when
- * there is no employer on one side to disagree, and only when it is a
- * near-exact, multi-word title.
+ * A parsed label that is really a sentence of duty text rather than a name.
+ * Used ONLY to decide whose labels win when a row is absorbed — never to
+ * decide whether two rows match, and never in the parse step. A wrong answer
+ * here costs a label, not a job.
  */
-function roleMatchScore(parsed: ParsedRole, existing: any): number {
-  const empSim = Math.max(nameSimilarity(parsed.employer, existing?.employer), nameSimilarity(parsed.employer, existing?.title));
+function isJunkLabel(s: string | null | undefined): boolean {
+  const t = (s ?? "").trim();
+  if (!t) return false;
+  if (looksLikeProse(t)) return true;
+  // An ALL-CAPS resume defeats looksLikeProse unless the line ends in
+  // punctuation. Eight or more words, all caps, no lowercase anywhere is a
+  // duty sentence rather than a job title. The threshold sits far above any
+  // real title on purpose: a word-count test like this one inside the PARSE
+  // step threw four real jobs away on 2026-08-19 (Tabitha Graciano). Here the
+  // fallback is keeping the STORED label, so the downside is bounded.
+  if (!/[a-z]/.test(t) && /[A-Z]/.test(t) && wordCount(t) >= 8) return true;
+  return false;
+}
+
+/**
+ * The date range a stored row's own notes text describes, if any. Reuses this
+ * module's range regexes and token parser rather than adding a second date
+ * parser — the two would drift.
+ */
+function notesDateRange(existing: any, asOf: MonthYear): { start: string; end: string | null } | null {
+  const notes = typeof existing?.notes === "string" ? existing.notes : "";
+  if (!notes.trim()) return null;
+  let startTok: Tok = null;
+  let endTok: Tok = null;
+  let m = notes.match(RANGE_RE);
+  if (m) {
+    startTok = parseDateToken(m[1], asOf);
+    endTok = parseDateToken(m[2], asOf);
+  } else {
+    m = notes.match(SINCE_RE);
+    if (m) {
+      startTok = parseDateToken(m[1], asOf);
+      endTok = { kind: "present" };
+    }
+  }
+  if (!startTok || startTok.kind !== "date" || !endTok) return null;
+  return {
+    start: ym(startTok.my),
+    end: endTok.kind === "present" ? null : ym((endTok as any).my),
+  };
+}
+
+/**
+ * Fires when the stored row holds the SWAPPED labels this parser corrects:
+ * the parsed title looks like the stored employer, or vice versa.
+ */
+function swapSignature(parsed: ParsedRole, existing: any): number {
+  return Math.max(
+    nameSimilarity(parsed.title, existing?.employer),
+    nameSimilarity(parsed.employer, existing?.title),
+  );
+}
+
+/**
+ * How much the LABELS say these are the same job. Employer agreement is
+ * strongest (checked against both stored fields, since the previous parser
+ * swapped them). A swap signature is next. A title alone matches many jobs
+ * ("Manager"), so it only counts when one side names no employer at all —
+ * two named employers that disagree still mean different jobs, whatever the
+ * titles say (Karen Garza's Harlandale row versus her Comal ISD row).
+ */
+function labelEvidence(parsed: ParsedRole, existing: any): number {
+  const empSim = Math.max(
+    nameSimilarity(parsed.employer, existing?.employer),
+    nameSimilarity(parsed.employer, existing?.title),
+  );
   if (empSim >= 0.5) return empSim;
+  if (swapSignature(parsed, existing) >= 0.8) return 0.7;
   const bothHaveEmployer = !!normalizeName(parsed.employer) && !!normalizeName(existing?.employer);
-  if (bothHaveEmployer) return 0; // two named employers that disagree = different jobs
-  const titleSim = Math.max(nameSimilarity(parsed.title, existing?.title), nameSimilarity(parsed.title, existing?.employer));
-  if (titleSim >= 0.9 && nameTokens(parsed.title).size >= 2) return 0.8;
+  if (bothHaveEmployer) return 0;
+  const titleSim = Math.max(
+    nameSimilarity(parsed.title, existing?.title),
+    nameSimilarity(parsed.title, existing?.employer),
+  );
+  if (titleSim >= 0.9) return nameTokens(parsed.title).size >= 2 ? 0.55 : 0.30;
   return 0;
+}
+
+/**
+ * How much the DATES say these are the same job. Added to the label evidence.
+ * Same start month is the strongest signal there is that two differently
+ * labelled rows are one job; different start months are strong evidence they
+ * are not. An undated stored row has no start to compare, so its own notes
+ * text and its recorded tenure stand in.
+ */
+function dateAgreement(parsed: ParsedRole, existing: any, asOf: MonthYear): number {
+  const eStart = typeof existing?.start === "string" && existing.start ? existing.start : null;
+  if (eStart) {
+    if (eStart !== parsed.start) return -0.40;
+    const eEnd = typeof existing?.end === "string" && existing.end ? existing.end : null;
+    return eEnd === parsed.end ? 0.50 : 0.25;
+  }
+  const fromNotes = notesDateRange(existing, asOf);
+  if (fromNotes && fromNotes.start === parsed.start && fromNotes.end === parsed.end) return 0.50;
+  if (typeof existing?.tenure_months === "number" && existing.tenure_months === parsed.tenure_months) return 0.35;
+  return 0;
+}
+
+/**
+ * How well a parsed role matches an existing entry: label evidence plus date
+ * agreement, threshold 0.5 in the caller.
+ *
+ * HARD RULE — a pair with no label evidence at all never matches, however
+ * well the dates line up. The parser's labels are sometimes the WRONG ones,
+ * and absorbing on dates alone would overwrite a correct stored label with a
+ * wrong parsed one. Jonathan Kelley is the reference case: 2011-02 to
+ * 2014-05, parser says "Chief of Police @ Achille Police Department", stored
+ * says "Sergeant @ Fannin County Sheriffs Office", and the STORED row is the
+ * correct one. That duplicate is left visible on purpose.
+ */
+function roleMatchScore(parsed: ParsedRole, existing: any, asOf: MonthYear): number {
+  const label = labelEvidence(parsed, existing);
+  if (label <= 0) return 0;
+  return label + dateAgreement(parsed, existing, asOf);
 }
 
 /**
@@ -1480,7 +1585,9 @@ function hasQualitativeContent(entry: any): boolean {
 export function mergeParsedRolesIntoResumeAnalysis(
   existing: any,
   parsedRoles: ParsedRole[],
+  asOf?: MonthYear,
 ): { updated: any; changed: boolean } {
+  const now = asOf ?? nowMonthYear();
   const base = existing && typeof existing === "object" ? { ...existing } : {};
   const qualifications = { ...(base.qualifications ?? {}) };
   const priorSimilarRole = { ...(qualifications.prior_similar_role ?? {}) };
@@ -1494,16 +1601,29 @@ export function mergeParsedRolesIntoResumeAnalysis(
     let bestScore = 0;
     existingRoles.forEach((r, idx) => {
       if (usedExistingIdx.has(idx)) return;
-      const sc = roleMatchScore(parsed, r);
+      const sc = roleMatchScore(parsed, r, now);
       if (sc > bestScore) { bestScore = sc; bestIdx = idx; }
     });
     if (bestIdx >= 0 && bestScore >= 0.5) {
       usedExistingIdx.add(bestIdx);
       const existingRole = existingRoles[bestIdx];
+      // Whose labels win. 1) The swap signature fired, so the stored row IS
+      // the swapped one — take the parsed labels. 2) Someone wrote a category
+      // or a note on this row and the parsed label is duty-sentence junk —
+      // keep the stored labels and take only the dates. 3) Otherwise the
+      // parsed labels, as before. Category and notes always survive either way.
+      const swapFired = swapSignature(parsed, existingRole) >= 0.8;
+      const keepStoredLabels = !swapFired
+        && hasQualitativeContent(existingRole)
+        && (isJunkLabel(parsed.title) || isJunkLabel(parsed.employer));
       mergedRoles.push(withSeasonalFields({
         ...existingRole,
-        employer: parsed.employer ?? existingRole.employer ?? null,
-        title: parsed.title ?? existingRole.title ?? null,
+        employer: keepStoredLabels
+          ? (existingRole.employer ?? parsed.employer ?? null)
+          : (parsed.employer ?? existingRole.employer ?? null),
+        title: keepStoredLabels
+          ? (existingRole.title ?? parsed.title ?? null)
+          : (parsed.title ?? existingRole.title ?? null),
         start: parsed.start,
         end: parsed.end,
         is_current: parsed.is_current,
@@ -1522,10 +1642,64 @@ export function mergeParsedRolesIntoResumeAnalysis(
       }, parsed));
     }
   }
-  // Carry over hand-written entries this parse did not touch (undated jobs).
+  // Carry over entries this parse did not touch, folding in the ones that are
+  // really a merged row wearing older labels.
+  //
+  // WHY A SECOND PASS EXISTS. The loop above can never reach these. By the
+  // time a reparse runs, the stored list already holds a merged twin of every
+  // row the parser produces, and best-match always scores the twin higher
+  // (same employer 1.0 plus same dates 0.50) than the stale duplicate beside
+  // it. The duplicate lost that comparison once and loses it again, whatever
+  // the score function does — verified across all 53 affected candidates on
+  // 2026-08-20, zero absorbed. So the leftovers are compared against the
+  // MERGED ROWS instead, reusing the same score with the merged row standing
+  // in for the parsed one.
+  //
+  // Only rows already claimed by this parse are eligible targets: a leftover
+  // may not fold onto another leftover.
+  const parsedTargets = mergedRoles.length;
   existingRoles.forEach((r, idx) => {
     if (usedExistingIdx.has(idx)) return;
-    if (hasQualitativeContent(r)) mergedRoles.push(r);
+    if (!hasQualitativeContent(r)) return;
+
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < parsedTargets; i++) {
+      const target = mergedRoles[i];
+      // Never fold two noted rows together — that would force a choice
+      // between two sets of written notes. Leave the duplicate visible and
+      // let a person decide.
+      if (hasQualitativeContent(target)) continue;
+      const asParsed: ParsedRole = {
+        title: target.title ?? null,
+        employer: target.employer ?? null,
+        start: target.start,
+        end: target.end ?? null,
+        is_current: !!target.is_current,
+        tenure_months: target.tenure_months,
+        start_raw: "",
+        end_raw: "",
+      };
+      const sc = roleMatchScore(asParsed, r, now);
+      if (sc > bestScore) { bestScore = sc; bestIdx = i; }
+    }
+
+    if (bestIdx >= 0 && bestScore >= 0.5) {
+      const target = mergedRoles[bestIdx];
+      // The merged row owns employer / title / dates / tenure — those came
+      // from the corrected parse. The leftover contributes what only it has.
+      const { employer: _e, title: _t, start: _s, end: _x, is_current: _c,
+              tenure_months: _m, ...carried } = r;
+      // target wins on every field it owns, but an unmatched parsed row
+      // carries category:null / notes:null EXPLICITLY, and a plain spread
+      // would let those nulls erase the very notes this fold exists to save.
+      const folded: any = { ...carried, ...target };
+      folded.category = target.category ?? r.category ?? null;
+      folded.notes = target.notes ?? r.notes ?? null;
+      mergedRoles[bestIdx] = folded;
+      return;
+    }
+    mergedRoles.push(r);
   });
 
   priorSimilarRole.roles = mergedRoles;
