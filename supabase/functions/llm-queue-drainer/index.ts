@@ -62,8 +62,18 @@ const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extrac
 const GROQ_REQUEST_TOKEN_CAP = 8000;
 const GROQ_SAFETY_MARGIN = 300; // token-estimate is a 4-chars/token approximation, not exact
 
+// 4 chars/token is the usual rule of thumb for prose, but statement text is
+// dense with digits, currency symbols and punctuation, which tokenize far
+// worse. Measured on AMEX 26-08 after boilerplate trimming: ~13,400 chars came
+// in at 3,619 real tokens, i.e. 3.70 chars/token. At the 4.0 estimate the
+// request was sized at 8,319 against a hard 8,000 cap and Groq rejected the
+// whole call with HTTP 413 — which, unlike a 429, burns an attempt. Estimate
+// low so the sizing errs toward a slightly smaller answer budget instead of a
+// rejected request.
+const CHARS_PER_TOKEN_EST = 3.4;
+
 function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor: number): number {
-  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / 4);
+  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
   const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
   return Math.max(floor, Math.min(ceiling, available));
 }
