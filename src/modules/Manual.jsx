@@ -1242,12 +1242,22 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // markTransclusions only turned on for admins actively viewing (not
   // editing raw markdown) — the pencil buttons it injects are an edit
   // affordance, not something a non-admin or the raw editor should see.
+  // The title block above already prints the page title, so a page whose body
+  // ALSO opens with a top-level heading showed the title twice — once from the
+  // record, once from the markdown — on screen and on paper. Strip a leading
+  // `# ...` line before rendering. Only the first heading, only if it is the
+  // first non-empty line: a `#` further down is a real section heading and is
+  // left alone.
+  const bodyMd = useMemo(() => {
+    const raw = String(page?.content || "");
+    return raw.replace(/^\s*#[ \t]+[^\n]*\n?/, "");
+  }, [page?.content]);
   const html = useMemo(
-    () => mdToHtml(page?.content || "", {
+    () => mdToHtml(bodyMd, {
       resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq,
       markTransclusions: isAdmin && mode === "view",
     }),
-    [page?.content, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode]
+    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode]
   );
 
   // ── Included-section quick editor ─────────────────────────────
