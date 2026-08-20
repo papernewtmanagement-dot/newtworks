@@ -68,6 +68,49 @@ function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number
   return Math.max(floor, Math.min(ceiling, available));
 }
 
+// Strips legal boilerplate from statement text before it is sent to the model.
+//
+// AMEX 26-08 is 16,806 characters, of which roughly 8,700 are the same notices
+// printed on every statement: change-of-address instructions, autopay promo,
+// payment terms, how the average daily balance is computed, foreign currency
+// charges, and the billing-rights notice. None of it contains a transaction,
+// and it was consuming about 2,175 tokens of a hard 8,000-token request budget
+// on every call — budget the model then did not have left for its answer. This
+// is what made truncation a coin flip: the thinking and the answer were fighting
+// over what little remained.
+//
+// SAFETY: a span is only cut when it holds almost no date-shaped text. Every
+// transaction line carries a MM/DD/YY date, so a block with fewer than three of
+// them cannot be hiding the detail. If a statement is ever laid out differently
+// the guard declines to cut, and the only cost is the budget we had before.
+const STATEMENT_BOILERPLATE_SPANS: { start: RegExp; end: RegExp }[] = [
+  { start: /Late Payment Warning:/i, end: /Account Summary/i },
+  { start: /Change of Address, phone number, email/i, end: /Payments and Credits Summary/i },
+];
+
+function trimStatementBoilerplate(text: string): { text: string; removed: number } {
+  const dateish = /\d{2}\/\d{2}\/\d{2}\b/g;
+  let out = text;
+  let removed = 0;
+
+  for (const { start, end } of STATEMENT_BOILERPLATE_SPANS) {
+    const s = start.exec(out);
+    if (!s) continue;
+    const rest = out.slice(s.index);
+    const e = end.exec(rest);
+    if (!e || e.index <= s[0].length) continue;
+
+    const span = rest.slice(0, e.index);
+    if (span.length < 300) continue;
+    const dateHits = (span.match(dateish) ?? []).length;
+    if (dateHits >= 3) continue; // might contain real detail — leave it alone
+
+    out = out.slice(0, s.index) + " " + out.slice(s.index + span.length);
+    removed += span.length;
+  }
+  return { text: out, removed };
+}
+
 // Compact statement prompt used by drainBankStatementItem. See the long note at
 // its call site for why this exists instead of the queued JSON prompt.
 const BANK_STATEMENT_PROMPT_COMPACT = `You are a parser for U.S. bank and credit card statements. You will be given the
@@ -362,8 +405,14 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // The drainer already overrides the queued MODEL (BANK_STATEMENT_MODEL), so
   // overriding the queued PROMPT follows the same precedent. document-processor's
   // synchronous path is untouched and still uses its own JSON prompt.
-  const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, item.user_content, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, item.user_content, bankMaxTokens, "low");
+  const trimmed = trimStatementBoilerplate(item.user_content);
+  const statementText = trimmed.text;
+  if (trimmed.removed > 0) {
+    console.log(`[drainer] trimmed ${trimmed.removed} chars of statement boilerplate `
+      + `(${item.user_content.length} -> ${statementText.length})`);
+  }
+  const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, statementText, 6000, 1200);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText, bankMaxTokens, "low");
   if (!llm.ok) return { ok: false, error: llm.error };
 
   // 2. Check truncation FIRST — a cut-off answer is a budget problem, and
@@ -373,7 +422,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     return {
       ok: false,
       error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
-        + `(prompt ~${Math.ceil((BANK_STATEMENT_PROMPT_COMPACT.length + item.user_content.length) / 4)} tokens, `
+        + `(prompt ~${Math.ceil((BANK_STATEMENT_PROMPT_COMPACT.length + statementText.length) / 4)} tokens, `
         + `${llm.raw.length} chars returned). Statement is too long for one pass — split it or shrink the prompt.`,
     };
   }
@@ -406,7 +455,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     const offBefore = Math.round(off(before) * 100) / 100;
 
     if (offBefore > 0.01) {
-      const rc = reclassifyCreditsFromText(item.user_content, json.transactions);
+      const rc = reclassifyCreditsFromText(statementText, json.transactions);
       const after = sumOf(rc.txns);
       const offAfter = Math.round(off(after) * 100) / 100;
       if (rc.flipped > 0 && offAfter <= 0.01) {
