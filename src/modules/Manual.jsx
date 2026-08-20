@@ -668,6 +668,7 @@ export default function Manual({ manualType, userRole }) {
           display: "flex", flexDirection: "column",
         }}
         aria-hidden={_vp.isPhone && !drawerOpen}
+        className="nw-print-hide"
       >
         <div style={{ padding: "20px 20px 14px 20px", borderBottom: `1px solid ${T.slate200}` }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
@@ -843,7 +844,7 @@ export default function Manual({ manualType, userRole }) {
       {/* drawer so the user can pop to anywhere directly.               */}
       <div style={{ flex: 1, overflowY: "auto" }}>
         {_vp.isPhone && (
-          <div style={{
+          <div className="nw-print-hide" style={{
             position: "sticky", top: 0, zIndex: 10,
             background: T.white,
             borderBottom: `1px solid ${T.slate200}`,
@@ -1274,6 +1275,40 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
+  // A closed expander is hidden by the browser itself, so its text would be
+  // missing from a printed page even though it is sitting right there in the
+  // document. This opens every expander the moment the print dialog is asked
+  // for and closes the ones that were closed again as soon as printing ends,
+  // so what the person sees on screen is unchanged either way. Also clears any
+  // leftover inline height the smooth open/close animation may have left on an
+  // expander, which would otherwise crop it on paper.
+  useEffect(() => {
+    const before = () => {
+      const root = bodyRef.current;
+      if (!root) return;
+      root.querySelectorAll("details").forEach((d) => {
+        if (!d.open) {
+          d.setAttribute("data-nw-print-reopened", "1");
+          d.open = true;
+        }
+        d.style.height = "";
+      });
+    };
+    const after = () => {
+      const root = bodyRef.current;
+      if (!root) return;
+      root.querySelectorAll("details[data-nw-print-reopened]").forEach((d) => {
+        d.removeAttribute("data-nw-print-reopened");
+        d.open = false;
+      });
+    };
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => {
+      window.removeEventListener("beforeprint", before);
+      window.removeEventListener("afterprint", after);
+    };
+  }, [html]);
   // Single delegated click handler for the pencil buttons markTransclusions
   // drops in front of every included/excerpt block (see markdown.js). The
   // buttons are raw HTML (rendered via dangerouslySetInnerHTML), so this is
@@ -1309,7 +1344,7 @@ What I\'d like to discuss:
   const icon = iconForNode(page);
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
+    <div className="nw-manual-print" style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
       {/* Inline style block for HTML-rendered handbook content.
           Scoped via a wrapper class so it can't bleed into other modules. */}
       <style>{`
@@ -1466,13 +1501,100 @@ What I\'d like to discuss:
         .newtworks-handbook-body > :is(table, .newtworks-table-wrap) {
           width: calc(100% - 12px);
         }
+
+        /* --- PRINTING: TITLE AND CONTENT ONLY ---
+           Peter 2026-08-19: a manual page must print as nothing but its title
+           and its text. Everything else on the screen goes away - the app's top
+           bar, the left-hand module list, the section list beside the page, the
+           edit buttons, the little label chips above the title, and the white
+           card frame the text sits inside.
+
+           HOW IT WORKS: hide every element on the page, then un-hide just the
+           print root, and lift that root out of the app's fixed-height,
+           scrolling layout by positioning it at the top-left corner of the
+           sheet. Without that lift only the first screenful would print,
+           because the app shell clips and scrolls everything inside it. Same
+           approach already in use for the Financials print package.
+
+           MARGINS ON PURPOSE: every margin below is written as margin-top /
+           margin-bottom, never the margin shorthand. The rules further up this
+           block indent body content 12px from the left using margin-left, and
+           a shorthand would silently wipe that out - the same trap already
+           documented above. Do not "tidy" these into shorthand. */
+        @media print {
+          html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+          body * { visibility: hidden !important; }
+          .nw-manual-print, .nw-manual-print * { visibility: visible !important; }
+          .nw-manual-print {
+            position: absolute !important; left: 0 !important; top: 0 !important;
+            width: 100% !important; max-width: none !important;
+            margin-top: 0 !important; margin-bottom: 0 !important;
+            padding: 0 !important;
+          }
+          /* Anything wearing this class is screen-only chrome. display:none beats
+             the visibility rule above, so these never take up print space. */
+          .nw-print-hide, .nw-print-hide * { display: none !important; }
+          .nw-manual-print-title {
+            font-size: 20pt !important; color: #000 !important;
+            margin-top: 0 !important; margin-bottom: 14pt !important;
+          }
+          /* The card frame becomes plain paper. */
+          .nw-manual-print-card {
+            background: #fff !important; border: 0 !important; border-radius: 0 !important;
+            box-shadow: none !important; padding: 0 !important;
+          }
+          .newtworks-handbook-body { font-size: 11pt !important; line-height: 1.55 !important; color: #000 !important; }
+          .newtworks-handbook-body :is(h1, h2, h3, h4) {
+            color: #000 !important;
+            break-after: avoid; page-break-after: avoid;
+          }
+          .newtworks-handbook-body h2 {
+            background: none !important; border-left: 2pt solid #444 !important;
+            border-radius: 0 !important; padding: 2pt 0 2pt 8pt !important;
+          }
+          .newtworks-handbook-body a { color: #000 !important; text-decoration: underline; }
+          .newtworks-handbook-body code, .newtworks-handbook-body pre { background: none !important; }
+          .newtworks-handbook-body pre { border: 1pt solid #999 !important; white-space: pre-wrap !important; }
+          .newtworks-handbook-body blockquote {
+            background: none !important; border-left: 2pt solid #999 !important; border-radius: 0 !important;
+          }
+          /* Expanders print open and flat. The matching JavaScript below opens
+             every one of them before the print dialog runs and puts them back
+             afterwards - closed panels are hidden by the browser itself, which
+             CSS alone cannot reliably undo. These rules strip the on-screen
+             tinted panel and keep an expander from splitting across sheets. */
+          .newtworks-handbook-body details,
+          .newtworks-handbook-body details[open] {
+            background: none !important; border-radius: 0 !important;
+            height: auto !important; overflow: visible !important;
+            margin-top: 6pt !important; margin-bottom: 6pt !important;
+            break-inside: avoid; page-break-inside: avoid;
+          }
+          .newtworks-handbook-body details > summary {
+            background: none !important; padding: 0 0 0 12pt !important;
+          }
+          .newtworks-handbook-body details > *:not(summary) {
+            display: block !important; content-visibility: visible !important;
+            padding: 2pt 0 2pt 12pt !important;
+          }
+          .newtworks-handbook-body details[open] > :is(ul, ol) { padding-left: 30pt !important; }
+          .newtworks-handbook-body li, .newtworks-handbook-body tr {
+            break-inside: avoid; page-break-inside: avoid;
+          }
+          .newtworks-handbook-body table { font-size: 9.5pt !important; }
+          .newtworks-handbook-body th { background: none !important; }
+          /* On screen wide tables scroll sideways inside a box. On paper the box
+             would cut them off, so it stops clipping. */
+          .newtworks-table-wrap { overflow: visible !important; }
+          .newtworks-handbook-body img { max-width: 100% !important; }
+        }
       `}</style>
 
       {/* Title block */}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 20 }}>
         {icon && <div style={{ fontSize: 40, lineHeight: 1 }}>{icon}</div>}
         <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+          <div className="nw-print-hide" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
             <div style={{
               fontSize: 10, fontWeight: 800, color: T.blue,
               textTransform: "uppercase", letterSpacing: "0.1em",
@@ -1489,18 +1611,34 @@ What I\'d like to discuss:
               </div>
             )}
           </div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: T.slate900, margin: 0, letterSpacing: "-0.025em", lineHeight: 1.25 }}>
+          <h1 className="nw-manual-print-title" style={{ fontSize: 28, fontWeight: 800, color: T.slate900, margin: 0, letterSpacing: "-0.025em", lineHeight: 1.25 }}>
             {page ? withNumber(page) : "Untitled page"}
           </h1>
         </div>
       </div>
 
       {/* Accent bar */}
-      <div style={{ height: 4, background: T.blue, borderRadius: 2, marginBottom: 24, opacity: 0.85 }} />
+      <div className="nw-print-hide" style={{ height: 4, background: T.blue, borderRadius: 2, marginBottom: 24, opacity: 0.85 }} />
+
+      {/* Print — available to everyone, not just admins. Hidden on the printed
+          sheet itself. Ctrl/Cmd-P produces exactly the same output. */}
+      <div className="nw-print-hide" style={{ display: "flex", marginBottom: 18 }}>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          title="Print this page (title and content only)"
+          style={{
+            padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.slate300}`,
+            background: T.white, color: T.slate700, fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}
+        >
+          Print
+        </button>
+      </div>
 
       {/* Action row — admin-only edit controls */}
       {isAdmin && mode === "view" && (
-        <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
+        <div className="nw-print-hide" style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={enterEdit}
@@ -1536,7 +1674,7 @@ What I\'d like to discuss:
         </div>
       )}
       {isAdmin && (mode === "edit" || mode === "new-child") && (
-        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="nw-print-hide" style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
             onClick={mode === "edit" ? saveEdit : createChild}
@@ -1571,7 +1709,7 @@ What I\'d like to discuss:
       )}
 
       {/* Content */}
-      <div style={{
+      <div className="nw-manual-print-card" style={{
         background: T.white,
         padding: "28px 32px",
         borderRadius: 14,
