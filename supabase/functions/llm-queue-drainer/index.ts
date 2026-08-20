@@ -260,6 +260,12 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // truncation is strictly the better failure mode: a throttled item drains
   // later, a truncated item never drains at all.
   //
+  // MEASURED, 2026-08-19, this exact statement (prompt ~5.5k tokens, ~2.2k left):
+  //   low  + compressed prompt -> 51 txns, tie off by one credit group
+  //   low  + verbose prompt    -> 35 txns, lines dropped, tie worse
+  //   medium + either          -> EMPTY answer; thinking ate the whole budget
+  // "low" is the only setting that fits. Do not raise it without first cutting
+  // the prompt or the statement text down, or the answer disappears entirely.
   // THINKING BUDGET, added 2026-08-19. The raise above was necessary but not
   // sufficient, because openai/gpt-oss-120b is a REASONING model and Groq bills
   // its hidden thinking against max_tokens. AMEX Discretionary 26-08 died the
@@ -290,7 +296,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // overriding the queued PROMPT follows the same precedent. document-processor's
   // synchronous path is untouched and still uses its own JSON prompt.
   const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, item.user_content, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, item.user_content, bankMaxTokens, "medium");
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, item.user_content, bankMaxTokens, "low");
   if (!llm.ok) return { ok: false, error: llm.error };
 
   // 2. Check truncation FIRST — a cut-off answer is a budget problem, and
