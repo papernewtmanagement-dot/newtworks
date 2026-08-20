@@ -181,6 +181,11 @@ interface GroqChatResult {
   raw: string;            // assistant content when ok, "" otherwise
   error: string | null;
   httpStatus: number;     // 0 on network failure
+  // "length" means the model ran out of answer budget and the content is CUT
+  // OFF mid-stream. A caller that JSON.parses the content must check this
+  // first, otherwise a truncation is misreported as malformed JSON and the
+  // real cause (budget, not the model's output shape) stays hidden.
+  finishReason?: string | null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -196,6 +201,14 @@ async function callGroqChat(opts: {
   temperature?: number;    // default 0.1
   jsonObject?: boolean;    // request response_format json_object
   retries?: number;        // extra attempts on 429/5xx; default 0
+  // gpt-oss models are REASONING models: Groq bills their hidden thinking
+  // tokens against max_tokens, so thinking silently eats the answer budget.
+  // Measured live 2026-08-18 on AMEX Discretionary 26-08: max_tokens 2623,
+  // visible answer stopped at ~365 tokens (~1459 chars, mid-string) because
+  // roughly 2250 tokens went to thinking. Set "low" for mechanical extraction
+  // (statement parsing, field pulls) where thinking buys nothing. Omit to keep
+  // the provider default.
+  reasoningEffort?: "none" | "low" | "medium" | "high";
 }): Promise<GroqChatResult> {
   const body: Record<string, unknown> = {
     model: opts.model,
@@ -207,6 +220,7 @@ async function callGroqChat(opts: {
     max_tokens: opts.maxTokens ?? 4000,
   };
   if (opts.jsonObject) body.response_format = { type: "json_object" };
+  if (opts.reasoningEffort) body.reasoning_effort = opts.reasoningEffort;
 
   const attempts = 1 + Math.max(0, opts.retries ?? 0);
   let lastErr = "unknown";
@@ -243,11 +257,12 @@ async function callGroqChat(opts: {
     catch (e) {
       return { ok: false, raw: text, error: `Groq returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
     }
+    const finishReason = parsed?.choices?.[0]?.finish_reason ?? null;
     const content = parsed?.choices?.[0]?.message?.content ?? "";
     if (!content || typeof content !== "string") {
-      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status };
+      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status, finishReason };
     }
-    return { ok: true, raw: content, error: null, httpStatus: res.status };
+    return { ok: true, raw: content, error: null, httpStatus: res.status, finishReason };
   }
 
   return { ok: false, raw: "", error: `Groq exhausted retries: ${lastErr}`, httpStatus: lastStatus };
@@ -568,6 +583,71 @@ async function writeParsedStatement(
   return { ok: true, inserted };
 }
 
+// ==================== _shared/alerts.ts ====================
+// =========================================================================
+// _shared/alerts.ts
+// =========================================================================
+// Canonical alerts writer for ALL Newtworks edge functions.
+//
+// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
+// title, message, module_reference, related_id, is_resolved). Hand-written
+// inserts have shipped with a `body:` column that does not exist and with
+// alert_type missing — both fail silently when the insert result isn't
+// checked. Going through this helper makes that class of bug impossible.
+// =========================================================================
+
+
+async function insertAlert(opts: {
+  agencyId: string;
+  alertType: string;
+  severity: "info" | "warning" | "high" | "critical" | string;
+  title: string;
+  message: string;
+  moduleReference?: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; error: string | null }> {
+  const row: Record<string, unknown> = {
+    agency_id: opts.agencyId,
+    alert_type: opts.alertType,
+    severity: opts.severity,
+    title: opts.title,
+    message: opts.message,
+    is_read: false,
+    is_resolved: false,
+  };
+  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
+  if (opts.relatedId != null) row.related_id = opts.relatedId;
+
+  const { error } = await sb.from("alerts").insert(row);
+  if (error) {
+    // Never throw — alerting must not mask the underlying failure being
+    // reported. But do surface the miss to whoever reads the function logs.
+    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, error: null };
+}
+
+// Resolve all open alerts carrying a given module_reference (the standard
+// "this condition cleared" pattern used by surepayroll + pfa flows).
+async function resolveAlerts(opts: {
+  agencyId: string;
+  moduleReference: string;
+}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
+  const { data, error } = await sb
+    .from("alerts")
+    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
+    .eq("agency_id", opts.agencyId)
+    .eq("module_reference", opts.moduleReference)
+    .eq("is_resolved", false)
+    .select("id");
+  if (error) {
+    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
+    return { ok: false, resolved: 0, error: error.message };
+  }
+  return { ok: true, resolved: (data ?? []).length, error: null };
+}
+
 // ==================== llm-queue-drainer/index.ts ====================
 // llm-queue-drainer edge function
 //
@@ -633,9 +713,16 @@ function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number
   return Math.max(floor, Math.min(ceiling, available));
 }
 
-async function callGroq(apiKey: string, model: string, systemPrompt: string, userContent: string, maxTokens = 8000): Promise<{ ok: boolean; raw: string; error?: string }> {
-  const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1 });
-  return { ok: r.ok, raw: r.raw, error: r.error ?? undefined };
+async function callGroq(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  maxTokens = 8000,
+  reasoningEffort?: "none" | "low" | "medium" | "high",
+): Promise<{ ok: boolean; raw: string; error?: string; finishReason?: string | null }> {
+  const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1, reasoningEffort });
+  return { ok: r.ok, raw: r.raw, error: r.error ?? undefined, finishReason: r.finishReason ?? null };
 }
 
 interface QueueItem {
@@ -679,11 +766,31 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // retried on the next tick), so trading a little more TPM pressure for no
   // truncation is strictly the better failure mode: a throttled item drains
   // later, a truncated item never drains at all.
+  //
+  // THINKING BUDGET, added 2026-08-19. The raise above was necessary but not
+  // sufficient, because openai/gpt-oss-120b is a REASONING model and Groq bills
+  // its hidden thinking against max_tokens. AMEX Discretionary 26-08 died the
+  // same way 26-04 had: max_tokens computed to 2623, yet the visible answer
+  // stopped after ~365 tokens (1459 chars, mid-string) — roughly 2250 tokens had
+  // gone to thinking before a single transaction was written. Raising the cap
+  // cannot outrun that; the thinking scales with the budget you hand it.
+  // Statement parsing is mechanical transcription, so thinking buys nothing:
+  // reasoning_effort "low" hands essentially the whole budget to the answer.
   const bankMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, bankMaxTokens);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, bankMaxTokens, "low");
   if (!llm.ok) return { ok: false, error: llm.error };
 
-  // 2. Parse JSON
+  // 2. Parse JSON. Check truncation FIRST — a cut-off answer is a budget
+  // problem, and calling it "JSON parse failed" sent three sessions looking at
+  // the wrong layer. Name it plainly so the next failure is diagnosable.
+  if (llm.finishReason === "length") {
+    return {
+      ok: false,
+      error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
+        + `(prompt ~${Math.ceil((item.system_prompt.length + item.user_content.length) / 4)} tokens, `
+        + `${llm.raw.length} chars returned). Statement is too long for one pass — split it or shrink the prompt.`,
+    };
+  }
   let json: any;
   try { json = JSON.parse(stripFences(llm.raw)); }
   catch (e) { return { ok: false, error: `JSON parse failed: ${e}. Head: ${llm.raw.slice(0, 200)}` }; }
@@ -1085,12 +1192,42 @@ Deno.serve(async (req) => {
         }).eq("id", item.id);
       } else {
         const newAttempts = (item.attempts ?? 0) + 1;
+        const nowDead = newAttempts >= 3;
         await sb.from("llm_parse_queue").update({
-          status: newAttempts >= 3 ? "failed" : "pending",
+          status: nowDead ? "failed" : "pending",
           attempts: newAttempts,
           last_attempt_at: new Date().toISOString(),
           last_error: r.error ?? "unknown",
         }).eq("id", item.id);
+
+        // An item that exhausts its attempts is DEAD: nothing retries it, because
+        // the claim query only reads status="pending". Until 2026-08-19 that
+        // happened in total silence — this runner keeps reporting success (the
+        // RUNNER worked; the ITEM failed), so no automation_failure alert ever
+        // fired. AMEX Discretionary 26-08 went dead five minutes after arriving
+        // and was only noticed two days later because the email was still sitting
+        // unread in the inbox. Never rely on that again.
+        if (nowDead) {
+          let label = item.purpose;
+          if (item.document_id) {
+            const { data: deadDoc } = await sb
+              .from("documents")
+              .select("file_name")
+              .eq("id", item.document_id)
+              .maybeSingle();
+            if (deadDoc?.file_name) label = deadDoc.file_name;
+          }
+          await insertAlert({
+            agencyId: item.agency_id,
+            alertType: "llm_parse_item_dead",
+            severity: "warning",
+            title: `Parse gave up after 3 tries: ${label}`,
+            message: `Queue item ${item.id} (${item.purpose}) failed 3 attempts and will not be retried `
+              + `automatically. Nothing downstream of it has been written. Last error: ${r.error ?? "unknown"}`,
+            moduleReference: item.purpose === "parse_bank_statement" ? "financials" : "automations",
+            relatedId: item.document_id ?? null,
+          });
+        }
       }
     }
 

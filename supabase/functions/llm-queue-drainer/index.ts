@@ -22,6 +22,7 @@ import { sb, jsonResponse, getSettingOrNull, stripFences } from "../_shared/supa
 import { callGroqChat } from "../_shared/llm.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
 import { writeParsedStatement } from "../_shared/statement_writer.ts";
+import { insertAlert } from "../_shared/alerts.ts";
 
 // llama-3.3-70b-versatile (12,000 TPM) is decommissioned by Groq 2026-08-16.
 // Moved to openai/gpt-oss-120b (8,000 TPM) 2026-08-08 — less throughput, but
@@ -67,9 +68,16 @@ function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number
   return Math.max(floor, Math.min(ceiling, available));
 }
 
-async function callGroq(apiKey: string, model: string, systemPrompt: string, userContent: string, maxTokens = 8000): Promise<{ ok: boolean; raw: string; error?: string }> {
-  const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1 });
-  return { ok: r.ok, raw: r.raw, error: r.error ?? undefined };
+async function callGroq(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  maxTokens = 8000,
+  reasoningEffort?: "none" | "low" | "medium" | "high",
+): Promise<{ ok: boolean; raw: string; error?: string; finishReason?: string | null }> {
+  const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1, reasoningEffort });
+  return { ok: r.ok, raw: r.raw, error: r.error ?? undefined, finishReason: r.finishReason ?? null };
 }
 
 interface QueueItem {
@@ -113,11 +121,31 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // retried on the next tick), so trading a little more TPM pressure for no
   // truncation is strictly the better failure mode: a throttled item drains
   // later, a truncated item never drains at all.
+  //
+  // THINKING BUDGET, added 2026-08-19. The raise above was necessary but not
+  // sufficient, because openai/gpt-oss-120b is a REASONING model and Groq bills
+  // its hidden thinking against max_tokens. AMEX Discretionary 26-08 died the
+  // same way 26-04 had: max_tokens computed to 2623, yet the visible answer
+  // stopped after ~365 tokens (1459 chars, mid-string) — roughly 2250 tokens had
+  // gone to thinking before a single transaction was written. Raising the cap
+  // cannot outrun that; the thinking scales with the budget you hand it.
+  // Statement parsing is mechanical transcription, so thinking buys nothing:
+  // reasoning_effort "low" hands essentially the whole budget to the answer.
   const bankMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, bankMaxTokens);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, item.system_prompt, item.user_content, bankMaxTokens, "low");
   if (!llm.ok) return { ok: false, error: llm.error };
 
-  // 2. Parse JSON
+  // 2. Parse JSON. Check truncation FIRST — a cut-off answer is a budget
+  // problem, and calling it "JSON parse failed" sent three sessions looking at
+  // the wrong layer. Name it plainly so the next failure is diagnosable.
+  if (llm.finishReason === "length") {
+    return {
+      ok: false,
+      error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
+        + `(prompt ~${Math.ceil((item.system_prompt.length + item.user_content.length) / 4)} tokens, `
+        + `${llm.raw.length} chars returned). Statement is too long for one pass — split it or shrink the prompt.`,
+    };
+  }
   let json: any;
   try { json = JSON.parse(stripFences(llm.raw)); }
   catch (e) { return { ok: false, error: `JSON parse failed: ${e}. Head: ${llm.raw.slice(0, 200)}` }; }
@@ -519,12 +547,42 @@ Deno.serve(async (req) => {
         }).eq("id", item.id);
       } else {
         const newAttempts = (item.attempts ?? 0) + 1;
+        const nowDead = newAttempts >= 3;
         await sb.from("llm_parse_queue").update({
-          status: newAttempts >= 3 ? "failed" : "pending",
+          status: nowDead ? "failed" : "pending",
           attempts: newAttempts,
           last_attempt_at: new Date().toISOString(),
           last_error: r.error ?? "unknown",
         }).eq("id", item.id);
+
+        // An item that exhausts its attempts is DEAD: nothing retries it, because
+        // the claim query only reads status="pending". Until 2026-08-19 that
+        // happened in total silence — this runner keeps reporting success (the
+        // RUNNER worked; the ITEM failed), so no automation_failure alert ever
+        // fired. AMEX Discretionary 26-08 went dead five minutes after arriving
+        // and was only noticed two days later because the email was still sitting
+        // unread in the inbox. Never rely on that again.
+        if (nowDead) {
+          let label = item.purpose;
+          if (item.document_id) {
+            const { data: deadDoc } = await sb
+              .from("documents")
+              .select("file_name")
+              .eq("id", item.document_id)
+              .maybeSingle();
+            if (deadDoc?.file_name) label = deadDoc.file_name;
+          }
+          await insertAlert({
+            agencyId: item.agency_id,
+            alertType: "llm_parse_item_dead",
+            severity: "warning",
+            title: `Parse gave up after 3 tries: ${label}`,
+            message: `Queue item ${item.id} (${item.purpose}) failed 3 attempts and will not be retried `
+              + `automatically. Nothing downstream of it has been written. Last error: ${r.error ?? "unknown"}`,
+            moduleReference: item.purpose === "parse_bank_statement" ? "financials" : "automations",
+            relatedId: item.document_id ?? null,
+          });
+        }
       }
     }
 
