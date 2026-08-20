@@ -674,11 +674,18 @@ export async function writeParsedStatement(
   // ---- 4. Transactions with per-parse occurrence counting -----------------
   // legacy_source_table intentionally omitted — NULL is the correct value for
   // live intake (finrebuild_e1_statements_legacy_source_table_nullable).
+  //
+  // BATCHED, 2026-08-19. This used to insert one row per call, and each call
+  // took long enough that a 51-transaction statement outlived the edge
+  // function's wall clock: runs on AMEX 26-08 died at 21, then 31 rows, with
+  // the queue row left claimed and the document half-written. One array insert
+  // finishes in a single round trip. And because a killed run can now leave a
+  // partial set behind for its reclaim to find, the batch is preceded by a
+  // sweep of any rows this document already wrote — restart-safe: the reclaim
+  // rewrites the full set instead of doubling the partial one.
   const refCounters = new Map<string, number>();
-  let inserted = 0;
-  const errors: string[] = [];
 
-  for (const t of opts.transactions) {
+  const rows = opts.transactions.map((t) => {
     const amount = opts.account.accountKind === "credit" ? -t.signedAmount : t.signedAmount;
     const transactionType = opts.account.accountKind === "credit"
       ? (amount >= 0 ? "charge" : "payment_or_credit")
@@ -692,7 +699,7 @@ export async function writeParsedStatement(
     refCounters.set(fpBase, occ);
     const withOcc = occ === 1 ? fpBase : `${fpBase}:${occ}`;
 
-    const { error: stErr } = await sb.from("statements").insert({
+    return {
       id: crypto.randomUUID(),
       agency_id: opts.agencyId,
       business_entity_id: opts.account.businessEntityId,
@@ -705,20 +712,38 @@ export async function writeParsedStatement(
       reference_number: withOcc,
       dedup_fingerprint: withOcc,
       source_document_id: opts.documentId,
-    });
-    if (stErr) { errors.push(`tx ${t.date}: ${stErr.message}`); continue; }
-    inserted += 1;
+    };
+  });
+
+  // The GL writer may already have posted the partial set to the ledger, and
+  // ledger rows point at statements rows — so children go first, then parents.
+  const { data: oldRows } = await sb.from("statements")
+    .select("id")
+    .eq("source_document_id", opts.documentId);
+  if ((oldRows?.length ?? 0) > 0) {
+    const oldIds = (oldRows ?? []).map((r: { id: string }) => r.id);
+    const { error: lgErr } = await sb.from("ledger").delete().in("statement_id", oldIds);
+    if (lgErr) {
+      return { ok: false, error: `pre-insert ledger sweep failed: ${lgErr.message}`, inserted: 0 };
+    }
+  }
+  const { error: delErr } = await sb.from("statements")
+    .delete()
+    .eq("source_document_id", opts.documentId);
+  if (delErr) {
+    return { ok: false, error: `pre-insert sweep failed: ${delErr.message}`, inserted: 0 };
   }
 
-  if (errors.length > 0) {
+  const { error: batchErr } = await sb.from("statements").insert(rows);
+  if (batchErr) {
     return {
       ok: false,
-      error: `${errors.length}/${opts.transactions.length} transaction inserts failed: ${errors.slice(0, 5).join(" | ")}`,
-      inserted,
+      error: `batched insert of ${rows.length} transactions failed: ${batchErr.message}`,
+      inserted: 0,
     };
   }
 
-  return { ok: true, inserted };
+  return { ok: true, inserted: rows.length };
 }
 
 // ==================== lib/composio.ts ====================
