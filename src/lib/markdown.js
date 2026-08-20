@@ -88,20 +88,40 @@ function inlineMd(s) {
     return `<button type="button" class="newtworks-info-btn" popovertarget="${id}" aria-label="More info">\u24d8</button><span popover="auto" id="${id}" class="newtworks-info-popover" role="tooltip">${content}</span>`;
   });
 
+  // Emitted HTML is parked behind null-byte placeholders and restored at the
+  // very end of this function, so no later pass can chew on it.
+  //
+  // WHY THIS EXISTS: link HTML used to be emitted straight into the string and
+  // the underscore-italic pass further down then ate the underscores inside the
+  // URL. A link to insurance_vocab_match.pdf shipped as
+  // insurance<em>vocab</em>match.pdf, and target="_blank" turned into
+  // target="<em>blank". The file was fine, the anchor was not, and every
+  // handout link with an underscore in its filename was dead on the page while
+  // the file itself answered 200 to a direct request. Anything holding a URL or
+  // an HTML attribute goes through protect(); only the human-readable link TEXT
+  // stays exposed, so bold and italic inside the text still render.
+  const htmlPlaceholders = [];
+  const protect = (html) => {
+    htmlPlaceholders.push(html);
+    return `\u0000HTML${htmlPlaceholders.length - 1}\u0000`;
+  };
+
   // Links [text](url) — guard against javascript: scheme.
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
     const safe = /^(https?:|mailto:|#|\/)/i.test(url) ? url : "#";
-    return `<a href="${safe}" target="_blank" rel="noreferrer noopener">${txt}</a>`;
+    return protect(`<a href="${safe}" target="_blank" rel="noreferrer noopener">`)
+      + txt + protect("</a>");
   });
 
   // CommonMark autolinks: <https://…> and <mailto:…>. Must run BEFORE the
   // bold/italic passes so `_` inside URLs isn't consumed as emphasis, and
-  // BEFORE any HTML escape so the browser doesn't see an unknown tag.
+  // BEFORE any HTML escape so the browser doesn't see an unknown tag. Here the
+  // URL is also the visible text, so the whole anchor is protected.
   out = out.replace(/<(https?:\/\/[^\s<>]+)>/g, (m, url) =>
-    `<a href="${url}" target="_blank" rel="noreferrer noopener">${url}</a>`
+    protect(`<a href="${url}" target="_blank" rel="noreferrer noopener">${url}</a>`)
   );
   out = out.replace(/<(mailto:[^\s<>]+)>/g, (m, url) =>
-    `<a href="${url}">${url.replace(/^mailto:/, "")}</a>`
+    protect(`<a href="${url}">${url.replace(/^mailto:/, "")}</a>`)
   );
 
   // ─── Script-voice markers ───────────────────────────────────
@@ -134,7 +154,10 @@ function inlineMd(s) {
 
   // Italic (* or _), not consuming **
   out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
-  out = out.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
+  // Underscore emphasis only at word boundaries — file_name_like_this must not
+  // become file<em>name</em>like<em>this</em>. Asterisk emphasis is unchanged;
+  // CommonMark allows intraword * but never intraword _.
+  out = out.replace(/(^|[^\w_])_([^_\n]+)_(?![\w_])/g, "$1<em>$2</em>");
 
   // Inline code
   out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
@@ -142,6 +165,11 @@ function inlineMd(s) {
   // Restore protected {{faq: topic_key}} markers verbatim — never reprocessed.
   if (faqPlaceholders.length) {
     out = out.replace(/\u0000FAQ(\d+)\u0000/g, (_m, idx) => faqPlaceholders[Number(idx)]);
+  }
+
+  // Restore protected HTML (anchors) verbatim — must be the last restore.
+  if (htmlPlaceholders.length) {
+    out = out.replace(/\u0000HTML(\d+)\u0000/g, (_m, idx) => htmlPlaceholders[Number(idx)]);
   }
 
   return out;
