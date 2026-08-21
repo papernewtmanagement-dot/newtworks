@@ -286,10 +286,18 @@ const MIG_DIR = "supabase/migrations";
 // GitHub helpers
 // -------------------------------------------------------------------------
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// GitHub enforces a SECONDARY rate limit on content-creating calls that is
+// separate from the hourly quota and is not advertised in the normal
+// x-ratelimit headers. It answers 403 with a "secondary rate limit" message.
+// Backfilling a thousand migrations trips it, so every call retries with
+// backoff, honouring Retry-After when GitHub sends one.
 async function gh(
   token: string,
   path: string,
   init?: { method?: string; body?: unknown },
+  attempt = 0,
 ): Promise<any> {
   const res = await fetch(`${GH_API}${path}`, {
     method: init?.method ?? "GET",
@@ -303,22 +311,20 @@ async function gh(
     body: init?.body ? JSON.stringify(init.body) : undefined,
   });
   const text = await res.text();
+
   if (!res.ok) {
+    const throttled =
+      res.status === 429 ||
+      (res.status === 403 && /secondary rate limit|abuse detection/i.test(text));
+    if (throttled && attempt < 4) {
+      const retryAfter = Number(res.headers.get("retry-after") ?? 0);
+      const waitMs = retryAfter > 0 ? retryAfter * 1000 : 2000 * Math.pow(2, attempt);
+      await sleep(waitMs);
+      return gh(token, path, init, attempt + 1);
+    }
     throw new Error(`GitHub ${init?.method ?? "GET"} ${path} -> ${res.status}: ${text.slice(0, 400)}`);
   }
   return text ? JSON.parse(text) : null;
-}
-
-// Base64 for the blob upload. Chunked so a large migration cannot blow the
-// argument limit on String.fromCharCode.
-function toBase64(s: string): string {
-  const bytes = new TextEncoder().encode(s);
-  let bin = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
 }
 
 // Filenames follow the Supabase CLI convention: <14-digit version>_<name>.sql
@@ -432,23 +438,23 @@ Deno.serve(async (req: Request) => {
         break;
       }
 
-      // --- one blob per file, then one tree, one commit, one ref update ---
+      // --- one tree, one commit, one ref update ---------------------------
+      // File content goes INLINE in the tree call. The obvious alternative —
+      // POST a blob per file, then reference each blob sha — costs one extra
+      // request per file and trips GitHub's secondary rate limit partway
+      // through a backfill of this size. Inline content is UTF-8 only, which
+      // is exactly what SQL is.
       const treeEntries: Array<Record<string, string>> = [];
       let batchBytes = 0;
       for (const row of pending) {
         // Trailing newline is house convention for mirrored files; the mirror
         // standard is functional equivalence, not byte-identity with the
         // ledger (which stores no trailing newline).
-        const content = `${row.sql_text}\n`;
-        const blob = await gh(token, `/repos/${GH_REPO}/git/blobs`, {
-          method: "POST",
-          body: { content: toBase64(content), encoding: "base64" },
-        });
         treeEntries.push({
           path: `${MIG_DIR}/${row.version}_${safeName(row.name)}.sql`,
           mode: "100644",
           type: "blob",
-          sha: blob.sha,
+          content: `${row.sql_text}\n`,
         });
         batchBytes += row.bytes;
       }
@@ -478,6 +484,11 @@ Deno.serve(async (req: Request) => {
 
       commits.push({ sha: commit.sha, files: treeEntries.length, bytes: batchBytes });
       written += treeEntries.length;
+
+      // Deliberate pause between batches. GitHub's secondary limit is about
+      // sustained write RATE, not total volume, so a short gap costs seconds
+      // and buys a backfill that runs to completion.
+      if (batch < maxBatches - 1) await sleep(1500);
     }
 
     // Re-read the gap after the run so the caller sees where things landed.
