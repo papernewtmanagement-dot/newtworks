@@ -1,0 +1,688 @@
+-- Rename is_excluded → is_excluded_pjsagencybot to reflect that (post per-bot split)
+-- this column governs @pjsagencybot only. Paired with is_excluded_paper_newt_bot.
+--
+-- Atomic: rename column + recreate all 4 CPR SQL functions that reference it, in one txn.
+-- Edge fns (chatbot, telegram, terminate-team-member) deploy separately immediately after.
+
+ALTER TABLE public.team_telegram_map RENAME COLUMN is_excluded TO is_excluded_pjsagencybot;
+
+COMMENT ON COLUMN public.team_telegram_map.is_excluded_pjsagencybot IS
+  'Governs @pjsagencybot (telegram edge fn). Renamed from is_excluded on 2026-07-06 after per-bot exclusion split.';
+
+-- ============================================================================
+-- Recreate 4 CPR SQL functions with new column name
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.dispatch_time_clock_edit_notifications()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_agency_id     uuid := '126794dd-25ff-47d2-a436-724499733365';
+  v_recipe_id     uuid;
+  v_run_started   timestamptz := now();
+  v_peter_chat_id bigint;
+  v_pending_sent  int := 0;
+  v_pending_fail  int := 0;
+  v_resolved_sent int := 0;
+  v_resolved_fail int := 0;
+  v_resolved_skip int := 0;
+  r_group         record;
+  r_res           record;
+  v_msg           text;
+  v_resp          jsonb;
+  v_type_label    text;
+BEGIN
+  SELECT id INTO v_recipe_id FROM public.automation_recipes
+   WHERE agency_id = v_agency_id AND recipe_name = 'time_clock_edit_notifier' LIMIT 1;
+
+  SELECT ttm.telegram_user_id INTO v_peter_chat_id
+    FROM public.team_telegram_map ttm
+    JOIN public.team t ON t.id = ttm.team_id
+   WHERE t.agency_id = v_agency_id
+     AND t.role_level = 'Owner'
+     AND t.is_admin_backoffice = false
+     AND coalesce(ttm.is_excluded_pjsagencybot, false) = false
+   LIMIT 1;
+
+  IF v_peter_chat_id IS NOT NULL THEN
+    FOR r_group IN
+      SELECT tcer.team_member_id, t.first_name, t.last_name,
+        array_agg(tcer.id ORDER BY tcer.submitted_at) AS request_ids,
+        array_agg(tcer.edit_type ORDER BY tcer.submitted_at) AS edit_types,
+        array_agg(tcer.punch_date ORDER BY tcer.submitted_at) AS punch_dates,
+        array_agg(tcer.reason ORDER BY tcer.submitted_at) AS reasons
+      FROM public.time_clock_edit_requests tcer
+      JOIN public.team t ON t.id = tcer.team_member_id
+      WHERE tcer.agency_id = v_agency_id
+        AND tcer.status = 'pending'
+        AND tcer.telegram_notified_at IS NULL
+      GROUP BY tcer.team_member_id, t.first_name, t.last_name
+    LOOP
+      v_msg := E'⏰ Time clock edit request'
+            || CASE WHEN array_length(r_group.request_ids, 1) > 1
+                    THEN 's (' || array_length(r_group.request_ids, 1) || ')' ELSE '' END
+            || E' from ' || r_group.first_name || ' ' || r_group.last_name || E'\n';
+
+      FOR i IN 1..array_length(r_group.request_ids, 1) LOOP
+        v_type_label := CASE r_group.edit_types[i]
+          WHEN 'missed_shift'     THEN 'Missed shift'
+          WHEN 'missed_clock_in'  THEN 'Missed clock-in'
+          WHEN 'missed_clock_out' THEN 'Missed clock-out'
+          WHEN 'wrong_time'       THEN 'Wrong time'
+          ELSE r_group.edit_types[i]
+        END;
+        v_msg := v_msg || E'\n• '
+              || to_char(r_group.punch_dates[i], 'Dy Mon DD')
+              || ' — ' || v_type_label
+              || E'\n  "' || left(r_group.reasons[i], 140) || '"';
+      END LOOP;
+
+      v_msg := v_msg || E'\n\nReview in Time Clock → Admin.';
+      v_resp := public.paper_newt_send_message(v_peter_chat_id, v_msg);
+
+      IF v_resp IS NOT NULL AND (v_resp->>'ok')::boolean IS TRUE THEN
+        UPDATE public.time_clock_edit_requests SET telegram_notified_at = now() WHERE id = ANY(r_group.request_ids);
+        v_pending_sent := v_pending_sent + array_length(r_group.request_ids, 1);
+      ELSE
+        v_pending_fail := v_pending_fail + array_length(r_group.request_ids, 1);
+      END IF;
+    END LOOP;
+  END IF;
+
+  FOR r_res IN
+    SELECT tcer.id, tcer.team_member_id, tcer.status, tcer.edit_type, tcer.punch_date, tcer.review_note,
+      t.first_name, ttm.telegram_user_id
+    FROM public.time_clock_edit_requests tcer
+    JOIN public.team t ON t.id = tcer.team_member_id
+    LEFT JOIN public.team_telegram_map ttm ON ttm.team_id = tcer.team_member_id
+                                          AND coalesce(ttm.is_excluded_pjsagencybot, false) = false
+    WHERE tcer.agency_id = v_agency_id
+      AND tcer.status IN ('approved', 'denied', 'cancelled')
+      AND tcer.requester_notified_at IS NULL
+    ORDER BY tcer.reviewed_at NULLS LAST
+    LIMIT 20
+  LOOP
+    IF r_res.status = 'cancelled' THEN
+      UPDATE public.time_clock_edit_requests SET requester_notified_at = now() WHERE id = r_res.id;
+      v_resolved_skip := v_resolved_skip + 1; CONTINUE;
+    END IF;
+
+    IF r_res.telegram_user_id IS NULL THEN
+      UPDATE public.time_clock_edit_requests SET requester_notified_at = now() WHERE id = r_res.id;
+      v_resolved_skip := v_resolved_skip + 1; CONTINUE;
+    END IF;
+
+    v_type_label := CASE r_res.edit_type
+      WHEN 'missed_shift'     THEN 'missed shift'
+      WHEN 'missed_clock_in'  THEN 'missed clock-in'
+      WHEN 'missed_clock_out' THEN 'missed clock-out'
+      WHEN 'wrong_time'       THEN 'wrong time'
+      ELSE r_res.edit_type
+    END;
+
+    IF r_res.status = 'approved' THEN
+      v_msg := format(E'✅ %s, your time clock edit request was approved.\n\n%s · %s',
+                      r_res.first_name, to_char(r_res.punch_date, 'Dy Mon DD'), v_type_label);
+    ELSE
+      v_msg := format(E'❌ %s, your time clock edit request was denied.\n\n%s · %s',
+                      r_res.first_name, to_char(r_res.punch_date, 'Dy Mon DD'), v_type_label);
+    END IF;
+
+    IF r_res.review_note IS NOT NULL AND length(btrim(r_res.review_note)) > 0 THEN
+      v_msg := v_msg || E'\n\nPeter: "' || r_res.review_note || '"';
+    END IF;
+
+    v_resp := public.telegram_send_message(r_res.telegram_user_id, v_msg);
+    UPDATE public.time_clock_edit_requests SET requester_notified_at = now() WHERE id = r_res.id;
+
+    IF v_resp IS NOT NULL AND (v_resp->>'ok')::boolean IS TRUE THEN
+      v_resolved_sent := v_resolved_sent + 1;
+    ELSE
+      v_resolved_fail := v_resolved_fail + 1;
+    END IF;
+  END LOOP;
+
+  INSERT INTO public.automation_run_log
+    (agency_id, recipe_id, run_at, status, records_processed, output_summary, duration_seconds)
+  VALUES (v_agency_id, v_recipe_id, v_run_started,
+    CASE WHEN v_pending_fail + v_resolved_fail > 0 THEN 'partial' ELSE 'success' END,
+    v_pending_sent + v_resolved_sent + v_resolved_skip,
+    format('pending→paper_newt: %s sent / %s failed · resolved→pjsagencybot: %s sent / %s failed / %s skipped',
+           v_pending_sent, v_pending_fail, v_resolved_sent, v_resolved_fail, v_resolved_skip),
+    EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+
+  RETURN jsonb_build_object(
+    'pending_sent',   v_pending_sent,
+    'pending_failed', v_pending_fail,
+    'resolved_sent',  v_resolved_sent,
+    'resolved_failed',v_resolved_fail,
+    'resolved_skipped', v_resolved_skip);
+EXCEPTION WHEN OTHERS THEN
+  INSERT INTO public.automation_run_log
+    (agency_id, recipe_id, run_at, status, error_message, duration_seconds)
+  VALUES (v_agency_id, v_recipe_id, v_run_started, 'failed', SQLERRM,
+          EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+  RAISE;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.nudge_peter_for_cpr_drafts()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'net'
+AS $function$
+DECLARE
+  v_agency_id     uuid := '126794dd-25ff-47d2-a436-724499733365';
+  v_recipe_id     uuid;
+  v_run_started   timestamptz := now();
+  v_now_ct        timestamp;
+  v_today_ct      date;
+  v_hour_ct       int;
+  v_week_end      date;
+  v_dow           int;
+  v_report        record;
+  v_peter_chat_id bigint;
+  v_message       text;
+  v_state         text;
+  v_send_resp     jsonb;
+  v_result        jsonb;
+BEGIN
+  SELECT id INTO v_recipe_id FROM public.automation_recipes
+   WHERE agency_id = v_agency_id AND recipe_name = 'weekly_cpr_nudge_peter' LIMIT 1;
+
+  v_now_ct   := (NOW() AT TIME ZONE 'America/Chicago');
+  v_today_ct := v_now_ct::date;
+  v_hour_ct  := EXTRACT(HOUR FROM v_now_ct)::int;
+  v_dow      := EXTRACT(DOW FROM v_today_ct)::int;
+  v_week_end := v_today_ct - ((v_dow + 1) % 7);
+
+  IF v_hour_ct <> 18 OR v_dow NOT IN (0, 6) THEN
+    v_result := jsonb_build_object('skipped', 'wrong_dst_cron_fire', 'hour_ct', v_hour_ct, 'dow_ct', v_dow);
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary, duration_seconds)
+    VALUES (v_agency_id, v_recipe_id, v_run_started, 'success',
+            'Skipped: wrong-DST cron fire (intended Sat/Sun 6 PM CT, got DOW ' || v_dow || ' hour ' || v_hour_ct || ')',
+            EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+    RETURN v_result;
+  END IF;
+
+  SELECT * INTO v_report FROM public.weekly_cpr_reports
+   WHERE agency_id = v_agency_id AND week_ending_date = v_week_end;
+
+  IF FOUND AND v_report.sent_to_team_at IS NOT NULL THEN
+    v_result := jsonb_build_object('skipped', 'already_sent', 'week_ending_date', v_week_end);
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary, duration_seconds)
+    VALUES (v_agency_id, v_recipe_id, v_run_started, 'skipped', v_result::text, EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+    RETURN v_result;
+  END IF;
+
+  IF FOUND
+     AND v_report.opener_text IS NOT NULL AND length(btrim(v_report.opener_text)) >= 100
+     AND v_report.looking_next_week_text IS NOT NULL AND length(btrim(v_report.looking_next_week_text)) >= 50 THEN
+    v_result := jsonb_build_object('skipped', 'drafts_ready', 'week_ending_date', v_week_end);
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary, duration_seconds)
+    VALUES (v_agency_id, v_recipe_id, v_run_started, 'skipped', v_result::text, EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+    RETURN v_result;
+  END IF;
+
+  SELECT ttm.telegram_user_id INTO v_peter_chat_id
+  FROM public.team_telegram_map ttm
+  JOIN public.team t ON t.id = ttm.team_id
+  WHERE t.agency_id = v_agency_id 
+    AND t.role_level = 'Owner' 
+    AND t.is_admin_backoffice = false
+    AND coalesce(ttm.is_excluded_pjsagencybot, false) = false
+  LIMIT 1;
+
+  IF v_peter_chat_id IS NULL THEN
+    v_result := jsonb_build_object('error', 'no_telegram_chat_id_for_peter');
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, error_message, duration_seconds)
+    VALUES (v_agency_id, v_recipe_id, v_run_started, 'failed', 'No Telegram chat_id found for Owner', EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+    RETURN v_result;
+  END IF;
+
+  IF NOT FOUND OR v_report IS NULL THEN
+    v_state := 'no_row';
+  ELSIF v_report.auto_ratio_pct IS NOT NULL AND v_report.fire_ratio_pct IS NOT NULL THEN
+    v_state := 'form_filled_drafts_pending';
+  ELSE
+    v_state := 'form_empty';
+  END IF;
+
+  IF v_state = 'form_filled_drafts_pending' THEN
+    v_message := E'📊 CPR check-in\n\n'
+              || E'The form is filled but drafts aren''t in yet.\n\n'
+              || E'⏳ Ping Claude to draft the opener + looking-ahead. Cron auto-sends at 6 AM CT once drafts land.\n\n'
+              || 'Week ending: ' || v_week_end::text;
+  ELSE
+    v_message := E'📊 CPR check-in\n\n'
+              || E'The CPR form isn''t filled in yet. Auto-send needs both form data + Claude drafts.\n\n'
+              || E'Fill the form, then ping Claude.\n\n'
+              || 'Week ending: ' || v_week_end::text;
+  END IF;
+
+  v_send_resp := public.paper_newt_send_message(v_peter_chat_id, v_message);
+
+  IF v_send_resp IS NULL OR (v_send_resp->>'ok')::boolean IS NOT TRUE THEN
+    v_result := jsonb_build_object('nudged', false, 'state', v_state,
+      'telegram_error', v_send_resp->>'description',
+      'telegram_code', v_send_resp->>'error_code',
+      'send_response', v_send_resp, 'week_ending_date', v_week_end);
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, error_message, output_summary, duration_seconds)
+    VALUES (v_agency_id, v_recipe_id, v_run_started, 'failed',
+            'Telegram send failed: ' || coalesce(v_send_resp->>'description', v_send_resp->>'error', 'unknown'),
+            v_result::text, EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+    RETURN v_result;
+  END IF;
+
+  v_result := jsonb_build_object('nudged', true, 'state', v_state,
+    'telegram_message_id', v_send_resp->'result'->>'message_id', 'week_ending_date', v_week_end);
+  INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary, duration_seconds)
+  VALUES (v_agency_id, v_recipe_id, v_run_started, 'success', v_result::text, EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+
+  RETURN v_result;
+EXCEPTION WHEN OTHERS THEN
+  INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, error_message, duration_seconds)
+  VALUES (v_agency_id, v_recipe_id, v_run_started, 'failed', SQLERRM, EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+  RAISE;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.try_send_weekly_cpr_recap()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+ SET statement_timeout TO '210000'
+AS $function$
+DECLARE
+  v_agency_id      uuid := '126794dd-25ff-47d2-a436-724499733365';
+  v_now_ct         timestamp;
+  v_hour_ct        int;
+  v_dow            int;
+  v_week_end       date;
+  v_report         record;
+  v_send_result    jsonb;
+  v_ok             boolean;
+  v_reason         text;
+  v_recipe_id      uuid;
+  v_day_label      text;
+  v_retry_note     text;
+  v_peter_chat     bigint;
+BEGIN
+  SELECT id INTO v_recipe_id FROM public.automation_recipes
+   WHERE agency_id = v_agency_id AND recipe_name = 'weekly_cpr_auto_send' LIMIT 1;
+
+  v_now_ct  := (now() AT TIME ZONE 'America/Chicago');
+  v_hour_ct := EXTRACT(HOUR FROM v_now_ct)::int;
+  v_dow     := EXTRACT(DOW  FROM v_now_ct)::int;
+
+  IF v_hour_ct <> 6 THEN
+    IF v_recipe_id IS NOT NULL THEN
+      INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary)
+      VALUES (v_agency_id, v_recipe_id, now(), 'success',
+              format('Skipped: wrong-DST cron fire (intended 6 AM CT, got hour %s)', v_hour_ct));
+    END IF;
+    RETURN jsonb_build_object('skipped', true, 'reason', 'wrong_dst_hour', 'hour_ct', v_hour_ct);
+  END IF;
+
+  v_week_end := (v_now_ct::date) - ((v_dow + 1) % 7);
+
+  v_day_label  := CASE v_dow WHEN 6 THEN 'Sat' WHEN 0 THEN 'Sun' WHEN 1 THEN 'Mon'
+                             ELSE 'Day' || v_dow::text END;
+  v_retry_note := CASE v_dow WHEN 6 THEN ' Sun + Mon backups will retry.'
+                             WHEN 0 THEN ' Mon backup will retry.'
+                             WHEN 1 THEN ' No further auto-retry — manual send needed.'
+                             ELSE '' END;
+
+  SELECT * INTO v_report FROM public.weekly_cpr_reports
+   WHERE agency_id = v_agency_id AND week_ending_date = v_week_end;
+
+  IF NOT FOUND THEN
+    v_ok := false;
+    v_reason := 'No weekly_cpr_reports row for week ending ' || v_week_end::text;
+  ELSIF v_report.sent_to_team_at IS NOT NULL THEN
+    v_ok := false;
+    v_reason := 'already_sent at ' || v_report.sent_to_team_at::text;
+  ELSIF COALESCE(v_report.send_attempt_count, 0) >= 3 THEN
+    v_ok := false;
+    v_reason := 'attempt_cap_reached (' || v_report.send_attempt_count || ' of 3)';
+  ELSIF v_report.send_dispatched_at IS NOT NULL
+        AND v_report.send_dispatched_at > now() - INTERVAL '90 minutes' THEN
+    v_ok := false;
+    v_reason := 'recent_dispatch_in_flight since ' || v_report.send_dispatched_at::text;
+  ELSIF v_report.opener_text IS NULL OR length(btrim(v_report.opener_text)) < 100 THEN
+    v_ok := false;
+    v_reason := 'opener_not_ready (chars=' ||
+                COALESCE(length(btrim(v_report.opener_text)), 0) || ', need >=100)';
+  ELSIF v_report.looking_next_week_text IS NULL OR length(btrim(v_report.looking_next_week_text)) < 50 THEN
+    v_ok := false;
+    v_reason := 'looking_ahead_not_ready (chars=' ||
+                COALESCE(length(btrim(v_report.looking_next_week_text)), 0) || ', need >=50)';
+  ELSE
+    v_ok := true;
+  END IF;
+
+  IF NOT v_ok THEN
+    SELECT ttm.telegram_user_id INTO v_peter_chat
+      FROM public.team_telegram_map ttm
+      JOIN public.team t ON t.id = ttm.team_id
+     WHERE t.agency_id = v_agency_id AND t.role_level = 'Owner'
+       AND t.is_admin_backoffice = false AND coalesce(ttm.is_excluded_pjsagencybot, false) = false
+     LIMIT 1;
+
+    IF v_peter_chat IS NOT NULL AND v_reason NOT LIKE 'already_sent%'
+       AND v_reason NOT LIKE 'recent_dispatch%' THEN
+      BEGIN
+        PERFORM public.paper_newt_send_message(v_peter_chat,
+          format(E'🟡 CPR %s send skipped: %s.%s',
+                 v_day_label, v_reason, v_retry_note));
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+    END IF;
+
+    IF v_recipe_id IS NOT NULL THEN
+      INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary)
+      VALUES (v_agency_id, v_recipe_id, now(), 'success',
+              format('Skipped %s: %s', v_day_label, v_reason));
+    END IF;
+
+    RETURN jsonb_build_object('skipped', true, 'reason', v_reason, 'day', v_day_label,
+                              'week_ending_date', v_week_end);
+  END IF;
+
+  v_send_result := public.send_weekly_cpr_recap(v_agency_id, v_week_end);
+
+  IF v_recipe_id IS NOT NULL THEN
+    INSERT INTO public.automation_run_log (agency_id, recipe_id, run_at, status, output_summary)
+    VALUES (v_agency_id, v_recipe_id, now(),
+            CASE WHEN (v_send_result->>'success')::boolean THEN 'success' ELSE 'error' END,
+            format('%s auto-send dispatched. verify_pending_cpr_sends will confirm. Result: %s',
+                   v_day_label, v_send_result::text));
+  END IF;
+
+  RETURN jsonb_build_object('day', v_day_label, 'week_ending_date', v_week_end,
+                            'send_result', v_send_result);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.verify_pending_cpr_sends()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'net'
+AS $function$
+DECLARE
+  v_agency_id       uuid := '126794dd-25ff-47d2-a436-724499733365';
+  v_recipe_id       uuid;
+  v_run_started     timestamptz := now();
+  v_report          record;
+  v_send_resp       record;
+  v_verify_resp     record;
+  v_content_jsonb   jsonb;
+  v_gmail_msg_id    text;
+  v_label_ids       jsonb;
+  v_gmail_dt_epoch  bigint;
+  v_verify_req_id   bigint;
+  v_api_key         text;
+  v_composio_user   text;
+  v_conn_acct       text;
+  v_confirmed       int := 0;
+  v_dispatched_verify int := 0;
+  v_reset_error     int := 0;
+  v_reset_stale     int := 0;
+  v_escalated       int := 0;
+  v_still_pending   int := 0;
+  v_details         jsonb := '[]'::jsonb;
+  v_peter_chat      bigint;
+BEGIN
+  SELECT id INTO v_recipe_id FROM public.automation_recipes
+   WHERE agency_id = v_agency_id AND recipe_name = 'verify_pending_cpr_sends' LIMIT 1;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.weekly_cpr_reports
+    WHERE agency_id = v_agency_id
+      AND sent_to_team_at IS NULL
+      AND send_dispatched_at IS NOT NULL
+  ) THEN
+    RETURN jsonb_build_object('pending', 0, 'note', 'No pending sends to verify.');
+  END IF;
+
+  SELECT setting_value INTO v_api_key
+    FROM public.settings WHERE agency_id = v_agency_id AND setting_key = 'composio_api_key';
+  SELECT setting_value INTO v_composio_user
+    FROM public.settings WHERE agency_id = v_agency_id AND setting_key = 'composio_user_id';
+  SELECT setting_value INTO v_conn_acct
+    FROM public.settings WHERE agency_id = v_agency_id AND setting_key = 'composio_gmail_account_id';
+
+  SELECT ttm.telegram_user_id INTO v_peter_chat
+    FROM public.team_telegram_map ttm
+    JOIN public.team t ON t.id = ttm.team_id
+   WHERE t.agency_id = v_agency_id
+     AND t.role_level = 'Owner'
+     AND t.is_admin_backoffice = false
+     AND coalesce(ttm.is_excluded_pjsagencybot, false) = false
+   LIMIT 1;
+
+  FOR v_report IN
+    SELECT * FROM public.weekly_cpr_reports
+     WHERE agency_id = v_agency_id
+       AND sent_to_team_at IS NULL
+       AND send_dispatched_at IS NOT NULL
+     ORDER BY send_dispatched_at
+  LOOP
+    IF v_report.gmail_message_id IS NULL THEN
+      SELECT id, status_code, content, error_msg, created INTO v_send_resp
+        FROM net._http_response WHERE id = v_report.send_request_id;
+
+      IF v_send_resp.id IS NULL THEN
+        IF v_report.send_dispatched_at < now() - INTERVAL '10 minutes' THEN
+          UPDATE public.weekly_cpr_reports
+             SET send_dispatched_at = NULL, send_request_id = NULL
+           WHERE id = v_report.id;
+          v_reset_stale := v_reset_stale + 1;
+          v_details := v_details || jsonb_build_object(
+            'week_ending_date', v_report.week_ending_date,
+            'phase', 1, 'action', 'reset_stale_no_response',
+            'attempt', v_report.send_attempt_count);
+        ELSE
+          v_still_pending := v_still_pending + 1;
+        END IF;
+
+      ELSIF v_send_resp.status_code BETWEEN 200 AND 299 THEN
+        BEGIN
+          v_content_jsonb := v_send_resp.content::jsonb;
+        EXCEPTION WHEN OTHERS THEN
+          v_content_jsonb := NULL;
+        END;
+
+        v_gmail_msg_id := v_content_jsonb #>> '{data,response_data,id}';
+
+        IF v_gmail_msg_id IS NULL OR btrim(v_gmail_msg_id) = '' THEN
+          UPDATE public.weekly_cpr_reports
+             SET send_dispatched_at = NULL, send_request_id = NULL
+           WHERE id = v_report.id;
+          v_reset_error := v_reset_error + 1;
+          v_details := v_details || jsonb_build_object(
+            'week_ending_date', v_report.week_ending_date,
+            'phase', 1, 'action', 'reset_no_msgid_in_2xx_body',
+            'body', left(coalesce(v_send_resp.content, ''), 300));
+        ELSE
+          SELECT net.http_post(
+            url     := 'https://backend.composio.dev/api/v3/tools/execute/GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+            headers := jsonb_build_object('x-api-key', v_api_key, 'Content-Type', 'application/json'),
+            body    := jsonb_build_object(
+              'user_id', v_composio_user,
+              'connected_account_id', v_conn_acct,
+              'arguments', jsonb_build_object(
+                'message_id', v_gmail_msg_id,
+                'user_id', 'me',
+                'format', 'metadata'
+              )
+            ),
+            timeout_milliseconds := 60000
+          ) INTO v_verify_req_id;
+
+          UPDATE public.weekly_cpr_reports
+             SET gmail_message_id       = v_gmail_msg_id,
+                 gmail_verify_request_id = v_verify_req_id
+           WHERE id = v_report.id;
+
+          v_dispatched_verify := v_dispatched_verify + 1;
+          v_details := v_details || jsonb_build_object(
+            'week_ending_date', v_report.week_ending_date,
+            'phase', 1, 'action', 'msgid_captured_verify_fired',
+            'gmail_message_id', v_gmail_msg_id,
+            'verify_request_id', v_verify_req_id);
+        END IF;
+
+      ELSE
+        UPDATE public.weekly_cpr_reports
+           SET send_dispatched_at = NULL, send_request_id = NULL
+         WHERE id = v_report.id;
+        v_reset_error := v_reset_error + 1;
+        v_details := v_details || jsonb_build_object(
+          'week_ending_date', v_report.week_ending_date,
+          'phase', 1, 'action', 'reset_send_error',
+          'status_code', v_send_resp.status_code,
+          'error_msg', v_send_resp.error_msg,
+          'body', left(coalesce(v_send_resp.content, ''), 300));
+      END IF;
+
+    ELSE
+      SELECT id, status_code, content, error_msg, created INTO v_verify_resp
+        FROM net._http_response WHERE id = v_report.gmail_verify_request_id;
+
+      IF v_verify_resp.id IS NULL THEN
+        IF v_report.send_dispatched_at < now() - INTERVAL '2 hours' THEN
+          UPDATE public.weekly_cpr_reports
+             SET send_dispatched_at = NULL, send_request_id = NULL,
+                 gmail_message_id = NULL, gmail_verify_request_id = NULL
+           WHERE id = v_report.id;
+          v_reset_stale := v_reset_stale + 1;
+          v_details := v_details || jsonb_build_object(
+            'week_ending_date', v_report.week_ending_date,
+            'phase', 2, 'action', 'reset_verify_stale',
+            'attempt', v_report.send_attempt_count);
+        ELSE
+          v_still_pending := v_still_pending + 1;
+        END IF;
+
+      ELSIF v_verify_resp.status_code BETWEEN 200 AND 299 THEN
+        BEGIN
+          v_content_jsonb := v_verify_resp.content::jsonb;
+        EXCEPTION WHEN OTHERS THEN
+          v_content_jsonb := NULL;
+        END;
+
+        v_label_ids := v_content_jsonb #> '{data,response_data,labelIds}';
+        v_gmail_dt_epoch := (v_content_jsonb #>> '{data,response_data,internalDate}')::bigint;
+
+        IF v_label_ids IS NOT NULL AND v_label_ids @> '["SENT"]'::jsonb THEN
+          UPDATE public.weekly_cpr_reports
+             SET sent_to_team_at   = COALESCE(
+                                       to_timestamp(v_gmail_dt_epoch / 1000.0),
+                                       v_verify_resp.created,
+                                       now()),
+                 gmail_verified_at = now()
+           WHERE id = v_report.id;
+          v_confirmed := v_confirmed + 1;
+          v_details := v_details || jsonb_build_object(
+            'week_ending_date', v_report.week_ending_date,
+            'phase', 2, 'action', 'gmail_confirmed_sent',
+            'gmail_message_id', v_report.gmail_message_id,
+            'gmail_internal_date', v_gmail_dt_epoch,
+            'labelIds', v_label_ids);
+        ELSE
+          UPDATE public.weekly_cpr_reports
+             SET gmail_message_id = NULL, gmail_verify_request_id = NULL,
+                 send_dispatched_at = NULL, send_request_id = NULL
+           WHERE id = v_report.id;
+          v_reset_error := v_reset_error + 1;
+          v_details := v_details || jsonb_build_object(
+            'week_ending_date', v_report.week_ending_date,
+            'phase', 2, 'action', 'reset_no_sent_label',
+            'labelIds', v_label_ids);
+        END IF;
+
+      ELSE
+        UPDATE public.weekly_cpr_reports
+           SET gmail_message_id = NULL, gmail_verify_request_id = NULL,
+               send_dispatched_at = NULL, send_request_id = NULL
+         WHERE id = v_report.id;
+        v_reset_error := v_reset_error + 1;
+        v_details := v_details || jsonb_build_object(
+          'week_ending_date', v_report.week_ending_date,
+          'phase', 2, 'action', 'reset_gmail_fetch_error',
+          'status_code', v_verify_resp.status_code,
+          'error_msg', v_verify_resp.error_msg,
+          'body', left(coalesce(v_verify_resp.content, ''), 300));
+      END IF;
+    END IF;
+  END LOOP;
+
+  IF v_peter_chat IS NOT NULL THEN
+    FOR v_report IN
+      SELECT * FROM public.weekly_cpr_reports
+       WHERE agency_id = v_agency_id
+         AND sent_to_team_at IS NULL
+         AND COALESCE(send_attempt_count, 0) >= 3
+         AND escalation_alerted_at IS NULL
+         AND week_ending_date >= CURRENT_DATE - INTERVAL '14 days'
+    LOOP
+      BEGIN
+        PERFORM public.paper_newt_send_message(v_peter_chat,
+          format(E'🔴🔴🔴 CPR RECAP — WEEK %s\nSend attempts exhausted (%s of 3). No Gmail confirmation.\nManual send required. Consider: SELECT public.send_weekly_cpr_recap(''%s''::uuid, ''%s''::date) after resetting send_attempt_count.',
+                 v_report.week_ending_date, v_report.send_attempt_count,
+                 v_agency_id, v_report.week_ending_date));
+        UPDATE public.weekly_cpr_reports
+           SET escalation_alerted_at = now()
+         WHERE id = v_report.id;
+        v_escalated := v_escalated + 1;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+    END LOOP;
+  END IF;
+
+  IF (v_reset_error + v_reset_stale) > 0 AND v_peter_chat IS NOT NULL THEN
+    BEGIN
+      PERFORM public.paper_newt_send_message(v_peter_chat,
+        format(E'🟡 CPR verify: %s errors / %s stale reset\n\n%s',
+               v_reset_error, v_reset_stale, left(v_details::text, 1000)));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+  END IF;
+
+  IF v_recipe_id IS NOT NULL AND (v_confirmed + v_dispatched_verify + v_reset_error + v_reset_stale + v_escalated) > 0 THEN
+    INSERT INTO public.automation_run_log
+      (agency_id, recipe_id, run_at, status, records_processed, output_summary, duration_seconds)
+    VALUES
+      (v_agency_id, v_recipe_id, v_run_started,
+       CASE WHEN (v_reset_error + v_reset_stale + v_escalated) > 0 THEN 'partial' ELSE 'success' END,
+       v_confirmed + v_dispatched_verify + v_reset_error + v_reset_stale + v_escalated,
+       jsonb_build_object(
+         'confirmed', v_confirmed,
+         'verify_dispatched', v_dispatched_verify,
+         'still_pending', v_still_pending,
+         'reset_error', v_reset_error,
+         'reset_stale', v_reset_stale,
+         'escalated', v_escalated,
+         'details', v_details
+       )::text,
+       EXTRACT(EPOCH FROM (now() - v_run_started))::int);
+  END IF;
+
+  RETURN jsonb_build_object(
+    'confirmed', v_confirmed,
+    'verify_dispatched', v_dispatched_verify,
+    'still_pending', v_still_pending,
+    'reset_error', v_reset_error,
+    'reset_stale', v_reset_stale,
+    'escalated', v_escalated,
+    'details', v_details
+  );
+END;
+$function$;
