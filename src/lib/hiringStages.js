@@ -4,7 +4,7 @@
 // from here so the two can never drift apart.
 //
 // Status values match the hiring_candidates.status check constraint:
-// applied | assessment_sent | assessed | interview | team_meet_and_greet |
+// applied | assessment_sent | assessed | interview | meet_and_greet |
 // offer | reference_check | hired | declined | former
 // ("archived" was renamed to "former" on 2026-07-24, migration
 // 20260724231037 — it is not a valid status and must not be reintroduced.)
@@ -14,10 +14,10 @@
 //   1. offer now comes BEFORE reference_check. The offer is written as
 //      contingent on references clearing, so references are the last check
 //      before Hired rather than a gate before the offer goes out.
-//   2. The stored status value is still team_meet_and_greet, but the label
-//      shown on screen is "Meet & Greet" — the word "Team" was dropped.
-//      The stored value was deliberately left alone so nothing downstream
-//      breaks; label and value are allowed to differ here.
+//   2. The stage lost the word "Team" in both the label and the stored
+//      value. The old stored value team_meet_and_greet was renamed to
+//      meet_and_greet on the same date (migrations 20260821 step 1 and 2) —
+//      the old spelling is no longer accepted and must not come back.
 import { T } from "./theme.js";
 
 export const STAGES = {
@@ -25,7 +25,7 @@ export const STAGES = {
   assessment_sent:     { label: "Assessment Sent", color: T.slate600, bg: T.slate100, order: 1 },
   assessed:            { label: "Assessed",        color: T.slate500, bg: T.slate100, order: 2 },
   interview:           { label: "Interview",       color: T.amber,    bg: T.amberLt,  order: 3 },
-  team_meet_and_greet: { label: "Meet & Greet",    color: T.teal,     bg: T.tealLt,   order: 4 },
+  meet_and_greet:      { label: "Meet & Greet",    color: T.teal,     bg: T.tealLt,   order: 4 },
   offer:               { label: "Offer",           color: T.purple,   bg: T.purpleLt, order: 5 },
   reference_check:     { label: "Ref Check",       color: T.blue,     bg: T.blueLt,   order: 6 },
   hired:               { label: "Hired",           color: T.green,    bg: T.greenLt,  order: 7 },
@@ -42,7 +42,7 @@ export const PIPELINE_STAGES = [
   "assessment_sent",
   "assessed",
   "interview",
-  "team_meet_and_greet",
+  "meet_and_greet",
   "offer",
   "reference_check",
   "hired",
