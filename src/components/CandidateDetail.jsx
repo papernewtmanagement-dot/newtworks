@@ -1554,7 +1554,7 @@ const StageStepper = ({ status, saving, onPick }) => {
       <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>
         {offPipeline
           ? `${stageLabel(status)} — tap a stage above to put this candidate back in the active pipeline.`
-          : "Tap a stage to move this candidate."}
+          : "Tap a stage to move this candidate. Hired also opens the new team member form in a second tab."}
       </div>
     </div>
   );
@@ -1926,6 +1926,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   const changeStage = async (newStatus) => {
     if (!detail?.id || !newStatus || newStatus === detail.status) return;
     if (stageSaving) return;
+    // Moving to Hired opens the new team member form in a second tab with this
+    // candidate's details already filled in. The tab is opened here, before the
+    // first await, because browsers only allow a new window while the click that
+    // asked for it is still being handled — opening it after the database write
+    // comes back gets it blocked. If the write then fails we close it again.
+    let hireTab = null;
+    if (newStatus === "hired" && typeof window !== "undefined") {
+      hireTab = window.open(`/team?tab=members&newhire=${encodeURIComponent(detail.id)}`, "_blank");
+    }
     setStageSaving(newStatus);
     const nowIso = new Date().toISOString();
     const { error } = await supabase
@@ -1934,8 +1943,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       .eq("id", detail.id);
     if (error) {
       setStageSaving(null);
+      try { if (hireTab && !hireTab.closed) hireTab.close(); } catch (e) { /* popup blocked — nothing to close */ }
       alert("Stage change failed: " + error.message);
       return;
+    }
+    if (newStatus === "hired" && !hireTab) {
+      // The browser blocked the second tab. Say so plainly rather than leaving
+      // the impression the form is waiting somewhere.
+      alert("Moved to Hired. Your browser blocked the new tab — open Team › Members and use + Add member.");
     }
     const { data } = await supabase
       .from("v_hiring_candidates")

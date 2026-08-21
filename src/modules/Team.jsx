@@ -1282,9 +1282,65 @@ const StaffDirectory = ({ staff }) => {
     license_ips:      false,
   });
   const [additions, setAdditions] = useState([]);
+  // Set when this panel was opened from the hiring pipeline (?newhire=<id>),
+  // so the panel can show where the details came from and the candidate row can
+  // be linked to the new team row once it exists.
+  const [hiredFrom, setHiredFrom] = useState(null);
+
+  // Hired-from-pipeline handoff. CandidateDetail's stage stepper opens
+  // /team?tab=members&newhire=<candidate id> in a new tab when a candidate is
+  // moved to Hired; this reads that candidate and fills in what the hiring
+  // record actually knows — name, personal email, personal phone. Role, level,
+  // employment type, start date and licensing are left blank on purpose: the
+  // job posting title a candidate applied under is not the same vocabulary as
+  // the role fields on a team row, so guessing there would put the wrong label
+  // on a live team record.
+  useEffect(() => {
+    if (typeof window === "undefined" || !supabase) return undefined;
+    const params = new URLSearchParams(window.location.search);
+    const candidateId = params.get("newhire");
+    if (!candidateId) return undefined;
+    // Drop the parameter straight away so a refresh doesn't refill the panel
+    // (and can't quietly create a second team row for the same person).
+    params.delete("newhire");
+    const qs = params.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("hiring_candidates")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, team_member_id")
+        .eq("id", candidateId)
+        .eq("agency_id", AGENCY_ID)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        setAddError("Couldn't load that candidate — the form is blank, fill it in by hand.");
+        setAddOpen(true);
+        return;
+      }
+      // Fall back to splitting the single-field name when the parts are missing.
+      const parts = String(data.candidate_name || "").trim().split(/\s+/).filter(Boolean);
+      const first = data.first_name || parts[0] || "";
+      const last  = data.last_name  || (parts.length > 1 ? parts.slice(1).join(" ") : "");
+      setAddError(data.team_member_id ? "Heads up: this candidate is already linked to a team record." : "");
+      setHiredFrom({ id: data.id, name: [first, last].filter(Boolean).join(" "), position: data.position || "" });
+      setAddForm(f => ({
+        ...f,
+        first_name:     first,
+        last_name:      last,
+        email_personal: (data.email || "").trim(),
+        phone_personal: (data.phone || "").trim(),
+      }));
+      setAddOpen(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const openAdd = () => {
     setAddError("");
+    setHiredFrom(null);
     setAddOpen(true);
     setAddForm({
       first_name:      "",
@@ -1307,7 +1363,7 @@ const StaffDirectory = ({ staff }) => {
       license_ips:     false,
     });
   };
-  const closeAdd = () => { setAddOpen(false); setAddError(""); };
+  const closeAdd = () => { setAddOpen(false); setAddError(""); setHiredFrom(null); };
 
   const addMember = async () => {
     if (adding) return;
@@ -1427,8 +1483,25 @@ const StaffDirectory = ({ staff }) => {
         console.error("[add member] non-blocking failures:", warnings);
       }
 
+      // 3b) Came from the pipeline: point the hiring record at the new team row
+      //     so the candidate's assessment and interview history follow them onto
+      //     their team profile. Non-blocking — a failure here costs the link,
+      //     not the hire.
+      if (hiredFrom?.id) {
+        const linkRes = await supabase
+          .from("hiring_candidates")
+          .update({ team_member_id: newTeam.id, status: "hired", status_updated_at: new Date().toISOString() })
+          .eq("id", hiredFrom.id)
+          .eq("agency_id", AGENCY_ID)
+          .select("id");
+        if (linkRes.error || !linkRes.data || linkRes.data.length === 0) {
+          console.error("[add member] candidate link failed:", linkRes.error?.message || "no row updated");
+        }
+      }
+
       // 4) Local UI: prepend the new row so it appears immediately.
       setAdditions(prev => [newTeam, ...prev]);
+      setHiredFrom(null);
       setAddOpen(false);
       setAddForm({
         first_name:"", last_name:"", email_personal:"",
@@ -1617,6 +1690,12 @@ const StaffDirectory = ({ staff }) => {
       {addOpen && (
         <Card style={{ border:`2px solid ${T.slate900}`, background:T.white, marginBottom:4 }}>
           <div style={{ fontSize:13, fontWeight:700, color:T.slate900, marginBottom:6 }}>Add new team member</div>
+          {hiredFrom && (
+            <div style={{ marginBottom:10, padding:"8px 12px", fontSize:11, color:T.slate800, background:T.greenLt, border:`1px solid ${T.green}`, borderRadius:7, lineHeight:1.5 }}>
+              <strong>Hired from the pipeline{hiredFrom.name ? ` — ${hiredFrom.name}` : ""}.</strong>{" "}
+              Name, personal email and phone came from the hiring record{hiredFrom.position ? ` (applied for ${hiredFrom.position})` : ""}. Role, level, employment type, start date and licensing still need setting. Saving also links their assessment and interview history to this team profile.
+            </div>
+          )}
           <div style={{ fontSize:11, color:T.slate600, marginBottom:14, lineHeight:1.55 }}>
             Creates a team row, sends a Supabase Auth invite to the personal email, and links the new Newtworks user back to this team row once they sign in. Role defaults to <code>staff</code> (team tier — sees Dashboard, CPR, Hours, Handbook, Processes). To grant admin access, change role to <code>owner</code> or <code>manager</code> after they accept.
           </div>
