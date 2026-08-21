@@ -150,6 +150,14 @@ const s = {
   stageSub: { fontSize: 12, color: T.slate500 },
   playCardTitle: { fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 4 },
   playCardDesc: { fontSize: 12, color: T.slate500, marginBottom: 12 },
+  // Every mode card carries its own solo / multiplayer choice inside the card.
+  modeRow: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" },
+  modeBtn: (on) => ({
+    padding: "5px 12px", borderRadius: 14, fontSize: 12, fontWeight: 700,
+    cursor: "pointer", fontFamily: "inherit",
+    border: `1px solid ${on ? T.blue : T.slate300}`,
+    background: on ? T.blueLt : "#fff", color: on ? T.blue : T.slate700,
+  }),
   bigStat: { fontSize: 22, fontWeight: 700, color: T.slate900 },
   smallLabel: { fontSize: 11, color: T.slate500, marginTop: 2 },
   timerPill: (urgent) => ({
@@ -925,6 +933,25 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // Shared Grid runs inside Play now. It owns its own state, so it tells us
   // when a game is actually running and we treat it like any other live game.
   const [sharedActive, setSharedActive] = useState(false);
+
+  // The Grid is the first card wired to the in-card choice: "multi" is the
+  // shared-screen game that used to sit on its own tab. Kept in the URL so a
+  // refresh mid-game lands back on the right branch.
+  const [gridMode, setGridMode] = useTabParam("gridmode", "solo", ["solo", "multi"]);
+
+  // A host who closes the tab and comes back to a clean URL should still find
+  // their room. One cheap check on mount flips the card to the multiplayer
+  // branch, and the branch resumes itself from there.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.rpc("quiz_shared_grid_my_active_session");
+      if (cancelled || error || !data) return;
+      setGridMode("multi");
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Daily Five
   const [dfPhase, setDfPhase] = useState("checking"); // checking | not_started | in_progress | playing | finishing | finished | error
@@ -2016,16 +2043,14 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const activeGame =
       nightInPlay ? "night"
     : (!gatesError && activeGate && gatePhase !== "idle") ? "gate"
-    : (gridPhase === "board" || gridPhase === "finishing") ? "grid"
+    : (gridPhase === "board" || gridPhase === "finishing" || sharedActive) ? "grid"
     : (spinPhase === "playing" || spinPhase === "finishing") ? "spin"
     : (duelMode === "playing" || duelMode === "starting") ? "duel"
     : (dfPhase === "playing" || dfPhase === "finishing") ? "daily"
-    : sharedActive ? "shared"
     : null;
   const stageTitles = {
     night: "Trivia Night", gate: "Training", grid: "The Grid",
     spin: "Spin & Solve", duel: "Duel", daily: "Daily Five",
-    shared: "Shared Grid",
   };
   const shows = (key) => !activeGame || activeGame === key;
   const boxStyle = (key) => (activeGame === key ? s.stageCard : s.playCard);
@@ -2034,7 +2059,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
     <div>
       {(modesError || poolError) && <div style={s.errorBanner}>{modesError || poolError}</div>}
 
-      {activeGame && activeGame !== "shared" && (
+      {activeGame && (
         <div style={s.stageHeader}>
           <div>
             <div style={s.stageTitle}>{stageTitles[activeGame]}</div>
@@ -2291,6 +2316,24 @@ function TriviaPlayTab({ userId, isAdmin }) {
         {shows("grid") && (
         <div style={boxStyle("grid")}>
           <div style={s.playCardTitle}>The Grid</div>
+
+          {activeGame !== "grid" && (
+            <div style={s.modeRow}>
+              <button type="button" style={s.modeBtn(gridMode === "solo")} onClick={() => setGridMode("solo")}>
+                Solo
+              </button>
+              <button type="button" style={s.modeBtn(gridMode === "multi")} onClick={() => setGridMode("multi")}>
+                Multiplayer
+              </button>
+            </div>
+          )}
+
+          {gridMode === "multi" && (
+            <TriviaSharedGridTab userId={userId} onActiveChange={setSharedActive} />
+          )}
+
+          {gridMode === "solo" && (
+          <>
           <div style={s.playCardDesc}>Pick a square, answer the question — higher rows are worth more.</div>
 
           {gridError && <div style={s.errorBanner}>{gridError}</div>}
@@ -2366,6 +2409,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {gridPhase !== "finished" && gridPhase !== "board" && (
             <DayStandings rows={dayStandings.the_grid} label="Today's board — the team" />
+          )}
+          </>
           )}
         </div>
         )}
@@ -2629,10 +2674,6 @@ function TriviaPlayTab({ userId, isAdmin }) {
         </div>
         )}
 
-        {/* ── Shared Grid card ── */}
-        {shows("shared") && (
-          <TriviaSharedGridTab userId={userId} onActiveChange={setSharedActive} />
-        )}
       </div>
 
       {/* ── Standings strip ── */}
@@ -2696,7 +2737,8 @@ function renderRuleLabel(rule, pinnedItemsById) {
 // same as the solo Grid) — the client never reports a value.
 // ============================================================
 const gridShared = {
-  wrap: { background: "#fff", border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 16, maxWidth: 900, margin: "0 auto" },
+  // Renders inside The Grid card now, so this is a plain container, not a card.
+  wrap: {},
   setupRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
   nameInput: {
     flex: 1, padding: "8px 10px", fontSize: 13, borderRadius: 6,
@@ -2934,13 +2976,12 @@ function TriviaSharedGridTab({ userId, onActiveChange }) {
   };
 
   if (gsPhase === "checking") {
-    return <div style={{ padding: 16, fontSize: 13, color: T.slate500 }}>Checking for a game in progress…</div>;
+    return <div style={{ fontSize: 13, color: T.slate500 }}>Checking for a game in progress…</div>;
   }
 
   if (gsPhase === "setup") {
     return (
       <div style={gridShared.wrap}>
-        <div style={s.playCardTitle}>Shared Grid</div>
         <div style={s.playCardDesc}>
           One shared screen, everyone in the room. Type in who's playing, then the host
           picks squares, reveals the answer, and taps who got it right.
@@ -2988,10 +3029,9 @@ function TriviaSharedGridTab({ userId, onActiveChange }) {
 
   return (
     <div style={gridShared.wrap}>
-      <div style={s.stageHeader}>
-        <div>
-          <div style={s.stageTitle}>Shared Grid</div>
-          <div style={s.stageSub}>{gsState.status === "finished" ? "game over" : "in play"}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        <div style={s.stageSub}>
+          {gsState.status === "finished" ? "multiplayer — game over" : "multiplayer — in play"}
         </div>
         {gsState.is_host && gsState.status !== "finished" && (
           <button type="button" style={s.ghostBtn} onClick={endGame} disabled={gsBusy}>End game</button>
