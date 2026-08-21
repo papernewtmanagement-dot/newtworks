@@ -1,0 +1,1 @@
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS hire_date date;

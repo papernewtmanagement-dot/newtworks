@@ -1,0 +1,43 @@
+-- Path 1 auth fix: logged-in users read as 'authenticated', but all read
+-- policies were scoped to 'anon' only -> RLS returned 0 rows after login.
+-- This ADDS authenticated to every read policy (additive; anon access kept).
+ALTER POLICY anon_read_agency                ON public.agency                TO anon, authenticated;
+ALTER POLICY anon_read_aipp_tracking         ON public.aipp_tracking         TO anon, authenticated;
+ALTER POLICY anon_read_alerts                ON public.alerts                TO anon, authenticated;
+ALTER POLICY anon_read_applicants            ON public.applicants            TO anon, authenticated;
+ALTER POLICY anon_read_automation_recipes    ON public.automation_recipes    TO anon, authenticated;
+ALTER POLICY anon_read_automation_run_log    ON public.automation_run_log    TO anon, authenticated;
+ALTER POLICY anon_read_bank_accounts         ON public.bank_accounts         TO anon, authenticated;
+ALTER POLICY anon_read_bank_transactions     ON public.bank_transactions     TO anon, authenticated;
+ALTER POLICY anon_read_chart_of_accounts     ON public.chart_of_accounts     TO anon, authenticated;
+ALTER POLICY anon_read_commission_structures ON public.commission_structures TO anon, authenticated;
+ALTER POLICY anon_read_comp_recap            ON public.comp_recap            TO anon, authenticated;
+ALTER POLICY anon_read_compliance_calendar   ON public.compliance_calendar   TO anon, authenticated;
+ALTER POLICY anon_read_compliance_log        ON public.compliance_log        TO anon, authenticated;
+ALTER POLICY anon_read_compliance_rules      ON public.compliance_rules      TO anon, authenticated;
+ALTER POLICY anon_read_content_calendar      ON public.content_calendar      TO anon, authenticated;
+ALTER POLICY anon_read_credit_accounts       ON public.credit_accounts       TO anon, authenticated;
+ALTER POLICY anon_read_credit_transactions   ON public.credit_transactions   TO anon, authenticated;
+ALTER POLICY anon_read_daily_briefing_log    ON public.daily_briefing_log    TO anon, authenticated;
+ALTER POLICY anon_read_documents             ON public.documents             TO anon, authenticated;
+ALTER POLICY anon_read_goals                 ON public.goals                 TO anon, authenticated;
+ALTER POLICY anon_read_interviews            ON public.interviews            TO anon, authenticated;
+ALTER POLICY anon_read_journal_entries       ON public.journal_entries       TO anon, authenticated;
+ALTER POLICY anon_read_journal_lines         ON public.journal_lines         TO anon, authenticated;
+ALTER POLICY anon_read_monthly_close_checklist ON public.monthly_close_checklist TO anon, authenticated;
+ALTER POLICY anon_read_notification_preferences ON public.notification_preferences TO anon, authenticated;
+ALTER POLICY anon_read_offers                ON public.offers                TO anon, authenticated;
+ALTER POLICY anon_read_onboarding_checklists ON public.onboarding_checklists TO anon, authenticated;
+ALTER POLICY anon_read_payroll_detail        ON public.payroll_detail        TO anon, authenticated;
+ALTER POLICY anon_read_payroll_runs          ON public.payroll_runs          TO anon, authenticated;
+ALTER POLICY anon_read_persistent_memory     ON public.persistent_memory     TO anon, authenticated;
+ALTER POLICY anon_read_positions             ON public.positions             TO anon, authenticated;
+ALTER POLICY anon_read_producer_production   ON public.producer_production   TO anon, authenticated;
+ALTER POLICY anon_read_scoreboard_tracking   ON public.scoreboard_tracking   TO anon, authenticated;
+ALTER POLICY anon_read_settings_nonsecret    ON public.settings              TO anon, authenticated;
+ALTER POLICY anon_read_social_accounts       ON public.social_accounts       TO anon, authenticated;
+ALTER POLICY anon_read_social_analytics      ON public.social_analytics      TO anon, authenticated;
+ALTER POLICY anon_read_staff                 ON public.staff                 TO anon, authenticated;
+ALTER POLICY anon_read_staff_performance     ON public.staff_performance     TO anon, authenticated;
+ALTER POLICY anon_read_tasks                 ON public.tasks                 TO anon, authenticated;
+ALTER POLICY anon_read_users                 ON public.users                 TO anon, authenticated;
