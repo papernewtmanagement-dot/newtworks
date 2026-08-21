@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport, useVerdictThresholds } from "../lib/hooks.js";
 import { STAGES, PIPELINE_STAGES, stageLabel } from "../lib/hiringStages.js";
+import OfferLetterModal from "./OfferLetterModal.jsx";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -1572,6 +1573,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // Which stage button is mid-write (null = idle). Drives the stepper's
   // saving state so a double-tap can't fire two writes.
   const [stageSaving, setStageSaving] = useState(null);
+  // Moving to the Offer stage opens the offer letter form first — see changeStage.
+  const [offerModalOpen, setOfferModalOpen] = useState(false);
   const [bestFit, setBestFit] = useState(null);
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
@@ -1926,6 +1929,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   const changeStage = async (newStatus) => {
     if (!detail?.id || !newStatus || newStatus === detail.status) return;
     if (stageSaving) return;
+    // Moving to Offer opens the offer letter form instead of writing the stage
+    // straight away. The form captures the pay terms, fills in the stored
+    // letter, and does the stage write itself when it saves.
+    if (newStatus === "offer") { setOfferModalOpen(true); return; }
     // Moving to Hired opens the new team member form in a second tab with this
     // candidate's details already filled in. The tab is opened here, before the
     // first await, because browsers only allow a new window while the click that
@@ -2152,6 +2159,24 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
 
       {/* Pipeline stage stepper — tap a stage to move this candidate. */}
       <StageStepper status={detail?.status} saving={stageSaving} onPick={changeStage} />
+
+      {offerModalOpen && (
+        <OfferLetterModal
+          candidate={detail}
+          onClose={() => setOfferModalOpen(false)}
+          onSaved={async () => {
+            setOfferModalOpen(false);
+            const { data } = await supabase
+              .from("v_hiring_candidates")
+              .select("*")
+              .eq("id", detail.id)
+              .maybeSingle();
+            if (data) setDetail(data);
+            else setDetail(prev => ({ ...prev, status: "offer" }));
+            if (typeof onUpdate === "function") onUpdate(detail.id, "offer", { alreadyPersisted: true });
+          }}
+        />
+      )}
 
       {/* Results — Suggs four-layer × three-construct framework read from
           verdict_overall. The 4×3 matrix

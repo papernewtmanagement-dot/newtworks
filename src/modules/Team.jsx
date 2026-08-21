@@ -15,7 +15,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 //
 // SECTIONS:
 //   1. Overview      — Pipeline summary, team snapshot, alerts
-//   2. Recruiting    — Kanban: Applied→AssessmentSent→Assessed→Interview (Team Meet & Greet onward moved to Finalists)
+//   2. Recruiting    — Kanban: Applied→AssessmentSent→Assessed→Interview (Meet & Greet onward moved to Finalists)
 //   3. Candidate Detail — assessment scores, resume, scorecards (new: click a card)
 //   4. Staff         — Current team directory with licensing status
 //   5. Performance   — Monthly KPI tracking per staff member
@@ -457,7 +457,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
   const [selected, setSelected] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
-  const stages = stagesProp || ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired"]; // declined + former hidden by default
+  const stages = stagesProp || ["applied","assessment_sent","assessed","interview","team_meet_and_greet","offer","reference_check","hired"]; // declined + former hidden by default
 
 
   const selectedApp = applicants.find(a => a.id === selected);
@@ -2905,7 +2905,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
   }
   // Split the pipeline: top-of-funnel in Recruiting, reference-check-onward in Closing.
   const RECRUITING_STAGES = ["applied","assessment_sent","assessed","interview"];
-  const CLOSING_STAGES    = ["team_meet_and_greet","reference_check","offer","hired"];
+  const CLOSING_STAGES    = ["team_meet_and_greet","offer","reference_check","hired"];
   const recruitingApps = applicants.filter(a => RECRUITING_STAGES.includes(a.status));
   const closingApps    = applicants.filter(a => CLOSING_STAGES.includes(a.status));
   const subs = [
@@ -3043,7 +3043,7 @@ export default function Team({ userRole }) {
     if (!supabase || !AGENCY_ID) return;
     let cancelled = false;
 
-    const PIPELINE_STATUSES = ["applied","assessment_sent","assessed","interview","team_meet_and_greet","reference_check","offer","hired","declined","former"];
+    const PIPELINE_STATUSES = ["applied","assessment_sent","assessed","interview","team_meet_and_greet","offer","reference_check","hired","declined","former"];
 
     // Pass 2 — res_composite only now. Cheap for everyone (plain resume
     // scoring, no facet-norm lookups involved), unlike assessment_composite
