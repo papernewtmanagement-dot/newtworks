@@ -57,6 +57,7 @@ import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
+import { processReferencesMode } from "./parsers/reference_ingest.ts";
 import { processPaypalPrintSalesMode } from "./parsers/paypal_print_sales.ts";
 import { processAmazonOrderEmailMode } from "./parsers/amazon_order_email.ts";
 import { processWrapupNoSendMode } from "./parsers/wrapup_no_send.ts";
@@ -2264,6 +2265,14 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processCareerplugMode(cpCtx, body);
     return jsonResponse({ ok: true, mode: "careerplug", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "references") {
+    // Body-only reference emails ("Reference N - <name>"). See
+    // parsers/reference_ingest.ts for why this door exists.
+    const refCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processReferencesMode(refCtx, body);
+    return jsonResponse({ ok: true, mode: "references", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "wrapup") {
     const wupCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };

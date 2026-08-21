@@ -11407,6 +11407,14 @@ async function run(req: Request): Promise<Response> {
     const result = await processCareerplugMode(cpCtx, body);
     return jsonResponse({ ok: true, mode: "careerplug", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
+  if (mode === "references") {
+    // Body-only reference emails ("Reference N - <name>"). See
+    // parsers/reference_ingest.ts for why this door exists.
+    const refCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
+    const startedAt = new Date().toISOString();
+    const result = await processReferencesMode(refCtx, body);
+    return jsonResponse({ ok: true, mode: "references", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
   if (mode === "wrapup") {
     const wupCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId };
     const startedAt = new Date().toISOString();
