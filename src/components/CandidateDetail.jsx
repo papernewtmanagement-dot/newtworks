@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, Fragment } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport, useVerdictThresholds } from "../lib/hooks.js";
+import { STAGES, PIPELINE_STAGES, stageLabel } from "../lib/hiringStages.js";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -148,16 +149,6 @@ const competencyBand = (v) => {
   if (v >= 50) return "green";
   if (v >= 40) return "yellow";
   return "red";
-};
-
-const STAGE_LABELS = {
-  assessed:        "Assessed",
-  interview:       "Interview",
-  team_meet_and_greet: "Team Meet & Greet",
-  reference_check: "Ref Check",
-  offer:           "Offer",
-  hired:           "Hired",
-  archived:        "Archived",
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -1494,6 +1485,81 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
 
 // ─── Main component ────────────────────────────────────────────────
 
+// ─── Stage Stepper ─────────────────────────────────────────────────
+// Tap-to-move pipeline control at the top of the detail page. Every active
+// stage is its own button: the current stage is filled in its stage color,
+// stages already passed read as done, stages still ahead read as pending.
+// Tapping any stage writes hiring_candidates.status immediately — no confirm,
+// because a wrong tap is undone by tapping the right stage.
+//
+// The strip scrolls sideways rather than wrapping (frontend rule 20) so all
+// eight stages stay in one line on a 412px phone, and it auto-centers the
+// current stage on open so the candidate's position is visible without a swipe.
+const StageStepper = ({ status, saving, onPick }) => {
+  const stripRef = useRef(null);
+  const currentIdx = PIPELINE_STAGES.indexOf(status);
+  const offPipeline = currentIdx === -1;   // declined or former
+
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const el = strip.querySelector('[data-current="1"]');
+    if (!el) return;
+    // Set scrollLeft directly rather than scrollIntoView — scrollIntoView can
+    // drag the whole page vertically on mobile.
+    strip.scrollLeft = Math.max(0, el.offsetLeft - (strip.clientWidth - el.offsetWidth) / 2);
+  }, [status]);
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div
+        ref={stripRef}
+        style={{
+          display: "flex", alignItems: "center", gap: 6,
+          overflowX: "auto", WebkitOverflowScrolling: "touch",
+          paddingBottom: 4,
+        }}
+      >
+        {PIPELINE_STAGES.map((s, i) => {
+          const cfg       = STAGES[s] || {};
+          const isCurrent = s === status;
+          const isDone    = !offPipeline && i < currentIdx;
+          const busy      = saving === s;
+          return (
+            <Fragment key={s}>
+              {i > 0 && (
+                <span style={{ fontSize: 14, color: T.slate300, flexShrink: 0, userSelect: "none" }}>›</span>
+              )}
+              <button
+                data-current={isCurrent ? "1" : undefined}
+                onClick={() => { if (!isCurrent && !saving) onPick(s); }}
+                disabled={!!saving || isCurrent}
+                title={isCurrent ? `Currently ${cfg.label}` : `Move to ${cfg.label}`}
+                style={{
+                  flexShrink: 0, whiteSpace: "nowrap", boxSizing: "border-box",
+                  padding: "6px 12px", fontSize: 11, fontWeight: 700, borderRadius: 20,
+                  border: `1px solid ${isCurrent ? (cfg.color || T.slate400) : T.slate200}`,
+                  background: isCurrent ? (cfg.color || T.slate400) : isDone ? T.slate100 : T.white,
+                  color: isCurrent ? T.white : isDone ? T.slate600 : T.slate500,
+                  cursor: isCurrent ? "default" : saving ? "wait" : "pointer",
+                  opacity: saving && !busy ? 0.55 : 1,
+                }}
+              >
+                {busy ? "Saving…" : cfg.label || s}
+              </button>
+            </Fragment>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>
+        {offPipeline
+          ? `${stageLabel(status)} — tap a stage above to put this candidate back in the active pipeline.`
+          : "Tap a stage to move this candidate."}
+      </div>
+    </div>
+  );
+};
+
 export default function CandidateDetail({ candidate, onBack, onUpdate, userRole }) {
   // App-wide admin convention (Manual.jsx, FitScorecards.jsx, Onboarding.jsx,
   // Licensing.jsx, PFA.jsx all use the same ["owner","manager"] check). Gates
@@ -1503,6 +1569,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   const verdictThresh = useVerdictThresholds();
   const [detail, setDetail] = useState(candidate || {});
   const [savingSection, setSavingSection] = useState(null);
+  // Which stage button is mid-write (null = idle). Drives the stepper's
+  // saving state so a double-tap can't fire two writes.
+  const [stageSaving, setStageSaving] = useState(null);
   const [bestFit, setBestFit] = useState(null);
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
@@ -1849,6 +1918,36 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     }
   };
 
+  // Move the candidate to another pipeline stage. Writes status +
+  // status_updated_at, refetches the view row so every computed column on the
+  // page stays in step, then tells the parent list to re-render. The parent's
+  // updater is told the write already happened so it only syncs its own state
+  // instead of writing the same row a second time.
+  const changeStage = async (newStatus) => {
+    if (!detail?.id || !newStatus || newStatus === detail.status) return;
+    if (stageSaving) return;
+    setStageSaving(newStatus);
+    const nowIso = new Date().toISOString();
+    const { error } = await supabase
+      .from("hiring_candidates")
+      .update({ status: newStatus, status_updated_at: nowIso })
+      .eq("id", detail.id);
+    if (error) {
+      setStageSaving(null);
+      alert("Stage change failed: " + error.message);
+      return;
+    }
+    const { data } = await supabase
+      .from("v_hiring_candidates")
+      .select("*")
+      .eq("id", detail.id)
+      .maybeSingle();
+    setStageSaving(null);
+    if (data) setDetail(data);
+    else setDetail(prev => ({ ...prev, status: newStatus, status_updated_at: nowIso }));
+    if (typeof onUpdate === "function") onUpdate(detail.id, newStatus, { alreadyPersisted: true });
+  };
+
   const saveDecline = async () => {
     if (!detail?.id) return;
     if (!detail.decline_reason) {
@@ -1881,7 +1980,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       .maybeSingle();
     setSavingSection(null);
     if (data) setDetail(data);
-    if (typeof onUpdate === "function") onUpdate(detail.id, "declined");
+    if (typeof onUpdate === "function") onUpdate(detail.id, "declined", { alreadyPersisted: true });
   };
 
   // Update one probe's answer text in local state. Save button batch-writes
@@ -1982,6 +2081,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   };
 
   const displayName = [detail?.first_name, detail?.last_name].filter(Boolean).join(" ") || detail?.candidate_name || "Unknown Candidate";
+  // Declined / former candidates sit outside the eight active stages. The
+  // decline reason only makes sense while they are there — once they are put
+  // back in the pipeline the stored reason stays on the row but stops showing.
+  const isOffPipeline = !PIPELINE_STAGES.includes(detail?.status);
 
   return (
     <div>
@@ -1990,8 +2093,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{displayName}</div>
-            <div style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: T.slate700, background: T.slate100, borderRadius: 12 }}>
-              {STAGE_LABELS[detail?.status] || detail?.status || "—"}
+            <div style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, color: STAGES[detail?.status]?.color || T.slate700, background: STAGES[detail?.status]?.bg || T.slate100, borderRadius: 12 }}>
+              {stageLabel(detail?.status)}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
@@ -2024,13 +2127,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             <button onClick={() => setDetailRetryTick(t => t + 1)} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 600, color: T.white, background: T.red, border: "none", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>Retry</button>
           </div>
         )}
-        {(detail?.decline_reason || detail?.assessment_date) && (
+        {((isOffPipeline && detail?.decline_reason) || detail?.assessment_date) && (
           <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>
-            {detail?.decline_reason && (<>Declined: {DECLINE_REASON_LABEL[detail.decline_reason] || detail.decline_reason} · </>)}
+            {isOffPipeline && detail?.decline_reason && (<>Declined: {DECLINE_REASON_LABEL[detail.decline_reason] || detail.decline_reason} · </>)}
             Assessed {detail?.assessment_date || "—"}
           </div>
         )}
       </div>
+
+      {/* Pipeline stage stepper — tap a stage to move this candidate. */}
+      <StageStepper status={detail?.status} saving={stageSaving} onPick={changeStage} />
 
       {/* Results — Suggs four-layer × three-construct framework read from
           verdict_overall. The 4×3 matrix

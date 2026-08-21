@@ -43,18 +43,8 @@ import { T } from "../lib/theme.js";
 import { useTabParam } from "../lib/routing.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
-const STAGES = {
-  applied:          { label:"Applied",          color:T.slate500, bg:T.slate100, order:0 },
-  assessment_sent:  { label:"Assessment Sent",  color:T.slate600, bg:T.slate100, order:1 },
-  assessed:         { label:"Assessed",         color:T.slate500, bg:T.slate100, order:2 },
-  interview:        { label:"Interview",        color:T.amber,    bg:T.amberLt,  order:3 },
-  team_meet_and_greet: { label:"Team Meet & Greet", color:T.teal, bg:T.tealLt,   order:4 },
-  reference_check:  { label:"Ref Check",        color:T.blue,     bg:T.blueLt,   order:5 },
-  offer:            { label:"Offer",            color:T.purple,   bg:T.purpleLt, order:6 },
-  hired:            { label:"Hired",            color:T.green,    bg:T.greenLt,  order:7 },
-  declined:         { label:"Declined",         color:T.red,      bg:T.redLt,    order:8 },
-  former:           { label:"Former",           color:T.slate500, bg:T.slate100, order:9 },
-};
+// Shared with the candidate detail stepper — see src/lib/hiringStages.js.
+import { STAGES } from "../lib/hiringStages.js";
 
 // ─── Producer ROI Hook ───────────────────────────────────────
 function useProducerROI() {
@@ -3088,9 +3078,13 @@ export default function Team({ userRole }) {
 
   const retryApplicants = () => setApplicantsRetryTick(t => t + 1);
 
-  const updateApplicantStage = async (id, newStatus) => {
+  const updateApplicantStage = async (id, newStatus, opts = {}) => {
     // Optimistic UI update
     setApplicants(prev => prev.map(a => a.id === id ? {...a, status:newStatus} : a));
+    // CandidateDetail writes the row itself (stage stepper, decline button) and
+    // calls this only to keep the list in step — writing again here would be a
+    // pointless second round trip to the same row.
+    if (opts.alreadyPersisted) return;
     // Persist to DB
     const { error } = await supabase
       .from("hiring_candidates")
