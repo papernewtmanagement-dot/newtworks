@@ -139,7 +139,6 @@ function stripFences(s: string): string {
     .trim();
 }
 
-
 // ==================== _shared/auth.ts ====================
 // =========================================================================
 // _shared/auth.ts
@@ -168,7 +167,6 @@ async function requireSharedSecret(
   }
   return null;
 }
-
 
 // ==================== _shared/alerts.ts ====================
 // =========================================================================
@@ -234,7 +232,6 @@ async function resolveAlerts(opts: {
   }
   return { ok: true, resolved: (data ?? []).length, error: null };
 }
-
 
 // ==================== _shared/composio.ts ====================
 // =========================================================================
@@ -450,7 +447,6 @@ async function callComposioNoAuth(opts: {
   return unwrapComposio(await res.text(), res.ok, res.status);
 }
 
-
 // ==================== _shared/gmail.ts ====================
 // =========================================================================
 // _shared/gmail.ts
@@ -525,7 +521,6 @@ async function sendGmail(opts: {
   });
 }
 
-
 // ==================== _shared/html.ts ====================
 // =========================================================================
 // _shared/html.ts
@@ -544,7 +539,6 @@ function escHtml(s: string | null | undefined): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-
 
 // ==================== hiring-interview-scheduler/index.ts ====================
 // =========================================================================
@@ -894,8 +888,14 @@ function formatChicago(iso: string): string {
 // -------------------------------------------------------------------------
 // mode=process_assessed
 // -------------------------------------------------------------------------
-async function processAssessed(agencyId: string): Promise<Response> {
-  const { data: candidates, error } = await sb
+async function processAssessed(agencyId: string, candidateId?: string): Promise<Response> {
+  // candidateId narrows this to one person. The database trigger
+  // trg_dispatch_assessed_candidate passes it whenever a candidate's status
+  // lands on 'assessed', so the live path only ever touches the candidate who
+  // just finished. Called without it, this still sweeps every eligible
+  // candidate in 'assessed' -- deliberately left available, but nothing
+  // schedules it, so a backlog is never processed by surprise.
+  let query = sb
     .from("hiring_candidates")
     .select("id, first_name, candidate_name, email, position")
     .eq("agency_id", agencyId)
@@ -903,6 +903,8 @@ async function processAssessed(agencyId: string): Promise<Response> {
     .eq("is_test_candidate", false)
     .is("decision_at", null)
     .is("interview_invite_token", null);
+  if (candidateId) query = query.eq("id", candidateId);
+  const { data: candidates, error } = await query;
   if (error) return jsonResponse({ ok: false, error: error.message }, 500);
 
   const gmailCreds = await getComposioGmailCreds(agencyId);
@@ -1163,7 +1165,7 @@ Deno.serve(async (req: Request) => {
   if (mode === "process_assessed") {
     const denied = await requireSharedSecret(agencyId, body.shared_secret);
     if (denied) return denied;
-    return await processAssessed(agencyId);
+    return await processAssessed(agencyId, body.candidate_id || undefined);
   }
 
   if (mode === "refresh_offer") {
