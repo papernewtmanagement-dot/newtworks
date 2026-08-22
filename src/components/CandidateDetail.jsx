@@ -1201,19 +1201,24 @@ function renderAssessmentLayer({ detail, bestFit, selectedRole, setSelectedRole,
 // name in the subject line matches this candidate, so a reference can never sit
 // invisible in the table just because the automatic match missed.
 // Marie's mail client sends every reference twice in one message: a plain-text
-// copy of the write-up followed by an HTML copy of the same thing. The intake
-// stores the message body whole, so roughly half of every stored reference is a
-// duplicate wrapped in markup. Trim it for display only — the stored text is
-// left exactly as received, so nothing is lost and the durable fix belongs
-// upstream in the intake parser.
-function referenceBodyText(raw) {
-  const s = String(raw || "");
+// copy of the write-up followed by an HTML copy of the same thing, and the
+// intake stores the message body whole. The durable fix is the generated column
+// hiring_candidate_references.body_text (migrations 20260822070233 +
+// 20260822070324), which derives the clean copy in the database for every row,
+// current and future. Prefer that; this client-side trim stays only as a
+// fallback for the moment between a row being written and the column being
+// read, and reproduces the same two branches.
+function referenceBodyText(row) {
+  if (row && typeof row.body_text === "string" && row.body_text.trim().length > 0) {
+    return row.body_text;
+  }
+  const s = String(row?.body || "");
   const idx = s.search(/<div[^>]*dir=["']ltr["'][^>]*>/i);
   if (idx > 0) {
     const plain = s.slice(0, idx).trim();
     if (plain.length > 0) return plain;
   }
-  if (/<[a-z][^>]*>/i.test(s)) {
+  if (/<\/?(div|span|br|p|a|b|i|u|em|strong|font|table|tr|td|th|ul|ol|li|img|blockquote|h[1-6])[\s/>]/i.test(s)) {
     return s
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/(p|div|tr|li)\s*>/gi, "\n")
@@ -1305,7 +1310,7 @@ function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T,
                     whiteSpace: "pre-wrap", wordBreak: "break-word",
                     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                   }}>
-                    {referenceBodyText(r.body)}
+                    {referenceBodyText(r)}
                   </div>
                 </div>
               )}
@@ -1952,7 +1957,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     (async () => {
       const { data, error } = await supabase
         .from("hiring_candidate_references")
-        .select("id, candidate_id, candidate_name_from_subject, reference_number, sender, received_at, subject, body")
+        .select("id, candidate_id, candidate_name_from_subject, reference_number, sender, received_at, subject, body, body_text")
         .eq("agency_id", AGENCY_ID)
         .or(`candidate_id.eq.${detail.id},candidate_id.is.null`);
       if (cancelled) return;
