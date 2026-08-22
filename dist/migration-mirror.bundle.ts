@@ -461,15 +461,23 @@ Deno.serve(async (req: Request) => {
       const take = Math.min(Math.max(Number(body.audit_limit ?? 250), 1), 600);
       const slice = targets.slice(offset, offset + take);
 
+      // Blob fetches are I/O bound. Doing 300 of them one after another burns
+      // the worker's wall clock and returns WORKER_RESOURCE_LIMIT. A modest
+      // concurrency window keeps the same total work well inside budget.
+      const CONCURRENCY = 8;
       const rows: Array<{ version: string; path: string; fingerprint: string }> = [];
-      for (const t of slice) {
-        const blob = await gh(token, `/repos/${GH_REPO}/git/blobs/${t.sha}`);
-        const raw = blob.encoding === "base64"
-          ? new TextDecoder().decode(
-              Uint8Array.from(atob(blob.content.replace(/\n/g, "")), (c) => c.charCodeAt(0)),
-            )
-          : String(blob.content ?? "");
-        rows.push({ version: t.version, path: t.path, fingerprint: await fingerprint(raw) });
+      for (let i = 0; i < slice.length; i += CONCURRENCY) {
+        const window = slice.slice(i, i + CONCURRENCY);
+        const done = await Promise.all(window.map(async (t) => {
+          const blob = await gh(token, `/repos/${GH_REPO}/git/blobs/${t.sha}`);
+          const raw = blob.encoding === "base64"
+            ? new TextDecoder().decode(
+                Uint8Array.from(atob(blob.content.replace(/\n/g, "")), (c) => c.charCodeAt(0)),
+              )
+            : String(blob.content ?? "");
+          return { version: t.version, path: t.path, fingerprint: await fingerprint(raw) };
+        }));
+        rows.push(...done);
       }
 
       let tally: any = null;
