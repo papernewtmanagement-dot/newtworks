@@ -4,8 +4,8 @@
 // v2 (2026-08-18): Runs HOURLY (not weekly — the 5-review-per-call cap on
 // Google Maps' API means a weekly cadence could silently drop reviews on
 // weeks with 6+ new ones; hourly makes that a non-issue in practice).
-// Pulls the 5 most recent Google Business Profile reviews via Composio's
-// Google Maps GET_PLACE_DETAILS tool, diffs against gbp_review_tracker
+// Pulls Google Business Profile reviews via Composio's Google Maps
+// GET_PLACE_DETAILS tool, diffs against gbp_review_tracker
 // (keyed on place_id + google review resource name), and for anything new:
 // drafts a response with Groq (compliance-guardrailed, varied against the
 // last 10 drafted openings so nothing echoes), posts it to the Paper Newt
@@ -95,7 +95,13 @@ async function callGroq(agencyId: string, groqApiKey: string, userContent: strin
       { role: "user", content: userContent },
     ],
     temperature: 0.7,
-    max_tokens: 300,
+    // gpt-oss-120b is a reasoning model: it spends output tokens on an internal
+    // reasoning pass BEFORE emitting the JSON body. At max_tokens 300 the budget
+    // was consumed by reasoning and the JSON never closed, so Groq rejected every
+    // call with json_validate_failed and an empty generation. Reproduced against
+    // the live prompt 2026-08-21. Do not lower this below ~800.
+    max_tokens: 1200,
+    reasoning_effort: "low",
     response_format: { type: "json_object" },
   };
   const res = await fetch(GROQ_API_URL, {
@@ -241,6 +247,22 @@ Deno.serve(async (req: Request) => {
       task_id: taskId,
       status: draftedResponse ? "drafted" : "draft_failed",
     });
+
+    // A review that lands but never gets a draft produces no task and no
+    // Telegram message. Without this alert that failure is completely silent —
+    // which is exactly how five reviews sat undrafted and unnoticed in August.
+    if (!draftedResponse) {
+      await sb.from("alerts").insert({
+        agency_id: agencyId,
+        alert_type: "gbp_review_draft_failed",
+        severity: "warning",
+        title: `Google review reply could not be drafted (${authorName})`,
+        message: `A new Google review was captured but the reply draft failed, so no task and no Telegram message were created. Reason: ${groqResult.error ?? "unknown"}. The review is stored in gbp_review_tracker with status draft_failed.`,
+        module_reference: "gbp_reviews",
+        is_read: false,
+        is_resolved: false,
+      });
+    }
 
     if (draftedResponse) recentOpenings.unshift(draftedResponse.split(" ").slice(0, 5).join(" "));
     results.push({ author: authorName, rating, drafted: !!draftedResponse, task_id: taskId });
