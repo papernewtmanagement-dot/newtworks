@@ -75,7 +75,7 @@ ALTER TABLE public.hiregauge_rules
     'screen_score_rubric'::text, 'reference_score_rubric'::text
   ])));
 
--- 3 ---------------------------------------------------------------------
+-- 3 ----------------------------------------------------------------------
 INSERT INTO public.hiregauge_rules
   (rule_type, rule_name, short_label, description, notes, calibration_status, verdict_impact, is_active)
 VALUES
@@ -139,7 +139,7 @@ VALUES
  'TWO-REFERENCE MINIMUM: every construct function returns NULL until at least two scored references exist, so the layer contributes nothing to the overall verdict on the strength of one referee. A single reference is noise; the same discipline as never coaching off a scorecard step measured fewer than three days. The per-reference numbers still display — the gate is on the layer counting, not on Peter seeing it. Basis: Hunter & Hunter 1984 table 9 (unstructured reference checks about .26); Taylor, Pajo, Cheung & Stringfield 2004 Personnel Psychology 57(3) 745-772 (structured procedure, 223 applicants, r = .25 uncorrected / .36 corrected — structure is the moderator); reference checks were among the predictors the Sackett et al. re-analysis could not recompute for want of reported data, so .26 is soft not settled; Wainer 1976 (equal weights beat estimated weights absent a large local sample). Scored by Claude in chat only.',
  'proposed','informational',true);
 
--- 4 ---------------------------------------------------------------------
+-- 4 ----------------------------------------------------------------------
 -- Shared aggregator. One referee, one vote.
 CREATE OR REPLACE FUNCTION public._reference_construct(p_candidate_id uuid, p_signals text[])
 RETURNS numeric
@@ -186,7 +186,7 @@ AS $function$
     ARRAY['attitude_toward_work','motivation','rehire_intent']);
 $function$;
 
--- 5 ---------------------------------------------------------------------
+-- 5 ----------------------------------------------------------------------
 -- Threshold note still carried the pre-2026-08-04 construct names. Values
 -- unchanged; wording brought onto Peter's current terms.
 UPDATE public.hiregauge_verdict_thresholds
