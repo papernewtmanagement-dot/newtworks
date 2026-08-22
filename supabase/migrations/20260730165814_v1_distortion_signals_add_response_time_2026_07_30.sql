@@ -1,0 +1,233 @@
+-- Step A / Item 4: extend compute_newtworks_v1_distortion_signals with per-item
+-- response-time signals, and extend compute_newtworks_v1_traits_as_row to surface
+-- them in the row shape.
+--
+-- New signals:
+--   n_timed_items          -- Likert (personality + impression_mgmt) items with both served_at + answered_at
+--   mean_response_ms       -- mean(answered_at - served_at) over timed Likert items
+--   min_response_ms        -- fastest timed Likert response
+--   straight_through_flag  -- n_timed_items >= 5 AND mean_response_ms < 2000
+--
+-- 2000ms mean is a conservative Likert-straight-through threshold. Genuine
+-- reading + choosing lands at 3-8s per item; sub-2-second mean = click-through.
+-- Guarded at n_timed_items >= 5 so a partial-completion candidate doesn't
+-- misfire the flag on tiny samples.
+--
+-- Row-shape change on both functions requires DROP + CREATE.
+
+DROP FUNCTION IF EXISTS public.compute_newtworks_v1_distortion_signals(uuid, integer, integer);
+
+CREATE OR REPLACE FUNCTION public.compute_newtworks_v1_distortion_signals(
+  p_candidate_id uuid,
+  p_stint integer DEFAULT NULL,
+  p_sitting integer DEFAULT NULL
+)
+RETURNS TABLE (
+  n_likert_items          integer,
+  max_consecutive_run     integer,
+  overall_sd              numeric,
+  straight_line_flag      boolean,
+  acquiescence_mean       numeric,
+  acquiescence_bias       numeric,
+  acquiescence_flag       boolean,
+  n_timed_items           integer,
+  mean_response_ms        numeric,
+  min_response_ms         numeric,
+  straight_through_flag   boolean
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH likert AS (
+    SELECT r.response_value,
+           r.served_at,
+           r.answered_at,
+           r.created_at,
+           ROW_NUMBER() OVER (ORDER BY r.created_at, r.id) AS rn
+    FROM public.hiregauge_candidate_responses r
+    JOIN public.hiregauge_instrument_items i ON i.id = r.item_id
+    WHERE r.candidate_id = p_candidate_id
+      AND i.section IN ('newtworks_v1_personality', 'newtworks_v1_impression_mgmt')
+      AND r.response_value IS NOT NULL
+      AND i.is_active
+      AND (p_stint   IS NULL OR i.stint = p_stint)
+      AND (p_sitting IS NULL OR r.sitting = p_sitting)
+  ),
+  -- Gaps-and-islands: identical adjacent responses share a grp id.
+  grouped AS (
+    SELECT response_value,
+           rn,
+           rn - ROW_NUMBER() OVER (PARTITION BY response_value ORDER BY rn) AS grp
+    FROM likert
+  ),
+  runs AS (
+    SELECT response_value, grp, COUNT(*)::int AS run_length
+    FROM grouped
+    GROUP BY response_value, grp
+  ),
+  agg AS (
+    SELECT COUNT(*)::int                                    AS n_items,
+           COALESCE(stddev_samp(response_value), 0)::numeric AS sd,
+           COALESCE(avg(response_value), 0)::numeric        AS raw_mean
+    FROM likert
+  ),
+  max_run AS (
+    SELECT COALESCE(MAX(run_length), 0)::int AS max_run FROM runs
+  ),
+  -- Per-item response time on Likert items where both timestamps landed.
+  timed AS (
+    SELECT EXTRACT(EPOCH FROM (answered_at - served_at)) * 1000.0 AS ms
+    FROM likert
+    WHERE served_at IS NOT NULL
+      AND answered_at IS NOT NULL
+      AND answered_at >= served_at  -- guard against clock skew / bad data
+  ),
+  timing AS (
+    SELECT COUNT(*)::int         AS n_timed,
+           COALESCE(avg(ms), 0)::numeric AS mean_ms,
+           COALESCE(min(ms), 0)::numeric AS min_ms
+    FROM timed
+  )
+  SELECT agg.n_items,
+         max_run.max_run,
+         round(agg.sd, 3)                                       AS overall_sd,
+         (agg.n_items > 0 AND (max_run.max_run >= 8 OR agg.sd < 0.5)) AS straight_line_flag,
+         round(agg.raw_mean, 3)                                 AS acquiescence_mean,
+         round(abs(agg.raw_mean - 3.0), 3)                      AS acquiescence_bias,
+         (agg.n_items > 0 AND abs(agg.raw_mean - 3.0) > 0.75)   AS acquiescence_flag,
+         timing.n_timed                                         AS n_timed_items,
+         CASE WHEN timing.n_timed > 0 THEN round(timing.mean_ms, 0) ELSE NULL END AS mean_response_ms,
+         CASE WHEN timing.n_timed > 0 THEN round(timing.min_ms,  0) ELSE NULL END AS min_response_ms,
+         (timing.n_timed >= 5 AND timing.mean_ms > 0 AND timing.mean_ms < 2000) AS straight_through_flag
+  FROM agg CROSS JOIN max_run CROSS JOIN timing;
+$$;
+
+-- Row-shape change: rebuild traits_as_row to add 4 new distortion_ columns.
+DROP FUNCTION IF EXISTS public.compute_newtworks_v1_traits_as_row(uuid, integer, integer);
+
+CREATE OR REPLACE FUNCTION public.compute_newtworks_v1_traits_as_row(
+  p_candidate_id uuid,
+  p_stint integer DEFAULT NULL,
+  p_sitting integer DEFAULT NULL
+)
+RETURNS TABLE (
+  candidate_id                     uuid,
+  assertiveness                    integer,
+  independent_spirit               integer,
+  compassion                       integer,
+  belief_in_others                 integer,
+  optimism                         integer,
+  analytical                       integer,
+  deadline_motivation              integer,
+  self_promotion                   integer,
+  recognition_drive                integer,
+  overall_score                    integer,
+  n_items_scored                   integer,
+  cognitive_score                  integer,
+  cognitive_n                      integer,
+  impression_mgmt_score            integer,
+  impression_mgmt_n                integer,
+  nonsense_inflation               integer,
+  nonsense_n                       integer,
+  retest_divergence                numeric,
+  retest_n_pairs                   integer,
+  expansion_triggers               jsonb,
+  reliability_by_trait             jsonb,
+  distortion_n_likert_items        integer,
+  distortion_max_consecutive_run   integer,
+  distortion_overall_sd            numeric,
+  distortion_straight_line_flag    boolean,
+  distortion_acquiescence_mean     numeric,
+  distortion_acquiescence_bias     numeric,
+  distortion_acquiescence_flag     boolean,
+  distortion_n_timed_items         integer,
+  distortion_mean_response_ms      numeric,
+  distortion_min_response_ms       numeric,
+  distortion_straight_through_flag boolean
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  agency_id_val uuid := '126794dd-25ff-47d2-a436-724499733365';
+  trait_scores jsonb;
+  overall_avg int;
+  n_items_total int;
+  cog record;
+  im record;
+  nons record;
+  ret record;
+  dist record;
+  triggers jsonb;
+  reliability_json jsonb;
+BEGIN
+  SELECT COALESCE(jsonb_object_agg(t.trait, t.score_0_100), '{}'::jsonb),
+         round(avg(t.score_0_100))::int,
+         COALESCE(sum(t.n_items), 0)::int
+    INTO trait_scores, overall_avg, n_items_total
+    FROM public.compute_newtworks_v1_traits(p_candidate_id, p_stint, p_sitting) t;
+
+  SELECT * INTO cog  FROM public.compute_newtworks_v1_cognitive_score      (p_candidate_id, p_stint, p_sitting);
+  SELECT * INTO im   FROM public.compute_newtworks_v1_impression_mgmt_score(p_candidate_id, p_stint, p_sitting);
+  SELECT * INTO nons FROM public.compute_newtworks_v1_nonsense_inflation   (p_candidate_id, p_stint, p_sitting);
+  SELECT * INTO ret  FROM public.compute_newtworks_v1_retest_divergence    (p_candidate_id, p_sitting);
+  SELECT * INTO dist FROM public.compute_newtworks_v1_distortion_signals   (p_candidate_id, p_stint, p_sitting);
+
+  triggers := public.compute_newtworks_v1_expansion_triggers(
+    agency_id_val,
+    trait_scores,
+    cog.score_0_100,
+    im.score_0_100,
+    nons.inflation_count,
+    ret.avg_divergence
+  );
+
+  SELECT COALESCE(
+    jsonb_object_agg(rel.trait, jsonb_build_object(
+      'n_items',            rel.n_items,
+      'within_trait_sd',    rel.within_trait_sd,
+      'n_retest_pairs',     rel.n_retest_pairs,
+      'retest_divergence',  rel.retest_divergence
+    )),
+    '{}'::jsonb)
+    INTO reliability_json
+    FROM public.compute_newtworks_v1_reliability_per_candidate(p_candidate_id, p_stint, p_sitting) rel;
+
+  RETURN QUERY
+  SELECT
+    p_candidate_id,
+    NULLIF(trait_scores ->> 'assertiveness',       '')::int,
+    NULLIF(trait_scores ->> 'independent_spirit',  '')::int,
+    NULLIF(trait_scores ->> 'compassion',          '')::int,
+    NULLIF(trait_scores ->> 'belief_in_others',    '')::int,
+    NULLIF(trait_scores ->> 'optimism',            '')::int,
+    NULLIF(trait_scores ->> 'analytical',          '')::int,
+    NULLIF(trait_scores ->> 'deadline_motivation', '')::int,
+    NULLIF(trait_scores ->> 'self_promotion',      '')::int,
+    NULLIF(trait_scores ->> 'recognition_drive',   '')::int,
+    overall_avg,
+    n_items_total,
+    cog.score_0_100,
+    cog.n_items,
+    im.score_0_100,
+    im.n_items,
+    nons.inflation_count,
+    nons.n_nonsense_items,
+    ret.avg_divergence,
+    ret.n_pairs,
+    triggers,
+    reliability_json,
+    dist.n_likert_items,
+    dist.max_consecutive_run,
+    dist.overall_sd,
+    dist.straight_line_flag,
+    dist.acquiescence_mean,
+    dist.acquiescence_bias,
+    dist.acquiescence_flag,
+    dist.n_timed_items,
+    dist.mean_response_ms,
+    dist.min_response_ms,
+    dist.straight_through_flag;
+END;
+$$;
+
