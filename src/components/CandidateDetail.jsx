@@ -2022,7 +2022,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     const updates = {};
     fields.forEach(f => { updates[f] = detail[f] ?? null; });
     // Timestamp bookkeeping
-    if (sectionKey === "rc" && detail.rc_notes) updates.rc_completed_at = new Date().toISOString();
     if (sectionKey === "decision" && detail.final_decision) updates.decision_at = new Date().toISOString();
 
     const { error } = await supabase
@@ -2044,7 +2043,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     if (data) setDetail(data);
   };
 
-  const saveRC = () => saveFields(["rc_notes"], "rc");
   const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
 
   // Copy the public /assess/<id>/<token> URL to clipboard. mint_v1_assessment_link
@@ -2771,25 +2769,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
           </div>
         </Section>
       )}
-
-      {/* Reference Check */}
-      <Section title="Reference Check">
-        <textarea
-          value={detail?.rc_notes || ""}
-          onChange={(e) => updateField("rc_notes", e.target.value)}
-          placeholder="Notes from 2-3 reference calls (script on Reference Check manual page)"
-          rows={6}
-          style={{ width: "100%", padding: 8, fontSize: 12, borderRadius: 7, border: `1px solid ${T.slate200}` }}
-        />
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={saveRC} disabled={savingSection === "rc"} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.white, background: T.blue, border: "none", borderRadius: 7, cursor: savingSection === "rc" ? "wait" : "pointer" }}>
-            {savingSection === "rc" ? "Saving..." : "Save Reference Check"}
-          </button>
-          {detail?.rc_completed_at && (
-            <span style={{ fontSize: 10, color: T.slate500 }}>Refs completed {new Date(detail.rc_completed_at).toLocaleString()}</span>
-          )}
-        </div>
-      </Section>
 
       {/* Final Decision */}
       <Section title="Final Decision" tone={T.amberLt}>
