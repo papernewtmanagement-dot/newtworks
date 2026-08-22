@@ -924,6 +924,287 @@ function formatGridCategoryLabel(category) {
   return prefix + label;
 }
 
+// Recording one answer is identical for a solo game and for a game inside a
+// room, because a room gives every player an ordinary game record. Lives at
+// module level so both the solo card and the shared room shell call the same
+// one rather than keeping two copies in step.
+async function submitAnswer(attemptId, itemId, chosenOptionId, secondsTaken) {
+  const { data, error } = await supabase.rpc("quiz_submit_answer", {
+    p_attempt_id: attemptId,
+    p_item_id: itemId,
+    p_chosen_option_id: chosenOptionId || null,
+    p_seconds_taken: Number.isFinite(secondsTaken) ? secondsTaken : 0,
+  });
+  if (error) throw error;
+  return data;
+}
+
+// ============================================================
+// TriviaRoom — the shared multiplayer shell.
+//
+// Step 3 of the Play-tab sequence. One of these renders inside a mode card
+// whenever the player picks Multiplayer. It owns everything that is identical
+// for every mode: finding the room you are already in, opening one, joining
+// somebody else's, showing who is in it, the host's start button, your own
+// questions once it begins, and the live scoreboard. A mode supplies only two
+// things — the name of the server function that deals its questions, and how
+// to draw its own gameplay.
+//
+// Every player in a room holds an ordinary game record, exactly like a solo
+// game, which is why loading questions, recording answers and scoring all work
+// here untouched. Multiplayer scoring is not reinvented anywhere.
+//
+// Nothing pushes from the database. That was tried and ruled out twice: a
+// database broadcast fails silently because the realtime message table has no
+// partitions, and row-change subscriptions deliver nothing because these
+// tables have security switched on with no read rules. A short poll is the
+// proven path and it is what Trivia Night already runs on.
+// ============================================================
+function TriviaRoom({ modeKey, startFnName, onStatusChange, renderPlay }) {
+  const [room, setRoom] = useState(null);
+  const [openRooms, setOpenRooms] = useState([]);
+  const [play, setPlay] = useState(null);
+  const [finishResult, setFinishResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const roomId = room?.room_id || null;
+  const status = room?.status || null;
+  const myAttemptId = room?.my_attempt_id || null;
+  const players = Array.isArray(room?.players) ? room.players : [];
+  const me = players.find(p => p.is_me) || null;
+  const iAmDone = !!me?.finished;
+
+  // Tell the card whether a game is running so it can take the whole width,
+  // the same handoff The Grid's multiplayer branch already uses.
+  useEffect(() => { onStatusChange?.(status); }, [status, onStatusChange]);
+
+  const refreshRoom = useCallback(async (id) => {
+    if (!id) return null;
+    const { data, error: err } = await supabase.rpc("quiz_room_state", { p_room_id: id });
+    if (err) { setError(err.message); return null; }
+    setRoom(data);
+    return data;
+  }, []);
+
+  const refreshOpen = useCallback(async () => {
+    const { data, error: err } = await supabase.rpc("quiz_room_list_open", { p_mode_key: modeKey });
+    if (err) { setError(err.message); return; }
+    setOpenRooms(Array.isArray(data) ? data : []);
+  }, [modeKey]);
+
+  // A player who closes the tab and comes back should land straight back in
+  // their room, so the room id is never carried in the address bar — the
+  // server is asked instead.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data: mine } = await supabase.rpc("quiz_room_my_active", { p_mode_key: modeKey });
+      if (cancelled) return;
+      if (mine) await refreshRoom(mine); else await refreshOpen();
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [modeKey, refreshRoom, refreshOpen]);
+
+  useEffect(() => {
+    if (loading) return undefined;
+    const watching = !roomId || status === "lobby" || status === "playing";
+    if (!watching) return undefined;
+    const t = setInterval(() => {
+      if (roomId) refreshRoom(roomId); else refreshOpen();
+    }, 5000);
+    return () => clearInterval(t);
+  }, [loading, status, roomId, refreshRoom, refreshOpen]);
+
+  // My own questions for this room. Loaded once the game starts and left alone
+  // afterwards, so the poll refreshing the scoreboard never disturbs play.
+  useEffect(() => {
+    let cancelled = false;
+    if (status !== "playing" || !myAttemptId) { setPlay(null); return undefined; }
+    (async () => {
+      try {
+        const st = await loadPlayState(myAttemptId);
+        if (!cancelled) setPlay(st);
+      } catch (ex) {
+        if (!cancelled) setError(ex?.message || "Could not load the questions.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [status, myAttemptId]);
+
+  const act = async (fn) => {
+    setError(null);
+    setBusy(true);
+    try { await fn(); }
+    catch (ex) { setError(ex?.message || "That did not work."); }
+    finally { setBusy(false); }
+  };
+
+  const openRoom = () => act(async () => {
+    const { data, error: err } = await supabase.rpc("quiz_room_open", { p_mode_key: modeKey, p_config: {} });
+    if (err) throw err;
+    await refreshRoom(data);
+  });
+
+  const joinRoom = (id) => act(async () => {
+    const { data, error: err } = await supabase.rpc("quiz_room_join", { p_room_id: id });
+    if (err) throw err;
+    setRoom(data);
+  });
+
+  const leaveRoom = () => act(async () => {
+    const { error: err } = await supabase.rpc("quiz_room_leave", { p_room_id: roomId });
+    if (err) throw err;
+    setRoom(null);
+    setPlay(null);
+    setFinishResult(null);
+    await refreshOpen();
+  });
+
+  const startGame = () => act(async () => {
+    const { data, error: err } = await supabase.rpc(startFnName, { p_room_id: roomId });
+    if (err) throw err;
+    setRoom(data);
+  });
+
+  const clearRoom = () => act(async () => {
+    setRoom(null);
+    setPlay(null);
+    setFinishResult(null);
+    await refreshOpen();
+  });
+
+  const finishMine = async () => {
+    setError(null);
+    const { data, error: err } = await supabase.rpc("quiz_room_my_finish", { p_room_id: roomId });
+    if (err) { setError(err.message || "Could not finish — try again."); return; }
+    setFinishResult(data?.result || null);
+    if (data?.room) setRoom(data.room);
+  };
+
+  const submitRoomAnswer = async (itemId, chosenOptionId, secondsTaken) =>
+    submitAnswer(myAttemptId, itemId, chosenOptionId, secondsTaken);
+
+  const scoreboard = players.length > 0 && (
+    <div style={{ marginTop: 12 }}>
+      <div style={s.groupTitle}>{status === "lobby" ? "In this room" : "Scores"}</div>
+      {players.map(p => (
+        <div key={p.team_member_id} style={s.duelListRow}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: p.is_me ? 700 : 500 }}>
+              {p.name}{p.is_host ? " · host" : ""}{p.is_me ? " · you" : ""}
+            </span>
+            <span style={{ fontSize: 12, color: T.slate500 }}>
+              {status === "lobby"
+                ? "ready"
+                : `${p.correct_count}/${p.answered_count} · ${p.points} pts${p.finished ? " ✓" : ""}`}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  if (loading) {
+    return <div style={{ fontSize: 13, color: T.slate500 }}>Checking for a room…</div>;
+  }
+
+  return (
+    <div>
+      {error && <div style={s.errorBanner}>{error}</div>}
+
+      {!roomId && (
+        <div>
+          <div style={s.playCardDesc}>
+            Play the same questions as your teammates, at the same time.
+          </div>
+          <button type="button" style={s.primaryBtn} disabled={busy} onClick={openRoom}>
+            Start a room
+          </button>
+          {openRooms.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={s.groupTitle}>Rooms open now</div>
+              {openRooms.map(r => (
+                <div key={r.room_id} style={s.duelListRow}>
+                  <div style={{ marginBottom: 6 }}>
+                    {r.host_name}&apos;s room — {r.player_count} in
+                    {r.status === "playing" ? " · already started" : ""}
+                  </div>
+                  {r.status === "lobby" ? (
+                    <button type="button" style={s.ghostBtn} disabled={busy} onClick={() => joinRoom(r.room_id)}>
+                      Join
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>too late to join</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {roomId && status === "lobby" && (
+        <div>
+          <div style={s.playCardDesc}>
+            {room.is_host
+              ? "Your room is open. Start when everyone is in."
+              : "You are in. Waiting for the host to start."}
+          </div>
+          {scoreboard}
+          <div style={s.actionsRow}>
+            {room.is_host && (
+              <button type="button" style={s.primaryBtn} disabled={busy} onClick={startGame}>
+                Start game
+              </button>
+            )}
+            <button type="button" style={s.ghostBtn} disabled={busy} onClick={leaveRoom}>
+              {room.is_host ? "Close room" : "Leave"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {roomId && status === "playing" && !iAmDone && play && renderPlay
+        && renderPlay({ play, submitRoomAnswer, finishMine, attemptId: myAttemptId })}
+
+      {roomId && status === "playing" && !iAmDone && !play && (
+        <div style={{ fontSize: 13, color: T.slate500 }}>Dealing the questions…</div>
+      )}
+
+      {roomId && status === "playing" && iAmDone && (
+        <div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>
+            You are done — waiting on the others to finish.
+          </div>
+          {scoreboard}
+        </div>
+      )}
+
+      {roomId && (status === "finished" || status === "abandoned") && (
+        <div>
+          {finishResult && (
+            <>
+              <div style={s.bigStat}>{finishResult.correct_count}/{finishResult.question_count}</div>
+              <div style={s.smallLabel}>{finishResult.points_earned} points earned</div>
+            </>
+          )}
+          {status === "abandoned" && (
+            <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>The host closed this room.</div>
+          )}
+          {scoreboard}
+          <div style={s.actionsRow}>
+            <button type="button" style={s.ghostBtn} disabled={busy} onClick={clearRoom}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TriviaPlayTab({ userId, isAdmin }) {
   const [modes, setModes] = useState({});
   const [modesError, setModesError] = useState(null);
@@ -948,6 +1229,29 @@ function TriviaPlayTab({ userId, isAdmin }) {
       const { data, error } = await supabase.rpc("quiz_shared_grid_my_active_session");
       if (cancelled || error || !data) return;
       setGridMode("multi");
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Daily Five carries the same in-card choice The Grid got in step 1. "multi"
+  // is a room: same five questions dealt to everyone at once, each person
+  // scored on their own record. Kept in the address bar so a refresh lands
+  // back on the right branch. The room id itself is deliberately NOT in the
+  // address bar - several cards can sit in multiplayer at the same time in the
+  // lobby grid and would fight over one shared parameter. The room is found by
+  // asking the server instead.
+  const [dfMode, setDfMode] = useTabParam("dfmode", "solo", ["solo", "multi"]);
+  const [dailyRoomStatus, setDailyRoomStatus] = useState(null);
+
+  // Cold start: someone already in a Daily Five room lands on the right branch
+  // without having to pick it again.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.rpc("quiz_room_my_active", { p_mode_key: "daily_five" });
+      if (cancelled || error || !data) return;
+      setDfMode("multi");
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1453,16 +1757,6 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // trick: the screen learns which option was right at the moment it can no
   // longer change its mind, and the one-answer-per-question rule in the
   // database means it only gets one moment.
-  const submitAnswer = async (attemptId, itemId, chosenOptionId, secondsTaken) => {
-    const { data, error } = await supabase.rpc("quiz_submit_answer", {
-      p_attempt_id: attemptId,
-      p_item_id: itemId,
-      p_chosen_option_id: chosenOptionId || null,
-      p_seconds_taken: Number.isFinite(secondsTaken) ? secondsTaken : 0,
-    });
-    if (error) throw error;
-    return data;
-  };
 
   // ── Training gate actions ──
   const startGate = async (gate) => {
@@ -2046,7 +2340,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
     : (gridPhase === "board" || gridPhase === "finishing" || sharedActive) ? "grid"
     : (spinPhase === "playing" || spinPhase === "finishing") ? "spin"
     : (duelMode === "playing" || duelMode === "starting") ? "duel"
-    : (dfPhase === "playing" || dfPhase === "finishing") ? "daily"
+    : (dfPhase === "playing" || dfPhase === "finishing"
+       || dailyRoomStatus === "playing" || dailyRoomStatus === "finished") ? "daily"
     : null;
   const stageTitles = {
     night: "Trivia Night", gate: "Training", grid: "The Grid",
@@ -2063,7 +2358,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
         <div style={s.stageHeader}>
           <div>
             <div style={s.stageTitle}>{stageTitles[activeGame]}</div>
-            <div style={s.stageSub}>in play</div>
+            <div style={s.stageSub}>
+              {activeGame === "daily" && dailyRoomStatus === "finished" ? "game over" : "in play"}
+            </div>
           </div>
         </div>
       )}
@@ -2150,6 +2447,38 @@ function TriviaPlayTab({ userId, isAdmin }) {
         {shows("daily") && (
         <div style={boxStyle("daily")}>
           <div style={s.playCardTitle}>Daily Five</div>
+
+          {activeGame !== "daily" && (
+            <div style={s.modeRow}>
+              <button type="button" style={s.modeBtn(dfMode === "solo")} onClick={() => setDfMode("solo")}>
+                Solo
+              </button>
+              <button type="button" style={s.modeBtn(dfMode === "multi")} onClick={() => setDfMode("multi")}>
+                Multiplayer
+              </button>
+            </div>
+          )}
+
+          {dfMode === "multi" && (
+            <TriviaRoom
+              modeKey="daily_five"
+              startFnName="quiz_room_start_daily_five"
+              onStatusChange={setDailyRoomStatus}
+              renderPlay={({ play, submitRoomAnswer, finishMine, attemptId }) => (
+                <QuestionRunner
+                  itemIds={play.remainingIds}
+                  itemsById={play.itemsById}
+                  attemptId={attemptId}
+                  secondsPerQuestion={dailyCfg?.seconds_per_question || 30}
+                  onSubmitAnswer={submitRoomAnswer}
+                  onAllDone={finishMine}
+                />
+              )}
+            />
+          )}
+
+          {dfMode === "solo" && (
+          <>
           <div style={s.playCardDesc}>{dailyCfg?.description || "Five questions a day. Keep your streak going."}</div>
 
           {dfError && <div style={s.errorBanner}>{dfError}</div>}
@@ -2195,6 +2524,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {dfPhase !== "finished" && dfPhase !== "playing" && (
             <DayStandings rows={dayStandings.daily_five} label="Today's five — the team" />
+          )}
+          </>
           )}
         </div>
         )}
