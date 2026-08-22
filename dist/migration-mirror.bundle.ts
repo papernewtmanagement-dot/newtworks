@@ -362,6 +362,38 @@ async function listMigrationVersions(
   return { versions: Array.from(new Set(versions)), fileCount: files.length };
 }
 
+// Same normalisation the database side uses in v_migration_ledger_fingerprints:
+// strip -- line comments, strip ALL whitespace, sha256. A mirror that carries an
+// added provenance comment header, or that was reflowed, still fingerprints
+// equal to its ledger original — which plain blob-hash comparison misses.
+async function fingerprint(sql: string): Promise<string> {
+  const norm = sql.replace(/--[^\n]*/g, "").replace(/\s+/g, "");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(norm));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// Full listing (path + blob sha), not just versions — audit needs the paths.
+async function listMigrationFiles(
+  token: string,
+  treeSha: string,
+): Promise<Array<{ path: string; sha: string }>> {
+  const root = await gh(token, `/repos/${GH_REPO}/git/trees/${treeSha}`);
+  const supa = (root.tree ?? []).find((e: any) => e.path === "supabase" && e.type === "tree");
+  if (!supa) return [];
+  const supaTree = await gh(token, `/repos/${GH_REPO}/git/trees/${supa.sha}`);
+  const migs = (supaTree.tree ?? []).find((e: any) => e.path === "migrations" && e.type === "tree");
+  if (!migs) return [];
+  const migTree = await gh(token, `/repos/${GH_REPO}/git/trees/${migs.sha}`);
+  if (migTree.truncated) {
+    throw new Error("migrations tree came back truncated — cannot trust the diff, aborting");
+  }
+  return (migTree.tree ?? [])
+    .filter((e: any) => e.type === "blob")
+    .map((e: any) => ({ path: e.path, sha: e.sha }));
+}
+
 // -------------------------------------------------------------------------
 // Handler
 // -------------------------------------------------------------------------
@@ -393,6 +425,80 @@ Deno.serve(async (req: Request) => {
   try {
     const token = await getSetting(agencyId, "github_pat_newtworks_commit");
     if (!token) throw new Error("settings.github_pat_newtworks_commit is not set");
+
+    // --- audit: fingerprint every repo migration with no ledger row ---------
+    if (mode === "audit") {
+      const ref = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
+      const headCommit = await gh(token, `/repos/${GH_REPO}/git/commits/${ref.object.sha}`);
+      const files = await listMigrationFiles(token, headCommit.tree.sha);
+
+      const byVersion = new Map<string, Array<{ path: string; sha: string }>>();
+      let noVersion = 0;
+      for (const f of files) {
+        const m = /^(\d{14})/.exec(f.path);
+        if (!m) { noVersion++; continue; }
+        const arr = byVersion.get(m[1]) ?? [];
+        arr.push(f);
+        byVersion.set(m[1], arr);
+      }
+
+      const { data: repoOnly, error: roErr } = await sb.rpc("migration_mirror_repo_only", {
+        p_repo_versions: Array.from(byVersion.keys()),
+      });
+      if (roErr) throw new Error(`migration_mirror_repo_only failed: ${roErr.message}`);
+
+      // Every file under a repo-only version, flattened, then paged so a run
+      // cannot outlive the function's wall clock.
+      const targets: Array<{ version: string; path: string; sha: string }> = [];
+      for (const row of repoOnly ?? []) {
+        for (const f of byVersion.get((row as any).version) ?? []) {
+          targets.push({ version: (row as any).version, path: f.path, sha: f.sha });
+        }
+      }
+      targets.sort((a, b) => (a.path < b.path ? -1 : 1));
+
+      const offset = Math.max(Number(body.offset ?? 0), 0);
+      const take = Math.min(Math.max(Number(body.audit_limit ?? 250), 1), 600);
+      const slice = targets.slice(offset, offset + take);
+
+      const rows: Array<{ version: string; path: string; fingerprint: string }> = [];
+      for (const t of slice) {
+        const blob = await gh(token, `/repos/${GH_REPO}/git/blobs/${t.sha}`);
+        const raw = blob.encoding === "base64"
+          ? new TextDecoder().decode(
+              Uint8Array.from(atob(blob.content.replace(/\n/g, "")), (c) => c.charCodeAt(0)),
+            )
+          : String(blob.content ?? "");
+        rows.push({ version: t.version, path: t.path, fingerprint: await fingerprint(raw) });
+      }
+
+      let tally: any = null;
+      if (rows.length) {
+        const { data: rec, error: recErr } = await sb.rpc("migration_mirror_record_audit", {
+          p_agency_id: agencyId,
+          p_rows: rows,
+        });
+        if (recErr) throw new Error(`migration_mirror_record_audit failed: ${recErr.message}`);
+        tally = rec?.[0] ?? null;
+      }
+
+      return jsonResponse({
+        ok: true,
+        mode: "audit",
+        branch,
+        head: ref.object.sha,
+        repo_files: files.length,
+        files_without_version: noVersion,
+        repo_versions: byVersion.size,
+        repo_only_versions: (repoOnly ?? []).length,
+        audit_targets: targets.length,
+        offset,
+        checked_this_run: rows.length,
+        next_offset: offset + rows.length < targets.length ? offset + rows.length : null,
+        running_tally: tally,
+        elapsed_ms: Date.now() - started,
+      });
+    }
 
     for (let batch = 0; batch < maxBatches; batch++) {
       // --- read the branch head fresh every batch -------------------------
