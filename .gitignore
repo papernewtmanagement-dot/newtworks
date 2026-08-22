@@ -1,0 +1,16 @@
+# The repo had no .gitignore at all until 2026-08-22.
+#
+# dist/ is Vite's build output and nothing committed lives there. The edge
+# function bundles used to, which was the bug: Vite empties dist/ at the start
+# of every build, so a local build deleted all eleven of them. They now live in
+# edge-bundles/, which IS committed and must never be listed here.
+dist/
+node_modules/
+
+# Local scratch and tooling noise.
+.DS_Store
+*.log
+.env
+.env.local
+.vercel
+_scratch/

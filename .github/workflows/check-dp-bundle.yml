@@ -6,13 +6,13 @@ on:
     paths:
       - "supabase/functions/document-processor/**"
       - "scripts/bundle_document_processor.py"
-      - "dist/document-processor.bundle.ts"
+      - "edge-bundles/document-processor.bundle.ts"
       - ".github/workflows/check-dp-bundle.yml"
   pull_request:
     paths:
       - "supabase/functions/document-processor/**"
       - "scripts/bundle_document_processor.py"
-      - "dist/document-processor.bundle.ts"
+      - "edge-bundles/document-processor.bundle.ts"
       - ".github/workflows/check-dp-bundle.yml"
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
 
       - name: Compare committed bundle against fresh regen
         run: |
-          COMMITTED="dist/document-processor.bundle.ts"
+          COMMITTED="edge-bundles/document-processor.bundle.ts"
           FRESH="/tmp/dp-check/fresh.bundle.ts"
 
           if [ ! -f "$COMMITTED" ]; then
@@ -55,12 +55,12 @@ jobs:
           fi
 
           echo ""
-          echo "::error::dist/document-processor.bundle.ts is STALE relative to the 17 source files in supabase/functions/document-processor/"
+          echo "::error::edge-bundles/document-processor.bundle.ts is STALE relative to the 17 source files in supabase/functions/document-processor/"
           echo ""
           echo "To fix, run this locally and commit the result:"
           echo ""
           echo "    python3 scripts/bundle_document_processor.py"
-          echo "    git add dist/document-processor.bundle.ts"
+          echo "    git add edge-bundles/document-processor.bundle.ts"
           echo "    git commit -m 'chore(dp): regenerate bundle'"
           echo ""
           echo "--- diff (first 200 lines) ---"
