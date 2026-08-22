@@ -1,4 +1,239 @@
 // =========================================================================
+// migration-mirror bundle (auto-generated)
+// Source of truth: supabase/functions/migration-mirror/ + supabase/functions/_shared/
+// This single-file bundle is what gets deployed to the Supabase edge runtime.
+// Do NOT hand-edit. Regenerate via `python3 scripts/bundle_edge_fn.py migration-mirror`.
+// =========================================================================
+
+import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+
+// ==================== _shared/supabase.ts ====================
+// =========================================================================
+// _shared/supabase.ts
+// =========================================================================
+// Canonical Supabase client + settings + response helpers for ALL Newtworks
+// edge functions. Source of truth for code that used to be copy-pasted into
+// every function (client creation, getSetting, jsonResponse, stripFences).
+//
+// Edge functions deploy as single-file bundles: `scripts/bundle_edge_fn.py`
+// inlines this file into each function's bundle. Never edit a bundle by hand;
+// edit here and rebundle every consumer.
+// =========================================================================
+
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// Service role — bypasses RLS. Same client options every function used.
+const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+// Single-agency install. Functions that accept agency_id in the request body
+// should still prefer the body value; this is the fallback.
+const AGENCY_ID_DEFAULT = "126794dd-25ff-47d2-a436-724499733365";
+
+// -------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------
+// Two variants on purpose — they preserve the two behaviors that existed in
+// the wild before consolidation:
+//   getSetting        — THROWS if the settings table read itself errors
+//                       (infra failure ≠ missing row). Use on critical paths.
+//   getSettingOrNull  — swallows read errors, returns null. Use where the
+//                       caller treats "can't read" the same as "not set".
+// Both return null when the row simply doesn't exist.
+// -------------------------------------------------------------------------
+
+async function getSetting(
+  agencyId: string,
+  key: string,
+): Promise<string | null> {
+  const { data, error } = await sb
+    .from("settings")
+    .select("setting_value")
+    .eq("agency_id", agencyId)
+    .eq("setting_key", key)
+    .maybeSingle();
+  if (error) {
+    throw new Error(
+      `settings read failed for agency ${agencyId} key ${key}: ${error.message}`,
+    );
+  }
+  return data?.setting_value ?? null;
+}
+
+async function getSettingOrNull(
+  agencyId: string,
+  key: string,
+): Promise<string | null> {
+  try {
+    const { data } = await sb
+      .from("settings")
+      .select("setting_value")
+      .eq("agency_id", agencyId)
+      .eq("setting_key", key)
+      .maybeSingle();
+    return (data?.setting_value as string | null) ?? null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// Batch read — one query for N keys. Missing keys come back as null.
+async function getSettings(
+  agencyId: string,
+  keys: string[],
+): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {};
+  for (const k of keys) out[k] = null;
+  const { data, error } = await sb
+    .from("settings")
+    .select("setting_key,setting_value")
+    .eq("agency_id", agencyId)
+    .in("setting_key", keys);
+  if (error) {
+    throw new Error(`settings batch read failed for agency ${agencyId}: ${error.message}`);
+  }
+  for (const row of data ?? []) {
+    out[(row as any).setting_key] = (row as any).setting_value ?? null;
+  }
+  return out;
+}
+
+// -------------------------------------------------------------------------
+// HTTP responses
+// -------------------------------------------------------------------------
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body, null, 2), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function corsJson(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+// -------------------------------------------------------------------------
+// Text helpers
+// -------------------------------------------------------------------------
+
+// Strip ```json fences an LLM wrapped around its output.
+function stripFences(s: string): string {
+  return s
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+}
+
+// ==================== _shared/auth.ts ====================
+// =========================================================================
+// _shared/auth.ts
+// =========================================================================
+// Canonical shared-secret gate for cron/internally-dispatched edge functions.
+// The dispatch side (_dispatch_edge_fn, run_automation_recipe, automation-
+// runner INTERNAL handlers) POSTs { agency_id, shared_secret } in the body;
+// the secret must match settings.automation_runner_cron_secret.
+//
+// Usage in a handler:
+//   const denied = await requireSharedSecret(agencyId, body.shared_secret);
+//   if (denied) return denied;
+// =========================================================================
+
+
+async function requireSharedSecret(
+  agencyId: string,
+  provided: string | undefined | null,
+): Promise<Response | null> {
+  if (!provided) {
+    return jsonResponse({ ok: false, error: "missing shared_secret" }, 401);
+  }
+  const expected = await getSettingOrNull(agencyId, "automation_runner_cron_secret");
+  if (!expected || provided !== expected) {
+    return jsonResponse({ ok: false, error: "unauthorized" }, 401);
+  }
+  return null;
+}
+
+// ==================== _shared/alerts.ts ====================
+// =========================================================================
+// _shared/alerts.ts
+// =========================================================================
+// Canonical alerts writer for ALL Newtworks edge functions.
+//
+// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
+// title, message, module_reference, related_id, is_resolved). Hand-written
+// inserts have shipped with a `body:` column that does not exist and with
+// alert_type missing — both fail silently when the insert result isn't
+// checked. Going through this helper makes that class of bug impossible.
+// =========================================================================
+
+
+async function insertAlert(opts: {
+  agencyId: string;
+  alertType: string;
+  severity: "info" | "warning" | "high" | "critical" | string;
+  title: string;
+  message: string;
+  moduleReference?: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; error: string | null }> {
+  const row: Record<string, unknown> = {
+    agency_id: opts.agencyId,
+    alert_type: opts.alertType,
+    severity: opts.severity,
+    title: opts.title,
+    message: opts.message,
+    is_read: false,
+    is_resolved: false,
+  };
+  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
+  if (opts.relatedId != null) row.related_id = opts.relatedId;
+
+  const { error } = await sb.from("alerts").insert(row);
+  if (error) {
+    // Never throw — alerting must not mask the underlying failure being
+    // reported. But do surface the miss to whoever reads the function logs.
+    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, error: null };
+}
+
+// Resolve all open alerts carrying a given module_reference (the standard
+// "this condition cleared" pattern used by surepayroll + pfa flows).
+async function resolveAlerts(opts: {
+  agencyId: string;
+  moduleReference: string;
+}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
+  const { data, error } = await sb
+    .from("alerts")
+    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
+    .eq("agency_id", opts.agencyId)
+    .eq("module_reference", opts.moduleReference)
+    .eq("is_resolved", false)
+    .select("id");
+  if (error) {
+    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
+    return { ok: false, resolved: 0, error: error.message };
+  }
+  return { ok: true, resolved: (data ?? []).length, error: null };
+}
+
+// ==================== migration-mirror/index.ts ====================
+// =========================================================================
 // migration-mirror
 // =========================================================================
 // Mirrors the Supabase migration ledger (supabase_migrations.schema_migrations)
@@ -42,9 +277,6 @@
 // "check" reports the gap and writes nothing.
 // =========================================================================
 
-import { getSetting, jsonResponse, AGENCY_ID_DEFAULT, sb } from "../_shared/supabase.ts";
-import { requireSharedSecret } from "../_shared/auth.ts";
-import { insertAlert } from "../_shared/alerts.ts";
 
 const GH_REPO = "papernewtmanagement-dot/newtworks";
 const GH_API = "https://api.github.com";
