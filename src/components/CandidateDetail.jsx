@@ -1188,6 +1188,104 @@ function renderAssessmentLayer({ detail, bestFit, selectedRole, setSelectedRole,
   return renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2RoleFits, facetRewordedFlags, v2PoolPosition, selectedRole, setSelectedRole, T, screenAnswers, isAdmin });
 }
 
+// ─── Reference layer ───────────────────────────────────────────────
+// Reference emails ingested by the document-processor "references" mode into
+// hiring_candidate_references (deterministic parse, no LLM — see the reference
+// intake recipe). Each row is one emailed reference write-up: the person who
+// gave it, when it landed, and the body exactly as it was written. Nothing is
+// scored here yet; this is the read surface.
+//
+// Rows whose candidate_id is null never got matched to a candidate record by
+// the intake job. Those are surfaced deliberately with an UNLINKED tag when the
+// name in the subject line matches this candidate, so a reference can never sit
+// invisible in the table just because the automatic match missed.
+function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T, isPhone }) {
+  if (refLoadError) {
+    return (
+      <div style={{ fontSize: 12, color: T.red }}>
+        Could not load reference emails. Reopen this row to try again.
+      </div>
+    );
+  }
+  if (refEmails == null) {
+    return <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>Loading references…</div>;
+  }
+  if (refEmails.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
+        No reference emails received yet. They appear here automatically once they arrive.
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
+        Reference Emails · {refEmails.length}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {(refEmails || []).map((r) => {
+          const isOpen = !!openRefs[r.id];
+          const unlinked = r.candidate_id == null;
+          const when = r.received_at ? new Date(r.received_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
+          const label = r.reference_number != null ? `Reference ${r.reference_number}` : "Reference";
+          return (
+            <div key={r.id} style={{
+              background: T.white,
+              border: `1px solid ${unlinked ? T.amber : T.slate200}`,
+              borderRadius: 7,
+              boxSizing: "border-box",
+              overflow: "hidden",
+            }}>
+              <button
+                onClick={() => toggleRef(r.id)}
+                style={{
+                  width: "100%", textAlign: "left", background: unlinked ? T.amberLt : T.slate50,
+                  border: "none", borderBottom: isOpen ? `1px solid ${T.slate200}` : "none",
+                  padding: isPhone ? "8px 10px" : "10px 12px", cursor: "pointer",
+                  display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8,
+                  boxSizing: "border-box",
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>
+                  {isOpen ? "▾" : "▸"} {label}
+                </span>
+                {unlinked && (
+                  <span style={{ display: "inline-block", padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: T.white, background: T.amber }}>
+                    Unlinked
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: T.slate500 }}>{when}</span>
+              </button>
+              {isOpen && (
+                <div style={{ padding: isPhone ? "10px" : "12px 14px", boxSizing: "border-box" }}>
+                  <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Sent by</div>
+                  <div style={{ fontSize: 11.5, color: T.slate700, marginBottom: 8, wordBreak: "break-word" }}>{r.sender || "—"}</div>
+                  <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Subject</div>
+                  <div style={{ fontSize: 11.5, color: T.slate700, marginBottom: 10, wordBreak: "break-word" }}>{r.subject || "—"}</div>
+                  {unlinked && (
+                    <div style={{ fontSize: 11, color: T.slate700, background: T.amberLt, border: `1px solid ${T.amber}`, borderRadius: 6, padding: "6px 8px", marginBottom: 10, boxSizing: "border-box" }}>
+                      This one was never attached to a candidate record automatically. It is shown here
+                      because the name on the subject line matches — treat the link as unconfirmed.
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Written reference, verbatim</div>
+                  <div style={{
+                    fontSize: 12.5, lineHeight: 1.55, color: T.slate800,
+                    whiteSpace: "pre-wrap", wordBreak: "break-word",
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  }}>
+                    {r.body}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnswers, answersLastSavedAt, generateCustomProbes, probesGenerating, probesError, buildInterviewPlan, planBuilding, planError }) {
   return (
     <div>
@@ -1612,6 +1710,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // constraint name between hiregauge_candidate_responses and
   // hiregauge_instrument_items.
   const [screenAnswers, setScreenAnswers] = useState(null);
+  // Reference emails from hiring_candidate_references. Null = still loading,
+  // [] = none received. openRefs tracks which bodies are expanded — plain UI
+  // state, same as expandedLayer above, not a record view worth URL-persisting.
+  const [refEmails, setRefEmails] = useState(null);
+  const [refLoadError, setRefLoadError] = useState(false);
+  const [openRefs, setOpenRefs] = useState({});
+  const toggleRef = (id) => setOpenRefs((prev) => ({ ...prev, [id]: !prev[id] }));
   // Which role fit is selected. Local UI state only — session-scoped, defaults to
   // bestFit on load. Framework scoring always uses assessment_best_fit_role's best_role;
   // the selector only controls which competency detail displays.
@@ -1800,6 +1905,48 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     })();
     return () => { cancelled = true; };
   }, [detail?.id, detail?.assessment_source]);
+
+  // Reference emails. Pulls rows already linked to this candidate, plus any
+  // unlinked row whose subject-line name matches this candidate — an unmatched
+  // reference must never sit invisible just because the intake job's automatic
+  // match missed it.
+  useEffect(() => {
+    if (!detail?.id || !supabase) return;
+    let cancelled = false;
+    setRefEmails(null);
+    setRefLoadError(false);
+    setOpenRefs({});
+    (async () => {
+      const { data, error } = await supabase
+        .from("hiring_candidate_references")
+        .select("id, candidate_id, candidate_name_from_subject, reference_number, sender, received_at, subject, body")
+        .eq("agency_id", AGENCY_ID)
+        .or(`candidate_id.eq.${detail.id},candidate_id.is.null`);
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed to load reference emails:", error);
+        setRefLoadError(true);
+        return;
+      }
+      const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      const names = new Set(
+        [detail.candidate_name, `${detail.first_name || ""} ${detail.last_name || ""}`]
+          .map(norm).filter(Boolean)
+      );
+      const rows = (data || []).filter((r) =>
+        r.candidate_id === detail.id || names.has(norm(r.candidate_name_from_subject))
+      );
+      rows.sort((a, b) => {
+        const an = a.reference_number, bn = b.reference_number;
+        if (an != null && bn != null && an !== bn) return an - bn;
+        if (an != null && bn == null) return -1;
+        if (an == null && bn != null) return 1;
+        return String(a.received_at || "").localeCompare(String(b.received_at || ""));
+      });
+      setRefEmails(rows);
+    })();
+    return () => { cancelled = true; };
+  }, [detail?.id, detail?.candidate_name, detail?.first_name, detail?.last_name]);
 
   // Best-fit role via RPC (graceful fallback if function missing)
   //
@@ -2554,11 +2701,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                       })()}
                                     </div>
                                   )}
-                                  {layer.key === "reference" && (
-                                    <div style={{ fontSize: 12, color: T.slate500, fontStyle: "italic" }}>
-                                      Reference layer detail — coming next.
-                                    </div>
-                                  )}
+                                  {layer.key === "reference" && renderReferenceLayer({
+                                    refEmails, refLoadError, openRefs, toggleRef, T, isPhone,
+                                  })}
                                 </td>
                               </tr>
                             )}
