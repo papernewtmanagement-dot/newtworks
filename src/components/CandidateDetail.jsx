@@ -1199,6 +1199,36 @@ function renderAssessmentLayer({ detail, bestFit, selectedRole, setSelectedRole,
 // the intake job. Those are surfaced deliberately with an UNLINKED tag when the
 // name in the subject line matches this candidate, so a reference can never sit
 // invisible in the table just because the automatic match missed.
+// Marie's mail client sends every reference twice in one message: a plain-text
+// copy of the write-up followed by an HTML copy of the same thing. The intake
+// stores the message body whole, so roughly half of every stored reference is a
+// duplicate wrapped in markup. Trim it for display only — the stored text is
+// left exactly as received, so nothing is lost and the durable fix belongs
+// upstream in the intake parser.
+function referenceBodyText(raw) {
+  const s = String(raw || "");
+  const idx = s.search(/<div[^>]*dir=["']ltr["'][^>]*>/i);
+  if (idx > 0) {
+    const plain = s.slice(0, idx).trim();
+    if (plain.length > 0) return plain;
+  }
+  if (/<[a-z][^>]*>/i.test(s)) {
+    return s
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|tr|li)\s*>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&#39;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+  return s.trim();
+}
+
 function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T, isPhone }) {
   if (refLoadError) {
     return (
@@ -1274,7 +1304,7 @@ function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T,
                     whiteSpace: "pre-wrap", wordBreak: "break-word",
                     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                   }}>
-                    {r.body}
+                    {referenceBodyText(r.body)}
                   </div>
                 </div>
               )}
