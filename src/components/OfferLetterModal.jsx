@@ -199,6 +199,7 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
       start_date:           longDate(startDate),
       respond_by:           longDate(respondBy),
       pay_line:             payLine,
+      offer_amount:         money(amount, payType === "hourly" ? "hour" : "year"),
       license_clause:       licenseClause,
     });
   }, [template, fullName, candidate, jobTitle, reportsTo, startDate, respondBy, payLine, licenseClause]);
