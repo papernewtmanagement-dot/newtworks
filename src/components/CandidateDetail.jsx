@@ -4,6 +4,7 @@ import { T } from "../lib/theme.js";
 import { useViewport, useVerdictThresholds } from "../lib/hooks.js";
 import { STAGES, PIPELINE_STAGES, stageLabel } from "../lib/hiringStages.js";
 import OfferLetterModal from "./OfferLetterModal.jsx";
+import MeetGreetModal from "./MeetGreetModal.jsx";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -1703,6 +1704,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   const [stageSaving, setStageSaving] = useState(null);
   // Moving to the Offer stage opens the offer letter form first — see changeStage.
   const [offerModalOpen, setOfferModalOpen] = useState(false);
+  // Moving to the Meet & Greet stage opens the time picker first — see changeStage.
+  const [meetGreetOpen, setMeetGreetOpen] = useState(false);
   const [bestFit, setBestFit] = useState(null);
   const [probesGenerating, setProbesGenerating] = useState(false);
   const [probesError, setProbesError] = useState(null);
@@ -2108,6 +2111,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     // straight away. The form captures the pay terms, fills in the stored
     // letter, and does the stage write itself when it saves.
     if (newStatus === "offer") { setOfferModalOpen(true); return; }
+    // Moving to Meet & Greet opens the time picker instead of writing the stage
+    // straight away, because there is no meet & greet without a time on the
+    // calendar. Peter picks it — the candidate does not self-book at this stage
+    // the way they do for the interview — and the picker books the calendar
+    // event, emails the candidate and does the stage write itself.
+    if (newStatus === "meet_and_greet") { setMeetGreetOpen(true); return; }
     // Moving to Hired opens the new team member form in a second tab with this
     // candidate's details already filled in. The tab is opened here, before the
     // first await, because browsers only allow a new window while the click that
@@ -2334,6 +2343,24 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
 
       {/* Pipeline stage stepper — tap a stage to move this candidate. */}
       <StageStepper status={detail?.status} saving={stageSaving} onPick={changeStage} />
+
+      {meetGreetOpen && (
+        <MeetGreetModal
+          candidate={detail}
+          onClose={() => setMeetGreetOpen(false)}
+          onSaved={async () => {
+            setMeetGreetOpen(false);
+            const { data } = await supabase
+              .from("v_hiring_candidates")
+              .select("*")
+              .eq("id", detail.id)
+              .maybeSingle();
+            if (data) setDetail(data);
+            else setDetail(prev => ({ ...prev, status: "meet_and_greet" }));
+            if (typeof onUpdate === "function") onUpdate(detail.id, "meet_and_greet", { alreadyPersisted: true });
+          }}
+        />
+      )}
 
       {offerModalOpen && (
         <OfferLetterModal

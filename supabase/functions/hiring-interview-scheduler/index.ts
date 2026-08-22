@@ -21,13 +21,24 @@
 //     race between two candidates picking the same slot), creates the
 //     calendar event with a fresh Google Meet link, emails confirmation.
 //
+//   mode="schedule_meet_greet"  (admin, session-token gated)
+//     The stage AFTER the interview, and it works the opposite way round:
+//     Peter picks the time, because the meeting has to suit two or three
+//     teammates as well as him. Creates one calendar event carrying the
+//     candidate and the chosen teammates, moves the candidate to the
+//     meet_and_greet stage, and emails the candidate.
+//
 // Candidates never see or touch Peter's calendar directly — only the
 // slots this function computed and offered.
+//
+// The name says "interview" because that is what it did first. It is the
+// hiring scheduler now — interviews and meet & greets both live here so the
+// calendar, time-zone and email plumbing is written once.
 // =========================================================================
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { sb, jsonResponse, corsJson, CORS_HEADERS, AGENCY_ID_DEFAULT, getSettings, getSettingOrNull } from "../_shared/supabase.ts";
-import { requireSharedSecret } from "../_shared/auth.ts";
+import { requireSharedSecret, requireOwnerOrManager } from "../_shared/auth.ts";
 import { callComposio } from "../_shared/composio.ts";
 import { getComposioGmailCreds, sendGmail } from "../_shared/gmail.ts";
 import { escHtml } from "../_shared/html.ts";
@@ -38,6 +49,11 @@ const INTERVIEW_MINUTES = 35;
 const LOOKAHEAD_DAYS = 45; // calendar days scanned forward for eligible slots
 const BOOKING_WINDOW_DAYS = 7; // link expiry
 const BOOKING_BASE_URL = "https://newtworks.vercel.app/schedule";
+
+// Meet & greet defaults. The modal can override the length; the address is
+// fixed and matches the one on the offer letter.
+const MEET_GREET_DEFAULT_MINUTES = 30;
+const OFFICE_ADDRESS = "28120 US Hwy 281 N, Suite 125, San Antonio, TX 78260";
 
 // Fixed weekly interview schedule (Chicago local time), per Peter directive
 // 2026-08-12. getUTCDay()-style weekday numbering (0=Sun..6=Sat) applied to
@@ -324,6 +340,28 @@ function confirmationEmailHtml(firstName: string, startLocal: string, meetUrl: s
 <p>This will be a video call over Google Meet: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a></p>
 <p>${escHtml(PREP_LINE)}</p>
 <p>A calendar invite is on its way to this email address as well. Looking forward to speaking with you.</p>
+<p>Sincerely,<br/>Story Agency</p>`;
+}
+
+function meetGreetEmailHtml(
+  firstName: string,
+  whenLocal: string,
+  isVideo: boolean,
+  locationText: string,
+  meetUrl: string | null,
+  note: string,
+): string {
+  const wherePara = isVideo
+    ? `<p>It's a video call over Google Meet${meetUrl ? `: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a>` : ""}.</p>`
+    : `<p>We'll meet at our office:<br/>${escHtml(locationText)}</p>`;
+  const notePara = note ? `<p>${escHtml(note)}</p>` : "";
+  return `<p>Hi ${escHtml(firstName)},</p>
+<p>Thank you for the conversation — we'd like you to meet the rest of the team.</p>
+<p>You're set for <strong>${escHtml(whenLocal)}</strong> (Central time).</p>
+${wherePara}
+<p>This one is less formal than the interview. It's a chance for you to meet the people you'd be working alongside, and for them to meet you — so come with questions.</p>
+${notePara}
+<p>A calendar invite is on its way to this email address as well. If that time doesn't work, just reply to this email and we'll find another.</p>
 <p>Sincerely,<br/>Story Agency</p>`;
 }
 
@@ -615,6 +653,177 @@ async function refreshOffer(agencyId: string, candidateIds: string[]): Promise<R
 }
 
 // -------------------------------------------------------------------------
+// mode=schedule_meet_greet  (admin, session-token gated)
+// -------------------------------------------------------------------------
+// The interview stage lets the candidate pick from slots this function
+// computed. The meet & greet is the opposite: Peter picks the time (his
+// ruling, 2026-08-21), because it has to suit two or three teammates as well
+// as him. So there is no token, no offered-slot list and no booking window —
+// just the one time he chose.
+//
+// One calendar event carries everyone. The candidate and each chosen teammate
+// go on as attendees, so Google sends them all the invite and tracks their
+// replies; the email to the candidate is separate and warmer than a bare
+// calendar notification.
+//
+// The teammate rows are read back out of the database rather than trusted
+// from the browser, so a page left open since last week cannot invite someone
+// who has since left the team.
+async function scheduleMeetGreet(agencyId: string, body: any): Promise<Response> {
+  const candidateId = body.candidate_id;
+  const startIso = body.start;
+  const minutes = Number(body.duration_minutes) || MEET_GREET_DEFAULT_MINUTES;
+  const isVideo = body.meeting_kind === "video";
+  const preferPersonal = body.team_email_kind === "personal";
+  const teamIds: string[] = Array.isArray(body.team_ids) ? body.team_ids : [];
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+
+  if (!candidateId || !startIso) return corsJson({ ok: false, error: "missing candidate_id or start" }, 400);
+  const startDate = new Date(startIso);
+  if (Number.isNaN(startDate.getTime())) return corsJson({ ok: false, error: "bad start time" }, 400);
+  if (!Number.isFinite(minutes) || minutes < 15 || minutes > 240) {
+    return corsJson({ ok: false, error: "duration must be between 15 and 240 minutes" }, 400);
+  }
+
+  const { data: c, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, position")
+    .eq("id", candidateId)
+    .eq("agency_id", agencyId)
+    .maybeSingle();
+  if (error || !c) return corsJson({ ok: false, error: "candidate_not_found" }, 404);
+
+  const creds = await getCalendarCreds(agencyId);
+  if (!creds) return corsJson({ ok: false, error: "calendar_unavailable" }, 500);
+
+  const endDate = new Date(startDate.getTime() + minutes * 60000);
+  const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+  const whenLocal = formatChicago(startDate.toISOString());
+  const locationText = isVideo ? "Google Meet" : OFFICE_ADDRESS;
+
+  // Teammates, live from the team table.
+  let teamRows: any[] = [];
+  if (teamIds.length > 0) {
+    const { data: t } = await sb
+      .from("team")
+      .select("id, first_name, last_name, nickname, email_sf, email_personal")
+      .eq("agency_id", agencyId)
+      .eq("is_active", true)
+      .in("id", teamIds);
+    teamRows = t ?? [];
+  }
+  const teamAttendees = teamRows
+    .map((m: any) => ({
+      team_id: m.id,
+      name: `${m.nickname || m.first_name || ""} ${m.last_name || ""}`.trim(),
+      email: preferPersonal
+        ? (m.email_personal || m.email_sf)
+        : (m.email_sf || m.email_personal),
+    }))
+    .filter((a: any) => !!a.email);
+
+  const forwardEmail = await getForwardEmail(agencyId);
+  const attendees = [
+    ...(c.email ? [c.email] : []),
+    ...teamAttendees.map((a: any) => a.email),
+    ...(forwardEmail ? [forwardEmail] : []),
+  ].filter((e, i, arr) => arr.indexOf(e) === i);
+
+  // Soft conflict check. Peter chose this time on purpose, so a clash is not a
+  // reason to refuse — but it IS worth saying out loud, because the calendar
+  // he is booking is not the one he is usually looking at.
+  const busy = await fetchBusy(creds, startDate.toISOString(), endDate.toISOString());
+  const conflict = overlapsBusy({ start: startDate.toISOString(), end: endDate.toISOString() }, busy);
+
+  const whoLine = teamAttendees.length > 0
+    ? teamAttendees.map((a: any) => a.name).filter(Boolean).join(", ")
+    : "no other teammates selected";
+
+  const createRes = await callComposio({
+    apiKey: creds.apiKey,
+    userId: creds.userId,
+    connectedAccountId: creds.accountId,
+    toolSlug: "GOOGLECALENDAR_CREATE_EVENT",
+    toolArguments: {
+      calendar_id: CALENDAR_ID,
+      summary: `Meet & Greet — ${c.candidate_name || firstName}${c.position ? " (" + c.position + ")" : ""}`,
+      description: `Team meet & greet, scheduled from Newtworks.\nCandidate: ${c.candidate_name || firstName}\nPosition: ${c.position || "n/a"}\nTeam: ${whoLine}\nWhere: ${locationText}${note ? `\n\nNote to candidate: ${note}` : ""}`,
+      // The address goes in the description as well as the location field —
+      // if Composio ever stops passing location through, the candidate can
+      // still read where to go.
+      location: locationText,
+      start_datetime: toChicagoNaive(startDate.toISOString()),
+      timezone: TZ,
+      event_duration_hour: Math.floor(minutes / 60),
+      event_duration_minutes: minutes % 60,
+      attendees,
+      create_meeting_room: isVideo,
+      exclude_organizer: false,
+      send_updates: true,
+    },
+  });
+
+  if (!createRes.ok) {
+    return corsJson({ ok: false, error: "calendar_create_failed", detail: createRes.error }, 500);
+  }
+  const ev = createRes.data?.response_data ?? createRes.data ?? {};
+  const meetUrl = isVideo
+    ? (ev.hangoutLink || ev.conferenceData?.entryPoints?.find((e: any) => e.entryPointType === "video")?.uri || null)
+    : null;
+  const eventId = ev.id || null;
+
+  const { error: updErr } = await sb.from("hiring_candidates").update({
+    status: "meet_and_greet",
+    status_updated_at: new Date().toISOString(),
+    meet_greet_scheduled_start: startDate.toISOString(),
+    meet_greet_scheduled_end: endDate.toISOString(),
+    meet_greet_calendar_event_id: eventId,
+    meet_greet_meet_url: meetUrl,
+    meet_greet_location: locationText,
+    meet_greet_attendees: teamAttendees,
+    meet_greet_invited_at: new Date().toISOString(),
+  }).eq("id", c.id);
+  if (updErr) return corsJson({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
+
+  // The calendar invite already went to the candidate. This is the human note
+  // that goes with it, and it is best-effort: the meeting is booked either
+  // way, so a mail failure is reported rather than rolled back.
+  let emailed = false;
+  let emailError: string | null = null;
+  if (c.email) {
+    const gmailCreds = await getComposioGmailCreds(agencyId);
+    if (gmailCreds.ok) {
+      const sendRes = await sendGmail({
+        creds: gmailCreds.creds,
+        to: c.email,
+        subject: "You're set — meet the team",
+        html: meetGreetEmailHtml(firstName, whenLocal, isVideo, locationText, meetUrl, note),
+      });
+      emailed = sendRes.ok;
+      if (!sendRes.ok) emailError = sendRes.error;
+    } else {
+      emailError = gmailCreds.error;
+    }
+  } else {
+    emailError = "candidate has no email address on file";
+  }
+
+  return corsJson({
+    ok: true,
+    scheduled_start: startDate.toISOString(),
+    scheduled_end: endDate.toISOString(),
+    scheduled_display: whenLocal,
+    location: locationText,
+    meet_url: meetUrl,
+    calendar_event_id: eventId,
+    attendees: teamAttendees,
+    emailed,
+    email_error: emailError,
+    calendar_conflict: conflict,
+  });
+}
+
+// -------------------------------------------------------------------------
 // Router
 // -------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
@@ -648,6 +857,14 @@ Deno.serve(async (req: Request) => {
   if (mode === "claim_slot") {
     if (!body.token || !body.start) return corsJson({ ok: false, error: "missing token or start" }, 400);
     return await claimSlot(agencyId, body.token, body.start);
+  }
+
+  if (mode === "schedule_meet_greet") {
+    // Fired from the candidate page in the app, so the gate is the caller's
+    // own session rather than a shared secret — see requireOwnerOrManager.
+    const denied = await requireOwnerOrManager(req, agencyId);
+    if (denied) return denied;
+    return await scheduleMeetGreet(agencyId, body);
   }
 
   return jsonResponse({ ok: false, error: "unknown mode" }, 400);
