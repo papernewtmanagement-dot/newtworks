@@ -423,9 +423,16 @@ async function loadStint2Items(supa: any, candidateId: string) {
       if (ansErr) throw new Error(`stint2_${section}_answered_ids_fetch: ${ansErr.message}`);
       const answeredIdSet = new Set((answeredRows || []).map((r: any) => r.item_id));
 
+      // is_active must be selected explicitly here: ITEM_SELECT deliberately
+      // omits it, but this branch's filter reads it. From the 2026-08-14
+      // lock fix until 2026-08-21 it was undefined on every row, so the
+      // filter kept ONLY already-answered items -- any candidate who paused
+      // mid-stint-2 and resumed had the stint silently truncated to what
+      // they had answered and was advanced to the SJT (4 live candidates
+      // scored on 32-56 of 100 FC pairs, 2026-08-18..20).
       const { data, error } = await supa
         .from("hiregauge_instrument_items")
-        .select(ITEM_SELECT)
+        .select(`${ITEM_SELECT}, is_active`)
         .eq("stint", 2)
         .eq("section", section)
         .order("item_number", { ascending: true });
