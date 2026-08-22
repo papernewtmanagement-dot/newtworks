@@ -4,7 +4,7 @@ bundle_edge_fn.py — generic single-file bundler for Newtworks edge functions.
 
 Reads:  supabase/functions/<slug>/index.ts plus everything it imports locally,
         including the shared library at supabase/functions/_shared/*.ts
-Writes: dist/<slug>.bundle.ts
+Writes: edge-bundles/<slug>.bundle.ts
 
 Usage:
     python3 scripts/bundle_edge_fn.py <slug> [<slug> ...]
@@ -29,9 +29,9 @@ Mechanics:
       duplicate top-level const/function declarations, non-trivial size.
 
 Deploying a bundle (canonical path):
-    1. Commit dist/<slug>.bundle.ts via scripts/commit_newtworks.py
+    1. Commit edge-bundles/<slug>.bundle.ts via scripts/commit_newtworks.py
     2. SUPABASE_DEPLOY_FUNCTION { ref, slug, file_url:
-       "https://raw.githubusercontent.com/papernewtmanagement-dot/newtworks/<SHA>/dist/<slug>.bundle.ts" }
+       "https://raw.githubusercontent.com/papernewtmanagement-dot/newtworks/<SHA>/edge-bundles/<slug>.bundle.ts" }
     3. Preserve the function's existing verify_jwt flag (check
        list_edge_functions BEFORE deploying; pass/update to match).
 
@@ -49,7 +49,12 @@ from pathlib import Path
 
 FUNCTIONS_DIR = Path("supabase/functions")
 SHARED_DIR = FUNCTIONS_DIR / "_shared"
-DIST_DIR = Path("dist")
+# Bundles live in their own directory, NOT in dist/. dist/ is Vite's output
+# folder and Vite empties it at the start of every build -- when the bundles
+# lived there, running a local build deleted all eleven of them, and a commit
+# taken from that working copy would have removed them from the repo. Moved
+# out 2026-08-22 so a build and a bundle can never touch the same place.
+BUNDLE_DIR = Path("edge-bundles")
 
 IMPORT_TARGET_RE = re.compile(r'''from\s+["']([^"']+)["']''')
 SIDE_EFFECT_IMPORT_RE = re.compile(r'''^import\s+["']([^"']+)["']''')
@@ -231,11 +236,11 @@ def main() -> int:
     ap.add_argument("--all-shared-consumers", action="store_true",
                     help="bundle every function whose index.ts imports _shared/")
     ap.add_argument("--repo-root", default=".", help="repo root (default: cwd)")
-    ap.add_argument("--out-dir", default=None, help="output dir (default: <repo-root>/dist)")
+    ap.add_argument("--out-dir", default=None, help="output dir (default: <repo-root>/edge-bundles)")
     args = ap.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
-    out_dir = Path(args.out_dir) if args.out_dir else repo_root / DIST_DIR
+    out_dir = Path(args.out_dir) if args.out_dir else repo_root / BUNDLE_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
     slugs = list(args.slugs)

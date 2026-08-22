@@ -20,9 +20,11 @@ set -u
 #
 #   supabase/migrations/  database migrations, applied to Supabase
 #   supabase/functions/   edge function sources, deployed to Supabase
-#   dist/                 edge function bundles; Vite empties and
-#                         regenerates this directory during every build,
-#                         so the committed copies never reach the site
+#   edge-bundles/         edge function bundles, deployed to Supabase.
+#                         Deliberately NOT dist/: dist/ is Vite's output
+#                         folder and Vite empties it at the start of every
+#                         build, which used to delete every committed
+#                         bundle. Separated 2026-08-22.
 #   docs/                 documentation
 #   _scratch/             scratch space
 #   .github/              GitHub Actions workflows, run by GitHub
@@ -32,7 +34,7 @@ set -u
 # index.html, package.json, vite.config.js, vercel.json.
 # tools/ matters because package.json runs "prebuild": node tools/schema-audit.js
 # on every build.
-SKIPPABLE='^(supabase/migrations/|supabase/functions/|dist/|docs/|_scratch/|\.github/|[^/]+\.md$)'
+SKIPPABLE='^(supabase/migrations/|supabase/functions/|edge-bundles/|docs/|_scratch/|\.github/|[^/]+\.md$)'
 
 PREV="${VERCEL_GIT_PREVIOUS_SHA:-}"
 

@@ -3,7 +3,7 @@
 Bundle document-processor edge function into a single-file deployable .ts
 
 Reads:  supabase/functions/document-processor/*.ts (multi-file source)
-Writes: dist/document-processor.bundle.ts (default; override via --out)
+Writes: edge-bundles/document-processor.bundle.ts (default; override via --out)
 
 Why this exists:
     Supabase edge functions can be deployed multi-file (Deno resolves ./ imports
@@ -14,7 +14,7 @@ Why this exists:
 
 Deploying the bundle (from a Claude/Composio session):
 
-    with open("dist/document-processor.bundle.ts") as f: body = f.read()
+    with open("edge-bundles/document-processor.bundle.ts") as f: body = f.read()
     run_composio_tool("SUPABASE_DEPLOY_FUNCTION", {
         "ref": "vulhdujhbwvibbojiimi",
         "slug": "document-processor",
@@ -227,8 +227,8 @@ def main() -> int:
     )
     ap.add_argument(
         "--out",
-        default="dist/document-processor.bundle.ts",
-        help="output path (default: dist/document-processor.bundle.ts)",
+        default="edge-bundles/document-processor.bundle.ts",
+        help="output path (default: edge-bundles/document-processor.bundle.ts)",
     )
     ap.add_argument("--stdout", action="store_true", help="write to stdout instead of file")
     args = ap.parse_args()
