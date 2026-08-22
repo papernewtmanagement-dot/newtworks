@@ -948,14 +948,14 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
     const action = recipe.composio_action;
     if (!action) throw new Error(`Recipe ${recipe.recipe_name} has no composio_action set.`);
     const inputConfig = recipe.input_config || {};
-    const RUNNER_ONLY_KEYS = new Set(["gmail_query","gmail_labels","archive_after_parse","archive_label_ids_to_add","dedupe_by","local_time","gl_firewall","output_table","drive_folders","apply_coding_rules","coding_rules_table"]);
+    const RUNNER_ONLY_KEYS = new Set(["gmail_query","gmail_labels","archive_after_parse","archive_label_ids_to_add","dedupe_by","local_time","gl_firewall","output_table","drive_folders","apply_coding_rules","coding_rules_table","file_unparsed_messages"]);
     const composioArgs: Record<string, any> = {};
     for (const [k, v] of Object.entries(inputConfig)) if (!RUNNER_ONLY_KEYS.has(k)) composioArgs[k] = v;
     if (action === "GMAIL_FETCH_EMAILS") { if (inputConfig.gmail_query && !composioArgs.query) composioArgs.query = inputConfig.gmail_query; if (!composioArgs.user_id) composioArgs.user_id = "me"; if (recipe.internal_parser && composioArgs.include_payload === undefined) composioArgs.include_payload = true; }
     const composioResult = await callComposio({ apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId, toolSlug: action, toolArguments: composioArgs });
     if (!composioResult.ok) throw new Error(`Composio ${action} failed: ${composioResult.error}`);
 
-    let parsedRecords: any[] = []; let alreadyKnownMessageIds: string[] = [];
+    let parsedRecords: any[] = []; let alreadyKnownMessageIds: string[] = []; let fetchedMessageIds: string[] = [];
     let usedInternalParser = false;
     if (recipe.internal_parser && INTERNAL_PARSERS[recipe.internal_parser]) {
       let inputData: any = composioResult.data;
@@ -963,6 +963,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         inputData = extractGmailEssentials(composioResult.data, 50000);
         const messages: any[] = Array.isArray(inputData?.messages) ? inputData.messages : [];
         const fetchedIds: string[] = messages.map((m: any) => m.messageId as string | undefined).filter((x: any): x is string => typeof x === "string" && x.length > 0);
+        fetchedMessageIds = fetchedIds;
         if (recipe.output_table && fetchedIds.length > 0) {
           const { data: existing, error: dedupErr } = await sb.from(recipe.output_table).select("source_message_id").in("source_message_id", fetchedIds);
           if (!dedupErr) { const knownSet = new Set((existing ?? []).map((r: any) => r.source_message_id as string)); if (knownSet.size > 0) { alreadyKnownMessageIds = fetchedIds.filter((id) => knownSet.has(id)); const nm = messages.filter((m: any) => !knownSet.has(m.messageId)); inputData = { total: nm.length, messages: nm }; } }
@@ -979,6 +980,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         inputData = extractGmailEssentials(composioResult.data);
         const messages: any[] = Array.isArray(inputData?.messages) ? inputData.messages : [];
         const fetchedIds: string[] = messages.map((m: any) => m.messageId as string | undefined).filter((x: any): x is string => typeof x === "string" && x.length > 0);
+        fetchedMessageIds = fetchedIds;
         if (fetchedIds.length > 0) {
           const { data: existing, error: dedupErr } = await sb.from(recipe.output_table).select("source_message_id").in("source_message_id", fetchedIds);
           if (!dedupErr) { const knownSet = new Set((existing ?? []).map((r: any) => r.source_message_id as string)); if (knownSet.size > 0) { alreadyKnownMessageIds = fetchedIds.filter((id) => knownSet.has(id)); const nm = messages.filter((m: any) => !knownSet.has(m.messageId)); inputData = { total: nm.length, messages: nm }; } }
@@ -995,6 +997,66 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
     } else if (recipe.output_table && Array.isArray(composioResult.data)) {
       parsedRecords = composioResult.data;
     }
+    // -------------------------------------------------------------------
+    // fileFetchedGmailMessages — label + archive EVERY fetched message,
+    // including ones the parser deliberately returned no record for.
+    //
+    // Until 2026-08-22 only two groups were ever filed: messages that
+    // produced a record on this run, and messages already present in the
+    // output table from an earlier run. A message the parser SKIPPED on
+    // purpose belonged to neither. It stayed in the inbox with no label,
+    // and because "already handled" is judged by presence in the output
+    // table, it was re-fetched and re-sent to the LLM on EVERY subsequent
+    // run, indefinitely.
+    //
+    // That is not theoretical. The Cash Register Alert Ingestor's prompt
+    // carries a business-account whitelist (3439/3977/4335/4676). Four US
+    // Bank alerts for personal accounts 0353 and 2545 arrived 2026-08-21,
+    // were correctly skipped, and were then re-parsed roughly 24 times in
+    // a day — sitting unlabelled in the inbox the whole time and burning
+    // a slice of the Groq daily token allowance on every pass, until the
+    // allowance ran out and runs with real work started failing 429.
+    //
+    // OPT-IN, via input_config.file_unparsed_messages. Default OFF and
+    // behaviour is byte-for-byte what it was. Recipes that read human
+    // correspondence (candidate replies, time-off votes, bounce
+    // detection) must NOT turn it on: filing an email the parser could
+    // not read would bury a real message out of Peter's inbox. Turn it on
+    // only where skipping is a designed outcome rather than a failure.
+    //
+    // Filing is never silent even when enabled: the count goes into the
+    // run summary and an alert row records the message ids.
+    // -------------------------------------------------------------------
+    const fileFetchedGmailMessages = async (recordIds: string[]): Promise<string> => {
+      const handled = new Set<string>([...recordIds, ...alreadyKnownMessageIds]);
+      const skippedIds = inputConfig.file_unparsed_messages === true
+        ? fetchedMessageIds.filter((id) => !handled.has(id))
+        : [];
+      const allIds = Array.from(new Set<string>([...handled, ...skippedIds]));
+      if (allIds.length === 0) return "";
+      const ar = await archiveProcessedGmailMessages({ apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId, messageIds: allIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined });
+      let note = "";
+      if (ar.ok) {
+        note += ` — archived ${ar.archived} from inbox`;
+        if (alreadyKnownMessageIds.length > 0) note += ` (${alreadyKnownMessageIds.length} were dups)`;
+        if (skippedIds.length > 0) note += ` (${skippedIds.length} filed with no record — parser skipped)`;
+      } else {
+        note += ` — ⚠️ archive failed: ${ar.error}`;
+        await telegram(agencyId, `🟡 Post-parse archive failed for ${recipe.recipe_name}\n${(ar.error ?? "").slice(0,400)}`);
+      }
+      if (skippedIds.length > 0) {
+        await insertAlert({
+          agencyId,
+          alertType: "gmail_parser_skipped_message",
+          severity: "info",
+          title: `${skippedIds.length} email(s) filed with no record — ${recipe.recipe_name}`,
+          message: `The parser returned no record for ${skippedIds.length} fetched message(s). They have been labelled and archived so they are not re-parsed on every run. Gmail message ids: ${skippedIds.slice(0, 20).join(", ")}`,
+          moduleReference: "automation-runner",
+        });
+      }
+      return note;
+    };
+
     if (recipe.output_table && parsedRecords.length > 0) {
       const wr = await writeOutput({ outputTable: recipe.output_table, outputConfig: recipe.output_config || {}, records: parsedRecords, agencyId });
       recordsProcessed = wr.inserted + wr.updated;
@@ -1013,22 +1075,18 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
 
       if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
         const newIds = parsedRecords.map((r: any) => r.source_message_id as string | undefined).filter((x): x is string => typeof x === "string" && x.length > 0);
-        const allIds = Array.from(new Set([...newIds, ...alreadyKnownMessageIds]));
-        if (allIds.length > 0) {
-          const ar = await archiveProcessedGmailMessages({ apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId, messageIds: allIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined });
-          if (ar.ok) { outputSummary += ` — archived ${ar.archived} from inbox`; if (alreadyKnownMessageIds.length > 0) outputSummary += ` (${alreadyKnownMessageIds.length} were dups)`; }
-          else { outputSummary += ` — ⚠️ archive failed: ${ar.error}`; await telegram(agencyId, `🟡 Post-parse archive failed for ${recipe.recipe_name}\n${(ar.error ?? "").slice(0,400)}`); }
-        }
+        outputSummary += await fileFetchedGmailMessages(newIds);
       }
     } else if (recipe.output_table && alreadyKnownMessageIds.length > 0) {
       outputSummary = `0 new records — ${alreadyKnownMessageIds.length} already processed historically`;
       if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
-        const ar = await archiveProcessedGmailMessages({ apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId, messageIds: alreadyKnownMessageIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined });
-        if (ar.ok) outputSummary += ` — archived ${ar.archived} from inbox`;
-        else outputSummary += ` — ⚠️ archive failed: ${ar.error}`;
+        outputSummary += await fileFetchedGmailMessages([]);
       }
     } else if (recipe.output_table) {
       outputSummary = `0 records — no records to write`;
+      if (recipe.composio_action === "GMAIL_FETCH_EMAILS" && inputConfig.archive_after_parse === true) {
+        outputSummary += await fileFetchedGmailMessages([]);
+      }
     } else {
       outputSummary = `Action ${action} executed successfully (no output_table)`;
       recordsProcessed = 1;
