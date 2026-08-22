@@ -623,6 +623,20 @@ Deno.serve(async (req: Request) => {
       };
     }
 
+    // Heartbeat. A dispatch rejected at the gateway (verify_jwt momentarily
+    // true during a redeploy) never reaches this code and cannot alert about
+    // itself, so absence of a row here is what the nightly handler's 26h
+    // staleness check looks for. Never let a logging failure fail the run.
+    try {
+      await sb.from("migration_mirror_runs").insert({
+        agency_id: agencyId,
+        mode,
+        written,
+        pending_after: stats?.pending ?? null,
+        ok: true,
+      });
+    } catch (_e) { /* heartbeat is best-effort */ }
+
     return jsonResponse({
       ok: true,
       mode,
