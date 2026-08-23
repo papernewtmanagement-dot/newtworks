@@ -382,6 +382,20 @@ async function writeOutput(opts: { outputTable: string; outputConfig: any; recor
       const resolved = await resolveBusinessEntityIdByLast4(opts.agencyId as string, (r as any).account_last4);
       if (resolved) o.business_entity_id = resolved;
     }
+    // output_config.account_labels maps a last-4 to the human-readable account
+    // name. The config key has existed on the Cash Register recipe since it was
+    // built but nothing ever read it, so every row written since the generic
+    // writer took over has landed with account_label NULL and only a bare
+    // 4-digit number to identify the account. Harmless with four accounts,
+    // unreadable now that every US Bank account feeds the register.
+    // Parser-supplied values win; this only fills a blank.
+    if (primaryCols.has("account_label") && !o.account_label && cfg.account_labels) {
+      const last4 = (r as any).account_last4;
+      if (last4 != null) {
+        const lbl = (cfg.account_labels as Record<string, string>)[String(last4)];
+        if (lbl) o.account_label = lbl;
+      }
+    }
     primaryRecords.push(o);
   }
   let primaryInserted = 0;
