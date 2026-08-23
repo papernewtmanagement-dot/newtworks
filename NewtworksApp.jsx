@@ -1059,11 +1059,11 @@ export default function NewtworksApp() {
             )}
             <div style={css.headerLogo}>
               <img
-                src="/paper-newt-master.png"
+                src="/paper-newt-mark.png"
                 alt="paper newt"
-                width={viewport.isPhone ? 88 : 136}
-                height={viewport.isPhone ? 36 : 56}
-                style={{ display: "block" }}
+                width={viewport.isPhone ? 32 : 40}
+                height={viewport.isPhone ? 32 : 40}
+                style={{ display: "block", borderRadius: "50%" }}
               />
             </div>
             {!viewport.isPhone && (
