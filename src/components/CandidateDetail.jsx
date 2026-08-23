@@ -1235,7 +1235,36 @@ function referenceBodyText(row) {
   return s.trim();
 }
 
+// Which written line each score came from, grouped the way the construct
+// functions group them in the database (migration 20260822071127). Change one
+// and the other must change with it — the labels here are display only, the
+// grouping is the contract.
+const REFERENCE_CONSTRUCTS = [
+  { key: "character", label: "Character", signals: [
+    { slug: "honesty", label: "Honesty" },
+    { slug: "concern_for_others", label: "Concern for Others" },
+    { slug: "work_ethic", label: "Hard Work Ethic" },
+    { slug: "personal_responsibility", label: "Personal Responsibility" },
+  ]},
+  { key: "commitment", label: "Commitment", signals: [
+    { slug: "attitude_toward_work", label: "Attitude Toward the Work" },
+    { slug: "motivation", label: "Motivation" },
+    { slug: "rehire_intent", label: "Rehire Intent" },
+  ]},
+  { key: "capability", label: "Capability", signals: [
+    { slug: "learning_speed", label: "Learning Speed" },
+    { slug: "communication", label: "Communication" },
+    { slug: "demonstrated_sales_ability", label: "Demonstrated Sales Ability" },
+  ]},
+];
+
 function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T, isPhone }) {
+  // Reference layer thresholds: 75 pass / 60 consider, per
+  // hiregauge_verdict_thresholds. Same bands the Results row above uses.
+  const refBg = (v) => v == null ? T.slate50 : v >= 75 ? T.greenLt : v >= 60 ? T.amberLt : T.redLt;
+  const refFg = (v) => v == null ? T.slate500 : v >= 75 ? T.green : v >= 60 ? T.amber : T.red;
+  const asPct = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Math.round(Number(v));
+  const scoredCount = (refEmails || []).filter((r) => r?.reference_analysis?.signals).length;
   if (refLoadError) {
     return (
       <div style={{ fontSize: 12, color: T.red }}>
@@ -1257,7 +1286,18 @@ function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T,
     <div>
       <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
         Reference Emails · {refEmails.length}
+        {scoredCount > 0 && <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}> · {scoredCount} scored</span>}
       </div>
+      {scoredCount === 1 && (
+        <div style={{
+          fontSize: 11, color: T.slate700, background: T.amberLt, border: `1px solid ${T.amber}`,
+          borderRadius: 6, padding: "7px 9px", marginBottom: 10, lineHeight: 1.5, boxSizing: "border-box",
+        }}>
+          One scored reference. The score below is shown, but the Reference row above stays blank
+          and this layer counts for nothing in the overall verdict until a second reference is
+          scored — one referee is not enough to move a hiring decision.
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {(refEmails || []).map((r) => {
           const isOpen = !!openRefs[r.id];
@@ -1291,6 +1331,16 @@ function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T,
                   </span>
                 )}
                 <span style={{ fontSize: 11, color: T.slate500 }}>{when}</span>
+                {asPct(r.reference_analysis?.candor) != null && (
+                  <span style={{
+                    marginLeft: "auto", padding: "1px 7px", borderRadius: 10,
+                    fontSize: 10, fontWeight: 700, color: T.slate900,
+                    background: refBg(asPct(r.reference_analysis.candor)),
+                    border: `1px solid ${refFg(asPct(r.reference_analysis.candor))}`,
+                  }}>
+                    Candor {asPct(r.reference_analysis.candor)}
+                  </span>
+                )}
               </button>
               {isOpen && (
                 <div style={{ padding: isPhone ? "10px" : "12px 14px", boxSizing: "border-box" }}>
@@ -1304,6 +1354,85 @@ function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T,
                       because the name on the subject line matches — treat the link as unconfirmed.
                     </div>
                   )}
+                  {(() => {
+                    const a = r.reference_analysis;
+                    if (!a || !a.signals) {
+                      return (
+                        <div style={{ fontSize: 11.5, color: T.slate600, fontStyle: "italic", marginBottom: 12 }}>
+                          Not yet scored. The write-up below is the whole record until it is.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ marginBottom: 14 }}>
+                        {a.referee && (
+                          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>{a.referee}</div>
+                        )}
+                        {a.relationship && (
+                          <div style={{ fontSize: 11, color: T.slate600, marginBottom: 10, lineHeight: 1.5 }}>{a.relationship}</div>
+                        )}
+                        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 8 }}>
+                          What this referee said, scored
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                          {REFERENCE_CONSTRUCTS.map((c) => {
+                            const scored = c.signals
+                              .map((s) => ({ ...s, score: asPct(a.signals[s.slug]) }))
+                              .filter((s) => s.score != null);
+                            if (scored.length === 0) return null;
+                            const mean = Math.round(scored.reduce((t, s) => t + s.score, 0) / scored.length);
+                            return (
+                              <div key={c.key}>
+                                <div style={{
+                                  display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap",
+                                  padding: "6px 10px", background: refBg(mean),
+                                  borderLeft: `3px solid ${refFg(mean)}`, borderRadius: 4, marginBottom: 6,
+                                  boxSizing: "border-box",
+                                }}>
+                                  <span style={{ fontSize: 12.5, fontWeight: 700, color: T.slate900 }}>{c.label}</span>
+                                  <span style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>{mean}</span>
+                                  <span style={{ fontSize: 10, color: T.slate600 }}>
+                                    from this reference · mean of {scored.length}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginLeft: 6 }}>
+                                  {scored.map((s) => (
+                                    <span key={s.slug} style={{
+                                      display: "inline-flex", alignItems: "center", gap: 6,
+                                      padding: "4px 8px", borderRadius: 6, background: T.white,
+                                      border: `1px solid ${T.slate200}`, borderLeft: `3px solid ${refFg(s.score)}`,
+                                      fontSize: 11, color: T.slate700, boxSizing: "border-box",
+                                    }}>
+                                      <span style={{ fontWeight: 700, color: T.slate900 }}>{s.score}</span>
+                                      {s.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {asPct(a.candor) != null && (
+                          <div style={{
+                            marginTop: 12, padding: "8px 10px", borderRadius: 6,
+                            background: refBg(asPct(a.candor)), border: `1px solid ${refFg(asPct(a.candor))}`,
+                            fontSize: 11, color: T.slate700, lineHeight: 1.5, boxSizing: "border-box",
+                          }}>
+                            <strong>Candor {asPct(a.candor)}</strong> — how much usable information this
+                            referee gave, not a score on the candidate. Never averaged into anything above.
+                            A candidate picks their own referees, so a write-up with no criticism in it
+                            carries less weight than one that names something real.
+                          </div>
+                        )}
+                        {a.narrative && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Read</div>
+                            <div style={{ fontSize: 11.5, color: T.slate700, lineHeight: 1.6 }}>{a.narrative}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Written reference, verbatim</div>
                   <div style={{
                     fontSize: 12.5, lineHeight: 1.55, color: T.slate800,
@@ -1957,7 +2086,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     (async () => {
       const { data, error } = await supabase
         .from("hiring_candidate_references")
-        .select("id, candidate_id, candidate_name_from_subject, reference_number, sender, received_at, subject, body, body_text")
+        .select("id, candidate_id, candidate_name_from_subject, reference_number, sender, received_at, subject, body, body_text, reference_analysis")
         .eq("agency_id", AGENCY_ID)
         .or(`candidate_id.eq.${detail.id},candidate_id.is.null`);
       if (cancelled) return;
