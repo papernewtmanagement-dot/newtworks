@@ -946,6 +946,35 @@ async function submitAnswer(attemptId, itemId, chosenOptionId, secondsTaken) {
   return data;
 }
 
+// The six things a player can do to a hidden term: answer the follow-up
+// question, guess a consonant, spin the wheel, buy a vowel, solve the term, or
+// run out of clock. Every one of them is just that action aimed at one game
+// record, so they are built here against whichever record is in play - the
+// solo game or the player's own record inside a room.
+//
+// Full casino wheel: a spin lands on a value, Bankrupt, Lose a Turn or Free
+// Spin, and a landed value must be spent on a consonant before the wheel turns
+// again (enforced server-side). Vowels bypass the wheel for a fixed cost out of
+// the term's banked money. When the letters clock runs out the term is shown
+// and the solve bonus is gone - the screen holds nothing, so ending that half
+// is a request to the server, not something the browser decides.
+function phraseActions(attemptId) {
+  const call = async (fn, extra) => {
+    const { data, error } = await supabase.rpc(fn, { p_attempt_id: attemptId, ...extra });
+    if (error) throw error;
+    return data;
+  };
+  return {
+    submitSpinAnswer: (itemId, chosenOptionId, secondsTaken) =>
+      submitAnswer(attemptId, itemId, chosenOptionId, secondsTaken),
+    guessSpinLetter: (itemId, letter) => call("quiz_phrase_guess", { p_item_id: itemId, p_letter: letter }),
+    spinSpinWheel:   (itemId)         => call("quiz_wheel_spin", { p_item_id: itemId }),
+    buySpinVowel:    (itemId, letter) => call("quiz_wheel_buy_vowel", { p_item_id: itemId, p_letter: letter }),
+    solveSpinTerm:   (itemId, text)   => call("quiz_phrase_solve", { p_item_id: itemId, p_text: text }),
+    giveUpSpinTerm:  (itemId)         => call("quiz_phrase_give_up", { p_item_id: itemId }),
+  };
+}
+
 // ============================================================
 // TriviaRoom — the shared multiplayer shell.
 //
@@ -1250,6 +1279,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // asking the server instead.
   const [dfMode, setDfMode] = useTabParam("dfmode", "solo", ["solo", "multi"]);
   const [dailyRoomStatus, setDailyRoomStatus] = useState(null);
+  const [spinMode, setSpinMode] = useTabParam("spinmode", "solo", ["solo", "multi"]);
+  const [spinRoomStatus, setSpinRoomStatus] = useState(null);
 
   // Cold start: someone already in a Daily Five room lands on the right branch
   // without having to pick it again.
@@ -1986,57 +2017,13 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // to send up solved-or-not and the miss count as facts, and those two numbers
   // are exactly what the solve bonus is calculated from. The server keeps its
   // own record of the guessing and reads the bonus off that instead.
-  const submitSpinAnswer = async (itemId, chosenOptionId, secondsTaken) => {
-    return submitAnswer(spinAttempt.id, itemId, chosenOptionId, secondsTaken);
-  };
-
-  const guessSpinLetter = async (itemId, letter) => {
-    const { data, error } = await supabase.rpc("quiz_phrase_guess", {
-      p_attempt_id: spinAttempt.id, p_item_id: itemId, p_letter: letter,
-    });
-    if (error) throw error;
-    return data;
-  };
-
-  // Full casino wheel: spin lands on a value / Bankrupt / Lose a Turn / Free
-  // Spin. A landed value must be spent on a consonant guess before the wheel
-  // can spin again (guessSpinLetter now enforces that server-side).
-  const spinSpinWheel = async (itemId) => {
-    const { data, error } = await supabase.rpc("quiz_wheel_spin", {
-      p_attempt_id: spinAttempt.id, p_item_id: itemId,
-    });
-    if (error) throw error;
-    return data;
-  };
-
-  // Vowels bypass the wheel entirely — fixed cost out of the term's banked
-  // money, no spin required, no value earned or lost either way.
-  const buySpinVowel = async (itemId, letter) => {
-    const { data, error } = await supabase.rpc("quiz_wheel_buy_vowel", {
-      p_attempt_id: spinAttempt.id, p_item_id: itemId, p_letter: letter,
-    });
-    if (error) throw error;
-    return data;
-  };
-
-  const solveSpinTerm = async (itemId, text) => {
-    const { data, error } = await supabase.rpc("quiz_phrase_solve", {
-      p_attempt_id: spinAttempt.id, p_item_id: itemId, p_text: text,
-    });
-    if (error) throw error;
-    return data;
-  };
-
-  // The letter half has its own clock. When it runs out the term is shown and
-  // the solve bonus is gone. The screen used to reveal a term it was holding;
-  // it holds nothing now, so ending the half is a request.
-  const giveUpSpinTerm = async (itemId) => {
-    const { data, error } = await supabase.rpc("quiz_phrase_give_up", {
-      p_attempt_id: spinAttempt.id, p_item_id: itemId,
-    });
-    if (error) throw error;
-    return data;
-  };
+  // Solo binds the six wheel-and-letters actions to its own game record; a
+  // room binds the same six to the player's record inside that room. Same
+  // factory both times so the two can never drift apart.
+  const {
+    submitSpinAnswer, guessSpinLetter, spinSpinWheel,
+    buySpinVowel, solveSpinTerm, giveUpSpinTerm,
+  } = useMemo(() => phraseActions(spinAttempt?.id), [spinAttempt?.id]);
 
   const finishSpin = async (attemptId) => {
     setSpinPhase("finishing");
@@ -2345,7 +2332,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
       nightInPlay ? "night"
     : (!gatesError && activeGate && gatePhase !== "idle") ? "gate"
     : (gridPhase === "board" || gridPhase === "finishing" || sharedActive) ? "grid"
-    : (spinPhase === "playing" || spinPhase === "finishing") ? "spin"
+    : (spinPhase === "playing" || spinPhase === "finishing"
+       || spinRoomStatus === "playing" || spinRoomStatus === "finished") ? "spin"
     : (duelMode === "playing" || duelMode === "starting") ? "duel"
     : (dfPhase === "playing" || dfPhase === "finishing"
        || dailyRoomStatus === "playing" || dailyRoomStatus === "finished") ? "daily"
@@ -2366,7 +2354,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
           <div>
             <div style={s.stageTitle}>{stageTitles[activeGame]}</div>
             <div style={s.stageSub}>
-              {activeGame === "daily" && dailyRoomStatus === "finished" ? "game over" : "in play"}
+              {(activeGame === "daily" && dailyRoomStatus === "finished")
+                || (activeGame === "spin" && spinRoomStatus === "finished")
+                ? "game over" : "in play"}
             </div>
           </div>
         </div>
@@ -2757,6 +2747,47 @@ function TriviaPlayTab({ userId, isAdmin }) {
         {shows("spin") && (
         <div style={boxStyle("spin")}>
           <div style={s.playCardTitle}>Spin &amp; Solve</div>
+
+          {activeGame !== "spin" && (
+            <div style={s.modeRow}>
+              <button type="button" style={s.modeBtn(spinMode === "solo")} onClick={() => setSpinMode("solo")}>
+                Solo
+              </button>
+              <button type="button" style={s.modeBtn(spinMode === "multi")} onClick={() => setSpinMode("multi")}>
+                Multiplayer
+              </button>
+            </div>
+          )}
+
+          {spinMode === "multi" && (
+            <TriviaRoom
+              modeKey="spin_and_solve"
+              startFnName="quiz_room_start_spin_and_solve"
+              onStatusChange={setSpinRoomStatus}
+              renderPlay={({ play, attemptId, finishMine }) => {
+                const a = phraseActions(attemptId);
+                return (
+                  <PhraseRunner
+                    itemIds={play.remainingIds}
+                    itemsById={play.itemsById}
+                    attemptId={attemptId}
+                    secondsPerPhase={spinCfg?.seconds_per_question || 60}
+                    secondsFirstPhase={spinCfg?.seconds_first_phase || 150}
+                    onSpinWheel={a.spinSpinWheel}
+                    onBuyVowel={a.buySpinVowel}
+                    onSubmitAnswer={a.submitSpinAnswer}
+                    onGuessLetter={a.guessSpinLetter}
+                    onSolveTerm={a.solveSpinTerm}
+                    onTermTimeout={a.giveUpSpinTerm}
+                    onAllDone={finishMine}
+                  />
+                );
+              }}
+            />
+          )}
+
+          {spinMode === "solo" && (
+          <>
           <div style={s.playCardDesc}>Solve the hidden coverage term, then say what it means.</div>
 
           {spinError && <div style={s.errorBanner}>{spinError}</div>}
@@ -2810,6 +2841,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {spinPhase !== "finished" && spinPhase !== "playing" && (
             <DayStandings rows={dayStandings.spin_and_solve} label="Today's terms — the team" />
+          )}
+          </>
           )}
         </div>
         )}
