@@ -440,10 +440,17 @@ Deno.serve(async (req: Request) => {
       });
       if (prErr) throw new Error(`migration_mirror_prunable failed: ${prErr.message}`);
 
-      // Only delete what is actually in the tree right now.
+      // The migrations subtree listing yields BARE FILENAMES (tree entry paths
+      // are relative to the subtree), and that is what the audit table stores.
+      // Tree writes are rooted at the repo, so the directory must go back on —
+      // without it GitHub is asked to delete a path at the repo root that does
+      // not exist, and answers 422 GitRPC::BadObjectState.
+      const fullPath = (p: string) =>
+        p.startsWith(`${MIG_DIR}/`) ? p : `${MIG_DIR}/${p}`;
+
       const paths = (prunable ?? [])
         .map((p: any) => p.repo_path)
-        .filter((p: string) => present.has(p));
+        .filter((p: string) => present.has(p) || present.has(p.split("/").pop() ?? p));
 
       const take = Math.min(Math.max(Number(body.prune_limit ?? 700), 1), 900);
       const chunkSize = Math.min(Math.max(Number(body.prune_chunk ?? 100), 1), 200);
@@ -477,7 +484,7 @@ Deno.serve(async (req: Request) => {
           method: "POST",
           body: {
             base_tree: curCommit.tree.sha,
-            tree: chunk.map((p: string) => ({ path: p, mode: "100644", type: "blob", sha: null })),
+            tree: chunk.map((p: string) => ({ path: fullPath(p), mode: "100644", type: "blob", sha: null })),
           },
         });
 
