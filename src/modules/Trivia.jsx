@@ -34,6 +34,13 @@ import { useTabParam } from "../lib/routing.jsx";
 // multiple-choice QuestionRunner is untouched by it.
 // ============================================================
 
+// Duel is hidden. It came out of an early planning list of seven modes on
+// 2026-08-08 and got built without Peter ever asking for it; he did not know
+// what it was. Nobody has ever played one - zero duel games exist in the whole
+// history of the platform. The card is switched off rather than deleted so
+// nothing is lost: flip this to true and it comes straight back.
+const SHOW_DUEL_CARD = false;
+
 const s = {
   page: { display: "flex", flexDirection: "column", height: "100%", background: T.slate50 },
   headerBar: {
@@ -2531,7 +2538,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
         )}
 
         {/* ── Duel card ── */}
-        {shows("duel") && (
+        {SHOW_DUEL_CARD && shows("duel") && (
         <div style={boxStyle("duel")}>
           <div style={s.playCardTitle}>Duel</div>
           <div style={s.playCardDesc}>{duelCfg?.description || "Challenge a teammate. Same questions, play when you have a minute."}</div>
