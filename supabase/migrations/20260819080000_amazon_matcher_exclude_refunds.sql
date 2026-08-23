@@ -1,0 +1,10 @@
+-- Peter 2026-08-18: two fixes.
+-- 1. The $28.69 on the agency card (3447) was a REFUND, not a charge -- which is why Alvi
+--    could not trace it to an order. It is the return of the January spinner die sent to
+--    Thomas for the prize cart. Filed to 6160 Employee Relations against the original.
+-- 2. Refunds are credits. An Amazon order is always a purchase, so a refund can never have
+--    a matching order -- yet the matcher pulled refunds in via GREATEST(debit,credit) and
+--    then reported them as unmatched purchases. That is what inflated the gap list Alvi
+--    had to work through by hand. Both the matcher function and the reporting view now
+--    restrict to actual charges (debit > 0).
+-- Applied via Supabase MCP; see migrations 20260819070000 and 20260819080000.
