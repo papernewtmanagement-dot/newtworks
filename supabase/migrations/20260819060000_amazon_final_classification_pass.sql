@@ -1,0 +1,13 @@
+-- Peter 2026-08-18, Amazon cleanup, final classification pass.
+-- Card 7435 (Cap One): Amazon = care packages for total-loss customers. Bulk stays in
+--   PaperNewt 6400 Advertising & Marketing (closest existing fit); office/cleaning
+--   supplies to 6910. No new accounts created -- the chart-of-accounts lock stays on.
+--   Person-name labels from Alvi's email proved unreliable and were replaced with
+--   item-level memos.
+-- Card 1003 (AmEx PaperNewt): office snacks -> 6160, filters -> 6240, first aid stock
+--   and misc office items -> 6910.
+-- Card 3447 (US Bank, agency): employee gifts/awards -> 6160, iPad -> 1500 Office
+--   Equipment (capitalized), computer equipment -> 6330, decorative -> 6910, desk
+--   refund -> 1510, one untraceable line -> 6950 flagged in memo.
+-- See migrations 20260819030000..20260819050000 applied via Supabase MCP this session.
+-- This file is the consolidated record; individual statements were applied atomically.
