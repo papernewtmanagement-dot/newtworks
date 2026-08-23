@@ -214,6 +214,7 @@ Deno.serve(async (req: Request) => {
         .filter((p: string) => present.has(p));
 
       const take = Math.min(Math.max(Number(body.prune_limit ?? 700), 1), 900);
+      const chunkSize = Math.min(Math.max(Number(body.prune_chunk ?? 100), 1), 200);
       const slice = paths.slice(0, take);
 
       if (dryRun || slice.length === 0) {
@@ -226,36 +227,52 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      // sha: null against a base_tree removes the path.
-      const newTree = await gh(token, `/repos/${GH_REPO}/git/trees`, {
-        method: "POST",
-        body: {
-          base_tree: baseTree,
-          tree: slice.map((p: string) => ({ path: p, mode: "100644", type: "blob", sha: null })),
-        },
-      });
+      // One tree call carrying 658 deletions returns 422 GitRPC::BadObjectState.
+      // The entry shape is correct (it matches the proven commit script); the
+      // volume is what GitHub rejects. Delete in chunks, each its own commit,
+      // re-reading the branch head every time so a concurrent push cannot be
+      // clobbered.
+      const pruneCommits: Array<{ sha: string; files: number }> = [];
+      let deleted = 0;
+      for (let i = 0; i < slice.length; i += chunkSize) {
+        const chunk = slice.slice(i, i + chunkSize);
 
-      const commit = await gh(token, `/repos/${GH_REPO}/git/commits`, {
-        method: "POST",
-        body: {
-          message:
-            `migration mirror: prune ${slice.length} redundant migration file(s) ` +
-            `(duplicate content already tracked under a ledger version)`,
-          tree: newTree.sha,
-          parents: [headSha],
-        },
-      });
+        const curRef = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
+        const curSha: string = curRef.object.sha;
+        const curCommit = await gh(token, `/repos/${GH_REPO}/git/commits/${curSha}`);
 
-      await gh(token, `/repos/${GH_REPO}/git/refs/heads/${branch}`, {
-        method: "PATCH",
-        body: { sha: commit.sha, force: false },
-      });
+        const t = await gh(token, `/repos/${GH_REPO}/git/trees`, {
+          method: "POST",
+          body: {
+            base_tree: curCommit.tree.sha,
+            tree: chunk.map((p: string) => ({ path: p, mode: "100644", type: "blob", sha: null })),
+          },
+        });
+
+        const c = await gh(token, `/repos/${GH_REPO}/git/commits`, {
+          method: "POST",
+          body: {
+            message: `migration mirror: prune ${chunk.length} redundant migration file(s)`,
+            tree: t.sha,
+            parents: [curSha],
+          },
+        });
+
+        await gh(token, `/repos/${GH_REPO}/git/refs/heads/${branch}`, {
+          method: "PATCH",
+          body: { sha: c.sha, force: false },
+        });
+
+        pruneCommits.push({ sha: c.sha, files: chunk.length });
+        deleted += chunk.length;
+        await sleep(1200);
+      }
 
       return jsonResponse({
         ok: true, mode: "prune", dry_run: false,
         prunable: (prunable ?? []).length,
-        deleted: slice.length,
-        commit: commit.sha,
+        deleted,
+        commits: pruneCommits,
         elapsed_ms: Date.now() - started,
       });
     }
