@@ -194,6 +194,72 @@ Deno.serve(async (req: Request) => {
     const token = await getSetting(agencyId, "github_pat_newtworks_commit");
     if (!token) throw new Error("settings.github_pat_newtworks_commit is not set");
 
+    // --- prune: delete repo files that are provably redundant --------------
+    if (mode === "prune") {
+      const ref = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
+      const headSha: string = ref.object.sha;
+      const headCommit = await gh(token, `/repos/${GH_REPO}/git/commits/${headSha}`);
+      const baseTree: string = headCommit.tree.sha;
+      const files = await listMigrationFiles(token, baseTree);
+      const present = new Set(files.map((f) => f.path));
+
+      const { data: prunable, error: prErr } = await sb.rpc("migration_mirror_prunable", {
+        p_agency_id: agencyId,
+      });
+      if (prErr) throw new Error(`migration_mirror_prunable failed: ${prErr.message}`);
+
+      // Only delete what is actually in the tree right now.
+      const paths = (prunable ?? [])
+        .map((p: any) => p.repo_path)
+        .filter((p: string) => present.has(p));
+
+      const take = Math.min(Math.max(Number(body.prune_limit ?? 700), 1), 900);
+      const slice = paths.slice(0, take);
+
+      if (dryRun || slice.length === 0) {
+        return jsonResponse({
+          ok: true, mode: "prune", dry_run: dryRun,
+          prunable: (prunable ?? []).length,
+          present_in_tree: paths.length,
+          would_delete: slice.length,
+          elapsed_ms: Date.now() - started,
+        });
+      }
+
+      // sha: null against a base_tree removes the path.
+      const newTree = await gh(token, `/repos/${GH_REPO}/git/trees`, {
+        method: "POST",
+        body: {
+          base_tree: baseTree,
+          tree: slice.map((p: string) => ({ path: p, mode: "100644", type: "blob", sha: null })),
+        },
+      });
+
+      const commit = await gh(token, `/repos/${GH_REPO}/git/commits`, {
+        method: "POST",
+        body: {
+          message:
+            `migration mirror: prune ${slice.length} redundant migration file(s) ` +
+            `(duplicate content already tracked under a ledger version)`,
+          tree: newTree.sha,
+          parents: [headSha],
+        },
+      });
+
+      await gh(token, `/repos/${GH_REPO}/git/refs/heads/${branch}`, {
+        method: "PATCH",
+        body: { sha: commit.sha, force: false },
+      });
+
+      return jsonResponse({
+        ok: true, mode: "prune", dry_run: false,
+        prunable: (prunable ?? []).length,
+        deleted: slice.length,
+        commit: commit.sha,
+        elapsed_ms: Date.now() - started,
+      });
+    }
+
     // --- adopt: register repo files whose SQL is nowhere in the ledger ------
     if (mode === "adopt") {
       const ref = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
