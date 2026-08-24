@@ -63,7 +63,6 @@ const BLANK_ROW = () => ({
   icon: null,
   sort_order: 0,
   parent_page_id: null,
-  tree_root: null,
   source_url: null,
   confluence_page_id: null,
   is_active: true,
@@ -212,7 +211,7 @@ export default function ContentEditor({ userRole }) {
     try {
       const { data, error: e } = await supabase
         .from("manuals")
-        .select("id, agency_id, manual_type, title, content, content_format, icon, sort_order, parent_page_id, tree_root, source_url, confluence_page_id, is_active, version, archived_at, updated_at")
+        .select("id, agency_id, manual_type, title, content, content_format, icon, sort_order, parent_page_id, source_url, confluence_page_id, is_active, version, archived_at, updated_at")
         .eq("agency_id", AGENCY_ID)
         .order("manual_type", { ascending: true })
         .order("sort_order", { ascending: true, nullsFirst: false })
@@ -292,7 +291,6 @@ export default function ContentEditor({ userRole }) {
         icon: draft.icon || null,
         sort_order: Number.isFinite(Number(draft.sort_order)) ? Number(draft.sort_order) : 0,
         parent_page_id: draft.parent_page_id || null,
-        tree_root: draft.tree_root || null,
         source_url: draft.source_url || null,
         confluence_page_id: draft.confluence_page_id || null,
         is_active: true,
@@ -641,7 +639,7 @@ function EditorPane({ draft, rows, saving, dirty, saveMsg, onField, onSave, onDi
         </div>
       </div>
 
-      {/* Parent + tree root */}
+      {/* Parent page */}
       <div style={s.fieldRow}>
         <div style={{ ...s.field, flex: 1, minWidth: 200 }}>
           <label style={s.fieldLabel}>Parent page (same manual)</label>
@@ -657,16 +655,6 @@ function EditorPane({ draft, rows, saving, dirty, saveMsg, onField, onSave, onDi
               </option>
             ))}
           </select>
-        </div>
-        <div style={{ ...s.field, flex: 1, minWidth: 160 }}>
-          <label style={s.fieldLabel}>Tree root</label>
-          <input
-            type="text"
-            style={s.input}
-            value={draft.tree_root || ""}
-            onChange={(e) => onField("tree_root", e.target.value || null)}
-            placeholder="e.g. Checklists"
-          />
         </div>
       </div>
 

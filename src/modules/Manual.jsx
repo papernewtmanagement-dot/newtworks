@@ -1084,7 +1084,6 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       const row = {
         agency_id: AGENCY_ID,
         manual_type: manualType,
-        tree_root: page.tree_root || manualType,
         title: (form.title || "").trim() || "Untitled",
         content: form.content || "",
         content_format: "markdown",
