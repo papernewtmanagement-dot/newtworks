@@ -929,6 +929,138 @@ function FreeTextItem({ item, onAnswer, selected, saving }) {
   );
 }
 
+// Forced-choice ranking block (Phase 4 personality section, added 2026-08-25).
+// choices is an OBJECT ({ options: { A: {text, facet, pole, ...}, B, C, D },
+// block, block_kind }). Four statements; the candidate taps them in order
+// from most like them to least like them. Tapping an already-ranked
+// statement un-ranks it and everything after it, so a mis-tap is fixed by
+// tapping again. The parent's Next button stays disabled until all four are
+// ranked: onAnswer(null) while the ranking is partial, onAnswer({ label })
+// once complete. The label is the DISPLAY letters in rank order, most-like
+// first (e.g. "CADB"); the edge function translates each letter back to its
+// stored letter on save (canonicalLetter), because the .options key routes
+// this item through the letter permutation the pairs bypass.
+function ForcedChoiceQuadItem({ item, onAnswer, selected, saving, vp }) {
+  const options = item?.choices?.options || {};
+  const letters = ["A", "B", "C", "D", "E", "F"].filter((L) => options[L] != null);
+  const [order, setOrder] = useState(() => {
+    const l = typeof selected?.label === "string" ? selected.label : "";
+    const chars = l.split("");
+    return chars.length === letters.length && chars.every((c) => letters.includes(c)) ? chars : [];
+  });
+  if (letters.length < 2) return null;
+
+  const rankWord = (i) =>
+    i === 0
+      ? "Most like me"
+      : i === letters.length - 1
+      ? "Least like me"
+      : `${i + 1}${i === 1 ? "nd" : i === 2 ? "rd" : "th"}`;
+
+  const tap = (L) => {
+    if (saving) return;
+    const i = order.indexOf(L);
+    const next = i === -1 ? [...order, L] : order.slice(0, i);
+    setOrder(next);
+    onAnswer(next.length === letters.length ? { label: next.join("") } : null);
+  };
+
+  const reset = () => {
+    if (saving) return;
+    setOrder([]);
+    onAnswer(null);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12, lineHeight: 1.4 }}>
+        Tap the statements in order: first the one most like you, last the one least like you.
+        Tap a ranked statement to undo it.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {letters.map((L) => {
+          const rank = order.indexOf(L);
+          const ranked = rank !== -1;
+          return (
+            <button
+              key={`${item?.id ?? "x"}-${L}`}
+              disabled={saving}
+              onClick={() => tap(L)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                width: "100%",
+                padding: "12px 14px",
+                background: ranked ? T.blueLt : T.white,
+                border: `1px solid ${ranked ? T.blue : T.slate200}`,
+                borderRadius: 8,
+                textAlign: "left",
+                fontSize: 15,
+                color: T.slate900,
+                cursor: saving ? "wait" : "pointer",
+                transition: "background 0.15s, border-color 0.15s",
+                lineHeight: 1.4,
+                boxSizing: "border-box",
+              }}
+            >
+              <span
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  background: ranked ? T.blue : T.slate100,
+                  color: ranked ? T.white : T.slate400,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxSizing: "border-box",
+                }}
+              >
+                {ranked ? rank + 1 : ""}
+              </span>
+              <span style={{ flex: 1 }}>{options[L]?.text ?? ""}</span>
+              {ranked ? (
+                <span
+                  style={{
+                    flexShrink: 0,
+                    fontSize: vp?.isPhone ? 11 : 12,
+                    color: T.slate500,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {rankWord(rank)}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      {order.length > 0 ? (
+        <button
+          disabled={saving}
+          onClick={reset}
+          style={{
+            marginTop: 10,
+            padding: "4px 0",
+            background: "transparent",
+            border: "none",
+            color: T.slate500,
+            fontSize: 13,
+            textDecoration: "underline",
+            cursor: saving ? "wait" : "pointer",
+          }}
+        >
+          Start over
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function ResponseControls({ item, candidateId, onAnswer, selected, saving, vp }) {
   // Stint 5 (written screen) free-text items. Checked first -- these carry
   // no choices and no scale_max, so without this check they would silently
@@ -950,6 +1082,28 @@ function ResponseControls({ item, candidateId, onAnswer, selected, saving, vp })
   // Array.isArray multi-choice branch below as the pattern-matching check.
   if (isGmaNumericalItem(item)) {
     return <GmaNumericalItem item={item} onAnswer={onAnswer} selected={selected} saving={saving} vp={vp} />;
+  }
+
+  // Forced-choice ranking block (Phase 4 personality section, added 2026-08-25).
+  // choices is an OBJECT ({ options: {A..D}, block, block_kind }) -- checked
+  // before the Array.isArray branch and the Likert fallback for the same
+  // reason as the object-shaped GMA items above. Keyed on item.id so the
+  // ranking state resets on every new block.
+  if (
+    item?.response_format === "forced_choice_quad" &&
+    item?.choices?.options &&
+    typeof item.choices.options === "object"
+  ) {
+    return (
+      <ForcedChoiceQuadItem
+        key={item.id}
+        item={item}
+        onAnswer={onAnswer}
+        selected={selected}
+        saving={saving}
+        vp={vp}
+      />
+    );
   }
 
   // Forced-choice pair item (Phase 3 personality section, added 2026-08-14).

@@ -56,6 +56,7 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SECTIONS = [
   "newtworks_v2_personality",
   "newtworks_v2_personality_fc",
+  "newtworks_v2_personality_fc_quad",
   "newtworks_v2_cognitive_gma",
   "newtworks_v2_sjt",
   "newtworks_v2_screen",
@@ -382,7 +383,15 @@ async function loadStint3Targets(supa: any, candidateId: string) {
 // never switched mid-stream just because is_active changed underneath
 // them. A candidate who hasn't touched stint 2 yet still gets whichever
 // section is currently active, unchanged from before.
-const STINT2_PERSONALITY_SECTIONS = ["newtworks_v2_personality", "newtworks_v2_personality_fc"];
+// Phase 4 ranking blocks (newtworks_v2_personality_fc_quad, items 701-775)
+// added 2026-08-25 while still is_active=false: harmless until activation
+// (no responses -> the loop skips it and the active section still serves),
+// and once active the same lock keeps mid-sitting pair candidates on pairs.
+const STINT2_PERSONALITY_SECTIONS = [
+  "newtworks_v2_personality",
+  "newtworks_v2_personality_fc",
+  "newtworks_v2_personality_fc_quad",
+];
 
 async function loadStint2Items(supa: any, candidateId: string) {
   for (const section of STINT2_PERSONALITY_SECTIONS) {
@@ -604,6 +613,21 @@ function canonicalLetter(reported: string, item: any, candidateId: string): stri
   if (!ch || Array.isArray(ch) || typeof ch !== "object") return reported;
   if (!ch.options || typeof ch.options !== "object") return reported;
   const letters = optionLetters(ch.options);
+  // Ranking items (forced_choice_quad, Phase 4) report EVERY display letter
+  // in rank order, most-like-me first, e.g. "CADB". Translate letter by
+  // letter with the same permutation. Anything that is not a clean
+  // permutation of the served letters is stored as reported rather than
+  // half-translated. Single-letter items are unchanged below.
+  if (reported.length > 1) {
+    const chars = reported.split("");
+    const clean =
+      chars.length === letters.length &&
+      chars.every((c) => letters.includes(c)) &&
+      new Set(chars).size === chars.length;
+    if (!clean) return reported;
+    const perm = letterPermutation(candidateId, item.id, letters);
+    return chars.map((c) => perm[letters.indexOf(c)]).join("");
+  }
   const slot = letters.indexOf(reported);
   if (slot === -1) return reported;
   return letterPermutation(candidateId, item.id, letters)[slot];
