@@ -22,19 +22,17 @@
 //     fairness, greed_avoidance) + GMA cognitive floor (16 active items, 4
 //     per subtest: pattern/deductive/numerical/verbal). Served in full, no
 //     rotation, unconditional.
-//   - Stint 2 = 6-item baseline per personality facet (~140 items). Served
-//     in full once Stint 1 is complete.
-//   - Stint 3 = up to 4 leftover items per facet whose Stint 1+2 score lands
-//     in the ambiguous 45-55 band (compute_newtworks_v2_stint3_triggers).
-//     Pulled from the SAME already-published, already-cited scale used for
-//     Stint 2 — not new content, not a retest. Conditional; may be empty.
-//   - Stint 4 = SJT (40 items, 10 constructs x 4 items each). Served in
-//     full once Stint 3 is resolved (whether or not it triggered any
-//     facets), unconditional, same pattern as Stint 2 — not trigger-gated.
-//   - Retest items (1 per personality facet, all 22) are separate from
-//     Stint 3 — within-sitting consistency checks (Meade & Craig 2012).
-//     They live in Stint 1 or 2 alongside their facet's baseline items and
-//     are always served.
+//   - Stint 2 = personality: 75 forced-choice ranking blocks of four
+//     statements (section newtworks_v2_personality_fc_quad, live
+//     2026-08-25). Served in full once Stint 1 is complete.
+//   - (Stint 3 -- the rating-scale follow-up section -- was removed
+//     2026-08-25 with the rest of the old personality system. There is no
+//     stint 3; stint 4 follows stint 2 directly.)
+//   - Stint 4 = SJT. Served in full once Stint 2 is complete, unconditional,
+//     same pattern as Stint 2 — not trigger-gated.
+//   - Retest items (within-sitting consistency checks, Meade & Craig 2012)
+//     live in Stint 1 alongside their facet's baseline items and are always
+//     served.
 //   - Scoring on finalize: compute_newtworks_v2_facets_as_row (personality
 //     facets), apply_newtworks_gma_to_candidate (GMA accuracy + speed per
 //     domain), apply_newtworks_v2_sjt_to_candidate (SJT % correct per
@@ -334,40 +332,6 @@ async function loadAnswered(supa: any, candidateId: string): Promise<Set<string>
   return new Set((data || []).map((r: any) => r.item_id));
 }
 
-// Stint 3 targets: ambiguous-facet leftover-pool items, computed only once
-// Stint 1 + Stint 2 are both fully answered (the trigger reads the merged
-// score, so it can't fire early). SJT/GMA never trigger Stint 3 — the
-// trigger function only reads personality facet scores.
-async function loadStint3Targets(supa: any, candidateId: string) {
-  const { data, error } = await supa.rpc("compute_newtworks_v2_stint3_triggers", {
-    p_candidate_id: candidateId,
-  });
-  if (error) throw new Error(`stint3_triggers_fetch: ${error.message}`);
-  const traits = new Set(((data || []) as any[]).map((r) => r.hypothesized_trait));
-  if (traits.size === 0) return [];
-
-  const { data: items, error: iErr } = await supa
-    .from("hiregauge_instrument_items")
-    .select(ITEM_SELECT)
-    .eq("stint", 3)
-    .eq("is_active", true)
-    .in("section", SECTIONS)
-    .in("hypothesized_trait", Array.from(traits))
-    .order("item_number", { ascending: true });
-  if (iErr) throw new Error(`stint3_items_fetch: ${iErr.message}`);
-
-  // Cap at 4 items per triggered facet, per spec ("2-4 items per triggered
-  // facet" — some facets' leftover pool has more than 4 items).
-  const perTraitCount: Record<string, number> = {};
-  const capped: any[] = [];
-  for (const it of items || []) {
-    const trait = it.hypothesized_trait ?? "";
-    perTraitCount[trait] = (perTraitCount[trait] || 0) + 1;
-    if (perTraitCount[trait] <= 4) capped.push(it);
-  }
-  return capped;
-}
-
 // Which stint-2 personality section (Likert or FC) a candidate's items come
 // from. Added 2026-08-14 at the FC go-live flip, same-day incident: a
 // candidate (Sara Burke-Cruz) was actively answering the Likert stint-2
@@ -383,11 +347,10 @@ async function loadStint3Targets(supa: any, candidateId: string) {
 // them. A candidate who hasn't touched stint 2 yet still gets whichever
 // section is currently active, unchanged from before.
 // Phase 4 ranking blocks (newtworks_v2_personality_fc_quad, items 701-775)
-// went live 2026-08-25 (migration fc_quad_go_live_and_retire_pairs). The
-// Phase 3 pair section was hard-deleted in the same migration, so it is no
-// longer listed; the Likert section stays for anyone still locked to it.
+// went live 2026-08-25. The pair section and the rating-scale stint-2 items
+// were hard-deleted the same day, so this is the only stint-2 section; the
+// list stays so a future replacement section slots in without a rewrite.
 const STINT2_PERSONALITY_SECTIONS = [
-  "newtworks_v2_personality",
   "newtworks_v2_personality_fc_quad",
 ];
 
@@ -465,21 +428,10 @@ async function loadProgress(supa: any, candidateId: string) {
   const stint2Answered = stint2Items.filter((it: any) => answered.has(it.id)).length;
   const stint2Done = stint1Done && stint2Items.length > 0 && stint2Answered >= stint2Items.length;
 
-  // Stint 3 is only computable once stint 1+2 are both done (trigger reads
-  // the merged score). Before that, treat it as "not yet known."
-  let stint3Items: any[] = [];
-  let stint3Answered = 0;
-  let stint3Done = false;
-  if (stint2Done) {
-    stint3Items = await loadStint3Targets(supa, candidateId);
-    stint3Answered = stint3Items.filter((it: any) => answered.has(it.id)).length;
-    stint3Done = stint3Items.length === 0 || stint3Answered >= stint3Items.length;
-  }
-
-  // Stint 4 (SJT) is unconditional, like stint 2 — not trigger-gated — but
-  // only reachable once stint 3 is resolved (whether or not it triggered).
+  // Stint 4 (SJT) is unconditional, like stint 2 — not trigger-gated —
+  // reachable once stint 2 is done (stint 3 was removed 2026-08-25).
   const stint4Answered = stint4Items.filter((it: any) => answered.has(it.id)).length;
-  const stint4Done = stint3Done && (stint4Items.length === 0 || stint4Answered >= stint4Items.length);
+  const stint4Done = stint2Done && (stint4Items.length === 0 || stint4Answered >= stint4Items.length);
 
   // Stint 5 (written screen — "Part 2") is unconditional, same pattern as
   // stint 2/4 — not trigger-gated — reachable once stint 4 is done. Added
@@ -491,10 +443,9 @@ async function loadProgress(supa: any, candidateId: string) {
   const stint5Done = stint4Done && (stint5Items.length === 0 || stint5Answered >= stint5Items.length);
 
   return {
-    stint1Items, stint2Items, stint3Items, stint4Items, stint5Items, answered,
+    stint1Items, stint2Items, stint4Items, stint5Items, answered,
     stint1Total: stint1Items.length, stint1Answered, stint1Done,
     stint2Total: stint2Items.length, stint2Answered, stint2Done,
-    stint3Total: stint3Items.length, stint3Answered, stint3Done,
     stint4Total: stint4Items.length, stint4Answered, stint4Done,
     stint5Total: stint5Items.length, stint5Answered, stint5Done,
   };
@@ -677,13 +628,11 @@ async function handleVerify(supa: any, cand: any) {
       });
     }
     const prog = await loadProgress(supa, cand.id);
-    const allDone = prog.stint1Done && prog.stint2Done && prog.stint3Done && prog.stint4Done && prog.stint5Done;
+    const allDone = prog.stint1Done && prog.stint2Done && prog.stint4Done && prog.stint5Done;
     const currentProgress = !prog.stint1Done
       ? { answered: prog.stint1Answered, total: prog.stint1Total }
       : !prog.stint2Done
       ? { answered: prog.stint2Answered, total: prog.stint2Total }
-      : !prog.stint3Done
-      ? { answered: prog.stint3Answered, total: prog.stint3Total }
       : !prog.stint4Done
       ? { answered: prog.stint4Answered, total: prog.stint4Total }
       : { answered: prog.stint5Answered, total: prog.stint5Total };
@@ -691,7 +640,7 @@ async function handleVerify(supa: any, cand: any) {
       ok: true,
       candidate: { first_name: cand.first_name, position: cand.position },
       primary_answered: prog.stint1Done,
-      expansion_ready: prog.stint2Done && prog.stint3Total > 0,
+      expansion_ready: false,
       done: allDone,
       progress: currentProgress,
     });
@@ -725,16 +674,6 @@ async function handleServe(supa: any, cand: any) {
         done: unanswered.length === 0,
         items: prepareItems(constrainedShuffle(unanswered), cand.id),
         progress: { answered: prog.stint2Answered, total: prog.stint2Total },
-      });
-    }
-
-    if (!prog.stint3Done) {
-      const unanswered = prog.stint3Items.filter((it: any) => !prog.answered.has(it.id));
-      return json({
-        stint: 3,
-        done: unanswered.length === 0,
-        items: prepareItems(constrainedShuffle(unanswered), cand.id),
-        progress: { answered: prog.stint3Answered, total: prog.stint3Total },
       });
     }
 
@@ -887,9 +826,6 @@ async function handleFinalize(supa: any, cand: any) {
     if (prog.stint2Total > 0 && !prog.stint2Done) {
       return json({ error: "assessment_incomplete", stage: "stint_2", answered: prog.stint2Answered, total: prog.stint2Total }, 409);
     }
-    if (prog.stint3Total > 0 && !prog.stint3Done) {
-      return json({ error: "assessment_incomplete", stage: "stint_3", answered: prog.stint3Answered, total: prog.stint3Total }, 409);
-    }
     if (prog.stint4Total > 0 && !prog.stint4Done) {
       return json({ error: "assessment_incomplete", stage: "stint_4", answered: prog.stint4Answered, total: prog.stint4Total }, 409);
     }
@@ -913,10 +849,7 @@ async function handleFinalize(supa: any, cand: any) {
     // per-candidate flag set at invite time -- there is still exactly ONE
     // assessment being served at any given moment (whichever section
     // is_active), consistent with the 2026-08-02 v1-assessment directive
-    // against a dual-path switch. compute_newtworks_v2_stint3_triggers
-    // already hardcodes section = 'newtworks_v2_personality', so it
-    // naturally returns zero rows for an FC candidate of either kind --
-    // stint 3 needs no separate skip logic here.
+    // against a dual-path switch.
     const { data: personalitySource, error: fcCheckErr } = await supa.rpc(
       "hiregauge_candidate_personality_source",
       { p_candidate_id: cand.id, p_sitting: 1 }
