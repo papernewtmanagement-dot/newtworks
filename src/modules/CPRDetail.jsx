@@ -332,8 +332,14 @@ function isCurrentOrFutureCPRWeek(weekEndingISO) {
   return weekEndingISO >= currentCPRWeekSaturdayCT();
 }
 
-// Weeks BEFORE the current calendar quarter are read-only for everyone,
-// including the Owner. Historical CPRs are archival.
+// Weeks BEFORE the current quarter are read-only for everyone, including the
+// Owner. Historical CPRs are archival.
+//
+// The quarter boundary is whatever current_cycle_info says it is — State Farm
+// cycles start on a Sunday and run 91 days, so they do NOT line up with the
+// first of a calendar month. The calendar version below is a fallback only, used
+// before the cycle fetch lands; it can be off by up to a week, which previously
+// left the prior quarter's closing CPR editable.
 function getCurrentQuarterStartISO(refDate = null) {
   const d = refDate ? new Date(refDate + "T00:00:00Z") : new Date();
   const y = d.getUTCFullYear();
@@ -342,9 +348,9 @@ function getCurrentQuarterStartISO(refDate = null) {
   const iso = new Date(Date.UTC(y, startMonth, 1)).toISOString().slice(0, 10);
   return iso;
 }
-function isHistoricalWeek(weekDateISO) {
+function isHistoricalWeek(weekDateISO, currentCycleStartISO = null) {
   if (!weekDateISO) return false;
-  const qStart = getCurrentQuarterStartISO();
+  const qStart = currentCycleStartISO || getCurrentQuarterStartISO();
   return weekDateISO < qStart;
 }
 
@@ -483,7 +489,9 @@ function useCPRData(weekDate) {
     goals: [],           // book_performance_goals rows (current year)
     campaignPriors: {},  // {defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
-    cycleStartISO: null,  // current cycle start (YYYY-MM-DD) — used to suppress WoW delta across quarter boundary
+    cycleStartISO: null,  // cycle start for the week being viewed (YYYY-MM-DD), from current_cycle_info
+    cycleEndISO: null,    // cycle end (close Saturday) for the week being viewed, from current_cycle_info
+    currentCycleStartISO: null, // cycle start as of TODAY — weeks before this are archival/read-only
     runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, buyback, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
@@ -509,6 +517,19 @@ function useCPRData(weekDate) {
       setState(s => ({ ...s, loading: true, error: null }));
       try {
         const year = parseInt(weekDate.slice(0, 4), 10);
+
+        // 0. Cycle start as of TODAY, from current_cycle_info. Fetched first because the
+        // read-only gate in step 2b depends on it: anything before the current cycle is
+        // archival and must not be recomputed. Null on failure — isHistoricalWeek falls
+        // back to its calendar approximation.
+        let currentCycleStartISO = null;
+        try {
+          const { data: nowCycle } = await supabase.rpc("current_cycle_info", { p_agency_id: AGENCY_ID });
+          const nowRow = Array.isArray(nowCycle) ? nowCycle[0] : nowCycle;
+          currentCycleStartISO = nowRow?.cycle_start || null;
+        } catch (e) {
+          console.warn("current_cycle_info (today) fetch failed:", e);
+        }
 
         // 1. Team (ALL members, including archived, tenure order).
         //
@@ -557,7 +578,7 @@ function useCPRData(weekDate) {
         // on page load so the banner and Payroll section always reflect current
         // truth. Skipped only for historical weeks (before current calendar
         // quarter), which stay read-only. Errors swallowed — non-fatal.
-        if (reportRow?.id && !isHistoricalWeek(weekDate)) {
+        if (reportRow?.id && !isHistoricalWeek(weekDate, currentCycleStartISO)) {
           try {
             await supabase.rpc("recompute_cpr_outcome", {
               p_agency_id: AGENCY_ID,
@@ -708,22 +729,26 @@ function useCPRData(weekDate) {
           if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
         });
 
-        // 8. Cycle start (YYYY-MM-DD) — used to suppress WoW delta indicator across cycle
-        // boundaries. Cycle anchor 2026-04-05 (per settings cycle_anchor_date); cycles are 91 days.
+        // 8. Cycle start + end (YYYY-MM-DD) for the week being viewed, and the cycle start
+        // for TODAY (drives read-only lockout of past quarters).
+        //
+        // These come from the current_cycle_info database function — the single source of
+        // quarter boundaries everywhere else in the app. The page used to derive them
+        // itself from a hardcoded 2026-04-05 anchor stepping 91 days, clamped at zero
+        // cycles: every week before that anchor got a "cycle start" LATER than the week
+        // itself, so the cycle charts on any 2025 or Q1-2026 CPR queried an empty range.
         let cycleStartISO = null;
+        let cycleEndISO = null;
         try {
-          const anchorMs = Date.UTC(2026, 3, 5);
-          const wkMs = Date.UTC(
-            parseInt(weekDate.slice(0,4),10),
-            parseInt(weekDate.slice(5,7),10) - 1,
-            parseInt(weekDate.slice(8,10),10)
-          );
-          const daysSince = Math.floor((wkMs - anchorMs) / 86400000);
-          const cyclesCompleted = Math.max(0, Math.floor(daysSince / 91));
-          const cycleStartMs = anchorMs + cyclesCompleted * 91 * 86400000;
-          cycleStartISO = new Date(cycleStartMs).toISOString().slice(0,10);
+          const { data: wkCycle } = await supabase.rpc("current_cycle_info", {
+            p_agency_id: AGENCY_ID,
+            p_today: weekDate,
+          });
+          const wkRow = Array.isArray(wkCycle) ? wkCycle[0] : wkCycle;
+          cycleStartISO = wkRow?.cycle_start || null;
+          cycleEndISO   = wkRow?.cycle_end   || null;
         } catch (e) {
-          console.warn("cycleStart derivation failed:", e);
+          console.warn("current_cycle_info (week) fetch failed:", e);
         }
 
         // 8c. Cycle weekly team detail — every team_detail row from cycle start through this week.
@@ -1020,15 +1045,26 @@ function useCPRData(weekDate) {
         // strictly before weekDate, then step back 13 weeks at a time for a total of 4 dates.
         let priorQuartersAvgSP = {};
         const priorQuarterEndDates = (() => {
-          if (!weekDate) return [];
-          // Full historical set of quarter-end Saturdays; pick the newest 4 that fall before weekDate
-          const ALL_QTR_ENDS = [
-            "2023-03-25","2023-06-24","2023-09-30","2023-12-30",
-            "2024-03-30","2024-06-29","2024-09-28","2024-12-28",
-            "2025-03-29","2025-06-28","2025-09-27","2025-12-27",
-            "2026-03-28","2026-06-27",
-          ];
-          return ALL_QTR_ENDS.filter(d => d < weekDate).slice(-4);
+          if (!weekDate || !cycleStartISO) return [];
+          // Quarter-end Saturdays are derived from the cycle this week belongs to, not a
+          // hardcoded list. The day before a cycle starts IS the previous cycle's close
+          // Saturday, and cycles are 91 days, so stepping back 91 at a time walks the
+          // closes. The old hardcoded list held calendar quarter-ends, which drifted from
+          // the real State Farm cycle ends by a week and went stale whenever a close row
+          // moved.
+          const dayMs = 86400000;
+          const startMs = Date.UTC(
+            parseInt(cycleStartISO.slice(0,4),10),
+            parseInt(cycleStartISO.slice(5,7),10) - 1,
+            parseInt(cycleStartISO.slice(8,10),10)
+          );
+          const out = [];
+          for (let i = 0; i < 4; i++) {
+            const endMs = startMs - dayMs - (i * 91 * dayMs);
+            const iso = new Date(endMs).toISOString().slice(0,10);
+            if (iso < weekDate) out.push(iso);
+          }
+          return out.reverse();
         })();
         try {
           // weekly_cpr_team_detail_activity — sales_points is not comp data,
@@ -1125,6 +1161,8 @@ function useCPRData(weekDate) {
           campaignPriors,
           lastWeekSalesPointsByMember,
           cycleStartISO,
+          cycleEndISO,
+          currentCycleStartISO,
           runtimeHours,
           runtimeReqs,
           section11,
@@ -5670,7 +5708,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
   // Edit rights = owner role AND current-or-future quarter. Historical weeks
   // are archival for everyone (including Owner).
   const isOwner = userRole === "owner";
-  const canEdit = EDIT_ROLES.has(userRole) && !isHistoricalWeek(weekDate);
+  const canEdit = EDIT_ROLES.has(userRole) && !isHistoricalWeek(weekDate, data.currentCycleStartISO);
 
   // ── Week picker — dropdown listing every weekly CPR report this agency has ──
   // Fetched once on mount (no dependency on weekDate). Click any week to jump
