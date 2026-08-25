@@ -1966,8 +1966,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     if (!detail?.id || !supabase) return;
     const src = detail?.assessment_source;
     let cancelled = false;
-    const rpcName = src === "v2fc" ? "compute_newtworks_v2fc_facets_as_row" : "compute_newtworks_v2_facets_as_row";
-    const rpcArgs = src === "v2fc"
+    // v2fcq (Phase 4 quad ranking blocks, 2026-08-25) has its own scorer too;
+    // same reason as the v2fc split above -- the Likert-only function would
+    // pick up stray Stint 1 responses and mis-report item counts.
+    const rpcName =
+      src === "v2fcq"
+        ? "compute_newtworks_v2fcq_facets_as_row"
+        : src === "v2fc"
+        ? "compute_newtworks_v2fc_facets_as_row"
+        : "compute_newtworks_v2_facets_as_row";
+    const rpcArgs = src === "v2fcq" || src === "v2fc"
       ? { p_candidate_id: detail.id, p_sitting: 1 }
       : { p_candidate_id: detail.id, p_stint: null, p_sitting: 1 };
     supabase
