@@ -136,7 +136,7 @@ export default function CPRList({ userRole = null }) {
           `)
           .eq("agency_id", AGENCY_ID)
           .order("week_ending_date", { ascending: false })
-          .limit(104);
+          .limit(400);
         if (cancelled) return;
         if (error) {
           setState({ loading: false, error: error.message, reports: [] });
@@ -150,9 +150,15 @@ export default function CPRList({ userRole = null }) {
           const currentSat = currentCPRWeekSaturdayCT();
           rows = rows.filter(r => r.week_ending_date < currentSat);
         }
-        // Hide pre-Q3 2026 CPRs from every viewer (Peter 2026-07-18).
-        // Q3 2026 cycle begins with week ending 2026-07-11 per the agency cycle system.
-        rows = rows.filter(r => r.week_ending_date >= "2026-07-11");
+        // Show the full recap history for all time (Peter 2026-08-25). This
+        // replaces the 2026-07-18 rule that hid everything before 2026-07-11 —
+        // that cutoff is why the list only ever showed the current quarter.
+        //
+        // Still excluded: the synthetic quarter-end rows inserted by migration
+        // 20260709033746 to carry historical sales points. They were never real
+        // CPRs — no opener, no quotes, no won-the-week — so they are not recaps
+        // and would only add empty lines to the list.
+        rows = rows.filter(r => !(r.notes || "").startsWith("Historical quarter-end backfill"));
         setState({ loading: false, error: null, reports: rows });
       } catch (err) {
         if (!cancelled) {
