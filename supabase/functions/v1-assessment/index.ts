@@ -55,7 +55,6 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 // structure) when new sections come online.
 const SECTIONS = [
   "newtworks_v2_personality",
-  "newtworks_v2_personality_fc",
   "newtworks_v2_personality_fc_quad",
   "newtworks_v2_cognitive_gma",
   "newtworks_v2_sjt",
@@ -384,12 +383,11 @@ async function loadStint3Targets(supa: any, candidateId: string) {
 // them. A candidate who hasn't touched stint 2 yet still gets whichever
 // section is currently active, unchanged from before.
 // Phase 4 ranking blocks (newtworks_v2_personality_fc_quad, items 701-775)
-// added 2026-08-25 while still is_active=false: harmless until activation
-// (no responses -> the loop skips it and the active section still serves),
-// and once active the same lock keeps mid-sitting pair candidates on pairs.
+// went live 2026-08-25 (migration fc_quad_go_live_and_retire_pairs). The
+// Phase 3 pair section was hard-deleted in the same migration, so it is no
+// longer listed; the Likert section stays for anyone still locked to it.
 const STINT2_PERSONALITY_SECTIONS = [
   "newtworks_v2_personality",
-  "newtworks_v2_personality_fc",
   "newtworks_v2_personality_fc_quad",
 ];
 
@@ -910,8 +908,8 @@ async function handleFinalize(supa: any, cand: any) {
     // responses in decides both the scoring function called here and the
     // assessment_source written below. This is data-driven (checked via
     // hiregauge_candidate_personality_source, which returns 'v2fcq' for the
-    // Phase 4 quad ranking blocks, 'v2fc' for the Phase 3 pairs, else 'v2'
-    // -- widened 2026-08-25 from the boolean used_fc check), not a
+    // Phase 4 quad ranking blocks, else 'v2' for Likert -- the Phase 3 pair
+    // section and its 'v2fc' branch were retired 2026-08-25), not a
     // per-candidate flag set at invite time -- there is still exactly ONE
     // assessment being served at any given moment (whichever section
     // is_active), consistent with the 2026-08-02 v1-assessment directive
@@ -926,14 +924,11 @@ async function handleFinalize(supa: any, cand: any) {
     if (fcCheckErr) {
       return json({ error: "fc_source_check_failed", detail: fcCheckErr.message }, 500);
     }
-    const source: "v2fcq" | "v2fc" | "v2" =
-      personalitySource === "v2fcq" ? "v2fcq" : personalitySource === "v2fc" ? "v2fc" : "v2";
+    const source: "v2fcq" | "v2" = personalitySource === "v2fcq" ? "v2fcq" : "v2";
 
     const { data: facetRows, error: facetErr } =
       source === "v2fcq"
         ? await supa.rpc("compute_newtworks_v2fcq_facets_as_row", { p_candidate_id: cand.id, p_sitting: 1 })
-        : source === "v2fc"
-        ? await supa.rpc("compute_newtworks_v2fc_facets_as_row", { p_candidate_id: cand.id, p_sitting: 1 })
         : await supa.rpc("compute_newtworks_v2_facets_as_row", { p_candidate_id: cand.id, p_stint: null, p_sitting: 1 });
     if (facetErr) {
       return json({ error: "facet_compute_failed", detail: facetErr.message }, 500);
