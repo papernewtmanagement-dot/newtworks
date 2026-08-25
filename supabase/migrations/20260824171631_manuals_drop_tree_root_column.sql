@@ -1,0 +1,21 @@
+-- Drop the dead tree_root column from public.manuals.
+--
+-- Peter directive 2026-08-24. tree_root was legacy residue from the Confluence
+-- import: the old playbook table partitioned pages by tree_root
+-- ('Checklists' / 'Product Knowledge' / 'Tech Support') with a CHECK constraint
+-- and an index. Tech Support was dismantled 2026-07-04 and the consolidated
+-- manuals table (20260708003226) kept the column, but nothing has read it since.
+--
+-- Verified immediately before this migration: no database function, no view,
+-- no index, no constraint, no RLS policy and no edge function references
+-- tree_root. The only two writers were the frontend "Tree root" input in
+-- ContentEditor.jsx and the child-page create path in Manual.jsx; both were
+-- removed in commit 23c35f2df369385702796868a186ae1a99b13817, deployed READY
+-- before this migration ran. Every row was already set to NULL earlier in the
+-- same session, so no data is lost here.
+--
+-- A page belongs to a manual via manual_type; its place in the tree comes from
+-- parent_page_id and sort_order. If a second tree is ever needed inside a
+-- manual, that is a parent page, not a column.
+
+ALTER TABLE public.manuals DROP COLUMN IF EXISTS tree_root;
