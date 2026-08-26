@@ -1147,11 +1147,22 @@ function useCPRData(weekDate) {
           }
         } catch (e) { console.warn("marketing_points fetch failed:", e); }
 
+        // Sales Points recognition title (bands locked 2026-08-25) -- Great = Rockstar,
+        // Elite = Rock Legend, off the 13-week rolling average. The RPC already excludes
+        // the Owner, unlicensed seats, archived and test rows, so a teammate absent from
+        // this map simply has no title to show.
+        const spTitleById = {};
+        try {
+          const { data: spRows, error: spErr } = await supabase.rpc("team_sales_points_ratings", { p_agency_id: AGENCY_ID });
+          if (spErr) console.error("Failed to load Sales Points ratings:", spErr);
+          (spRows || []).forEach(r => { if (r?.team_member_id) spTitleById[r.team_member_id] = r.title; });
+        } catch (e) { console.error("Sales Points ratings fetch failed:", e); }
+
         setState({
           loading: false, error: null,
           report: reportRow || null,
           details: detailRows,
-          team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)" })),
+          team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)", sp_title: spTitleById[t.id] || null })),
           snapshot,
           snapshotPrior,
           lapseRates,
@@ -3240,6 +3251,17 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                         <span style={{ color: T.slate400, marginRight: 4, userSelect: "none", fontSize: 10 }}>{isExpanded ? "▾" : "▸"}</span>
                       ) : null}
                       {firstName(d.__name)}
+                      {d.__title && (
+                        <span
+                          title={`Sales Points rating title, 13-week rolling average`}
+                          style={{
+                            marginLeft: 6, fontSize: 9, fontWeight: 700, padding: "1px 6px",
+                            borderRadius: 20, whiteSpace: "nowrap",
+                            background: d.__title === "Rock Legend" ? T.goldLt : T.purpleLt,
+                            color:      d.__title === "Rock Legend" ? "#854D0E" : "#5B21B6",
+                          }}
+                        >&#9733; {d.__title}</span>
+                      )}
                     </Td>
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
@@ -5632,6 +5654,7 @@ function sortByTenure(details, team) {
     .map(d => ({
       ...d,
       __name: teamById[d.team_member_id]?.full_name || "(unknown)",
+      __title: teamById[d.team_member_id]?.sp_title || null,
       __hire: teamById[d.team_member_id]?.hire_date || "9999-12-31",
     }))
     .sort((a, b) => {

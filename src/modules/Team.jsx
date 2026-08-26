@@ -733,6 +733,24 @@ const StaffDirectory = ({ staff }) => {
     return () => { cancelled = true; };
   }, [seatWeekEnd]);
 
+  // -- Sales Points recognition title (bands locked 2026-08-25) --
+  // Great = Rockstar, Elite = Rock Legend, driven off each person's 13-week rolling
+  // average. The RPC itself excludes the Owner, unlicensed seats, archived and test
+  // rows, so anyone absent from this map simply has no title to show.
+  const [spRatingByMember, setSpRatingByMember] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    supabase.rpc("team_sales_points_ratings", { p_agency_id: AGENCY_ID })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) { console.error("Failed to load Sales Points ratings:", error); return; }
+        const map = {};
+        (data || []).forEach(r => { if (r?.team_member_id) map[r.team_member_id] = r; });
+        setSpRatingByMember(map);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   // ── Assessment / production / behavioral note lookups for expanded row ──
   // All three pulled in one Promise.all keyed by team_member_id. Displayed only inside
   // the admin-only Members view — no team-tier exposure per the Newtworks visibility rule.
@@ -2046,6 +2064,16 @@ const StaffDirectory = ({ staff }) => {
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
                   <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{member.first_name} {member.last_name}</span>
+                  {spRatingByMember[member.id]?.title && (
+                    <span
+                      title={`13-week Sales Points average ${Number(spRatingByMember[member.id]?.avg_13wk || 0).toFixed(0)} - rating ${spRatingByMember[member.id]?.rating || "-"}`}
+                      style={{
+                        fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20,
+                        background: spRatingByMember[member.id].title === "Rock Legend" ? T.goldLt : T.purpleLt,
+                        color:      spRatingByMember[member.id].title === "Rock Legend" ? "#854D0E" : "#5B21B6",
+                      }}
+                    >&#9733; {spRatingByMember[member.id].title}</span>
+                  )}
                   {hasAnyLicense(member) ? (
                     <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                       {member.license_pc && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>P&amp;C</span>}
