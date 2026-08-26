@@ -3,10 +3,10 @@
 // =========================================================================
 // Generates a per-team-member State Farm email signature package and emails
 // it to the team member's SF alias from paper.newt.management@gmail.com.
-// Uses Composio only to fetch the connected account's OAuth access token;
-// the send itself is a direct Gmail API call (required because Composio's
-// GMAIL_SEND_EMAIL only accepts S3-hosted attachments). Peter is CC'd on
-// every send.
+// The message is built here as a raw MIME message and handed to Composio's
+// proxy, which attaches the stored Google credentials and forwards it to
+// Gmail. Composio's own GMAIL_SEND_EMAIL is not used because it silently
+// drops attachments. Peter is CC'd on every send.
 //
 // Called two ways:
 //   1. RPC send_signature_email(team_member_id, force) → shared_secret +
@@ -102,39 +102,31 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 // =========================================================================
-// Gmail API direct send
+// Gmail send via the Composio proxy
 // -------------------------------------------------------------------------
-// Composio's GMAIL_SEND_EMAIL requires attachments as FileUploadable
-// {name, mimetype, s3key} pointers to Composio-hosted S3 objects. Edge
-// functions cannot mint arbitrary s3keys, so we bypass Composio Gmail for
-// the send path: fetch the connected account's live OAuth access token
-// from Composio, then POST a raw MIME message to the Gmail API directly.
-// The connected account itself is still Composio-managed (paper.newt.
-// management@gmail.com) — only the send call is direct.
+// Two dead ends are already ruled out, do not re-explore them:
+//   1. Composio's GMAIL_SEND_EMAIL silently drops inline attachments. It
+//      only accepts attachments as {name, mimetype, s3key} pointers to
+//      Composio-hosted S3 objects, and an edge function cannot mint an
+//      s3key.
+//   2. Reading the live OAuth token out of Composio and calling Google
+//      ourselves. GET /api/v3/connected_accounts/{id} returns the literal
+//      string "REDACTED" in place of access_token, by design. Proven from
+//      Postgres, so it is not a display artifact.
+//
+// The working path is Composio's proxy: we hand Composio the request we
+// want made, and Composio attaches the stored Google credentials on its
+// own servers and forwards it. We build the MIME message exactly as
+// before and post it to Gmail's own send endpoint through that proxy, so
+// nothing about the message construction changes and no secret ever
+// reaches this function.
+//
+// The endpoint below is deliberately a relative path. Composio resolves
+// it against the connected account's own base address and rejects any
+// request pointing at a different domain.
 // =========================================================================
-const COMPOSIO_CONNECTED_ACCOUNTS_BASE = "https://backend.composio.dev/api/v3/connected_accounts";
-const GMAIL_API_SEND = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
-
-async function getGmailAccessToken(apiKey: string, gmailAccountId: string): Promise<{
-  ok: boolean; accessToken: string | null; error: string | null;
-}> {
-  const res = await fetch(`${COMPOSIO_CONNECTED_ACCOUNTS_BASE}/${gmailAccountId}`, {
-    method: "GET",
-    headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    return { ok: false, accessToken: null, error: `composio ${res.status}: ${text.slice(0, 300)}` };
-  }
-  let parsed: any;
-  try { parsed = JSON.parse(text); }
-  catch { return { ok: false, accessToken: null, error: `invalid JSON from composio: ${text.slice(0, 200)}` }; }
-  const token = parsed?.data?.access_token ?? null;
-  if (!token || typeof token !== "string") {
-    return { ok: false, accessToken: null, error: "no access_token in composio response" };
-  }
-  return { ok: true, accessToken: token, error: null };
-}
+const COMPOSIO_PROXY_URL = "https://backend.composio.dev/api/v3/tools/execute/proxy";
+const GMAIL_SEND_PATH = "/gmail/v1/users/me/messages/send";
 
 // Base64url = base64 with URL-safe alphabet, no padding — Gmail API requires
 // this for the `raw` field on messages/send.
@@ -157,7 +149,8 @@ function encodeMimeHeaderIfNeeded(s: string): string {
 }
 
 async function sendViaGmailApi(opts: {
-  accessToken: string;
+  composioApiKey: string;
+  gmailAccountId: string;
   to: string;
   cc: string[];
   subject: string;
@@ -202,13 +195,23 @@ async function sendViaGmailApi(opts: {
 
   const raw = base64UrlEncode(new TextEncoder().encode(mime));
 
-  const res = await fetch(GMAIL_API_SEND, {
+  // Composio answers 200 for its own leg of the call even when Google
+  // refuses the message, and reports Google's real answer in the "status"
+  // field of the reply. Both have to be checked or a rejected send looks
+  // like a success.
+  const res = await fetch(COMPOSIO_PROXY_URL, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${opts.accessToken}`,
+      "x-api-key": opts.composioApiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ raw }),
+    body: JSON.stringify({
+      endpoint: GMAIL_SEND_PATH,
+      method: "POST",
+      connected_account_id: opts.gmailAccountId,
+      parameters: [],
+      body: { raw },
+    }),
   });
   const text = await res.text();
   let parsed: any = {};
@@ -216,12 +219,28 @@ async function sendViaGmailApi(opts: {
   if (!res.ok) {
     return {
       ok: false, messageId: null,
-      error: `gmail api ${res.status}: ${text.slice(0, 400)}`,
+      error: `composio proxy ${res.status}: ${text.slice(0, 400)}`,
       httpStatus: res.status,
     };
   }
+  const upstreamStatus = typeof parsed?.status === "number" ? parsed.status : 200;
+  if (upstreamStatus >= 300) {
+    return {
+      ok: false, messageId: null,
+      error: `gmail api ${upstreamStatus}: ${text.slice(0, 400)}`,
+      httpStatus: upstreamStatus,
+    };
+  }
+  const messageId = parsed?.data?.id ?? null;
+  if (!messageId) {
+    return {
+      ok: false, messageId: null,
+      error: `gmail api returned no message id: ${text.slice(0, 400)}`,
+      httpStatus: upstreamStatus,
+    };
+  }
   return {
-    ok: true, messageId: parsed?.id ?? null, error: null, httpStatus: res.status,
+    ok: true, messageId, error: null, httpStatus: upstreamStatus,
   };
 }
 
@@ -460,27 +479,14 @@ async function run(req: Request): Promise<Response> {
     });
   }
 
-  // 9) Send email via Gmail API direct (see helper block for rationale)
+  // 9) Send email through the Composio proxy (see helper block for rationale)
   const firstName = member.first_name!;
   const emailBody = buildEmailBody(firstName);
   const subject = `Your State Farm Email Signature — ${fullName}`;
 
-  const tokenRes = await getGmailAccessToken(composioApiKey, gmailAccountId);
-  if (!tokenRes.ok || !tokenRes.accessToken) {
-    await sb.from("email_signature_sends").insert({
-      agency_id: agencyId,
-      team_member_id: teamMemberId,
-      recipient_email: member.email_sf,
-      triggered_by: triggeredBy,
-      status: "failed",
-      error_message: `token fetch failed: ${tokenRes.error}`.slice(0, 1000),
-      zip_size_bytes: zipBytes.length,
-    });
-    return jsonResponse({ ok: false, status: "token_failed", error: tokenRes.error }, 502);
-  }
-
   const sendRes = await sendViaGmailApi({
-    accessToken: tokenRes.accessToken,
+    composioApiKey,
+    gmailAccountId,
     to: member.email_sf!,
     cc: [PETER_CC],
     subject,
