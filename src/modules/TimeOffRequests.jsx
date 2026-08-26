@@ -58,7 +58,61 @@ function formatRequestLabel(request) {
 }
 
 
+// Handbook 02 Hours & Time Off: time off is scheduled after the first four weeks of a
+// quarter and runs up to one week at a time. Both limits lift with the Sales Points
+// rating -- "Great" lifts the first-four-weeks limit, "Elite" lifts the one-week limit.
+// The two flags come straight off time_off_check_eligibility; this only reads them.
+const TIMING_GATED_TYPES = ["time_off_full_day", "time_off_half_day"];
+const MS_PER_DAY = 86400000;
+
+// Both dates are plain YYYY-MM-DD strings. Parsed as UTC so no timezone shifts the day.
+function evaluateTiming(requestType, startDate, endDate, eligibility) {
+  if (!TIMING_GATED_TYPES.includes(requestType) || !startDate) return null;
+  const parts = String(startDate).split("-").map(Number);
+  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return null;
+  const [year, month] = parts;
+  const startMs = Date.UTC(year, month - 1, parts[2]);
+  const endParts = String(endDate || startDate).split("-").map(Number);
+  const endMs = endParts.length === 3 && endParts.every(n => Number.isFinite(n))
+    ? Date.UTC(endParts[0], endParts[1] - 1, endParts[2])
+    : startMs;
+  const quarterStartMs = Date.UTC(year, Math.floor((month - 1) / 3) * 3, 1);
+
+  const dayOfQuarter = Math.floor((startMs - quarterStartMs) / MS_PER_DAY) + 1;
+  const spanDays = Math.floor((endMs - startMs) / MS_PER_DAY) + 1;
+  const inFirstFourWeeks = dayOfQuarter <= 28;
+  const exceedsOneWeek = spanDays > 7;
+
+  const clearsFirstFourWeeks = eligibility?.may_start_in_first_four_weeks === true;
+  const clearsOneWeek = eligibility?.may_exceed_one_week === true;
+
+  const messages = [];
+  if (inFirstFourWeeks) {
+    messages.push(clearsFirstFourWeeks
+      ? `Day ${dayOfQuarter} of the quarter -- inside the first four weeks, but your rating clears it`
+      : `Day ${dayOfQuarter} of the quarter -- inside the first four weeks, needs the agent's OK`);
+  }
+  if (exceedsOneWeek) {
+    messages.push(clearsOneWeek
+      ? `${spanDays} days -- longer than a week, but your rating clears it`
+      : `${spanDays} days -- longer than a week at a time, needs the agent's OK`);
+  }
+  if (!messages.length) messages.push("After the first four weeks of the quarter and a week or less");
+
+  return {
+    day_of_quarter: dayOfQuarter,
+    span_days: spanDays,
+    in_first_four_weeks: inFirstFourWeeks,
+    exceeds_one_week: exceedsOneWeek,
+    clears_first_four_weeks: clearsFirstFourWeeks,
+    clears_one_week: clearsOneWeek,
+    needs_agent_ok: (inFirstFourWeeks && !clearsFirstFourWeeks) || (exceedsOneWeek && !clearsOneWeek),
+    messages
+  };
+}
+
 const COVERAGE_STYLES = {
+
   green:  { bg: "#dcfce7", fg: "#166534", emoji: "🟢", label: "Clear" },
   yellow: { bg: "#fef9c3", fg: "#854d0e", emoji: "🟡", label: "Coverage concern" },
   red:    { bg: "#fee2e2", fg: "#991b1b", emoji: "🔴", label: "Coverage blocked" }
@@ -425,10 +479,12 @@ function SubmitView({ me, onSubmitted }) {
         supabase.rpc("time_off_check_eligibility", { p_requester_team_id: me?.id }),
         supabase.rpc("time_off_check_coverage", { p_agency_id: AGENCY_ID, p_start_date: startDate, p_end_date: eff_end, p_exclude_request_id: null, p_request_type: requestType, p_requester_team_id: me?.id })
       ]);
+      const eligData = eligRes?.data || null;
       setChecks({
         notice: noticeRes?.data || null,
-        eligibility: eligRes?.data || null,
+        eligibility: eligData,
         coverage: coverRes?.data || null,
+        timing: evaluateTiming(requestType, startDate, eff_end, eligData),
         notice_err: noticeRes?.error?.message,
         elig_err: eligRes?.error?.message,
         cover_err: coverRes?.error?.message
@@ -449,7 +505,8 @@ function SubmitView({ me, onSubmitted }) {
       const noticePasses = checks?.notice?.passes === true;
       const coverageRed = checks?.coverage?.severity === "red";
       const eligStatus = checks?.eligibility?.overall_eligibility;
-      const isCaseByCase = eligStatus === "pending_review" || coverageRed || !noticePasses;
+      const timingNeedsAgent = checks?.timing?.needs_agent_ok === true;
+      const isCaseByCase = eligStatus === "pending_review" || coverageRed || !noticePasses || timingNeedsAgent;
       const initialStatus = isCaseByCase ? "flagged_case_by_case" : "voting";
 
       const voteOpenedAt = initialStatus === "voting" ? new Date().toISOString() : null;
@@ -470,6 +527,7 @@ function SubmitView({ me, onSubmitted }) {
           notice_check_result: checks?.notice || null,
           eligibility_check_result: checks?.eligibility || null,
           coverage_check_result: checks?.coverage || null,
+          timing_check_result: checks?.timing || null,
           vote_opened_at: voteOpenedAt,
           vote_closes_at: voteClosesAt
         });
@@ -541,6 +599,11 @@ function SubmitView({ me, onSubmitted }) {
               detail={checks?.notice ? (checks.notice.passes ? `Required ${checks.notice.required_days} days · provided ${checks.notice.provided_days} days` : `Required ${checks.notice.required_days} days · provided ${checks.notice.provided_days} days · short ${checks.notice.shortfall_days} days`) : (checks?.notice_err || "—")} />
             <CheckCard title="Eligibility" ok={checks?.eligibility?.overall_eligibility === "eligible"} warn={checks?.eligibility?.overall_eligibility === "pending_review"}
               detail={checks?.eligibility ? `${checks.eligibility.overall_eligibility}${(checks.eligibility.reasons || []).length ? ' · ' + checks.eligibility.reasons.join('; ') : ''}` : (checks?.elig_err || "—")} />
+            {checks?.timing && (
+              <CheckCard title="Timing" ok={checks.timing.needs_agent_ok !== true}
+                warn={checks.timing.needs_agent_ok === true}
+                detail={(checks.timing.messages || []).join(" · ")} />
+            )}
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Coverage</div>
               {checks?.coverage ? <CoverageBadge severity={checks.coverage.severity} messages={checks.coverage.messages} /> : <div style={{ color: "#94a3b8", fontSize: 12 }}>{checks?.cover_err || "—"}</div>}
@@ -1594,6 +1657,7 @@ function InboxView({ me, onDecided }) {
         const elig = r.eligibility_check_result;
         const cov = r.coverage_check_result;
         const notice = r.notice_check_result;
+        const timing = r.timing_check_result;
         const requesterName = r?.requester?.first_name ? `${r.requester.first_name} ${r.requester.last_name}` : "—";
         return (
           <div key={r.id} style={cardStyle}>
@@ -1610,6 +1674,10 @@ function InboxView({ me, onDecided }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
               <CheckCard title="Notice" ok={notice?.passes === true} detail={notice ? `${notice.provided_days}/${notice.required_days} days` : "—"} />
               <CheckCard title="Eligibility" ok={elig?.overall_eligibility === "eligible"} warn={elig?.overall_eligibility === "pending_review"} detail={elig?.overall_eligibility || "—"} />
+              {timing && (
+                <CheckCard title="Timing" ok={timing.needs_agent_ok !== true} warn={timing.needs_agent_ok === true}
+                  detail={(timing.messages || []).join(" · ")} />
+              )}
               <div>{cov ? <CoverageBadge severity={cov.severity} messages={cov.messages} /> : <div style={{ fontSize: 12, color: "#94a3b8" }}>—</div>}</div>
             </div>
             {vs && (
