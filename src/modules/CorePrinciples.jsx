@@ -22,7 +22,7 @@ import ComplianceCenter from "./ComplianceCenter.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ─── Domain Metadata ──────────────────────────────────────────
 // Visual config per known domain. Domains not in this map fall
 // back to DEFAULT_DOMAIN_META.
@@ -126,7 +126,7 @@ function PrinciplesView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // URL-persisted so refresh keeps the same principle open.
-  const [selectedId, setSelectedId] = useTabParam("principle", null);
+  const [selectedId, setSelectedId, principleHref] = useTabParam("principle", null);
   const _vp = useViewport();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -255,9 +255,10 @@ function PrinciplesView() {
             const m = metaFor(p.domain);
             const isActive = p.id === selectedId;
             return (
-              <button
+              <TabLink
                 key={p.id}
-                onClick={() => { setSelectedId(p.id); if (_vp.isPhone) setDrawerOpen(false); }}
+                href={principleHref(p.id)}
+                onSelect={() => { setSelectedId(p.id); if (_vp.isPhone) setDrawerOpen(false); }}
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -288,7 +289,7 @@ function PrinciplesView() {
                     {m.tagline || (p.title || "").slice(0, 60)}
                   </div>
                 </div>
-              </button>
+              </TabLink>
             );
           })}
         </div>
@@ -471,7 +472,7 @@ What I'd like to discuss:
 // (principles tab) AND hosts the operational compliance tooling
 // (compliance tab — wraps the existing ComplianceCenter module).
 export default function CorePrinciples() {
-  const [outerTab, setOuterTab] = useTabParam("tab", "principles", ["principles","compliance"]);
+  const [outerTab, setOuterTab, outerTabHref] = useTabParam("tab", "principles", ["principles","compliance"]);
   const tabs = [
     { id: "principles", label: "Principles",        icon: "📜" },
     { id: "compliance", label: "Compliance Center", icon: "⚖️" },
@@ -483,9 +484,10 @@ export default function CorePrinciples() {
         {tabs.map(t => {
           const isActive = outerTab === t.id;
           return (
-            <button
+            <TabLink
               key={t.id}
-              onClick={() => setOuterTab(t.id)}
+              href={outerTabHref(t.id)}
+              onSelect={() => setOuterTab(t.id)}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6,
                 padding: "9px 16px 11px 16px",
@@ -503,7 +505,7 @@ export default function CorePrinciples() {
             >
               <span style={{ fontSize: 14, lineHeight: 1 }}>{t.icon}</span>
               {t.label}
-            </button>
+            </TabLink>
           );
         })}
       </div>

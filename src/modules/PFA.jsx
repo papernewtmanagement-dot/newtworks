@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // =====================================================================
 // PFA.jsx — Premium Fund Account
 //
@@ -1118,7 +1118,7 @@ function ClosesTab() {
 // =====================================================================
 export default function PFA({ userRole }) {
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [activeTab, setActiveTab] = useTabParam("tab", "today", ["today","statements","closes","recon","ledger"]);
+  const [activeTab, setActiveTab, tabHref] = useTabParam("tab", "today", ["today","statements","closes","recon","ledger"]);
   const [pfaAccountId, setPfaAccountId] = useState(null);
   const [pfaAccountError, setPfaAccountError] = useState(false);
   const [pfaAccountRetryTick, setPfaAccountRetryTick] = useState(0);
@@ -1195,7 +1195,7 @@ export default function PFA({ userRole }) {
             {tabs.map(t => {
               const active = activeTab === t.id;
               return (
-                <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
+                <TabLink key={t.id} href={tabHref(t.id)} onSelect={() => setActiveTab(t.id)}
                   style={{
                     padding: "8px 14px",
                     borderRadius: "8px 8px 0 0",
@@ -1209,7 +1209,7 @@ export default function PFA({ userRole }) {
                     marginBottom: -1,
                   }}>
                   {t.label}
-                </button>
+                </TabLink>
               );
             })}
           </div>

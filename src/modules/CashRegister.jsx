@@ -20,7 +20,7 @@ import { fmtMoney } from "../lib/format.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 const fmt = (n) => fmtMoney(n ?? 0, { decimals: 2, dashOnInvalid: false });
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) : "—";
 
@@ -639,7 +639,7 @@ function useCashRegisterData() {
 
 // ─── Main Export ──────────────────────────────────────────────
 export default function CashRegister() {
-  const [activeTab, setActiveTab] = useTabParam("tab", "balances", ["balances","queue","register","rules","weekly"]);
+  const [activeTab, setActiveTab, tabHref] = useTabParam("tab", "balances", ["balances","queue","register","rules","weekly"]);
   const { data, loading, refresh } = useCashRegisterData();
 
   const tabs = [
@@ -675,7 +675,7 @@ export default function CashRegister() {
 
       {/* GL Firewall Banner */}
       {data && data.questions?.length > 0 && (
-        <div onClick={() => setActiveTab("queue")}
+        <TabLink href={tabHref("queue")} onSelect={() => setActiveTab("queue")}
           style={{ padding:"10px 16px", background:T.amberLt, borderRadius:8, marginBottom:16,
                    cursor:"pointer", display:"flex", alignItems:"center", gap:10,
                    border:`1px solid ${T.amber}` }}>
@@ -683,7 +683,7 @@ export default function CashRegister() {
           <span style={{ fontSize:13, color:"#92400e", fontWeight:600 }}>
             GL Firewall: {data.questions.length} transaction{data.questions.length>1?"s":""} blocked from ledger — click to code them.
           </span>
-        </div>
+        </TabLink>
       )}
 
       {/* Tab Nav */}
@@ -691,9 +691,9 @@ export default function CashRegister() {
                     marginBottom:20, background:T.slate100, padding:"0 4px", borderRadius:"10px 10px 0 0",
                     overflowX:"auto", WebkitOverflowScrolling:"touch", whiteSpace:"nowrap" }}>
         {tabs.map(t => (
-          <button key={t.id} style={tabStyle(activeTab===t.id)} onClick={()=>setActiveTab(t.id)}>
+          <TabLink key={t.id} href={tabHref(t.id)} style={tabStyle(activeTab===t.id)} onSelect={()=>setActiveTab(t.id)}>
             {t.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

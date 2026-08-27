@@ -1,7 +1,7 @@
 import TimeClock from "./TimeClock.jsx";
 import TimeOffRequests from "./TimeOffRequests.jsx";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ─────────────────────────────────────────────────────────────────────────────
 // TimeHub: parent module that unifies Timeclock and Time Off & Remote under a
 // single nav entry with a top-level tab switch.
@@ -18,7 +18,7 @@ const TABS = [
 ];
 
 export default function TimeHub() {
-  const [activeTab, setActiveTab] = useTabParam("tab", "timeclock", ["timeclock","timeoff"]);
+  const [activeTab, setActiveTab, tabHref] = useTabParam("tab", "timeclock", ["timeclock","timeoff"]);
 
   return (
     <div>
@@ -31,9 +31,10 @@ export default function TimeHub() {
           gap: 4
         }}>
           {TABS.map(tab => (
-            <button
+            <TabLink
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              href={tabHref(tab.id)}
+              onSelect={() => setActiveTab(tab.id)}
               style={{
                 padding: "10px 18px",
                 border: "none",
@@ -47,7 +48,7 @@ export default function TimeHub() {
               }}
             >
               {tab.label}
-            </button>
+            </TabLink>
           ))}
         </div>
       </div>

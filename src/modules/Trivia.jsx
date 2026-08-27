@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 
 // ============================================================
 // Newtworks TRIVIA MODULE — Wave 5 (Trivia Night) shipped
@@ -355,7 +355,7 @@ function orderedOptions(options, attemptId, itemId) {
 export default function Trivia({ userRole, userId }) {
   const vp = useViewport();
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [tabRaw, setTabRaw] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
+  const [tabRaw, setTabRaw, tabHref] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
   // Shared Grid is no longer a tab of its own — it is a mode inside Play, like
   // every other game. Non-admins only ever see Play.
   const tab = isAdmin ? tabRaw : "play";
@@ -761,15 +761,15 @@ export default function Trivia({ userRole, userId }) {
         <div style={s.headerTitle}>Trivia</div>
       </div>
       <div style={s.tabBar}>
-        <button type="button" style={s.tabBtn(tab === "play")} onClick={() => setTabRaw("play")}>Play</button>
+        <TabLink style={s.tabBtn(tab === "play")} href={tabHref("play")} onSelect={() => setTabRaw("play")}>Play</TabLink>
         {isAdmin && (
           <>
-            <button type="button" style={s.tabBtn(tab === "review")} onClick={() => setTabRaw("review")}>Review</button>
-            <button type="button" style={s.tabBtn(tab === "approved")} onClick={() => setTabRaw("approved")}>Approved</button>
-            <button type="button" style={s.tabBtn(tab === "reports")} onClick={() => setTabRaw("reports")}>
+            <TabLink style={s.tabBtn(tab === "review")} href={tabHref("review")} onSelect={() => setTabRaw("review")}>Review</TabLink>
+            <TabLink style={s.tabBtn(tab === "approved")} href={tabHref("approved")} onSelect={() => setTabRaw("approved")}>Approved</TabLink>
+            <TabLink style={s.tabBtn(tab === "reports")} href={tabHref("reports")} onSelect={() => setTabRaw("reports")}>
               Reports{reports.length > 0 && <span style={s.badge}>{reports.length}</span>}
-            </button>
-            <button type="button" style={s.tabBtn(tab === "gates")} onClick={() => setTabRaw("gates")}>Gates</button>
+            </TabLink>
+            <TabLink style={s.tabBtn(tab === "gates")} href={tabHref("gates")} onSelect={() => setTabRaw("gates")}>Gates</TabLink>
           </>
         )}
       </div>
@@ -1254,7 +1254,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // The Grid is the first card wired to the in-card choice: "multi" is the
   // shared-screen game that used to sit on its own tab. Kept in the URL so a
   // refresh mid-game lands back on the right branch.
-  const [gridMode, setGridMode] = useTabParam("gridmode", "solo", ["solo", "multi"]);
+  const [gridMode, setGridMode, gridModeHref] = useTabParam("gridmode", "solo", ["solo", "multi"]);
 
   // A host who closes the tab and comes back to a clean URL should still find
   // their room. One cheap check on mount flips the card to the multiplayer
@@ -1277,9 +1277,9 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // address bar - several cards can sit in multiplayer at the same time in the
   // lobby grid and would fight over one shared parameter. The room is found by
   // asking the server instead.
-  const [dfMode, setDfMode] = useTabParam("dfmode", "solo", ["solo", "multi"]);
+  const [dfMode, setDfMode, dfModeHref] = useTabParam("dfmode", "solo", ["solo", "multi"]);
   const [dailyRoomStatus, setDailyRoomStatus] = useState(null);
-  const [spinMode, setSpinMode] = useTabParam("spinmode", "solo", ["solo", "multi"]);
+  const [spinMode, setSpinMode, spinModeHref] = useTabParam("spinmode", "solo", ["solo", "multi"]);
   const [spinRoomStatus, setSpinRoomStatus] = useState(null);
 
   // Cold start: someone already in a Daily Five room lands on the right branch
@@ -2447,12 +2447,12 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {activeGame !== "daily" && (
             <div style={s.modeRow}>
-              <button type="button" style={s.modeBtn(dfMode === "solo")} onClick={() => setDfMode("solo")}>
+              <TabLink style={s.modeBtn(dfMode === "solo")} href={dfModeHref("solo")} onSelect={() => setDfMode("solo")}>
                 Solo
-              </button>
-              <button type="button" style={s.modeBtn(dfMode === "multi")} onClick={() => setDfMode("multi")}>
+              </TabLink>
+              <TabLink style={s.modeBtn(dfMode === "multi")} href={dfModeHref("multi")} onSelect={() => setDfMode("multi")}>
                 Multiplayer
-              </button>
+              </TabLink>
             </div>
           )}
 
@@ -2647,12 +2647,12 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {activeGame !== "grid" && (
             <div style={s.modeRow}>
-              <button type="button" style={s.modeBtn(gridMode === "solo")} onClick={() => setGridMode("solo")}>
+              <TabLink style={s.modeBtn(gridMode === "solo")} href={gridModeHref("solo")} onSelect={() => setGridMode("solo")}>
                 Solo
-              </button>
-              <button type="button" style={s.modeBtn(gridMode === "multi")} onClick={() => setGridMode("multi")}>
+              </TabLink>
+              <TabLink style={s.modeBtn(gridMode === "multi")} href={gridModeHref("multi")} onSelect={() => setGridMode("multi")}>
                 Multiplayer
-              </button>
+              </TabLink>
             </div>
           )}
 
@@ -2750,12 +2750,12 @@ function TriviaPlayTab({ userId, isAdmin }) {
 
           {activeGame !== "spin" && (
             <div style={s.modeRow}>
-              <button type="button" style={s.modeBtn(spinMode === "solo")} onClick={() => setSpinMode("solo")}>
+              <TabLink style={s.modeBtn(spinMode === "solo")} href={spinModeHref("solo")} onSelect={() => setSpinMode("solo")}>
                 Solo
-              </button>
-              <button type="button" style={s.modeBtn(spinMode === "multi")} onClick={() => setSpinMode("multi")}>
+              </TabLink>
+              <TabLink style={s.modeBtn(spinMode === "multi")} href={spinModeHref("multi")} onSelect={() => setSpinMode("multi")}>
                 Multiplayer
-              </button>
+              </TabLink>
             </div>
           )}
 

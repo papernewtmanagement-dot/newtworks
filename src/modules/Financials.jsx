@@ -26,7 +26,7 @@ import MonthlyClose from "./MonthlyClose.jsx";
 
 import { T } from "../lib/theme.js";
 
-import { useTabParam, handleModuleLinkClick } from "../lib/routing.jsx";
+import { useTabParam, handleModuleLinkClick, TabLink } from "../lib/routing.jsx";
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 // Entity hierarchy root (Peter Story / personal). Default entity for Financials
@@ -1569,7 +1569,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
   const priorQStart   = (priorQnum - 1) * 3 + 1;
   const priorQEnd     = priorQStart + 2;
 
-  const [grain, setGrain]     = useTabParam("plgrain", "quarterly", ["monthly", "quarterly", "annual"]);
+  const [grain, setGrain, grainHref] = useTabParam("plgrain", "quarterly", ["monthly", "quarterly", "annual"]);
   const [showPct, setShowPct] = useState(false);
   const [yearsBack, setYearsBack] = useState("3"); // "3" | "10" | "all"
 
@@ -2029,9 +2029,10 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
   };
 
   const grainBtn = (key, label) => (
-    <button
+    <TabLink
       key={key}
-      onClick={() => setGrain(key)}
+      href={grainHref(key)}
+      onSelect={() => setGrain(key)}
       style={{
         padding: "6px 12px",
         fontSize: 12,
@@ -2042,7 +2043,7 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
         borderRadius: 6,
         cursor: "pointer",
       }}
-    >{label}</button>
+    >{label}</TabLink>
   );
 
   const totalCellCount = 1 + columns.length * 2;
@@ -3447,7 +3448,7 @@ const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
 
 // ─── Main Financials Module ───────────────────────────────────
 export default function Financials() {
-  const [section, setSection] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
   // Phase 3 (entity hierarchy): which entity the Financials views are scoped
   // to. Persists in URL so refresh restores; default = Personal (root of tree).
@@ -3510,7 +3511,7 @@ export default function Financials() {
             {idx === viewSections.length && (
               <div aria-hidden="true" style={{ width: 1, alignSelf: "stretch", background: T.slate300, margin: "4px 6px", opacity: 0.6 }} />
             )}
-            <button onClick={() => setSection(s.id)} style={{
+            <TabLink href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{
               padding: "7px 14px", fontSize: 12,
               fontWeight: section === s.id ? 600 : 400,
               color: section === s.id ? T.slate900 : T.slate500,
@@ -3518,7 +3519,7 @@ export default function Financials() {
               border: "none", borderRadius: 7, cursor: "pointer",
               transition: "all 0.12s",
               boxShadow: section === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-            }}>{s.label}</button>
+            }}>{s.label}</TabLink>
           </span>
         ))}
       </div>

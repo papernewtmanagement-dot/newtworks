@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 import {
   mdToHtml,
   buildIncludeLookup,
@@ -197,7 +197,7 @@ export default function ContentEditor({ userRole }) {
   // URL-persisted so refresh keeps the same content row open. Draft/dirty
   // remain local — unsaved edits still don't survive a refresh (would need
   // a beforeunload prompt), but the selection does.
-  const [selectedId, setSelectedId] = useTabParam("row", null);
+  const [selectedId, setSelectedId, rowHref] = useTabParam("row", null);
   const [draft, setDraft] = useState(null);   // working copy of the selected row
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -404,7 +404,7 @@ export default function ContentEditor({ userRole }) {
               {meta.label} <span style={{ color: T.slate400, fontWeight: 500 }}>({list.length})</span>
             </div>
             {list.map(r => (
-              <div key={r.id} style={s.listItem(r.id === selectedId)} onClick={() => pickRow(r.id)}>
+              <TabLink key={r.id} style={{ display: "block", ...s.listItem(r.id === selectedId) }} href={rowHref(r.id)} onSelect={() => pickRow(r.id)}>
                 <div style={s.listItemTitle}>{r.title || "(untitled)"}</div>
                 <div style={s.listItemMeta}>
                   <span>v{r.version || 1}</span>
@@ -412,7 +412,7 @@ export default function ContentEditor({ userRole }) {
                   {r.parent_page_id && <span>· nested</span>}
                   {!r.is_active && <span style={{ color: T.red }}>· archived</span>}
                 </div>
-              </div>
+              </TabLink>
             ))}
           </div>
         );

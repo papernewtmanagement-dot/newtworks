@@ -31,7 +31,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ─── Mock Data ────────────────────────────────────────────────
 const MOCK_RECIPES = [
   {
@@ -543,7 +543,8 @@ const Connections = ({ connections }) => (
 
 // ─── Section: Daily Briefing ──────────────────────────────────
 const DailyBriefingSection = ({ briefings }) => {
-  const [selected, setSelected] = useState(briefings[0]?.id);
+  const [selectedRaw, setSelected, briefingHref] = useTabParam("briefing", null);
+  const selected = selectedRaw || briefings[0]?.id;
   const current = briefings.find(b => b.id === selected);
 
   return (
@@ -552,10 +553,11 @@ const DailyBriefingSection = ({ briefings }) => {
       <Card>
         <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>Briefing history</div>
         {briefings.map(b => (
-          <div
+          <TabLink
             key={b.id}
-            onClick={() => setSelected(b.id)}
-            style={{ padding:"10px 12px", borderRadius:8, cursor:"pointer", background:selected===b.id?T.blueLt:"transparent", border:`1px solid ${selected===b.id?T.blue:T.slate200}`, marginBottom:6 }}
+            href={briefingHref(b.id)}
+            onSelect={() => setSelected(b.id)}
+            style={{ display:"block", padding:"10px 12px", borderRadius:8, cursor:"pointer", background:selected===b.id?T.blueLt:"transparent", border:`1px solid ${selected===b.id?T.blue:T.slate200}`, marginBottom:6 }}
           >
             <div style={{ fontSize:12, fontWeight:600, color:T.slate800 }}>{b.date}</div>
             <div style={{ fontSize:10, color:T.slate400, marginTop:2 }}>
@@ -565,7 +567,7 @@ const DailyBriefingSection = ({ briefings }) => {
               {b.delivered && <span style={{ fontSize:9, padding:"2px 6px", borderRadius:10, background:T.greenLt, color:"#065F46", fontWeight:600 }}>Delivered</span>}
               {b.opened    && <span style={{ fontSize:9, padding:"2px 6px", borderRadius:10, background:T.blueLt,  color:"#1E40AF", fontWeight:600 }}>Opened</span>}
             </div>
-          </div>
+          </TabLink>
         ))}
       </Card>
 
@@ -682,7 +684,7 @@ const DocImporter = ({ imports }) => {
 
 // ─── Main Automations Module ──────────────────────────────────
 export default function Automations() {
-  const [section, setSection] = useTabParam("tab", "overview", ["overview","recipes","runlog","importer","briefing","connections"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","recipes","runlog","importer","briefing","connections"]);
   const { data: liveRecipes, loading: recipesLoading, error: recipesError, refetch: refetchRecipes } = useSupabaseTable("automation_recipes", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const { data: liveRunLog, error: runLogError }   = useSupabaseTable("automation_run_log", AGENCY_ID, { orderBy: "run_at", ascending: false });
   const { data: liveSettings, error: settingsError } = useSupabaseTable("settings", AGENCY_ID);
@@ -892,9 +894,9 @@ export default function Automations() {
       {/* Section Navigation */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

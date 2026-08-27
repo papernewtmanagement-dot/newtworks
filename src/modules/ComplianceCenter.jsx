@@ -28,7 +28,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ─── Category Config ──────────────────────────────────────────
 const CATEGORY_CONFIG = {
   contract:              { label: "Contract Basics",        color: T.slate900,   icon: "📜" },
@@ -569,7 +569,7 @@ const AuditLog = ({ log = [], agencyName = "Agent", onRefresh }) => {
 
 // ─── Main Compliance Center Module ───────────────────────────
 export default function ComplianceCenter() {
-  const [section, setSection] = useTabParam("tab", "dashboard", ["dashboard","calendar","checklist","log","rules"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "dashboard", ["dashboard","calendar","checklist","log","rules"]);
 
   // ── Live data ────────────────────────────────────────────────
   const [rules, setRules] = useState([]);
@@ -702,9 +702,9 @@ export default function ComplianceCenter() {
       {/* Section Navigation */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

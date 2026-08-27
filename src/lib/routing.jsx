@@ -48,6 +48,71 @@ export function ModuleLink({ to, onNavigate, style, children, title, className }
   );
 }
 
+// Build a URL for the CURRENT page with one query param changed. Used to give
+// every tab / sub-tab / record-open control a real href so right-click
+// "Open in new tab" works on it. Mirrors the write logic inside useTabParam's
+// setter: setting a param to its default value strips it from the URL.
+export function hrefWithParam(paramName, value, defaultValue) {
+  if (typeof window === "undefined") return "#";
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    if (value === defaultValue || value === null || value === undefined) {
+      sp.delete(paramName);
+    } else {
+      sp.set(paramName, String(value));
+    }
+    const qs = sp.toString();
+    const path = window.location.pathname;
+    return qs ? `${path}?${qs}` : path;
+  } catch {
+    return "#";
+  }
+}
+
+// Same as hrefWithParam but sets several params at once (e.g. jumping to a
+// different tab AND opening a record in it).
+export function hrefWithParams(pairs) {
+  if (typeof window === "undefined") return "#";
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    (pairs || []).forEach(([name, value, defaultValue]) => {
+      if (value === defaultValue || value === null || value === undefined) sp.delete(name);
+      else sp.set(name, String(value));
+    });
+    const qs = sp.toString();
+    const path = window.location.pathname;
+    return qs ? `${path}?${qs}` : path;
+  } catch {
+    return "#";
+  }
+}
+
+// Anchor-rendered tab / record-open control. Drop-in swap for
+// `<button onClick={() => setTab(id)} style={...}>` — same box, same styles,
+// but right-click "Open in new tab", middle-click and cmd/ctrl-click all work
+// because it is a real <a href>. Plain left-click stays SPA.
+export function TabLink({ href, onSelect, style, children, title, className, ariaLabel, disabled }) {
+  if (disabled) {
+    return (
+      <span style={{ textDecoration: "none", color: "inherit", display: "inline-block", ...style }} title={title} className={className}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href || "#"}
+      onClick={(e) => handleModuleLinkClick(e, onSelect)}
+      style={{ textDecoration: "none", color: "inherit", display: "inline-block", boxSizing: "border-box", ...style }}
+      title={title}
+      className={className}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </a>
+  );
+}
+
 // ─── useTabParam ───────────────────────────────────────────────────────────
 // Persist a tab identifier in the URL query string so a page refresh restores
 // the same tab. Drop-in replacement for `useState(defaultValue)` in any
@@ -125,5 +190,12 @@ export function useTabParam(paramName, defaultValue, validValues) {
     }
   }, [paramName, defaultValue]);
 
-  return [tab, setTab];
+  const hrefFor = useCallback(
+    (value) => hrefWithParam(paramName, value, defaultValue),
+    [paramName, defaultValue]
+  );
+
+  // Third element is opt-in: existing `const [tab, setTab] = ...` call sites
+  // keep working unchanged.
+  return [tab, setTab, hrefFor];
 }

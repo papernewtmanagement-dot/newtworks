@@ -31,7 +31,7 @@ import MemberAvatar from "../lib/MemberAvatar.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ─── Role Config ──────────────────────────────────────────────
 const ROLES = {
   owner:     { label:"Owner",      color:T.slate900,   bg:T.slate100, description:"Full access including settings and all financial data" },
@@ -616,7 +616,7 @@ const Security = () => {
 // ─── Section: About ───────────────────────────────────────────
 const About = ({ agency: agencyProp }) => {
   const agency = agencyProp || {};
-  const [tab, setTab] = useTabParam("subtab", "stack", ["stack","how"]);
+  const [tab, setTab, subTabHref] = useTabParam("subtab", "stack", ["stack","how"]);
 
   const components = [
     {
@@ -696,7 +696,7 @@ const About = ({ agency: agencyProp }) => {
       {/* Sub-tabs */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:8 }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
+          <TabLink key={t.id} href={subTabHref(t.id)} onSelect={() => setTab(t.id)} style={{
             padding:"12px 14px",
             fontSize:13, fontWeight:600,
             color: tab===t.id ? T.slate900 : T.slate500,
@@ -705,7 +705,7 @@ const About = ({ agency: agencyProp }) => {
             borderRadius:10, cursor:"pointer",
             transition:"all 0.12s",
             boxShadow: tab===t.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-          }}>{t.label}</button>
+          }}>{t.label}</TabLink>
         ))}
       </div>
 
@@ -824,7 +824,7 @@ export default function Settings() {
     loadSettings();
   }, []);
 
-  const [section, setSection] = useTabParam("tab", "profile", ["profile","about","config","connections","security","team"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "profile", ["profile","about","config","connections","security","team"]);
 
   const sections = [
     { id:"profile",     label:"Agency Profile"    },
@@ -952,9 +952,9 @@ export default function Settings() {
       {/* Section Navigation */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

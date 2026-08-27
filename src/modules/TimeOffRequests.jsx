@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { mdToHtml } from "../lib/markdown.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ============================================================
 // Time Off & Remote Request Module
 // Spec: persistent_memory id fcaa841a-68f0-481c-a348-9d07f1699a85
@@ -1730,7 +1730,7 @@ function InboxView({ me, onDecided }) {
 // MAIN ================================================
 export default function TimeOffRequests() {
   const [me, setMe] = useState(null);
-  const [activeTab, setActiveTab] = useTabParam("subtab", "submit", ["submit","history","inbox","my","vote"]);
+  const [activeTab, setActiveTab, tabHref] = useTabParam("subtab", "submit", ["submit","history","inbox","my","vote"]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [policyOpen, setPolicyOpen] = useState(false);
@@ -1844,14 +1844,14 @@ export default function TimeOffRequests() {
 
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #e2e8f0", marginBottom: 20 }}>
         {tabs.map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+          <TabLink key={tab.id} href={tabHref(tab.id)} onSelect={() => setActiveTab(tab.id)}
             style={{
               padding: "10px 16px", border: "none",
               borderBottom: activeTab === tab.id ? "2px solid #2563eb" : "2px solid transparent",
               background: "transparent", cursor: "pointer",
               fontWeight: activeTab === tab.id ? 600 : 500,
               color: activeTab === tab.id ? "#1e40af" : "#475569"
-            }}>{tab.label}</button>
+            }}>{tab.label}</TabLink>
         ))}
       </div>
       <div key={refreshKey}>

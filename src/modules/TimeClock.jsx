@@ -29,7 +29,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { T } from "../lib/theme.js";
 import { StaffRequestSection, AdminApprovalQueue } from "./TimeClockEditRequests.jsx";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 const YELLOW_HR = 39;
 const RED_HR = 40;
 
@@ -279,7 +279,7 @@ function filterVisibleStaff(staff, user) {
 export default function TimeClock() {
   const { user, loading: userLoading } = useCurrentUser();
   const canSeeAdmin = !!user && ["owner", "manager"].includes(user.role);
-  const [tab, setTab] = useTabParam("subtab", "kiosk", ["kiosk","admin"]);
+  const [tab, setTab, subTabHref] = useTabParam("subtab", "kiosk", ["kiosk","admin"]);
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 
@@ -294,8 +294,8 @@ export default function TimeClock() {
         </div>
         {!userLoading && canSeeAdmin && (
           <div style={{ display: "flex", gap: 3, padding: 3, background: T.slate100, borderRadius: 9 }}>
-            <TabButton active={tab === "kiosk"} onClick={() => setTab("kiosk")}>Kiosk</TabButton>
-            <TabButton active={tab === "admin"} onClick={() => setTab("admin")}>Admin</TabButton>
+            <TabButton active={tab === "kiosk"} href={subTabHref("kiosk")} onClick={() => setTab("kiosk")}>Kiosk</TabButton>
+            <TabButton active={tab === "admin"} href={subTabHref("admin")} onClick={() => setTab("admin")}>Admin</TabButton>
           </div>
         )}
       </div>
@@ -307,10 +307,11 @@ export default function TimeClock() {
   );
 }
 
-function TabButton({ active, onClick, children }) {
+function TabButton({ active, onClick, href, children }) {
   return (
-    <button
-      onClick={onClick}
+    <TabLink
+      href={href}
+      onSelect={onClick}
       style={{
         padding: "6px 14px",
         borderRadius: 7,
@@ -325,7 +326,7 @@ function TabButton({ active, onClick, children }) {
       }}
     >
       {children}
-    </button>
+    </TabLink>
   );
 }
 

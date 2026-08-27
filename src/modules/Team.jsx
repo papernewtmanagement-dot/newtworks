@@ -41,7 +41,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
 // Shared with the candidate detail stepper — see src/lib/hiringStages.js.
@@ -455,7 +455,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
   // Persist selected candidate in URL query (?candidate=<uuid>) so refresh
   // returns to the same detail view. useTabParam without an allowlist just
   // syncs the value bidirectionally with the URL query string.
-  const [selected, setSelected] = useTabParam("candidate", null);
+  const [selected, setSelected, candidateHref] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   // Default = full pipeline. GrowthTab passes a subset for the split Recruiting/Closing views.
   const stages = stagesProp || ["applied","assessment_sent","assessed","interview","meet_and_greet","offer","reference_check","hired"]; // declined + former hidden by default
@@ -490,10 +490,11 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
                 <span style={{ fontSize:10, fontWeight:700, padding:"1px 6px", borderRadius:10, background:s.bg, color:s.color }}>{stageApps.length}</span>
               </div>
               {stageApps.map(app => (
-                <div
+                <TabLink
                   key={app.id}
-                  onClick={() => setSelected(selected===app.id?null:app.id)}
-                  style={{ background:T.white, border:`1px solid ${selected===app.id?T.blue:T.slate200}`, borderRadius:8, padding:"8px 10px", marginBottom:6, cursor:"pointer" }}
+                  href={candidateHref(selected===app.id?null:app.id)}
+                  onSelect={() => setSelected(selected===app.id?null:app.id)}
+                  style={{ display:"block", background:T.white, border:`1px solid ${selected===app.id?T.blue:T.slate200}`, borderRadius:8, padding:"8px 10px", marginBottom:6, cursor:"pointer" }}
                 >
                   <div style={{ fontSize:11, fontWeight:600, color:T.slate800 }}>{app.first_name} {app.last_name}</div>
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4, gap:6 }}>
@@ -522,7 +523,7 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
                       )}
                     </div>
                   </div>
-                </div>
+                </TabLink>
               ))}
             </div>
           );
@@ -561,7 +562,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
   // URL-persisted candidate selection so refresh keeps the same candidate open.
   // Same param name as RecruitingPipeline uses; the two are conditionally
   // rendered (gtab picks one) so there's no collision.
-  const [selected, setSelected] = useTabParam("candidate", null);
+  const [selected, setSelected, candidateHref] = useTabParam("candidate", null);
   const verdictThresh = useVerdictThresholds();
   const selectedApp = declined.find(a => a.id === selected);
   // sortKey ∈ {name, source, resume, assess, recent}; direction ∈ {asc, desc}
@@ -651,7 +652,9 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
                   style={{ cursor: "pointer" }}
                 >
                   <td style={{ ...tdBase, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}>
-                    {app.first_name} {app.last_name}
+                    <TabLink href={candidateHref(app.id)} onSelect={() => setSelected(app.id)} style={{ fontWeight: 600, color: T.slate900 }}>
+                      {app.first_name} {app.last_name}
+                    </TabLink>
                   </td>
                   <td style={{ ...tdBase, fontSize: 10, color: T.slate600, whiteSpace: "nowrap" }}>{sourceLbl}</td>
                   <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.res_composite), verdictThresh.resume) }}>
@@ -1119,7 +1122,7 @@ const StaffDirectory = ({ staff }) => {
   };
 
   // ── Reactivation flow state ──
-  const [view, setView] = useTabParam("mtab", "active", ["active","archived"]); // "active" or "archived"
+  const [view, setView, mtabHref] = useTabParam("mtab", "active", ["active","archived"]); // "active" or "archived"
   const [archivedStaff, setArchivedStaff] = useState([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [archivedError, setArchivedError] = useState("");
@@ -1683,16 +1686,18 @@ const StaffDirectory = ({ staff }) => {
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
       {/* View toggle — Active vs Archived — plus Add member button */}
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
-        <button
-          onClick={() => setView("active")}
+        <TabLink
+          href={mtabHref("active")}
+          onSelect={() => setView("active")}
           style={{ padding:"6px 12px", fontSize:11, fontWeight:view==="active"?700:500, color:view==="active"?T.white:T.slate700, background:view==="active"?T.slate900:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
           Active · {activeCount}
-        </button>
-        <button
-          onClick={() => setView("archived")}
+        </TabLink>
+        <TabLink
+          href={mtabHref("archived")}
+          onSelect={() => setView("archived")}
           style={{ padding:"6px 12px", fontSize:11, fontWeight:view==="archived"?700:500, color:view==="archived"?T.white:T.slate700, background:view==="archived"?T.slate900:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
           Archived{view==="archived" ? " · " + archivedCount : ""}
-        </button>
+        </TabLink>
         {view === "archived" && archivedLoading && (
           <span style={{ fontSize:11, color:T.slate500 }}>Loading…</span>
         )}
@@ -2883,7 +2888,7 @@ const HypotheticalHireForecast = () => {
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry, userRole }) => {
-  const [view, setView] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots","earnings"]);
+  const [view, setView, gtabHref] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots","earnings"]);
   // Admin-only manual override on top of the automatic hourly background
   // refresh (see Team's useEffect above) — forces every candidate with a
   // completed assessment (not just the active pipeline) to recompute right
@@ -2954,9 +2959,10 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
       <div style={{ display:"flex", flexWrap:"wrap", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:16 }}>
         <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:8, padding:3 }}>
           {subs.map(s => (
-            <button
+            <TabLink
               key={s.id}
-              onClick={() => setView(s.id)}
+              href={gtabHref(s.id)}
+              onSelect={() => setView(s.id)}
               style={{
                 padding:"6px 12px",
                 fontSize:11,
@@ -2971,7 +2977,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
               }}
             >
               {s.label}
-            </button>
+            </TabLink>
           ))}
         </div>
         {isAdminForRefresh && (
@@ -3026,7 +3032,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
-  const [section, setSection] = useTabParam("tab", "members", ["members","growth"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth"]);
   const [applicants,  setApplicants]  = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(true);
   const [applicantsError,   setApplicantsError]   = useState(false);
@@ -3230,9 +3236,9 @@ export default function Team({ userRole }) {
       {/* Section Navigation */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

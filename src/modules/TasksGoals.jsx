@@ -35,7 +35,7 @@ import { fmtMoney } from "../lib/format.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ─── Priority Config ──────────────────────────────────────────
 const PRIORITY = {
   critical: { color:T.red,    bg:T.redLt,    label:"Critical", dot:"🔴" },
@@ -1143,7 +1143,7 @@ const CompletedSection = ({ tasks, canEdit, onReopen }) => {
 
 // ─── Main Tasks & Goals Module ────────────────────────────────
 export default function TasksGoals({ onNavigate, userRole, userId }) {
-  const [section, setSection] = useTabParam("tab", "todos", ["todos","goals","overview","completed"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "todos", ["todos","goals","overview","completed"]);
   const { data: liveTasks, loading: tasksLoading, error: tasksError, refetch: refetchTasks } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
   const { data: liveGoals, loading: goalsLoading, error: goalsError, refetch: refetchGoals } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
@@ -1444,9 +1444,9 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       {/* Section Navigation */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

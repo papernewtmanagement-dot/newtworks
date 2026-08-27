@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
 import EmptyState from "../components/EmptyState.jsx";
-import { ModuleLink } from "../lib/routing.jsx";
+import { ModuleLink, TabLink } from "../lib/routing.jsx";
 
 // ============================================================
 // Newtworks ALERTS & NOTIFICATIONS MODULE v1.0
@@ -562,7 +562,7 @@ const NotificationPrefs = () => {
 
 // ─── Main Alerts Module ───────────────────────────────────────
 export default function AlertsNotifications({ onNavigate }) {
-  const [section, setSection] = useTabParam("tab", "overview", ["overview","all","history","prefs"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","all","history","prefs"]);
   const { data: liveAlerts, loading: alertsLoading, error: alertsError, refetch: refetchAlerts } = useSupabaseTable("alerts", AGENCY_ID, { orderBy: "created_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
   const [alerts, setAlerts] = useState(useMockData ? MOCK_ALERTS : []);
@@ -631,9 +631,9 @@ export default function AlertsNotifications({ onNavigate }) {
       {/* Section Navigation */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

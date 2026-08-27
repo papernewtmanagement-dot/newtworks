@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { fmtMoney } from "../lib/format.jsx";
 // ============================================================
 // Newtworks BOOK MODULE
@@ -39,7 +39,7 @@ const KPICard = ({ label, value, sub, color = T.slate900, border }) => (
   </div>
 );
 
-const TabBar = ({ tabs, active, onChange }) => (
+const TabBar = ({ tabs, active, onChange, hrefFor }) => (
   <div style={{
     display: "flex", gap: 2,
     background: T.slate100,
@@ -48,14 +48,14 @@ const TabBar = ({ tabs, active, onChange }) => (
     flexWrap: "wrap",
   }}>
     {tabs.map(t => (
-      <button key={t.id} onClick={() => onChange(t.id)} style={{
+      <TabLink key={t.id} href={hrefFor ? hrefFor(t.id) : undefined} onSelect={() => onChange(t.id)} style={{
         padding: "6px 14px", fontSize: 12, fontWeight: active === t.id ? 600 : 400,
         color: active === t.id ? T.slate900 : T.slate500,
         background: active === t.id ? T.white : "transparent",
         border: "none", borderRadius: 6, cursor: "pointer",
         transition: "all 0.12s",
         boxShadow: active === t.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-      }}>{t.label}</button>
+      }}>{t.label}</TabLink>
     ))}
   </div>
 );
@@ -1163,7 +1163,7 @@ const BookAssignmentsSection = () => {
 
 
 export default function Book() {
-  const [tab, setTab] = useTabParam("tab", "snapshot", ["snapshot","goals","assignments"]);
+  const [tab, setTab, tabHref] = useTabParam("tab", "snapshot", ["snapshot","goals","assignments"]);
 
   const tabs = [
     { id: "snapshot",    label: "Snapshot" },
@@ -1187,7 +1187,7 @@ export default function Book() {
         </div>
       </div>
 
-      <TabBar tabs={tabs} active={tab} onChange={setTab} />
+      <TabBar tabs={tabs} active={tab} onChange={setTab} hrefFor={tabHref} />
 
       {tab === "snapshot" && <BookSnapshotSection />}
       {tab === "goals" && <BookGoalsSection />}

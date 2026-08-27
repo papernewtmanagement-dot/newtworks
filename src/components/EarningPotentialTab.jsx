@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { T } from "../lib/theme.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { useViewport } from "../lib/hooks.js";
 import { fmtMoney } from "../lib/format.jsx";
 
@@ -206,7 +206,7 @@ const TierBreakdown = ({ tier, roleKey }) => {
 // ─── Tab ─────────────────────────────────────────────────────
 export default function EarningPotentialTab() {
   const _vp = useViewport();
-  const [roleKey, setRoleKey] = useTabParam("erole", "sales", ROLE_ORDER);
+  const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", ROLE_ORDER);
   const [highlighted, setHighlighted] = useState("rock");
   // "selected" = dashed base line for the highlighted tier only.
   // "all" = all four base lines, muted. Toggle lives in the chart header.
@@ -272,7 +272,7 @@ export default function EarningPotentialTab() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {roles.map(r => (
-            <button key={r.role_key} onClick={() => setRoleKey(r.role_key)} style={btn(r.role_key === role.role_key)}>{r.role_label}</button>
+            <TabLink key={r.role_key} href={roleHref(r.role_key)} onSelect={() => setRoleKey(r.role_key)} style={btn(r.role_key === role.role_key)}>{r.role_label}</TabLink>
           ))}
         </div>
         <div style={{ fontSize: 11, color: T.slate500 }}>

@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ============================================================
 // Newtworks MARKETING MODULE v1.0
 // Newtworks — State Farm Agent Edition
@@ -1442,7 +1442,7 @@ function InputRow({ label, span, children }) {
 
 function ReferralsReviewsTab() {
   const vp = useViewport();
-  const [subTab, setSubTab] = useTabParam("subtab", "referrals", ["referrals","reviews"]);
+  const [subTab, setSubTab, subTabHref] = useTabParam("subtab", "referrals", ["referrals","reviews"]);
   const { loading, referrals, reviews, error, reload } = useRefRevData();
   const team = useTeamRoster();
 
@@ -1459,9 +1459,10 @@ function ReferralsReviewsTab() {
           { id: "referrals", label: `Referrals (${referrals.length})` },
           { id: "reviews",   label: `Reviews (${reviews.length})` },
         ].map(t => (
-          <button
+          <TabLink
             key={t.id}
-            onClick={() => setSubTab(t.id)}
+            href={subTabHref(t.id)}
+            onSelect={() => setSubTab(t.id)}
             style={{
               padding: "5px 12px", fontSize: 12,
               fontWeight: subTab === t.id ? 600 : 400,
@@ -1470,7 +1471,7 @@ function ReferralsReviewsTab() {
               border: "none", borderRadius: 6, cursor: "pointer",
               boxShadow: subTab === t.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
             }}
-          >{t.label}</button>
+          >{t.label}</TabLink>
         ))}
       </div>
 
@@ -2234,7 +2235,7 @@ export default function Marketing() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [quarter, setQuarter] = useState(Math.floor(now.getMonth() / 3) + 1);
-  const [section, setSection] = useTabParam("tab", "overview", ["overview","refrev","sources","spend","economics","everquote","ideas"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","refrev","sources","spend","economics","everquote","ideas"]);
   const state = useMarketingData(year, quarter);
 
   // Year/quarter selector options
@@ -2285,9 +2286,10 @@ export default function Marketing() {
         overflowX: "auto", WebkitOverflowScrolling: "touch", whiteSpace: "nowrap",
       }}>
         {SECTIONS.map(s => (
-          <button
+          <TabLink
             key={s.id}
-            onClick={() => setSection(s.id)}
+            href={sectionHref(s.id)}
+            onSelect={() => setSection(s.id)}
             style={{
               padding: "7px 14px", fontSize: 12,
               fontWeight: section === s.id ? 600 : 400,
@@ -2298,7 +2300,7 @@ export default function Marketing() {
               boxShadow: section === s.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
               transition: "all 0.12s",
             }}
-          >{s.label}</button>
+          >{s.label}</TabLink>
         ))}
       </div>
 

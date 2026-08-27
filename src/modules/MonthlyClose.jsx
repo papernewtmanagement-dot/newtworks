@@ -37,7 +37,7 @@ import EmptyState from "../components/EmptyState.jsx";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 
-import { useTabParam } from "../lib/routing.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 const MONTHS = ["", "January","February","March","April","May","June",
   "July","August","September","October","November","December"];
 
@@ -200,7 +200,7 @@ const ChecklistRow = ({ item, doc, busy, monthClosed, onMark, onRevert }) => {
 
 // ─── Main Module ──────────────────────────────────────────────
 export default function MonthlyClose() {
-  const [section, setSection] = useTabParam("tab", "checklist", ["checklist","timeline"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "checklist", ["checklist","timeline"]);
   const [busyId, setBusyId] = useState(null);
   const [closing, setClosing] = useState(false);
 
@@ -496,9 +496,9 @@ export default function MonthlyClose() {
       {/* Section nav */}
       <div style={{ display:"flex", gap:2, flexWrap:"wrap", background:T.slate100, borderRadius:10, padding:4, marginBottom:18 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
+          <TabLink key={s.id} href={sectionHref(s.id)} onSelect={() => setSection(s.id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:section===s.id?600:400, color:section===s.id?T.slate900:T.slate500, background:section===s.id?T.white:"transparent", border:"none", borderRadius:7, cursor:"pointer", transition:"all 0.12s", boxShadow:section===s.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
             {s.label}
-          </button>
+          </TabLink>
         ))}
       </div>
 

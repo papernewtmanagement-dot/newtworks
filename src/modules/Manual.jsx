@@ -26,6 +26,7 @@ import { useViewport } from "../lib/hooks.js";
 
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
+import { handleModuleLinkClick } from "../lib/routing.jsx";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -788,13 +789,13 @@ export default function Manual({ manualType, userRole }) {
                 >
                   {hasChildren ? (isExpanded ? "▾" : "▸") : ""}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
+                <a
+                  href={`${cfg.basePath}/${encodeURIComponent(node.confluence_page_id)}`}
+                  onClick={(ev) => handleModuleLinkClick(ev, () => {
                     selectPage(node.confluence_page_id);
                     if (hasChildren && !isExpanded) toggleExpand(node.confluence_page_id);
                     if (_vp.isPhone) setDrawerOpen(false);
-                  }}
+                  })}
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -806,6 +807,9 @@ export default function Manual({ manualType, userRole }) {
                     display: "flex",
                     gap: 10,
                     alignItems: "flex-start",
+                    textDecoration: "none",
+                    color: "inherit",
+                    boxSizing: "border-box",
                   }}
                 >
                   {icon && <div style={{ fontSize: 16, lineHeight: 1.2, marginTop: 1 }}>{icon}</div>}
@@ -824,7 +828,7 @@ export default function Manual({ manualType, userRole }) {
                       </div>
                     )}
                   </div>
-                </button>
+                </a>
               </div>
               </Fragment>
             );
