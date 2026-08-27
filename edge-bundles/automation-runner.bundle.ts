@@ -553,6 +553,33 @@ function findGmailPlainTextBody(payload: any): string {
 
 function stripParenthesizedUrls(text: string): string { if (!text) return ""; return text.replace(/\s*\(\s*https?:\/\/[^)]+\)\s*/g, " ").replace(/\s+/g, " ").trim(); }
 
+// Composio hands back messageText as the sender's raw HTML whenever the email
+// has no plain-text part. American Express is like that; US Bank sends plain
+// text. Until 2026-08-27 messageText was trusted as-is, so the per-message
+// character cap below kept the doctype and the stylesheet and threw away the
+// alert itself — the merchant, the amount and the account number never
+// reached the model, which then returned no record, which (with
+// file_unparsed_messages on) labelled and archived a real transaction.
+// Plain-text bodies are unaffected: the tag test fails and the string is
+// returned untouched.
+function htmlToText(s: string): string {
+  if (!s) return "";
+  return s
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function looksLikeHtml(s: string): boolean { return /<[a-z][^>]*>/i.test(s || ""); }
+
 function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): any {
   const messages = Array.isArray(composioData) ? composioData : (composioData?.messages ?? composioData?.data?.messages ?? []);
   if (!Array.isArray(messages)) return composioData;
@@ -561,7 +588,8 @@ function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): an
     const gh = (name: string) => (headers.find((x: any) => (x.name ?? "").toLowerCase() === name.toLowerCase())?.value ?? "");
     const pre = typeof m.messageText === "string" && m.messageText.length > 0 ? m.messageText : null;
     const raw = pre ?? findGmailPlainTextBody(m.payload);
-    const body = stripParenthesizedUrls(raw).slice(0, perMessageBodyCap);
+    const text = looksLikeHtml(raw) ? htmlToText(raw) : raw;
+    const body = stripParenthesizedUrls(text).slice(0, perMessageBodyCap);
     return { messageId: m.messageId ?? m.id ?? "", threadId: m.threadId ?? "", subject: m.subject ?? gh("Subject"), from: m.sender ?? m.from ?? gh("From"), to: m.to ?? gh("To"), date: gh("Date") || m.internalDate || "", snippet: m.snippet ?? "", body };
   }) };
 }
