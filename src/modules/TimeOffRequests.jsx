@@ -1394,7 +1394,10 @@ function LogTimeOffForm({ onLogged }) {
 
 
 // Approval defaults — follow the rules:
-// - PTO: eligibility=eligible → paid; not_eligible → unpaid; pending_review → paid (data gap, benefit of doubt)
+// - PTO: unlimited paid time off is EARNED at a Good rating or better. Anything short of
+//   that defaults to unpaid, including "we do not have a rating yet". Peter 2026-08-26:
+//   nobody under Good gets unlimited paid time off, and Good at 100 points a week is a
+//   low bar already. He can still mark any request paid in the approval box.
 // - Sick: paid by default (handbook policy)
 // - Remote / 4-day off-day change: paid (still working, just different location/schedule)
 function computeDefaultPaid(req) {
@@ -1413,12 +1416,15 @@ function computeDefaultPaid(req) {
     // 0 days year 1, 5 days year 2, 10 days year 3+. Default UNPAID; Peter
     // verifies YTD balance against accrual_cap in the modal before marking paid.
     if (e.is_account_associate) return false;
-    // Account Manager and above — unlimited PTO subject to Sales Points Good+
+    // Account Manager and above — unlimited paid time off has to be earned at Good or better.
     if (e.is_manager_tier) {
       const o = e.overall_eligibility;
       if (o === "eligible") return true;
-      if (o === "ineligible") return false;
-      return true; // pending_review — data gap, benefit of doubt for AMs
+      // ineligible (below Good) and pending_review (no rating yet, or still inside the
+      // thirteen-week onboarding window) both default to UNPAID. The handbook gives
+      // unlimited paid time off to Account Managers who have COMPLETED onboarding and
+      // hold a Good rating; neither is true here, so it is not earned yet.
+      return false;
     }
     return false;
   }
@@ -1446,7 +1452,12 @@ function computeDefaultPaidReason(req) {
       const o = e.overall_eligibility;
       if (o === "eligible") return "Account Manager, Sales Points Good+ — unlimited PTO is paid.";
       if (o === "ineligible") return "Account Manager, Sales Points below Good — unpaid by policy.";
-      if (o === "pending_review") return "Account Manager, eligibility pending review — defaulting to paid.";
+      if (o === "pending_review") {
+        const wks = e.weeks_employed;
+        return e.is_post_probation === false
+          ? `Account Manager, week ${wks} of the thirteen-week onboarding window — no rating yet, so unlimited paid time off is not earned. Defaulting to unpaid; mark paid if you want to grant it.`
+          : "Account Manager, no Sales Points rating available — unlimited paid time off is not earned without a Good rating. Defaulting to unpaid; mark paid if you want to grant it.";
+      }
       return "";
     }
     return "Role not mapped to PTO eligibility — verify manually.";
