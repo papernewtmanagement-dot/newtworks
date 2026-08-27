@@ -547,35 +547,30 @@ export default function CandidateAssessment({ candidateId, token }) {
     // longest part of the assessment; say so honestly, with a real time
     // estimate (self-test pace: ~6 s per rating statement). Stint 3 keeps the
     // adaptive framing (accurate there). Stint 4 is the SJT.
+    // 2026-08-26: stint 4 (scenarios) removed; stint 2 copy rewritten for the
+    // ranking blocks (the old text described rating statements, and the time
+    // estimate came from the Likert era -- measured block pace is ~27 s each).
     const eyebrow =
       stint === 2
         ? "Section 2"
-        : stint === 4
-        ? "Section 3"
         : stint === 5
         ? "Part 2 — final section"
         : "Follow-up section";
     const headline =
       stint === 2
         ? "Nice work — the problem-solving section is done."
-        : stint === 4
-        ? "Almost there."
         : stint === 5
         ? "Last part — a few written questions."
         : "A few follow-up questions.";
     const bodyLead =
       stint === 2
-        ? "Next is the longest part of the assessment: a series of quick statements about how you naturally think and work. Rate how well each one describes you and move on — your first instinct is the right speed."
-        : stint === 4
-        ? "This section is short workplace scenarios. Read each one and pick the response closest to what you would actually do."
+        ? "Next is the longest part of the assessment. Each screen shows four short statements about how you naturally think and work. Tap them in order from most like you to least like you — first tap is most like you. Go with your first instinct; there are no right answers."
         : stint === 5
         ? "This part is not timed — take your time and answer in your own words. Quality of thought matters more than speed."
         : "Based on how you answered so far, I'd like to ask a few follow-up questions on a couple of areas where a clearer read would help. This is normal — the assessment adds questions when it needs more signal, not because anything is wrong.";
     const bodyCount =
       stint === 2
-        ? `${remaining} statements — most people finish this section in about 15–20 minutes.`
-        : stint === 4
-        ? `${remaining} short scenarios, then one short written section and you're done.`
+        ? `${remaining} screens — most people finish this section in about 30 minutes. You can leave and come back; your progress is saved.`
         : stint === 5
         ? `${remaining} written questions. No time limit.`
         : remaining > 0
@@ -770,8 +765,6 @@ export default function CandidateAssessment({ candidateId, token }) {
             >
               {stint === 2
                 ? "Section 2"
-                : stint === 4
-                ? "Section 3"
                 : stint === 5
                 ? "Part 2 — final section"
                 : stint > 1

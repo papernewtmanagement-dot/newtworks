@@ -28,15 +28,14 @@
 //   - (Stint 3 -- the rating-scale follow-up section -- was removed
 //     2026-08-25 with the rest of the old personality system. There is no
 //     stint 3; stint 4 follows stint 2 directly.)
-//   - Stint 4 = SJT. Served in full once Stint 2 is complete, unconditional,
-//     same pattern as Stint 2 — not trigger-gated.
+//   - (Stint 4 -- the situational-judgement scenarios -- was removed
+//     2026-08-26 by Peter directive; stint 5 follows stint 2 directly.)
 //   - Retest items (within-sitting consistency checks, Meade & Craig 2012)
 //     live in Stint 1 alongside their facet's baseline items and are always
 //     served.
 //   - Scoring on finalize: compute_newtworks_v2_facets_as_row (personality
 //     facets), apply_newtworks_gma_to_candidate (GMA accuracy + speed per
-//     domain), apply_newtworks_v2_sjt_to_candidate (SJT % correct per
-//     construct), apply_newtworks_v2_impression_management_to_candidate
+//     domain), apply_newtworks_v2_impression_management_to_candidate
 //     (social-desirability index), and apply_newtworks_v2_reliability_to_
 //     candidate (careless-response composite). All are independent and
 //     best-effort at finalize — one failing does not block the others or
@@ -55,7 +54,6 @@ const SECTIONS = [
   "newtworks_v2_personality",
   "newtworks_v2_personality_fc_quad",
   "newtworks_v2_cognitive_gma",
-  "newtworks_v2_sjt",
   "newtworks_v2_screen",
 ];
 
@@ -418,7 +416,6 @@ async function loadStint2Items(supa: any, candidateId: string) {
 async function loadProgress(supa: any, candidateId: string) {
   const stint1Items = await loadStintItems(supa, 1);
   const stint2Items = await loadStint2Items(supa, candidateId);
-  const stint4Items = await loadStintItems(supa, 4);
   const stint5Items = await loadStintItems(supa, 5);
   const answered = await loadAnswered(supa, candidateId);
 
@@ -428,25 +425,20 @@ async function loadProgress(supa: any, candidateId: string) {
   const stint2Answered = stint2Items.filter((it: any) => answered.has(it.id)).length;
   const stint2Done = stint1Done && stint2Items.length > 0 && stint2Answered >= stint2Items.length;
 
-  // Stint 4 (SJT) is unconditional, like stint 2 — not trigger-gated —
-  // reachable once stint 2 is done (stint 3 was removed 2026-08-25).
-  const stint4Answered = stint4Items.filter((it: any) => answered.has(it.id)).length;
-  const stint4Done = stint2Done && (stint4Items.length === 0 || stint4Answered >= stint4Items.length);
-
   // Stint 5 (written screen — "Part 2") is unconditional, same pattern as
-  // stint 2/4 — not trigger-gated — reachable once stint 4 is done. Added
+  // stint 2 — not trigger-gated — reachable once stint 2 is done (stints 3
+  // and 4 were removed 2026-08-25/26). Added
   // 2026-08-06: in-app replacement for the emailed Part 2 flow. Filter
   // economics are inherited for free — a candidate only reaches stint 5 by
   // clearing every earlier stint's exit gates, so there is no separate
   // "clears CTS" condition to reproduce here.
   const stint5Answered = stint5Items.filter((it: any) => answered.has(it.id)).length;
-  const stint5Done = stint4Done && (stint5Items.length === 0 || stint5Answered >= stint5Items.length);
+  const stint5Done = stint2Done && (stint5Items.length === 0 || stint5Answered >= stint5Items.length);
 
   return {
-    stint1Items, stint2Items, stint4Items, stint5Items, answered,
+    stint1Items, stint2Items, stint5Items, answered,
     stint1Total: stint1Items.length, stint1Answered, stint1Done,
     stint2Total: stint2Items.length, stint2Answered, stint2Done,
-    stint4Total: stint4Items.length, stint4Answered, stint4Done,
     stint5Total: stint5Items.length, stint5Answered, stint5Done,
   };
 }
@@ -628,13 +620,11 @@ async function handleVerify(supa: any, cand: any) {
       });
     }
     const prog = await loadProgress(supa, cand.id);
-    const allDone = prog.stint1Done && prog.stint2Done && prog.stint4Done && prog.stint5Done;
+    const allDone = prog.stint1Done && prog.stint2Done && prog.stint5Done;
     const currentProgress = !prog.stint1Done
       ? { answered: prog.stint1Answered, total: prog.stint1Total }
       : !prog.stint2Done
       ? { answered: prog.stint2Answered, total: prog.stint2Total }
-      : !prog.stint4Done
-      ? { answered: prog.stint4Answered, total: prog.stint4Total }
       : { answered: prog.stint5Answered, total: prog.stint5Total };
     return json({
       ok: true,
@@ -674,16 +664,6 @@ async function handleServe(supa: any, cand: any) {
         done: unanswered.length === 0,
         items: prepareItems(constrainedShuffle(unanswered), cand.id),
         progress: { answered: prog.stint2Answered, total: prog.stint2Total },
-      });
-    }
-
-    if (!prog.stint4Done) {
-      const unanswered = prog.stint4Items.filter((it: any) => !prog.answered.has(it.id));
-      return json({
-        stint: 4,
-        done: unanswered.length === 0,
-        items: prepareItems(constrainedShuffle(unanswered), cand.id),
-        progress: { answered: prog.stint4Answered, total: prog.stint4Total },
       });
     }
 
@@ -826,9 +806,6 @@ async function handleFinalize(supa: any, cand: any) {
     if (prog.stint2Total > 0 && !prog.stint2Done) {
       return json({ error: "assessment_incomplete", stage: "stint_2", answered: prog.stint2Answered, total: prog.stint2Total }, 409);
     }
-    if (prog.stint4Total > 0 && !prog.stint4Done) {
-      return json({ error: "assessment_incomplete", stage: "stint_4", answered: prog.stint4Answered, total: prog.stint4Total }, 409);
-    }
     if (prog.stint5Total > 0 && !prog.stint5Done) {
       return json({ error: "assessment_incomplete", stage: "stint_5", answered: prog.stint5Answered, total: prog.stint5Total }, 409);
     }
@@ -908,7 +885,7 @@ async function handleFinalize(supa: any, cand: any) {
       update_skip_reason = "no_facets_scored";
     }
 
-    // GMA, SJT, reliability composite — independent, best-effort. Any one
+    // GMA, reliability composite — independent, best-effort. Any one
     // failing does not block the others or the core facet write above.
     let gma_result: any = null;
     try {
@@ -916,14 +893,6 @@ async function handleFinalize(supa: any, cand: any) {
       gma_result = error ? { error: error.message } : data;
     } catch (e: any) {
       gma_result = { error: e?.message ?? "unknown" };
-    }
-
-    let sjt_result: any = null;
-    try {
-      const { data, error } = await supa.rpc("apply_newtworks_v2_sjt_to_candidate", { p_candidate_id: cand.id });
-      sjt_result = error ? { error: error.message } : data;
-    } catch (e: any) {
-      sjt_result = { error: e?.message ?? "unknown" };
     }
 
     let im_result: any = null;
@@ -994,7 +963,7 @@ async function handleFinalize(supa: any, cand: any) {
           const message =
             `${candName} finished the Newtworks assessment for ${position}. ` +
             `${rows.length} personality facets scored, ${totalItemsScored} items. ` +
-            `GMA + SJT scored alongside. View: ${link}`;
+            `GMA scored alongside. View: ${link}`;
 
           const { error: alertErr } = await supa.from("alerts").insert({
             agency_id: AGENCY_ID,
@@ -1068,7 +1037,6 @@ async function handleFinalize(supa: any, cand: any) {
       facets_scored: rows.length,
       total_items_scored: totalItemsScored,
       gma: gma_result,
-      sjt: sjt_result,
       impression_management: im_result,
     });
   } catch (e: any) {
