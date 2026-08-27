@@ -358,7 +358,12 @@ const EXCLUDED_HEADERS: ReadonlySet<string> = new Set([
   "community service", "community involvement", "activities", "extracurricular activities",
   "extracurriculars", "school involvement", "leadership", "leadership experience",
   "projects", "interests", "hobbies", "publications", "affiliations",
-  "professional affiliations", "memberships",
+  "professional affiliations", "memberships", "leadership and projects", "leadership & projects",
+  "leadership and activities", "leadership & activities", "leadership & involvement",
+  "leadership and involvement", "campus involvement", "student organizations", "organizations",
+  "clubs", "clubs and activities", "clubs & activities", "honors and activities", "honors & activities",
+  "awards and activities", "awards & activities", "activities and honors", "activities & honors",
+  "extracurricular", "community engagement", "civic engagement",
   // Spanish
   "voluntariado", "referencias", "proyectos", "intereses", "actividades",
 ]);
@@ -487,7 +492,13 @@ const SKILL_PHRASES: ReadonlySet<string> = new Set([
 ]);
 function isSkillPhrase(s: string): boolean {
   const t = s.trim().toLowerCase().replace(/[.,;:•·]+$/, "").replace(/\s+/g, " ");
-  return SKILL_PHRASES.has(t);
+  if (SKILL_PHRASES.has(t)) return true;
+  // "Bilingual (English, Spanish) Phone Systems", "Microsoft Office Suite",
+  // "Google Workspace (Docs, Sheets)": a skills line with trimmings
+  if (/^(?:bilingual|microsoft office|ms office|google (?:workspace|suite|docs)|adobe (?:creative|photoshop|premiere)|proficient in|fluent in)\b/.test(t)) return true;
+  // every comma / paren / slash chunk is itself a skill phrase
+  const chunks = t.split(/\s*[(),/|&]\s*|\s{2,}/).map((x) => x.trim()).filter(Boolean);
+  return chunks.length >= 2 && chunks.every((x) => SKILL_PHRASES.has(x));
 }
 // "Camp Counselor English", "Team Lead Worker Team Player": cut the trailing
 // skills-column word(s) off a label that already carries a job-title word.
@@ -529,16 +540,19 @@ function isStreetAddress(s: string): boolean {
 // label: "Assist Customers successfully 19811 Sunset Meadows San Antonio
 // Business Owner in Mexico" -> "Business Owner in Mexico".
 function stripEmbeddedAddress(s: string): string {
-  const m = s.match(/^(.*?)\s*\b(\d{3,6}\s+[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s+(.+)$/);
+  const m = s.match(/^(.+?)\s+\b(\d{3,6})\s+([A-Z][A-Za-z.'-]*(?:\s+\S+){0,8})$/);
   if (!m) return s;
-  let tail = m[3].trim();
-  // the address usually ends in the city name
-  for (let n = 3; n >= 1; n--) {
-    const w = tail.split(/\s+/);
-    if (w.length <= n) continue;
-    if (KNOWN_CITIES.has(w.slice(0, n).join(" ").toLowerCase())) { tail = w.slice(n).join(" "); break; }
+  const words = m[3].split(/\s+/);
+  let cityEnd = -1;
+  outer: for (let i = 0; i < Math.min(words.length, 6); i++) {
+    for (let n = 3; n >= 1; n--) {
+      if (i + n <= words.length && isKnownCity(words.slice(i, i + n).join(" "))) { cityEnd = i + n; break outer; }
+    }
   }
-  if (titleScore(tail) > 0 || employerScore(tail) > 0) return tail;
+  const hasAddrWord = ADDRESS_WORD_RE.test(words.slice(0, 4).join(" "));
+  if (cityEnd < 0 && !hasAddrWord) return s;
+  const tail = cityEnd > 0 ? words.slice(cityEnd).join(" ") : "";
+  if (tail && (titleScore(tail) > 0 || employerScore(tail) > 0)) return tail;
   return s;
 }
 // A line that is only punctuation / bullet glyphs (PDF extraction leaves
@@ -570,10 +584,14 @@ function looksLikeProse(s: string): boolean {
   // — text after a comma that starts lowercase is a clause, not a label.
   // "Manager, Customer Service" and "Walmart, Fort Stockton, TX" keep their
   // capitals. An employment-type tail ("Server, part-time") is not prose.
+  // Only when there are TWO such clauses, or one clause plus a trailing
+  // comma: "Construction Framer, los duques" is a title and a lowercase
+  // employer name, not a sentence (margarita rodriguez, 2026-08-26).
   {
     const noType = t.replace(EMPLOYMENT_TYPE_ALL_RE, " ").replace(/\s+/g, " ");
-    if (/,\s+[a-z]/.test(noType) && !/,\s+(?:and|&|of|de|the)\b/i.test(noType)) return true;
-    if (/[a-z],\s*$/.test(noType)) return true;
+    const lowerClauses = (noType.match(/,\s+(?!(?:and|&|of|de|the|la|el|los|las|y)\b)[a-z]/g) ?? []).length;
+    if (lowerClauses >= 2) return true;
+    if (lowerClauses === 1 && /,\s*$/.test(noType)) return true;
   }
   if (t.length > 110) return true;
   if (wordCount(t) > 14) return true;
@@ -1058,7 +1076,7 @@ function splitHeaderLine(line: string): string[] {
     // "Dispatcher Sicola's Florist": a possessive business name glued straight
     // onto a title. Split where the possessive starts (Rosalie Jackson).
     const poss = p.match(/^(.+?\S)\s+((?:[A-Z][A-Za-z]*['\u2019]s)\b.*)$/);
-    if (poss && titleScore(poss[1]) > 0 && !/[,\-–—/&|]$/.test(poss[1]) && !/\b(?:at|for|with|of|the|and)$/i.test(poss[1])) {
+    if (poss && titleScore(poss[1]) > 0 && wordCount(poss[2]) <= 3 && !/[,\-–—/&|]$/.test(poss[1]) && !/\b(?:at|for|with|of|the|and)$/i.test(poss[1])) {
       out.push(poss[1].trim());
       p = poss[2].trim();
     }
@@ -1411,7 +1429,7 @@ function assignTitleEmployer(labels: string[]): { title: string | null; employer
 // -------------------------------------------------------------------------
 
 const NOT_A_JOB_RE =
-  /\b(?:unemploy(?:ed|ment)|stay[- ]at[- ]home|homemaker|started a family|maternity|paternity|attended (?:college|school|university)|full[- ]time student|career break|sabbatical|gap year|medical leave|caregiver for|caring for my|raising my|took time off|hiatus|between jobs|job search)\b/i;
+  /\b(?:awards?\s*\/\s*activities\s*:|activities\s*\/\s*awards?\s*:|honors?\s*(?:&|and)\s*awards?\s*:|awards?\s*(?:&|and)\s*honors?\s*:|unemploy(?:ed|ment)|stay[- ]at[- ]home|homemaker|started a family|maternity|paternity|attended (?:college|school|university)|full[- ]time student|career break|sabbatical|gap year|medical leave|caregiver for|caring for my|raising my|took time off|hiatus|between jobs|job search)\b/i;
 const DEGREE_RE =
   /\b(?:bachelor(?:'?s)?|associate(?:'?s)? (?:of|in|degree)|master(?:'?s)? (?:of|in|degree)|mba|b\.?[as]\.?(?:\s|$|,)|a\.?[as]\.?(?:\s|$|,)|m\.?[as]\.?(?:\s|$|,)|b\.?s\.?n\.?|ph\.?d\.?|doctorate|high school(?: diploma)?|\bged\b|diploma|coursework|dean'?s list|undergraduate|graduate student|studying|major(?:ing)? in|degree in|semester|gpa)\b/i;
 const CERT_RE = /\b(?:certif(?:icate|ication|ied)|licen[sc]e[sd]?|credential|training program|bootcamp|course)\b/i;
@@ -1420,7 +1438,12 @@ const CERT_RE = /\b(?:certif(?:icate|ication|ied)|licen[sc]e[sd]?|credential|tra
 // counted as three months of employment (2026-08-26). A drive, a fundraiser,
 // a service project, a club or a scout rank is not a job.
 const VOLUNTEER_RE =
-  /\b(?:volunteer(?:ing|ed|s)?|unpaid|pro bono|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|habitat for humanity|donation drive|fundrais(?:er|ing)|food drive|toy drive|coat drive|blood drive|book drive|supply drive|charity (?:event|drive|work)|service project|community service|service hours|student council|honor society|key club|beta club|boy scouts?|girl scouts?|cub scouts?|eagle scout|4-h|ffa|fbla|deca|rotary|kiwanis|interact club|leo club|big brothers|big sisters|meals on wheels|red cross|salvation army|goodwill donation|united way|relay for life|march of dimes|humane society|animal shelter volunteer|soup kitchen|food bank)\b/i;
+  /\b(?:volunteer(?:ing|ed|s)?|unpaid|pro bono|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|donation drive|food drive|toy drive|coat drive|blood drive|book drive|supply drive|charity (?:event|drive|work)|service project|community service|service hours|student council|honor society|key club|beta club|boy scouts?|girl scouts?|cub scouts?|eagle scout|class president|class officer)\b/i;
+// NOTE (2026-08-26): organisation names (Salvation Army, Red Cross, Goodwill)
+// and club acronyms (DECA, FFA) were tried as triggers and removed the same
+// day — a paid job at a Salvation Army thrift store and a DECA Commissary
+// bagger were both thrown away. Only words that describe the WORK as unpaid
+// belong here.
 const VOLUNTEER_JOB_RE = /\b(?:coordinator|manager|director|specialist|supervisor|paid)\b/i;
 
 const INSTITUTION_RE =
@@ -1643,7 +1666,10 @@ function splitMultiRangeLines(lines: string[], now: MonthYear): { lines: string[
     if (closeParen) { headFull = head + closeParen[0]; rest = rest.slice(closeParen[0].length); }
     if (!DATE_ANYWHERE_RE.test(rest)) { out.push(line); cont.push(false); continue; }
     const restHit = findRangeOnLine(rest, now);
-    const stripped = rest.replace(/^\s*(?:and|&|also|then|,|;|\/|\|)?\s*/i, "");
+    // "Awards/Activities: Senior Class President - X (2022-2023), Founder of
+    // Y (2023-Present)": the lead-in label applies to every item on the line
+    const leadIn = head.match(/^\s*((?:awards?\s*\/\s*activities|activities\s*\/\s*awards?|honors?\s*(?:&|and)\s*awards?|awards?\s*(?:&|and)\s*honors?)\s*:)\s*/i);
+    const stripped = (leadIn ? leadIn[1] + " " : "") + rest.replace(/^\s*(?:and|&|also|then|,|;|\/|\|)?\s*/i, "");
     if (restHit) {
       // a second full range: continuation of the same job when nothing but the
       // conjunction sits between the two ranges, otherwise a second entry
