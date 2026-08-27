@@ -5915,7 +5915,7 @@ const CERT_RE = /\b(?:certif(?:icate|ication|ied)|licen[sc]e[sd]?|credential|tra
 // counted as three months of employment (2026-08-26). A drive, a fundraiser,
 // a service project, a club or a scout rank is not a job.
 const VOLUNTEER_RE =
-  /\b(?:volunteer(?:ing|ed|s)?|unpaid|pro bono|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|donation drive|food drive|toy drive|coat drive|blood drive|book drive|supply drive|charity (?:event|drive|work)|service project|community service|service hours|student council|honor society|key club|beta club|boy scouts?|girl scouts?|cub scouts?|eagle scout|class president|class officer)\b/i;
+  /\b(?:volunteer(?:ing|ed|s)?|unpaid|pro bono|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|donation drive|food drive|toy drive|coat drive|blood drive|book drive|supply drive|charity (?:event|drive|work)|service project|community service|service hours|student council|honor society|key club|beta club|boy scouts?|girl scouts?|cub scouts?|eagle scout|class president|class officer|j?rotc|drill team|colou?r guard|cadet corps)\b/i;
 // NOTE (2026-08-26): organisation names (Salvation Army, Red Cross, Goodwill)
 // and club acronyms (DECA, FFA) were tried as triggers and removed the same
 // day — a paid job at a Salvation Army thrift store and a DECA Commissary
@@ -5950,7 +5950,15 @@ function needMoreLines(linesWithLabels: number): boolean {
 function isNonJobEntry(headerText: string, dateLineText: string, sectionKind: SectionKind = "neutral"): boolean {
   const all = `${headerText} ${dateLineText}`;
   if (NOT_A_JOB_RE.test(all)) return true;
-  if (DEGREE_RE.test(headerText)) return true;
+  // "Student Tutor / Del Valle High School" under WORK EXPERIENCE is a job
+  // whose employer happens to be a school. Only "high school" matching, plus
+  // a proper title word, keeps the entry (Hailley Hernandez, 2026-08-26);
+  // any real degree word still rejects it.
+  if (DEGREE_RE.test(headerText)) {
+    const withoutSchool = headerText.replace(/\bhigh school(?: diploma)?\b/gi, " ");
+    const onlySchoolMatched = !DEGREE_RE.test(withoutSchool) && !/\bdiploma\b/i.test(headerText);
+    if (!(onlySchoolMatched && strongTitleScore(headerText) > 0)) return true;
+  }
   if (PARENTHESISED_AWARD_RE.test(headerText)) return true;
   if (sectionKind === "filtered") {
     // Under an EDUCATION / SKILLS / CERTIFICATIONS / CONTACT header, only an
