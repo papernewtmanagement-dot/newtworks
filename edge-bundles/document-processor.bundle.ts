@@ -5915,13 +5915,15 @@ const CERT_RE = /\b(?:certif(?:icate|ication|ied)|licen[sc]e[sd]?|credential|tra
 // counted as three months of employment (2026-08-26). A drive, a fundraiser,
 // a service project, a club or a scout rank is not a job.
 const VOLUNTEER_RE =
-  /\b(?:volunteer(?:ing|ed|s)?|unpaid|pro bono|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|donation drive|food drive|toy drive|coat drive|blood drive|book drive|supply drive|charity (?:event|drive|work)|service project|community service|service hours|student council|honor society|key club|beta club|boy scouts?|girl scouts?|cub scouts?|eagle scout|class president|class officer|j?rotc|drill team|colou?r guard|cadet corps)\b/i;
+  /\b(?:volunteer(?:ing|ed|s)?|unpaid|pro bono|altar (?:boy|server)|knights of columbus|church member|youth group|mission trip|donation drive|food drive|toy drive|coat drive|blood drive|book drive|supply drive|charity (?:event|drive|work)|service project|community service|service hours|student council|honor society|key club|beta club|boy scouts?|girl scouts?|cub scouts?|eagle scout|class president|class officer|j?rotc|cadet corps)\b/i;
 // NOTE (2026-08-26): organisation names (Salvation Army, Red Cross, Goodwill)
 // and club acronyms (DECA, FFA) were tried as triggers and removed the same
 // day — a paid job at a Salvation Army thrift store and a DECA Commissary
 // bagger were both thrown away. Only words that describe the WORK as unpaid
 // belong here.
-const VOLUNTEER_JOB_RE = /\b(?:coordinator|manager|director|specialist|supervisor|paid)\b/i;
+// "JROTC Instructor" and "Color Guard Technician" at a school district are
+// paid staff, not cadets — the title words below keep such entries.
+const VOLUNTEER_JOB_RE = /\b(?:coordinator|manager|director|specialist|supervisor|paid|instructor|technician|teacher)\b/i;
 
 const INSTITUTION_RE =
   /\b(?:university|univ\.?|college|school|academy|institute|instituto|universidad|escuela|colegio|program|studies|campus|seminary|conservatory)\b/i;
