@@ -323,7 +323,12 @@ function buildEmailBody(firstName: string, htmName: string, folderName: string):
   const signatureName = htmName.replace(/\.htm$/, "");
   return `Hi ${firstName},
 
-Attached is your State Farm email signature. Three steps to install:
+Attached is your State Farm email signature. Before you start, check which
+version of Outlook you have. This only works in Outlook Classic. If there is
+a "New Outlook" switch in the top right corner of your Outlook window, turn
+it off and let Outlook restart, then carry on.
+
+Three steps to install:
 
 1. Save the ZIP anywhere, then double-click to unzip. You'll get one file
    called "${htmName}" and one folder called
