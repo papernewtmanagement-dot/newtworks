@@ -16,12 +16,17 @@
 // AUTH: POST body must include shared_secret matching the agency's
 // automation_runner_cron_secret setting.
 //
-// OUTPUT: ZIP attachment with structure:
-//   State Farm email.htm            <- tokenized template with per-person subs
-//   State Farm email_files/
+// OUTPUT: ZIP attachment. The .htm file and its folder are BOTH named after
+// the person's own State Farm address, because Outlook keys a signature to
+// that pair of names and one person's signature will overwrite another's if
+// they share a name. For peter.story.yrru@statefarm.com:
+//   State Farm email (peter.story.yrru@statefarm.com).htm
+//   State Farm email (peter.story.yrru@statefarm.com)_files/
 //     agentPhoto.jpg                <- their photo (resized to 120x147)
 //     header_logo.gif, social*.gif, spacer.gif, ...  <- 12 shared GIFs
 //     filelist-email.xml            <- Outlook signature manifest
+// Every path inside the .htm, and the manifest's pointer back to the .htm,
+// are rewritten to match. See buildAssetNames().
 //
 // HARD RULE: NO Newtworks self-attribution footer anywhere in the email
 // or attachment.
@@ -61,6 +66,13 @@ const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 const PETER_CC = "storypeterj@gmail.com";
+
+// The literal names the ORIGINAL State Farm template ships with. Both the
+// stored template and the stored manifest still contain these strings, so
+// they are what we search for when rewriting paths per person.
+const TEMPLATE_BASE_NAME = "State Farm email";
+const TEMPLATE_FOLDER_NAME = "State Farm email_files";
+const TEMPLATE_HTM_NAME = "State Farm email.htm";
 const PHOTO_W = 120;
 const PHOTO_H = 147;
 
@@ -284,7 +296,7 @@ function computeTitle(t: TeamMember): string {
   return "";
 }
 
-function substituteTemplate(template: string, t: TeamMember): string {
+function substituteTemplate(template: string, t: TeamMember, folderName: string): string {
   const fullName = `${t.first_name} ${t.last_name}`.trim();
   const title = computeTitle(t);
   const credInline = t.credentials_line && t.credentials_line.trim()
@@ -293,7 +305,10 @@ function substituteTemplate(template: string, t: TeamMember): string {
   const nmlsLine = t.nmls_number && t.nmls_number.trim()
     ? `NMLS# ${t.nmls_number.trim()}<br />`
     : "";
+  // Every image path in the template points at the generic folder name.
+  // Repoint them all at this person's folder before substituting tokens.
   return template
+    .replaceAll(TEMPLATE_FOLDER_NAME, folderName)
     .replaceAll("{{FULL_NAME}}", fullName)
     .replaceAll("{{TITLE}}", title)
     .replaceAll("{{CREDENTIALS_INLINE}}", credInline)
@@ -303,22 +318,24 @@ function substituteTemplate(template: string, t: TeamMember): string {
 // =========================================================================
 // Install instructions email body
 // =========================================================================
-function buildEmailBody(firstName: string): string {
+function buildEmailBody(firstName: string, htmName: string, folderName: string): string {
+  // Outlook lists a signature under its file name without the extension.
+  const signatureName = htmName.replace(/\.htm$/, "");
   return `Hi ${firstName},
 
 Attached is your State Farm email signature. Three steps to install:
 
 1. Save the ZIP anywhere, then double-click to unzip. You'll get one file
-   called "State Farm email.htm" and one folder called
-   "State Farm email_files".
+   called "${htmName}" and one folder called
+   "${folderName}".
 
 2. Open File Explorer. Click in the address bar at the top, type
    %AppData%\\Roaming\\Microsoft\\Signatures and press Enter. Drag BOTH
    the .htm file and the folder into that window.
 
 3. Open Outlook: File > Options > Mail > Signatures. In the dropdowns on
-   the right, set both "New messages" and "Replies/forwards" to "State
-   Farm email". Click OK.
+   the right, set both "New messages" and "Replies/forwards" to
+   "${signatureName}". Click OK.
 
 Send yourself a test email to check it looks right. If anything's off,
 reply to this email and let me know.
@@ -327,19 +344,42 @@ reply to this email and let me know.
 }
 
 // =========================================================================
+// Per-person file naming
+// -------------------------------------------------------------------------
+// Outlook stores a signature as an .htm file plus a same-named _files
+// folder, and identifies it by that name. Naming both after the person's
+// own State Farm address keeps two people's signatures from colliding on a
+// shared machine and makes it obvious which one belongs to whom.
+// =========================================================================
+function buildAssetNames(emailSf: string): { htmName: string; folderName: string } {
+  const base = `${TEMPLATE_BASE_NAME} (${emailSf})`;
+  return { htmName: `${base}.htm`, folderName: `${base}_files` };
+}
+
+// =========================================================================
 // ZIP builder
 // =========================================================================
 async function buildSignatureZip(opts: {
   fullName: string;
+  htmName: string;
+  folderName: string;
   substitutedHtml: string;
   photoJpeg: Uint8Array;
 }): Promise<Uint8Array> {
   const zip = new JSZip();
   const rootFolder = zip.folder(`State Farm Templates - ${opts.fullName}`)!;
-  rootFolder.file("State Farm email.htm", opts.substitutedHtml);
-  const imgFolder = rootFolder.folder("State Farm email_files")!;
+  rootFolder.file(opts.htmName, opts.substitutedHtml);
+  const imgFolder = rootFolder.folder(opts.folderName)!;
   imgFolder.file("agentPhoto.jpg", opts.photoJpeg);
   for (const [filename, b64] of Object.entries(SHARED_ASSETS)) {
+    // The Outlook manifest carries a pointer back up to the .htm file by
+    // name, so it has to be rewritten for this person like the template was.
+    if (filename === "filelist-email.xml") {
+      const xml = new TextDecoder().decode(base64ToBytes(b64))
+        .replaceAll(TEMPLATE_HTM_NAME, opts.htmName);
+      imgFolder.file(filename, new TextEncoder().encode(xml));
+      continue;
+    }
     imgFolder.file(filename, base64ToBytes(b64));
   }
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
@@ -453,13 +493,16 @@ async function run(req: Request): Promise<Response> {
   }
 
   // 7) Substitute template
-  const substitutedHtml = substituteTemplate(tpl.template_html, member as TeamMember);
+  const { htmName, folderName } = buildAssetNames(member.email_sf!);
+  const substitutedHtml = substituteTemplate(tpl.template_html, member as TeamMember, folderName);
 
   // 8) Build ZIP
   const fullName = `${member.first_name} ${member.last_name}`.trim();
   let zipBytes: Uint8Array;
   try {
-    zipBytes = await buildSignatureZip({ fullName, substitutedHtml, photoJpeg: resizedPhoto });
+    zipBytes = await buildSignatureZip({
+      fullName, htmName, folderName, substitutedHtml, photoJpeg: resizedPhoto,
+    });
   } catch (e) {
     return jsonResponse({ ok: false, error: `zip build failed: ${e instanceof Error ? e.message : String(e)}` }, 500);
   }
@@ -472,6 +515,8 @@ async function run(req: Request): Promise<Response> {
       full_name: fullName,
       recipient: member.email_sf,
       cc: PETER_CC,
+      htm_name: htmName,
+      folder_name: folderName,
       zip_size: zipBytes.length,
       photo_size: resizedPhoto.length,
       substituted_html_bytes: substitutedHtml.length,
@@ -481,7 +526,7 @@ async function run(req: Request): Promise<Response> {
 
   // 9) Send email through the Composio proxy (see helper block for rationale)
   const firstName = member.first_name!;
-  const emailBody = buildEmailBody(firstName);
+  const emailBody = buildEmailBody(firstName, htmName, folderName);
   const subject = `Your State Farm Email Signature — ${fullName}`;
 
   const sendRes = await sendViaGmailApi({
