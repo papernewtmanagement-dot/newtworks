@@ -1,0 +1,13 @@
+-- Peter directive 2026-08-26. Tell the scorer to read the screener accomplishment
+-- answer when one exists, and record why the resume weight moved.
+UPDATE public.hiregauge_rules
+SET description = description || E'\n\nSCREENER ACCOMPLISHMENT ANSWER (added 2026-08-26). Applicants applying through the careers page now answer two required questions: best_result (the result and what they were measured against) and best_result_verifier (who can confirm it). They live in hiring_candidates.ingestion_metadata->screener_answers and on job_applications.screener_answers. WHEN AN ANSWER EXISTS, SCORE THIS SIGNAL FROM IT, using the resume only as supporting evidence. When there is no answer — every candidate sourced from Indeed, ZipRecruiter, email or the back catalogue — score from the resume exactly as before.\n\nScoring the answer against the existing anchors: a named result with a number, against a stated target or standard, plus a verifier with a name, title and contact = 70-100. A real result with no number attached, or a number with no target to compare it to = 40-70. A duty restated as an accomplishment ("handled customer calls"), or a claim with no verifier given = 0-40.\n\nDo NOT penalise a candidate whose role had no numeric target. Judge the result against the standard they name, not against whether the standard happened to be numeric. A retention seat with no quota can still describe saving a specific book of business.\n\nWHY IT SITS HERE AND NOT IN THE RESUME TEXT: McDaniel, Schmidt & Hunter 1988 (Personnel Psychology 41) — behavioural-consistency accomplishment description validates at .45 against .11 for the unstructured point method. Verifiability is what makes it hold up (Levashina, Morgeson & Campion 2012, Personnel Psychology 65, N=16,304). The resume weight for this signal was cut from .20 to .08 the same day precisely because free-form resume goal language is the weak form; it was retained rather than zeroed because numbers a candidate volunteers are still real evidence.'
+WHERE id = '14c87199-d835-4f90-8f34-e704c2ed073d';
+
+UPDATE public.hiregauge_rules
+SET trait_signature = jsonb_set(
+      trait_signature,
+      '{signal_weights_note}',
+      '"Signal weights live in hiregauge_resume_signal_weights and were rebalanced 2026-08-26 (Peter): goal_orientation .20 -> .08, interpersonal_substrate .10 -> .16, autonomy .06 -> .12. Nonzero weights still sum to 1.000. Goal orientation was reduced, NOT removed - free-form resume goal language is the weak form of the accomplishment predictor and the structured screener question best_result now carries the strong form. Verdict thresholds unchanged (pass >=70, decline <50)."'::jsonb,
+      true)
+WHERE id = '42e640a0-ccd9-46af-8e0e-f8fe82d54a47';
