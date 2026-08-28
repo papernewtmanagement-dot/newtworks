@@ -84,19 +84,6 @@ const xStepFor = (xMax, isPremium) => {
 // it fills the full available width and scales on a phone without a chart
 // library.
 
-// Temporary comparison overlay (Peter, 2026-08-28): the locked band
-// concept — starts at 1x / 3x / 6x / 10x of the Danger width — drawn a
-// second time at the width below, as a ribbon above the sales chart.
-// Remove once the Danger width is decided.
-const COMPARE_DANGER_WIDTH = 60;
-const BAND_SEQ = [
-  { key: "danger",  label: "Danger"  },
-  { key: "caution", label: "Caution" },
-  { key: "good",    label: "Good"    },
-  { key: "great",   label: "Great"   },
-  { key: "elite",   label: "Elite"   },
-];
-
 // Three lines (Peter 2026-08-28): base pay on its own, base plus
 // commission on its own, and the full total with the team bonus on top.
 // "place" is which side of its own line that line's dollar labels sit on.
@@ -118,23 +105,10 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const xMax   = Number(curve?.x_max) || 0;
   const isPremium = curve?.x_kind === "annual_life_premium";
 
-  // Comparison bands at COMPARE_DANGER_WIDTH — sales pay-scale chart only.
-  const compare = useMemo(() => {
-    if (curve?.source !== "pay_scale" || !(xMax > 0)) return null;
-    const d = COMPARE_DANGER_WIDTH;
-    const starts = [0, d, 3 * d, 6 * d, 10 * d];
-    return BAND_SEQ.map((b, i) => ({
-      key: b.key, label: b.label,
-      fromX: starts[i],
-      toX: i < starts.length - 1 ? Math.min(starts[i + 1], xMax) : xMax,
-    })).filter(s => s.fromX < xMax);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curve]);
-
   const W = isPhone ? 400 : 1100;
   const H = isPhone ? 500 : 600;
   const padL = isPhone ? 40 : 56, padR = isPhone ? 14 : 20;
-  const padT = compare ? 46 : 28;
+  const padT = 28;
   const padB = isPhone ? 40 : 44;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
@@ -207,14 +181,12 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const fontTick = isPhone ? 9 : 10;
   const fontMark = isPhone ? 9 : 10;
   const fontDot  = isPhone ? 8 : 9;
-  const ribbonY = 24, ribbonH = 16;
 
   // Where each line gets a dollar figure. Band transitions on the base and
   // base-plus-commission lines, every 100-point crossing on all three. Keep
   // a minimum gap so nothing stacks up on a phone — the further-left label
-  // wins, and the total line yields to the markers it already carries.
+  // wins, and the total line yields to the band markers it already carries.
   const bandXs = bands.map(b => Number(b.from_x) || 0).filter(v => v > 0);
-  const compareXs = compare ? compare.map(c => c.fromX).filter(v => v > 0) : [];
   const minGapPx = isPhone ? 30 : 34;
   const thin = (xs, seed) => {
     const kept = [...(seed || [])];
@@ -230,7 +202,7 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const labelXs = {
     base:      thin([...gridXs, ...bandXs]),
     base_comm: thin([...gridXs, ...bandXs]),
-    total:     thin(gridXs, [...compareXs, ...bandXs]),
+    total:     thin(gridXs, bandXs),
   };
 
   // Legend runs left to right; widths are rough but stable at both sizes.
@@ -282,11 +254,6 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
         </text>
       ))}
       <text x={padL + chartW / 2} y={H - 6} textAnchor="middle" fontSize={fontTick} fontWeight={600} fill={T.slate400}>{curve.x_label}</text>
-      {/* Comparison drop lines */}
-      {compare && compare.map(c => c.fromX > 0 && (
-        <line key={"cd-" + c.key} x1={xFor(c.fromX)} y1={ribbonY + ribbonH} x2={xFor(c.fromX)} y2={padT + chartH}
-          stroke={tierColor(c.key)} strokeWidth="1.25" strokeDasharray="3 4" opacity="0.5" />
-      ))}
       {/* The three pay lines */}
       {CURVE_LINES.map(l => (
         <path key={"line-" + l.key} d={pathFor(l.key)} stroke={l.color}
@@ -325,39 +292,6 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
           </g>
         );
       })}
-      {/* Total pay at the comparison transitions: hollow markers, label below the line */}
-      {compare && compare.map(c => {
-        if (!(c.fromX > 0)) return null;
-        const tv = valueAt("total", c.fromX);
-        const px = xFor(c.fromX), py = yFor(tv);
-        const anchor = px > padL + chartW - 34 ? "end" : "middle";
-        return (
-          <g key={"cmk-" + c.key}>
-            <circle cx={px} cy={py} r={3.5} fill={T.white} stroke={tierColor(c.key)} strokeWidth="2" />
-            <text x={anchor === "end" ? px + 4 : px} y={py + 15} textAnchor={anchor} fontSize={fontMark} fontWeight={700} fill={tierColor(c.key)}>{fmtK(tv)}</text>
-          </g>
-        );
-      })}
-      {/* Comparison ribbon */}
-      {compare && (
-        <g>
-          <text x={padL} y={21} fontSize={9} fontWeight={700} fill={T.slate500}>If Danger = {COMPARE_DANGER_WIDTH}</text>
-          {compare.map(c => {
-            const x0 = xFor(c.fromX), wPx = Math.max(0, xFor(c.toX) - x0);
-            return (
-              <g key={"cr-" + c.key}>
-                <rect x={x0} y={ribbonY} width={wPx} height={ribbonH} fill={tierBandFill(c.key)} opacity="0.9" stroke={tierColor(c.key)} strokeWidth="0.5" strokeOpacity="0.4" />
-                {wPx >= 44 && (
-                  <text x={x0 + wPx / 2} y={ribbonY + ribbonH / 2 + 2.8} textAnchor="middle" fontSize={8} fontWeight={700} fill={tierColor(c.key)}>{c.label}</text>
-                )}
-                {c.fromX > 0 && (
-                  <text x={x0} y={padT - 3} textAnchor="middle" fontSize={8.5} fontWeight={600} fill={tierColor(c.key)}>{Math.round(c.fromX)}</text>
-                )}
-              </g>
-            );
-          })}
-        </g>
-      )}
       {/* Legend */}
       <g>
         {CURVE_LINES.map((l, i) => (
@@ -631,7 +565,7 @@ export default function EarningPotentialTab() {
         <details style={{ marginTop: 6 }}>
           <summary style={{ cursor: "pointer", color: T.slate600, fontWeight: 600 }}>Model inputs</summary>
           <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "4px 16px" }}>
-            <div>Share of agency earnings funding the pool: <b style={{ color: T.slate700 }}>{fmtPct(a.pool_pct_used)}</b>{Number.isFinite(Number(a.pool_pct_this_week)) && <span> (this week {fmtPct(a.pool_pct_this_week)}; averaged forward to {a.pool_pct_window_end || "the plan horizon"})</span>}</div>
+            <div>Share of agency earnings funding the pool: <b style={{ color: T.slate700 }}>{fmtPct(a.pool_pct_used)}</b></div>
             <div>Bonus pool basis (annual): <b style={{ color: T.slate700 }}>{fmtMoney(a.pool_basis_annual)}</b></div>
             <div>Weekly bonus pool (quarter average): <b style={{ color: T.slate700 }}>{fmtMoney(a.weekly_bonus_pool, { decimals: 2 })}</b></div>
             <div>Rest of team, weekly sales points: <b style={{ color: T.slate700 }}>{Number(a.rest_of_team_weekly_sp || 0).toLocaleString()}</b></div>
