@@ -1038,34 +1038,37 @@ function useCPRData(weekDate) {
           if (!cancelled) mvpThisWeek = mvpRow || null;
         } catch (e) { console.warn("mvp_history fetch failed:", e); }
 
-        // Prior-quarter avg SP per person — from historical quarterly QTD divided by 13.
-        // Serves as reference lines on Sales Points weekly-run charts (assumes even production).
-        // Look back at most 4 completed quarters (=1 year of context) prior to the current week.
-        // The list of quarter-end Saturdays is derived: pick the most recent quarter-end Sat that is
-        // strictly before weekDate, then step back 13 weeks at a time for a total of 4 dates.
+        // Prior-quarter average weekly Sales Points per person, for the last 4 COMPLETED
+        // State Farm quarters before the week being viewed. Reference lines on the
+        // Sales Points weekly run (assumes even production across the quarter).
+        //
+        // Close dates, week counts AND labels all come from the prior_quarter_closes
+        // database function, which walks current_cycle_info -- the single source of
+        // quarter boundaries. The page used to derive all three itself and got two of
+        // them wrong:
+        //   * It stepped back a fixed 91 days per quarter. Quarters are not always 91
+        //     days -- Q4 2023, Q4 2028 and Q3 2029 run 14 weeks, Q1 2029 runs 12.
+        //   * It read the quarter label off the calendar month of the CLOSE SATURDAY.
+        //     A quarter closes on the Saturday of the week containing the calendar
+        //     quarter's last day, so that Saturday normally falls in the NEXT calendar
+        //     month: Q2 2026 closes 2026-07-04 and was labelled "Q3 2026". Every label
+        //     was one quarter too high (wrong on 24 of the 28 quarters from 2023
+        //     through 2029), and the YEAR was wrong too whenever a close crossed New
+        //     Year -- Q4 2025 closes 2026-01-03 and was labelled "Q1 2026".
         let priorQuartersAvgSP = {};
-        const priorQuarterEndDates = (() => {
-          if (!weekDate || !cycleStartISO) return [];
-          // Quarter-end Saturdays are derived from the cycle this week belongs to, not a
-          // hardcoded list. The day before a cycle starts IS the previous cycle's close
-          // Saturday, and cycles are 91 days, so stepping back 91 at a time walks the
-          // closes. The old hardcoded list held calendar quarter-ends, which drifted from
-          // the real State Farm cycle ends by a week and went stale whenever a close row
-          // moved.
-          const dayMs = 86400000;
-          const startMs = Date.UTC(
-            parseInt(cycleStartISO.slice(0,4),10),
-            parseInt(cycleStartISO.slice(5,7),10) - 1,
-            parseInt(cycleStartISO.slice(8,10),10)
-          );
-          const out = [];
-          for (let i = 0; i < 4; i++) {
-            const endMs = startMs - dayMs - (i * 91 * dayMs);
-            const iso = new Date(endMs).toISOString().slice(0,10);
-            if (iso < weekDate) out.push(iso);
-          }
-          return out.reverse();
-        })();
+        let priorQuarterMeta = [];
+        try {
+          const { data: pqRows } = await supabase.rpc("prior_quarter_closes", {
+            p_agency_id: AGENCY_ID,
+            p_ref_date: weekDate,
+            p_count: 4,
+          });
+          priorQuarterMeta = (pqRows || []).filter(r => r?.close_date && r.close_date < weekDate);
+        } catch (e) {
+          console.warn("prior_quarter_closes fetch failed:", e);
+        }
+        const priorQuarterEndDates = priorQuarterMeta.map(r => r.close_date);
+        const priorQuarterByClose = Object.fromEntries(priorQuarterMeta.map(r => [r.close_date, r]));
         try {
           // weekly_cpr_team_detail_activity — sales_points is not comp data,
           // but the base table's row-level admin-or-own policy dropped every
@@ -1099,16 +1102,18 @@ function useCPRData(weekDate) {
             const grouped = {};
             qtrRows.forEach(r => {
               const wed = r.weekly_cpr_reports?.week_ending_date;
-              const y = wed?.slice(0,4);
-              const m = parseInt(wed?.slice(5,7), 10);
-              const q = m >= 1 && m <= 3 ? 1 : m <= 6 ? 2 : m <= 9 ? 3 : 4;
-              const label = `Q${q} ${y}`;
+              const meta = priorQuarterByClose[wed];
+              if (!meta) return;
+              // Real week count for that quarter. 13 is normal but 12 and 14 both occur;
+              // a hardcoded 13 mis-stated the average on every non-13-week quarter.
+              const weeks = Number(meta.weeks_in_quarter) || 13;
               const tmId = r.team_member_id;
               if (!grouped[tmId]) grouped[tmId] = [];
               grouped[tmId].push({
-                quarter_label: label,
-                avg_weekly_sp: (Number(r.sales_points) || 0) / 13,
+                quarter_label: meta.quarter_label,
+                avg_weekly_sp: (Number(r.sales_points) || 0) / weeks,
                 qtd_sp: Number(r.sales_points) || 0,
+                weeks_in_quarter: weeks,
               });
             });
             priorQuartersAvgSP = grouped;
@@ -3220,7 +3225,10 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 <Th align="right">Q Sales Pts</Th>
                 <Th align="right" style={{ background: _TINT_1PCT }}>↑ 1% vs 13-wk</Th>
                 {quarterList.map(q => (
-                  <Th key={q} align="right" style={{ background: _TINT_HIST }}>{q}</Th>
+                  <Th key={q} align="right" style={{ background: _TINT_HIST }}>
+                    {q}
+                    <div style={{ fontWeight: 400, fontSize: 9, letterSpacing: 0, color: T.slate400 }}>avg sales pts / wk</div>
+                  </Th>
                 ))}
               </tr>
             </thead>
