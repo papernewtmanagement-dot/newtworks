@@ -326,6 +326,34 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   );
 };
 
+// ─── The published raise ladder ─────────────────────────────
+// Base rate steps up as weekly pace crosses each tier, and never steps
+// back down. Read off public.pay_scale, the one copy of the ladder.
+const RaiseLadder = ({ ladder, isPhone }) => {
+  const rows = Array.isArray(ladder) ? ladder : [];
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isPhone ? 76 : 88}px, 1fr))`, gap: 6 }}>
+      {rows.map(r => {
+        const start = !(Number(r.from_x) > 0);
+        return (
+          <div key={"rl-" + r.tier} style={{
+            border: `1px solid ${start ? T.slate200 : T.blueLt}`, borderRadius: 8,
+            background: start ? T.white : T.blueLt, padding: "6px 8px", textAlign: "center", boxSizing: "border-box",
+          }}>
+            <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: start ? T.slate700 : T.blue, whiteSpace: "nowrap" }}>
+              ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600 }}>/hr</span>
+            </div>
+            <div style={{ fontSize: 9.5, color: T.slate500, whiteSpace: "nowrap" }}>
+              {start ? "starting rate" : Number(r.from_x).toLocaleString() + " pts"}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ─── Breakdown table for one tier ───────────────────────────
 const TierBreakdown = ({ tier, roleKey }) => {
   const yrs = Array.isArray(tier?.years) ? [...tier.years].sort((a, b) => Number(a.year) - Number(b.year)) : [];
@@ -539,14 +567,25 @@ export default function EarningPotentialTab() {
         )}
       </div>
 
+      {/* Raise tiers: the published ladder, between the chart and the first year. */}
+      {role.role_key === "sales" && Array.isArray(role.raise_ladder) && role.raise_ladder.length > 0 && (
+        <div style={card}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Raise tiers</div>
+          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
+            The base rate steps up as a weekly pace crosses each tier. A raise never steps back down.
+          </div>
+          <RaiseLadder ladder={role.raise_ladder} isPhone={_vp.isPhone} />
+        </div>
+      )}
+
       {/* Sales: first-year path to $100k. Other roles keep the tier grid. */}
       {role.role_key === "sales" && y1 && (
         <div style={card}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>
-            A first year to a hundred thousand
+          <div style={{ fontSize: _vp.isPhone ? 19 : 23, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+            Year One — Path to $100k
           </div>
           {y1.headline && (
-            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>{y1.headline}</div>
+            <div style={{ fontSize: 12, color: T.slate600, marginTop: 4, marginBottom: 10 }}>{y1.headline}</div>
           )}
           <YearOnePath path={y1} isPhone={_vp.isPhone} />
         </div>
@@ -574,10 +613,10 @@ export default function EarningPotentialTab() {
 
       {/* Assumptions */}
       <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.5 }}>
-        {a.note && <div>{a.note}</div>}
-        <details style={{ marginTop: 6 }}>
-          <summary style={{ cursor: "pointer", color: T.slate600, fontWeight: 600 }}>Model inputs</summary>
-          <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "4px 16px" }}>
+        <details>
+          <summary style={{ cursor: "pointer", color: T.slate600, fontWeight: 600 }}>How these numbers are calculated</summary>
+          {a.note && <div style={{ marginTop: 6 }}>{a.note}</div>}
+          <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "4px 16px" }}>
             <div>Share of agency earnings funding the pool: <b style={{ color: T.slate700 }}>{fmtPct(a.pool_pct_used)}</b></div>
             <div>Bonus pool basis (annual): <b style={{ color: T.slate700 }}>{fmtMoney(a.pool_basis_annual)}</b></div>
             <div>Weekly bonus pool (quarter average): <b style={{ color: T.slate700 }}>{fmtMoney(a.weekly_bonus_pool, { decimals: 2 })}</b></div>
