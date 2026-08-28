@@ -99,7 +99,7 @@ const CURVE_LINES = [
 // meaningless.
 const GRID_POINT_STEP = 100;
 
-const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
+const EarningsCurveChart = ({ curve, tiers, highlighted, isPhone }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
   const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
   const xMax   = Number(curve?.x_max) || 0;
@@ -205,6 +205,25 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
     total:     thin(gridXs, bandXs),
   };
 
+  // Which performer tier sits in which band (Peter 2026-08-28): a tier's
+  // production level is its multiplier against the role's weekly target, so
+  // it falls inside whichever band covers that level. On the computed
+  // curves the band IS the tier, so only the percentage gets added.
+  const tierTargetX = curve?.source === "pay_scale" ? 100 : null;
+  const tiersInBand = (bandKey, fromX, toX) => {
+    const list = Array.isArray(tiers) ? tiers : [];
+    return list.filter(t => {
+      if (t.tier_key === bandKey) return true;
+      if (tierTargetX == null) return false;
+      const tx = tierTargetX * (Number(t.multiplier) || 1);
+      return tx >= fromX && tx < toX;
+    }).map(t => ({
+      key: t.tier_key,
+      text: t.tier_key === bandKey ? fmtPct(t.applicant_pct)
+                                   : t.tier_label + " " + fmtPct(t.applicant_pct),
+    }));
+  };
+
   // Legend runs left to right; widths are rough but stable at both sizes.
   const legendStep = (label) => 24 + label.length * (isPhone ? 4.4 : 5.0) + 12;
   let legendAcc = 0;
@@ -227,7 +246,13 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
             <rect x={x0} y={padT} width={wPx} height={chartH} fill={tierBandFill(m.key)} opacity={hot ? 0.85 : 0.45} />
             <line x1={x0} y1={padT} x2={x0} y2={padT + chartH} stroke={tierColor(m.key)} strokeWidth="1" opacity="0.5" strokeDasharray="2 3" />
             {wPx >= 22 && (labelHoriz ? (
-              <text x={x0 + wPx / 2} y={padT + 12} textAnchor="middle" fontSize={9} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3">{m.label}</text>
+              <>
+                <text x={x0 + wPx / 2} y={padT + 12} textAnchor="middle" fontSize={9} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3">{m.label}</text>
+                {tiersInBand(m.key, m.fromX, m.toX).map((tb, ti) => (
+                  <text key={"tb-" + m.key + "-" + tb.key} x={x0 + wPx / 2} y={padT + 24 + ti * 11}
+                    textAnchor="middle" fontSize={8.5} fontWeight={600} fill={tierColor(m.key)} opacity="0.85">{tb.text}</text>
+                ))}
+              </>
             ) : (
               <text x={x0 + wPx / 2} y={padT + chartH / 2} textAnchor="middle" fontSize={8.5} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3"
                 transform={`rotate(-90 ${(x0 + wPx / 2).toFixed(1)} ${(padT + chartH / 2).toFixed(1)})`}>{m.label}</text>
@@ -502,10 +527,10 @@ export default function EarningPotentialTab() {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges. Tap a tier below to highlight it.</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges, with the performer tier that lands in each.</div>
         </div>
         {curve ? (
-          <EarningsCurveChart curve={curve} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
+          <EarningsCurveChart curve={curve} tiers={tiers} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
         ) : (
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
         )}
@@ -517,25 +542,6 @@ export default function EarningPotentialTab() {
             {extrasPrefix}{extrasNote}
           </div>
         )}
-      </div>
-
-      {/* Tier legend */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-        {tiers.map(t => {
-          const hot = t.tier_key === hotTier?.tier_key;
-          const c = tierColor(t.tier_key);
-          return (
-            <button key={t.tier_key} onClick={() => setHighlighted(t.tier_key)}
-              style={{ textAlign: "left", background: T.white, border: `2px solid ${hot ? c : T.slate200}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer", boxShadow: hot ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ width: 22, height: 4, background: c, borderRadius: 2, display: "inline-block", flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{t.tier_label}</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: c, marginLeft: "auto", whiteSpace: "nowrap" }}>{fmtPct(t.applicant_pct)} of applicants</span>
-              </span>
-              <span style={{ display: "block", fontSize: 11.5, color: T.slate600, lineHeight: 1.4 }}>{t.descriptor}</span>
-            </button>
-          );
-        })}
       </div>
 
       {/* Sales: first-year path to $100k. Other roles keep the tier grid. */}
@@ -552,8 +558,20 @@ export default function EarningPotentialTab() {
       )}
       {role.role_key !== "sales" && hotTier && (
         <div style={card}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>
-            Year-by-year for {hotTier.tier_label}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>
+              Year-by-year for {hotTier.tier_label}
+            </div>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {tiers.map(t => (
+                <button key={t.tier_key} onClick={() => setHighlighted(t.tier_key)}
+                  style={{ padding: "3px 8px", fontSize: 11, fontWeight: t.tier_key === hotTier.tier_key ? 700 : 500,
+                    color: t.tier_key === hotTier.tier_key ? T.white : T.slate600,
+                    background: t.tier_key === hotTier.tier_key ? tierColor(t.tier_key) : T.white,
+                    border: `1px solid ${t.tier_key === hotTier.tier_key ? tierColor(t.tier_key) : T.slate200}`,
+                    borderRadius: 6, cursor: "pointer" }}>{t.tier_label}</button>
+              ))}
+            </div>
           </div>
           <TierBreakdown tier={hotTier} roleKey={role.role_key} />
         </div>
