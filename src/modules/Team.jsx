@@ -3030,7 +3030,10 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
-  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth","earnings"]);
+  // Earning Potential is OWNER only (Peter 2026-08-28) — the rest of the Team
+  // module stays owner+manager. Managers never see the tab or its URL.
+  const isOwner = userRole === "owner";
+  const [section, setSection, sectionHref] = useTabParam("tab", "members", isOwner ? ["members","growth","earnings"] : ["members","growth"]);
   const [applicants,  setApplicants]  = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(true);
   const [applicantsError,   setApplicantsError]   = useState(false);
@@ -3216,7 +3219,7 @@ export default function Team({ userRole }) {
   const sections = [
     { id:"members",  label:"Members"  },
     { id:"growth",   label:"Growth"   },
-    { id:"earnings", label:"Earning Potential" },
+    ...(isOwner ? [{ id:"earnings", label:"Earning Potential" }] : []),
   ];
 
   return (
@@ -3246,7 +3249,7 @@ export default function Team({ userRole }) {
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
       {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} userRole={userRole} />}
-      {section === "earnings" && <EarningPotentialTab />}
+      {section === "earnings" && isOwner && <EarningPotentialTab />}
     </div>
   );
 }
