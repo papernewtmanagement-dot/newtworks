@@ -453,9 +453,9 @@ export default function EarningPotentialTab() {
           <summary style={{ cursor: "pointer", color: T.slate600, fontWeight: 600 }}>Model inputs</summary>
           <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "4px 16px" }}>
             <div>Bonus pool basis (annual): <b style={{ color: T.slate700 }}>{fmtMoney(a.pool_basis_annual)}</b></div>
-            <div>Weekly bonus pool: <b style={{ color: T.slate700 }}>{fmtMoney(a.weekly_bonus_pool, { decimals: 2 })}</b></div>
-            <div>Bonus dollars per sales point: <b style={{ color: T.slate700 }}>{fmtMoney(a.bonus_dollars_per_sales_point, { decimals: 4 })}</b></div>
-            <div>Bonus dollars per weighted hour, weekly: <b style={{ color: T.slate700 }}>{fmtMoney(a.bonus_dollars_per_weighted_hour_weekly, { decimals: 4 })}</b></div>
+            <div>Weekly bonus pool (quarter average): <b style={{ color: T.slate700 }}>{fmtMoney(a.weekly_bonus_pool, { decimals: 2 })}</b></div>
+            <div>Rest of team, weekly sales points: <b style={{ color: T.slate700 }}>{Number(a.rest_of_team_weekly_sp || 0).toLocaleString()}</b></div>
+            <div>Team weighted retention hours, weekly: <b style={{ color: T.slate700 }}>{Number(a.team_weighted_hours_weekly || 0).toLocaleString()}</b></div>
             <div>Weekly sales-point targets: <b style={{ color: T.slate700 }}>Sales {a.sales_points_target_weekly?.sales ?? "—"} · Retention {a.sales_points_target_weekly?.retention ?? "—"}</b></div>
           </div>
         </details>
