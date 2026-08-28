@@ -217,6 +217,14 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
     total:     thin(gridXs, bandXs),
   };
 
+  // Legend runs left to right; widths are rough but stable at both sizes.
+  const legendAt = [];
+  let legendAcc = 0;
+  for (const l of CURVE_LINES) {
+    legendAt.push(legendAcc);
+    legendAcc += 24 + l.label.length * (isPhone ? 4.4 : 5.0) + 12;
+  }
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Projected annual pay by production level: base pay, base plus commission, and total pay, with performance bands shaded">
       {/* Performance bands */}
@@ -224,7 +232,7 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
         const x0 = xFor(m.fromX), x1 = xFor(m.toX);
         const wPx = Math.max(0, x1 - x0);
         const hot = m.key === highlighted;
-        const labelHoriz = wPx >= (isPhone ? 52 : 60);
+        const labelHoriz = wPx >= (isPhone ? 48 : 60);
         return (
           <g key={"band-" + m.key}>
             <rect x={x0} y={padT} width={wPx} height={chartH} fill={tierBandFill(m.key)} opacity={hot ? 0.85 : 0.45} />
@@ -240,7 +248,9 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
               </>
             ) : (
               <text x={x0 + wPx / 2} y={padT + chartH / 2} textAnchor="middle" fontSize={8.5} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3"
-                transform={`rotate(-90 ${(x0 + wPx / 2).toFixed(1)} ${(padT + chartH / 2).toFixed(1)})`}>{m.label}</text>
+                transform={`rotate(-90 ${(x0 + wPx / 2).toFixed(1)} ${(padT + chartH / 2).toFixed(1)})`}>
+                {[m.label, ...(BAND_NOTES[m.key] || [])].join(" · ")}
+              </text>
             ))}
           </g>
         );
