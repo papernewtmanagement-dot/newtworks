@@ -74,7 +74,18 @@ const MS_PER_DAY = 86400000;
 // were gated on the wrong side of the first-four-weeks line.
 function evaluateTiming(requestType, startDate, endDate, eligibility, cycleStartISO) {
   if (!TIMING_GATED_TYPES.includes(requestType) || !startDate) return null;
-  if (!cycleStartISO) return null;   // no quarter, no ruling — never guess one locally
+  // FAIL CLOSED. If the quarter cannot be resolved, do NOT drop the gate — the caller
+  // treats a null timing result as "no gate applies", so returning null here would let a
+  // request that needs the agent's OK go straight through. Route it to the agent instead.
+  if (!cycleStartISO) {
+    return {
+      day_of_quarter: null, span_days: null,
+      in_first_four_weeks: null, exceeds_one_week: null,
+      clears_first_four_weeks: null, clears_one_week: null,
+      needs_agent_ok: true,
+      messages: ["Could not confirm which quarter this start date falls in -- sending to the agent to check"],
+    };
+  }
   const parts = String(startDate).split("-").map(Number);
   if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return null;
   const [year, month] = parts;
