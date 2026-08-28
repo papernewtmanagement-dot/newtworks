@@ -79,16 +79,46 @@ const xStepFor = (xMax, isPremium) => {
 
 // ─── Chart ───────────────────────────────────────────────────
 // Inline SVG, same approach as the CPR sparkline. viewBox + width 100% so
-// it fills its card and scales on a phone without a chart library.
+// it fills the full available width and scales on a phone without a chart
+// library.
+
+// Temporary comparison overlay (Peter, 2026-08-28): the locked band
+// concept — starts at 1x / 3x / 6x / 10x of the Danger width — drawn a
+// second time at a Danger width of 75, as a ribbon above the sales chart.
+// Remove once the Danger width is decided.
+const COMPARE_DANGER_WIDTH = 75;
+const BAND_SEQ = [
+  { key: "danger",  label: "Danger"  },
+  { key: "caution", label: "Caution" },
+  { key: "good",    label: "Good"    },
+  { key: "great",   label: "Great"   },
+  { key: "elite",   label: "Elite"   },
+];
+
 const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
   const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
   const xMax   = Number(curve?.x_max) || 0;
   const isPremium = curve?.x_kind === "annual_life_premium";
 
-  const W = isPhone ? 400 : 680;
-  const H = isPhone ? 250 : 292;
-  const padL = isPhone ? 40 : 50, padR = isPhone ? 14 : 18, padT = 28, padB = isPhone ? 40 : 42;
+  // Comparison bands at COMPARE_DANGER_WIDTH — sales pay-scale chart only.
+  const compare = useMemo(() => {
+    if (curve?.source !== "pay_scale" || !(xMax > 0)) return null;
+    const d = COMPARE_DANGER_WIDTH;
+    const starts = [0, d, 3 * d, 6 * d, 10 * d];
+    return BAND_SEQ.map((b, i) => ({
+      key: b.key, label: b.label,
+      fromX: starts[i],
+      toX: i < starts.length - 1 ? Math.min(starts[i + 1], xMax) : xMax,
+    })).filter(s => s.fromX < xMax);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curve]);
+
+  const W = isPhone ? 400 : 1100;
+  const H = isPhone ? 500 : 600;
+  const padL = isPhone ? 40 : 56, padR = isPhone ? 14 : 20;
+  const padT = compare ? 46 : 28;
+  const padB = isPhone ? 40 : 44;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
@@ -105,7 +135,7 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const yFor = (v) => padT + chartH - (Math.max(0, Number(v) || 0) / maxY) * chartH;
   const pathFor = (key) => points.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(p[key]).toFixed(1)).join("");
 
-  // Total pay at each tier's production level, for the threshold markers.
+  // Total pay at each band's production level, for the threshold markers.
   const markers = useMemo(() => bands.map((b, i) => {
     const fx = Number(b.from_x) || 0;
     let best = null;
@@ -128,10 +158,11 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
 
   const fontTick = isPhone ? 9 : 10;
   const fontMark = isPhone ? 9 : 10;
+  const ribbonY = 24, ribbonH = 16;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", maxWidth: 820 }} role="img" aria-label="Projected annual pay by production level, with performer-tier ranges shaded">
-      {/* Tier background bands */}
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Projected annual pay by production level, with performance bands shaded">
+      {/* Performance bands */}
       {markers.map(m => {
         const x0 = xFor(m.fromX), x1 = xFor(m.toX);
         const wPx = Math.max(0, x1 - x0);
@@ -164,11 +195,16 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
         </text>
       ))}
       <text x={padL + chartW / 2} y={H - 6} textAnchor="middle" fontSize={fontTick} fontWeight={600} fill={T.slate400}>{curve.x_label}</text>
+      {/* Comparison drop lines */}
+      {compare && compare.map(c => c.fromX > 0 && (
+        <line key={"cd-" + c.key} x1={xFor(c.fromX)} y1={ribbonY + ribbonH} x2={xFor(c.fromX)} y2={padT + chartH}
+          stroke={tierColor(c.key)} strokeWidth="1.25" strokeDasharray="3 4" opacity="0.5" />
+      ))}
       {/* Base pay: dashed step line */}
       <path d={pathFor("base")} stroke={T.slate500} strokeWidth="1.75" strokeDasharray="5 4" fill="none" opacity="0.9" />
       {/* Total pay: solid line */}
       <path d={pathFor("total")} stroke={T.blue} strokeWidth={isPhone ? 2.5 : 2.75} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-      {/* Tier threshold markers on the total line */}
+      {/* Band threshold markers on the total line */}
       {markers.map(m => {
         if (!(m.fromX > 0)) return null;
         const hot = m.key === highlighted;
@@ -181,6 +217,26 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
           </g>
         );
       })}
+      {/* Comparison ribbon */}
+      {compare && (
+        <g>
+          <text x={padL} y={21} fontSize={9} fontWeight={700} fill={T.slate500}>If Danger = {COMPARE_DANGER_WIDTH}</text>
+          {compare.map(c => {
+            const x0 = xFor(c.fromX), wPx = Math.max(0, xFor(c.toX) - x0);
+            return (
+              <g key={"cr-" + c.key}>
+                <rect x={x0} y={ribbonY} width={wPx} height={ribbonH} fill={tierBandFill(c.key)} opacity="0.9" stroke={tierColor(c.key)} strokeWidth="0.5" strokeOpacity="0.4" />
+                {wPx >= 44 && (
+                  <text x={x0 + wPx / 2} y={ribbonY + ribbonH / 2 + 2.8} textAnchor="middle" fontSize={8} fontWeight={700} fill={tierColor(c.key)}>{c.label}</text>
+                )}
+                {c.fromX > 0 && (
+                  <text x={x0} y={padT - 3} textAnchor="middle" fontSize={8.5} fontWeight={600} fill={tierColor(c.key)}>{Math.round(c.fromX)}</text>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
       {/* Legend */}
       <g>
         <line x1={padL} y1={9} x2={padL + 18} y2={9} stroke={T.slate500} strokeWidth="1.5" strokeDasharray="5 4" />
