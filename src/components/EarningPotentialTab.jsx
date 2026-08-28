@@ -239,10 +239,24 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
   const raiseXs = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
     .map(r => Number(r.threshold))
     .filter(v => v > 0 && v <= xMax);
+  // Drop any label that would repeat the figure the previous one already
+  // shows — two positions on the same flat run of a line both round to the
+  // same thousands and read as a duplicate marker.
+  const dropRepeats = (key, xs) => {
+    const out = [];
+    let last = null;
+    for (const x of xs) {
+      const txt = fmtK(valueAt(key, x));
+      if (txt === last) continue;
+      last = txt;
+      out.push(x);
+    }
+    return out;
+  };
   const labelXs = {
-    base:      thin([...gridXs, ...bandXs, ...raiseXs]),
-    base_comm: thin([...gridXs, ...bandXs]),
-    total:     thin(gridXs, bandXs),
+    base:      dropRepeats("base",      thin([...gridXs, ...bandXs, ...raiseXs])),
+    base_comm: dropRepeats("base_comm", thin([...gridXs, ...bandXs])),
+    total:     dropRepeats("total",     thin(gridXs, bandXs)),
   };
 
 
