@@ -327,26 +327,64 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
 };
 
 // ─── The published raise ladder ─────────────────────────────
-// Base rate steps up as weekly pace crosses each tier, and never steps
-// back down. Read off public.pay_scale, the one copy of the ladder.
+// Qualifying rule, settled in the Raise System threads: tiers one to four
+// are earned on the average across the person's whole tenure so far — one
+// quarter, then two, then three, then four. From tier five on it is a
+// rolling average of the last four quarters. Reviewed only at quarter
+// close, one tier per close, in order.
 const RaiseLadder = ({ ladder, isPhone }) => {
   const rows = Array.isArray(ladder) ? ladder : [];
   if (rows.length === 0) return null;
+
+  const startRow = rows.find(r => r.window_kind === "start") || null;
+  const yearOne  = rows.filter(r => r.window_kind === "tenure");
+  const after    = rows.filter(r => r.window_kind === "rolling");
+
+  const chip = (r, sub) => (
+    <div key={"rl-" + r.tier} style={{
+      border: `1px solid ${T.slate200}`, borderRadius: 8, background: T.white,
+      padding: "6px 8px", textAlign: "center", boxSizing: "border-box",
+    }}>
+      <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>
+        ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600, color: T.slate500 }}>/hr</span>
+      </div>
+      <div style={{ fontSize: 9.5, color: T.slate500, whiteSpace: "nowrap" }}>{sub}</div>
+    </div>
+  );
+
+  const grid = { display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isPhone ? 76 : 88}px, 1fr))`, gap: 6 };
+  const capStyle = { fontSize: 10.5, fontWeight: 700, color: T.slate600, marginBottom: 4, marginTop: 10 };
+  const subCap = { fontSize: 10, fontWeight: 400, color: T.slate500 };
+  const qtrWord = (n) => (n === 1 ? "1st quarter" : "first " + n + " quarters");
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isPhone ? 76 : 88}px, 1fr))`, gap: 6 }}>
-      {rows.map(r => (
-        <div key={"rl-" + r.tier} style={{
-          border: `1px solid ${T.slate200}`, borderRadius: 8, background: T.white,
-          padding: "6px 8px", textAlign: "center", boxSizing: "border-box",
-        }}>
-          <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>
-            ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600, color: T.slate500 }}>/hr</span>
+    <div>
+      {startRow && (
+        <>
+          <div style={{ ...capStyle, marginTop: 0 }}>Starting rate</div>
+          <div style={grid}>{chip(startRow, "day one")}</div>
+        </>
+      )}
+      {yearOne.length > 0 && (
+        <>
+          <div style={capStyle}>
+            Year one <span style={subCap}>— your average since you started, checked at each quarter close</span>
           </div>
-          <div style={{ fontSize: 9.5, color: T.slate500, whiteSpace: "nowrap" }}>
-            {Number(r.from_x) > 0 ? Number(r.from_x).toLocaleString() + " pts" : "start"}
+          <div style={grid}>
+            {yearOne.map(r => chip(r, Number(r.threshold).toLocaleString() + " over " + qtrWord(Number(r.window_quarters))))}
           </div>
-        </div>
-      ))}
+        </>
+      )}
+      {after.length > 0 && (
+        <>
+          <div style={capStyle}>
+            After year one <span style={subCap}>— your average over the last four quarters, checked at each quarter close</span>
+          </div>
+          <div style={grid}>
+            {after.map(r => chip(r, Number(r.threshold).toLocaleString() + " a week"))}
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -569,8 +607,8 @@ export default function EarningPotentialTab() {
         <div style={card}>
           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Raise tiers</div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
-            Measured on the 13-week average — one full quarter at or above the pace, the same
-            measure the Sales Points rating uses. A raise never steps back down.
+            Reviewed only at quarter close, one tier per close, in order. Each tier is harder to
+            reach than the last. A raise never steps back down.
           </div>
           <RaiseLadder ladder={role.raise_ladder} isPhone={_vp.isPhone} />
         </div>
