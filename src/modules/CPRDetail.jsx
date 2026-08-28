@@ -335,11 +335,13 @@ function isCurrentOrFutureCPRWeek(weekEndingISO) {
 // Weeks BEFORE the current quarter are read-only for everyone, including the
 // Owner. Historical CPRs are archival.
 //
-// The quarter boundary is whatever current_cycle_info says it is — State Farm
-// cycles start on a Sunday and run 91 days, so they do NOT line up with the
-// first of a calendar month. The calendar version below is a fallback only, used
-// before the cycle fetch lands; it can be off by up to a week, which previously
-// left the prior quarter's closing CPR editable.
+// The quarter boundary is whatever current_cycle_info says it is — quarters are
+// 13 weeks, Sunday start, closing on the last Saturday, so they do NOT line up
+// with the first of a calendar month. The calendar version below is a fallback
+// ONLY for the instant before the cycle fetch lands; it can be off by up to a
+// week, which previously left the prior quarter's closing CPR editable. Never
+// use it as a quarter source anywhere else — current_cycle_info is the one
+// function that calculates quarters.
 function getCurrentQuarterStartISO(refDate = null) {
   const d = refDate ? new Date(refDate + "T00:00:00Z") : new Date();
   const y = d.getUTCFullYear();
@@ -1039,33 +1041,44 @@ function useCPRData(weekDate) {
         } catch (e) { console.warn("mvp_history fetch failed:", e); }
 
         // Prior-quarter average weekly Sales Points per person, for the last 4 COMPLETED
-        // State Farm quarters before the week being viewed. Reference lines on the
-        // Sales Points weekly run (assumes even production across the quarter).
+        // quarters before the week being viewed. Reference lines on the Sales Points
+        // weekly run (assumes even production across the quarter).
         //
-        // Close dates, week counts AND labels all come from the prior_quarter_closes
-        // database function, which walks current_cycle_info -- the single source of
-        // quarter boundaries. The page used to derive all three itself and got two of
-        // them wrong:
-        //   * It stepped back a fixed 91 days from the cycle start rather than asking
-        //     current_cycle_info where each close actually falls.
-        //   * It read the quarter label off the calendar month of the CLOSE SATURDAY.
-        //     A quarter closes on the Saturday of the week containing the calendar
-        //     quarter's last day, so that Saturday normally falls in the NEXT calendar
-        //     month: Q2 2026 closes 2026-07-04 and was labelled "Q3 2026". Every label
-        //     was one quarter too high (wrong on 24 of the 28 quarters from 2023
-        //     through 2029), and the YEAR was wrong too whenever a close crossed New
-        //     Year -- Q4 2025 closes 2026-01-03 and was labelled "Q1 2026".
+        // Quarter boundaries and quarter NAMES both come from current_cycle_info, the one
+        // function that calculates quarters. This page derives neither. It walks back by
+        // asking that function again for the day before each cycle start -- the day before
+        // a cycle starts IS the previous cycle's closing Saturday -- so there is no date
+        // arithmetic and no label logic here at all.
+        //
+        // Both jobs used to be done locally and both were wrong: the label was read off the
+        // close Saturday's calendar month, which put every column one quarter too high
+        // ("Q3 2026" was carrying Q2 2026), and the year was wrong whenever a close crossed
+        // New Year. An intermediate fix routed this through a prior_quarter_closes() helper;
+        // that helper existed only to call current_cycle_info in a loop, so per Peter's
+        // directive it was deleted and the loop moved here, straight onto the core function.
         let priorQuartersAvgSP = {};
-        let priorQuarterMeta = [];
+        const priorQuarterMeta = [];
         try {
-          const { data: pqRows } = await supabase.rpc("prior_quarter_closes", {
-            p_agency_id: AGENCY_ID,
-            p_ref_date: weekDate,
-            p_count: 4,
-          });
-          priorQuarterMeta = (pqRows || []).filter(r => r?.close_date && r.close_date < weekDate);
+          let cursor = cycleStartISO;
+          for (let i = 0; i < 4 && cursor; i++) {
+            const prevDay = new Date(new Date(cursor + "T00:00:00Z").getTime() - 86400000)
+              .toISOString().slice(0, 10);
+            const { data: cyc } = await supabase.rpc("current_cycle_info", {
+              p_agency_id: AGENCY_ID,
+              p_today: prevDay,
+            });
+            const row = Array.isArray(cyc) ? cyc[0] : cyc;
+            if (!row?.cycle_end || !row?.cycle_start) break;
+            if (row.cycle_end < weekDate) {
+              priorQuarterMeta.push({
+                close_date: row.cycle_end,
+                quarter_label: row.quarter_label,
+              });
+            }
+            cursor = row.cycle_start;
+          }
         } catch (e) {
-          console.warn("prior_quarter_closes fetch failed:", e);
+          console.warn("current_cycle_info (prior quarters) fetch failed:", e);
         }
         const priorQuarterEndDates = priorQuarterMeta.map(r => r.close_date);
         const priorQuarterByClose = Object.fromEntries(priorQuarterMeta.map(r => [r.close_date, r]));
@@ -1122,13 +1135,13 @@ function useCPRData(weekDate) {
 
         // Marketing points QTD context (per-teammate). Peter enters QTD total in the
         // Payroll edit UI; save handler stores delta = entered - qtd_prior_sum.
-        // Quarter window matches compute_weekly_marketing_bonus (date_trunc quarter of week_end).
+        // Quarter window matches compute_weekly_marketing_bonus, which now reads
+        // current_cycle_info like everything else. This used to build a CALENDAR quarter
+        // start (first of Jan/Apr/Jul/Oct) locally, which is up to a week adrift of the
+        // real cycle start and pulled the wrong weeks into the quarter-to-date total.
         let marketingByTeammate = {};
         try {
-          const wd = new Date(weekDate + "T00:00:00Z");
-          const qStartMonth = Math.floor(wd.getUTCMonth() / 3) * 3;
-          const qStart = new Date(Date.UTC(wd.getUTCFullYear(), qStartMonth, 1));
-          const qStartISO = qStart.toISOString().slice(0, 10);
+          const qStartISO = cycleStartISO;
           const { data: mpRows } = await supabase
             .from("marketing_points")
             .select("team_member_id, week_end_date, points, notes")
