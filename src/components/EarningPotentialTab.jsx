@@ -5,12 +5,14 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { useViewport } from "../lib/hooks.js";
 import { fmtMoney } from "../lib/format.jsx";
 
-// Growth > Earning Potential. Read-only. One chart: years of employment
-// (1-5) across the bottom, dollars up the side. Four total-pay lines, one
-// per performer tier, plus a dashed base-pay line for the tier that is
-// highlighted in the legend. Everything comes from one call to
-// compute_role_earnings_projection — nothing here is stored as a "current"
-// value, and nothing on this page writes.
+// Team > Earning Potential. Read-only. One chart: production across the
+// bottom (weekly sales points; annual life premium for the Life Specialist
+// seat), dollars up the side. Two lines — dashed base pay stepping up at
+// each pay-band raise, solid total pay (base + commission + bonuses)
+// climbing from the lowest tier to the highest. Shaded background bands
+// mark each performer tier's production range. Everything comes from one
+// call to compute_role_earnings_projection — nothing here is stored as a
+// "current" value, and nothing on this page writes.
 
 const ROLE_ORDER = ["sales", "retention", "life_specialist"];
 
@@ -21,7 +23,14 @@ const TIER_COLORS = {
   rockstar:    T.gold,
   rock_legend: T.purple,
 };
+const TIER_BAND_FILLS = {
+  rock:        T.slate200,
+  rock_n_roll: T.tealLt,
+  rockstar:    T.goldLt,
+  rock_legend: T.purpleLt,
+};
 const tierColor = (key) => TIER_COLORS[key] || T.blue;
+const tierBandFill = (key) => TIER_BAND_FILLS[key] || T.slate100;
 
 const fmtK = (n) => {
   const v = Number(n) || 0;
@@ -50,109 +59,121 @@ const axisFor = (max) => {
   return { max: ceil - max < step * 0.15 ? ceil + step : ceil, step };
 };
 
+// Clean step for the production axis. Sales-point axes get round point
+// counts; the Life premium axis gets round dollar amounts.
+const xStepFor = (xMax, isPremium) => {
+  if (isPremium) return xMax > 300000 ? 100000 : xMax > 120000 ? 50000 : 25000;
+  return xMax > 400 ? 100 : xMax > 160 ? 50 : 25;
+};
+
 // ─── Chart ───────────────────────────────────────────────────
 // Inline SVG, same approach as the CPR sparkline. viewBox + width 100% so
 // it fills its card and scales on a phone without a chart library.
-const EarningsLineChart = ({ tiers, highlighted, baseMode, isPhone }) => {
+const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
+  const points = Array.isArray(curve?.points) ? curve.points : [];
+  const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
+  const xMax   = Number(curve?.x_max) || 0;
+  const isPremium = curve?.x_kind === "annual_life_premium";
+
   const W = isPhone ? 400 : 680;
-  const H = isPhone ? 240 : 280;
-  const padL = isPhone ? 40 : 50, padR = isPhone ? 56 : 74, padT = 28, padB = 30;
+  const H = isPhone ? 250 : 292;
+  const padL = isPhone ? 40 : 50, padR = isPhone ? 14 : 18, padT = 28, padB = isPhone ? 40 : 42;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
-  const years = [1, 2, 3, 4, 5];
-  const allTotals = (tiers || []).flatMap(t => (t.years || []).map(y => Number(y.total) || 0));
-  const allBases  = (tiers || []).flatMap(t => (t.years || []).map(y => Number(y.base) || 0));
-  const { max: maxY, step: tickStep } = axisFor(Math.max(0, ...allTotals, ...allBases));
-  const ticks = [];
-  for (let v = 0; v <= maxY; v += tickStep) ticks.push(v);
+  const allY = points.flatMap(p => [Number(p.total) || 0, Number(p.base) || 0]);
+  const { max: maxY, step: tickStep } = axisFor(Math.max(0, ...allY));
+  const yTicks = [];
+  for (let v = 0; v <= maxY; v += tickStep) yTicks.push(v);
 
-  const xFor = (yr) => padL + ((yr - 1) / 4) * chartW;
-  const yFor = (v)  => padT + chartH - (Math.max(0, Number(v) || 0) / maxY) * chartH;
-  const pathFor = (vals) => vals.map((v, i) => (i === 0 ? "M " : " L ") + xFor(i + 1).toFixed(1) + " " + yFor(v).toFixed(1)).join("");
+  const xStep = xStepFor(xMax, isPremium);
+  const xTicks = [];
+  for (let v = 0; v <= xMax; v += xStep) xTicks.push(v);
 
-  const seriesOf = (t, key) => years.map(yr => {
-    const row = (t.years || []).find(y => Number(y.year) === yr);
-    return row ? Number(row[key]) || 0 : 0;
-  });
+  const xFor = (x) => padL + (Math.max(0, Number(x) || 0) / (xMax || 1)) * chartW;
+  const yFor = (v) => padT + chartH - (Math.max(0, Number(v) || 0) / maxY) * chartH;
+  const pathFor = (key) => points.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(p[key]).toFixed(1)).join("");
 
-  // Year-5 labels to the right of each line, nudged apart so they never overlap.
-  const endLabels = useMemo(() => {
-    const items = (tiers || []).map(t => {
-      const tot = seriesOf(t, "total");
-      return { key: t.tier_key, label: fmtK(tot[4]), y: yFor(tot[4]), color: tierColor(t.tier_key) };
-    }).sort((a, b) => a.y - b.y);
-    const minGap = 12;
-    for (let i = 1; i < items.length; i++) {
-      if (items[i].y - items[i - 1].y < minGap) items[i].y = items[i - 1].y + minGap;
+  // Total pay at each tier's production level, for the threshold markers.
+  const markers = useMemo(() => bands.map((b, i) => {
+    const fx = Number(b.from_x) || 0;
+    let best = null;
+    for (const p of points) {
+      const d = Math.abs((Number(p.x) || 0) - fx);
+      if (!best || d < best.d) best = { d, total: Number(p.total) || 0 };
     }
-    // If the bottom label was pushed below the plot, shove the stack back up.
-    const overflow = items.length ? items[items.length - 1].y - (padT + chartH + 4) : 0;
-    if (overflow > 0) items.forEach(it => { it.y -= overflow; });
-    return items;
+    const next = bands[i + 1];
+    return {
+      key: b.tier_key,
+      label: b.tier_label,
+      fromX: fx,
+      toX: next ? Number(next.from_x) || xMax : xMax,
+      total: best ? best.total : 0,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tiers, W, H]);
+  }), [curve]);
 
-  if (!Array.isArray(tiers) || tiers.length === 0) return null;
+  if (points.length === 0 || bands.length === 0) return null;
 
   const fontTick = isPhone ? 9 : 10;
-  const fontEnd  = isPhone ? 9.5 : 11;
+  const fontMark = isPhone ? 9 : 10;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", maxWidth: 820 }} role="img" aria-label="Projected total pay by year of employment and performer tier">
-      {/* Y gridlines + labels */}
-      {ticks.map(v => (
-        <g key={v}>
-          <line x1={padL} y1={yFor(v)} x2={padL + chartW} y2={yFor(v)} stroke={T.slate200} strokeWidth="1" />
-          <text x={padL - 5} y={yFor(v) + 3.5} textAnchor="end" fontSize={fontTick} fill={T.slate500}>{fmtK(v)}</text>
-        </g>
-      ))}
-      {/* X axis labels */}
-      {years.map(yr => (
-        <text key={yr} x={xFor(yr)} y={H - 9} textAnchor="middle" fontSize={fontTick} fill={T.slate500}>
-          {isPhone ? "Yr " + yr : "Year " + yr}
-        </text>
-      ))}
-      {/* Base pay: dashed. Either one line for the highlighted tier, or all four muted. */}
-      {tiers.map(t => {
-        const show = baseMode === "all" || t.tier_key === highlighted;
-        if (!show) return null;
-        const muted = baseMode === "all";
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", maxWidth: 820 }} role="img" aria-label="Projected annual pay by production level, with performer-tier ranges shaded">
+      {/* Tier background bands */}
+      {markers.map(m => {
+        const x0 = xFor(m.fromX), x1 = xFor(m.toX);
+        const wPx = Math.max(0, x1 - x0);
+        const hot = m.key === highlighted;
+        const labelHoriz = wPx >= (isPhone ? 58 : 66);
         return (
-          <path key={"base-" + t.tier_key}
-            d={pathFor(seriesOf(t, "base"))}
-            stroke={muted ? T.slate400 : tierColor(t.tier_key)}
-            strokeWidth={muted ? 1.25 : 1.75}
-            strokeDasharray="5 4"
-            fill="none"
-            opacity={muted ? 0.55 : 0.8} />
-        );
-      })}
-      {/* Total pay: one solid line per tier. Highlighted tier drawn last and thicker. */}
-      {[...tiers].sort((a, b) => (a.tier_key === highlighted) - (b.tier_key === highlighted)).map(t => {
-        const hot = t.tier_key === highlighted;
-        const tot = seriesOf(t, "total");
-        const c = tierColor(t.tier_key);
-        return (
-          <g key={"tot-" + t.tier_key} opacity={hot ? 1 : 0.85}>
-            <path d={pathFor(tot)} stroke={c} strokeWidth={hot ? 3 : 2} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-            {tot.map((v, i) => (
-              <circle key={i} cx={xFor(i + 1)} cy={yFor(v)} r={hot ? 3.5 : 2.75} fill={c} />
+          <g key={"band-" + m.key}>
+            <rect x={x0} y={padT} width={wPx} height={chartH} fill={tierBandFill(m.key)} opacity={hot ? 0.85 : 0.45} />
+            <line x1={x0} y1={padT} x2={x0} y2={padT + chartH} stroke={tierColor(m.key)} strokeWidth="1" opacity="0.5" strokeDasharray="2 3" />
+            {wPx >= 22 && (labelHoriz ? (
+              <text x={x0 + wPx / 2} y={padT + 12} textAnchor="middle" fontSize={9} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3">{m.label}</text>
+            ) : (
+              <text x={x0 + wPx / 2} y={padT + chartH / 2} textAnchor="middle" fontSize={8.5} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3"
+                transform={`rotate(-90 ${(x0 + wPx / 2).toFixed(1)} ${(padT + chartH / 2).toFixed(1)})`}>{m.label}</text>
             ))}
           </g>
         );
       })}
-      {/* Year-5 value labels */}
-      {endLabels.map(it => (
-        <text key={"end-" + it.key} x={padL + chartW + 6} y={it.y + 3.5} fontSize={fontEnd} fontWeight={it.key === highlighted ? 700 : 600} fill={it.color}>
-          {it.label}
+      {/* Y gridlines + labels */}
+      {yTicks.map(v => (
+        <g key={"y" + v}>
+          <line x1={padL} y1={yFor(v)} x2={padL + chartW} y2={yFor(v)} stroke={T.slate200} strokeWidth="1" opacity="0.8" />
+          <text x={padL - 5} y={yFor(v) + 3.5} textAnchor="end" fontSize={fontTick} fill={T.slate500}>{fmtK(v)}</text>
+        </g>
+      ))}
+      {/* X ticks + axis title */}
+      {xTicks.map(v => (
+        <text key={"x" + v} x={xFor(v)} y={padT + chartH + 13} textAnchor="middle" fontSize={fontTick} fill={T.slate500}>
+          {isPremium ? fmtK(v) : Math.round(v)}
         </text>
       ))}
-      {/* Legend for the dashed line */}
+      <text x={padL + chartW / 2} y={H - 6} textAnchor="middle" fontSize={fontTick} fontWeight={600} fill={T.slate400}>{curve.x_label}</text>
+      {/* Base pay: dashed step line */}
+      <path d={pathFor("base")} stroke={T.slate500} strokeWidth="1.75" strokeDasharray="5 4" fill="none" opacity="0.9" />
+      {/* Total pay: solid line */}
+      <path d={pathFor("total")} stroke={T.blue} strokeWidth={isPhone ? 2.5 : 2.75} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+      {/* Tier threshold markers on the total line */}
+      {markers.map(m => {
+        const hot = m.key === highlighted;
+        const px = xFor(m.fromX), py = yFor(m.total);
+        const anchor = px > padL + chartW - 34 ? "end" : "middle";
+        return (
+          <g key={"mk-" + m.key}>
+            <circle cx={px} cy={py} r={hot ? 4.5 : 3.5} fill={tierColor(m.key)} stroke={T.white} strokeWidth="1.5" />
+            <text x={anchor === "end" ? px + 4 : px} y={py - 8} textAnchor={anchor} fontSize={fontMark} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)}>{fmtK(m.total)}</text>
+          </g>
+        );
+      })}
+      {/* Legend */}
       <g>
-        <line x1={padL} y1={9} x2={padL + 18} y2={9} stroke={T.slate400} strokeWidth="1.5" strokeDasharray="5 4" />
+        <line x1={padL} y1={9} x2={padL + 18} y2={9} stroke={T.slate500} strokeWidth="1.5" strokeDasharray="5 4" />
         <text x={padL + 22} y={12.5} fontSize={fontTick} fill={T.slate500}>Base pay</text>
-        <line x1={padL + 76} y1={9} x2={padL + 94} y2={9} stroke={T.slate700} strokeWidth="2.25" />
+        <line x1={padL + 76} y1={9} x2={padL + 94} y2={9} stroke={T.blue} strokeWidth="2.25" />
         <text x={padL + 98} y={12.5} fontSize={fontTick} fill={T.slate500}>Total pay</text>
       </g>
     </svg>
@@ -208,9 +229,6 @@ export default function EarningPotentialTab() {
   const _vp = useViewport();
   const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", ROLE_ORDER);
   const [highlighted, setHighlighted] = useState("rock");
-  // "selected" = dashed base line for the highlighted tier only.
-  // "all" = all four base lines, muted. Toggle lives in the chart header.
-  const [baseMode, setBaseMode] = useState("selected");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -230,6 +248,7 @@ export default function EarningPotentialTab() {
   }, [data]);
   const role = roles.find(r => r.role_key === roleKey) || roles[0] || null;
   const tiers = Array.isArray(role?.tiers) ? role.tiers : [];
+  const curve = role?.curve || null;
   const hotTier = tiers.find(t => t.tier_key === highlighted) || tiers[0] || null;
 
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "14px 16px" : "16px 20px";
@@ -282,17 +301,18 @@ export default function EarningPotentialTab() {
 
       {/* Chart */}
       <div style={card}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected total pay by year</div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>Solid lines are total pay for each tier. The dashed line is base pay. Tap a tier below to highlight it.</div>
-          </div>
-          <button onClick={() => setBaseMode(m => (m === "all" ? "selected" : "all"))}
-            style={{ fontSize: 11, fontWeight: 600, color: T.slate600, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", flexShrink: 0 }}>
-            {baseMode === "all" ? "Show base for highlighted tier" : "Show base for all tiers"}
-          </button>
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Solid line is total pay, dashed is base pay. Shaded bands mark each tier's production range. Tap a tier below to highlight it.</div>
         </div>
-        <EarningsLineChart tiers={tiers} highlighted={hotTier?.tier_key} baseMode={baseMode} isPhone={_vp.isPhone} />
+        {curve ? (
+          <EarningsCurveChart curve={curve} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
+        ) : (
+          <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
+        )}
+        <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
+          Held at a steady production pace. Years one and two typically run lower — the year-by-year table below shows the ramp.
+        </div>
         {role.role_key === "life_specialist" && extrasNote && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.goldLt, border: `1px solid ${T.gold}`, borderRadius: 7, padding: "7px 10px" }}>
             {extrasPrefix}{extrasNote}

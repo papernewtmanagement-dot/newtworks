@@ -2888,7 +2888,7 @@ const HypotheticalHireForecast = () => {
 // lives in the top-level Onboarding module. Hypothetical hire forecast
 // lives inside the Recruiting sub-view.
 const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onRetry, userRole }) => {
-  const [view, setView, gtabHref] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots","earnings"]);
+  const [view, setView, gtabHref] = useTabParam("gtab", "recruiting", ["recruiting","finalists","declined","former","slots"]);
   // Admin-only manual override on top of the automatic hourly background
   // refresh (see Team's useEffect above) — forces every candidate with a
   // completed assessment (not just the active pipeline) to recompute right
@@ -2948,7 +2948,6 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
     { id:"declined",   label:`Declined (${declined.length})` },
     { id:"former",     label:`Former (${former.length})` },
     { id:"slots",      label:"Interview Slots" },
-    { id:"earnings",   label:"Earning Potential" },
   ];
   return (
     <div>
@@ -3022,7 +3021,6 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
       {view === "declined"   && <DeclinedTable declined={declined} onUpdate={onUpdate} userRole={userRole} />}
       {view === "former"     && <DeclinedTable declined={former}   onUpdate={onUpdate} emptyLabel="No former team members on file." userRole={userRole} />}
       {view === "slots"       && <InterviewSlotsManager />}
-      {view === "earnings"    && <EarningPotentialTab />}
     </div>
   );
 };
@@ -3032,7 +3030,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
-  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth","earnings"]);
   const [applicants,  setApplicants]  = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(true);
   const [applicantsError,   setApplicantsError]   = useState(false);
@@ -3218,6 +3216,7 @@ export default function Team({ userRole }) {
   const sections = [
     { id:"members",  label:"Members"  },
     { id:"growth",   label:"Growth"   },
+    { id:"earnings", label:"Earning Potential" },
   ];
 
   return (
@@ -3247,6 +3246,7 @@ export default function Team({ userRole }) {
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
       {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} userRole={userRole} />}
+      {section === "earnings" && <EarningPotentialTab />}
     </div>
   );
 }
