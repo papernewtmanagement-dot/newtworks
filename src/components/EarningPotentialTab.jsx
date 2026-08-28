@@ -86,9 +86,9 @@ const xStepFor = (xMax, isPremium) => {
 
 // Temporary comparison overlay (Peter, 2026-08-28): the locked band
 // concept — starts at 1x / 3x / 6x / 10x of the Danger width — drawn a
-// second time at a Danger width of 75, as a ribbon above the sales chart.
+// second time at the width below, as a ribbon above the sales chart.
 // Remove once the Danger width is decided.
-const COMPARE_DANGER_WIDTH = 75;
+const COMPARE_DANGER_WIDTH = 60;
 const BAND_SEQ = [
   { key: "danger",  label: "Danger"  },
   { key: "caution", label: "Caution" },
