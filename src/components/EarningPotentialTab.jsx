@@ -9,8 +9,9 @@ import { fmtMoney } from "../lib/format.jsx";
 // bottom (weekly sales points; annual life premium for the Life Specialist
 // seat), dollars up the side. Two lines — dashed base pay stepping up at
 // each pay-band raise, solid total pay (base + commission + bonuses)
-// climbing from the lowest tier to the highest. Shaded background bands
-// mark each performer tier's production range. Everything comes from one
+// climbing smoothly from the bottom to the top. Shaded background bands
+// mark the performance ranges (sales: the Sales Points rating bands, fed
+// by the pay_scale table through the projection). Everything comes from one
 // call to compute_role_earnings_projection — nothing here is stored as a
 // "current" value, and nothing on this page writes.
 
@@ -22,12 +23,22 @@ const TIER_COLORS = {
   rock_n_roll: T.teal,
   rockstar:    T.gold,
   rock_legend: T.purple,
+  danger:      T.red,
+  caution:     T.amber,
+  good:        T.green,
+  great:       T.gold,
+  elite:       T.purple,
 };
 const TIER_BAND_FILLS = {
   rock:        T.slate200,
   rock_n_roll: T.tealLt,
   rockstar:    T.goldLt,
   rock_legend: T.purpleLt,
+  danger:      T.redLt,
+  caution:     T.amberLt,
+  good:        T.greenLt,
+  great:       T.goldLt,
+  elite:       T.purpleLt,
 };
 const tierColor = (key) => TIER_COLORS[key] || T.blue;
 const tierBandFill = (key) => TIER_BAND_FILLS[key] || T.slate100;
@@ -63,7 +74,7 @@ const axisFor = (max) => {
 // counts; the Life premium axis gets round dollar amounts.
 const xStepFor = (xMax, isPremium) => {
   if (isPremium) return xMax > 300000 ? 100000 : xMax > 120000 ? 50000 : 25000;
-  return xMax > 400 ? 100 : xMax > 160 ? 50 : 25;
+  return xMax > 800 ? 200 : xMax > 400 ? 100 : xMax > 160 ? 50 : 25;
 };
 
 // ─── Chart ───────────────────────────────────────────────────
@@ -159,6 +170,7 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
       <path d={pathFor("total")} stroke={T.blue} strokeWidth={isPhone ? 2.5 : 2.75} fill="none" strokeLinejoin="round" strokeLinecap="round" />
       {/* Tier threshold markers on the total line */}
       {markers.map(m => {
+        if (!(m.fromX > 0)) return null;
         const hot = m.key === highlighted;
         const px = xFor(m.fromX), py = yFor(m.total);
         const anchor = px > padL + chartW - 34 ? "end" : "middle";
@@ -303,7 +315,7 @@ export default function EarningPotentialTab() {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Solid line is total pay, dashed is base pay. Shaded bands mark each tier's production range. Tap a tier below to highlight it.</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Solid line is total pay, dashed is base pay. Shaded bands mark the performance ranges. Tap a tier below to highlight it.</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
