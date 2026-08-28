@@ -171,7 +171,13 @@ function extractGmailEssentials(composioData: any, perMessageBodyCap = 1000): an
     const gh = (name: string) => (headers.find((x: any) => (x.name ?? "").toLowerCase() === name.toLowerCase())?.value ?? "");
     const pre = typeof m.messageText === "string" && m.messageText.length > 0 ? m.messageText : null;
     const raw = pre ?? findGmailPlainTextBody(m.payload);
-    const text = looksLikeHtml(raw) ? htmlToText(raw) : raw;
+    // HARDWIRED: nothing carrying markup is allowed past this point, ever.
+    // htmlToText runs until the tag test comes back clean, and a brute
+    // fallback catches anything malformed enough to survive that. The
+    // character cap below must never be handed a stylesheet again.
+    let text = raw;
+    for (let i = 0; i < 3 && looksLikeHtml(text); i++) text = htmlToText(text);
+    if (looksLikeHtml(text)) text = text.replace(/<[^>]*>?/g, " ").replace(/\s+/g, " ").trim();
     const body = stripParenthesizedUrls(text).slice(0, perMessageBodyCap);
     return { messageId: m.messageId ?? m.id ?? "", threadId: m.threadId ?? "", subject: m.subject ?? gh("Subject"), from: m.sender ?? m.from ?? gh("From"), to: m.to ?? gh("To"), date: gh("Date") || m.internalDate || "", snippet: m.snippet ?? "", body };
   }) };
@@ -654,9 +660,28 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
     // -------------------------------------------------------------------
     const fileFetchedGmailMessages = async (recordIds: string[]): Promise<string> => {
       const handled = new Set<string>([...recordIds, ...alreadyKnownMessageIds]);
-      const skippedIds = inputConfig.file_unparsed_messages === true
+      const unparsedIds = inputConfig.file_unparsed_messages === true
         ? fetchedMessageIds.filter((id) => !handled.has(id))
         : [];
+      // HARDWIRED: a batch that produced ZERO records is a systemic failure --
+      // an unreadable body shape, a model outage, a broken prompt -- not proof
+      // that none of these emails mattered. Filing them buries real
+      // transactions with no ledger row, which is exactly what happened on
+      // 2026-08-27 when Amex bodies were arriving as unstripped HTML. Leave
+      // them in the inbox and shout instead.
+      const parserReturnedNothing = recordIds.length === 0 && unparsedIds.length > 0;
+      const skippedIds = parserReturnedNothing ? [] : unparsedIds;
+      if (parserReturnedNothing) {
+        await insertAlert({
+          agencyId,
+          alertType: "gmail_parser_returned_nothing",
+          severity: "warning",
+          title: `Parser returned no records for ${unparsedIds.length} email(s) — ${recipe.recipe_name}`,
+          message: `Nothing was archived and the emails are still in the inbox. A whole batch parsing to nothing almost always means the message body is arriving in a shape the parser cannot read. Gmail message ids: ${unparsedIds.slice(0, 20).join(", ")}`,
+          moduleReference: "automation-runner",
+        });
+        await telegram(agencyId, `🔴 ${recipe.recipe_name}: parser returned no records for ${unparsedIds.length} fetched email(s). Left in the inbox rather than archived — check the body shape.`);
+      }
       const allIds = Array.from(new Set<string>([...handled, ...skippedIds]));
       if (allIds.length === 0) return "";
       const ar = await archiveProcessedGmailMessages({ apiKey: composioApiKey, userId: composioUserId, connectedAccountId: accountId, messageIds: allIds, additionalLabelsToAdd: inputConfig.archive_label_ids_to_add as string[] | undefined });
