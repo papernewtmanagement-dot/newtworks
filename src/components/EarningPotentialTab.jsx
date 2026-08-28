@@ -234,17 +234,17 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
     }
     return out;
   };
+  // Raise tiers are just more places the base line gets labelled — no
+  // separate marker style (Peter 2026-08-28).
+  const raiseXs = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
+    .map(r => Number(r.threshold))
+    .filter(v => v > 0 && v <= xMax);
   const labelXs = {
-    base:      thin([...gridXs, ...bandXs]),
+    base:      thin([...gridXs, ...bandXs, ...raiseXs]),
     base_comm: thin([...gridXs, ...bandXs]),
     total:     thin(gridXs, bandXs),
   };
 
-  // Raise tiers marked where they land on the base line.
-  const raiseMarks = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
-    .filter(r => Number(r.threshold) > 0 && Number(r.threshold) <= xMax)
-    .map(r => ({ x: Number(r.threshold), label: fmtK(Number(r.annual)) }));
-  const raiseKeep = new Set(thin(raiseMarks.map(r => r.x), labelXs.base).map(String));
 
   // Legend runs left to right; widths are rough but stable at both sizes.
   const legendAt = [];
@@ -311,18 +311,6 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
           fill="none" strokeLinejoin="round" strokeLinecap="round"
           opacity={l.key === "base" ? 0.9 : 1} />
       ))}
-      {/* Raise tiers on the base line */}
-      {raiseMarks.map(r => {
-        const px = xFor(r.x), py = yFor(valueAt("base", r.x));
-        return (
-          <g key={"rt-" + r.x}>
-            <line x1={px} y1={py - 4} x2={px} y2={py + 4} stroke={T.slate600} strokeWidth="1.5" opacity="0.85" />
-            {raiseKeep.has(String(r.x)) && (
-              <text x={px} y={py + 22} textAnchor="middle" fontSize={fontDot} fontWeight={700} fill={T.slate600}>{r.label}</text>
-            )}
-          </g>
-        );
-      })}
       {/* Dollar figures where the lines cross the markers */}
       {CURVE_LINES.map(l => (
         <g key={"lab-" + l.key}>
@@ -580,7 +568,6 @@ export default function EarningPotentialTab() {
   const extrasNote = distinctNotes.length === 1 ? distinctNotes[0] : hotY1Note;
   const extrasPrefix = distinctNotes.length > 1 && hotTier ? hotTier.tier_label + " — " : "";
 
-  const a = data?.assumptions || {};
   const btn = (active) => ({
     padding: "7px 14px", fontSize: 12, fontWeight: active ? 700 : 500,
     color: active ? T.white : T.slate700, background: active ? T.blue : T.white,
@@ -668,21 +655,6 @@ export default function EarningPotentialTab() {
         </div>
       )}
 
-      {/* Assumptions */}
-      <div style={{ fontSize: 11, color: T.slate500, lineHeight: 1.5 }}>
-        <details>
-          <summary style={{ cursor: "pointer", color: T.slate600, fontWeight: 600 }}>How these numbers are calculated</summary>
-          {a.note && <div style={{ marginTop: 6 }}>{a.note}</div>}
-          <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "4px 16px" }}>
-            <div>Share of agency earnings funding the pool: <b style={{ color: T.slate700 }}>{fmtPct(a.pool_pct_used)}</b></div>
-            <div>Bonus pool basis (annual): <b style={{ color: T.slate700 }}>{fmtMoney(a.pool_basis_annual)}</b></div>
-            <div>Weekly bonus pool (quarter average): <b style={{ color: T.slate700 }}>{fmtMoney(a.weekly_bonus_pool, { decimals: 2 })}</b></div>
-            <div>Rest of team, weekly sales points: <b style={{ color: T.slate700 }}>{Number(a.rest_of_team_weekly_sp || 0).toLocaleString()}</b></div>
-            <div>Team weighted retention hours, weekly: <b style={{ color: T.slate700 }}>{Number(a.team_weighted_hours_weekly || 0).toLocaleString()}</b></div>
-            <div>Weekly sales-point targets: <b style={{ color: T.slate700 }}>Sales {a.sales_points_target_weekly?.sales ?? "—"} · Retention {a.sales_points_target_weekly?.retention ?? "—"}</b></div>
-          </div>
-        </details>
-      </div>
     </div>
   );
 }
