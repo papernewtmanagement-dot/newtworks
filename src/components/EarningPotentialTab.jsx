@@ -321,12 +321,82 @@ const TierBreakdown = ({ tier, roleKey }) => {
   );
 };
 
+
+// ─── First year path to $100k (Sales) ───────────────────────
+// Replaces the tier-by-year grid for Sales. Each rung is a weekly
+// sales-point pace read live off the published pay scale, so the table
+// moves with the scale. The closing note is the point of the table: the
+// timeline belongs to the person, not the plan.
+const YearOnePath = ({ path, isPhone }) => {
+  const rungs = Array.isArray(path?.rungs) ? path.rungs : [];
+  if (rungs.length === 0) return null;
+  const th = { padding: "6px 10px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.slate500, textAlign: "right", borderBottom: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
+  const td = { padding: "8px 10px", fontSize: 12, color: T.slate700, textAlign: "right", borderBottom: `1px solid ${T.slate100}`, whiteSpace: "nowrap" };
+  const rows = [
+    { k: "weekly_sales_points", label: "Weekly sales points", fmt: v => Number(v).toLocaleString() },
+    { k: "base_annual",  label: "Base pay",   fmt: v => fmtMoney(v), sub: r => r.rate_label },
+    { k: "commission",   label: "Commission", fmt: v => fmtMoney(v) },
+    { k: "bonus",        label: "Team bonus", fmt: v => fmtMoney(v) },
+    { k: "total",        label: "Annual pay at that pace", fmt: v => fmtMoney(v), bold: true },
+  ];
+  return (
+    <div>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: isPhone ? 460 : 560 }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: "left" }}>Milestone</th>
+              {rungs.map(r => (
+                <th key={r.step} style={th}>
+                  <div>{r.step_label}</div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: T.slate900, marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
+                    {r.pace_label} {fmtMoney(r.target_annual)}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.k} style={row.bold ? { background: T.slate50 } : undefined}>
+                <td style={{ ...td, textAlign: "left", fontWeight: row.bold ? 700 : 500, color: row.bold ? T.slate900 : T.slate700 }}>{row.label}</td>
+                {rungs.map(r => (
+                  <td key={r.step} style={{ ...td, fontWeight: row.bold ? 700 : 400, color: row.bold ? T.slate900 : T.slate700 }}>
+                    {row.fmt(r[row.k])}
+                    {row.sub && row.sub(r) && (
+                      <div style={{ fontSize: 9.5, color: T.slate400, fontWeight: 400, marginTop: 1 }}>{row.sub(r)}</div>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr>
+              <td style={{ ...td, textAlign: "left", fontWeight: 500, borderBottom: "none" }}>Range at that pace</td>
+              {rungs.map(r => (
+                <td key={r.step} style={{ ...td, borderBottom: "none" }}>
+                  <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, color: T.slate700, background: T.slate100 }}>{r.band}</span>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {path?.note && (
+        <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.55, color: T.slate700, background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "10px 12px" }}>
+          {path.note}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Tab ─────────────────────────────────────────────────────
 export default function EarningPotentialTab() {
   const _vp = useViewport();
   const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", ROLE_ORDER);
   const [highlighted, setHighlighted] = useState("rock");
   const [data, setData] = useState(null);
+  const [y1, setY1] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
@@ -335,6 +405,9 @@ export default function EarningPotentialTab() {
     const { data: d, error } = await supabase.rpc("compute_role_earnings_projection", { p_agency_id: AGENCY_ID });
     if (error) { console.error("compute_role_earnings_projection failed:", error); setErr(error.message || "Request failed"); setData(null); }
     else setData(d || null);
+    const { data: p1, error: e1 } = await supabase.rpc("year_one_path_to_100k", { p_agency_id: AGENCY_ID });
+    if (e1) { console.error("year_one_path_to_100k failed:", e1); setY1(null); }
+    else setY1(p1 || null);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -408,7 +481,7 @@ export default function EarningPotentialTab() {
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
-          Held at a steady production pace. Years one and two typically run lower — the year-by-year table below shows the ramp.
+          {role.role_key === "sales" ? "Held at a steady production pace. The table below shows how a first year can build up to it." : "Held at a steady production pace. Years one and two typically run lower — the year-by-year table below shows the ramp."}
         </div>
         {role.role_key === "life_specialist" && extrasNote && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.goldLt, border: `1px solid ${T.gold}`, borderRadius: 7, padding: "7px 10px" }}>
@@ -436,8 +509,19 @@ export default function EarningPotentialTab() {
         })}
       </div>
 
-      {/* Year-by-year breakdown for the highlighted tier */}
-      {hotTier && (
+      {/* Sales: first-year path to $100k. Other roles keep the tier grid. */}
+      {role.role_key === "sales" && y1 && (
+        <div style={card}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>
+            A first year to a hundred thousand
+          </div>
+          {y1.headline && (
+            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>{y1.headline}</div>
+          )}
+          <YearOnePath path={y1} isPhone={_vp.isPhone} />
+        </div>
+      )}
+      {role.role_key !== "sales" && hotTier && (
         <div style={card}>
           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>
             Year-by-year for {hotTier.tier_label}
