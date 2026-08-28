@@ -111,7 +111,7 @@ const CURVE_LINES = [
 // meaningless.
 const GRID_POINT_STEP = 100;
 
-const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
+const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
   const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
   const xMax   = Number(curve?.x_max) || 0;
@@ -217,6 +217,12 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
     total:     thin(gridXs, bandXs),
   };
 
+  // Raise tiers marked where they land on the base line.
+  const raiseMarks = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
+    .filter(r => Number(r.threshold) > 0 && Number(r.threshold) <= xMax)
+    .map(r => ({ x: Number(r.threshold), label: "$" + Number(r.hourly).toFixed(0) }));
+  const raiseKeep = new Set(thin(raiseMarks.map(r => r.x)).map(String));
+
   // Legend runs left to right; widths are rough but stable at both sizes.
   const legendAt = [];
   let legendAcc = 0;
@@ -282,6 +288,18 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
           fill="none" strokeLinejoin="round" strokeLinecap="round"
           opacity={l.key === "base" ? 0.9 : 1} />
       ))}
+      {/* Raise tiers on the base line */}
+      {raiseMarks.map(r => {
+        const px = xFor(r.x), py = yFor(valueAt("base", r.x));
+        return (
+          <g key={"rt-" + r.x}>
+            <line x1={px} y1={py - 4} x2={px} y2={py + 4} stroke={T.slate600} strokeWidth="1.5" opacity="0.85" />
+            {raiseKeep.has(String(r.x)) && (
+              <text x={px} y={py + 22} textAnchor="middle" fontSize={fontDot} fontWeight={700} fill={T.slate600}>{r.label}</text>
+            )}
+          </g>
+        );
+      })}
       {/* Dollar figures where the lines cross the markers */}
       {CURVE_LINES.map(l => (
         <g key={"lab-" + l.key}>
@@ -327,64 +345,43 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
 };
 
 // ─── The published raise ladder ─────────────────────────────
-// Qualifying rule, settled in the Raise System threads: tiers one to four
-// are earned on the average across the person's whole tenure so far — one
-// quarter, then two, then three, then four. From tier five on it is a
-// rolling average of the last four quarters. Reviewed only at quarter
-// close, one tier per close, in order.
+// One row, left to right. Rate three ways, the weekly pace needed, and how
+// many quarters that average is taken over. Qualifying rule (Peter): the
+// look-back is the LAST 1 quarter for the first raise, last 2 for the
+// second, last 3 for the third, and last 4 from there on. Missing a close
+// costs nothing — qualify at the next one and take it then.
 const RaiseLadder = ({ ladder, isPhone }) => {
   const rows = Array.isArray(ladder) ? ladder : [];
   if (rows.length === 0) return null;
-
-  const startRow = rows.find(r => r.window_kind === "start") || null;
-  const yearOne  = rows.filter(r => r.window_kind === "tenure");
-  const after    = rows.filter(r => r.window_kind === "rolling");
-
-  const chip = (r, sub) => (
-    <div key={"rl-" + r.tier} style={{
-      border: `1px solid ${T.slate200}`, borderRadius: 8, background: T.white,
-      padding: "6px 8px", textAlign: "center", boxSizing: "border-box",
-    }}>
-      <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>
-        ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600, color: T.slate500 }}>/hr</span>
-      </div>
-      <div style={{ fontSize: 9.5, color: T.slate500, whiteSpace: "nowrap" }}>{sub}</div>
-    </div>
-  );
-
-  const grid = { display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isPhone ? 76 : 88}px, 1fr))`, gap: 6 };
-  const capStyle = { fontSize: 10.5, fontWeight: 700, color: T.slate600, marginBottom: 4, marginTop: 10 };
-  const subCap = { fontSize: 10, fontWeight: 400, color: T.slate500 };
-  const qtrWord = (n) => (n === 1 ? "1st quarter" : "first " + n + " quarters");
-
+  const qtrs = (n) => (Number(n) === 1 ? "last quarter" : "last " + n + " quarters");
   return (
-    <div>
-      {startRow && (
-        <>
-          <div style={{ ...capStyle, marginTop: 0 }}>Starting rate</div>
-          <div style={grid}>{chip(startRow, "day one")}</div>
-        </>
-      )}
-      {yearOne.length > 0 && (
-        <>
-          <div style={capStyle}>
-            Year one <span style={subCap}>— your average since you started, checked at each quarter close</span>
+    <div style={{ display: "flex", gap: 4, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2 }}>
+      {rows.map(r => {
+        const start = !(Number(r.threshold) > 0);
+        return (
+          <div key={"rl-" + r.tier} style={{
+            flex: `1 1 ${isPhone ? 92 : 0}px`, minWidth: isPhone ? 92 : 72,
+            border: `1px solid ${T.slate200}`, borderRadius: 8, background: T.white,
+            padding: "6px 5px", textAlign: "center", boxSizing: "border-box",
+          }}>
+            <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>
+              ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600, color: T.slate500 }}>/hr</span>
+            </div>
+            <div style={{ fontSize: 9, color: T.slate600, whiteSpace: "nowrap" }}>
+              ${Number(r.weekly).toLocaleString()}/wk
+            </div>
+            <div style={{ fontSize: 9, color: T.slate600, whiteSpace: "nowrap", marginBottom: 3 }}>
+              ${Number(r.annual).toLocaleString()}/yr
+            </div>
+            <div style={{ fontSize: 9.5, fontWeight: 700, color: start ? T.slate400 : T.blue, whiteSpace: "nowrap" }}>
+              {start ? "start" : Number(r.threshold).toLocaleString() + " pts"}
+            </div>
+            <div style={{ fontSize: 8.5, color: T.slate500, whiteSpace: "nowrap" }}>
+              {start ? "day one" : qtrs(r.lookback_quarters)}
+            </div>
           </div>
-          <div style={grid}>
-            {yearOne.map(r => chip(r, Number(r.threshold).toLocaleString() + " over " + qtrWord(Number(r.window_quarters))))}
-          </div>
-        </>
-      )}
-      {after.length > 0 && (
-        <>
-          <div style={capStyle}>
-            After year one <span style={subCap}>— your average over the last four quarters, checked at each quarter close</span>
-          </div>
-          <div style={grid}>
-            {after.map(r => chip(r, Number(r.threshold).toLocaleString() + " a week"))}
-          </div>
-        </>
-      )}
+        );
+      })}
     </div>
   );
 };
@@ -588,7 +585,7 @@ export default function EarningPotentialTab() {
           <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges, each headed with the performer it describes.</div>
         </div>
         {curve ? (
-          <EarningsCurveChart curve={curve} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
+          <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
         ) : (
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
         )}
@@ -607,8 +604,9 @@ export default function EarningPotentialTab() {
         <div style={card}>
           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Raise tiers</div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
-            Reviewed only at quarter close, one tier per close, in order. Each tier is harder to
-            reach than the last. A raise never steps back down.
+            Reviewed only at quarter close, one tier per close, in order. Miss a close and nothing
+            is lost — qualify at the next one and take it then. Each tier is harder to reach than
+            the last, and a raise never steps back down. Marked on the chart above.
           </div>
           <RaiseLadder ladder={role.raise_ladder} isPhone={_vp.isPhone} />
         </div>
