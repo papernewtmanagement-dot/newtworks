@@ -1046,8 +1046,8 @@ function useCPRData(weekDate) {
         // database function, which walks current_cycle_info -- the single source of
         // quarter boundaries. The page used to derive all three itself and got two of
         // them wrong:
-        //   * It stepped back a fixed 91 days per quarter. Quarters are not always 91
-        //     days -- Q4 2023, Q4 2028 and Q3 2029 run 14 weeks, Q1 2029 runs 12.
+        //   * It stepped back a fixed 91 days from the cycle start rather than asking
+        //     current_cycle_info where each close actually falls.
         //   * It read the quarter label off the calendar month of the CLOSE SATURDAY.
         //     A quarter closes on the Saturday of the week containing the calendar
         //     quarter's last day, so that Saturday normally falls in the NEXT calendar
@@ -1104,16 +1104,16 @@ function useCPRData(weekDate) {
               const wed = r.weekly_cpr_reports?.week_ending_date;
               const meta = priorQuarterByClose[wed];
               if (!meta) return;
-              // Real week count for that quarter. 13 is normal but 12 and 14 both occur;
-              // a hardcoded 13 mis-stated the average on every non-13-week quarter.
-              const weeks = Number(meta.weeks_in_quarter) || 13;
+              // 13 weeks, always. Peter directive 2026-08-28: the agency runs a
+              // 13-week quarter consistently at all times, so this divisor is a
+              // FIXED house constant, not something derived per quarter. Do not
+              // replace it with a computed week count.
               const tmId = r.team_member_id;
               if (!grouped[tmId]) grouped[tmId] = [];
               grouped[tmId].push({
                 quarter_label: meta.quarter_label,
-                avg_weekly_sp: (Number(r.sales_points) || 0) / weeks,
+                avg_weekly_sp: (Number(r.sales_points) || 0) / 13,
                 qtd_sp: Number(r.sales_points) || 0,
-                weeks_in_quarter: weeks,
               });
             });
             priorQuartersAvgSP = grouped;
@@ -3225,10 +3225,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 <Th align="right">Q Sales Pts</Th>
                 <Th align="right" style={{ background: _TINT_1PCT }}>↑ 1% vs 13-wk</Th>
                 {quarterList.map(q => (
-                  <Th key={q} align="right" style={{ background: _TINT_HIST }}>
-                    {q}
-                    <div style={{ fontWeight: 400, fontSize: 9, letterSpacing: 0, color: T.slate400 }}>avg sales pts / wk</div>
-                  </Th>
+                  <Th key={q} align="right" style={{ background: _TINT_HIST }}>{q}</Th>
                 ))}
               </tr>
             </thead>
