@@ -18,27 +18,27 @@ import { fmtMoney } from "../lib/format.jsx";
 const ROLE_ORDER = ["sales", "retention", "life_specialist"];
 
 // Colours escalate with the tier. Brand supporting accents only (theme.js).
+// Band names and performer-tier names are the same vocabulary as of
+// 2026-08-28 (Peter): Danger / Casual / Rock / Rockstar / Rock Legend.
+// Keys arrive lower-cased, so "Rock Legend" reaches here as "rock legend"
+// from the band config and as "rock_legend" from the tier table.
 const TIER_COLORS = {
-  rock:        T.slate500,
-  rock_n_roll: T.teal,
-  rockstar:    T.gold,
-  rock_legend: T.purple,
-  danger:      T.red,
-  caution:     T.amber,
-  good:        T.green,
-  great:       T.gold,
-  elite:       T.purple,
+  danger:        T.red,
+  casual:        T.amber,
+  rock:          T.green,
+  rock_n_roll:   T.teal,
+  rockstar:      T.gold,
+  rock_legend:   T.purple,
+  "rock legend": T.purple,
 };
 const TIER_BAND_FILLS = {
-  rock:        T.slate200,
-  rock_n_roll: T.tealLt,
-  rockstar:    T.goldLt,
-  rock_legend: T.purpleLt,
-  danger:      T.redLt,
-  caution:     T.amberLt,
-  good:        T.greenLt,
-  great:       T.goldLt,
-  elite:       T.purpleLt,
+  danger:        T.redLt,
+  casual:        T.amberLt,
+  rock:          T.greenLt,
+  rock_n_roll:   T.tealLt,
+  rockstar:      T.goldLt,
+  rock_legend:   T.purpleLt,
+  "rock legend": T.purpleLt,
 };
 const tierColor = (key) => TIER_COLORS[key] || T.blue;
 const tierBandFill = (key) => TIER_BAND_FILLS[key] || T.slate100;
@@ -213,14 +213,16 @@ const EarningsCurveChart = ({ curve, tiers, highlighted, isPhone }) => {
   const tiersInBand = (bandKey, fromX, toX) => {
     const list = Array.isArray(tiers) ? tiers : [];
     return list.filter(t => {
-      if (t.tier_key === bandKey) return true;
+      const norm = (v) => String(v || "").replace(/[\s_]+/g, "");
+      if (norm(t.tier_key) === norm(bandKey)) return true;
       if (tierTargetX == null) return false;
       const tx = tierTargetX * (Number(t.multiplier) || 1);
       return tx >= fromX && tx < toX;
     }).map(t => ({
       key: t.tier_key,
-      text: t.tier_key === bandKey ? fmtPct(t.applicant_pct)
-                                   : t.tier_label + " " + fmtPct(t.applicant_pct),
+      text: String(t.tier_label || "").replace(/[\s_]+/g, "").toLowerCase() === String(bandKey || "").replace(/[\s_]+/g, "")
+               ? fmtPct(t.applicant_pct)
+               : t.tier_label + " " + fmtPct(t.applicant_pct),
     }));
   };
 
