@@ -64,8 +64,9 @@ const fmtWeekEnd = (iso) => {
 // on the spread) and round the axis ceiling up to it, with a little headroom
 // so the top line never kisses the frame.
 const axisFor = (max) => {
-  if (!(max > 0)) return { max: 50000, step: 10000 };
-  const step = max > 150000 ? 50000 : max > 60000 ? 25000 : 10000;
+  // Every $25k on the y axis (Peter 2026-08-28).
+  if (!(max > 0)) return { max: 50000, step: 25000 };
+  const step = 25000;
   const ceil = Math.ceil(max / step) * step;
   return { max: ceil - max < step * 0.15 ? ceil + step : ceil, step };
 };
@@ -74,7 +75,8 @@ const axisFor = (max) => {
 // counts; the Life premium axis gets round dollar amounts.
 const xStepFor = (xMax, isPremium) => {
   if (isPremium) return xMax > 300000 ? 100000 : xMax > 120000 ? 50000 : 25000;
-  return xMax > 800 ? 200 : xMax > 400 ? 100 : xMax > 160 ? 50 : 25;
+  // Every 100 points on the sales x axis (Peter 2026-08-28).
+  return xMax > 400 ? 100 : xMax > 160 ? 50 : 25;
 };
 
 // ─── Chart ───────────────────────────────────────────────────
@@ -134,6 +136,20 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const xFor = (x) => padL + (Math.max(0, Number(x) || 0) / (xMax || 1)) * chartW;
   const yFor = (v) => padT + chartH - (Math.max(0, Number(v) || 0) / maxY) * chartH;
   const pathFor = (key) => points.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(p[key]).toFixed(1)).join("");
+  // Total pay at any x, interpolated between the two nearest curve points.
+  const totalAt = (x) => {
+    if (points.length === 0) return 0;
+    let lo = points[0], hi = points[points.length - 1];
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      if ((Number(a.x) || 0) <= x && x <= (Number(b.x) || 0)) { lo = a; hi = b; break; }
+    }
+    const x0 = Number(lo.x) || 0, x1 = Number(hi.x) || 0;
+    const t0 = Number(lo.total) || 0, t1 = Number(hi.total) || 0;
+    if (x1 === x0) return t0;
+    const f = Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
+    return t0 + f * (t1 - t0);
+  };
 
   // Total pay at each band's production level, for the threshold markers.
   const markers = useMemo(() => bands.map((b, i) => {
@@ -214,6 +230,19 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
           <g key={"mk-" + m.key}>
             <circle cx={px} cy={py} r={hot ? 4.5 : 3.5} fill={tierColor(m.key)} stroke={T.white} strokeWidth="1.5" />
             <text x={anchor === "end" ? px + 4 : px} y={py - 8} textAnchor={anchor} fontSize={fontMark} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)}>{fmtK(m.total)}</text>
+          </g>
+        );
+      })}
+      {/* Total pay at the comparison transitions: hollow markers, label below the line */}
+      {compare && compare.map(c => {
+        if (!(c.fromX > 0)) return null;
+        const tv = totalAt(c.fromX);
+        const px = xFor(c.fromX), py = yFor(tv);
+        const anchor = px > padL + chartW - 34 ? "end" : "middle";
+        return (
+          <g key={"cmk-" + c.key}>
+            <circle cx={px} cy={py} r={3.5} fill={T.white} stroke={tierColor(c.key)} strokeWidth="2" />
+            <text x={anchor === "end" ? px + 4 : px} y={py + 15} textAnchor={anchor} fontSize={fontMark} fontWeight={700} fill={tierColor(c.key)}>{fmtK(tv)}</text>
           </g>
         );
       })}
