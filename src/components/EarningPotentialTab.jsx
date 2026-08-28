@@ -125,12 +125,35 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
+  // Base runs as a straight slope from one raise tier to the next rather
+  // than as a staircase (Peter 2026-08-28). Actual pay still steps at the
+  // tier; this is how the line is drawn. The other two lines are built on
+  // the same sloped base so the commission and bonus gaps stay true.
+  const anchors = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
+    .map(r => ({ x: Number(r.threshold) || 0, y: Number(r.annual) || 0 }))
+    .sort((a, b) => a.x - b.x);
+  const slopedBase = (x) => {
+    if (anchors.length < 2) return null;
+    if (x <= anchors[0].x) return anchors[0].y;
+    if (x >= anchors[anchors.length - 1].x) return anchors[anchors.length - 1].y;
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const a = anchors[i], b = anchors[i + 1];
+      if (x >= a.x && x <= b.x) {
+        const f = b.x === a.x ? 0 : (x - a.x) / (b.x - a.x);
+        return a.y + f * (b.y - a.y);
+      }
+    }
+    return anchors[anchors.length - 1].y;
+  };
+
   // Base + commission is sent by the projection; fall back to adding the
   // two parts for any older payload that predates the field.
   const valOf = (p, key) => {
-    if (key === "base_comm" && p?.base_comm == null) {
-      return (Number(p?.base) || 0) + (Number(p?.commission) || 0);
-    }
+    const sb = slopedBase(Number(p?.x) || 0);
+    const base = sb == null ? (Number(p?.base) || 0) : sb;
+    if (key === "base") return base;
+    if (key === "base_comm") return base + (Number(p?.commission) || 0);
+    if (key === "total") return base + (Number(p?.commission) || 0) + (Number(p?.bonus) || 0);
     return Number(p?.[key]) || 0;
   };
 
@@ -220,8 +243,8 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
   // Raise tiers marked where they land on the base line.
   const raiseMarks = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
     .filter(r => Number(r.threshold) > 0 && Number(r.threshold) <= xMax)
-    .map(r => ({ x: Number(r.threshold), label: "$" + Number(r.hourly).toFixed(0) }));
-  const raiseKeep = new Set(thin(raiseMarks.map(r => r.x)).map(String));
+    .map(r => ({ x: Number(r.threshold), label: fmtK(Number(r.annual)) }));
+  const raiseKeep = new Set(thin(raiseMarks.map(r => r.x), labelXs.base).map(String));
 
   // Legend runs left to right; widths are rough but stable at both sizes.
   const legendAt = [];
