@@ -66,8 +66,15 @@ const TIMING_GATED_TYPES = ["time_off_full_day", "time_off_half_day"];
 const MS_PER_DAY = 86400000;
 
 // Both dates are plain YYYY-MM-DD strings. Parsed as UTC so no timezone shifts the day.
-function evaluateTiming(requestType, startDate, endDate, eligibility) {
+//
+// cycleStartISO is the quarter start from current_cycle_info — the one function that
+// calculates quarters. This used to build a CALENDAR quarter start (first of Jan/Apr/
+// Jul/Oct) locally, which is up to a week adrift of the real quarter: Q3 2026 starts
+// Jul 5, not Jul 1, so day-of-quarter ran four days high and requests near the boundary
+// were gated on the wrong side of the first-four-weeks line.
+function evaluateTiming(requestType, startDate, endDate, eligibility, cycleStartISO) {
   if (!TIMING_GATED_TYPES.includes(requestType) || !startDate) return null;
+  if (!cycleStartISO) return null;   // no quarter, no ruling — never guess one locally
   const parts = String(startDate).split("-").map(Number);
   if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return null;
   const [year, month] = parts;
@@ -76,7 +83,8 @@ function evaluateTiming(requestType, startDate, endDate, eligibility) {
   const endMs = endParts.length === 3 && endParts.every(n => Number.isFinite(n))
     ? Date.UTC(endParts[0], endParts[1] - 1, endParts[2])
     : startMs;
-  const quarterStartMs = Date.UTC(year, Math.floor((month - 1) / 3) * 3, 1);
+  const cs = String(cycleStartISO).split("-").map(Number);
+  const quarterStartMs = Date.UTC(cs[0], cs[1] - 1, cs[2]);
 
   const dayOfQuarter = Math.floor((startMs - quarterStartMs) / MS_PER_DAY) + 1;
   const spanDays = Math.floor((endMs - startMs) / MS_PER_DAY) + 1;
@@ -474,17 +482,20 @@ function SubmitView({ me, onSubmitted }) {
     if (eff_end < startDate) { setError("End date can't be before start date."); return; }
     setError(null);
     try {
-      const [noticeRes, eligRes, coverRes] = await Promise.all([
+      const [noticeRes, eligRes, coverRes, cycleRes] = await Promise.all([
         supabase.rpc("time_off_check_notice", { p_request_type: requestType, p_submitted_at: new Date().toISOString(), p_start_date: startDate, p_end_date: eff_end }),
         supabase.rpc("time_off_check_eligibility", { p_requester_team_id: me?.id }),
-        supabase.rpc("time_off_check_coverage", { p_agency_id: AGENCY_ID, p_start_date: startDate, p_end_date: eff_end, p_exclude_request_id: null, p_request_type: requestType, p_requester_team_id: me?.id })
+        supabase.rpc("time_off_check_coverage", { p_agency_id: AGENCY_ID, p_start_date: startDate, p_end_date: eff_end, p_exclude_request_id: null, p_request_type: requestType, p_requester_team_id: me?.id }),
+        // Quarter the requested start falls in — from the one function that calculates quarters.
+        supabase.rpc("current_cycle_info", { p_agency_id: AGENCY_ID, p_today: startDate })
       ]);
       const eligData = eligRes?.data || null;
+      const cycleRow = Array.isArray(cycleRes?.data) ? cycleRes.data[0] : cycleRes?.data;
       setChecks({
         notice: noticeRes?.data || null,
         eligibility: eligData,
         coverage: coverRes?.data || null,
-        timing: evaluateTiming(requestType, startDate, eff_end, eligData),
+        timing: evaluateTiming(requestType, startDate, eff_end, eligData, cycleRow?.cycle_start || null),
         notice_err: noticeRes?.error?.message,
         elig_err: eligRes?.error?.message,
         cover_err: coverRes?.error?.message

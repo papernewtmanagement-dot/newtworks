@@ -66,10 +66,25 @@ function useMarketingData(year, quarter) {
       try {
         const weekEnd = currentWeekSaturday();
 
-        // Time bounds for the selected quarter
-        const qStartMonth = (quarter - 1) * 3;                            // 0,3,6,9
-        const qStart = new Date(year, qStartMonth, 1).toISOString().slice(0, 10);
-        const qEnd = new Date(year, qStartMonth + 3, 0).toISOString().slice(0, 10);
+        // Time bounds for the selected quarter, from current_cycle_info — the one
+        // function that calculates quarters. These bound a day-grained ledger read
+        // (ledger.entry_date), so they must be the real quarter: Q3 2026 is Jul 5 to
+        // Oct 3, not Jul 1 to Sep 30. Building the window from calendar months locally
+        // pulled up to a week of the wrong quarter's spend into the total.
+        // The lead_source_quarterly read below is keyed on the stored period_year /
+        // period_quarter integers and is unaffected.
+        let qStart, qEnd;
+        {
+          const probe = `${year}-${String((quarter - 1) * 3 + 2).padStart(2, "0")}-15`;
+          const { data: qc } = await supabase.rpc("current_cycle_info", {
+            p_agency_id: AGENCY_ID,
+            p_today: probe,
+          });
+          const qrow = Array.isArray(qc) ? qc[0] : qc;
+          qStart = qrow?.cycle_start;
+          qEnd   = qrow?.cycle_end;
+          if (!qStart || !qEnd) throw new Error("Could not resolve quarter bounds");
+        }
         const ytdStart = `${year}-01-01`;
 
         const [
