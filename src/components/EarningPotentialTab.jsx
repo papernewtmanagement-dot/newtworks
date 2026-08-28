@@ -7,9 +7,9 @@ import { fmtMoney } from "../lib/format.jsx";
 
 // Team > Earning Potential. Read-only. One chart: production across the
 // bottom (weekly sales points; annual life premium for the Life Specialist
-// seat), dollars up the side. Two lines — dashed base pay stepping up at
-// each pay-band raise, solid total pay (base + commission + bonuses)
-// climbing smoothly from the bottom to the top. Shaded background bands
+// seat), dollars up the side. Three lines — dashed base pay stepping up at
+// each pay-band raise, base plus commission, and total pay with the team
+// bonus on top — climbing from the bottom to the top. Shaded background bands
 // mark the performance ranges (sales: the Sales Points rating bands, fed
 // by the pay_scale table through the projection). Everything comes from one
 // call to compute_role_earnings_projection — nothing here is stored as a
@@ -97,6 +97,21 @@ const BAND_SEQ = [
   { key: "elite",   label: "Elite"   },
 ];
 
+// Three lines (Peter 2026-08-28): base pay on its own, base plus
+// commission on its own, and the full total with the team bonus on top.
+// "place" is which side of its own line that line's dollar labels sit on.
+const CURVE_LINES = [
+  { key: "base",      label: "Base pay",          color: T.slate500, dash: "5 4", w: 1.75, place: "below" },
+  { key: "base_comm", label: "Base + commission", color: T.teal,     dash: null,  w: 2.25, place: "below" },
+  { key: "total",     label: "Total pay",         color: T.blue,     dash: null,  w: 2.75, place: "above" },
+];
+
+// Dotted vertical every 100 weekly sales points, with the dollar figure at
+// every crossing on every line (Peter 2026-08-28). Point axes only — the
+// Life Specialist axis is premium dollars, where a line every 100 would be
+// meaningless.
+const GRID_POINT_STEP = 100;
+
 const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
   const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
@@ -124,7 +139,16 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
-  const allY = points.flatMap(p => [Number(p.total) || 0, Number(p.base) || 0]);
+  // Base + commission is sent by the projection; fall back to adding the
+  // two parts for any older payload that predates the field.
+  const valOf = (p, key) => {
+    if (key === "base_comm" && p?.base_comm == null) {
+      return (Number(p?.base) || 0) + (Number(p?.commission) || 0);
+    }
+    return Number(p?.[key]) || 0;
+  };
+
+  const allY = points.flatMap(p => [valOf(p, "total"), valOf(p, "base"), valOf(p, "base_comm")]);
   const { max: maxY, step: tickStep } = axisFor(Math.max(0, ...allY));
   const yTicks = [];
   for (let v = 0; v <= maxY; v += tickStep) yTicks.push(v);
@@ -133,11 +157,19 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const xTicks = [];
   for (let v = 0; v <= xMax; v += xStep) xTicks.push(v);
 
+  // Dotted verticals every 100 points.
+  const gridXs = useMemo(() => {
+    if (isPremium || !(xMax > 0)) return [];
+    const out = [];
+    for (let v = GRID_POINT_STEP; v <= xMax + 0.001; v += GRID_POINT_STEP) out.push(v);
+    return out;
+  }, [xMax, isPremium]);
+
   const xFor = (x) => padL + (Math.max(0, Number(x) || 0) / (xMax || 1)) * chartW;
   const yFor = (v) => padT + chartH - (Math.max(0, Number(v) || 0) / maxY) * chartH;
-  const pathFor = (key) => points.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(p[key]).toFixed(1)).join("");
-  // Total pay at any x, interpolated between the two nearest curve points.
-  const totalAt = (x) => {
+  const pathFor = (key) => points.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(valOf(p, key)).toFixed(1)).join("");
+  // Any line's value at any x, interpolated between the two nearest points.
+  const valueAt = (key, x) => {
     if (points.length === 0) return 0;
     let lo = points[0], hi = points[points.length - 1];
     for (let i = 0; i < points.length - 1; i++) {
@@ -145,7 +177,7 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
       if ((Number(a.x) || 0) <= x && x <= (Number(b.x) || 0)) { lo = a; hi = b; break; }
     }
     const x0 = Number(lo.x) || 0, x1 = Number(hi.x) || 0;
-    const t0 = Number(lo.total) || 0, t1 = Number(hi.total) || 0;
+    const t0 = valOf(lo, key), t1 = valOf(hi, key);
     if (x1 === x0) return t0;
     const f = Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
     return t0 + f * (t1 - t0);
@@ -174,10 +206,44 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
 
   const fontTick = isPhone ? 9 : 10;
   const fontMark = isPhone ? 9 : 10;
+  const fontDot  = isPhone ? 8 : 9;
   const ribbonY = 24, ribbonH = 16;
 
+  // Where each line gets a dollar figure. Band transitions on the base and
+  // base-plus-commission lines, every 100-point crossing on all three. Keep
+  // a minimum gap so nothing stacks up on a phone — the further-left label
+  // wins, and the total line yields to the markers it already carries.
+  const bandXs = bands.map(b => Number(b.from_x) || 0).filter(v => v > 0);
+  const compareXs = compare ? compare.map(c => c.fromX).filter(v => v > 0) : [];
+  const minGapPx = isPhone ? 30 : 34;
+  const thin = (xs, seed) => {
+    const kept = [...(seed || [])];
+    const out = [];
+    for (const x of [...new Set(xs)].sort((a, b) => a - b)) {
+      const px = xFor(x);
+      if (kept.some(k => Math.abs(xFor(k) - px) < minGapPx)) continue;
+      kept.push(x);
+      out.push(x);
+    }
+    return out;
+  };
+  const labelXs = {
+    base:      thin([...gridXs, ...bandXs]),
+    base_comm: thin([...gridXs, ...bandXs]),
+    total:     thin(gridXs, [...compareXs, ...bandXs]),
+  };
+
+  // Legend runs left to right; widths are rough but stable at both sizes.
+  const legendStep = (label) => 24 + label.length * (isPhone ? 4.4 : 5.0) + 12;
+  let legendAcc = 0;
+  const legendAt = CURVE_LINES.map(l => {
+    const at = legendAcc;
+    legendAcc += legendStep(l.label);
+    return at;
+  });
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Projected annual pay by production level, with performance bands shaded">
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Projected annual pay by production level: base pay, base plus commission, and total pay, with performance bands shaded">
       {/* Performance bands */}
       {markers.map(m => {
         const x0 = xFor(m.fromX), x1 = xFor(m.toX);
@@ -204,6 +270,11 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
           <text x={padL - 5} y={yFor(v) + 3.5} textAnchor="end" fontSize={fontTick} fill={T.slate500}>{fmtK(v)}</text>
         </g>
       ))}
+      {/* Every-100-points dotted verticals */}
+      {gridXs.map(v => (
+        <line key={"gx" + v} x1={xFor(v)} y1={padT} x2={xFor(v)} y2={padT + chartH}
+          stroke={T.slate400} strokeWidth="1.25" strokeDasharray="3 4" opacity="0.45" />
+      ))}
       {/* X ticks + axis title */}
       {xTicks.map(v => (
         <text key={"x" + v} x={xFor(v)} y={padT + chartH + 13} textAnchor="middle" fontSize={fontTick} fill={T.slate500}>
@@ -216,10 +287,31 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
         <line key={"cd-" + c.key} x1={xFor(c.fromX)} y1={ribbonY + ribbonH} x2={xFor(c.fromX)} y2={padT + chartH}
           stroke={tierColor(c.key)} strokeWidth="1.25" strokeDasharray="3 4" opacity="0.5" />
       ))}
-      {/* Base pay: dashed step line */}
-      <path d={pathFor("base")} stroke={T.slate500} strokeWidth="1.75" strokeDasharray="5 4" fill="none" opacity="0.9" />
-      {/* Total pay: solid line */}
-      <path d={pathFor("total")} stroke={T.blue} strokeWidth={isPhone ? 2.5 : 2.75} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+      {/* The three pay lines */}
+      {CURVE_LINES.map(l => (
+        <path key={"line-" + l.key} d={pathFor(l.key)} stroke={l.color}
+          strokeWidth={isPhone ? Math.max(1.5, l.w - 0.25) : l.w}
+          strokeDasharray={l.dash || undefined}
+          fill="none" strokeLinejoin="round" strokeLinecap="round"
+          opacity={l.key === "base" ? 0.9 : 1} />
+      ))}
+      {/* Dollar figures where the lines cross the markers */}
+      {CURVE_LINES.map(l => (
+        <g key={"lab-" + l.key}>
+          {labelXs[l.key].map(x => {
+            const v = valueAt(l.key, x);
+            const px = xFor(x), py = yFor(v);
+            const anchor = px > padL + chartW - 30 ? "end" : px < padL + 26 ? "start" : "middle";
+            const dy = l.place === "above" ? -7 : 12;
+            return (
+              <g key={l.key + "-" + x}>
+                <circle cx={px} cy={py} r={2.4} fill={l.color} stroke={T.white} strokeWidth="1" />
+                <text x={px} y={py + dy} textAnchor={anchor} fontSize={fontDot} fontWeight={600} fill={l.color}>{fmtK(v)}</text>
+              </g>
+            );
+          })}
+        </g>
+      ))}
       {/* Band threshold markers on the total line */}
       {markers.map(m => {
         if (!(m.fromX > 0)) return null;
@@ -236,7 +328,7 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
       {/* Total pay at the comparison transitions: hollow markers, label below the line */}
       {compare && compare.map(c => {
         if (!(c.fromX > 0)) return null;
-        const tv = totalAt(c.fromX);
+        const tv = valueAt("total", c.fromX);
         const px = xFor(c.fromX), py = yFor(tv);
         const anchor = px > padL + chartW - 34 ? "end" : "middle";
         return (
@@ -268,10 +360,13 @@ const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
       )}
       {/* Legend */}
       <g>
-        <line x1={padL} y1={9} x2={padL + 18} y2={9} stroke={T.slate500} strokeWidth="1.5" strokeDasharray="5 4" />
-        <text x={padL + 22} y={12.5} fontSize={fontTick} fill={T.slate500}>Base pay</text>
-        <line x1={padL + 76} y1={9} x2={padL + 94} y2={9} stroke={T.blue} strokeWidth="2.25" />
-        <text x={padL + 98} y={12.5} fontSize={fontTick} fill={T.slate500}>Total pay</text>
+        {CURVE_LINES.map((l, i) => (
+          <g key={"lg-" + l.key}>
+            <line x1={padL + legendAt[i]} y1={9} x2={padL + legendAt[i] + 18} y2={9}
+              stroke={l.color} strokeWidth={l.w} strokeDasharray={l.dash || undefined} />
+            <text x={padL + legendAt[i] + 22} y={12.5} fontSize={fontTick} fill={T.slate500}>{l.label}</text>
+          </g>
+        ))}
       </g>
     </svg>
   );
@@ -473,7 +568,7 @@ export default function EarningPotentialTab() {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Solid line is total pay, dashed is base pay. Shaded bands mark the performance ranges. Tap a tier below to highlight it.</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges. Tap a tier below to highlight it.</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
@@ -536,6 +631,7 @@ export default function EarningPotentialTab() {
         <details style={{ marginTop: 6 }}>
           <summary style={{ cursor: "pointer", color: T.slate600, fontWeight: 600 }}>Model inputs</summary>
           <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "4px 16px" }}>
+            <div>Share of agency earnings funding the pool: <b style={{ color: T.slate700 }}>{fmtPct(a.pool_pct_used)}</b>{Number.isFinite(Number(a.pool_pct_this_week)) && <span> (this week {fmtPct(a.pool_pct_this_week)}; averaged forward to {a.pool_pct_window_end || "the plan horizon"})</span>}</div>
             <div>Bonus pool basis (annual): <b style={{ color: T.slate700 }}>{fmtMoney(a.pool_basis_annual)}</b></div>
             <div>Weekly bonus pool (quarter average): <b style={{ color: T.slate700 }}>{fmtMoney(a.weekly_bonus_pool, { decimals: 2 })}</b></div>
             <div>Rest of team, weekly sales points: <b style={{ color: T.slate700 }}>{Number(a.rest_of_team_weekly_sp || 0).toLocaleString()}</b></div>
