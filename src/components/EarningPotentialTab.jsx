@@ -100,9 +100,9 @@ const xStepFor = (xMax, isPremium) => {
 // commission on its own, and the full total with the team bonus on top.
 // "place" is which side of its own line that line's dollar labels sit on.
 const CURVE_LINES = [
-  { key: "base",      label: "Base pay",          color: T.slate500, dash: "5 4", w: 1.75, place: "below" },
-  { key: "base_comm", label: "Base + commission", color: T.teal,     dash: null,  w: 2.25, place: "below" },
-  { key: "total",     label: "Total pay",         color: T.blue,     dash: null,  w: 2.75, place: "above" },
+  { key: "base",      label: "Base",              color: T.slate500, dash: "5 4", w: 1.75, place: "below" },
+  { key: "base_comm", label: "Commission",        color: T.teal,     dash: null,  w: 2.25, place: "below" },
+  { key: "total",     label: "Bonuses",           color: T.blue,     dash: null,  w: 2.75, place: "above" },
 ];
 
 // Dotted vertical every 100 weekly sales points, with the dollar figure at
@@ -334,22 +334,19 @@ const RaiseLadder = ({ ladder, isPhone }) => {
   if (rows.length === 0) return null;
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isPhone ? 76 : 88}px, 1fr))`, gap: 6 }}>
-      {rows.map(r => {
-        const start = !(Number(r.from_x) > 0);
-        return (
-          <div key={"rl-" + r.tier} style={{
-            border: `1px solid ${start ? T.slate200 : T.blueLt}`, borderRadius: 8,
-            background: start ? T.white : T.blueLt, padding: "6px 8px", textAlign: "center", boxSizing: "border-box",
-          }}>
-            <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: start ? T.slate700 : T.blue, whiteSpace: "nowrap" }}>
-              ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600 }}>/hr</span>
-            </div>
-            <div style={{ fontSize: 9.5, color: T.slate500, whiteSpace: "nowrap" }}>
-              {start ? "starting rate" : Number(r.from_x).toLocaleString() + " pts"}
-            </div>
+      {rows.map(r => (
+        <div key={"rl-" + r.tier} style={{
+          border: `1px solid ${T.slate200}`, borderRadius: 8, background: T.white,
+          padding: "6px 8px", textAlign: "center", boxSizing: "border-box",
+        }}>
+          <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>
+            ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600, color: T.slate500 }}>/hr</span>
           </div>
-        );
-      })}
+          <div style={{ fontSize: 9.5, color: T.slate500, whiteSpace: "nowrap" }}>
+            {Number(r.from_x) > 0 ? Number(r.from_x).toLocaleString() + " pts" : "start"}
+          </div>
+        </div>
+      ))}
     </div>
   );
 };
@@ -572,7 +569,8 @@ export default function EarningPotentialTab() {
         <div style={card}>
           <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Raise tiers</div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
-            The base rate steps up as a weekly pace crosses each tier. A raise never steps back down.
+            Measured on the 13-week average — one full quarter at or above the pace, the same
+            measure the Sales Points rating uses. A raise never steps back down.
           </div>
           <RaiseLadder ladder={role.raise_ladder} isPhone={_vp.isPhone} />
         </div>
