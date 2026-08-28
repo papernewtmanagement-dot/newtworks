@@ -18,27 +18,39 @@ import { fmtMoney } from "../lib/format.jsx";
 const ROLE_ORDER = ["sales", "retention", "life_specialist"];
 
 // Colours escalate with the tier. Brand supporting accents only (theme.js).
-// Band names and performer-tier names are the same vocabulary as of
-// 2026-08-28 (Peter): Danger / Casual / Rock / Rockstar / Rock Legend.
-// Keys arrive lower-cased, so "Rock Legend" reaches here as "rock legend"
-// from the band config and as "rock_legend" from the tier table.
 const TIER_COLORS = {
-  danger:        T.red,
-  casual:        T.amber,
-  rock:          T.green,
-  rock_n_roll:   T.teal,
-  rockstar:      T.gold,
-  rock_legend:   T.purple,
-  "rock legend": T.purple,
+  rock:        T.slate500,
+  rock_n_roll: T.teal,
+  rockstar:    T.gold,
+  rock_legend: T.purple,
+  danger:      T.red,
+  caution:     T.amber,
+  good:        T.green,
+  great:       T.gold,
+  elite:       T.purple,
 };
 const TIER_BAND_FILLS = {
-  danger:        T.redLt,
-  casual:        T.amberLt,
-  rock:          T.greenLt,
-  rock_n_roll:   T.tealLt,
-  rockstar:      T.goldLt,
-  rock_legend:   T.purpleLt,
-  "rock legend": T.purpleLt,
+  rock:        T.slate200,
+  rock_n_roll: T.tealLt,
+  rockstar:    T.goldLt,
+  rock_legend: T.purpleLt,
+  danger:      T.redLt,
+  caution:     T.amberLt,
+  good:        T.greenLt,
+  great:       T.goldLt,
+  elite:       T.purpleLt,
+};
+
+// What each band header reads on the Sales chart (Peter 2026-08-28).
+// Band name on the first line, the performer nickname and its share of
+// applicants on the second, the traits that go with it on the third.
+// Danger carries no nickname. Percentages are the applicant shares held in
+// earnings_projection_tiers.
+const BAND_NOTES = {
+  caution: ["Casual 75%"],
+  good:    ["Rock 19%", "Consistent"],
+  great:   ["Rockstar 5%", "Consistent, Having Fun"],
+  elite:   ["Rock Legend 1%", "Consistent, Having Fun, Obsessed"],
 };
 const tierColor = (key) => TIER_COLORS[key] || T.blue;
 const tierBandFill = (key) => TIER_BAND_FILLS[key] || T.slate100;
@@ -99,7 +111,7 @@ const CURVE_LINES = [
 // meaningless.
 const GRID_POINT_STEP = 100;
 
-const EarningsCurveChart = ({ curve, tiers, highlighted, isPhone }) => {
+const EarningsCurveChart = ({ curve, highlighted, isPhone }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
   const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
   const xMax   = Number(curve?.x_max) || 0;
@@ -205,36 +217,6 @@ const EarningsCurveChart = ({ curve, tiers, highlighted, isPhone }) => {
     total:     thin(gridXs, bandXs),
   };
 
-  // Which performer tier sits in which band (Peter 2026-08-28): a tier's
-  // production level is its multiplier against the role's weekly target, so
-  // it falls inside whichever band covers that level. On the computed
-  // curves the band IS the tier, so only the percentage gets added.
-  const tierTargetX = curve?.source === "pay_scale" ? 100 : null;
-  const tiersInBand = (bandKey, fromX, toX) => {
-    const list = Array.isArray(tiers) ? tiers : [];
-    return list.filter(t => {
-      const norm = (v) => String(v || "").replace(/[\s_]+/g, "");
-      if (norm(t.tier_key) === norm(bandKey)) return true;
-      if (tierTargetX == null) return false;
-      const tx = tierTargetX * (Number(t.multiplier) || 1);
-      return tx >= fromX && tx < toX;
-    }).map(t => ({
-      key: t.tier_key,
-      text: String(t.tier_label || "").replace(/[\s_]+/g, "").toLowerCase() === String(bandKey || "").replace(/[\s_]+/g, "")
-               ? fmtPct(t.applicant_pct)
-               : t.tier_label + " " + fmtPct(t.applicant_pct),
-    }));
-  };
-
-  // Legend runs left to right; widths are rough but stable at both sizes.
-  const legendStep = (label) => 24 + label.length * (isPhone ? 4.4 : 5.0) + 12;
-  let legendAcc = 0;
-  const legendAt = CURVE_LINES.map(l => {
-    const at = legendAcc;
-    legendAcc += legendStep(l.label);
-    return at;
-  });
-
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Projected annual pay by production level: base pay, base plus commission, and total pay, with performance bands shaded">
       {/* Performance bands */}
@@ -242,7 +224,7 @@ const EarningsCurveChart = ({ curve, tiers, highlighted, isPhone }) => {
         const x0 = xFor(m.fromX), x1 = xFor(m.toX);
         const wPx = Math.max(0, x1 - x0);
         const hot = m.key === highlighted;
-        const labelHoriz = wPx >= (isPhone ? 58 : 66);
+        const labelHoriz = wPx >= (isPhone ? 52 : 60);
         return (
           <g key={"band-" + m.key}>
             <rect x={x0} y={padT} width={wPx} height={chartH} fill={tierBandFill(m.key)} opacity={hot ? 0.85 : 0.45} />
@@ -250,9 +232,10 @@ const EarningsCurveChart = ({ curve, tiers, highlighted, isPhone }) => {
             {wPx >= 22 && (labelHoriz ? (
               <>
                 <text x={x0 + wPx / 2} y={padT + 12} textAnchor="middle" fontSize={9} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3">{m.label}</text>
-                {tiersInBand(m.key, m.fromX, m.toX).map((tb, ti) => (
-                  <text key={"tb-" + m.key + "-" + tb.key} x={x0 + wPx / 2} y={padT + 24 + ti * 11}
-                    textAnchor="middle" fontSize={8.5} fontWeight={600} fill={tierColor(m.key)} opacity="0.85">{tb.text}</text>
+                {(BAND_NOTES[m.key] || []).map((note, ti) => (
+                  <text key={"bn-" + m.key + "-" + ti} x={x0 + wPx / 2} y={padT + 23 + ti * 10.5}
+                    textAnchor="middle" fontSize={ti === 0 ? 8.5 : 8} fontWeight={ti === 0 ? 700 : 500}
+                    fill={tierColor(m.key)} opacity={ti === 0 ? 0.95 : 0.8}>{note}</text>
                 ))}
               </>
             ) : (
@@ -529,10 +512,10 @@ export default function EarningPotentialTab() {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges, with the performer tier that lands in each.</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges, each headed with the performer it describes.</div>
         </div>
         {curve ? (
-          <EarningsCurveChart curve={curve} tiers={tiers} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
+          <EarningsCurveChart curve={curve} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
         ) : (
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
         )}
