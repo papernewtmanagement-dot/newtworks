@@ -3503,7 +3503,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 // + MVP on weekly_cpr_reports then invokes write_weekly_comp_v2 to populate
 // base_salary, commission, bonus, marketing_pool_earned_weekly, and
 // manager_bonus from the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
+function PayrollSection({ details, team, weekDate, report = null, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
   // Commission row expander — shows per-teammate cycle-view commission chart (small multiples).
   const [commissionExpanded, setCommissionExpanded] = useState(false);
   const cycleWeeks = computeCycleWeekList(cycleStartISO, weekDate);
@@ -3520,6 +3520,11 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   const [teamBonusExpanded, setTeamBonusExpanded] = useState(false);
   const [goalsExpanded, setGoalsExpanded] = useState(false);
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
+  // Territory median lapse rates (auto + fire). Peter enters these by hand each week.
+  // They are the benchmark the retention floor is measured against, and they live on
+  // the weekly CPR row rather than being recomputed, so they cannot drift later.
+  const [medianDrafts, setMedianDrafts] = useState({ auto: "", fire: "" });
+  const [medianPrefillFrom, setMedianPrefillFrom] = useState(null);
 
   // When entering edit mode, seed drafts from current values
   useEffect(() => {
@@ -3549,6 +3554,43 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   useEffect(() => {
     if (!canEdit && editMode) setEditMode(false);
   }, [canEdit, editMode]);
+
+  // Seed the territory median fields when edit mode opens. Whatever is already
+  // stored on this week wins; if the week is blank, prefill from the most recent
+  // earlier week that has them so Peter can leave them alone or type over them.
+  useEffect(() => {
+    if (!editMode) return undefined;
+    let cancelled = false;
+    (async () => {
+      const storedAuto = report?.territory_median_lapse_auto;
+      const storedFire = report?.territory_median_lapse_fire;
+      if (storedAuto !== null && storedAuto !== undefined && storedFire !== null && storedFire !== undefined) {
+        if (!cancelled) {
+          setMedianDrafts({ auto: String(storedAuto), fire: String(storedFire) });
+          setMedianPrefillFrom(null);
+        }
+        return;
+      }
+      if (!supabase || !weekDate) return;
+      try {
+        const { data: prior } = await supabase.rpc("get_prior_territory_medians", {
+          p_agency_id: AGENCY_ID,
+          p_week_end_date: weekDate,
+        });
+        const row = Array.isArray(prior) ? prior[0] : prior;
+        if (!cancelled && row) {
+          setMedianDrafts({
+            auto: row.median_auto !== null && row.median_auto !== undefined ? String(row.median_auto) : "",
+            fire: row.median_fire !== null && row.median_fire !== undefined ? String(row.median_fire) : "",
+          });
+          setMedianPrefillFrom(row.sourced_from || null);
+        }
+      } catch (_prefillErr) {
+        // Non-fatal — the fields just open empty and can be typed in by hand.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editMode, report, weekDate]);
 
   if (!details || details.length === 0) {
     return (
@@ -3664,6 +3706,28 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
 
       // Recompute the full CPR outcome (won_the_week + MVP + payroll) so the
       // banner and payroll reflect the just-saved edits.
+      // Territory median lapse rates go onto the weekly CPR row FIRST, so the
+      // recompute below picks up the resulting retention floor in the same save.
+      const parseRate = (v) => {
+        if (v === "" || v === null || v === undefined) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const medAuto = parseRate(medianDrafts.auto);
+      const medFire = parseRate(medianDrafts.fire);
+      const outOfRange = [medAuto, medFire].some(v => v !== null && (v < 0 || v > 1));
+      if (outOfRange) {
+        throw new Error("Territory median lapse has to be a rate between 0 and 1 — enter 0.2337, not 23.37.");
+      }
+      const { error: medErr } = await supabase
+        .from("weekly_cpr_reports")
+        .update({
+          territory_median_lapse_auto: medAuto,
+          territory_median_lapse_fire: medFire,
+        })
+        .eq("id", reportRow.id);
+      if (medErr) throw medErr;
+
       const { error: rpcErr } = await supabase.rpc("recompute_cpr_outcome", {
         p_agency_id: AGENCY_ID,
         p_week_end_date: weekDate,
@@ -3726,11 +3790,59 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   border: `1px solid ${T.slate300}`, background: T.white,
                   color: T.slate700, cursor: "pointer",
                 }}>
-                Edit payroll YTD
+                Edit payroll
               </button>
             )}
           </div>
         )}
+
+        {/* Territory median lapse — the benchmark behind the retention floor.
+            Read-only summary always; two entry fields while editing. */}
+        <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.slate200}`, background: T.slate50 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.slate700 }}>Territory median lapse</span>
+            {report?.territory_median_lapse_auto !== null && report?.territory_median_lapse_auto !== undefined ? (
+              <span style={{ fontSize: 12, color: T.slate500 }}>
+                auto {Number(report.territory_median_lapse_auto).toFixed(4)} · fire {Number(report.territory_median_lapse_fire ?? 0).toFixed(4)}
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, color: T.slate500 }}>not entered for this week</span>
+            )}
+            {report?.retention_floor_factor !== null && report?.retention_floor_factor !== undefined ? (
+              <span style={{ fontSize: 12, color: Number(report.retention_floor_factor) >= 0.5 ? T.green : T.amber }}>
+                retention floor factor {Number(report.retention_floor_factor).toFixed(4)}
+                {Number(report.retention_floor_factor) >= 0.5 ? " — at or ahead of the territory median" : " — behind the territory median"}
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, color: T.slate500 }}>no retention floor applied</span>
+            )}
+            {editMode && medianPrefillFrom && (
+              <span style={{ fontSize: 11, fontStyle: "italic", color: T.slate500 }}>
+                prefilled from week ending {medianPrefillFrom}
+              </span>
+            )}
+          </div>
+          {editMode && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 8 }}>
+              {[["auto", "Auto"], ["fire", "Fire"]].map(([k, lbl]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.slate700 }}>
+                  <span style={{ minWidth: 34 }}>{lbl}</span>
+                  <input
+                    type="number" step="0.0001" min="0" max="1"
+                    value={medianDrafts?.[k] ?? ""}
+                    placeholder="0.0000"
+                    onChange={e => setMedianDrafts(d => ({ ...d, [k]: e.target.value }))}
+                    style={{
+                      flex: 1, minWidth: 0, boxSizing: "border-box", fontSize: 12,
+                      padding: "4px 6px", borderRadius: 4, background: T.white,
+                      border: `1px solid ${T.slate300}`, color: T.slate900,
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -6384,7 +6496,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} report={data.report} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
 
       {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
