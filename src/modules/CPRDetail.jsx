@@ -290,6 +290,10 @@ const EDIT_FIELDS = {
     "eur",
     // Whiteboard Errors (free-form, weekly) — each line adds +1 to team requirements count
     "whiteboard_errors",
+    // Territory median lapse, auto + fire. Hand-entered weekly benchmark that drives the
+    // retention floor. Stored per week so it cannot drift; prefilled from the most recent
+    // prior week that has both values.
+    "territory_median_lapse_auto", "territory_median_lapse_fire",
   ],
   // Agency Performance YTD fields — live on agency_snapshot (single source of truth).
   // Row keyed by (agency_id, snapshot_date=week_ending_date, cadence='weekly').
@@ -498,6 +502,7 @@ function useCPRData(weekDate) {
     bookCurrent: null,   // agency_snapshot row (most recent)
     goals: [],           // book_performance_goals rows (current year)
     campaignPriors: {},  // {defectors_date, single_line_date, af_renewals_date} — most recent prior non-null per type
+    reportPrefills: {},  // report-level fields that open prefilled from the most recent prior week
     lastWeekSalesPointsByMember: {},  // {team_member_id: prior-week sales_points} — drives Team Activity WoW delta indicator
     cycleStartISO: null,  // cycle start for the week being viewed (YYYY-MM-DD), from current_cycle_info
     cycleEndISO: null,    // cycle end (close Saturday) for the week being viewed, from current_cycle_info
@@ -738,6 +743,24 @@ function useCPRData(weekDate) {
           if (!campaignPriors.single_line_date && r.campaign_single_line_date) campaignPriors.single_line_date = r.campaign_single_line_date;
           if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
         });
+
+        // 7b. Territory median lapse prefill — most recent prior week carrying both values.
+        // Entered by hand each week, so the fields open filled in and can be left alone
+        // or typed over.
+        const { data: priorMedianRows } = await supabase
+          .from("weekly_cpr_reports")
+          .select("week_ending_date, territory_median_lapse_auto, territory_median_lapse_fire")
+          .eq("agency_id", AGENCY_ID)
+          .lt("week_ending_date", weekDate)
+          .not("territory_median_lapse_auto", "is", null)
+          .not("territory_median_lapse_fire", "is", null)
+          .order("week_ending_date", { ascending: false })
+          .limit(1);
+        const priorMedianRow = (priorMedianRows || [])[0] || null;
+        const reportPrefills = priorMedianRow ? {
+          territory_median_lapse_auto: priorMedianRow.territory_median_lapse_auto,
+          territory_median_lapse_fire: priorMedianRow.territory_median_lapse_fire,
+        } : {};
 
         // 8. Cycle start + end (YYYY-MM-DD) for the week being viewed, and the cycle start
         // for TODAY (drives read-only lockout of past quarters).
@@ -1214,6 +1237,7 @@ function useCPRData(weekDate) {
           bookCurrent,
           goals: goalRows || [],
           campaignPriors,
+          reportPrefills,
           lastWeekSalesPointsByMember,
           cycleStartISO,
           cycleEndISO,
@@ -2852,6 +2876,31 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
             </tbody>
           </table>
         </div>
+        {editMode && (
+          <div style={{ padding: "12px 14px", borderTop: `1px solid ${T.slate200}`, background: T.slate50 }}>
+            <div style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, marginBottom: 6 }}>
+              Territory median lapse
+            </div>
+            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8, lineHeight: 1.5 }}>
+              Rate, not a percentage — enter 0.2337, not 23.37. Opens prefilled from the most
+              recent week that has them. Leave blank and no retention floor applies this week.
+            </div>
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
+              {[["territory_median_lapse_auto", "Auto"], ["territory_median_lapse_fire", "Fire"]].map(([key, label]) => (
+                <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{label}</span>
+                  <NumberInput
+                    value={formReport[key]}
+                    onChange={v => onReportChange(key, v)}
+                    dirty={isReportDirty(key)}
+                    min={0} max={1} step={0.0001}
+                    style={{ width: 110 }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -3508,7 +3557,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 // + MVP on weekly_cpr_reports then invokes write_weekly_comp_v2 to populate
 // base_salary, commission, bonus, marketing_pool_earned_weekly, and
 // manager_bonus from the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, report = null, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
+function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
   // Commission row expander — shows per-teammate cycle-view commission chart (small multiples).
   const [commissionExpanded, setCommissionExpanded] = useState(false);
   const cycleWeeks = computeCycleWeekList(cycleStartISO, weekDate);
@@ -3525,11 +3574,6 @@ function PayrollSection({ details, team, weekDate, report = null, marketingByTea
   const [teamBonusExpanded, setTeamBonusExpanded] = useState(false);
   const [goalsExpanded, setGoalsExpanded] = useState(false);
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
-  // Territory median lapse rates (auto + fire). Peter enters these by hand each week.
-  // They are the benchmark the retention floor is measured against, and they live on
-  // the weekly CPR row rather than being recomputed, so they cannot drift later.
-  const [medianDrafts, setMedianDrafts] = useState({ auto: "", fire: "" });
-  const [medianPrefillFrom, setMedianPrefillFrom] = useState(null);
 
   // When entering edit mode, seed drafts from current values
   useEffect(() => {
@@ -3559,43 +3603,6 @@ function PayrollSection({ details, team, weekDate, report = null, marketingByTea
   useEffect(() => {
     if (!canEdit && editMode) setEditMode(false);
   }, [canEdit, editMode]);
-
-  // Seed the territory median fields when edit mode opens. Whatever is already
-  // stored on this week wins; if the week is blank, prefill from the most recent
-  // earlier week that has them so Peter can leave them alone or type over them.
-  useEffect(() => {
-    if (!editMode) return undefined;
-    let cancelled = false;
-    (async () => {
-      const storedAuto = report?.territory_median_lapse_auto;
-      const storedFire = report?.territory_median_lapse_fire;
-      if (storedAuto !== null && storedAuto !== undefined && storedFire !== null && storedFire !== undefined) {
-        if (!cancelled) {
-          setMedianDrafts({ auto: String(storedAuto), fire: String(storedFire) });
-          setMedianPrefillFrom(null);
-        }
-        return;
-      }
-      if (!supabase || !weekDate) return;
-      try {
-        const { data: prior } = await supabase.rpc("get_prior_territory_medians", {
-          p_agency_id: AGENCY_ID,
-          p_week_end_date: weekDate,
-        });
-        const row = Array.isArray(prior) ? prior[0] : prior;
-        if (!cancelled && row) {
-          setMedianDrafts({
-            auto: row.median_auto !== null && row.median_auto !== undefined ? String(row.median_auto) : "",
-            fire: row.median_fire !== null && row.median_fire !== undefined ? String(row.median_fire) : "",
-          });
-          setMedianPrefillFrom(row.sourced_from || null);
-        }
-      } catch (_prefillErr) {
-        // Non-fatal — the fields just open empty and can be typed in by hand.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [editMode, report, weekDate]);
 
   if (!details || details.length === 0) {
     return (
@@ -3711,28 +3718,6 @@ function PayrollSection({ details, team, weekDate, report = null, marketingByTea
 
       // Recompute the full CPR outcome (won_the_week + MVP + payroll) so the
       // banner and payroll reflect the just-saved edits.
-      // Territory median lapse rates go onto the weekly CPR row FIRST, so the
-      // recompute below picks up the resulting retention floor in the same save.
-      const parseRate = (v) => {
-        if (v === "" || v === null || v === undefined) return null;
-        const n = Number(v);
-        return Number.isFinite(n) ? n : null;
-      };
-      const medAuto = parseRate(medianDrafts.auto);
-      const medFire = parseRate(medianDrafts.fire);
-      const outOfRange = [medAuto, medFire].some(v => v !== null && (v < 0 || v > 1));
-      if (outOfRange) {
-        throw new Error("Territory median lapse has to be a rate between 0 and 1 — enter 0.2337, not 23.37.");
-      }
-      const { error: medErr } = await supabase
-        .from("weekly_cpr_reports")
-        .update({
-          territory_median_lapse_auto: medAuto,
-          territory_median_lapse_fire: medFire,
-        })
-        .eq("id", reportRow.id);
-      if (medErr) throw medErr;
-
       const { error: rpcErr } = await supabase.rpc("recompute_cpr_outcome", {
         p_agency_id: AGENCY_ID,
         p_week_end_date: weekDate,
@@ -3795,59 +3780,11 @@ function PayrollSection({ details, team, weekDate, report = null, marketingByTea
                   border: `1px solid ${T.slate300}`, background: T.white,
                   color: T.slate700, cursor: "pointer",
                 }}>
-                Edit payroll
+                Edit payroll YTD
               </button>
             )}
           </div>
         )}
-
-        {/* Territory median lapse — the benchmark behind the retention floor.
-            Read-only summary always; two entry fields while editing. */}
-        <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.slate200}`, background: T.slate50 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: T.slate700 }}>Territory median lapse</span>
-            {report?.territory_median_lapse_auto !== null && report?.territory_median_lapse_auto !== undefined ? (
-              <span style={{ fontSize: 12, color: T.slate500 }}>
-                auto {Number(report.territory_median_lapse_auto).toFixed(4)} · fire {Number(report.territory_median_lapse_fire ?? 0).toFixed(4)}
-              </span>
-            ) : (
-              <span style={{ fontSize: 12, color: T.slate500 }}>not entered for this week</span>
-            )}
-            {report?.retention_floor_factor !== null && report?.retention_floor_factor !== undefined ? (
-              <span style={{ fontSize: 12, color: Number(report.retention_floor_factor) >= 0.5 ? T.green : T.amber }}>
-                retention floor factor {Number(report.retention_floor_factor).toFixed(4)}
-                {Number(report.retention_floor_factor) >= 0.5 ? " — at or ahead of the territory median" : " — behind the territory median"}
-              </span>
-            ) : (
-              <span style={{ fontSize: 12, color: T.slate500 }}>no retention floor applied</span>
-            )}
-            {editMode && medianPrefillFrom && (
-              <span style={{ fontSize: 11, fontStyle: "italic", color: T.slate500 }}>
-                prefilled from week ending {medianPrefillFrom}
-              </span>
-            )}
-          </div>
-          {editMode && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 8 }}>
-              {[["auto", "Auto"], ["fire", "Fire"]].map(([k, lbl]) => (
-                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.slate700 }}>
-                  <span style={{ minWidth: 34 }}>{lbl}</span>
-                  <input
-                    type="number" step="0.0001" min="0" max="1"
-                    value={medianDrafts?.[k] ?? ""}
-                    placeholder="0.0000"
-                    onChange={e => setMedianDrafts(d => ({ ...d, [k]: e.target.value }))}
-                    style={{
-                      flex: 1, minWidth: 0, boxSizing: "border-box", fontSize: 12,
-                      padding: "4px 6px", borderRadius: 4, background: T.white,
-                      border: `1px solid ${T.slate300}`, color: T.slate900,
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -4453,6 +4390,62 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
           {row("Retention Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_retention_pool) || 0), "weighted_hours share")}
+          {(() => {
+            // Territory median lapse — the benchmark behind the retention floor.
+            // Retention takes the BIGGER of its normal third and
+            //   (bonus pool + this week's commissions) / 3 x factor,
+            // capped at the whole pool. No medians entered = no floor at all.
+            const qp = diag.qtd_pools || {};
+            const fd = qp.retention_floor_detail || null;
+            const factor = qp.retention_floor_factor;
+            if (factor === null || factor === undefined || !fd) {
+              return (
+                <tr>
+                  <Td colSpan={3} style={{ paddingLeft: 28, color: T.slate500, fontSize: 11, fontStyle: "italic" }}>
+                    Territory median lapse not entered for this week — no retention floor applied.
+                  </Td>
+                </tr>
+              );
+            }
+            const rawFloor  = Number(qp.retention_floor_raw || 0);
+            const normal    = Number(qp.retention_normal_third || 0);
+            const basisComm = Number(qp.retention_floor_basis_commissions || 0);
+            const applied   = qp.retention_floor_applied === true;
+            const capped    = rawFloor > Number(qp.qtd_bonus_pool || 0) + 0.005;
+            const note = applied
+              ? "floor is what retention gets this week"
+              : capped
+                ? "floor exceeds the whole pool — capped at the pool"
+                : "normal third is higher — floor does nothing this week";
+            const line = (label, value, hint) => (
+              <tr key={label}>
+                <Td style={{ paddingLeft: 28, color: T.slate600, fontSize: 11 }}>{label}</Td>
+                <Td align="right" style={{ color: T.slate700, fontSize: 11 }}>{value}</Td>
+                <Td style={{ color: T.slate500, fontSize: 11, paddingLeft: 10 }}>{hint}</Td>
+              </tr>
+            );
+            return (
+              <Fragment>
+                <tr>
+                  <Td colSpan={3} style={{ paddingLeft: 28, paddingTop: 8, color: T.slate900, fontWeight: 700, fontSize: 11 }}>
+                    Territory median lapse — retention floor
+                  </Td>
+                </tr>
+                {line("Territory median — auto / fire", `${Number(fd.median_auto).toFixed(4)} / ${Number(fd.median_fire).toFixed(4)}`, "entered by hand for this week")}
+                {line("Ours — auto / fire", `${Number(fd.our_auto).toFixed(4)} / ${Number(fd.our_fire).toFixed(4)}`, "our own annualized lapse rate")}
+                {line("Ratio — auto / fire", `${Number(fd.ratio_auto).toFixed(4)} / ${Number(fd.ratio_fire).toFixed(4)}`, "median divided by ours; above 1.00 means we are ahead")}
+                {line("Blended ratio", Number(fd.blended_ratio).toFixed(4), `weighted by policies in force (${fmtInt(fd.pif_auto)} auto / ${fmtInt(fd.pif_fire)} fire)`)}
+                {line("Factor", Number(factor).toFixed(4), `0.50 x blended ratio, held between 0.25 and 1.00${fd.clamped ? " — clamped" : ""}. 0.50 = at the median`)}
+                {line("Floor basis", fmtMoneyCentsR(Number(qp.qtd_bonus_pool || 0) + basisComm), `bonus pool plus this week's commissions (${fmtMoneyCentsR(basisComm)})`)}
+                {line("Raw floor", fmtMoneyCentsR(rawFloor), `basis / 3 x factor, against a normal third of ${fmtMoneyCentsR(normal)}`)}
+                <tr>
+                  <Td style={{ paddingLeft: 28, color: applied ? T.green : T.slate600, fontSize: 11, fontWeight: 700 }}>Retention floor applied</Td>
+                  <Td align="right" style={{ color: applied ? T.green : T.slate600, fontSize: 11, fontWeight: 700 }}>{applied ? "yes" : "no"}</Td>
+                  <Td style={{ color: capped && !applied ? T.amber : T.slate500, fontSize: 11, paddingLeft: 10 }}>{note}</Td>
+                </tr>
+              </Fragment>
+            );
+          })()}
           {row("SP-13wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_13wk_pool) || 0), "rolling 13-wk SP avg share")}
           {row("SP-4wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
           <tr>
@@ -6000,7 +5993,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     // Agency Performance YTD fields live on agency_snapshot (single source of truth).
     // The prefill trigger on agency_snapshot fills the current-week row with prior-week
     // values on INSERT, so edit.begin pulls directly from data.snapshot.
-    edit.begin(data.report, data.details, data.snapshot || {});
+    edit.begin(data.report, data.details, data.snapshot || {}, data.reportPrefills || {});
   }
 
   // Validate route param
@@ -6501,7 +6494,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} report={data.report} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
 
       {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
