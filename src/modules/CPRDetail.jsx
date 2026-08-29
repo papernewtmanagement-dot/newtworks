@@ -1185,11 +1185,30 @@ function useCPRData(weekDate) {
           (spRows || []).forEach(r => { if (r?.team_member_id) spTitleById[r.team_member_id] = r.title; });
         } catch (e) { console.error("Sales Points ratings fetch failed:", e); }
 
+        // Raise policy is live: this is who is currently on pace to earn
+        // their next rung at the coming quarter close.
+        const raiseOnTrackById = {};
+        try {
+          const { data: rpRows, error: rpErr } = await supabase.rpc("team_raise_progress", { p_agency_id: AGENCY_ID });
+          if (rpErr) console.error("Failed to load raise progress:", rpErr);
+          (rpRows || []).forEach(r => {
+            if (r?.team_member_id && r.on_track) {
+              raiseOnTrackById[r.team_member_id] = {
+                nextHourly: r.next_hourly,
+                threshold: r.next_threshold,
+                quarters: r.lookback_quarters,
+                avg: r.avg_weekly_sp,
+              };
+            }
+          });
+        } catch (e) { console.error("Raise progress fetch failed:", e); }
+
         setState({
           loading: false, error: null,
           report: reportRow || null,
           details: detailRows,
-          team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)", sp_title: spTitleById[t.id] || null })),
+          team: (teamRows || []).map(t => ({ ...t, full_name: t.nickname || t.first_name || "(no name)", sp_title: spTitleById[t.id] || null,
+                                                sp_raise: raiseOnTrackById[t.id] || null })),
           snapshot,
           snapshotPrior,
           lapseRates,
@@ -3339,6 +3358,13 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                     ) : (
                       <Td align="right">
                         {d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}
+                        {d.__raise && (
+                          <span
+                            title={`On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr — needs ${Number(d.__raise.threshold).toLocaleString()} a week averaged over the last ${d.__raise.quarters} quarter${d.__raise.quarters === 1 ? "" : "s"}, currently ${Number(d.__raise.avg).toLocaleString()}. Earned at quarter close.`}
+                            style={{ marginLeft: 4, color: BAND.Good.ink, fontSize: 11, cursor: "help" }}
+                            aria-label="On pace for a raise"
+                          >&#9650;</span>
+                        )}
                         {(() => {
                           // WoW delta: this week's sales_points vs last week's, suppressed across cycle boundary.
                           if (d.sales_points == null) return null;
@@ -5682,6 +5708,7 @@ function sortByTenure(details, team) {
       ...d,
       __name: teamById[d.team_member_id]?.full_name || "(unknown)",
       __title: teamById[d.team_member_id]?.sp_title || null,
+      __raise: teamById[d.team_member_id]?.sp_raise || null,
       __hire: teamById[d.team_member_id]?.hire_date || "9999-12-31",
     }))
     .sort((a, b) => {
