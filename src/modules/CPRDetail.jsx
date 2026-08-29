@@ -3306,6 +3306,19 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                           }}
                         >&#9733; {d.__title}</span>
                       )}
+                      {d.__raise && (
+                        <span
+                          title={d.__raise.requirement
+                            ? `On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr — needs ${d.__raise.requirement}. Earned at quarter close.`
+                            : `On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr. Earned at quarter close.`}
+                          style={{
+                            marginLeft: 4, fontSize: 9, fontWeight: 700, padding: "1px 6px",
+                            borderRadius: 20, whiteSpace: "nowrap", cursor: "help",
+                            background: BAND.Good.badgeBg, color: BAND.Good.badgeFg,
+                          }}
+                          aria-label={`On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)} an hour`}
+                        >${Number(d.__raise.nextHourly).toFixed(0)}</span>
+                      )}
                     </Td>
                     {editMode ? (
                       <Td align="right" style={{ padding: 6 }}>
@@ -3356,19 +3369,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                     ) : (
                       <Td align="right">
                         {d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}
-                        {d.__raise && (
-                          <span
-                            title={d.__raise.requirement
-                              ? `On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr — needs ${d.__raise.requirement}. Earned at quarter close.`
-                              : `On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr. Earned at quarter close.`}
-                            style={{
-                              marginLeft: 5, fontSize: 8.5, fontWeight: 700, padding: "1px 5px",
-                              borderRadius: 20, whiteSpace: "nowrap", cursor: "help",
-                              background: BAND.Good.badgeBg, color: BAND.Good.badgeFg,
-                            }}
-                            aria-label={`On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)} an hour`}
-                          >${Number(d.__raise.nextHourly).toFixed(0)}</span>
-                        )}
+
                         {(() => {
                           // WoW delta: this week's sales_points vs last week's, suppressed across cycle boundary.
                           if (d.sales_points == null) return null;
