@@ -914,6 +914,14 @@ Deno.serve(async (req) => {
     if (!dryRun) {
       // Bump attempts + record result. Rate limit (429) = transient, don't count as an attempt.
       const isRateLimit = !r.ok && /Groq HTTP 429/.test(r.error ?? "");
+      // 413 and 429 look alike and need OPPOSITE responses. A 429 is "you are
+      // going too fast" — wait and the identical payload succeeds. A 413 is
+      // "this one request is too big" — it will fail identically forever, so
+      // waiting is not a strategy and neither is retrying. Fail it on the first
+      // attempt so the alert lands now instead of two cron ticks later. John
+      // Kostov's 2026-08-28 wrap-up burned all three attempts on the same 413
+      // and nobody heard about it until Peter noticed the CPR row was empty.
+      const isTooLarge = !r.ok && /Groq HTTP 413/.test(r.error ?? "");
       if (r.ok) {
         await sb.from("llm_parse_queue").update({
           status: "succeeded",
@@ -931,7 +939,7 @@ Deno.serve(async (req) => {
           last_error: r.error ?? "rate limited",
         }).eq("id", item.id);
       } else {
-        const newAttempts = (item.attempts ?? 0) + 1;
+        const newAttempts = isTooLarge ? 3 : (item.attempts ?? 0) + 1;
         const nowDead = newAttempts >= 3;
         await sb.from("llm_parse_queue").update({
           status: nowDead ? "failed" : "pending",
@@ -961,9 +969,16 @@ Deno.serve(async (req) => {
             agencyId: item.agency_id,
             alertType: "llm_parse_item_dead",
             severity: "warning",
-            title: `Parse gave up after 3 tries: ${label}`,
-            message: `Queue item ${item.id} (${item.purpose}) failed 3 attempts and will not be retried `
-              + `automatically. Nothing downstream of it has been written. Last error: ${r.error ?? "unknown"}`,
+            title: isTooLarge
+              ? `Parse payload too big, not retryable: ${label}`
+              : `Parse gave up after 3 tries: ${label}`,
+            message: isTooLarge
+              ? `Queue item ${item.id} (${item.purpose}) was rejected for exceeding the model's `
+                + `per-request token ceiling. Retrying cannot help — the same payload fails the same `
+                + `way every time. The text needs to be trimmed at the source before it is queued. `
+                + `Nothing downstream of it has been written. Error: ${r.error ?? "unknown"}`
+              : `Queue item ${item.id} (${item.purpose}) failed 3 attempts and will not be retried `
+                + `automatically. Nothing downstream of it has been written. Last error: ${r.error ?? "unknown"}`,
             moduleReference: item.purpose === "parse_bank_statement" ? "financials" : "automations",
             relatedId: item.document_id ?? null,
           });

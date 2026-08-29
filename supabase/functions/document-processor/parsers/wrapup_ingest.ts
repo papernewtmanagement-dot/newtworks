@@ -116,6 +116,9 @@ RULES for organized_text:
 7. Strip email signatures ("Thanks for trusting Peter Story State Farm…", block contact info, forwarded header stubs, etc.) from the source before folding in.
 8. Preserve customer first names + last initials as written (e.g. "Delia C.") — cancellation stories often reference customers by name.
 9. Zero-fabrication test: before writing ANY sentence under a section header, verify that the words either appear in the source OR are the exact literal string "(none reported)". Nothing else. Inventing content that sounds plausible is the most damaging failure mode of this parser — it makes teammates appear to have covered sections they never addressed. Prior real failure: a teammate's email had no section-2 content; the LLM wrote "Did not take any cancellation calls." under section 2. That line was fabricated — the words never appeared in the source. Correct output would have been "(none reported)".
+10. NUMBERING BEATS MEANING. If <NEW_EMAIL_BODY> is itself a numbered list of six items, map POSITIONALLY: their 1 goes in section 1, their 2 in section 2, and so on through 6. Do NOT re-sort by meaning. Do NOT merge two of their numbered items into one section. Do NOT slide later items up to fill a gap. Their numbers are the answer key; the six headers above are only labels for the same six slots. Reading by meaning is the FALLBACK, used ONLY when the incoming email carries no numbering of its own, or when a numbered email has some count other than six.
+
+WORKED EXAMPLE — a real failure, 2026-08-28. A teammate sent a bare list, 1 through 6, no headers. Her item 4 read like a continuation of her item 3 (it described a solution to the obstacle she had just named), so it was folded into section 3. That slid her item 5 up into slot 4 and left slot 5 empty, which wrote "(none reported)" for the efficiency section, marked her wrap-up incomplete, and sent the whole team an email saying she had skipped a section she had in fact answered. An item 4 that reads like a continuation of item 3 still belongs in slot 4. Position wins over meaning, every time.
 
 RULES for coverage:
 A section is covered if the teammate addressed it in their email in ANY way — including "N/A", "nothing to report", "no cancels this week", "no obstacles", or any deliberate acknowledgment that they read the section and answered it. Content quality is NOT the bar; presence of a genuine answer is. Do not penalize brief, sparse, or "nothing to report" answers — they count.
@@ -135,6 +138,33 @@ missing_item_labels: for each item where coverage is false, include a short labe
   ["Personal life & annuity updates", "Lapse/cancel trends", "Obstacles + solutions", "1% sales points plan", "Efficiency recommendation", "Brags on teammates"]
 
 Return JSON only. No markdown fences.`;
+
+// ---------- Request sizing ----------
+//
+// Groq caps EVERY request — prompt plus answer together — at a fixed token
+// budget, currently 8,000 for openai/gpt-oss-120b. Going over returns HTTP 413,
+// and unlike a 429 that is not a wait-and-retry condition: the same payload
+// fails identically every time.
+//
+// Before 2026-08-28 the only size guard here was a 12,000-character slice of
+// the email body, applied AFTER the body had already been bloated (see
+// wupCleanBody). 12,000 characters of body on its own can clear the ceiling
+// once the 5,311-character system prompt and the rubric are added. John's
+// wrap-up came in at 8,003 tokens — three over — and was lost.
+//
+// Two guards now, so neither has to be perfect. Hard caps on the two variable
+// pieces, and an answer budget sized to whatever is actually left.
+const WUP_MAX_BODY_CHARS = 5000;      // a real wrap-up runs ~700-2,000 chars
+const WUP_MAX_CURRENT_CHARS = 6000;   // six accumulated sections, generously
+const GROQ_REQUEST_TOKEN_CAP = 8000;
+const GROQ_SAFETY_MARGIN = 300;
+const CHARS_PER_TOKEN_EST = 3.4;      // measured, not the 4.0 rule of thumb
+
+function wupFitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor: number): number {
+  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
+  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
+  return Math.max(floor, Math.min(ceiling, available));
+}
 
 // ---------- Public entry (mode dispatch) ----------
 
@@ -358,8 +388,8 @@ async function processOneWrapupMessage(
     `<RUBRIC>\n${rubricText}\n</RUBRIC>\n\n` +
     `<SENDER_FIRST_NAME>${teamMember.first_name}</SENDER_FIRST_NAME>\n` +
     `<EMAIL_KIND>${kind}</EMAIL_KIND>\n\n` +
-    `<CURRENT_WRAPUP_TEXT>\n${currentText || "(none yet)"}\n</CURRENT_WRAPUP_TEXT>\n\n` +
-    `<NEW_EMAIL_BODY>\n${bodyText.slice(0, 12000)}\n</NEW_EMAIL_BODY>`;
+    `<CURRENT_WRAPUP_TEXT>\n${(currentText || "(none yet)").slice(0, WUP_MAX_CURRENT_CHARS)}\n</CURRENT_WRAPUP_TEXT>\n\n` +
+    `<NEW_EMAIL_BODY>\n${bodyText.slice(0, WUP_MAX_BODY_CHARS)}\n</NEW_EMAIL_BODY>`;
 
   const parseRes = await parseWithLLM({
     agencyId: ctx.agencyId,
@@ -369,7 +399,7 @@ async function processOneWrapupMessage(
     userContent: llmUserContent,
     documentId: null,
     purpose: "wrapup_organize",
-    maxTokens: 2500,
+    maxTokens: wupFitMaxTokens(WRAPUP_ORGANIZE_PROMPT, llmUserContent, 2500, 800),
     // Write-back pointer for llm-queue-drainer. Without this the queue-fallback
     // path below is a silent loss: the email gets labeled + archived (so no
     // future cron tick re-fetches it) while the queued job has no way to know
@@ -869,22 +899,82 @@ async function labelAndArchive(
 function wupExtractBestBody(msg: any): string {
   const direct: string | undefined =
     msg?.messageText ?? msg?.textBody ?? msg?.plaintext_body ?? msg?.body_text ?? msg?.snippet;
-  if (typeof direct === "string" && direct.trim().length > 20) return direct;
+  if (typeof direct === "string" && direct.trim().length > 20) return wupCleanBody(direct);
 
   const parts: any[] = msg?.payload?.parts ?? msg?.parts ?? [];
   const plain = wupFindPart(parts, "text/plain");
   if (plain) {
     const decoded = wupDecodeBase64Url(plain?.body?.data ?? "");
-    if (decoded && decoded.trim().length > 20) return decoded;
+    if (decoded && decoded.trim().length > 20) return wupCleanBody(decoded);
   }
   const html = wupFindPart(parts, "text/html");
   if (html) {
     const decoded = wupDecodeBase64Url(html?.body?.data ?? "");
-    if (decoded) return wupStripHtml(decoded);
+    if (decoded) return wupCleanBody(wupStripHtml(decoded));
   }
   const bodyDirect = wupDecodeBase64Url(msg?.payload?.body?.data ?? "");
-  if (bodyDirect && bodyDirect.trim().length > 20) return bodyDirect;
+  if (bodyDirect && bodyDirect.trim().length > 20) return wupCleanBody(bodyDirect);
   return "";
+}
+
+// Every return path of wupExtractBestBody runs through this.
+//
+// WHY IT EXISTS (2026-08-28). John's wrap-up arrived from Outlook with the
+// plaintext body AND the ENTIRE raw HTML document concatenated into the same
+// field, plus his full signature block twice over: 12,737 characters carrying
+// a roughly 700-character wrap-up. The first branch above used to return that
+// field RAW, so the HTML-stripping branch below it was never reached — the raw
+// branch short-circuited first. Groq rejected the request with HTTP 413,
+// 8,003 tokens against a hard 8,000 ceiling, identically on all three
+// attempts, and the wrap-up was never written to his CPR row.
+//
+// DELIBERATELY NOT STRIPPED: the quoted "From:/Sent:/To:/Subject:" header.
+// Two independent reasons, both load-bearing. Step 3 of processOneMessage
+// feeds this text to parseInnerForwardFrom to resolve the real sender on
+// forwarded mail. And in John's message the teammate's actual answers sat
+// BELOW that quoted header — cutting the quoted chain would have deleted the
+// very content this function exists to save.
+function wupCleanBody(raw: string): string {
+  if (!raw) return "";
+  let s = raw.replace(/\r\n/g, "\n");
+
+  // A whole HTML document glued onto the plaintext. It is always last, and its
+  // closing tag is often already lost to a truncation upstream, so cut from the
+  // opening tag to the end of the string rather than matching a closing tag.
+  const htmlStart = s.search(/<!DOCTYPE\s+html|<html[\s>]/i);
+  if (htmlStart >= 0) {
+    const before = s.slice(0, htmlStart);
+    // Real text ahead of it means the document is a duplicate rendering of what
+    // we already have — drop the document. Nothing meaningful ahead of it means
+    // the document IS the message — keep its readable text. Either way `before`
+    // is kept: discarding it on a short-but-real body would be the same class of
+    // silent content loss this whole function exists to stop.
+    s = before.replace(/\s+/g, " ").trim().length > 40
+      ? before
+      : before + "\n" + wupStripHtml(s.slice(htmlStart));
+  }
+
+  // Leftover inline markup. Deliberately narrow — it matches a real tag name
+  // and nothing else, so it cannot eat <someone@statefarm.com> out of a quoted
+  // "From:" line, which is exactly what parseInnerForwardFrom reads.
+  s = s
+    .replace(/<\/?(?:p|div|br|li|tr|h[1-6])(?:\s[^<>]*)?>/gi, "\n")
+    .replace(/<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?>/gi, "");
+
+  // The agency email signature, first line through last. Global and non-greedy
+  // so repeated copies all go. If a variant ever lacks the closing line the
+  // match simply fails and nothing is cut — the old behaviour, not a worse one.
+  s = s.replace(
+    /Thanks for trusting[\s\S]{0,2500}?The greatest compliment you can give is a referral\.?/gi,
+    "",
+  );
+  s = s.replace(/\[cid:[^\]]*\]/gi, "");   // Outlook inline-image placeholders
+  s = s.replace(/^_{5,}$/gm, "");          // Outlook rule above a quoted header
+
+  return s
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function wupFindPart(parts: any[], mimeType: string): any {
