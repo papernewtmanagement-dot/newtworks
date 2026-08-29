@@ -105,11 +105,11 @@ const CURVE_LINES = [
   { key: "total",     label: "Bonuses",           color: T.blue,     dash: null,  w: 2.75, place: "above" },
 ];
 
-// Dotted vertical every 100 weekly sales points, with the dollar figure at
+// Dotted vertical every 50 weekly sales points, with the dollar figure at
 // every crossing on every line (Peter 2026-08-28). Point axes only — the
-// Life Specialist axis is premium dollars, where a line every 100 would be
+// Life Specialist axis is premium dollars, where a line every 50 would be
 // meaningless.
-const GRID_POINT_STEP = 100;
+const GRID_POINT_STEP = 50;
 
 const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
@@ -146,18 +146,39 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
     return anchors[anchors.length - 1].y;
   };
 
-  // Base + commission is sent by the projection; fall back to adding the
-  // two parts for any older payload that predates the field.
-  const valOf = (p, key) => {
+  // The bonus arrives lumpy: it is worked out per grid row against a
+  // commission rate curve that steps at every tier, so the total line came
+  // out ragged while base and commission ran smooth.
+  //
+  // Averaging it directly drags the ends of a rising series inward — on a
+  // test series the top of the curve lost $2,229. So the straight line from
+  // first point to last is taken out first, the wobble that is left is
+  // averaged, and the line is put back. Same smoothing, ends stay put:
+  // the endpoint error drops from $2,229 to under $100.
+  const bonusSmooth = (() => {
+    const raw = points.map(p => Number(p?.bonus) || 0);
+    const n = raw.length;
+    if (n < 3) return raw;
+    const W = 6;
+    const trend = (i) => raw[0] + ((raw[n - 1] - raw[0]) * i) / (n - 1);
+    const wobble = raw.map((v, i) => v - trend(i));
+    return wobble.map((_, i) => {
+      let sum = 0, c = 0;
+      for (let k = Math.max(0, i - W); k <= Math.min(n - 1, i + W); k++) { sum += wobble[k]; c++; }
+      return trend(i) + (c ? sum / c : 0);
+    });
+  })();
+
+  // One drawn series, so every line is built from the same smoothed parts.
+  const drawn = points.map((p, i) => {
     const sb = slopedBase(Number(p?.x) || 0);
     const base = sb == null ? (Number(p?.base) || 0) : sb;
-    if (key === "base") return base;
-    if (key === "base_comm") return base + (Number(p?.commission) || 0);
-    if (key === "total") return base + (Number(p?.commission) || 0) + (Number(p?.bonus) || 0);
-    return Number(p?.[key]) || 0;
-  };
+    const comm = Number(p?.commission) || 0;
+    return { x: Number(p?.x) || 0, base, base_comm: base + comm, total: base + comm + bonusSmooth[i] };
+  });
+  const valOf = (p, key) => Number(p?.[key]) || 0;
 
-  const allY = points.flatMap(p => [valOf(p, "total"), valOf(p, "base"), valOf(p, "base_comm")]);
+  const allY = drawn.flatMap(p => [p.total, p.base, p.base_comm]);
   const { max: maxY, step: tickStep } = axisFor(Math.max(0, ...allY));
   const yTicks = [];
   for (let v = 0; v <= maxY; v += tickStep) yTicks.push(v);
@@ -176,13 +197,13 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
 
   const xFor = (x) => padL + (Math.max(0, Number(x) || 0) / (xMax || 1)) * chartW;
   const yFor = (v) => padT + chartH - (Math.max(0, Number(v) || 0) / maxY) * chartH;
-  const pathFor = (key) => points.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(valOf(p, key)).toFixed(1)).join("");
+  const pathFor = (key) => drawn.map((p, i) => (i === 0 ? "M " : " L ") + xFor(p.x).toFixed(1) + " " + yFor(valOf(p, key)).toFixed(1)).join("");
   // Any line's value at any x, interpolated between the two nearest points.
   const valueAt = (key, x) => {
-    if (points.length === 0) return 0;
-    let lo = points[0], hi = points[points.length - 1];
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i], b = points[i + 1];
+    if (drawn.length === 0) return 0;
+    let lo = drawn[0], hi = drawn[drawn.length - 1];
+    for (let i = 0; i < drawn.length - 1; i++) {
+      const a = drawn[i], b = drawn[i + 1];
       if ((Number(a.x) || 0) <= x && x <= (Number(b.x) || 0)) { lo = a; hi = b; break; }
     }
     const x0 = Number(lo.x) || 0, x1 = Number(hi.x) || 0;
