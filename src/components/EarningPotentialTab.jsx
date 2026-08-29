@@ -120,11 +120,35 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
   const xMax   = Number(curve?.x_max) || 0;
   const isPremium = curve?.x_kind === "annual_life_premium";
 
+  // The raise ladder is drawn inside the chart, under the axis, so each
+  // rung sits at the weekly pace that earns it (Peter 2026-08-28). Same
+  // coordinate system as the plot, so it cannot drift out of line.
+  const ladderRows = (curve?.source === "pay_scale" && Array.isArray(ladder) ? ladder : [])
+    .map(r => ({
+      x: Number(r.threshold) || 0,
+      rate: "$" + Number(r.hourly).toFixed(0) + "/hr",
+      annual: "$" + Number(r.annual).toLocaleString(),
+      window: !(Number(r.threshold) > 0) ? "day one"
+            : Number(r.lookback_quarters) === 1 ? "1 quarter"
+            : Number(r.lookback_quarters) + " quarters",
+    }))
+    .filter(r => r.x <= (Number(curve?.x_max) || 0))
+    .sort((a, b) => a.x - b.x);
+
   const W = isPhone ? 400 : 1100;
-  const H = isPhone ? 500 : 600;
   const padL = isPhone ? 40 : 56, padR = isPhone ? 14 : 20;
   const padT = 28;
-  const padB = isPhone ? 40 : 44;
+  const chartWTmp = W - padL - padR;
+  // How much room each rung gets, from the tightest gap between two rungs.
+  const rungGapPx = ladderRows.length > 1
+    ? Math.min(...ladderRows.slice(1).map((r, i) =>
+        ((r.x - ladderRows[i].x) / (Number(curve?.x_max) || 1)) * chartWTmp))
+    : chartWTmp;
+  const ladderEvery = rungGapPx >= 26 ? 1 : 2;      // thin out when rungs crowd
+  const ladderLines = rungGapPx >= 56 ? 3 : 1;      // rate only when tight
+  const ladderH = ladderRows.length === 0 ? 0 : (ladderLines === 3 ? 44 : 20);
+  const H = (isPhone ? 500 : 600) + ladderH;
+  const padB = (isPhone ? 40 : 44) + ladderH;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
@@ -341,6 +365,32 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
         </text>
       ))}
       <text x={padL + chartW / 2} y={H - 6} textAnchor="middle" fontSize={fontTick} fontWeight={600} fill={T.slate400}>{curve.x_label}</text>
+      {/* Raise ladder, each rung at the pace that earns it */}
+      {ladderRows.length > 0 && (
+        <g>
+          <line x1={padL} y1={padT + chartH + 20} x2={padL + chartW} y2={padT + chartH + 20}
+            stroke={T.slate200} strokeWidth="1" />
+          {ladderRows.map((r, i) => {
+            if (i % ladderEvery !== 0 && i !== ladderRows.length - 1) return null;
+            const px = xFor(r.x);
+            const anchor = px < padL + 18 ? "start" : px > padL + chartW - 18 ? "end" : "middle";
+            const top = padT + chartH + 20;
+            return (
+              <g key={"lad-" + r.x}>
+                <line x1={px} y1={top} x2={px} y2={top + 4} stroke={T.slate400} strokeWidth="1" opacity="0.7" />
+                <text x={px} y={top + 14} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
+                  fontWeight={800} fill={T.slate900}>{r.rate}</text>
+                {ladderLines === 3 && (
+                  <>
+                    <text x={px} y={top + 25} textAnchor={anchor} fontSize={8} fill={T.slate600}>{r.annual}</text>
+                    <text x={px} y={top + 35} textAnchor={anchor} fontSize={8} fill={T.slate400}>{r.window}</text>
+                  </>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
       {/* The three pay lines */}
       {CURVE_LINES.map(l => (
         <path key={"line-" + l.key} d={pathFor(l.key)} stroke={l.color}
@@ -390,48 +440,6 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
         ))}
       </g>
     </svg>
-  );
-};
-
-// ─── The published raise ladder ─────────────────────────────
-// One row, left to right. Rate three ways, the weekly pace needed, and how
-// many quarters that average is taken over. Qualifying rule (Peter): the
-// look-back is the LAST 1 quarter for the first raise, last 2 for the
-// second, last 3 for the third, and last 4 from there on. Missing a close
-// costs nothing — qualify at the next one and take it then.
-const RaiseLadder = ({ ladder, isPhone }) => {
-  const rows = Array.isArray(ladder) ? ladder : [];
-  if (rows.length === 0) return null;
-  const qtrs = (n) => (Number(n) === 1 ? "last quarter" : "last " + n + " quarters");
-  return (
-    <div style={{ display: "flex", gap: 4, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2 }}>
-      {rows.map(r => {
-        const start = !(Number(r.threshold) > 0);
-        return (
-          <div key={"rl-" + r.tier} style={{
-            flex: `1 1 ${isPhone ? 92 : 0}px`, minWidth: isPhone ? 92 : 72,
-            border: `1px solid ${T.slate200}`, borderRadius: 8, background: T.white,
-            padding: "6px 5px", textAlign: "center", boxSizing: "border-box",
-          }}>
-            <div style={{ fontSize: isPhone ? 13 : 14, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>
-              ${Number(r.hourly).toFixed(0)}<span style={{ fontSize: 9, fontWeight: 600, color: T.slate500 }}>/hr</span>
-            </div>
-            <div style={{ fontSize: 9, color: T.slate600, whiteSpace: "nowrap" }}>
-              ${Number(r.weekly).toLocaleString()}/wk
-            </div>
-            <div style={{ fontSize: 9, color: T.slate600, whiteSpace: "nowrap", marginBottom: 3 }}>
-              ${Number(r.annual).toLocaleString()}/yr
-            </div>
-            <div style={{ fontSize: 9.5, fontWeight: 700, color: start ? T.slate400 : T.blue, whiteSpace: "nowrap" }}>
-              {start ? "start" : Number(r.threshold).toLocaleString() + " pts"}
-            </div>
-            <div style={{ fontSize: 8.5, color: T.slate500, whiteSpace: "nowrap" }}>
-              {start ? "day one" : qtrs(r.lookback_quarters)}
-            </div>
-          </div>
-        );
-      })}
-    </div>
   );
 };
 
@@ -630,7 +638,7 @@ export default function EarningPotentialTab() {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Dotted verticals mark every hundred weekly points, with the dollars at each crossing. Shaded bands mark the performance ranges, each headed with the performer it describes.</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
@@ -646,19 +654,6 @@ export default function EarningPotentialTab() {
           </div>
         )}
       </div>
-
-      {/* Raise tiers: the published ladder, between the chart and the first year. */}
-      {role.role_key === "sales" && Array.isArray(role.raise_ladder) && role.raise_ladder.length > 0 && (
-        <div style={card}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Raise tiers</div>
-          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
-            Reviewed only at quarter close, one tier per close, in order. Miss a close and nothing
-            is lost — qualify at the next one and take it then. Each tier is harder to reach than
-            the last, and a raise never steps back down. Marked on the chart above.
-          </div>
-          <RaiseLadder ladder={role.raise_ladder} isPhone={_vp.isPhone} />
-        </div>
-      )}
 
       {/* Sales: first-year path to $100k. Other roles keep the tier grid. */}
       {role.role_key === "sales" && y1 && (
