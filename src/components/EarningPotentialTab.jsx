@@ -370,6 +370,8 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
         <g>
           <line x1={padL} y1={padT + chartH + 20} x2={padL + chartW} y2={padT + chartH + 20}
             stroke={T.slate200} strokeWidth="1" />
+          <text x={padL - 5} y={padT + chartH + 34} textAnchor="end" fontSize={isPhone ? 8.5 : 9.5}
+            fontWeight={700} fill={T.slate500} letterSpacing="0.3">Raises</text>
           {ladderRows.map((r, i) => {
             if (i % ladderEvery !== 0 && i !== ladderRows.length - 1) return null;
             const px = xFor(r.x);
