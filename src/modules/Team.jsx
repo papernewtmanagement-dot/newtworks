@@ -47,6 +47,14 @@ import { useVerdictThresholds } from "../lib/hooks.js";
 // Shared with the candidate detail stepper — see src/lib/hiringStages.js.
 import { STAGES } from "../lib/hiringStages.js";
 
+
+// Sales Points band badge colours (Peter 2026-08-28). The badge shows the
+// band — Good, Great or Elite — and nothing below Good.
+const BAND_BADGE = {
+  Good:  { bg: T.greenLt,  fg: "#166534" },
+  Great: { bg: T.goldLt,   fg: "#854D0E" },
+  Elite: { bg: T.purpleLt, fg: "#5B21B6" },
+};
 // ─── Producer ROI Hook ───────────────────────────────────────
 function useProducerROI() {
   const [data, setData] = useState(null);
@@ -737,7 +745,7 @@ const StaffDirectory = ({ staff }) => {
   }, [seatWeekEnd]);
 
   // -- Sales Points recognition title (bands locked 2026-08-25) --
-  // Great = Rockstar, Elite = Rock Legend, driven off each person's 13-week rolling
+  // Badge shows the band itself — Good, Great, Elite — off the 13-week rolling
   // average. The RPC itself excludes the Owner, unlicensed seats, archived and test
   // rows, so anyone absent from this map simply has no title to show.
   const [spRatingByMember, setSpRatingByMember] = useState({});
@@ -2074,8 +2082,8 @@ const StaffDirectory = ({ staff }) => {
                       title={`13-week Sales Points average ${Number(spRatingByMember[member.id]?.avg_13wk || 0).toFixed(0)} - rating ${spRatingByMember[member.id]?.rating || "-"}`}
                       style={{
                         fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20,
-                        background: spRatingByMember[member.id].title === "Rock Legend" ? T.goldLt : T.purpleLt,
-                        color:      spRatingByMember[member.id].title === "Rock Legend" ? "#854D0E" : "#5B21B6",
+                        background: BAND_BADGE[spRatingByMember[member.id].title]?.bg || T.purpleLt,
+                        color:      BAND_BADGE[spRatingByMember[member.id].title]?.fg || "#5B21B6",
                       }}
                     >&#9733; {spRatingByMember[member.id].title}</span>
                   )}

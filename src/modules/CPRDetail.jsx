@@ -3,6 +3,14 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 
+
+// Sales Points band badge colours (Peter 2026-08-28). The badge shows the
+// band — Good, Great or Elite — and nothing below Good.
+const BAND_BADGE = {
+  Good:  { bg: T.greenLt,  fg: "#166534" },
+  Great: { bg: T.goldLt,   fg: "#854D0E" },
+  Elite: { bg: T.purpleLt, fg: "#5B21B6" },
+};
 // =============================================================
 // CPR DETAIL PAGE — Full weekly report
 // Reachable at /cpr/{YYYY-MM-DD} where YYYY-MM-DD is week-ending Saturday.
@@ -1165,8 +1173,9 @@ function useCPRData(weekDate) {
           }
         } catch (e) { console.warn("marketing_points fetch failed:", e); }
 
-        // Sales Points recognition title (bands locked 2026-08-25) -- Great = Rockstar,
-        // Elite = Rock Legend, off the 13-week rolling average. The RPC already excludes
+        // Sales Points band badge (Peter 2026-08-28: the band itself, not the
+        // nickname) -- Good, Great or Elite off the 13-week rolling average,
+        // nothing below. The RPC already excludes
         // the Owner, unlicensed seats, archived and test rows, so a teammate absent from
         // this map simply has no title to show.
         const spTitleById = {};
@@ -3275,8 +3284,8 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                           style={{
                             marginLeft: 6, fontSize: 9, fontWeight: 700, padding: "1px 6px",
                             borderRadius: 20, whiteSpace: "nowrap",
-                            background: d.__title === "Rock Legend" ? T.goldLt : T.purpleLt,
-                            color:      d.__title === "Rock Legend" ? "#854D0E" : "#5B21B6",
+                            background: BAND_BADGE[d.__title]?.bg || T.purpleLt,
+                            color:      BAND_BADGE[d.__title]?.fg || "#5B21B6",
                           }}
                         >&#9733; {d.__title}</span>
                       )}
