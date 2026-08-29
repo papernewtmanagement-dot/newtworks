@@ -963,10 +963,40 @@ async function callGroqDirect(opts: {
   }
 }
 
+// ---------- Request budget ----------
+//
+// Groq caps EVERY request — prompt AND completion together — at a fixed token
+// budget, 8,000 on this account tier. A caller's maxTokens is therefore a
+// CEILING, not a reservation. Asking for 8,000 completion tokens on top of a
+// 4,200-token prompt is an 11,300-token request, and it comes back HTTP 413.
+//
+// A 413 is not a 429. A 429 means slow down and the identical payload succeeds
+// later; a 413 means this one request is too big and it will fail the same way
+// forever. Retrying it just delays the alert.
+//
+// llm-queue-drainer has fitted its budget this way since the AMEX statement
+// incident. The ingest side did not, so bank.ts still asked for a flat 8,000
+// and payroll, production and PFA each asked for 6,000 — every one of them a
+// 413 waiting for a large enough document. Clamping here fixes all call sites
+// at once and means no future caller can get it wrong.
+const GROQ_REQUEST_TOKEN_CAP = 8000;
+const GROQ_SAFETY_MARGIN = 300;
+// 4 chars/token is the prose rule of thumb, but statement and payroll text is
+// dense with digits and punctuation and tokenizes worse. Measured at 3.70 on a
+// real AMEX statement. Estimate low so sizing errs toward a slightly smaller
+// answer budget rather than a rejected request.
+const CHARS_PER_TOKEN_EST = 3.4;
+const GROQ_MIN_COMPLETION_TOKENS = 400;
+
+function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number): number {
+  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
+  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
+  return Math.max(GROQ_MIN_COMPLETION_TOKENS, Math.min(ceiling, available));
+}
+
 export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> {
   // Step 0: resolve the model once — settings.groq_model_default or fallback
   const model = opts.model ?? await getDefaultModel(opts.agencyId);
-
   // Step 1: load the Groq API key for this agency
   const groqKey = await getSetting(opts.agencyId, "groq_api_key");
 
@@ -977,7 +1007,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       model,
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
-      maxTokens: opts.maxTokens ?? 4000,
+      maxTokens: fitMaxTokens(opts.systemPrompt, opts.userContent, opts.maxTokens ?? 4000),
       context: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
     });
 
@@ -7608,7 +7638,7 @@ function extractBestBody(msg: any): string {
   //   4. fallback: msg.htmlBody / msg.html_body → strip tags
   const direct: string | undefined =
     msg?.messageText ?? msg?.textBody ?? msg?.plaintext_body ?? msg?.body_text ?? msg?.snippet;
-  if (typeof direct === "string" && direct.trim().length > 20) return direct;
+  if (typeof direct === "string" && direct.trim().length > 20) return dropGluedHtmlDocument(direct);
 
   const parts: any[] = msg?.payload?.parts ?? msg?.parts ?? [];
   const stack: any[] = [...parts];
@@ -7650,8 +7680,30 @@ function tryDecodeB64Url(b64: string): string | null {
   }
 }
 
-function stripCareerplugTrackers(text: string): string {
-  // CareerPlug notification bodies are ~90% base64 tracking URLs. Every
+// Some senders concatenate the plaintext body and the ENTIRE raw HTML document
+// into one field. The plaintext branch of extractBestBody returns that field
+// directly, so the stripHtml fallback below it is never reached and the whole
+// document rides along to Groq.
+//
+// This is the identical shape that lost John Kostov's 2026-08-28 weekly
+// wrap-up: 12,737 characters carrying a ~700-character message, rejected HTTP
+// 413 on every attempt. Fixed there in wrapup_ingest.wupCleanBody the same day;
+// fixed here in the same sweep because the code was a copy of the same
+// extractor. No CareerPlug email is known to have hit it yet — this is closing
+// the door, not cleaning up after it.
+function dropGluedHtmlDocument(text: string): string {
+  const htmlStart = text.search(/<!DOCTYPE\s+html|<html[\s>]/i);
+  if (htmlStart < 0) return text;
+  const before = text.slice(0, htmlStart);
+  // Real text ahead of it means the document is a duplicate rendering — drop
+  // it. Nothing meaningful ahead of it means the document IS the message —
+  // keep its readable text. `before` is never discarded either way.
+  return before.replace(/\s+/g, " ").trim().length > 40
+    ? before
+    : before + "\n" + stripHtml(text.slice(htmlStart));
+}
+
+function stripCareerplugTrackers(text: string): string {  // CareerPlug notification bodies are ~90% base64 tracking URLs. Every
   // clickable text is followed by a parenthesized URL blob. Strip them —
   // they carry zero applicant signal and blow past Groq's TPM budget.
   return text
@@ -8492,30 +8544,18 @@ Return JSON only. No markdown fences.`;
 
 // ---------- Request sizing ----------
 //
-// Groq caps EVERY request — prompt plus answer together — at a fixed token
-// budget, currently 8,000 for openai/gpt-oss-120b. Going over returns HTTP 413,
-// and unlike a 429 that is not a wait-and-retry condition: the same payload
-// fails identically every time.
-//
 // Before 2026-08-28 the only size guard here was a 12,000-character slice of
 // the email body, applied AFTER the body had already been bloated (see
-// wupCleanBody). 12,000 characters of body on its own can clear the ceiling
-// once the 5,311-character system prompt and the rubric are added. John's
-// wrap-up came in at 8,003 tokens — three over — and was lost.
+// wupCleanBody). 12,000 characters of body on its own can clear Groq's 8,000
+// token-per-request ceiling once the 5,311-character system prompt and the
+// rubric are added. John's wrap-up came in at 8,003 tokens — three over — and
+// was lost.
 //
-// Two guards now, so neither has to be perfect. Hard caps on the two variable
-// pieces, and an answer budget sized to whatever is actually left.
+// Two guards now, so neither has to be perfect. Hard caps here on the two
+// variable pieces, and a completion budget fitted to whatever is left, which
+// parseWithLLM applies for every caller.
 const WUP_MAX_BODY_CHARS = 5000;      // a real wrap-up runs ~700-2,000 chars
 const WUP_MAX_CURRENT_CHARS = 6000;   // six accumulated sections, generously
-const GROQ_REQUEST_TOKEN_CAP = 8000;
-const GROQ_SAFETY_MARGIN = 300;
-const CHARS_PER_TOKEN_EST = 3.4;      // measured, not the 4.0 rule of thumb
-
-function wupFitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor: number): number {
-  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
-  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
-  return Math.max(floor, Math.min(ceiling, available));
-}
 
 // ---------- Public entry (mode dispatch) ----------
 
@@ -8750,7 +8790,7 @@ async function processOneWrapupMessage(
     userContent: llmUserContent,
     documentId: null,
     purpose: "wrapup_organize",
-    maxTokens: wupFitMaxTokens(WRAPUP_ORGANIZE_PROMPT, llmUserContent, 2500, 800),
+    maxTokens: 2500,   // ceiling; parseWithLLM fits it to the remaining budget
     // Write-back pointer for llm-queue-drainer. Without this the queue-fallback
     // path below is a silent loss: the email gets labeled + archived (so no
     // future cron tick re-fetches it) while the queued job has no way to know

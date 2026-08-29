@@ -145,10 +145,40 @@ async function callGroqDirect(opts: {
   }
 }
 
+// ---------- Request budget ----------
+//
+// Groq caps EVERY request — prompt AND completion together — at a fixed token
+// budget, 8,000 on this account tier. A caller's maxTokens is therefore a
+// CEILING, not a reservation. Asking for 8,000 completion tokens on top of a
+// 4,200-token prompt is an 11,300-token request, and it comes back HTTP 413.
+//
+// A 413 is not a 429. A 429 means slow down and the identical payload succeeds
+// later; a 413 means this one request is too big and it will fail the same way
+// forever. Retrying it just delays the alert.
+//
+// llm-queue-drainer has fitted its budget this way since the AMEX statement
+// incident. The ingest side did not, so bank.ts still asked for a flat 8,000
+// and payroll, production and PFA each asked for 6,000 — every one of them a
+// 413 waiting for a large enough document. Clamping here fixes all call sites
+// at once and means no future caller can get it wrong.
+const GROQ_REQUEST_TOKEN_CAP = 8000;
+const GROQ_SAFETY_MARGIN = 300;
+// 4 chars/token is the prose rule of thumb, but statement and payroll text is
+// dense with digits and punctuation and tokenizes worse. Measured at 3.70 on a
+// real AMEX statement. Estimate low so sizing errs toward a slightly smaller
+// answer budget rather than a rejected request.
+const CHARS_PER_TOKEN_EST = 3.4;
+const GROQ_MIN_COMPLETION_TOKENS = 400;
+
+function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number): number {
+  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
+  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
+  return Math.max(GROQ_MIN_COMPLETION_TOKENS, Math.min(ceiling, available));
+}
+
 export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> {
   // Step 0: resolve the model once — settings.groq_model_default or fallback
   const model = opts.model ?? await getDefaultModel(opts.agencyId);
-
   // Step 1: load the Groq API key for this agency
   const groqKey = await getSetting(opts.agencyId, "groq_api_key");
 
@@ -159,7 +189,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       model,
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
-      maxTokens: opts.maxTokens ?? 4000,
+      maxTokens: fitMaxTokens(opts.systemPrompt, opts.userContent, opts.maxTokens ?? 4000),
       context: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
     });
 

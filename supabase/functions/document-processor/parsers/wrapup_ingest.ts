@@ -141,30 +141,18 @@ Return JSON only. No markdown fences.`;
 
 // ---------- Request sizing ----------
 //
-// Groq caps EVERY request — prompt plus answer together — at a fixed token
-// budget, currently 8,000 for openai/gpt-oss-120b. Going over returns HTTP 413,
-// and unlike a 429 that is not a wait-and-retry condition: the same payload
-// fails identically every time.
-//
 // Before 2026-08-28 the only size guard here was a 12,000-character slice of
 // the email body, applied AFTER the body had already been bloated (see
-// wupCleanBody). 12,000 characters of body on its own can clear the ceiling
-// once the 5,311-character system prompt and the rubric are added. John's
-// wrap-up came in at 8,003 tokens — three over — and was lost.
+// wupCleanBody). 12,000 characters of body on its own can clear Groq's 8,000
+// token-per-request ceiling once the 5,311-character system prompt and the
+// rubric are added. John's wrap-up came in at 8,003 tokens — three over — and
+// was lost.
 //
-// Two guards now, so neither has to be perfect. Hard caps on the two variable
-// pieces, and an answer budget sized to whatever is actually left.
+// Two guards now, so neither has to be perfect. Hard caps here on the two
+// variable pieces, and a completion budget fitted to whatever is left, which
+// parseWithLLM applies for every caller.
 const WUP_MAX_BODY_CHARS = 5000;      // a real wrap-up runs ~700-2,000 chars
 const WUP_MAX_CURRENT_CHARS = 6000;   // six accumulated sections, generously
-const GROQ_REQUEST_TOKEN_CAP = 8000;
-const GROQ_SAFETY_MARGIN = 300;
-const CHARS_PER_TOKEN_EST = 3.4;      // measured, not the 4.0 rule of thumb
-
-function wupFitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor: number): number {
-  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
-  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
-  return Math.max(floor, Math.min(ceiling, available));
-}
 
 // ---------- Public entry (mode dispatch) ----------
 
@@ -399,7 +387,7 @@ async function processOneWrapupMessage(
     userContent: llmUserContent,
     documentId: null,
     purpose: "wrapup_organize",
-    maxTokens: wupFitMaxTokens(WRAPUP_ORGANIZE_PROMPT, llmUserContent, 2500, 800),
+    maxTokens: 2500,   // ceiling; parseWithLLM fits it to the remaining budget
     // Write-back pointer for llm-queue-drainer. Without this the queue-fallback
     // path below is a silent loss: the email gets labeled + archived (so no
     // future cron tick re-fetches it) while the queued job has no way to know

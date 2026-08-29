@@ -342,7 +342,7 @@ function extractBestBody(msg: any): string {
   //   4. fallback: msg.htmlBody / msg.html_body → strip tags
   const direct: string | undefined =
     msg?.messageText ?? msg?.textBody ?? msg?.plaintext_body ?? msg?.body_text ?? msg?.snippet;
-  if (typeof direct === "string" && direct.trim().length > 20) return direct;
+  if (typeof direct === "string" && direct.trim().length > 20) return dropGluedHtmlDocument(direct);
 
   const parts: any[] = msg?.payload?.parts ?? msg?.parts ?? [];
   const stack: any[] = [...parts];
@@ -384,8 +384,30 @@ function tryDecodeB64Url(b64: string): string | null {
   }
 }
 
-function stripCareerplugTrackers(text: string): string {
-  // CareerPlug notification bodies are ~90% base64 tracking URLs. Every
+// Some senders concatenate the plaintext body and the ENTIRE raw HTML document
+// into one field. The plaintext branch of extractBestBody returns that field
+// directly, so the stripHtml fallback below it is never reached and the whole
+// document rides along to Groq.
+//
+// This is the identical shape that lost John Kostov's 2026-08-28 weekly
+// wrap-up: 12,737 characters carrying a ~700-character message, rejected HTTP
+// 413 on every attempt. Fixed there in wrapup_ingest.wupCleanBody the same day;
+// fixed here in the same sweep because the code was a copy of the same
+// extractor. No CareerPlug email is known to have hit it yet — this is closing
+// the door, not cleaning up after it.
+function dropGluedHtmlDocument(text: string): string {
+  const htmlStart = text.search(/<!DOCTYPE\s+html|<html[\s>]/i);
+  if (htmlStart < 0) return text;
+  const before = text.slice(0, htmlStart);
+  // Real text ahead of it means the document is a duplicate rendering — drop
+  // it. Nothing meaningful ahead of it means the document IS the message —
+  // keep its readable text. `before` is never discarded either way.
+  return before.replace(/\s+/g, " ").trim().length > 40
+    ? before
+    : before + "\n" + stripHtml(text.slice(htmlStart));
+}
+
+function stripCareerplugTrackers(text: string): string {  // CareerPlug notification bodies are ~90% base64 tracking URLs. Every
   // clickable text is followed by a parenthesized URL blob. Strip them —
   // they carry zero applicant signal and blow past Groq's TPM budget.
   return text
