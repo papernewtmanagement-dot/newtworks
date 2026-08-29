@@ -315,13 +315,6 @@ async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
 // -------------------------------------------------------------------------
 // Email bodies
 // -------------------------------------------------------------------------
-function declineEmailHtml(firstName: string): string {
-  return `<p>Hi ${escHtml(firstName)},</p>
-<p>Thank you for taking the time to complete our assessment and for your interest in joining our team. After reviewing your results, we've decided to move forward with other candidates for this role.</p>
-<p>We know that takes real time and effort on your part, and we appreciate you putting it in. We wish you the very best in your search.</p>
-<p>Sincerely,<br/>Story Agency</p>`;
-}
-
 const PREP_LINE = "This is an Interview AMA — please take some time beforehand to research Story Agency and State Farm, and come ready with your own questions for us.";
 
 function inviteEmailHtml(firstName: string, bookingUrl: string): string {
@@ -431,17 +424,12 @@ async function processAssessed(agencyId: string, candidateId?: string): Promise<
       }).eq("id", c.id);
       if (updErr) { results.push({ id: c.id, name: c.candidate_name, action: "decline_update_failed", error: updErr.message }); continue; }
 
-      if (c.email && gmailCreds.ok) {
-        const sendRes = await sendGmail({
-          creds: gmailCreds.creds,
-          to: c.email,
-          subject: "Update on your application — Story Agency",
-          html: declineEmailHtml(firstName),
-        });
-        results.push({ id: c.id, name: c.candidate_name, action: "declined", email_sent: sendRes.ok, composite: v.composite });
-      } else {
-        results.push({ id: c.id, name: c.candidate_name, action: "declined", email_sent: false, reason: "no email or gmail creds" });
-      }
+      // 2026-08-29: the decline letter is NOT sent from here any more. The
+      // status write above fires trg_send_candidate_decline_notice, which owns
+      // every decline letter for every path — one wording, one log, signed by
+      // Peter rather than "Story Agency". Sending here as well produced two
+      // different letters to the same person.
+      results.push({ id: c.id, name: c.candidate_name, action: "declined", composite: v.composite, email: "queued by decline-notice trigger" });
       continue;
     }
 
