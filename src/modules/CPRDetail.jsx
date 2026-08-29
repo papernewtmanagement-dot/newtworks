@@ -1195,9 +1195,7 @@ function useCPRData(weekDate) {
             if (r?.team_member_id && r.on_track) {
               raiseOnTrackById[r.team_member_id] = {
                 nextHourly: r.next_hourly,
-                threshold: r.next_threshold,
-                quarters: r.lookback_quarters,
-                avg: r.avg_weekly_sp,
+                requirement: r.next_requirement,
               };
             }
           });
@@ -3360,10 +3358,16 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                         {d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}
                         {d.__raise && (
                           <span
-                            title={`On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr — needs ${Number(d.__raise.threshold).toLocaleString()} a week averaged over the last ${d.__raise.quarters} quarter${d.__raise.quarters === 1 ? "" : "s"}, currently ${Number(d.__raise.avg).toLocaleString()}. Earned at quarter close.`}
-                            style={{ marginLeft: 4, color: BAND.Good.ink, fontSize: 11, cursor: "help" }}
-                            aria-label="On pace for a raise"
-                          >&#9650;</span>
+                            title={d.__raise.requirement
+                              ? `On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr — needs ${d.__raise.requirement}. Earned at quarter close.`
+                              : `On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)}/hr. Earned at quarter close.`}
+                            style={{
+                              marginLeft: 5, fontSize: 8.5, fontWeight: 700, padding: "1px 5px",
+                              borderRadius: 20, whiteSpace: "nowrap", cursor: "help",
+                              background: BAND.Good.badgeBg, color: BAND.Good.badgeFg,
+                            }}
+                            aria-label={`On pace for a raise to $${Number(d.__raise.nextHourly).toFixed(0)} an hour`}
+                          >${Number(d.__raise.nextHourly).toFixed(0)}</span>
                         )}
                         {(() => {
                           // WoW delta: this week's sales_points vs last week's, suppressed across cycle boundary.
