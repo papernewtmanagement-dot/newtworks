@@ -22,8 +22,8 @@ const ROLE_ORDER = ["sales", "retention", "life_specialist"];
 // belong to the Retention and Life Specialist curves and keep their own
 // accents. Band colours come from BAND in the theme, the one copy.
 const TIER_COLORS = {
-  rock:        T.slate500,
-  rock_n_roll: T.teal,
+  casual:      T.slate500,
+  rock:        T.teal,
   rockstar:    T.gold,
   rock_legend: T.purple,
   danger:      BAND.Danger.ink,
@@ -33,8 +33,8 @@ const TIER_COLORS = {
   elite:       BAND.Elite.ink,
 };
 const TIER_BAND_FILLS = {
-  rock:        T.slate200,
-  rock_n_roll: T.tealLt,
+  casual:      T.slate200,
+  rock:        T.tealLt,
   rockstar:    T.goldLt,
   rock_legend: T.purpleLt,
   danger:      BAND.Danger.fill,
@@ -44,17 +44,6 @@ const TIER_BAND_FILLS = {
   elite:       BAND.Elite.fill,
 };
 
-// What each band header reads on the Sales chart (Peter 2026-08-28).
-// Band name on the first line, the performer nickname and its share of
-// applicants on the second, the traits that go with it on the third.
-// Danger carries no nickname. Percentages are the applicant shares held in
-// earnings_projection_tiers.
-const BAND_NOTES = {
-  caution: ["Casual 75%"],
-  good:    ["Rock 19%", "Consistent"],
-  great:   ["Rockstar 5%", "Consistent, Having Fun"],
-  elite:   ["Rock Legend 1%", "Consistent, Having Fun, Obsessed"],
-};
 const tierColor = (key) => TIER_COLORS[key] || T.blue;
 const tierBandFill = (key) => TIER_BAND_FILLS[key] || T.slate100;
 
@@ -249,12 +238,21 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
       if (!best || d < best.d) best = { d, total: Number(p.total) || 0 };
     }
     const next = bands[i + 1];
+    // Header lines under the band name: the performer nickname with its
+    // share of applicants, then the traits. Both come from the band itself
+    // (pay_scale band-start rows) rather than a copy kept in here.
+    const notes = [];
+    if (b.nickname) {
+      notes.push(b.nickname + (b.applicant_pct == null ? "" : " " + fmtPct(b.applicant_pct)));
+    }
+    if (b.traits) notes.push(b.traits);
     return {
       key: b.tier_key,
       label: b.tier_label,
       fromX: fx,
       toX: next ? Number(next.from_x) || xMax : xMax,
       total: best ? best.total : 0,
+      notes,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [curve]);
@@ -331,7 +329,7 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
             {wPx >= 22 && (labelHoriz ? (
               <>
                 <text x={x0 + wPx / 2} y={padT + 12} textAnchor="middle" fontSize={9} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3">{m.label}</text>
-                {(BAND_NOTES[m.key] || []).map((note, ti) => (
+                {m.notes.map((note, ti) => (
                   <text key={"bn-" + m.key + "-" + ti} x={x0 + wPx / 2} y={padT + 23 + ti * 10.5}
                     textAnchor="middle" fontSize={ti === 0 ? 8.5 : 8} fontWeight={ti === 0 ? 700 : 500}
                     fill={tierColor(m.key)} opacity={ti === 0 ? 0.95 : 0.8}>{note}</text>
@@ -340,7 +338,7 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
             ) : (
               <text x={x0 + wPx / 2} y={padT + chartH / 2} textAnchor="middle" fontSize={8.5} fontWeight={hot ? 800 : 700} fill={tierColor(m.key)} letterSpacing="0.3"
                 transform={`rotate(-90 ${(x0 + wPx / 2).toFixed(1)} ${(padT + chartH / 2).toFixed(1)})`}>
-                {[m.label, ...(BAND_NOTES[m.key] || [])].join(" · ")}
+                {[m.label, ...m.notes].join(" · ")}
               </text>
             ))}
           </g>
