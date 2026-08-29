@@ -3619,11 +3619,14 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   const diag = diagAny.residual_pool_diag || {};
   const weeklySalesPool     = Number(diag.weekly_sales_pool || 0);
   const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
-  // Envelope = weekly bonus pool. Split into thirds under current design
-  // (qtd_pools.split_thirds:true): 1/3 to 13-wk SP, 1/3 to 4-wk SP, 1/3 to retention.
-  // Each person's share of each third is (share_ratio_pct × perThirdPool).
-  const weeklyBonusPool = weeklySalesPool + weeklyRetentionPool;
-  const perThirdPool    = weeklyBonusPool / 3;
+  // Envelope = weekly bonus pool. Normally an even three-way split: 13-wk sales points,
+  // 4-wk sales points, retention. But when the retention floor kicks in, retention takes
+  // MORE than a third and the two sales buckets share whatever is left — so the buckets
+  // are read from the actual settled pools, never assumed to be equal thirds.
+  const weeklyBonusPool     = weeklySalesPool + weeklyRetentionPool;
+  const retentionBucketPool = weeklyRetentionPool;
+  const salesBucketPool     = weeklySalesPool / 2;
+  const floorApplied        = diag.qtd_pools?.retention_floor_applied === true;
 
   // v2 pay components — every element that hits a check under the residual-pool structure.
   // Base + Commission are payroll-cycle earnings.
@@ -3803,6 +3806,11 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     <tr key={key} onClick={() => setTeamBonusExpanded(v => !v)} style={{ cursor: "pointer" }}>
                       <Td style={{ paddingLeft: 14, color: T.slate700, userSelect: "none" }}>
                         {teamBonusExpanded ? "▾" : "▸"} {label}
+                        {floorApplied && (
+                          <span style={{ marginLeft: 6, color: T.red, fontWeight: 700, fontSize: 11 }}>
+                            retention floor applied
+                          </span>
+                        )}
                       </Td>
                       {sorted.map(d => (
                         <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d.bonus)}</Td>
@@ -3868,9 +3876,9 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   ) : null;
                   return [
                     mainRow,
-                    subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", perThirdPool),
-                    subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  perThirdPool),
-                    subRow("ret",  "Retention split",   "ret_share_ratio_pct",  perThirdPool),
+                    subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", salesBucketPool),
+                    subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  salesBucketPool),
+                    subRow("ret",  "Retention split",   "ret_share_ratio_pct",  retentionBucketPool),
                     ...(teamAdjNote ? [teamAdjNote] : []),
                     ...(adjRow ? [adjRow] : []),
                   ];
@@ -4383,13 +4391,18 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2b. Split — 1/3 retention + 1/3 rolling 13-wk SP + 1/3 rolling 4-wk SP</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>
+        2b. Split — retention + rolling 13-wk SP + rolling 4-wk SP
+        {diag.qtd_pools?.retention_floor_applied === true && (
+          <span style={{ marginLeft: 8, color: T.red, fontWeight: 700, fontSize: 11 }}>retention floor applied — not an even three-way split this week</span>
+        )}
+      </div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        Retention distributed by this-week weighted_hours. SP buckets distributed by each person's rolling SP avg (NULL / pre-hire / pre-cycle weeks = 0; denominator always 13 or 4). No role gate — anyone with SP participates.
+        An even third each unless the retention floor lifts retention above its third, in which case the two SP buckets share what is left of the pool. Retention distributed by this-week weighted_hours. SP buckets distributed by each person's rolling SP avg (NULL / pre-hire / pre-cycle weeks = 0; denominator always 13 or 4). No role gate — anyone with SP participates.
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row("Retention Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_retention_pool) || 0), "weighted_hours share")}
+          {row("Retention Pool THIS WEEK", Number((diag.qtd_pools?.qtd_retention_pool) || 0), diag.qtd_pools?.retention_floor_applied === true ? "weighted_hours share — lifted by the retention floor" : "weighted_hours share (a third of the pool)")}
           {(() => {
             // Territory median lapse — the benchmark behind the retention floor.
             // Retention takes the BIGGER of its normal third and
@@ -4410,13 +4423,12 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             const rawFloor  = Number(qp.retention_floor_raw || 0);
             const normal    = Number(qp.retention_normal_third || 0);
             const basisComm = Number(qp.retention_floor_basis_commissions || 0);
+            const preComm   = Number(qp.pre_commission_pool || 0);
+            const poolRaw   = Number(qp.qtd_bonus_pool_raw || 0);
             const applied   = qp.retention_floor_applied === true;
-            const capped    = rawFloor > Number(qp.qtd_bonus_pool || 0) + 0.005;
             const note = applied
-              ? "floor is what retention gets this week"
-              : capped
-                ? "floor exceeds the whole pool — capped at the pool"
-                : "normal third is higher — floor does nothing this week";
+              ? "floor is what retention gets this week — it beat the normal third"
+              : "normal third is higher — floor does nothing this week";
             const line = (label, value, hint) => (
               <tr key={label}>
                 <Td style={{ paddingLeft: 28, color: T.slate600, fontSize: 11 }}>{label}</Td>
@@ -4436,8 +4448,8 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 {line("Ratio — auto / fire", `${Number(fd.ratio_auto).toFixed(4)} / ${Number(fd.ratio_fire).toFixed(4)}`, "median divided by ours; above 1.00 means we are ahead")}
                 {line("Blended ratio", Number(fd.blended_ratio).toFixed(4), `weighted by policies in force (${fmtInt(fd.pif_auto)} auto / ${fmtInt(fd.pif_fire)} fire)`)}
                 {line("Factor", Number(factor).toFixed(4), `0.50 x blended ratio, held between 0.25 and 1.00${fd.clamped ? " — clamped" : ""}. 0.50 = at the median`)}
-                {line("Floor basis", fmtMoneyCentsR(Number(qp.qtd_bonus_pool || 0) + basisComm), `bonus pool plus this week's commissions (${fmtMoneyCentsR(basisComm)})`)}
-                {line("Raw floor", fmtMoneyCentsR(rawFloor), `basis / 3 x factor, against a normal third of ${fmtMoneyCentsR(normal)}`)}
+                {line("Pre-commission pool", fmtMoneyCentsR(preComm), `bonus pool before the clamp (${fmtMoneyCentsR(poolRaw)}) plus THIS WEEK's commissions (${fmtMoneyCentsR(basisComm)}) added back`)}
+                {line("Floor", fmtMoneyCentsR(rawFloor), `pre-commission pool / 3 x factor. No cap. Compared against the normal third of ${fmtMoneyCentsR(normal)} — retention gets the bigger of the two`)}
                 <tr>
                   <Td style={{ paddingLeft: 28, color: applied ? T.green : T.slate600, fontSize: 11, fontWeight: 700 }}>Retention floor applied</Td>
                   <Td align="right" style={{ color: applied ? T.green : T.slate600, fontSize: 11, fontWeight: 700 }}>{applied ? "yes" : "no"}</Td>
@@ -4446,13 +4458,24 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
               </Fragment>
             );
           })()}
-          {row("SP-13wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_13wk_pool) || 0), "rolling 13-wk SP avg share")}
-          {row("SP-4wk Pool THIS WEEK (1/3)", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
-          <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= Bonus pool THIS WEEK (sum)</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(qtdBonusPool)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
-          </tr>
+          {row("SP-13wk Pool THIS WEEK", Number((diag.qtd_pools?.qtd_sp_13wk_pool) || 0), "rolling 13-wk SP avg share")}
+          {row("SP-4wk Pool THIS WEEK", Number((diag.qtd_pools?.qtd_sp_4wk_pool) || 0), "rolling 4-wk SP avg share")}
+          {(() => {
+            const qp = diag.qtd_pools || {};
+            const bucketSum = Number(qp.qtd_retention_pool || 0) + Number(qp.qtd_sp_13wk_pool || 0) + Number(qp.qtd_sp_4wk_pool || 0);
+            const over = bucketSum - qtdBonusPool;
+            return (
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>= Paid out THIS WEEK (sum of the three)</Td>
+                <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(bucketSum)}</Td>
+                <Td style={{ borderTop: `1px solid ${T.slate300}`, color: over > 0.005 ? T.red : T.slate500, fontSize: 11, paddingLeft: 10 }}>
+                  {over > 0.005
+                    ? `${fmtMoneyCentsR(over)} more than the bonus pool of ${fmtMoneyCentsR(qtdBonusPool)} — the retention floor is funded ahead of this week's commissions, so it can run the envelope over`
+                    : `bonus pool ${fmtMoneyCentsR(qtdBonusPool)}`}
+                </Td>
+              </tr>
+            );
+          })()}
         </tbody>
       </table>
 
