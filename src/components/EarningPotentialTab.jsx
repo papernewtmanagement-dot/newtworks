@@ -691,3 +691,6 @@ export default function EarningPotentialTab() {
     </div>
   );
 }
+
+// Exported for tests/chart — the checks render this directly.
+export { EarningsCurveChart };

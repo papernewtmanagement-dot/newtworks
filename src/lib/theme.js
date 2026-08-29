@@ -75,11 +75,10 @@ export const T = {
 // SAGE primary (#737A59), not a blue, so Great carries its own blue.
 //
 // Every band is built the same way on every surface (Peter 2026-08-28):
-// a light wash with dark ink over it. Elite is charcoal ink on cool
-// platinum — the traditional black tier read as lettering rather than as
-// a slab, because a charcoal wash across a 250-point band would swallow
-// the lines drawn over it. It is the only achromatic and the only cool
-// band, so it cannot be confused with the four below it.
+// a light wash with dark ink over it. Elite is purple rather than the
+// traditional charcoal — it reads as special at a glance, and it is the
+// only band that shares no hue with the four below it or with any of the
+// three lines drawn across the chart.
 //   ink      chart band label and boundary line
 //   fill     chart band wash, and the badge background
 //   badgeFg  badge lettering
@@ -88,7 +87,7 @@ export const BAND = {
   Caution: { ink: "#D4A017", fill: "#FAEFC8", badgeBg: "#FAEFC8", badgeFg: "#7A5B08" },
   Good:    { ink: "#2E8B57", fill: "#D8EFDF", badgeBg: "#D8EFDF", badgeFg: "#1B5E36" },
   Great:   { ink: "#255C99", fill: "#D9E5F2", badgeBg: "#D9E5F2", badgeFg: "#1D4E89" },
-  Elite:   { ink: "#2D2F26", fill: "#C9CDD6", badgeBg: "#C9CDD6", badgeFg: "#2D2F26" },
+  Elite:   { ink: "#6B3FA0", fill: "#E6DCF2", badgeBg: "#E6DCF2", badgeFg: "#4C2A75" },
 };
 
 // Alias for NewtworksApp.jsx which historically imports the object as TOKENS.
