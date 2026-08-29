@@ -9,10 +9,14 @@ import MeetGreetModal from "./MeetGreetModal.jsx";
 // ─── Constants ─────────────────────────────────────────────────────
 
 const DECLINE_REASON_LABEL = {
-  active_applicant: "Active — declined",
-  offer_rescinded:  "Offer rescinded",
-  calibration_only: "Calibration",
-  former_team:      "Former team",
+  // Four reasons Peter picks by hand, three the system stamps on its own.
+  active_applicant:      "Real applicant — passed on",
+  offer_rescinded:       "Offer pulled back",
+  calibration_only:      "Calibration record — not a real applicant",
+  former_team:           "Former team member — record kept for analysis",
+  resume_score:          "Auto-declined on resume score",
+  assessment_score:      "Auto-declined on assessment score",
+  bounced_undeliverable: "Email address dead — could not reach them",
 };
 
 // Seven of the nine old CTS traits, and every lss_* column, were dropped from
@@ -3011,11 +3015,24 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
               style={{ padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, minWidth: 220 }}
             >
               <option value="">Select a reason...</option>
-              <option value="active_applicant">Active — declined</option>
-              <option value="offer_rescinded">Offer rescinded</option>
-              <option value="calibration_only">Calibration test only</option>
-              <option value="former_team">Former team member</option>
+              <option value="active_applicant">Real applicant — passed on</option>
+              <option value="offer_rescinded">Offer pulled back</option>
+              <option value="calibration_only">Calibration record — not a real applicant</option>
+              <option value="former_team">Former team member — record kept for analysis</option>
             </select>
+          </div>
+          <ul style={{ fontSize: 11, color: T.slate600, margin: "0 0 8px 0", paddingLeft: 16, lineHeight: 1.5 }}>
+            <li><strong>Real applicant — passed on.</strong> Someone who actually applied for a job and you are turning down. This is the normal one.</li>
+            <li><strong>Offer pulled back.</strong> You made them an offer and then withdrew it.</li>
+            <li><strong>Calibration record — not a real applicant.</strong> A resume or profile loaded in to test the scoring. Nobody applied, so there is nobody to write to.</li>
+            <li><strong>Former team member — record kept for analysis.</strong> Someone who used to work here, scored after they left so their profile sits alongside the others.</li>
+          </ul>
+          <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8, padding: 8, background: T.white, borderRadius: 6, border: `1px solid ${T.slate200}` }}>
+            <strong>An email goes out on its own.</strong> Within 15 minutes of a decline, the candidate gets
+            a short, warm note thanking them and saying you are going with someone else. It sends for every
+            reason except <strong>Calibration record</strong>, and it sends the same way when the system
+            declines someone by itself on a resume or assessment score. It never names a score or a reason,
+            never goes out twice, and is held back if the person already told you they were withdrawing.
           </div>
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
