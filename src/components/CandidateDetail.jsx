@@ -11,6 +11,7 @@ import MeetGreetModal from "./MeetGreetModal.jsx";
 const DECLINE_REASON_LABEL = {
   // Four reasons Peter picks by hand, three the system stamps on its own.
   active_applicant:      "Real applicant — passed on",
+  candidate_withdrew:    "Candidate withdrew",
   offer_rescinded:       "Offer pulled back",
   calibration_only:      "Calibration record — not a real applicant",
   former_team:           "Former team member — record kept for analysis",
@@ -3016,6 +3017,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             >
               <option value="">Select a reason...</option>
               <option value="active_applicant">Real applicant — passed on</option>
+              <option value="candidate_withdrew">Candidate withdrew</option>
               <option value="offer_rescinded">Offer pulled back</option>
               <option value="calibration_only">Calibration record — not a real applicant</option>
               <option value="former_team">Former team member — record kept for analysis</option>
@@ -3023,16 +3025,18 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
           </div>
           <ul style={{ fontSize: 11, color: T.slate600, margin: "0 0 8px 0", paddingLeft: 16, lineHeight: 1.5 }}>
             <li><strong>Real applicant — passed on.</strong> Someone who actually applied for a job and you are turning down. This is the normal one.</li>
+            <li><strong>Candidate withdrew.</strong> They pulled out — you did not pass on them. Set for you automatically when someone emails in to say they are no longer interested.</li>
             <li><strong>Offer pulled back.</strong> You made them an offer and then withdrew it.</li>
             <li><strong>Calibration record — not a real applicant.</strong> A resume or profile loaded in to test the scoring. Nobody applied, so there is nobody to write to.</li>
             <li><strong>Former team member — record kept for analysis.</strong> Someone who used to work here, scored after they left so their profile sits alongside the others.</li>
           </ul>
           <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8, padding: 8, background: T.white, borderRadius: 6, border: `1px solid ${T.slate200}` }}>
-            <strong>An email goes out on its own.</strong> Within 15 minutes of a decline, the candidate gets
-            a short, warm note thanking them and saying you are going with someone else. It sends for every
-            reason except <strong>Calibration record</strong>, and it sends the same way when the system
-            declines someone by itself on a resume or assessment score. It never names a score or a reason,
-            never goes out twice, and is held back if the person already told you they were withdrawing.
+            <strong>An email goes out the moment you hit Decline.</strong> The candidate gets a short,
+            warm note from you. It sends for every reason except <strong>Calibration record</strong> and
+            <strong>Former team member</strong>, and it sends the same way when the system declines someone
+            by itself on a resume or assessment score. Someone who withdrew gets a different note — thanks
+            for closing the loop, apply again sometime — instead of the one about going with other
+            candidates. It never names a score or a reason, and never goes out twice.
           </div>
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
