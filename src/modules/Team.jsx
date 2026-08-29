@@ -39,7 +39,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 
 
 // ─── Design Tokens ────────────────────────────────────────────
-import { T } from "../lib/theme.js";
+import { T, BAND } from "../lib/theme.js";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
@@ -51,9 +51,9 @@ import { STAGES } from "../lib/hiringStages.js";
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
 // band — Good, Great or Elite — and nothing below Good.
 const BAND_BADGE = {
-  Good:  { bg: T.greenLt,  fg: "#166534" },
-  Great: { bg: T.goldLt,   fg: "#854D0E" },
-  Elite: { bg: T.purpleLt, fg: "#5B21B6" },
+  Good:  { bg: BAND.Good.badgeBg,  fg: BAND.Good.badgeFg },
+  Great: { bg: BAND.Great.badgeBg, fg: BAND.Great.badgeFg },
+  Elite: { bg: BAND.Elite.badgeBg, fg: BAND.Elite.badgeFg },
 };
 // ─── Producer ROI Hook ───────────────────────────────────────
 function useProducerROI() {

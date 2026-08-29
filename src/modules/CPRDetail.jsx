@@ -1,15 +1,15 @@
 import { useState, useEffect, useLayoutEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
-import { T } from "../lib/theme.js";
+import { T, BAND } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
 // band — Good, Great or Elite — and nothing below Good.
 const BAND_BADGE = {
-  Good:  { bg: T.greenLt,  fg: "#166534" },
-  Great: { bg: T.goldLt,   fg: "#854D0E" },
-  Elite: { bg: T.purpleLt, fg: "#5B21B6" },
+  Good:  { bg: BAND.Good.badgeBg,  fg: BAND.Good.badgeFg },
+  Great: { bg: BAND.Great.badgeBg, fg: BAND.Great.badgeFg },
+  Elite: { bg: BAND.Elite.badgeBg, fg: BAND.Elite.badgeFg },
 };
 // =============================================================
 // CPR DETAIL PAGE — Full weekly report

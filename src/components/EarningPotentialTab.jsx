@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { T } from "../lib/theme.js";
+import { T, BAND } from "../lib/theme.js";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { useViewport } from "../lib/hooks.js";
@@ -18,27 +18,30 @@ import { fmtMoney } from "../lib/format.jsx";
 const ROLE_ORDER = ["sales", "retention", "life_specialist"];
 
 // Colours escalate with the tier. Brand supporting accents only (theme.js).
+// Band keys arrive lower-cased off the band name; the performer-tier keys
+// belong to the Retention and Life Specialist curves and keep their own
+// accents. Band colours come from BAND in the theme, the one copy.
 const TIER_COLORS = {
   rock:        T.slate500,
   rock_n_roll: T.teal,
   rockstar:    T.gold,
   rock_legend: T.purple,
-  danger:      T.red,
-  caution:     T.amber,
-  good:        T.green,
-  great:       T.gold,
-  elite:       T.purple,
+  danger:      BAND.Danger.ink,
+  caution:     BAND.Caution.ink,
+  good:        BAND.Good.ink,
+  great:       BAND.Great.ink,
+  elite:       BAND.Elite.ink,
 };
 const TIER_BAND_FILLS = {
   rock:        T.slate200,
   rock_n_roll: T.tealLt,
   rockstar:    T.goldLt,
   rock_legend: T.purpleLt,
-  danger:      T.redLt,
-  caution:     T.amberLt,
-  good:        T.greenLt,
-  great:       T.goldLt,
-  elite:       T.purpleLt,
+  danger:      BAND.Danger.fill,
+  caution:     BAND.Caution.fill,
+  good:        BAND.Good.fill,
+  great:       BAND.Great.fill,
+  elite:       BAND.Elite.fill,
 };
 
 // What each band header reads on the Sales chart (Peter 2026-08-28).

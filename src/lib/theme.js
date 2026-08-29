@@ -69,6 +69,26 @@ export const T = {
   tealLt:   "#D5E2DF",
 };
 
+// ─── Sales Points band palette (Peter 2026-08-28) ──────────────────
+// Red, yellow, green, blue, charcoal — ascending. Tuned warm to sit in
+// the cream/sage shell rather than shouting over it. Note T.blue is the
+// SAGE primary (#737A59), not a blue, so Great carries its own dusty
+// blue. Elite keeps the traditional black-tier look: charcoal ink on a
+// cool platinum band, and a solid charcoal badge with white lettering —
+// it is the only achromatic and the only cool-toned band, so it cannot
+// be confused with the four below it.
+//   ink      chart band label and boundary line
+//   fill     chart band wash
+//   badgeBg  small badge on the CPR and Team cards
+//   badgeFg  badge lettering
+export const BAND = {
+  Danger:  { ink: "#D14343", fill: "#FBE0DE", badgeBg: "#FBE0DE", badgeFg: "#8E2A22" },
+  Caution: { ink: "#D4A017", fill: "#FAEFC8", badgeBg: "#FAEFC8", badgeFg: "#7A5B08" },
+  Good:    { ink: "#2E8B57", fill: "#D8EFDF", badgeBg: "#D8EFDF", badgeFg: "#1B5E36" },
+  Great:   { ink: "#255C99", fill: "#D9E5F2", badgeBg: "#D9E5F2", badgeFg: "#1D4E89" },
+  Elite:   { ink: "#2D2F26", fill: "#C9CDD6", badgeBg: "#2D2F26", badgeFg: "#FFFFFF" },
+};
+
 // Alias for NewtworksApp.jsx which historically imports the object as TOKENS.
 // Same object reference — change T, both update.
 export const TOKENS = T;
