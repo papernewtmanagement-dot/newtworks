@@ -4445,9 +4445,17 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                 </tr>
                 {line("Territory median — auto / fire", `${Number(fd.median_auto).toFixed(4)} / ${Number(fd.median_fire).toFixed(4)}`, "entered by hand for this week")}
                 {line("Ours — auto / fire", `${Number(fd.our_auto).toFixed(4)} / ${Number(fd.our_fire).toFixed(4)}`, "our own annualized lapse rate")}
-                {line("Ratio — auto / fire", `${Number(fd.ratio_auto).toFixed(4)} / ${Number(fd.ratio_fire).toFixed(4)}`, "median divided by ours; above 1.00 means we are ahead")}
+                {fd.prior_auto !== null && fd.prior_auto !== undefined &&
+                  line("Prior week — auto / fire", `${Number(fd.prior_auto).toFixed(4)} / ${Number(fd.prior_fire).toFixed(4)}`, "the week before, same measure")}
+                {fd.kicker_applied === true
+                  ? line("Improvement kicker", `−${Number(fd.improvement_auto).toFixed(4)} auto / −${Number(fd.improvement_fire).toFixed(4)} fire`, "we improved, so the improvement counts twice from where we were — for this week only")
+                  : line("Improvement kicker", "none", "no improvement on the prior week; no kicker, no penalty")}
+                {line("Treated as — auto / fire", `${Number(fd.effective_auto).toFixed(4)} / ${Number(fd.effective_fire).toFixed(4)}`, "the rate the factor is actually computed on; the real rate above is what gets recorded")}
+                {line("Ratio — auto / fire", `${Number(fd.ratio_auto).toFixed(4)} / ${Number(fd.ratio_fire).toFixed(4)}`, "median divided by the treated-as rate; above 1.00 means we are ahead of the median")}
                 {line("Blended ratio", Number(fd.blended_ratio).toFixed(4), `weighted by policies in force (${fmtInt(fd.pif_auto)} auto / ${fmtInt(fd.pif_fire)} fire)`)}
                 {line("Factor", Number(factor).toFixed(4), `0.50 x blended ratio, held between 0.25 and 1.00${fd.clamped ? " — clamped" : ""}. 0.50 = at the median`)}
+                {fd.half_capped === true &&
+                  line("Held at 0.50", "yes", "our raw rate is still worse than the median, so the kicker cannot carry the factor past half")}
                 {line("Pre-commission pool", fmtMoneyCentsR(preComm), `bonus pool before the clamp (${fmtMoneyCentsR(poolRaw)}) plus THIS WEEK's commissions (${fmtMoneyCentsR(basisComm)}) added back`)}
                 {line("Floor", fmtMoneyCentsR(rawFloor), `pre-commission pool / 3 x factor. No cap. Compared against the normal third of ${fmtMoneyCentsR(normal)} — retention gets the bigger of the two`)}
                 <tr>
