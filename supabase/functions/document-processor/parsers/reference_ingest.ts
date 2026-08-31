@@ -81,6 +81,66 @@ function parseReferenceSubject(
 // if the unique index were somehow bypassed.
 const TEAM_HIRING_LABEL_ID = "Label_3169275797947586809";
 
+// Gmail delivers a reference as a MIME tree: a text/plain part holding the
+// write-up, a text/html part holding the SAME write-up again, and the sender's
+// signature images. Composio's messageText field is not a safe source for the
+// plain half. On the tool-set version this function resolves against it hands
+// back plain and HTML glued together, so every row stored at roughly double
+// size — 43,111 bytes for one forward whose real text is 8,313. Newer Composio
+// tool sets return only the plain part, which is exactly why the identical call
+// from an interactive session always looked correct and the stored rows were
+// not. Reading the tree ourselves takes the version question off the table.
+//
+// Charset is read off the part instead of assumed: UTF-8 arrives from Gmail,
+// us-ascii and Windows-1252 from Outlook, and decoding Outlook's curly quotes
+// as UTF-8 turns them into mojibake.
+function referencePartCharset(part: any): string {
+  const contentType: string = (part?.headers ?? [])
+    .find((h: any) => String(h?.name ?? "").toLowerCase() === "content-type")?.value ?? "";
+  const m = /charset\s*=\s*"?([^";\s]+)"?/i.exec(contentType);
+  return (m?.[1] ?? "utf-8").trim().toLowerCase();
+}
+
+function decodeReferencePart(data: string, charset: string): string {
+  const b64 = String(data).replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  try {
+    return new TextDecoder(charset).decode(bytes);
+  } catch {
+    // An unknown or misspelled charset label must not lose the reference.
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+}
+
+// Depth-first: Outlook nests text/plain two levels down inside
+// multipart/related > multipart/alternative, Gmail puts it one level down.
+function findReferencePart(node: any, wantedMimeType: string): any | null {
+  if (!node) return null;
+  if (String(node.mimeType ?? "").toLowerCase() === wantedMimeType && node?.body?.data) return node;
+  for (const sub of node.parts ?? []) {
+    const hit = findReferencePart(sub, wantedMimeType);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function referenceBodyFromMessage(msg: any): string {
+  const plain = findReferencePart(msg?.payload, "text/plain");
+  if (plain) return decodeReferencePart(plain.body.data, referencePartCharset(plain));
+
+  // No plain part at all — store the HTML and let the body_text generated
+  // column strip it, rather than dropping the reference on the floor.
+  const html = findReferencePart(msg?.payload, "text/html");
+  if (html) return decodeReferencePart(html.body.data, referencePartCharset(html));
+
+  return String(
+    msg?.messageText ?? msg?.textBody ?? msg?.plaintext_body ?? msg?.body_text ?? msg?.snippet ?? "",
+  );
+}
+
 export async function processReferencesMode(
   ctx: ReferencesCtx,
   body: Record<string, unknown>,
@@ -182,8 +242,7 @@ async function processOneReferenceMessage(
     return { status: "skipped", message_id: messageId, candidate_name: candidateName, candidate_id: null, reference_number: referenceNumber, note: "already ingested" };
   }
 
-  const bodyText: string =
-    msg?.messageText ?? msg?.textBody ?? msg?.plaintext_body ?? msg?.body_text ?? msg?.snippet ?? "";
+  const bodyText: string = referenceBodyFromMessage(msg);
   if (!bodyText.trim()) {
     return { status: "error", message_id: messageId, candidate_name: candidateName, candidate_id: null, reference_number: referenceNumber, note: "empty body" };
   }
