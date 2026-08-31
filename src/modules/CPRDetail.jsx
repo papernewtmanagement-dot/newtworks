@@ -651,6 +651,9 @@ function useCPRData(weekDate) {
         // trigger uses). We just call it and write the deltas.
         // Runs on every load; manual edits persist until the next load.
         // Non-fatal: verify failure falls through with stored values.
+        // The RPC is SECURITY DEFINER (20260831134254) on purpose: it reads
+        // weekly_cpr_team_detail, which is admin-or-own at the ROW level, so an
+        // invoker-rights version handed a non-admin viewer only their own row.
         if (detailRows.length > 0) {
           try {
             const { data: doneRows } = await supabase.rpc(
@@ -660,7 +663,14 @@ function useCPRData(weekDate) {
             const doneByTm = new Map((doneRows || []).map(r => [r.team_member_id, Boolean(r.done)]));
             const toUpdate = [];
             for (const d of detailRows) {
-              const computed = Boolean(doneByTm.get(d.team_member_id));
+              // Absent from the RPC result means "not computed" -- NOT "not done".
+              // Writing false off a missing key is what showed every other teammate's
+              // Scorecard box as an X to a non-admin viewer, and wrote that false back
+              // to the table (the UPDATE policy is agency-wide, so it stuck until the
+              // next admin load recomputed it). Guard stays even now that the RPC is
+              // SECURITY DEFINER: a truncated result must never overwrite stored data.
+              if (!doneByTm.has(d.team_member_id)) continue;
+              const computed = doneByTm.get(d.team_member_id);
               if (Boolean(d.scorecard_done) !== computed) {
                 toUpdate.push({ id: d.id, computed });
                 d.scorecard_done = computed;
