@@ -595,7 +595,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
         <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Team total: <strong style={{ color: T.slate800 }}>${fmtPts(teamNet)}</strong> net points. One point = one dollar.</div>
         {rows[0]?.detail && (
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
-            Team missed {Number(rows[0].detail.team_missed_calls || 0)} of {Number(rows[0].detail.team_calls_answered || 0) + Number(rows[0].detail.team_missed_calls || 0)} calls. The phone rings everyone, so a call nobody picked up counts against the whole team. Voicemails are not counted yet.
+            Team missed {Number(rows[0].detail.team_missed_calls || 0)} of {Number(rows[0].detail.team_calls_answered || 0) + Number(rows[0].detail.team_missed_calls || 0)} calls. The phone rings everyone, so a call nobody picked up — hung up or left a voicemail — counts against the whole team.
           </div>
         )}
       </div>
