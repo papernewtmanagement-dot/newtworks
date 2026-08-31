@@ -1240,6 +1240,35 @@ function referenceBodyText(row) {
   return s.trim();
 }
 
+// A reference can arrive as a forward, and a forward carries the earlier
+// messages of the thread underneath it. Stephanie's second Rodney reference is
+// exactly that: Kathleen's write-up on top, the whole of Phillip's write-up
+// quoted below it — a reference already on file as its own row. Showing it
+// again reads as if this referee said all of it.
+//
+// The stored body stays verbatim, deliberately; the split is display only.
+// The cut is the LAST quote marker in the message, not the first, because a
+// person who forwards their own reply puts NEW content inside the first quote
+// block. Cutting last errs toward showing too much, never toward hiding
+// something a referee actually said, and a marker in the opening 200
+// characters is ignored so the panel can never come back empty.
+const QUOTE_MARKER_RE =
+  /(?:^|\n)(?:_{10,}\s*\n\s*From:|-{5,}\s*Forwarded message\s*-{5,}|On .{4,80}\bwrote:\s*$)/gm;
+
+function splitQuotedTail(text) {
+  const s = String(text || "");
+  let cut = -1;
+  QUOTE_MARKER_RE.lastIndex = 0;
+  let m;
+  while ((m = QUOTE_MARKER_RE.exec(s)) !== null) {
+    const at = m.index + (m[0].startsWith("\n") ? 1 : 0);
+    if (at > 200) cut = at;
+    if (m.index === QUOTE_MARKER_RE.lastIndex) QUOTE_MARKER_RE.lastIndex++;
+  }
+  if (cut < 0) return { own: s.trim(), quoted: "" };
+  return { own: s.slice(0, cut).trim(), quoted: s.slice(cut).trim() };
+}
+
 // Which written line each score came from, grouped the way the construct
 // functions group them in the database (migration 20260822071127). Change one
 // and the other must change with it — the labels here are display only, the
@@ -1438,14 +1467,28 @@ function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T,
                       </div>
                     );
                   })()}
-                  <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Written reference, verbatim</div>
-                  <div style={{
-                    fontSize: 12.5, lineHeight: 1.55, color: T.slate800,
-                    whiteSpace: "pre-wrap", wordBreak: "break-word",
-                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}>
-                    {referenceBodyText(r)}
-                  </div>
+                  {(() => {
+                    const { own, quoted } = splitQuotedTail(referenceBodyText(r));
+                    const bodyStyle = {
+                      fontSize: 12.5, lineHeight: 1.55, color: T.slate800,
+                      whiteSpace: "pre-wrap", wordBreak: "break-word",
+                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    };
+                    return (
+                      <>
+                        <div style={{ fontSize: 10, color: T.slate500, marginBottom: 4 }}>Written reference, verbatim</div>
+                        <div style={bodyStyle}>{own}</div>
+                        {quoted && (
+                          <details style={{ marginTop: 10 }}>
+                            <summary style={{ fontSize: 10, color: T.slate500, cursor: "pointer" }}>
+                              Earlier messages quoted in this forward — already on file as their own reference
+                            </summary>
+                            <div style={{ ...bodyStyle, marginTop: 6, color: T.slate500 }}>{quoted}</div>
+                          </details>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
