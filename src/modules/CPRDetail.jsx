@@ -4672,6 +4672,56 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         </tbody>
       </table>
 
+      {/* ───── 7. RETENTION POINTS BREAKDOWN (added alongside section 6, never instead of it) ───── */}
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>7. Retention points breakdown (this week)</div>
+      {(() => {
+        const rp0 = ((sorted[0] || {}).residual_pool_diag || {}).retention_points || {};
+        const isPoints = rp0.mode === "points";
+        return (
+          <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
+            Paying on <b style={{ color: isPoints ? T.green : T.amber }}>{isPoints ? "points" : "hours"}</b> this week
+            {rp0.go_live_week_end ? ` (points start the week ending ${rp0.go_live_week_end})` : " (no start date is set, so nothing below is being paid yet)"}.
+            {" "}One point is one dollar, guaranteed, once points are live. Team net points {Number(rp0.team_net_points || 0).toFixed(2)}. Retention third {fmtMoneyCentsR(Number(rp0.retention_third || 0))}.
+          </div>
+        );
+      })()}
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <Th align="left">Person</Th>
+            <Th align="right">Gross pts</Th>
+            <Th align="right">Missed %</Th>
+            <Th align="right">Cut %</Th>
+            <Th align="right">Net pts</Th>
+            <Th align="right">Pts share %</Th>
+            <Th align="right">Guarantee $</Th>
+            <Th align="right">Pool share $</Th>
+            <Th align="right">Agency top-up $</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(d => {
+            const rp = ((d.residual_pool_diag || {}).retention_points) || {};
+            return (
+              <tr key={d.team_member_id}>
+                <Td style={{ paddingLeft: 14 }}>{firstName(d.__name)}</Td>
+                <Td align="right">{Number(rp.gross_points || 0).toFixed(2)}</Td>
+                <Td align="right">{`${Number(rp.missed_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{`${Number(rp.reduction_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{Number(rp.net_points || 0).toFixed(2)}</Td>
+                <Td align="right">{`${Number(rp.points_share_pct || 0).toFixed(2)}%`}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(rp.guarantee_dollars || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(rp.pool_share_dollars || 0))}</Td>
+                <Td align="right">{fmtMoneyCentsR(Number(rp.agency_topup_dollars || 0))}</Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div style={{ color: T.slate500, fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+        Gross points are hours in the office, calls answered, and everything logged on the Activity Log page. The cut is 0.04 x missed%^2, using the team's missed-call rate for the week, applied to everyone who worked that week. Net points are what is left after the cut. Until points go live the three dollar columns read $0. The points and the shares are real now, so this shows what it would pay.
+      </div>
+
       <div style={{ marginTop: 12, color: T.slate500, fontSize: 11, lineHeight: 1.5 }}>
         QTD burden accrual (8% × [QTD base + comm + mgr + hdb + prize + wtq + bonus_pool]) = {fmtMoneyCentsR(qtdBurden)}. Baked into pool math via /(1+burden) wrap.
         Commissions eat the WHOLE POOL. Base + comm + Manager Bonus + HDB + MVP Prize Cart + WtQ Trip + bonus_pool are ALL burdened (wages).
