@@ -101,18 +101,32 @@ function referencePartCharset(part: any): string {
   return (m?.[1] ?? "utf-8").trim().toLowerCase();
 }
 
-function decodeReferencePart(data: string, charset: string): string {
+function decodeReferencePart(data: string, declaredCharset: string): string {
   const b64 = String(data).replace(/-/g, "+").replace(/_/g, "/");
   const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  // The declared charset lies. Stephanie's Outlook labels this part
+  // Windows-1252 and then sends UTF-8 bytes; trusting the label turned the
+  // apostrophe in "Visit Agent's Page" into "a EUR (tm)" mojibake on the first
+  // attempt at this fix. So UTF-8 is tried FIRST in fatal mode, which throws on
+  // any byte sequence that is not valid UTF-8, and the declared label is used
+  // only when the bytes genuinely are not UTF-8. Real Windows-1252 text with
+  // high bytes fails the fatal decode and falls through correctly; plain
+  // us-ascii is valid UTF-8 either way.
   try {
-    return new TextDecoder(charset).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    // An unknown or misspelled charset label must not lose the reference.
-    return new TextDecoder("utf-8").decode(bytes);
+    // Not UTF-8 after all — the label may be right.
   }
+  try {
+    return new TextDecoder(declaredCharset).decode(bytes);
+  } catch {
+    // Unknown or misspelled label must not lose the reference.
+  }
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
 // Depth-first: Outlook nests text/plain two levels down inside
