@@ -31,6 +31,7 @@ import Onboarding from "./src/modules/Onboarding.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
 import Trivia from "./src/modules/Trivia.jsx";
+import ActivityLog from "./src/modules/ActivityLog.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -111,6 +112,7 @@ const NAV_ITEMS = [
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "onboarding",  label: "Onboarding",  icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
   { id: "trivia",      label: "Trivia",      icon: "grid",          roles: TEAM_VISIBLE_ROLES },
+  { id: "activity",    label: "Activity",    icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
@@ -691,6 +693,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
     trivia:      <ErrorBoundary name="Trivia"><Trivia userRole={userRole} userId={userId} /></ErrorBoundary>,
+    activity:    <ErrorBoundary name="Activity Log"><ActivityLog userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
