@@ -3262,9 +3262,16 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
     (acc, d) => acc + (Number(runtimeReqs?.[d.team_member_id]?.net_quotes) || 0),
     0
   ) + teamPoolRestored;
-  const teamSalesPtsTotal = report?.quarterly_sales_points_qtd != null
-    ? Number(report.quarterly_sales_points_qtd)
-    : sorted.reduce((acc, d) => acc + (Number(d.sales_points) || 0), 0);
+  // Peter directive 2026-08-30: the team sales points total is computed here from the
+  // team detail rows, always — never read back from report.quarterly_sales_points_qtd.
+  // That stored column is written once on Saturday night and does not move when a
+  // teammate's sales points get corrected afterward, so preferring it showed a stale
+  // team total (week ending 2026-08-29: stored 3677 vs 3347.10 actually on the rows).
+  // Standing policy: totals are computed on display from the underlying rows.
+  const teamSalesPtsTotal = sorted.reduce(
+    (acc, d) => acc + (Number(d.sales_points) || 0),
+    0
+  );
 
   const carryover = Number(report?.quotes_owed_carryover) || 0;
   const freshNeeded = Number(report?.quotes_fresh_needed) || 0;
