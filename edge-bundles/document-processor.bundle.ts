@@ -9737,10 +9737,48 @@ interface OneRefResult {
   note?: string;
 }
 
-// "Reference 2 - Maximus Moody", tolerant of Fwd:/Re: prefixes, hyphen or
-// dash variants, and a missing number. Anchored so ordinary sentences that
-// merely contain the word "reference" cannot match.
-const SUBJECT_RE = /^\s*(?:(?:fwd|re):\s*)*reference\s*(\d+)?\s*[-–—:]\s*(.+?)\s*$/i;
+// Two people send these and they title them differently, so both shapes are
+// first-class. Reply/forward prefixes are stripped up front rather than being
+// baked into each pattern.
+const PREFIX_RE = /^(?:\s*(?:fwd?|re):\s*)+/i;
+
+// Shape A — Marie: "Reference 2 - Maximus Moody". Number optional, hyphen or
+// dash variants, anchored so an ordinary sentence containing the word
+// "reference" cannot match.
+const SUBJECT_LEADING_RE = /^reference\s*(\d+)?\s*[-–—:]\s*(.+?)\s*$/i;
+
+// Shape B — Stephanie: "Rodney References", "Bryson Reference 2". The name
+// comes first and is usually the first name alone.
+const SUBJECT_TRAILING_RE = /^(.+?)\s*[-–—:]?\s*references?\s*(\d+)?\s*$/i;
+
+// Shape B only. One to four capitalised words — that is what stops "please
+// send references" being read as a candidate called "please send". Shape A
+// needs no such guard: its own anchor already does the work.
+const LOOKS_LIKE_A_NAME_RE = /^[A-Z][\p{L}'’.\-]*(?:\s+[A-Z][\p{L}'’.\-]*){0,3}$/u;
+
+function parseReferenceSubject(
+  subject: string,
+): { candidateName: string; referenceNumber: number | null } | null {
+  const bare = subject.replace(PREFIX_RE, "").trim();
+
+  const a = SUBJECT_LEADING_RE.exec(bare);
+  if (a) {
+    return {
+      candidateName: a[2].trim(),
+      referenceNumber: a[1] ? parseInt(a[1], 10) : null,
+    };
+  }
+
+  const b = SUBJECT_TRAILING_RE.exec(bare);
+  if (b && LOOKS_LIKE_A_NAME_RE.test(b[1].trim())) {
+    return {
+      candidateName: b[1].trim(),
+      referenceNumber: b[2] ? parseInt(b[2], 10) : null,
+    };
+  }
+
+  return null;
+}
 
 // Team/Hiring. Processed reference threads leave the inbox and file here, and
 // the search query excludes the label so a thread is never ingested twice even
@@ -9751,9 +9789,17 @@ export async function processReferencesMode(
   ctx: ReferencesCtx,
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  // The Team-Hiring label is NOT excluded any more. Stephanie sends a second
+  // and third reference as replies on the SAME thread, and a new message
+  // re-inboxes a thread without dropping the label it already carries — so
+  // excluding the label made every follow-up reference permanently invisible.
+  // The unique index on gmail_message_id is the real duplicate guard, and the
+  // per-message check below skips an already-ingested one for the cost of one
+  // indexed lookup. Both singular and plural, since Gmail treats the quoted
+  // phrase literally.
   const query = (body.gmail_query as string | undefined)
-    ?? `subject:"Reference" -label:Team-Hiring -in:sent -in:trash newer_than:30d`;
-  const maxResults = (body.max_results as number | undefined) ?? 20;
+    ?? `(subject:reference OR subject:references) -in:sent -in:trash newer_than:30d`;
+  const maxResults = (body.max_results as number | undefined) ?? 50;
 
   const listRes = await callComposio({
     apiKey: ctx.composioApiKey,
@@ -9767,6 +9813,13 @@ export async function processReferencesMode(
   }
   const list: any = listRes.data;
   const messages: any[] = list?.messages ?? list?.response_data?.messages ?? [];
+
+  // Gmail does not return these in date order, and reference numbers are
+  // assigned by arrival when the subject does not carry one — so process
+  // oldest first or the first referee to arrive can end up numbered second.
+  messages.sort((a: any, b: any) =>
+    String(a?.messageTimestamp ?? "").localeCompare(String(b?.messageTimestamp ?? ""))
+  );
 
   const results: OneRefResult[] = [];
   const archivedThreads = new Set<string>();
@@ -9814,15 +9867,15 @@ async function processOneReferenceMessage(
   const hget = (name: string): string => headers.find((h: any) => h?.name === name)?.value ?? "";
 
   const subject: string = msg?.subject ?? hget("Subject") ?? "";
-  const sm = SUBJECT_RE.exec(subject);
-  if (!sm) {
-    // The Gmail query is broad on purpose; the regex is the real gate. A
-    // subject that merely contains "Reference" without the convention is not a
-    // reference email — leave it exactly where it is.
+  const parsed = parseReferenceSubject(subject);
+  if (!parsed) {
+    // The Gmail query is broad on purpose; the patterns are the real gate. A
+    // subject that merely contains "Reference" without either convention is
+    // not a reference email — leave it exactly where it is.
     return { status: "skipped", message_id: messageId, candidate_name: null, candidate_id: null, reference_number: null, note: "subject does not match convention" };
   }
-  const referenceNumber = sm[1] ? parseInt(sm[1], 10) : null;
-  const candidateName = sm[2].trim();
+  const candidateName = parsed.candidateName;
+  const referenceNumber = parsed.referenceNumber;
 
   const { data: existing } = await sb
     .from("hiring_candidate_references")
@@ -9844,21 +9897,50 @@ async function processOneReferenceMessage(
   const receivedRaw: string = msg?.messageTimestamp ?? hget("Date") ?? "";
   const receivedAt = receivedRaw ? new Date(receivedRaw).toISOString() : null;
 
-  // Exact name match only. A fuzzy match that links a reference to the wrong
-  // candidate is far worse than an unlinked row with a loud alert, so
-  // ambiguity and misses both stay NULL and get flagged for a human.
-  const { data: candidates } = await sb
+  // Full name first. Shape B usually carries the first name alone, so a
+  // single-token name falls back to a first-name lookup. Still no fuzzy
+  // matching of any kind: linking a reference to the WRONG candidate is far
+  // worse than an unlinked row with a loud alert, so anything other than
+  // exactly one hit stays NULL and gets flagged for a human.
+  let candidates: { id: string }[] = [];
+  const { data: byFullName } = await sb
     .from("hiring_candidates")
     .select("id, candidate_name")
     .eq("agency_id", ctx.agencyId)
     .ilike("candidate_name", candidateName);
-  const candidateId = (candidates?.length ?? 0) === 1 ? candidates![0].id : null;
+  candidates = byFullName ?? [];
+
+  if (candidates.length !== 1 && !candidateName.includes(" ")) {
+    const { data: byFirstName } = await sb
+      .from("hiring_candidates")
+      .select("id, candidate_name")
+      .eq("agency_id", ctx.agencyId)
+      .ilike("first_name", candidateName);
+    if ((byFirstName?.length ?? 0) > 0) candidates = byFirstName!;
+  }
+  const candidateId = candidates.length === 1 ? candidates[0].id : null;
+
+  // Shape B carries no number. Assign the next one for this candidate so the
+  // reference layer can still tell one referee from another. Messages are
+  // processed oldest-first and inserted one at a time, so a run that ingests
+  // three at once still numbers them in arrival order.
+  let resolvedNumber = referenceNumber;
+  if (resolvedNumber === null && candidateId) {
+    const { data: prior } = await sb
+      .from("hiring_candidate_references")
+      .select("reference_number")
+      .eq("candidate_id", candidateId);
+    resolvedNumber = (prior ?? []).reduce(
+      (max: number, r: any) => Math.max(max, r?.reference_number ?? 0),
+      0,
+    ) + 1;
+  }
 
   const { error: insErr } = await sb.from("hiring_candidate_references").insert({
     agency_id: ctx.agencyId,
     candidate_id: candidateId,
     candidate_name_from_subject: candidateName,
-    reference_number: referenceNumber,
+    reference_number: resolvedNumber,
     gmail_thread_id: threadId,
     gmail_message_id: messageId,
     sender,
@@ -9867,7 +9949,7 @@ async function processOneReferenceMessage(
     body: bodyText,
   });
   if (insErr) {
-    return { status: "error", message_id: messageId, candidate_name: candidateName, candidate_id: candidateId, reference_number: referenceNumber, note: `insert: ${insErr.message}` };
+    return { status: "error", message_id: messageId, candidate_name: candidateName, candidate_id: candidateId, reference_number: resolvedNumber, note: `insert: ${insErr.message}` };
   }
 
   // A reference is a hiring-gate artifact — its arrival should be loud.
@@ -9876,11 +9958,11 @@ async function processOneReferenceMessage(
     alert_type: candidateId ? "reference_received" : "reference_unmatched",
     severity: candidateId ? "info" : "warning",
     title: candidateId
-      ? `Reference${referenceNumber ? ` ${referenceNumber}` : ""} received: ${candidateName}`
+      ? `Reference${resolvedNumber ? ` ${resolvedNumber}` : ""} received: ${candidateName}`
       : `Reference received for UNMATCHED name: ${candidateName}`,
     message: candidateId
       ? `Reference write-up ingested from ${sender} and linked to the candidate record.`
-      : `Reference write-up ingested from ${sender}, but "${candidateName}" matched ${candidates?.length ?? 0} candidate records instead of exactly one. Stored unlinked — link it by hand.`,
+      : `Reference write-up ingested from ${sender}, but "${candidateName}" matched ${candidates.length} candidate records instead of exactly one. Stored unlinked — link it by hand.`,
     module_reference: "hiring",
     related_id: candidateId,
   });
@@ -9902,7 +9984,7 @@ async function processOneReferenceMessage(
     else console.error(`[references] archive failed for thread ${threadId}: ${arcRes.error}`);
   }
 
-  return { status: "processed", message_id: messageId, candidate_name: candidateName, candidate_id: candidateId, reference_number: referenceNumber };
+  return { status: "processed", message_id: messageId, candidate_name: candidateName, candidate_id: candidateId, reference_number: resolvedNumber };
 }
 
 // ==================== parsers/paypal_print_sales.ts ====================
