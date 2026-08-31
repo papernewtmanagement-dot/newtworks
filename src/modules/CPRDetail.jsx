@@ -5715,6 +5715,89 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
   );
 }
 
+// Quarter Close Banner — renders only on the CPR for the LAST week of a quarter, i.e.
+// when the week being viewed IS the cycle end. Carries the quarter-close items: the
+// Win the Quarter trip result written by quarter_close_wtq, and the receipts reminder.
+// Trip figures come off weekly_cpr_team_detail.wtq_trip_dollars / wtq_quarter_mvp,
+// which the close writes onto these very rows — no separate table.
+function QuarterCloseBanner({ weekDate, cycleEndISO, details, team }) {
+  if (!weekDate || !cycleEndISO || weekDate !== cycleEndISO) return null;
+
+  const rows = (details || []).filter(d => d?.wtq_trip_dollars != null);
+  if (rows.length === 0) return null;
+
+  const nameFor = (id) => {
+    const t = (team || []).find(m => m?.id === id);
+    return t?.nickname || t?.first_name || "Teammate";
+  };
+
+  const paid = rows.filter(d => Number(d?.wtq_trip_dollars || 0) > 0);
+  const total = paid.reduce((s, d) => s + Number(d?.wtq_trip_dollars || 0), 0);
+  const mvp = rows.find(d => d?.wtq_quarter_mvp === true);
+  const awarded = paid.length > 0;
+
+  return (
+    <div style={{
+      border: `2px solid ${awarded ? BAND.Great.ink : T.slate300}`,
+      background: awarded ? BAND.Great.fill : T.slate50,
+      borderRadius: 10, padding: "14px 16px", marginBottom: 16,
+    }}>
+      <div style={{
+        display: "flex", flexWrap: "wrap", gap: 8,
+        alignItems: "baseline", marginBottom: 10,
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.slate800 }}>Quarter Close</div>
+        <div style={{ fontSize: 12, color: T.slate600 }}>
+          Week ending {cycleEndISO} — this is the last CPR of the quarter.
+        </div>
+      </div>
+
+      {awarded ? (
+        <Fragment>
+          <div style={{ fontSize: 13, color: T.slate700, marginBottom: 8 }}>
+            <strong>Win the Quarter trip is funded — {fmtMoneyCentsR(total)} total.</strong>
+            {mvp ? ` ${nameFor(mvp.team_member_id)} is Quarter MVP.` : ""}
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            gap: 8, marginBottom: 12,
+          }}>
+            {paid
+              .slice()
+              .sort((a, b) => Number(b?.wtq_trip_dollars || 0) - Number(a?.wtq_trip_dollars || 0))
+              .map(d => (
+                <div key={d.team_member_id} style={{
+                  background: T.white, border: `1px solid ${T.slate200}`,
+                  borderRadius: 8, padding: "8px 10px",
+                }}>
+                  <div style={{ fontSize: 11, color: T.slate600, fontWeight: 700 }}>
+                    {nameFor(d.team_member_id)}{d?.wtq_quarter_mvp ? " - MVP" : ""}
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: T.slate800 }}>
+                    {fmtMoneyCentsR(d.wtq_trip_dollars)}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </Fragment>
+      ) : (
+        <div style={{ fontSize: 13, color: T.slate700, marginBottom: 12 }}>
+          <strong>No Win the Quarter trip this quarter.</strong> The team needs 9 of 13 weeks.
+        </div>
+      )}
+
+      <div style={{
+        background: BAND.Caution.fill, border: `1px solid ${BAND.Caution.ink}`,
+        borderRadius: 8, padding: "9px 11px", fontSize: 12.5, color: T.slate800,
+      }}>
+        <strong>Send your receipts.</strong> Book your own trip, then send receipts in to get
+        reimbursed up to your amount above. Nothing is paid out without a receipt.
+      </div>
+    </div>
+  );
+}
+
 // 21d — Win the Quarter Tracker (reads diag.carveouts_detail.wtq_trip)
 function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
   const cvo = (diag && diag.carveouts_detail) || {};
@@ -6319,6 +6402,15 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
         trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
         leaderboards={data.leaderboards}
+      />
+
+      {/* Quarter Close Banner — only on the final CPR of a quarter. Carries the Win the
+          Quarter trip result and the send-your-receipts reminder. */}
+      <QuarterCloseBanner
+        weekDate={weekDate}
+        cycleEndISO={data.cycleEndISO}
+        details={data.details}
+        team={data.team}
       />
 
       {/* 1. Opener */}
