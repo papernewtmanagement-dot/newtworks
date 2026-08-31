@@ -200,6 +200,11 @@ function ActivityForm({ values, isAdmin, roster, onLogged }) {
             </span>
           ))}
         </div>
+        <div style={{ fontSize: 12, color: T.slate500, marginTop: 8, lineHeight: 1.45 }}>
+          {serviceTier
+            ? (byKey[serviceTier]?.description || "")
+            : "A service task is a change you made and finished on the customer's policy, account, or billing. Answering a question or taking a message is the call point, not a task."}
+        </div>
       </div>
 
       <div style={{ marginTop: 14 }}>
@@ -566,7 +571,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
-              <th style={tableTh}>Who</th><th style={tableTh}>Hours in office</th><th style={tableTh}>Calls answered</th><th style={tableTh}>Missed %</th>
+              <th style={tableTh}>Who</th><th style={tableTh}>Hours in office</th><th style={tableTh}>Calls answered</th><th style={tableTh}>Team missed %</th>
               <th style={tableTh}>Logged</th><th style={tableTh}>From sales</th><th style={tableTh}>Gross</th><th style={tableTh}>Reduction</th><th style={tableTh}>Net points</th>
             </tr></thead>
             <tbody>
@@ -588,6 +593,11 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
           </table>
         </div>
         <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Team total: <strong style={{ color: T.slate800 }}>${fmtPts(teamNet)}</strong> net points. One point = one dollar.</div>
+        {rows[0]?.detail && (
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
+            Team missed {Number(rows[0].detail.team_missed_calls || 0)} of {Number(rows[0].detail.team_calls_answered || 0) + Number(rows[0].detail.team_missed_calls || 0)} calls. The phone rings everyone, so a call nobody picked up counts against the whole team. Voicemails are not counted yet.
+          </div>
+        )}
       </div>
 
       <div style={cardStyle}>
@@ -681,7 +691,7 @@ export default function ActivityLog({ userRole }) {
     let alive = true;
     (async () => {
       const [v, s, r, me] = await Promise.all([
-        supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
+        supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category").eq("agency_id", AGENCY_ID).eq("is_active", true).order("first_name"),
         supabase.rpc("current_team_member_id"),
