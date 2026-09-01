@@ -30,7 +30,7 @@ const PRODUCTS = [
 ];
 const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
 const SERVICE_KEYS = ["service_task", "service_task_company", "service_task_coi"];
-const TABS = ["log", "sale", "quote", "week"];
+const TABS = ["log", "sale", "quote", "cancel", "week"];
 
 // ---------- styles ----------
 const inputBase = {
@@ -494,6 +494,148 @@ function QuoteForm({ isAdmin, roster, onLogged }) {
 }
 
 // =====================================================================
+// Saves still waiting to clear — read-only list on the cancellation tab
+// =====================================================================
+function PendingSaves({ refreshKey }) {
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase
+        .from("rp_saves_clearing_soon")
+        .select("id, team_member_id, first_name, customer_label, save_line, occurred_on, credit_available_on, days_until_clear, points")
+        .eq("agency_id", AGENCY_ID)
+        .order("credit_available_on");
+      if (alive) setRows(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [refreshKey]);
+
+  if (!(rows || []).length) return null;
+
+  return (
+    <div style={{ ...cardStyle, marginTop: 16 }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Saves still waiting to clear</div>
+      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 14 }}>
+        A save pays once the policy has stayed active 30 days. If one of these cancelled anyway, log it above and the credit comes off before it is ever paid.
+      </div>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={tableTh}>Who</th>
+              <th style={tableTh}>Customer</th>
+              <th style={tableTh}>Line</th>
+              <th style={tableTh}>Saved</th>
+              <th style={tableTh}>Clears</th>
+              <th style={tableTh}>Days left</th>
+              <th style={tableTh}>Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rows || []).map(r => (
+              <tr key={r.id}>
+                <td style={tableTd}>{r.first_name || "\u2014"}</td>
+                <td style={tableTd}>{r.customer_label}</td>
+                <td style={tableTd}>{PRODUCT_LABEL[r.save_line] || r.save_line}</td>
+                <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
+                <td style={tableTd}>{fmtDate(r.credit_available_on)}</td>
+                <td style={tableTd}>{r.days_until_clear}</td>
+                <td style={tableTd}>{fmtPts(r.points)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// Cancellation entry — a policy that cancelled anyway. Takes back a save
+// on the same customer and line if that credit has not been paid yet.
+// =====================================================================
+function CancellationForm({ isAdmin, roster, onLogged, refreshKey }) {
+  const [first, setFirst] = useState("");
+  const [initial, setInitial] = useState("");
+  const [date, setDate] = useState(todayCentral());
+  const [line, setLine] = useState("");
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+  const [logFor, setLogFor] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+
+  const canSubmit = !busy && first.trim() && /^[A-Za-z]$/.test(initial.trim()) && !!line;
+
+  const submit = async () => {
+    setErr(""); setOk(""); setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("rp_log_cancellation", { p_payload: {
+        cancelled_on: date, customer_first: first.trim(), customer_last_initial: initial.trim(),
+        policy_line: line, reason: reason.trim() || null, note: note.trim() || null, team_member_id: logFor,
+      }});
+      if (error) { setErr(errText(error)); return; }
+      if (!data?.ok) { setErr(errText(data)); return; }
+      const voided = Number(data.saves_voided || 0);
+      setOk(
+        `Cancellation logged for ${data.customer} (${PRODUCT_LABEL[data.policy_line] || data.policy_line}).` +
+        (voided > 0
+          ? ` ${voided} unpaid save on that policy was taken back.`
+          : " No unpaid save on that policy, so nothing was taken back.")
+      );
+      setFirst(""); setInitial(""); setLine(""); setReason(""); setNote("");
+      onLogged?.();
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log a cancellation</div>
+        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>
+          A policy that cancelled. If someone logged a save on the same customer and line and that credit has not been paid yet, this takes it back.
+        </div>
+        <div style={gridForm}>
+          <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
+          <div>
+            <label style={labelStyle}>Date it cancelled</label>
+            <input type="date" style={inputBase} value={date} max={todayCentral()} min={addDays(todayCentral(), -90)} onChange={e => setDate(e.target.value)} />
+          </div>
+          <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <label style={labelStyle}>Which policy cancelled</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {PRODUCTS.map(p => (
+              <span key={p.key} style={chip(line === p.key)} onClick={() => setLine(line === p.key ? "" : p.key)}>{p.label}</span>
+            ))}
+          </div>
+        </div>
+        <div style={{ ...gridForm, marginTop: 14 }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyle}>Reason <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
+            <input style={inputBase} value={reason} onChange={e => setReason(e.target.value)} placeholder="what they told us" />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyle}>Note <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
+            <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} />
+          </div>
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving\u2026" : "Log cancellation"}</button>
+        </div>
+        <Notice kind="error">{err}</Notice>
+        <Notice kind="ok">{ok}</Notice>
+      </div>
+      <PendingSaves refreshKey={refreshKey} />
+    </div>
+  );
+}
+
+// =====================================================================
 // Week view — points table + this week's entries
 // =====================================================================
 function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
@@ -710,6 +852,7 @@ export default function ActivityLog({ userRole }) {
     { id: "log", label: "Log activity" },
     { id: "sale", label: "Log a sale" },
     { id: "quote", label: "Log a quote" },
+    { id: "cancel", label: "Log a cancellation" },
     { id: "week", label: "My week" },
   ];
 
@@ -733,6 +876,7 @@ export default function ActivityLog({ userRole }) {
       {tab === "log"   && <ActivityForm values={values} isAdmin={isAdmin} roster={roster} onLogged={bump} />}
       {tab === "sale"  && <SaleForm sources={sources} isAdmin={isAdmin} roster={roster} myTeamId={myTeamId} onLogged={bump} />}
       {tab === "quote" && <QuoteForm isAdmin={isAdmin} roster={roster} onLogged={bump} />}
+      {tab === "cancel" && <CancellationForm isAdmin={isAdmin} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week"  && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
     </div>
   );
