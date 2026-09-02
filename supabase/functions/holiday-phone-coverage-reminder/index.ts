@@ -3,9 +3,10 @@
 // =========================================================================
 // Weekly job (Monday mornings): looks at company_holidays for any
 // observance='closed' holiday landing on a weekday in the next 7 days.
-// If found, emails the active team the "Office Hours" section of the
-// Hours & Time Off handbook page (pulled live from public.manuals, not
-// hardcoded, so it stays in sync if the handbook changes).
+// If found, emails the active team the WHOLE "Office Hours" section of the
+// Hours & Time Off handbook page verbatim (pulled live from public.manuals,
+// not hardcoded, so it stays in sync if the handbook changes), under an
+// "Office closed — <date> is <holiday>" opener. Plain text, not HTML.
 //
 // Guards against double-send with company_holidays.phone_coverage_reminder_sent_at
 // (set after a successful pass over that holiday).
@@ -42,7 +43,7 @@ function addDaysISO(iso: string, days: number): string {
 
 function isWeekday(iso: string): boolean {
   const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
-  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun..6=Sat
   return dow >= 1 && dow <= 5;
 }
 
@@ -53,35 +54,20 @@ function humanDate(iso: string): string {
   });
 }
 
+// Pull the "## Office Hours" section out of the Hours & Time Off manuals
+// row, rather than hardcoding it, so this stays correct if the handbook
+// text changes.
+// Grabs the WHOLE "## Office Hours" section verbatim, header included, exactly
+// as it reads in the handbook (markdown left as literal text, not rendered —
+// matches the 2026-09-02 manual send Peter approved).
 function extractOfficeHoursSection(fullContent: string): string {
   const startMarker = "## Office Hours";
   const start = fullContent.indexOf(startMarker);
-  if (start === -1) return fullContent.slice(0, 1200);
-  const rest = fullContent.slice(start + startMarker.length);
-  const nextHeaderIdx = rest.indexOf("\n## ");
+  if (start === -1) return fullContent.slice(0, 1200); // fallback, shouldn't happen
+  const rest = fullContent.slice(start);
+  const nextHeaderIdx = rest.indexOf("\n## ", startMarker.length);
   const section = nextHeaderIdx === -1 ? rest : rest.slice(0, nextHeaderIdx);
   return section.trim();
-}
-
-function mdToHtmlLite(md: string): string {
-  const escaped = md
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const withBold = escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  const lines = withBold.split("\n");
-  let html = "";
-  let inList = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("- ")) {
-      if (!inList) { html += "<ul>"; inList = true; }
-      html += `<li>${trimmed.slice(2)}</li>`;
-    } else {
-      if (inList) { html += "</ul>"; inList = false; }
-      if (trimmed.length > 0) html += `<p>${trimmed}</p>`;
-    }
-  }
-  if (inList) html += "</ul>";
-  return html;
 }
 
 Deno.serve(async (req: Request) => {
@@ -150,7 +136,6 @@ Deno.serve(async (req: Request) => {
     });
   }
   const officeHoursSection = extractOfficeHoursSection((manualRow as any).content as string);
-  const officeHoursHtml = mdToHtmlLite(officeHoursSection);
 
   const { data: team, error: teamErr } = await sb
     .from("team")
@@ -173,17 +158,13 @@ Deno.serve(async (req: Request) => {
 
   for (const h of upcoming) {
     const dateStr = humanDate((h as any).holiday_date);
-    const subject = `Reminder: Office Closed ${humanDate((h as any).holiday_date)} (${(h as any).holiday_name})`;
-    const html = `<html><body>
-<p>Quick reminder — <strong>${dateStr}</strong> is ${(h as any).holiday_name}. Per the handbook:</p>
-${officeHoursHtml}
-<p>— Newtworks</p>
-</body></html>`;
+    const subject = `Office Closed ${dateStr} (${(h as any).holiday_name})`;
+    const text = `Office closed — ${dateStr} is ${(h as any).holiday_name}.\n\n${officeHoursSection}\n\n— Newtworks`;
 
     let holidaySent = 0;
     let holidayFailed = 0;
     for (const r of recipients) {
-      const sendResult = await sendGmail({ creds: gmailCreds, to: r.email, subject, html });
+      const sendResult = await sendGmail({ creds: gmailCreds, to: r.email, subject, text });
       if (sendResult.ok) { results.emails_sent++; holidaySent++; }
       else {
         results.emails_failed++; holidayFailed++;
