@@ -875,6 +875,11 @@ Output PLAIN TEXT LINES ONLY. No JSON, no prose, no markdown, no code fences.
 Emit exactly these line types, pipe-delimited, in this order:
 
 PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
+  The period is REQUIRED and is printed differently by each issuer: "Opening/Closing
+  Date 07/23/26 - 08/22/26" (Chase), "Jul 29, 2026 - Aug 28, 2026" next to the card
+  name (Capital One), a "Statement Period" line (US Bank). A two-digit year is 20xx.
+  Chase CC 26-08 died three times on a missing PERIOD line while the dates sat in
+  plain sight — if you can see any pair of dates bounding the statement, emit them.
 LAST4|<last 4 digits of the account, or NULL>
 OPEN|<opening/beginning/previous balance as a number, or NULL>
 CLOSE|<closing/ending/new balance as a number, or NULL>
