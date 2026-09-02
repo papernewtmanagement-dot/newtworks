@@ -882,6 +882,11 @@ PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
   plain sight — if you can see any pair of dates bounding the statement, emit them.
 LAST4|<last 4 digits of the account, or NULL>
 OPEN|<opening/beginning/previous balance as a number, or NULL>
+  REQUIRED whenever the statement prints it, and it almost always does. Chase and
+  Capital One label it "Previous Balance", US Bank "Beginning Balance on <date>".
+  Chase CC 26-08 was held out of the books with opening=null while "Previous
+  Balance $5,058.72" sat in its own Account Summary block. Emit NULL only when the
+  figure is genuinely not printed anywhere on the statement.
 CLOSE|<closing/ending/new balance as a number, or NULL>
 SUMCHARGES|<Account Summary "New Charges" + "Fees" + "Interest Charged", or NULL>
 SUMCREDITS|<Account Summary "Payments/Credits" total as a POSITIVE number, or NULL>
