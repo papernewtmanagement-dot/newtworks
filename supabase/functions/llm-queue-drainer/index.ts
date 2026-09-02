@@ -96,6 +96,16 @@ function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number
 const STATEMENT_BOILERPLATE_SPANS: { start: RegExp; end: RegExp }[] = [
   { start: /Late Payment Warning:/i, end: /Account Summary/i },
   { start: /Change of Address, phone number, email/i, end: /Payments and Credits Summary/i },
+  // Capital One: the reverse-side legal block (interest explanation, billing
+  // rights, dispute process) runs ~8,900 chars between these two markers on the
+  // Quicksilver statement and carries no transaction detail. Capital One Personal
+  // 26-08 sent 15,850 chars, of which 8,929 were this block; the model returned an
+  // EMPTY answer three times before it was trimmed to 6,922 and parsed.
+  { start: /How can I Avoid Paying Interest Charges/i, end: /Payments, Credits and Adjustments/i },
+  // Chase: same shape, ~7,100 chars of payment/interest legalese sitting between
+  // the remittance stub and the transaction table. Chase CC 26-08 sent 12,404
+  // chars and failed three times with a missing statement period; trimmed to 5,316.
+  { start: /You can pay down balances faster/i, end: /ACCOUNT ACTIVITY/i },
 ];
 
 function trimStatementBoilerplate(text: string): { text: string; removed: number } {
