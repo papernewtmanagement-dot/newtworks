@@ -975,6 +975,23 @@ Deno.serve(async (req) => {
               .maybeSingle();
             if (deadDoc?.file_name) label = deadDoc.file_name;
           }
+          // The QUEUE item is dead, but until 2026-09-02 the DOCUMENT row went on
+          // saying "queued_for_llm" forever, so the Documents view showed a statement
+          // as still in progress days after nothing was ever going to touch it again.
+          // Capital One 26-08 and Chase CC 26-08 both sat that way for two days. The
+          // alert above fires either way; this is about the record Peter actually reads.
+          if (item.document_id) {
+            await sb.from("documents").update({
+              processing_status: "error",
+              notes: JSON.stringify({
+                failed: "llm_parse",
+                queue_item: item.id,
+                purpose: item.purpose,
+                error: r.error ?? "unknown",
+                failed_at: new Date().toISOString(),
+              }),
+            }).eq("id", item.document_id);
+          }
           await insertAlert({
             agencyId: item.agency_id,
             alertType: "llm_parse_item_dead",
