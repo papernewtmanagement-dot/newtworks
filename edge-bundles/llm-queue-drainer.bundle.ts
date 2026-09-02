@@ -1291,6 +1291,11 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
       const before = sumOf(json.transactions);
       const offBefore = measure(json.transactions);
 
+      console.log(`[drainer] control inputs: declared_charges=${json.declared_charges ?? "n/a"} `
+        + `declared_credits=${json.declared_credits ?? "n/a"} parsed_charges=${before.charges.toFixed(2)} `
+        + `parsed_credits=${before.credits.toFixed(2)} open=${open ?? "n/a"} close=${close ?? "n/a"} `
+        + `control=${control} gap=${offBefore.toFixed(2)}`);
+
       if (offBefore > 0.01) {
         const rc = reclassifyCreditsFromText(statementText, json.transactions);
         const offAfter = measure(rc.txns);
@@ -1309,6 +1314,9 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
             + `Text repair flipped ${rc.flipped} line(s), still off by $${offAfter.toFixed(2)} — not applied.`;
           console.warn(`[drainer] ${controlNote}`);
         }
+      } else {
+        controlNote = `control check (${control}) ties: charges ${before.charges.toFixed(2)}, `
+          + `credits ${before.credits.toFixed(2)}`;
       }
     }
   }
@@ -1359,6 +1367,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
       statementBalance: { period, openingBalance, closingBalance, accountLast4 },
       transactionsInserted: rawTxns.length,
       docId: doc.id,
+      note: controlNote || "control check: nothing to report",
     };
   }
 
@@ -1436,6 +1445,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     statementBalance: { period, openingBalance, closingBalance, accountLast4 },
     transactionsInserted: w.inserted,
     docId: doc.id,
+    note: controlNote || undefined,
   };
 }
 
