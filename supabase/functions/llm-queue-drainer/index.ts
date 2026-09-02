@@ -153,8 +153,8 @@ OPEN|<opening/beginning/previous balance as a number, or NULL>
   Balance $5,058.72" sat in its own Account Summary block. Emit NULL only when the
   figure is genuinely not printed anywhere on the statement.
 CLOSE|<closing/ending/new balance as a number, or NULL>
-SUMCHARGES|<Account Summary "New Charges" + "Fees" + "Interest Charged", or NULL>
-SUMCREDITS|<Account Summary "Payments/Credits" total as a POSITIVE number, or NULL>
+SUMCHARGES|<Account Summary total of new charges + fees + interest, or NULL>
+SUMCREDITS|<Account Summary total of payments + credits, POSITIVE, or NULL>
 TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
 TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
 ...one TXN line per transaction...
@@ -176,9 +176,22 @@ Rules:
 - Emit PERIOD, LAST4, OPEN, CLOSE, SUMCHARGES and SUMCREDITS exactly once each,
   before any TXN line.
 - SUMCHARGES and SUMCREDITS come from the "Account Summary" block, which prints
-  authoritative totals (Previous Balance, Payments/Credits, New Charges, Fees,
-  Interest Charged). Copy those figures as printed — do not add them up yourself
-  from the transaction lines. They are used to check your work.
+  authoritative totals. Copy those figures as printed — never add them up from
+  the transaction lines, because a total derived from those lines cannot check
+  those lines.
+- ISSUERS LABEL THE SUMMARY LINES DIFFERENTLY AND OFTEN SPLIT ONE SIDE ACROSS
+  SEVERAL LINES. Add every summary line that belongs on the same side:
+    SUMCHARGES = "New Charges" + "Fees" + "Interest Charged" (AMEX, Chase), or
+      "Transactions" + "Cash Advances" + "Fees Charged" + "Interest Charged"
+      (Capital One).
+    SUMCREDITS = "Payments/Credits" (AMEX, Chase), or
+      "Payments" + "Other Credits" (Capital One).
+  Report both as POSITIVE numbers. A leading minus on a summary credit line is
+  a display convention, not a sign. Emit NULL only when the statement prints no
+  Account Summary at all. Capital One 26-08 sat out of the books for two days
+  because this instruction named a single "Payments/Credits" figure, Capital One
+  prints two separate lines, and NULL came back — which quietly switched off the
+  one check that would have caught the misread refund described below.
 - Emit one TXN line for EVERY transaction line printed on the statement. Do not
   summarise, sample, or stop early. Completeness matters more than anything else
   here: a dropped line breaks the books.
@@ -322,33 +335,53 @@ function parseCompactStatement(raw: string): {
 // Self-validating: the caller only keeps the result if it makes the statement's
 // own Account Summary totals tie. If it does not, the flips are discarded and
 // the statement is held, so a bad guess can never reach the books.
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 function reclassifyCreditsFromText(
   statementText: string,
   txns: { date: string; payee: string; memo: string; amount: number }[],
 ): { flipped: number; txns: typeof txns } {
-  // The detail credits block starts at a "Credits" heading and ends at the next
-  // section heading. Both spellings appear across AMEX layouts.
-  const startRe = /Credits\s+Amount|^\s*Credits\s*$/im;
-  const startM = startRe.exec(statementText);
-  if (!startM) return { flipped: 0, txns };
-  const from = startM.index + startM[0].length;
+  // EVERY credits block, not just the first, and under every heading an issuer
+  // uses for one. Capital One writes "Payments, Credits and Adjustments" and
+  // repeats it ONCE PER CARDMEMBER. On 26-08 the primary card's two credits sat
+  // under the first heading and a single $8.99 HEB refund sat alone under the
+  // second; the old single-block scan started at a /Credits\s+Amount/ pattern
+  // that Capital One never prints, so it found nothing at all and the refund
+  // stayed signed as a charge. A flipped sign throws the reconciliation by
+  // double the line, which is where that statement's $17.98 came from.
+  const headingRe =
+    /Payments,\s*Credits\s*and\s*Adjustments|Payments\s+and\s+Other\s+Credits|Credits\s+Amount|^[ \t]*Credits[ \t]*$/gim;
+  const endRe =
+    /Transactions\b|New Charges|Total New Charges|Fees\s+Amount|Fees Charged|Interest Charged|Cash Advances|Purchases\s+Amount/i;
 
-  const endRe = /New Charges|Total New Charges|Fees\s+Amount|Interest Charged/i;
-  const endM = endRe.exec(statementText.slice(from));
-  const span = endM
-    ? statementText.slice(from, from + endM.index)
-    : statementText.slice(from, from + 4000);
+  const spans: string[] = [];
+  for (const m of statementText.matchAll(headingRe)) {
+    const from = (m.index ?? 0) + m[0].length;
+    const rest = statementText.slice(from, from + 4000);
+    const e = endRe.exec(rest);
+    spans.push(e ? rest.slice(0, e.index) : rest);
+  }
+  if (spans.length === 0) return { flipped: 0, txns };
+  // Joined on newlines so the proximity match below cannot run out of the tail
+  // of one block and into the head of the next.
+  const span = spans.join("\n");
 
   let flipped = 0;
   const out = txns.map((t) => {
     if (t.amount >= 0) return t;              // already a credit or payment
-    const mag = Math.abs(t.amount).toFixed(2);
-    // Match the amount as printed, with or without a thousands separator, and
-    // require the line's own date nearby so an identical amount elsewhere in
-    // the block cannot claim it.
-    const amtPat = mag.replace(".", "\\.");
-    const dayPat = t.date.slice(8, 10) + "\\/";
-    const near = new RegExp(`${dayPat}[^|\\n]{0,120}?\\$?${amtPat}`);
+    // Match the amount as printed, with or without a thousands separator. The
+    // old pattern claimed to do this and did not: it compared "1896.74" against
+    // a statement printing "1,896.74", so no payment line could ever match.
+    const [whole, cents] = Math.abs(t.amount).toFixed(2).split(".");
+    const amtPat = `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",?")}\\.${cents}`;
+    // Require the line's own date nearby so an identical amount elsewhere in
+    // the block cannot claim it. Two printed shapes: AMEX and Chase use
+    // "08/14", Capital One uses "Jul 31". The old slash-only day pattern could
+    // not match a Capital One line under any circumstances.
+    const day = String(Number(t.date.slice(8, 10)));
+    const mon = MONTH_ABBR[Number(t.date.slice(5, 7)) - 1];
+    const dayPat = `(?:\\b0?${day}\\/|${mon}\\s+0?${day}\\b)`;
+    const near = new RegExp(`${dayPat}[^|\\n]{0,140}?\\$?${amtPat}`);
     if (near.test(span)) {
       flipped += 1;
       return { ...t, amount: Math.abs(t.amount) };
@@ -483,8 +516,17 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // totals then tie exactly. Anything less and the parse is left as-is for the
   // reconciliation guard to hold, because a partial guess on money is worse
   // than a clean stop.
+  //
+  // TWO controls, not one. The Account Summary totals are the better check and
+  // are used whenever the parse produced them. When it did not — an issuer whose
+  // summary this parser cannot read — the opening and closing balances are the
+  // fallback, because a statement that balances end to end cannot contain a
+  // flipped sign. Before 2026-09-02 there was only the first control, so a
+  // statement with no readable summary got NO check at all and simply went to
+  // the reconciliation guard to be held: silent, and indistinguishable from a
+  // parse that had nothing wrong with it.
   let controlNote = "";
-  if (json.declared_charges !== null || json.declared_credits !== null) {
+  {
     const sumOf = (ts: typeof json.transactions) => ({
       charges: ts.filter((t) => t.amount < 0).reduce((a, t) => a + Math.abs(t.amount), 0),
       credits: ts.filter((t) => t.amount > 0).reduce((a, t) => a + t.amount, 0),
@@ -493,25 +535,45 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
       Math.abs(s.charges - (json.declared_charges ?? s.charges))
       + Math.abs(s.credits - (json.declared_credits ?? s.credits));
 
-    const before = sumOf(json.transactions);
-    const offBefore = Math.round(off(before) * 100) / 100;
+    const haveDeclared = json.declared_charges !== null || json.declared_credits !== null;
+    const open = json.opening_balance;
+    const close = json.closing_balance;
+    const haveBalances = typeof open === "number" && typeof close === "number";
 
-    if (offBefore > 0.01) {
-      const rc = reclassifyCreditsFromText(statementText, json.transactions);
-      const after = sumOf(rc.txns);
-      const offAfter = Math.round(off(after) * 100) / 100;
-      if (rc.flipped > 0 && offAfter <= 0.01) {
-        json.transactions = rc.txns;
-        controlNote = `control totals: repaired ${rc.flipped} line(s) misread as charges, `
-          + `using the statement's own credits block; charges ${after.charges.toFixed(2)} and `
-          + `credits ${after.credits.toFixed(2)} now match the Account Summary exactly`;
-        console.log(`[drainer] ${controlNote}`);
-      } else {
-        controlNote = `control totals DISAGREE by $${offBefore.toFixed(2)}: parsed charges `
-          + `${before.charges.toFixed(2)} vs declared ${json.declared_charges ?? "n/a"}, parsed credits `
-          + `${before.credits.toFixed(2)} vs declared ${json.declared_credits ?? "n/a"}. `
-          + `Text repair flipped ${rc.flipped} line(s), still off by $${offAfter.toFixed(2)} — not applied.`;
-        console.warn(`[drainer] ${controlNote}`);
+    // Card balances fall as credits land and deposit balances rise, and the
+    // account kind is not looked up until further down, so accept whichever
+    // direction closes. The repair is only ever kept when the gap goes to zero,
+    // so the looser test cannot let a wrong answer through.
+    const measure = (ts: typeof json.transactions): number => {
+      if (haveDeclared) return Math.round(off(sumOf(ts)) * 100) / 100;
+      const net = ts.reduce((a, t) => a + t.amount, 0);
+      const gap = Math.min(Math.abs(open! - net - close!), Math.abs(open! + net - close!));
+      return Math.round(gap * 100) / 100;
+    };
+
+    if (haveDeclared || haveBalances) {
+      const control = haveDeclared ? "Account Summary totals" : "opening/closing balance";
+      const before = sumOf(json.transactions);
+      const offBefore = measure(json.transactions);
+
+      if (offBefore > 0.01) {
+        const rc = reclassifyCreditsFromText(statementText, json.transactions);
+        const offAfter = measure(rc.txns);
+        if (rc.flipped > 0 && offAfter <= 0.01) {
+          const after = sumOf(rc.txns);
+          json.transactions = rc.txns;
+          controlNote = `control check (${control}) was off by $${offBefore.toFixed(2)}; repaired `
+            + `${rc.flipped} line(s) misread as charges using the statement's own credits `
+            + `block(s); charges ${after.charges.toFixed(2)} and credits ${after.credits.toFixed(2)} `
+            + `now tie exactly`;
+          console.log(`[drainer] ${controlNote}`);
+        } else {
+          controlNote = `control check (${control}) DISAGREES by $${offBefore.toFixed(2)}: parsed charges `
+            + `${before.charges.toFixed(2)} vs declared ${json.declared_charges ?? "n/a"}, parsed credits `
+            + `${before.credits.toFixed(2)} vs declared ${json.declared_credits ?? "n/a"}. `
+            + `Text repair flipped ${rc.flipped} line(s), still off by $${offAfter.toFixed(2)} — not applied.`;
+          console.warn(`[drainer] ${controlNote}`);
+        }
       }
     }
   }
@@ -608,7 +670,15 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
 
   if (!w.ok) {
     if (w.held === "reconciliation_mismatch") {
-      return { ok: true, note: `held_reconciliation_mismatch: ${w.reason}`, transactionsInserted: 0, docId: doc.id };
+      // Without this the control-note only ever reached the console, so two
+      // separate runs on Capital One 26-08 left no record of whether the
+      // Account Summary check had even been able to run.
+      return {
+        ok: true,
+        note: `held_reconciliation_mismatch: ${w.reason}${controlNote ? ` | ${controlNote}` : ""}`,
+        transactionsInserted: 0,
+        docId: doc.id,
+      };
     }
     if (w.held === "duplicate_ingest") {
       return { ok: true, note: `duplicate_ingest: ${w.reason}`, transactionsInserted: 0, docId: doc.id };
