@@ -130,8 +130,8 @@ function CustomerFields({ first, setFirst, initial, setInitial }) {
   );
 }
 
-function LogForPicker({ isAdmin, roster, value, onChange }) {
-  if (!isAdmin) return null;
+function LogForPicker({ canLogForOthers, roster, value, onChange }) {
+  if (!canLogForOthers) return null;
   return (
     <div>
       <label style={labelStyle}>Log for</label>
@@ -217,7 +217,7 @@ function summarizeEntry(data) {
 // Activity, Quote, Sale, Cancellation as expanding sections; one Log
 // button; one RPC (rp_log_entry) that saves all of it or none of it.
 // =====================================================================
-function EntryPage({ values, sources, isAdmin, roster, onLogged, refreshKey }) {
+function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
   const today = todayCentral();
   // customer block (shared by every section)
   const [first, setFirst] = useState("");
@@ -370,7 +370,7 @@ function EntryPage({ values, sources, isAdmin, roster, onLogged, refreshKey }) {
             <label style={labelStyle}>Date</label>
             <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
           </div>
-          <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
+          <LogForPicker canLogForOthers={isOwner} roster={roster} value={logFor} onChange={setLogFor} />
         </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
@@ -806,6 +806,10 @@ export default function ActivityLog({ userRole }) {
   const [myTeamId, setMyTeamId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const isAdmin = ["owner", "manager"].includes(userRole);
+  // Logging on someone else's behalf is the owner's alone. The server enforces
+  // it too (rp_resolve_actor), so hiding the picker is not the only thing
+  // stopping it. isAdmin still governs seeing the whole team's week.
+  const isOwner = userRole === "owner";
 
   useEffect(() => {
     let alive = true;
@@ -848,7 +852,7 @@ export default function ActivityLog({ userRole }) {
         ))}
       </div>
 
-      {tab === "log"  && <EntryPage values={values} sources={sources} isAdmin={isAdmin} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "log"  && <EntryPage values={values} sources={sources} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
     </div>
   );
