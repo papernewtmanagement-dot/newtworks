@@ -183,6 +183,18 @@ Rules:
 - A per-cardmember credit subtotal in a summary block is a SUMMARY figure, not a
   transaction. Never emit one as a TXN line.
 - amount: NEGATIVE for money out, POSITIVE for money in, per KIND above.
+- DEPOSIT ACCOUNTS (checking, savings, money market) are not credit cards. A line
+  reading "Interest Paid" on one of these is the bank paying interest INTO the
+  account: KIND C, amount POSITIVE. It is NOT "interest charged". US Bank prints
+  money OUT with a TRAILING minus ("$ 50.00-") and money IN with no sign at all,
+  so the printed minus is the authority, never the wording. Tithe Tax 26-08 and
+  Kids Profit Disc 26-08 were both held out of the books because one "Interest
+  Paid" line was signed negative, and a flipped sign throws the reconciliation by
+  DOUBLE the amount, which is why the gap never matches any line on the page.
+- A minus sign printed INSIDE a payments or credits section does not make the line
+  a charge. Capital One prints refunds under "Payments, Credits and Adjustments"
+  as "- $8.99": that is KIND C, amount POSITIVE. The section heading wins over the
+  sign every time.
 - date MUST be the TRANSACTION date — the date the purchase or payment actually
   occurred. If a line prints both a transaction date and a separate posting
   date, use the transaction date, never the posting date.
