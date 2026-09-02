@@ -5,32 +5,41 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { T } from "../lib/theme.js";
 
 // ============================================================
-// ActivityLog — team capture for Retention Points, sales, quotes
+// ActivityLog — team capture for Retention Points, sales, quotes,
+// and cancellations.
 //
-// Three entry forms + a week view. Every write goes through a
-// SECURITY DEFINER RPC (rp_log_activity / rp_log_sale / rp_log_quote)
-// that resolves the signed-in team member server-side; admins may
-// log on someone's behalf via the "Log for" picker.
+// ONE entry page. A customer block on top, four expanding sections
+// (Activity, Quote, Sale, Cancellation), one Log button. The button
+// calls rp_log_entry, a SECURITY DEFINER RPC that writes every section
+// in one transaction (it wraps rp_log_activity / rp_log_quote /
+// rp_log_sale / rp_log_cancellation). Any failure rolls the whole entry
+// back, so nothing is ever half-saved. The signed-in team member is
+// resolved server-side; admins may log on someone's behalf via the
+// "Log for" picker.
 //
-// Sale entry derives Multiline Sold + Referral Sold credits itself —
-// nobody logs those by hand. Points are read from
-// retention_point_values so a value change never touches this file.
-// Week view calls compute_weekly_retention_points (the same number
-// the pay function will consume).
+// Service tasks are counters: three tasks for one customer go in as
+// three rows, each its own checkable, voidable credit. The sale section
+// derives Multiline Sold + Referral Sold credits itself; nobody logs
+// those by hand. Points are read from retention_point_values so a value
+// change never touches this file. Week view calls
+// compute_weekly_retention_points (the same number the pay function
+// will consume).
 // ============================================================
 
 const PRODUCTS = [
-  { key: "auto",     label: "Auto" },
-  { key: "fire",     label: "Fire (home / renters)" },
-  { key: "business", label: "Business" },
-  { key: "life",     label: "Life" },
-  { key: "health",   label: "Health" },
-  { key: "ips",      label: "Investment (IPS)" },
-  { key: "bank",     label: "Bank" },
+  { key: "auto",     label: "Auto",                short: "Auto" },
+  { key: "fire",     label: "Fire (home / renters)", short: "Fire" },
+  { key: "business", label: "Business",            short: "Business" },
+  { key: "life",     label: "Life",                short: "Life" },
+  { key: "health",   label: "Health",              short: "Health" },
+  { key: "ips",      label: "Investment (IPS)",    short: "IPS" },
+  { key: "bank",     label: "Bank",                short: "Bank" },
 ];
 const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
+const PRODUCT_SHORT = Object.fromEntries(PRODUCTS.map(p => [p.key, p.short]));
 const SERVICE_KEYS = ["service_task", "service_task_company", "service_task_coi"];
-const TABS = ["log", "sale", "quote", "cancel", "week"];
+const TABS = ["log", "week"];
+const MAX_COUNT = 50; // rp_log_entry refuses more than this of one item in a single entry
 
 // ---------- styles ----------
 const inputBase = {
@@ -58,6 +67,20 @@ const chip = (on) => ({
   border: `1px solid ${on ? T.blue : T.slate300}`, background: on ? T.blueLt : T.white, color: on ? T.blue : T.slate700,
 });
 const gridForm = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 };
+const sectionWrap = (open) => ({
+  border: `1px solid ${open ? T.blue : T.slate200}`, borderRadius: 10,
+  background: open ? T.white : T.slate50, overflow: "hidden", boxSizing: "border-box",
+});
+const sectionHead = {
+  display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10,
+  width: "100%", padding: "12px 14px", background: "transparent", border: "none", cursor: "pointer",
+  textAlign: "left", fontFamily: "inherit", color: T.slate900, boxSizing: "border-box",
+};
+const counterBtn = (disabled) => ({
+  width: 34, height: 34, borderRadius: 8, border: `1px solid ${T.slate300}`, padding: 0, lineHeight: 1,
+  background: disabled ? T.slate100 : T.white, color: disabled ? T.slate400 : T.slate800,
+  fontSize: 18, fontWeight: 700, cursor: disabled ? "default" : "pointer", boxSizing: "border-box",
+});
 
 // ---------- helpers ----------
 function todayCentral() {
@@ -84,6 +107,10 @@ function fmtPts(n) {
 }
 function errText(e) {
   return e?.message || e?.error || (typeof e === "string" ? e : "Something went wrong.");
+}
+function tierName(label) {
+  // "Service Task — Standard" -> "Standard"
+  return String(label || "").replace(/^service task\s*[—–-]\s*/i, "");
 }
 
 // ---------- shared field blocks ----------
@@ -123,378 +150,412 @@ function Notice({ kind, children }) {
   return <div style={{ padding: "10px 12px", borderRadius: 8, background: bg, color: fg, fontSize: 13, fontWeight: 600, marginTop: 12 }}>{children}</div>;
 }
 
-// =====================================================================
-// Activity form — one customer contact, several credits
-// =====================================================================
-function ActivityForm({ values, isAdmin, roster, onLogged }) {
-  const [first, setFirst] = useState("");
-  const [initial, setInitial] = useState("");
-  const [date, setDate] = useState(todayCentral());
-  const [ecrm, setEcrm] = useState("");
-  const [note, setNote] = useState("");
-  const [checked, setChecked] = useState({});   // activity_key -> true
-  const [serviceTier, setServiceTier] = useState("");
-  const [saveLine, setSaveLine] = useState("");
-  const [saveReason, setSaveReason] = useState("");
-  const [logFor, setLogFor] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  const loggable = (values || []).filter(v => v.category === "logged" && !SERVICE_KEYS.includes(v.activity_key));
-  const serviceTiers = (values || []).filter(v => SERVICE_KEYS.includes(v.activity_key));
-  const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
-
-  const items = [];
-  if (serviceTier) items.push({ activity_key: serviceTier });
-  for (const k of Object.keys(checked)) {
-    if (!checked[k]) continue;
-    if (k === "cancellation_saved") items.push({ activity_key: k, save_line: saveLine, save_reason: saveReason });
-    else items.push({ activity_key: k });
-  }
-  const total = items.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
-  const canSubmit = !busy && items.length > 0 && first.trim() && /^[A-Za-z]$/.test(initial.trim());
-
-  const reset = () => { setChecked({}); setServiceTier(""); setSaveLine(""); setSaveReason(""); setNote(""); setEcrm(""); setFirst(""); setInitial(""); };
-
-  const submit = async () => {
-    setErr(""); setOk("");
-    if (checked.cancellation_saved && (!saveLine || !saveReason.trim())) { setErr("A save needs the policy line and the reason the customer gave."); return; }
-    if (checked.policy_review && !note.trim()) { setErr("A policy review needs a note on what you covered."); return; }
-    setBusy(true);
-    try {
-      const { data, error } = await supabase.rpc("rp_log_activity", {
-        p_items: items, p_customer_first: first.trim(), p_customer_last_initial: initial.trim(),
-        p_occurred_on: date, p_ecrm_url: ecrm.trim() || null, p_note: note.trim() || null, p_team_member_id: logFor,
-      });
-      if (error) { setErr(errText(error)); return; }
-      if (!data?.ok) { setErr(errText(data)); return; }
-      const pend = (data.items || []).filter(i => i.credit_available_on);
-      setOk(`Logged ${data.items?.length || 0} item${data.items?.length === 1 ? "" : "s"} for ${data.customer} — $${fmtPts(data.points_total)}` +
-            (pend.length ? ` (save clears ${fmtDate(pend[0].credit_available_on)})` : ""));
-      reset();
-      onLogged?.();
-    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
-  };
-
+// A counter: minus, number, plus. Used for service tasks, which are counted
+// per type. Zero means "none of these".
+function Counter({ value, onChange }) {
+  const v = Number(value) || 0;
   return (
-    <div style={cardStyle}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log what you did</div>
-      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>One customer contact can earn several at once. Check everything that applies.</div>
-
-      <div style={gridForm}>
-        <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
-        <div>
-          <label style={labelStyle}>Date</label>
-          <input type="date" style={inputBase} value={date} max={todayCentral()} min={addDays(todayCentral(), -7)} onChange={e => setDate(e.target.value)} />
-        </div>
-        <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
-      </div>
-
-      <div style={{ marginTop: 18 }}>
-        <label style={labelStyle}>Service task <span style={{ color: T.slate400, fontWeight: 400 }}>(pick the one that fits)</span></label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {serviceTiers.map(v => (
-            <span key={v.activity_key} style={chip(serviceTier === v.activity_key)} onClick={() => setServiceTier(serviceTier === v.activity_key ? "" : v.activity_key)}>
-              {v.label.replace("Service task — ", "")} · ${fmtPts(v.points)}
-            </span>
-          ))}
-        </div>
-        <div style={{ fontSize: 12, color: T.slate500, marginTop: 8, lineHeight: 1.45 }}>
-          {serviceTier
-            ? (byKey[serviceTier]?.description || "")
-            : "A service task is a change you made and finished on the customer's policy, account, or billing. Answering a question or taking a message is the call point, not a task."}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 14 }}>
-        <label style={labelStyle}>Also</label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {loggable.map(v => (
-            <span key={v.activity_key} style={chip(!!checked[v.activity_key])} onClick={() => setChecked(c => ({ ...c, [v.activity_key]: !c[v.activity_key] }))}>
-              {v.label} · ${fmtPts(v.points)}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {checked.cancellation_saved && (
-        <div style={{ ...gridForm, marginTop: 14, padding: 12, background: T.slate50, borderRadius: 8 }}>
-          <div>
-            <label style={labelStyle}>Policy line at risk</label>
-            <select style={inputBase} value={saveLine} onChange={e => setSaveLine(e.target.value)}>
-              <option value="">Pick one</option>
-              {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-            </select>
-          </div>
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Reason the customer gave</label>
-            <input style={inputBase} value={saveReason} onChange={e => setSaveReason(e.target.value)} placeholder="Rate went up at renewal; found a cheaper quote" />
-            <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>Logged the same business day. Credit lands the week the 30-day hold clears, as long as the policy is still active.</div>
-          </div>
-        </div>
-      )}
-
-      <div style={{ ...gridForm, marginTop: 14 }}>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>Note {checked.policy_review ? <span style={{ color: T.red }}>(what you covered — required for a policy review)</span> : <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span>}</label>
-          <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
-        </div>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>ECRM link <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
-          <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
-        <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving…" : `Log it${total ? ` · $${fmtPts(total)}` : ""}`}</button>
-        <span style={{ fontSize: 12, color: T.slate500 }}>Multiline Sold and Referral Sold come from the Sale tab automatically.</span>
-      </div>
-      <Notice kind="error">{err}</Notice>
-      <Notice kind="ok">{ok}</Notice>
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+      <button type="button" style={counterBtn(v <= 0)} disabled={v <= 0} onClick={() => onChange(Math.max(0, v - 1))} aria-label="one less">−</button>
+      <span style={{ minWidth: 28, textAlign: "center", fontSize: 16, fontWeight: 700, color: v > 0 ? T.slate900 : T.slate400 }}>{v}</span>
+      <button type="button" style={counterBtn(v >= MAX_COUNT)} disabled={v >= MAX_COUNT} onClick={() => onChange(Math.min(MAX_COUNT, v + 1))} aria-label="one more">+</button>
     </div>
   );
 }
 
+// An expanding section of the entry. The header is a button (it only
+// expands and collapses, it does not navigate). What is inside stays in
+// the entry even while the section is collapsed; the summary pill on the
+// right shows it, so nothing hides.
+function Section({ title, hint, open, onToggle, summary, children }) {
+  return (
+    <div style={sectionWrap(open)}>
+      <button type="button" style={sectionHead} onClick={onToggle} aria-expanded={open}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <span style={{ fontSize: 13, color: T.slate500, width: 12, display: "inline-block" }}>{open ? "▾" : "▸"}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{title}</span>
+          {!open && hint ? <span style={{ fontSize: 12, color: T.slate500 }}>{hint}</span> : null}
+        </span>
+        {summary ? (
+          <span style={{ fontSize: 12, fontWeight: 700, color: T.blue, background: T.blueLt, padding: "4px 10px", borderRadius: 999, whiteSpace: "nowrap" }}>{summary}</span>
+        ) : null}
+      </button>
+      {open && <div style={{ padding: "4px 14px 16px" }}>{children}</div>}
+    </div>
+  );
+}
+
+// Plain-English wrap-up of what rp_log_entry saved.
+function summarizeEntry(data) {
+  const parts = [];
+  const a = data?.activity;
+  if (a) {
+    const n = (a.items || []).length;
+    const pend = (a.items || []).filter(i => i.credit_available_on);
+    parts.push(`${n} activity item${n === 1 ? "" : "s"} for $${fmtPts(a.points_total)}` +
+      (pend.length ? ` (save clears ${fmtDate(pend[0].credit_available_on)})` : ""));
+  }
+  const q = data?.quote;
+  if (q) parts.push(`quote: ${(q.products_discussed || []).map(k => PRODUCT_SHORT[k] || k).join(", ")}`);
+  const s = data?.sale;
+  if (s) {
+    const credits = (s.credits || []).map(c => c.activity_key === "multiline_sold" ? `Multiline (${PRODUCT_SHORT[c.line] || c.line})` : "Referral Sold");
+    parts.push(`sale: $${fmtPts(s.total_premium)} premium` +
+      (credits.length ? `, credited ${credits.join(", ")} = $${fmtPts(s.retention_points)}` : ", no multiline or referral credit"));
+  }
+  const c = data?.cancellation;
+  if (c) {
+    const voided = Number(c.saves_voided || 0);
+    parts.push(`cancellation: ${PRODUCT_SHORT[c.policy_line] || c.policy_line}` +
+      (voided > 0 ? `, ${voided} unpaid save taken back` : ""));
+  }
+  return `Logged for ${data?.customer || "the customer"}: ${parts.join("; ")}.`;
+}
+
 // =====================================================================
-// Sale form — structured, required fields; derives Multiline + Referral RP
+// Entry page — one customer, one contact, everything that happened.
+// Activity, Quote, Sale, Cancellation as expanding sections; one Log
+// button; one RPC (rp_log_entry) that saves all of it or none of it.
 // =====================================================================
-function SaleForm({ sources, isAdmin, roster, myTeamId, onLogged }) {
+function EntryPage({ values, sources, isAdmin, roster, onLogged, refreshKey }) {
+  const today = todayCentral();
+  // customer block (shared by every section)
   const [first, setFirst] = useState("");
   const [initial, setInitial] = useState("");
-  const [date, setDate] = useState(todayCentral());
-  const [household, setHousehold] = useState("");
+  const [date, setDate] = useState(today);
+  const [logFor, setLogFor] = useState(null);
   const [ecrm, setEcrm] = useState("");
+  const [note, setNote] = useState("");
+  // which sections are expanded (form state, not URL state)
+  const [open, setOpen] = useState({ activity: true, quote: false, sale: false, cancellation: false });
+  // activity
+  const [counts, setCounts] = useState({});    // service tier key -> count
+  const [checked, setChecked] = useState({});  // other activity_key -> true
+  const [saveLine, setSaveLine] = useState("");
+  const [saveReason, setSaveReason] = useState("");
+  // quote
+  const [qProds, setQProds] = useState({});
+  const [qExisting, setQExisting] = useState(false);
+  // sale
+  const [household, setHousehold] = useState("");
   const [source, setSource] = useState("");
   const [gnc, setGnc] = useState("");
   const [vehicles, setVehicles] = useState("");
   const [sourcedBy, setSourcedBy] = useState("");
-  const [products, setProducts] = useState({}); // key -> { premium, policy_count, is_new_line }
-  const [note, setNote] = useState("");
-  const [logFor, setLogFor] = useState(null);
+  const [sProds, setSProds] = useState({});    // key -> { premium, policy_count, is_new_line }
+  // cancellation
+  const [cLine, setCLine] = useState("");
+  const [cReason, setCReason] = useState("");
+  // submit
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
-  const toggleProduct = (k) => setProducts(p => {
+  const serviceTiers = (values || []).filter(v => SERVICE_KEYS.includes(v.activity_key));
+  const loggable = (values || []).filter(v => v.category === "logged" && !SERVICE_KEYS.includes(v.activity_key));
+  const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
+
+  const toggleOpen = (id) => setOpen(o => ({ ...o, [id]: !o[id] }));
+  const toggleSaleProduct = (k) => setSProds(p => {
     const n = { ...p };
     if (n[k]) delete n[k]; else n[k] = { premium: "", policy_count: 1, is_new_line: true };
     return n;
   });
-  const setProd = (k, field, val) => setProducts(p => ({ ...p, [k]: { ...p[k], [field]: val } }));
+  const setSaleProd = (k, field, val) => setSProds(p => ({ ...p, [k]: { ...p[k], [field]: val } }));
 
-  const selected = PRODUCTS.filter(p => products[p.key]);
-  const total = selected.reduce((s, p) => s + (Number(products[p.key].premium) || 0), 0);
-  const hasAuto = !!products.auto;
-  const canSubmit = !busy && first.trim() && /^[A-Za-z]$/.test(initial.trim()) && household && ecrm.trim() && source && gnc !== "" &&
-    selected.length > 0 && selected.every(p => products[p.key].premium !== "" && Number(products[p.key].premium) >= 0) &&
-    (!hasAuto || Number(vehicles) >= 1);
+  // ---- what is in the entry right now ----
+  const activityItems = [];
+  for (const v of serviceTiers) {
+    const n = Number(counts[v.activity_key]) || 0;
+    if (n > 0) activityItems.push({ activity_key: v.activity_key, count: n });
+  }
+  for (const k of Object.keys(checked)) {
+    if (!checked[k]) continue;
+    if (k === "cancellation_saved") activityItems.push({ activity_key: k, save_line: saveLine, save_reason: saveReason.trim() });
+    else activityItems.push({ activity_key: k });
+  }
+  const activityCount = activityItems.reduce((s, it) => s + (it.count || 1), 0);
+  const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0) * (it.count || 1), 0);
 
-  const reset = () => { setFirst(""); setInitial(""); setHousehold(""); setEcrm(""); setSource(""); setGnc(""); setVehicles(""); setSourcedBy(""); setProducts({}); setNote(""); };
+  const quoteChosen = PRODUCTS.filter(p => qProds[p.key]).map(p => p.key);
+
+  const saleSelected = PRODUCTS.filter(p => sProds[p.key]);
+  const saleTotal = saleSelected.reduce((s, p) => s + (Number(sProds[p.key].premium) || 0), 0);
+  const hasAuto = !!sProds.auto;
+
+  const hasActivity = activityItems.length > 0;
+  const hasQuote = quoteChosen.length > 0;
+  const hasSale = saleSelected.length > 0;
+  const hasCxl = !!cLine;
+  const hasAnything = hasActivity || hasQuote || hasSale || hasCxl;
+  const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
+
+  // ---- what still needs fixing, in plain words (mirrors the server rules) ----
+  const problems = [];
+  if (!customerOk) problems.push("Customer first name and last initial.");
+  if (!hasAnything) problems.push("Open a section and add what happened.");
+  if ((hasActivity || hasQuote) && date < addDays(today, -7)) problems.push("Activity and quotes are logged within 7 days. Pick a later date or split the entry.");
+  if (hasSale && date < addDays(today, -30)) problems.push("A sale is logged within 30 days of the bind.");
+  if (hasCxl && date < addDays(today, -90)) problems.push("A cancellation is logged within 90 days.");
+  if (checked.cancellation_saved) {
+    if (date !== today) problems.push("A save is logged the same business day it comes in. Set the date to today.");
+    if (!saveLine || !saveReason.trim()) problems.push("The save needs the policy line at risk and the reason the customer gave.");
+  }
+  if (checked.policy_review && !note.trim()) problems.push("The policy review needs a note on what you covered.");
+  if (hasSale) {
+    if (!household) problems.push("Sale: new household or existing customer?");
+    if (!source) problems.push("Sale: pick the marketing source.");
+    if (gnc === "") problems.push("Sale: was Good Neighbor Connect used?");
+    if (!ecrm.trim()) problems.push("Sale: the ECRM opportunity link is required.");
+    if (saleSelected.some(p => sProds[p.key].premium === "" || !(Number(sProds[p.key].premium) >= 0))) problems.push("Sale: every product needs its premium.");
+    if (hasAuto && !(Number(vehicles) >= 1)) problems.push("Sale: how many cars?");
+  }
+  if (hasSale && hasCxl && sProds[cLine]) problems.push(`${PRODUCT_SHORT[cLine]} is both sold and cancelled in this entry. Log those as two entries.`);
+  if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
+  const canSubmit = !busy && problems.length === 0;
+  const started = hasAnything || !!first.trim() || !!initial.trim();
+
+  const reset = () => {
+    setFirst(""); setInitial(""); setDate(today); setEcrm(""); setNote("");
+    setCounts({}); setChecked({}); setSaveLine(""); setSaveReason("");
+    setQProds({}); setQExisting(false);
+    setHousehold(""); setSource(""); setGnc(""); setVehicles(""); setSourcedBy(""); setSProds({});
+    setCLine(""); setCReason("");
+  };
 
   const submit = async () => {
-    setErr(""); setOk(""); setBusy(true);
+    setErr(""); setOk("");
+    if (!canSubmit) return;
+    setBusy(true);
     try {
       const payload = {
-        sale_date: date, customer_first: first.trim(), customer_last_initial: initial.trim(),
-        household_status: household, ecrm_opportunity_url: ecrm.trim(), marketing_source: source,
-        gnc_used: gnc === "yes", vehicle_count: hasAuto ? Number(vehicles) : null, note: note.trim() || null,
-        team_member_id: logFor, sourced_by_team_member_id: sourcedBy || null,
-        products: selected.map(p => ({
-          line_of_business: p.key, premium: Number(products[p.key].premium),
-          policy_count: Math.max(1, Number(products[p.key].policy_count) || 1),
-          is_new_line: household === "new" ? true : !!products[p.key].is_new_line,
-        })),
+        customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date,
+        ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
+        activity: hasActivity ? { items: activityItems } : null,
+        quote: hasQuote ? { products_discussed: quoteChosen, is_existing_customer: qExisting } : null,
+        sale: hasSale ? {
+          household_status: household, marketing_source: source, gnc_used: gnc === "yes",
+          vehicle_count: hasAuto ? Number(vehicles) : null, sourced_by_team_member_id: sourcedBy || null,
+          products: saleSelected.map(p => ({
+            line_of_business: p.key, premium: Number(sProds[p.key].premium),
+            policy_count: Math.max(1, Number(sProds[p.key].policy_count) || 1),
+            is_new_line: household === "new" ? true : !!sProds[p.key].is_new_line,
+          })),
+        } : null,
+        cancellation: hasCxl ? { policy_line: cLine, reason: cReason.trim() || null } : null,
       };
-      const { data, error } = await supabase.rpc("rp_log_sale", { p_payload: payload });
+      const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
       if (error) { setErr(errText(error)); return; }
       if (!data?.ok) { setErr(errText(data)); return; }
-      const credits = (data.credits || []).map(c => c.activity_key === "multiline_sold" ? `Multiline (${PRODUCT_LABEL[c.line] || c.line})` : "Referral Sold");
-      setOk(`Sale logged for ${data.customer} — $${fmtPts(data.total_premium)} premium.` +
-            (credits.length ? ` Retention Points credited: ${credits.join(", ")} = $${fmtPts(data.retention_points)}.` : " No multiline or referral credit on this one."));
+      setOk(summarizeEntry(data));
       reset();
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
+  const activitySummary = hasActivity ? `${activityCount} · $${fmtPts(activityTotal)}` : "";
+  const quoteSummary = hasQuote ? quoteChosen.map(k => PRODUCT_SHORT[k]).join(", ") : "";
+  const saleSummary = hasSale ? `$${fmtPts(saleTotal)} · ${saleSelected.map(p => p.short).join(", ")}` : "";
+  const cxlSummary = hasCxl ? PRODUCT_SHORT[cLine] : "";
+
   return (
-    <div style={cardStyle}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log a sale</div>
-      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>Everything here is required. Multiline Sold and Referral Sold points are credited automatically to whoever sourced the sale.</div>
+    <div>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log an entry</div>
+        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>One customer, one contact, everything that happened. Open the sections you need. One button saves it all.</div>
 
-      <div style={gridForm}>
-        <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
-        <div>
-          <label style={labelStyle}>Bind date</label>
-          <input type="date" style={inputBase} value={date} max={todayCentral()} min={addDays(todayCentral(), -30)} onChange={e => setDate(e.target.value)} />
+        <div style={gridForm}>
+          <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
+          <div>
+            <label style={labelStyle}>Date</label>
+            <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
+          </div>
+          <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
         </div>
-        <div>
-          <label style={labelStyle}>Household</label>
-          <select style={inputBase} value={household} onChange={e => setHousehold(e.target.value)}>
-            <option value="">Pick one</option>
-            <option value="new">New household</option>
-            <option value="existing">Existing customer</option>
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Marketing source</label>
-          <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
-            <option value="">Pick one</option>
-            {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Good Neighbor Connect used?</label>
-          <select style={inputBase} value={gnc} onChange={e => setGnc(e.target.value)}>
-            <option value="">Pick one</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Who sourced this sale?</label>
-          <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
-            <option value="">{logFor ? "The person logged for" : "Me"}</option>
-            {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
-          </select>
-        </div>
-        <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>ECRM opportunity link</label>
-          <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
-        </div>
-      </div>
 
-      <div style={{ marginTop: 18 }}>
-        <label style={labelStyle}>Products sold <span style={{ color: T.slate400, fontWeight: 400 }}>(click every one)</span></label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {PRODUCTS.map(p => <span key={p.key} style={chip(!!products[p.key])} onClick={() => toggleProduct(p.key)}>{p.label}</span>)}
-        </div>
-      </div>
-
-      {selected.length > 0 && (
-        <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-          {selected.map(p => (
-            <div key={p.key} style={{ ...gridForm, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" }}>
-              <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{p.label}</div>
-              <div>
-                <label style={labelStyle}>Premium</label>
-                <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={products[p.key].premium} onChange={e => setProd(p.key, "premium", e.target.value)} placeholder="0.00" />
-              </div>
-              {p.key === "auto" && (
-                <div>
-                  <label style={labelStyle}>How many cars?</label>
-                  <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={vehicles} onChange={e => setVehicles(e.target.value)} placeholder="1" />
+        <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
+          {/* ---------------- Activity ---------------- */}
+          <Section title="Activity" hint="service tasks, reviews, saves, and the rest" open={open.activity} onToggle={() => toggleOpen("activity")} summary={activitySummary}>
+            <label style={labelStyle}>Service tasks <span style={{ color: T.slate400, fontWeight: 400 }}>(count each one you finished)</span></label>
+            <div style={{ display: "grid", gap: 8 }}>
+              {serviceTiers.map(v => (
+                <div key={v.activity_key} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", background: T.slate50, borderRadius: 8 }}>
+                  <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800 }}>{tierName(v.label)} <span style={{ color: T.slate500, fontWeight: 400 }}>· ${fmtPts(v.points)} each</span></div>
+                    <div style={{ fontSize: 12, color: T.slate500, marginTop: 2, lineHeight: 1.4 }}>{v.description}</div>
+                  </div>
+                  <Counter value={counts[v.activity_key] || 0} onChange={n => setCounts(c => ({ ...c, [v.activity_key]: n }))} />
                 </div>
-              )}
-              <div>
-                <label style={labelStyle}>Policies</label>
-                <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={products[p.key].policy_count} onChange={e => setProd(p.key, "policy_count", e.target.value)} />
-              </div>
-              {household === "existing" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate700, paddingBottom: 10 }}>
-                  <input type="checkbox" checked={!!products[p.key].is_new_line} onChange={e => setProd(p.key, "is_new_line", e.target.checked)} />
-                  New line for this household
-                </label>
-              )}
+              ))}
+              {serviceTiers.length === 0 && <div style={{ fontSize: 12, color: T.slate500 }}>No service task tiers are set up.</div>}
             </div>
-          ))}
-          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Total premium: ${fmtPts(total)}</div>
+
+            <div style={{ marginTop: 14 }}>
+              <label style={labelStyle}>Also</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {loggable.map(v => (
+                  <span key={v.activity_key} style={chip(!!checked[v.activity_key])} onClick={() => setChecked(c => ({ ...c, [v.activity_key]: !c[v.activity_key] }))}>
+                    {v.label} · ${fmtPts(v.points)}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {checked.cancellation_saved && (
+              <div style={{ ...gridForm, marginTop: 14, padding: 12, background: T.slate50, borderRadius: 8 }}>
+                <div>
+                  <label style={labelStyle}>Policy line at risk</label>
+                  <select style={inputBase} value={saveLine} onChange={e => setSaveLine(e.target.value)}>
+                    <option value="">Pick one</option>
+                    {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                  </select>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={labelStyle}>Reason the customer gave</label>
+                  <input style={inputBase} value={saveReason} onChange={e => setSaveReason(e.target.value)} placeholder="Rate went up at renewal; found a cheaper quote" />
+                  <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>Logged the same business day. Credit lands the week the 30-day hold clears, as long as the policy is still active.</div>
+                </div>
+              </div>
+            )}
+          </Section>
+
+          {/* ---------------- Quote ---------------- */}
+          <Section title="Quote" hint="every product you discussed" open={open.quote} onToggle={() => toggleOpen("quote")} summary={quoteSummary}>
+            <label style={labelStyle}>Products discussed <span style={{ color: T.slate400, fontWeight: 400 }}>(click every one, not just the one they asked about)</span></label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {PRODUCTS.map(p => <span key={p.key} style={chip(!!qProds[p.key])} onClick={() => setQProds(x => ({ ...x, [p.key]: !x[p.key] }))}>{p.label}</span>)}
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate700, marginTop: 14 }}>
+              <input type="checkbox" checked={qExisting} onChange={e => setQExisting(e.target.checked)} />
+              Existing customer
+            </label>
+          </Section>
+
+          {/* ---------------- Sale ---------------- */}
+          <Section title="Sale" hint="a bound policy" open={open.sale} onToggle={() => toggleOpen("sale")} summary={saleSummary}>
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>Everything here is required, plus the ECRM link below. Multiline Sold and Referral Sold points are credited automatically to whoever sourced the sale.</div>
+            <div style={gridForm}>
+              <div>
+                <label style={labelStyle}>Household</label>
+                <select style={inputBase} value={household} onChange={e => setHousehold(e.target.value)}>
+                  <option value="">Pick one</option>
+                  <option value="new">New household</option>
+                  <option value="existing">Existing customer</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Marketing source</label>
+                <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
+                  <option value="">Pick one</option>
+                  {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Good Neighbor Connect used?</label>
+                <select style={inputBase} value={gnc} onChange={e => setGnc(e.target.value)}>
+                  <option value="">Pick one</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Who sourced this sale?</label>
+                <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
+                  <option value="">{logFor ? "The person logged for" : "Me"}</option>
+                  {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label style={labelStyle}>Products sold <span style={{ color: T.slate400, fontWeight: 400 }}>(click every one)</span></label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {PRODUCTS.map(p => <span key={p.key} style={chip(!!sProds[p.key])} onClick={() => toggleSaleProduct(p.key)}>{p.label}</span>)}
+              </div>
+            </div>
+
+            {saleSelected.length > 0 && (
+              <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                {saleSelected.map(p => (
+                  <div key={p.key} style={{ ...gridForm, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" }}>
+                    <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{p.label}</div>
+                    <div>
+                      <label style={labelStyle}>Premium</label>
+                      <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={sProds[p.key].premium} onChange={e => setSaleProd(p.key, "premium", e.target.value)} placeholder="0.00" />
+                    </div>
+                    {p.key === "auto" && (
+                      <div>
+                        <label style={labelStyle}>How many cars?</label>
+                        <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={vehicles} onChange={e => setVehicles(e.target.value)} placeholder="1" />
+                      </div>
+                    )}
+                    <div>
+                      <label style={labelStyle}>Policies</label>
+                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={sProds[p.key].policy_count} onChange={e => setSaleProd(p.key, "policy_count", e.target.value)} />
+                    </div>
+                    {household === "existing" && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate700, paddingBottom: 10 }}>
+                        <input type="checkbox" checked={!!sProds[p.key].is_new_line} onChange={e => setSaleProd(p.key, "is_new_line", e.target.checked)} />
+                        New line for this household
+                      </label>
+                    )}
+                  </div>
+                ))}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "baseline" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Total premium: ${fmtPts(saleTotal)}</div>
+                  {household === "new" && saleSelected.length > 1 && <span style={{ fontSize: 12, color: T.slate500 }}>New household: every line beyond the biggest one counts as a multiline.</span>}
+                </div>
+              </div>
+            )}
+          </Section>
+
+          {/* ---------------- Cancellation ---------------- */}
+          <Section title="Cancellation" hint="a policy that cancelled anyway" open={open.cancellation} onToggle={() => toggleOpen("cancellation")} summary={cxlSummary}>
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>If someone logged a save on the same customer and line and that credit has not been paid yet, this takes it back.</div>
+            <label style={labelStyle}>Which policy cancelled</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {PRODUCTS.map(p => (
+                <span key={p.key} style={chip(cLine === p.key)} onClick={() => setCLine(cLine === p.key ? "" : p.key)}>{p.label}</span>
+              ))}
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <label style={labelStyle}>Reason <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
+              <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
+            </div>
+          </Section>
         </div>
-      )}
 
-      <div style={{ marginTop: 14 }}>
-        <label style={labelStyle}>Note <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
-        <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} />
-      </div>
+        <div style={{ ...gridForm, marginTop: 16 }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyle}>ECRM link {hasSale ? <span style={{ color: T.red }}>(required for a sale)</span> : <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span>}</label>
+            <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyle}>Note {checked.policy_review ? <span style={{ color: T.red }}>(what you covered, required for a policy review)</span> : <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span>}</label>
+            <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
+          </div>
+        </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
-        <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving…" : "Log sale"}</button>
-        {household === "new" && selected.length > 1 && <span style={{ fontSize: 12, color: T.slate500 }}>New household: every line beyond the biggest one counts as a multiline.</span>}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
+          <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving…" : `Log it${activityTotal ? ` · $${fmtPts(activityTotal)}` : ""}`}</button>
+          <span style={{ fontSize: 12, color: T.slate500 }}>Multiline Sold and Referral Sold come from the sale automatically.</span>
+        </div>
+        {started && problems.length > 0 && (
+          <div style={{ marginTop: 12, fontSize: 12, color: T.slate600, lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 700, color: T.slate700 }}>Still needed</div>
+            {problems.map((p, i) => <div key={i}>· {p}</div>)}
+          </div>
+        )}
+        <Notice kind="error">{err}</Notice>
+        <Notice kind="ok">{ok}</Notice>
       </div>
-      <Notice kind="error">{err}</Notice>
-      <Notice kind="ok">{ok}</Notice>
+      <PendingSaves refreshKey={refreshKey} />
     </div>
   );
 }
 
 // =====================================================================
-// Quote form — click every product discussed
-// =====================================================================
-function QuoteForm({ isAdmin, roster, onLogged }) {
-  const [first, setFirst] = useState("");
-  const [initial, setInitial] = useState("");
-  const [date, setDate] = useState(todayCentral());
-  const [existing, setExisting] = useState(false);
-  const [prods, setProds] = useState({});
-  const [ecrm, setEcrm] = useState("");
-  const [note, setNote] = useState("");
-  const [logFor, setLogFor] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  const chosen = PRODUCTS.filter(p => prods[p.key]).map(p => p.key);
-  const canSubmit = !busy && first.trim() && /^[A-Za-z]$/.test(initial.trim()) && chosen.length > 0;
-
-  const submit = async () => {
-    setErr(""); setOk(""); setBusy(true);
-    try {
-      const { data, error } = await supabase.rpc("rp_log_quote", { p_payload: {
-        quote_date: date, customer_first: first.trim(), customer_last_initial: initial.trim(), is_existing_customer: existing,
-        products_discussed: chosen, ecrm_opportunity_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
-      }});
-      if (error) { setErr(errText(error)); return; }
-      if (!data?.ok) { setErr(errText(data)); return; }
-      setOk(`Quote logged for ${data.customer}: ${(data.products_discussed || []).map(k => PRODUCT_LABEL[k] || k).join(", ")}.`);
-      setFirst(""); setInitial(""); setProds({}); setEcrm(""); setNote(""); setExisting(false);
-      onLogged?.();
-    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
-  };
-
-  return (
-    <div style={cardStyle}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log a quote</div>
-      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>One entry per quote conversation. Click every product you discussed, not just the one they asked about.</div>
-      <div style={gridForm}>
-        <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
-        <div>
-          <label style={labelStyle}>Date</label>
-          <input type="date" style={inputBase} value={date} max={todayCentral()} min={addDays(todayCentral(), -7)} onChange={e => setDate(e.target.value)} />
-        </div>
-        <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
-      </div>
-      <div style={{ marginTop: 18 }}>
-        <label style={labelStyle}>Products discussed</label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {PRODUCTS.map(p => <span key={p.key} style={chip(!!prods[p.key])} onClick={() => setProds(x => ({ ...x, [p.key]: !x[p.key] }))}>{p.label}</span>)}
-        </div>
-      </div>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate700, marginTop: 14 }}>
-        <input type="checkbox" checked={existing} onChange={e => setExisting(e.target.checked)} />
-        Existing customer
-      </label>
-      <div style={{ ...gridForm, marginTop: 14 }}>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>ECRM opportunity link <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
-          <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
-        </div>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label style={labelStyle}>Note <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
-          <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} />
-        </div>
-      </div>
-      <div style={{ marginTop: 18 }}>
-        <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving…" : "Log quote"}</button>
-      </div>
-      <Notice kind="error">{err}</Notice>
-      <Notice kind="ok">{ok}</Notice>
-    </div>
-  );
-}
-
-// =====================================================================
-// Saves still waiting to clear — read-only list on the cancellation tab
+// Saves still waiting to clear — read-only list under the entry page
 // =====================================================================
 function PendingSaves({ refreshKey }) {
   const [rows, setRows] = useState([]);
@@ -518,7 +579,7 @@ function PendingSaves({ refreshKey }) {
     <div style={{ ...cardStyle, marginTop: 16 }}>
       <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Saves still waiting to clear</div>
       <div style={{ fontSize: 13, color: T.slate500, marginBottom: 14 }}>
-        A save pays once the policy has stayed active 30 days. If one of these cancelled anyway, log it above and the credit comes off before it is ever paid.
+        A save pays once the policy has stayed active 30 days. If one of these cancelled anyway, log the cancellation above and the credit comes off before it is ever paid.
       </div>
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -548,89 +609,6 @@ function PendingSaves({ refreshKey }) {
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-// =====================================================================
-// Cancellation entry — a policy that cancelled anyway. Takes back a save
-// on the same customer and line if that credit has not been paid yet.
-// =====================================================================
-function CancellationForm({ isAdmin, roster, onLogged, refreshKey }) {
-  const [first, setFirst] = useState("");
-  const [initial, setInitial] = useState("");
-  const [date, setDate] = useState(todayCentral());
-  const [line, setLine] = useState("");
-  const [reason, setReason] = useState("");
-  const [note, setNote] = useState("");
-  const [logFor, setLogFor] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  const canSubmit = !busy && first.trim() && /^[A-Za-z]$/.test(initial.trim()) && !!line;
-
-  const submit = async () => {
-    setErr(""); setOk(""); setBusy(true);
-    try {
-      const { data, error } = await supabase.rpc("rp_log_cancellation", { p_payload: {
-        cancelled_on: date, customer_first: first.trim(), customer_last_initial: initial.trim(),
-        policy_line: line, reason: reason.trim() || null, note: note.trim() || null, team_member_id: logFor,
-      }});
-      if (error) { setErr(errText(error)); return; }
-      if (!data?.ok) { setErr(errText(data)); return; }
-      const voided = Number(data.saves_voided || 0);
-      setOk(
-        `Cancellation logged for ${data.customer} (${PRODUCT_LABEL[data.policy_line] || data.policy_line}).` +
-        (voided > 0
-          ? ` ${voided} unpaid save on that policy was taken back.`
-          : " No unpaid save on that policy, so nothing was taken back.")
-      );
-      setFirst(""); setInitial(""); setLine(""); setReason(""); setNote("");
-      onLogged?.();
-    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
-  };
-
-  return (
-    <div>
-      <div style={cardStyle}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log a cancellation</div>
-        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>
-          A policy that cancelled. If someone logged a save on the same customer and line and that credit has not been paid yet, this takes it back.
-        </div>
-        <div style={gridForm}>
-          <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
-          <div>
-            <label style={labelStyle}>Date it cancelled</label>
-            <input type="date" style={inputBase} value={date} max={todayCentral()} min={addDays(todayCentral(), -90)} onChange={e => setDate(e.target.value)} />
-          </div>
-          <LogForPicker isAdmin={isAdmin} roster={roster} value={logFor} onChange={setLogFor} />
-        </div>
-        <div style={{ marginTop: 18 }}>
-          <label style={labelStyle}>Which policy cancelled</label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {PRODUCTS.map(p => (
-              <span key={p.key} style={chip(line === p.key)} onClick={() => setLine(line === p.key ? "" : p.key)}>{p.label}</span>
-            ))}
-          </div>
-        </div>
-        <div style={{ ...gridForm, marginTop: 14 }}>
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Reason <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
-            <input style={inputBase} value={reason} onChange={e => setReason(e.target.value)} placeholder="what they told us" />
-          </div>
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Note <span style={{ color: T.slate400, fontWeight: 400 }}>(optional)</span></label>
-            <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} />
-          </div>
-        </div>
-        <div style={{ marginTop: 18 }}>
-          <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving\u2026" : "Log cancellation"}</button>
-        </div>
-        <Notice kind="error">{err}</Notice>
-        <Notice kind="ok">{ok}</Notice>
-      </div>
-      <PendingSaves refreshKey={refreshKey} />
     </div>
   );
 }
@@ -849,10 +827,7 @@ export default function ActivityLog({ userRole }) {
 
   const bump = () => setRefreshKey(k => k + 1);
   const tabs = [
-    { id: "log", label: "Log activity" },
-    { id: "sale", label: "Log a sale" },
-    { id: "quote", label: "Log a quote" },
-    { id: "cancel", label: "Log a cancellation" },
+    { id: "log", label: "Log" },
     { id: "week", label: "My week" },
   ];
 
@@ -861,7 +836,7 @@ export default function ActivityLog({ userRole }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Activity Log</div>
-          <div style={{ fontSize: 13, color: T.slate500 }}>Retention Points, sales, and quotes — logged as they happen.</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>Retention Points, sales, quotes, and cancellations. Logged as they happen.</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
@@ -873,11 +848,8 @@ export default function ActivityLog({ userRole }) {
         ))}
       </div>
 
-      {tab === "log"   && <ActivityForm values={values} isAdmin={isAdmin} roster={roster} onLogged={bump} />}
-      {tab === "sale"  && <SaleForm sources={sources} isAdmin={isAdmin} roster={roster} myTeamId={myTeamId} onLogged={bump} />}
-      {tab === "quote" && <QuoteForm isAdmin={isAdmin} roster={roster} onLogged={bump} />}
-      {tab === "cancel" && <CancellationForm isAdmin={isAdmin} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
-      {tab === "week"  && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
+      {tab === "log"  && <EntryPage values={values} sources={sources} isAdmin={isAdmin} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
     </div>
   );
 }
