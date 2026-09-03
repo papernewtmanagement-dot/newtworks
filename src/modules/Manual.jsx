@@ -1591,7 +1591,25 @@ What I\'d like to discuss:
             padding: 2pt 0 2pt 12pt !important;
           }
           .newtworks-handbook-body details[open] > :is(ul, ol) { padding-left: 30pt !important; }
-          .newtworks-handbook-body li, .newtworks-handbook-body tr {
+          /* KEEPING BULLETS WHOLE, WITHOUT STRANDING A PAGE: a bullet that
+             holds its own sub-bullets is a whole section of the page and is
+             often taller than a sheet of paper. Telling the browser to keep one
+             of those in a single piece makes it jump wholesale to the next
+             sheet and leave whatever came before it alone on the sheet before -
+             the 09/03 course page printed its one-line video note by itself on
+             page one and started the first section on page two. So only bullets
+             with nothing nested inside them are held together; a bullet with
+             sub-bullets is allowed to break between its children. A browser too
+             old for :has() throws that line away and simply lets every bullet
+             break, which is the safe outcome, not the broken one. */
+          .newtworks-handbook-body li { break-inside: auto; page-break-inside: auto; }
+          .newtworks-handbook-body li li {
+            break-inside: avoid; page-break-inside: avoid;
+          }
+          .newtworks-handbook-body li:not(:has(ul)):not(:has(ol)) {
+            break-inside: avoid; page-break-inside: avoid;
+          }
+          .newtworks-handbook-body tr {
             break-inside: avoid; page-break-inside: avoid;
           }
           .newtworks-handbook-body table { font-size: 9.5pt !important; }
