@@ -560,7 +560,7 @@ function useCPRData(weekDate) {
         // leave those team_detail rows orphaned and display "(unknown)" on the page.
         const { data: liveRows } = await supabase
           .from("team_directory")
-          .select("id, first_name, last_name, nickname, hire_date, start_date, role, role_level, category, is_active, archived_at")
+          .select("id, first_name, last_name, nickname, hire_date, start_date, end_date, role, role_level, category, is_active, archived_at")
           .eq("agency_id", AGENCY_ID)
           .eq("is_admin_backoffice", false)
           .order("hire_date", { ascending: true })
@@ -1787,8 +1787,15 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
 }
 
 // 7 — Personal Checklist (CPR Reply / Wrap-up / Inbox per person)
-function PersonalChecklistSection({ details, team, editMode, formDetails, isDirty, onChange }) {
-  if (!details || details.length === 0) {
+function PersonalChecklistSection({ details, team, weekEnding, editMode, formDetails, isDirty, onChange }) {
+  // Anyone who left partway through the week comes off this table entirely — their checklist
+  // cleanup is unreliable by definition and nothing here should be read as a miss.
+  const teamById = {};
+  (team || []).forEach(t => { teamById[t.id] = t; });
+  const present = (details || []).filter(
+    d => finishedTheWeek(teamById[d.team_member_id]?.end_date, weekEnding),
+  );
+  if (present.length === 0) {
     return (
       <div>
         <SectionHeader icon="🧍" title="Personal Checklist" />
@@ -1796,7 +1803,7 @@ function PersonalChecklistSection({ details, team, editMode, formDetails, isDirt
       </div>
     );
   }
-  const sorted = sortByTenure(details, team);
+  const sorted = sortByTenure(present, team);
   return (
     <div>
       <SectionHeader icon="🧍" title="Personal Checklist" />
@@ -5990,6 +5997,16 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+// Did this person work the week all the way through? end_date is their last day, inclusive,
+// and the CPR week ends on a Saturday, so the test is "still here on the Friday". Someone who
+// left partway through could not have finished their checklist items, so an unticked box is
+// not a miss, it is a gap in the record. Server agrees: get_weekly_cpr_requirements charges
+// them zero misses for that week (migration 20260903000629).
+function finishedTheWeek(endDate, weekEndingISO) {
+  if (!endDate || !weekEndingISO) return true;
+  return endDate >= addDaysISO(weekEndingISO, -1);
+}
+
 function sortByTenure(details, team) {
   // Annotate each detail row with the team member's name + hire_date
   const teamById = {};
@@ -6543,6 +6560,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section>
         <PersonalChecklistSection
           details={data.details} team={data.team}
+          weekEnding={weekDate}
           editMode={edit.active}
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
