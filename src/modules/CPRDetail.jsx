@@ -1609,10 +1609,17 @@ function WrapupSummarySection({ report, editMode, formValue, dirty, onChange }) 
 }
 
 // 5 — Code Reds / Yellows
-function CodeRedsYellowsSection({ details, team, editMode, formDetails, isDirty, onChange }) {
+function CodeRedsYellowsSection({ details, team, weekEnding, editMode, formDetails, isDirty, onChange }) {
+  // Anyone terminated anywhere inside this week is dropped here too — code reds are part of
+  // the same checklist, and a departing teammate leaves them uncleaned.
+  const teamById = {};
+  (team || []).forEach(t => { teamById[t.id] = t; });
+  const present = (details || []).filter(
+    d => !leftDuringWeek(teamById[d.team_member_id]?.end_date, weekEnding),
+  );
   if (editMode) {
     // Edit mode: render per-person code_reds / code_yellows textareas
-    const sorted = sortByTenure(details || [], team);
+    const sorted = sortByTenure(present, team);
     if (sorted.length === 0) {
       return (
         <div>
@@ -1667,7 +1674,7 @@ function CodeRedsYellowsSection({ details, team, editMode, formDetails, isDirty,
   // Aggregate code_reds / code_yellows text from detail rows
   const reds = [];
   const yellows = [];
-  (details || []).forEach(d => {
+  present.forEach(d => {
     if (d.code_reds && d.code_reds.trim()) reds.push(d.code_reds.trim());
     if (d.code_yellows && d.code_yellows.trim()) yellows.push(d.code_yellows.trim());
   });
@@ -1788,12 +1795,12 @@ function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onR
 
 // 7 — Personal Checklist (CPR Reply / Wrap-up / Inbox per person)
 function PersonalChecklistSection({ details, team, weekEnding, editMode, formDetails, isDirty, onChange }) {
-  // Anyone who left partway through the week comes off this table entirely — their checklist
+  // Anyone terminated anywhere inside this week comes off this table entirely — their checklist
   // cleanup is unreliable by definition and nothing here should be read as a miss.
   const teamById = {};
   (team || []).forEach(t => { teamById[t.id] = t; });
   const present = (details || []).filter(
-    d => finishedTheWeek(teamById[d.team_member_id]?.end_date, weekEnding),
+    d => !leftDuringWeek(teamById[d.team_member_id]?.end_date, weekEnding),
   );
   if (present.length === 0) {
     return (
@@ -5997,14 +6004,15 @@ function WtQAndPrizeCartSection({ diag, prizeCart, team }) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────
-// Did this person work the week all the way through? end_date is their last day, inclusive,
-// and the CPR week ends on a Saturday, so the test is "still here on the Friday". Someone who
-// left partway through could not have finished their checklist items, so an unticked box is
-// not a miss, it is a gap in the record. Server agrees: get_weekly_cpr_requirements charges
-// them zero misses for that week (migration 20260903000629).
-function finishedTheWeek(endDate, weekEndingISO) {
-  if (!endDate || !weekEndingISO) return true;
-  return endDate >= addDaysISO(weekEndingISO, -1);
+// Was this person terminated anywhere inside this CPR week? end_date is their last day,
+// inclusive, and the CPR week ends on a Saturday, so any end_date on or before that Saturday
+// counts. Someone who left during the week has unreliable checklist cleanup, so nothing of
+// theirs is scored or shown for that week — no checklist row, no code reds, no misses.
+// Server agrees: get_weekly_cpr_requirements and compute_scorecard_done_for_cpr_week both use
+// the same test (migration 20260903 terminated_anywhere_in_week).
+function leftDuringWeek(endDate, weekEndingISO) {
+  if (!endDate || !weekEndingISO) return false;
+  return endDate <= weekEndingISO;
 }
 
 function sortByTenure(details, team) {
@@ -6538,6 +6546,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section>
         <CodeRedsYellowsSection
           details={data.details} team={data.team}
+          weekEnding={weekDate}
           editMode={edit.active}
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
