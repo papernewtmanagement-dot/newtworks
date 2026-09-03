@@ -1185,6 +1185,21 @@ async function getAccountGmailLabelId(
   return id;
 }
 
+// A thread can only be archived once every document on it has FINISHED. The
+// two places that decide this used to hardcode (processed, error, skipped)
+// separately, which left six other terminal statuses counting as "still
+// working" forever: a thread carrying a "filed" or "archived" or
+// "duplicate_ingest" document could never be archived at all, no matter how
+// long it sat. 2026-07-16's Profit & Loss thread was blocked that way for
+// seven weeks. Keep this list as the single source of truth.
+// NOT terminal, deliberately: "received" is mid-flight, "queued_for_llm" is
+// waiting on the parse queue, and "stored_pending_walkthrough" is waiting on
+// Peter — all three should still hold a thread in the inbox.
+const TERMINAL_DOC_STATUSES = [
+  "processed", "error", "skipped", "filed", "archived",
+  "archive_failed", "duplicate", "duplicate_ingest", "unpacked",
+] as const;
+
 async function maybeArchiveThread(
   ctx: RunCtx, threadId: string | null | undefined, docType?: string, accountCode?: string | null,
 ): Promise<void> {
@@ -1196,7 +1211,7 @@ async function maybeArchiveThread(
       .select("id, processing_status")
       .eq("agency_id", ctx.agencyId)
       .eq("gmail_thread_id", threadId)
-      .not("processing_status", "in", "(processed,error,skipped)");
+      .not("processing_status", "in", `(${TERMINAL_DOC_STATUSES.join(",")})`);
     if ((pending?.length ?? 0) > 0) {
       console.log(`[archive] thread ${threadId}: ${pending?.length} docs still pending, not archiving yet`);
       return;
@@ -2416,7 +2431,7 @@ async function run(req: Request): Promise<Response> {
       .eq("agency_id", ctx.agencyId)
       .is("gmail_archived_at", null)
       .not("gmail_thread_id", "is", null)
-      .in("processing_status", ["processed", "error", "skipped"])
+      .in("processing_status", TERMINAL_DOC_STATUSES as unknown as string[])
       .order("created_at", { ascending: false })
       .limit(50);
     if (unarchivedErr) {
