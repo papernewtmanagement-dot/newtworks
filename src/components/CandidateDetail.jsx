@@ -3074,12 +3074,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             <li><strong>Former team member — record kept for analysis.</strong> Someone who used to work here, scored after they left so their profile sits alongside the others.</li>
           </ul>
           <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8, padding: 8, background: T.white, borderRadius: 6, border: `1px solid ${T.slate200}` }}>
-            <strong>An email goes out the moment you hit Decline.</strong> The candidate gets a short,
-            warm note from you. It sends for every reason except <strong>Calibration record</strong> and
+            <strong>Decline letters go out in one batch every Monday at 8am.</strong> Declining
+            someone today does not email them today. The candidate gets a short, warm note from you.
+            It sends for every reason except <strong>Calibration record</strong> and
             <strong>Former team member</strong>, and it sends the same way when the system declines someone
-            by itself on a resume or assessment score. Someone who withdrew gets a different note — thanks
-            for closing the loop, apply again sometime — instead of the one about going with other
-            candidates. It never names a score or a reason, and never goes out twice.
+            by itself on a resume or assessment score. <strong>Candidate withdrew is the one exception</strong> —
+            that one sends right away, because it is a reply to someone who wrote in, and it is a different
+            note: thanks for closing the loop, apply again sometime. It never names a score or a reason,
+            and never goes out twice.
           </div>
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
