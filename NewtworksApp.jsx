@@ -112,7 +112,7 @@ const NAV_ITEMS = [
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "onboarding",  label: "Onboarding",  icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
   { id: "trivia",      label: "Trivia",      icon: "grid",          roles: TEAM_VISIBLE_ROLES },
-  { id: "activity",    label: "Activity",    icon: "check",         roles: TEAM_VISIBLE_ROLES },
+  { id: "production",  label: "Production",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
   { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
@@ -693,7 +693,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
     trivia:      <ErrorBoundary name="Trivia"><Trivia userRole={userRole} userId={userId} /></ErrorBoundary>,
-    activity:    <ErrorBoundary name="Activity Log"><ActivityLog userRole={userRole} /></ErrorBoundary>,
+    production:  <ErrorBoundary name="Production"><ActivityLog userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
@@ -734,6 +734,10 @@ const AccessDenied = () => (
 //   /cpr/YYYY-MM-DD    → { module: "cpr",       cprWeekDate: "YYYY-MM-DD" }
 //   anything else      → { module: "dashboard", cprWeekDate: null }
 const KNOWN_MODULE_IDS = NAV_ITEMS.filter(n => n.type !== "divider").map(n => n.id);
+// Old module slugs that still resolve. /activity became /production on
+// 2026-09-02; bookmarks and old links land on the new module and the URL
+// effect rewrites the address bar to the canonical slug.
+const LEGACY_MODULE_ALIASES = { activity: "production" };
 function parseUrl(pathname) {
   const p = (pathname || "/").replace(/\/+$/, "") || "/";
   const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);
@@ -743,8 +747,9 @@ function parseUrl(pathname) {
   // and admin own their own sub-route (e.g. /handbook/<page-id>) — NewtworksApp only
   // resolves the top-level module here and leaves the sub-path to the module.
   const slugMatch = /^\/([a-z][a-z0-9-]*)(?:\/.*)?$/.exec(p);
-  if (slugMatch && KNOWN_MODULE_IDS.includes(slugMatch[1])) {
-    return { module: slugMatch[1], cprWeekDate: null };
+  const slug = slugMatch ? (LEGACY_MODULE_ALIASES[slugMatch[1]] || slugMatch[1]) : null;
+  if (slug && KNOWN_MODULE_IDS.includes(slug)) {
+    return { module: slug, cprWeekDate: null };
   }
   return { module: "dashboard", cprWeekDate: null };
 }
