@@ -19,9 +19,16 @@
 //
 // Structure (4 stints):
 //   - Stint 1 = integrity gate (33 HEXACO Honesty-Humility items: sincerity,
-//     fairness, greed_avoidance) + GMA cognitive floor (16 active items, 4
-//     per subtest: pattern/deductive/numerical/verbal). Served in full, no
+//     fairness, greed_avoidance) + GMA cognitive floor (16 items, 4 per
+//     subtest: pattern/deductive/numerical/verbal). Served in full, no
 //     rotation, unconditional.
+//     GMA ITEM SETS (2026-09-02): the 16 GMA items are no longer read from
+//     is_active. They come from the candidate's own item set
+//     (hiregauge_gma_items_for_candidate), locked on their first GMA answer
+//     and never changed afterwards, and saves are validated by
+//     hiregauge_gma_accept_item rather than is_active. That is what lets the
+//     item set change while people are mid-assessment: whoever started on the
+//     old 16 finishes on the old 16 and is scored against the old norm.
 //   - Stint 2 = personality: 75 forced-choice ranking blocks of four
 //     statements (section newtworks_v2_personality_fc_quad, live
 //     2026-08-25). Served in full once Stint 1 is complete.
@@ -320,6 +327,51 @@ async function loadStintItems(supa: any, stint: number) {
   return data || [];
 }
 
+// Stint 1 = integrity/personality items (currently active) + the GMA items of
+// the candidate's OWN item set. Added 2026-09-02 with the Section 1 GMA swap.
+// The GMA half deliberately ignores is_active and reads
+// hiregauge_gma_items_for_candidate instead: a candidate who started Section 1
+// on a since-retired set must finish on that set. This is the same failure
+// that hit stint 2 on 2026-08-14 (Sara Burke-Cruz, see the comment above
+// loadStint2Items) -- an is_active filter alone re-serves a section a
+// candidate has already completed the moment the item list changes underneath
+// them.
+async function loadStint1Items(supa: any, candidateId: string) {
+  const { data: nonGma, error: e1 } = await supa
+    .from("hiregauge_instrument_items")
+    .select(ITEM_SELECT)
+    .eq("stint", 1)
+    .eq("is_active", true)
+    .in("section", SECTIONS.filter((s) => s !== "newtworks_v2_cognitive_gma"))
+    .order("section", { ascending: true })
+    .order("item_number", { ascending: true });
+  if (e1) throw new Error(`stint_1_items_fetch: ${e1.message}`);
+
+  const { data: gma, error: e2 } = await supa.rpc("hiregauge_gma_items_for_candidate", {
+    p_candidate_id: candidateId,
+  });
+  if (e2) throw new Error(`stint_1_gma_items_fetch: ${e2.message}`);
+
+  // The RPC returns whole item rows, answer_key included. Project down to the
+  // same fields the table query selects so a key can never reach the browser.
+  const gmaItems = (gma || []).map((it: any) => ({
+    id: it.id,
+    section: it.section,
+    item_number: it.item_number,
+    item_text: it.item_text,
+    choices: it.choices,
+    scale_max: it.scale_max,
+    is_nonsense: it.is_nonsense,
+    hypothesized_trait: it.hypothesized_trait,
+    cognitive_domain: it.cognitive_domain,
+    reverse_coded: it.reverse_coded,
+    retest_of_item_number: it.retest_of_item_number,
+    response_format: it.response_format,
+  }));
+
+  return [...(nonGma || []), ...gmaItems];
+}
+
 async function loadAnswered(supa: any, candidateId: string): Promise<Set<string>> {
   const { data, error } = await supa
     .from("hiregauge_candidate_responses")
@@ -414,7 +466,7 @@ async function loadStint2Items(supa: any, candidateId: string) {
 }
 
 async function loadProgress(supa: any, candidateId: string) {
-  const stint1Items = await loadStintItems(supa, 1);
+  const stint1Items = await loadStint1Items(supa, candidateId);
   const stint2Items = await loadStint2Items(supa, candidateId);
   const stint5Items = await loadStintItems(supa, 5);
   const answered = await loadAnswered(supa, candidateId);
@@ -703,7 +755,25 @@ async function handleSave(supa: any, cand: any, body: any) {
     .maybeSingle();
   if (iErr) return json({ error: "item_fetch_failed", detail: iErr.message }, 500);
   if (!item) return json({ error: "item_not_found" }, 404);
-  if (!SECTIONS.includes(item.section) || item.stint == null || !item.is_active) {
+  if (!SECTIONS.includes(item.section) || item.stint == null) {
+    return json({ error: "item_not_active" }, 400);
+  }
+
+  // GMA items are validated against the candidate's own item set, not
+  // is_active (2026-09-02 Section 1 swap). A candidate mid-sitting on a
+  // retired set must be able to save answers to items that are no longer
+  // active, and must NOT be able to save answers to items outside their set.
+  // The RPC also locks the set on the candidate's first GMA answer.
+  if (item.section === "newtworks_v2_cognitive_gma") {
+    const { data: accept, error: aErr } = await supa.rpc("hiregauge_gma_accept_item", {
+      p_candidate_id: cand.id,
+      p_item_id: item_id,
+    });
+    if (aErr) return json({ error: "item_set_check_failed", detail: aErr.message }, 500);
+    if (!accept?.accepted) {
+      return json({ error: "item_not_in_candidate_item_set", detail: accept?.reason ?? null }, 400);
+    }
+  } else if (!item.is_active) {
     return json({ error: "item_not_active" }, 400);
   }
 
