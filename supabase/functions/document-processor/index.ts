@@ -2402,21 +2402,32 @@ async function run(req: Request): Promise<Response> {
   // this only guarantees late finishers get looked at again.
   let sweepArchived = 0;
   try {
-    const { data: unarchived } = await sb
+    // documents has NO doc_type column — it never did. PostgREST rejected the
+    // whole select, the error was discarded because only `data` was
+    // destructured, and the sweep reported zero threads on every run from the
+    // day it was added (2026-08-19) until 2026-09-03. The late-finisher problem
+    // it exists to solve was never actually being solved: Marie's 2026-08-31
+    // six-statement email sat in the inbox even after all six PDFs finished.
+    // The document type is not stored on the row, so pass undefined and let
+    // maybeArchiveThread use the per-account label, which takes priority anyway.
+    const { data: unarchived, error: unarchivedErr } = await sb
       .from("documents")
-      .select("gmail_thread_id, doc_type, source_account_code")
+      .select("gmail_thread_id, source_account_code")
       .eq("agency_id", ctx.agencyId)
       .is("gmail_archived_at", null)
       .not("gmail_thread_id", "is", null)
       .in("processing_status", ["processed", "error", "skipped"])
       .order("created_at", { ascending: false })
       .limit(50);
+    if (unarchivedErr) {
+      console.error(`[archive-sweep] could not read unarchived documents: ${unarchivedErr.message}`);
+    }
     const seen = new Set<string>();
     for (const d of unarchived ?? []) {
       const tid = (d as any).gmail_thread_id as string;
       if (!tid || seen.has(tid)) continue;
       seen.add(tid);
-      await maybeArchiveThread(ctx, tid, (d as any).doc_type ?? undefined, (d as any).source_account_code ?? null);
+      await maybeArchiveThread(ctx, tid, undefined, (d as any).source_account_code ?? null);
       sweepArchived += 1;
     }
   } catch (e) {
