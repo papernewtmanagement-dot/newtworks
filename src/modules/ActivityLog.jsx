@@ -5,8 +5,9 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { T } from "../lib/theme.js";
 
 // ============================================================
-// ActivityLog — team capture for Retention Points, sales, quotes,
-// and cancellations.
+// ActivityLog — the Production module (nav label "Production", route
+// /production; the old /activity route still resolves). Team capture for
+// Retention Points, sales, quotes, and cancellations.
 //
 // ONE flat entry page, in the order Peter set: customer block, then
 // Relationship Type and Good Neighbor Connect (they apply to quotes
@@ -801,8 +802,8 @@ export default function ActivityLog({ userRole }) {
     <div style={{ padding: _pad, display: "grid", gap: 16 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Activity Log</div>
-          <div style={{ fontSize: 13, color: T.slate500 }}>Retention Points, sales, quotes, and cancellations. Logged as they happen.</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Production</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>What you wrote, quoted, kept, and lost. Logged as it happens.</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
