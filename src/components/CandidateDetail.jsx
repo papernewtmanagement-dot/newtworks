@@ -2346,15 +2346,24 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       alert("Please select a decline reason before declining.");
       return;
     }
-    if (!window.confirm(`Decline ${detail.first_name || ""} ${detail.last_name || ""}? They will be moved to the Declined view.`)) return;
+    // A former team member is not a decline. They worked here and left, so they
+    // belong in the Former view, and stamping them No Hire would be false on its
+    // face. Everything else behaves exactly as before.
+    const isFormerTeam = detail.decline_reason === "former_team";
+    const newStatus = isFormerTeam ? "former" : "declined";
+    const viewName = isFormerTeam ? "Former" : "Declined";
+    const verb = isFormerTeam ? "Move" : "Decline";
+    if (!window.confirm(`${verb} ${detail.first_name || ""} ${detail.last_name || ""}? They will be moved to the ${viewName} view.`)) return;
     setSavingSection("decline");
     const updates = {
-      status: "declined",
+      status: newStatus,
       status_updated_at: new Date().toISOString(),
       decline_reason: detail.decline_reason,
-      final_decision: "no_hire",
-      decision_at: new Date().toISOString(),
     };
+    if (!isFormerTeam) {
+      updates.final_decision = "no_hire";
+      updates.decision_at = new Date().toISOString();
+    }
     if (detail.decision_notes) updates.decision_notes = detail.decision_notes;
     const { error } = await supabase
       .from("hiring_candidates")
@@ -2372,7 +2381,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       .maybeSingle();
     setSavingSection(null);
     if (data) setDetail(data);
-    if (typeof onUpdate === "function") onUpdate(detail.id, "declined", { alreadyPersisted: true });
+    if (typeof onUpdate === "function") onUpdate(detail.id, newStatus, { alreadyPersisted: true });
   };
 
   // Update one probe's answer text in local state. Save button batch-writes
@@ -3045,11 +3054,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
         </div>
       </Section>
 
-      {/* Decline Candidate — moves out of active pipeline into Declined view */}
-      {detail?.status !== "declined" && (
+      {/* Decline Candidate — moves out of active pipeline into Declined view,
+          or into Former when the reason is a past team member */}
+      {detail?.status !== "declined" && detail?.status !== "former" && (
         <Section title="Decline Candidate" tone={T.redLt}>
           <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8 }}>
             Moves this candidate out of the active pipeline into the Declined view. Sets Final Decision to No Hire.
+            Picking <strong>Former team member</strong> is the one exception: it moves them to the Former view
+            instead, and leaves Final Decision alone.
           </div>
           <div style={{ marginBottom: 8 }}>
             <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Decline reason</label>
@@ -3095,7 +3107,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                 cursor: (savingSection === "decline" || !detail?.decline_reason) ? "not-allowed" : "pointer",
               }}
             >
-              {savingSection === "decline" ? "Declining..." : "Decline Candidate"}
+              {savingSection === "decline"
+                ? "Saving..."
+                : detail?.decline_reason === "former_team" ? "Move to Former Team" : "Decline Candidate"}
             </button>
             <span style={{ fontSize: 10, color: T.slate500 }}>Reasoning uses the notes field above.</span>
           </div>
