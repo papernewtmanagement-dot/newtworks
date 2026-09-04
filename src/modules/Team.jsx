@@ -2,7 +2,6 @@ import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CandidateDetail from "../components/CandidateDetail.jsx";
 import InterviewSlotsManager from "../components/InterviewSlotsManager.jsx";
-import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
 import { fmtMoney } from "../lib/format.jsx";
 
@@ -3038,10 +3037,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
-  // Earning Potential is OWNER only (Peter 2026-08-28) — the rest of the Team
-  // module stays owner+manager. Managers never see the tab or its URL.
-  const isOwner = userRole === "owner";
-  const [section, setSection, sectionHref] = useTabParam("tab", "members", isOwner ? ["members","growth","earnings"] : ["members","growth"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth"]);
   const [applicants,  setApplicants]  = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(true);
   const [applicantsError,   setApplicantsError]   = useState(false);
@@ -3227,7 +3223,6 @@ export default function Team({ userRole }) {
   const sections = [
     { id:"members",  label:"Members"  },
     { id:"growth",   label:"Growth"   },
-    ...(isOwner ? [{ id:"earnings", label:"Earning Potential" }] : []),
   ];
 
   return (
@@ -3257,7 +3252,6 @@ export default function Team({ userRole }) {
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
       {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} userRole={userRole} />}
-      {section === "earnings" && isOwner && <EarningPotentialTab />}
     </div>
   );
 }
