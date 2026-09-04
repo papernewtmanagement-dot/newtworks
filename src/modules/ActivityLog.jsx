@@ -21,6 +21,21 @@ import { T } from "../lib/theme.js";
 // Classic, GAINSCO, Home, RDP, PLUP, and so on) read from the
 // product_types table, so adding a type later never touches this file.
 //
+// Layout follows the web-form research Peter asked for (2026-09-04):
+//  * Fewer visible choices. Each policy block starts as one "Add" chip;
+//    the line bubbles appear on tap (Hick 1952: decision time grows with
+//    the number of options; Iyengar & Lepper 2000: too many visible
+//    options lower completion).
+//  * Errors after the attempt, not while typing (Bargas-Avila et al.
+//    2007, Interacting with Computers: "don't show errors right away").
+//    The Log button is always live; a tap with something missing shows
+//    the "Still needed" list next to it and saves nothing.
+//  * Sensible defaults so most rows need one tap (Johnson & Goldstein
+//    2003): cars defaults to 1, date to today.
+//  * Short labels, no parenthetical hints in headings, one column on a
+//    phone (Seckler et al. 2014, CHI: the 20-guideline form cut
+//    completion time, retries, and eye movements).
+//
 // The button calls rp_log_entry, which writes every part in one
 // transaction. Any failure rolls the whole entry back. Only the owner
 // may log on someone else's behalf, enforced server-side.
@@ -144,11 +159,21 @@ function Notice({ kind, children }) {
   return <div style={{ padding: "10px 12px", borderRadius: 8, background: bg, color: fg, fontSize: 13, fontWeight: 600, marginTop: 12 }}>{children}</div>;
 }
 
-// The bubbles that add a policy. Clicking Auto adds one auto policy;
-// clicking it again adds a second. The count sits on the bubble.
-function PolicyPicker({ list, onAdd }) {
+// The bubbles that add a policy. Until the block is used it is one
+// "Add" chip, so an empty page shows three chips instead of 21 bubbles.
+// Tapping Auto adds one auto policy; tapping it again adds a second.
+// The count sits on the bubble.
+function PolicyPicker({ list, onAdd, addLabel }) {
+  const [revealed, setRevealed] = useState(false);
   const counts = {};
   for (const p of list) counts[p.line] = (counts[p.line] || 0) + 1;
+  if (!revealed && list.length === 0) {
+    return (
+      <div style={chipRow}>
+        <span style={{ ...chip(false), borderStyle: "dashed", color: T.blue }} onClick={() => setRevealed(true)}>+ {addLabel}</span>
+      </div>
+    );
+  }
   return (
     <div style={chipRow}>
       {PRODUCTS.map(p => (
@@ -226,12 +251,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [canceled, setCanceled] = useState([]);   // [{id, line, type}]
   const [cReason, setCReason] = useState("");
   const [quoted, setQuoted] = useState([]);       // [{id, line, type}]
-  const [sold, setSold] = useState([]);           // [{id, line, type, premium, policyCount, vehicles, isNewLine}]
+  const [sold, setSold] = useState([]);           // [{id, line, type, premium, vehicles, isNewLine}]
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
+  const [attempted, setAttempted] = useState(false); // show what's missing only after a Log tap
+  const [formKey, setFormKey] = useState(0);         // bumps on reset so the Add chips fold back up
 
   const serviceTasks = (values || []).filter(v => v.category === "logged" && v.activity_key.startsWith(SERVICE_PREFIX));
   const alsoItems = (values || []).filter(v => v.category === "logged" && !v.activity_key.startsWith(SERVICE_PREFIX));
@@ -242,10 +269,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const editPolicy = (setter) => (id, field, val) => setter(list => list.map(p => p.id === id ? { ...p, [field]: val } : p));
   const dropPolicy = (setter) => (id) => setter(list => list.filter(p => p.id !== id));
 
-  const addCanceled = addPolicy(setCanceled, {});
+  const addCanceled = addPolicy(setCanceled, { premium: "", vehicles: "1" });
   const addQuoted = addPolicy(setQuoted, {});
-  const addSold = addPolicy(setSold, { premium: "", policyCount: 1, vehicles: "", isNewLine: true });
+  const addSold = addPolicy(setSold, { premium: "", vehicles: "1", isNewLine: true });
   const editSold = editPolicy(setSold);
+  const editCanceled = editPolicy(setCanceled);
 
   // ---- what is in the entry right now ----
   const activityItems = [];
@@ -281,6 +309,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   }
   if (checked.policy_review && !note.trim()) problems.push("The policy review needs a note on what you covered.");
   if (missingType(canceled)) problems.push("Every canceled policy needs its type.");
+  if (canceled.some(p => p.premium === "" || !(Number(p.premium) >= 0))) problems.push("Every canceled policy needs its premium.");
+  if (canceled.some(p => p.line === "auto" && !(Number(p.vehicles) >= 1))) problems.push("Every canceled auto policy needs its number of cars.");
   if (missingType(quoted)) problems.push("Every quoted policy needs its type.");
   if (missingType(sold)) problems.push("Every sold policy needs its type.");
   if (hasSale) {
@@ -297,8 +327,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (clash.length) problems.push(`${clash.map(k => PRODUCT_SHORT[k]).join(", ")} is both sold and canceled in this entry. Log those as two entries.`);
   }
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
-  const canSubmit = !busy && problems.length === 0;
-  const started = hasAnything || !!first.trim() || !!initial.trim();
+  const canSubmit = !busy;
 
   const reset = () => {
     setFirst(""); setInitial(""); setDate(today);
@@ -306,11 +335,13 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setChecked({}); setSaveLine(""); setSaveReason("");
     setCanceled([]); setCReason(""); setQuoted([]); setSold([]);
     setEcrm(""); setNote("");
+    setAttempted(false); setFormKey(k => k + 1);
   };
 
   const submit = async () => {
     setErr(""); setOk("");
-    if (!canSubmit) return;
+    setAttempted(true);
+    if (busy || problems.length > 0) return;
     setBusy(true);
     try {
       const payload = {
@@ -322,7 +353,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
         cancelation: hasCxl ? {
-          items: canceled.map(p => ({ line_of_business: p.line, product_type: p.type || null })),
+          items: canceled.map(p => ({
+            line_of_business: p.line, product_type: p.type || null,
+            premium: Number(p.premium), vehicle_count: p.line === "auto" ? Number(p.vehicles) : null,
+          })),
           reason: cReason.trim() || null,
         } : null,
         quote: hasQuote ? { items: quoted.map(p => ({ line_of_business: p.line, product_type: p.type || null })) } : null,
@@ -330,7 +364,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           products: sold.map(p => ({
             line_of_business: p.line, product_type: p.type || null,
             premium: Number(p.premium),
-            policy_count: Math.max(1, Number(p.policyCount) || 1),
+            policy_count: 1,
             vehicle_count: p.line === "auto" ? Number(p.vehicles) : null,
             is_new_line: householdFresh ? true : !!p.isNewLine,
           })),
@@ -350,8 +384,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   return (
     <div>
       <div style={cardStyle}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log an entry</div>
-        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>One customer, one contact, everything that happened. One button saves it all.</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>What happened with this customer?</div>
+        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>Tap what happened. Skip what didn't. One button saves it all.</div>
 
         <div style={gridForm}>
           <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
@@ -382,7 +416,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
         {/* ---- service tasks ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Service tasks <span style={hintStyle}>(pick every kind you finished)</span></div>
+          <div style={blockTitle}>Service tasks</div>
           <div style={chipRow}>
             {serviceTasks.map(v => (
               <span key={v.activity_key} style={chip(!!checked[v.activity_key])} onClick={() => toggleChecked(v.activity_key)}>
@@ -428,14 +462,24 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
         {/* ---- canceled ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Canceled <span style={hintStyle}>(click a line for each policy that canceled)</span></div>
-          <PolicyPicker list={canceled} onAdd={addCanceled} />
+          <div style={blockTitle}>Canceled</div>
+          <PolicyPicker key={`c${formKey}`} list={canceled} onAdd={addCanceled} addLabel="Add a canceled policy" />
           {canceled.length > 0 && (
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {canceled.map(p => (
                 <div key={p.id} style={policyRow}>
                   <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{PRODUCT_LABEL[p.line]}</div>
-                  <TypeField types={types} line={p.line} value={p.type} onChange={v => editPolicy(setCanceled)(p.id, "type", v)} />
+                  <TypeField types={types} line={p.line} value={p.type} onChange={v => editCanceled(p.id, "type", v)} />
+                  <div>
+                    <label style={labelStyle}>Premium</label>
+                    <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={p.premium} onChange={e => editCanceled(p.id, "premium", e.target.value)} placeholder="0.00" />
+                  </div>
+                  {p.line === "auto" && (
+                    <div>
+                      <label style={labelStyle}>Cars</label>
+                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editCanceled(p.id, "vehicles", e.target.value)} />
+                    </div>
+                  )}
                   <button type="button" style={removeBtn} onClick={() => dropPolicy(setCanceled)(p.id)}>Remove</button>
                 </div>
               ))}
@@ -472,8 +516,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
         {/* ---- quoted ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Quoted <span style={hintStyle}>(click a line for each policy you quoted, twice for two)</span></div>
-          <PolicyPicker list={quoted} onAdd={addQuoted} />
+          <div style={blockTitle}>Quoted</div>
+          <PolicyPicker key={`q${formKey}`} list={quoted} onAdd={addQuoted} addLabel="Add a quoted policy" />
           {quoted.length > 0 && (
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {quoted.map(p => (
@@ -489,8 +533,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
         {/* ---- sold ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Sold <span style={hintStyle}>(click a line for each policy you wrote, twice for two)</span></div>
-          <PolicyPicker list={sold} onAdd={addSold} />
+          <div style={blockTitle}>Sold</div>
+          <PolicyPicker key={`s${formKey}`} list={sold} onAdd={addSold} addLabel="Add a sold policy" />
           {sold.length > 0 && (
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {sold.map(p => (
@@ -504,7 +548,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                   {p.line === "auto" && (
                     <div>
                       <label style={labelStyle}>Cars</label>
-                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editSold(p.id, "vehicles", e.target.value)} placeholder="1" />
+                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editSold(p.id, "vehicles", e.target.value)} />
                     </div>
                   )}
                   {relationship === "existing" && (
@@ -541,7 +585,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
           <button style={btnPrimary(!canSubmit)} disabled={!canSubmit} onClick={submit}>{busy ? "Saving…" : `Log it${activityTotal ? ` · $${fmtPts(activityTotal)}` : ""}`}</button>
         </div>
-        {started && problems.length > 0 && (
+        {attempted && problems.length > 0 && (
           <div style={{ marginTop: 12, fontSize: 12, color: T.slate600, lineHeight: 1.6 }}>
             <div style={{ fontWeight: 700, color: T.slate700 }}>Still needed</div>
             {problems.map((p, i) => <div key={i}>· {p}</div>)}
