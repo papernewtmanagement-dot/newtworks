@@ -1,0 +1,4 @@
+-- rp_sold_on_file(first, initial): a customer's active sold policies for the entry page (premium prefill on Canceled).
+-- cancelation_log_chargeback: honors a matched_sale_product_id the page named, else searches as before.
+-- rp_log_cancelation / rp_log_entry pass matched_sale_product_id through.
+-- Live definition: migration sold_on_file_and_preferred_match in Supabase.
