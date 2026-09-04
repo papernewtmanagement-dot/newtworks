@@ -10,17 +10,19 @@ import { T } from "../lib/theme.js";
 // for Retention Points, sales, quotes, and cancelations.
 //
 // ONE flat page, Peter's layout (2026-09-04):
-//  * Row 1: every first field on one wrapping row (name, initial, date,
-//    Log for, Relationship type, Good Neighbor Connect).
-//  * Retention activity: one "Add Retention Activity" dropdown. Picking
-//    an item adds a pill with an x; pills sit on the same wrapping row.
-//    The same item can be added twice (two policy changes = two pills =
-//    two rows on the server).
-//  * Policies: the same pattern. "Add Policy" dropdown adds a row; the
-//    row holds the line, its type, a Quoted / Sold / Canceled dropdown,
-//    then premium and cars when Sold or Canceled. Marketing type sits on
-//    the Add Policy row. Auto and Fire types come from product_types.
-//  * ECRM link and note always shown, on one row.
+//  * Row 1, one wrapping row: Log for (owner), first name, last initial,
+//    Relationship type, Good Neighbor Connect. Date reads "Today" with a
+//    link to change it; the date box appears only when it is not today.
+//  * First name suggests customers already on file (rp_customer_suggest,
+//    eight matches per keystroke after two letters, nothing cached), so
+//    "Anna S." is spelled one way and cancelations can match sales.
+//  * "Add Activity" dropdown, cheapest first. Each pick is a pill with
+//    an x; the same item can be added twice (two policy changes = two
+//    pills = two rows). Pivot is on the list at $0: tracked, not paid.
+//  * "Add Policy" dropdown adds a row: line, type, Quoted / Sold /
+//    Canceled, then premium and cars once Sold or Canceled.
+//  * Bottom row: ECRM link (only with a sale), Note, Marketing type (only
+//    with a sale or quote), Who sourced the lead (only on a referral).
 //
 // Layout follows the web-form research Peter asked for (2026-09-04):
 //  * Fewer visible choices. Three policy blocks became one list with one
@@ -95,6 +97,7 @@ const gridForm = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minma
 const policyRow = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" };
 const removeBtn = { ...btnGhost, color: T.red, borderColor: T.slate300, alignSelf: "center", whiteSpace: "nowrap" };
 const wrapRow = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" };
+const linkBtn = { background: "none", border: "none", padding: 0, color: T.blue, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const field = (min = 150) => ({ flex: `1 1 ${min}px`, minWidth: 0 });
 const addSelect = {
   ...inputBase, width: "auto", flex: "0 1 auto", color: T.blue, fontWeight: 700,
@@ -136,6 +139,7 @@ function errText(e) {
 }
 let _pid = 0;
 const newPolicyId = () => `p${++_pid}`;
+const itemLabel = (v) => Number(v.points) > 0 ? `${v.label} · $${fmtPts(v.points)}` : v.label;
 
 // ---------- shared field blocks ----------
 
@@ -188,7 +192,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [first, setFirst] = useState("");
   const [initial, setInitial] = useState("");
   const [date, setDate] = useState(today);
+  const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
+  const [suggest, setSuggest] = useState([]);      // customer names on file that match what's typed
   const [relationship, setRelationship] = useState("");
   const [gnc, setGnc] = useState("");
   const [source, setSource] = useState("");
@@ -205,12 +211,23 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [ok, setOk] = useState("");
   const [attempted, setAttempted] = useState(false); // show what's missing only after a Log tap
 
-  // every Retention Points item, service tasks first
-  const items = useMemo(() => {
-    const all = (values || []).filter(v => v.category === "logged");
-    return [...all.filter(v => v.activity_key.startsWith(SERVICE_PREFIX)), ...all.filter(v => !v.activity_key.startsWith(SERVICE_PREFIX))];
-  }, [values]);
+  // every Retention Points item, least expensive first
+  const items = useMemo(() => (values || []).filter(v => v.category === "logged")
+    .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values]);
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
+
+  // name suggestions: two letters in, a quarter-second pause, at most eight back
+  useEffect(() => {
+    const q = first.trim();
+    if (q.length < 2) { setSuggest([]); return undefined; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.rpc("rp_customer_suggest", { p_prefix: q });
+      if (alive) setSuggest(Array.isArray(data) ? data : []);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [first]);
+  const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); setSuggest([]); };
 
   const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key }]); };
   const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
@@ -239,6 +256,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const householdFresh = relationship === "new" || relationship === "winback";
   const needsType = (line) => (types[line] || []).length > 0;
   const needsMoney = (p) => p.status === "sold" || p.status === "canceled";
+  const showDate = dateOpen || date !== today;
+  const showSuggest = suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
@@ -270,7 +289,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
 
   const reset = () => {
-    setFirst(""); setInitial(""); setDate(today);
+    setFirst(""); setInitial(""); setDate(today); setDateOpen(false); setSuggest([]);
     setRelationship(""); setGnc(""); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
     setPolicies([]); setCReason(""); setEcrm(""); setNote("");
@@ -316,20 +335,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
         {/* ---- row 1: every first field, wrapping ---- */}
         <div style={wrapRow}>
-          <div style={field(140)}>
-            <label style={labelStyle}>First name</label>
-            <input style={inputBase} value={first} onChange={e => setFirst(e.target.value)} placeholder="Anna" />
-          </div>
-          <div style={field(90)}>
-            <label style={labelStyle}>Last initial {preview ? <span style={hintStyle}>→ {preview}</span> : null}</label>
-            <input style={inputBase} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
-          </div>
-          <div style={field(150)}>
-            <label style={labelStyle}>Date</label>
-            <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
-          </div>
           {isOwner && (
-            <div style={field(140)}>
+            <div style={field(130)}>
               <label style={labelStyle}>Log for</label>
               <select style={inputBase} value={logFor || ""} onChange={e => setLogFor(e.target.value || null)}>
                 <option value="">Myself</option>
@@ -337,6 +344,24 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </select>
             </div>
           )}
+          <div style={{ ...field(150), position: "relative" }}>
+            <label style={labelStyle}>First name</label>
+            <input style={inputBase} value={first} onChange={e => setFirst(e.target.value)} placeholder="Anna" autoComplete="off" />
+            {showSuggest && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
+                {suggest.map(c => (
+                  <button key={c.customer_label} type="button" onClick={() => pickCustomer(c)}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
+                    {c.customer_label} <span style={{ color: T.slate400, fontSize: 12 }}>on file</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={field(90)}>
+            <label style={labelStyle}>Last initial {preview ? <span style={hintStyle}>→ {preview}</span> : null}</label>
+            <input style={inputBase} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
+          </div>
           <div style={field(160)}>
             <label style={labelStyle}>Relationship type</label>
             <select style={inputBase} value={relationship} onChange={e => setRelationship(e.target.value)}>
@@ -352,18 +377,29 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <option value="no">No</option>
             </select>
           </div>
+          {showDate && (
+            <div style={field(150)}>
+              <label style={labelStyle}>Date</label>
+              <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
+            </div>
+          )}
         </div>
+        {!showDate && (
+          <div style={{ marginTop: 8, fontSize: 13, color: T.slate500 }}>
+            Today · <button type="button" style={linkBtn} onClick={() => setDateOpen(true)}>change the date</button>
+          </div>
+        )}
 
         {/* ---- retention activity: Add dropdown + pills on one wrapping row ---- */}
         <div style={blockStyle}>
           <div style={{ ...wrapRow, alignItems: "center" }}>
             <select style={addSelect} value="" onChange={e => addActivity(e.target.value)}>
-              <option value="">+ Add Retention Activity</option>
-              {items.map(v => <option key={v.activity_key} value={v.activity_key}>{v.label} · ${fmtPts(v.points)}</option>)}
+              <option value="">+ Add Activity</option>
+              {items.map(v => <option key={v.activity_key} value={v.activity_key}>{itemLabel(v)}</option>)}
             </select>
             {activities.map(a => byKey[a.key] && (
               <span key={a.id} style={pill}>
-                {byKey[a.key].label} · ${fmtPts(byKey[a.key].points)}
+                {itemLabel(byKey[a.key])}
                 <button type="button" style={pillX} onClick={() => dropActivity(a.id)} aria-label="remove">×</button>
               </span>
             ))}
@@ -392,22 +428,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <option value="">+ Add Policy</option>
               {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
-            <div style={field(170)}>
-              <label style={labelStyle}>Marketing type</label>
-              <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
-                <option value="">Pick one</option>
-                {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
-              </select>
-            </div>
-            {isReferral && (
-              <div style={field(160)}>
-                <label style={labelStyle}>Who sourced the lead?</label>
-                <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
-                  <option value="">{logFor ? "The person logged for" : "Me"}</option>
-                  {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
-                </select>
-              </div>
-            )}
           </div>
 
           {policies.length > 0 && (
@@ -467,16 +487,36 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- ECRM link + note on one row ---- */}
+        {/* ---- bottom row: ECRM link (sale), note, marketing type (sale or quote), sourced by (referral) ---- */}
         <div style={{ ...wrapRow, ...blockStyle }}>
-          <div style={field(240)}>
-            <label style={labelStyle}>ECRM link {hasSale ? <span style={{ color: T.red }}>(required for a sale)</span> : null}</label>
-            <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
-          </div>
-          <div style={field(240)}>
+          {hasSale && (
+            <div style={field(220)}>
+              <label style={labelStyle}>ECRM link <span style={{ color: T.red }}>(required for a sale)</span></label>
+              <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
+            </div>
+          )}
+          <div style={field(220)}>
             <label style={labelStyle}>Note {hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
             <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
           </div>
+          {(hasSale || hasQuote) && (
+            <div style={field(160)}>
+              <label style={labelStyle}>Marketing type</label>
+              <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
+                <option value="">Pick one</option>
+                {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
+          {(hasSale || hasQuote) && isReferral && (
+            <div style={field(160)}>
+              <label style={labelStyle}>Who sourced the lead?</label>
+              <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
+                <option value="">{logFor ? "The person logged for" : "Me"}</option>
+                {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+              </select>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
