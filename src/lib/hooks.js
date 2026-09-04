@@ -130,7 +130,8 @@ export function useViewport() {
 // breaks; fallback matches table seed values.
 const FALLBACK_THRESHOLDS = {
   resume:     { pass: 70, consider: 50 },
-  assessment: { pass: 75, consider: 60 },
+  screen:     { pass: 70, consider: 50 },
+  assessment: { pass: 70, consider: 60 }, // recalibrated 2026-09-04
   interview:  { pass: 75, consider: 60 },
   reference:  { pass: 75, consider: 60 },
   framework:  { pass: 75, consider: 60 },

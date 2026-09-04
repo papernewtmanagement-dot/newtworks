@@ -422,7 +422,8 @@ const AdminBreakdown = ({ isAdmin, children }) => {
 // extracted-text pane. Sub-signal scores + reasoning read from the resume_analysis
 // jsonb col (migration 20260723080000 step 4a). Step 4d (migration 20260723225121)
 // removed the flat-col fallback — jsonb is the sole source. All scores render on
-// the 0-100 whole-number scale (bands: ≥75 green / ≥60 amber / <60 red).
+// the 0-100 whole-number scale; bands come from the resume row of
+// hiregauge_verdict_thresholds via the resumeThresh argument.
 function renderResumeLayer(detail, T, resumeThresh) {
   const text = detail?.resume_extracted_text;
   const composite = detail?.res_composite;
@@ -1292,11 +1293,14 @@ const REFERENCE_CONSTRUCTS = [
   ]},
 ];
 
-function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T, isPhone }) {
-  // Reference layer thresholds: 75 pass / 60 consider, per
-  // hiregauge_verdict_thresholds. Same bands the Results row above uses.
-  const refBg = (v) => v == null ? T.slate50 : v >= 75 ? T.greenLt : v >= 60 ? T.amberLt : T.redLt;
-  const refFg = (v) => v == null ? T.slate500 : v >= 75 ? T.green : v >= 60 ? T.amber : T.red;
+function renderReferenceLayer({ refEmails, refLoadError, openRefs, toggleRef, T, isPhone, refThresh }) {
+  // Reference layer thresholds come from useVerdictThresholds() (the
+  // hiregauge_verdict_thresholds row for 'reference'), never literals — the
+  // 2026-09-04 band recalibration found three hardcoded 75/60 sites in this
+  // file that would have silently drifted from the table.
+  const rt = refThresh || { pass: 75, consider: 60 };
+  const refBg = (v) => v == null ? T.slate50 : v >= rt.pass ? T.greenLt : v >= rt.consider ? T.amberLt : T.redLt;
+  const refFg = (v) => v == null ? T.slate500 : v >= rt.pass ? T.green : v >= rt.consider ? T.amber : T.red;
   const asPct = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Math.round(Number(v));
   const scoredCount = (refEmails || []).filter((r) => r?.reference_analysis?.signals).length;
   if (refLoadError) {
@@ -2346,24 +2350,15 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       alert("Please select a decline reason before declining.");
       return;
     }
-    // A former team member is not a decline. They worked here and left, so they
-    // belong in the Former view, and stamping them No Hire would be false on its
-    // face. Everything else behaves exactly as before.
-    const isFormerTeam = detail.decline_reason === "former_team";
-    const newStatus = isFormerTeam ? "former" : "declined";
-    const viewName = isFormerTeam ? "Former" : "Declined";
-    const verb = isFormerTeam ? "Move" : "Decline";
-    if (!window.confirm(`${verb} ${detail.first_name || ""} ${detail.last_name || ""}? They will be moved to the ${viewName} view.`)) return;
+    if (!window.confirm(`Decline ${detail.first_name || ""} ${detail.last_name || ""}? They will be moved to the Declined view.`)) return;
     setSavingSection("decline");
     const updates = {
-      status: newStatus,
+      status: "declined",
       status_updated_at: new Date().toISOString(),
       decline_reason: detail.decline_reason,
+      final_decision: "no_hire",
+      decision_at: new Date().toISOString(),
     };
-    if (!isFormerTeam) {
-      updates.final_decision = "no_hire";
-      updates.decision_at = new Date().toISOString();
-    }
     if (detail.decision_notes) updates.decision_notes = detail.decision_notes;
     const { error } = await supabase
       .from("hiring_candidates")
@@ -2381,7 +2376,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       .maybeSingle();
     setSavingSection(null);
     if (data) setDetail(data);
-    if (typeof onUpdate === "function") onUpdate(detail.id, newStatus, { alreadyPersisted: true });
+    if (typeof onUpdate === "function") onUpdate(detail.id, "declined", { alreadyPersisted: true });
   };
 
   // Update one probe's answer text in local state. Save button batch-writes
@@ -2666,13 +2661,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                 { key: "character",  label: "Character",  weight: cw.character,  score: threeConstruct.character_score  },
                 { key: "commitment", label: "Commitment", weight: cw.commitment, score: threeConstruct.commitment_score },
               ];
+              // Framework-level construct totals colour by the 'framework' row of
+              // hiregauge_verdict_thresholds (via the hook), not literals.
+              const fwThresh = verdictThresh.framework || verdictThresh.assessment;
               const scoreBg = (v) => v == null ? T.slate50
-                                   : v >= 75 ? T.greenLt
-                                   : v >= 60 ? T.amberLt
+                                   : v >= fwThresh.pass ? T.greenLt
+                                   : v >= fwThresh.consider ? T.amberLt
                                    : T.redLt;
               const scoreFg = (v) => v == null ? T.slate500
-                                   : v >= 75 ? T.green
-                                   : v >= 60 ? T.amber
+                                   : v >= fwThresh.pass ? T.green
+                                   : v >= fwThresh.consider ? T.amber
                                    : T.red;
               // All layers now on 0-100 scale (RPC normalized 2026-07-21). is100() kept for
               // legacy call-site safety but always true; can drop after next cleanup pass.
@@ -2896,7 +2894,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                           5: { key: "accountability", label: "Accountability" },
                                         };
                                         const signals = detail?.screen_analysis?.signals || null;
-                                        const sigColor = (v) => v == null ? null : v >= 75 ? T.green : v >= 55 ? T.amber : T.red;
+                                        const scT = verdictThresh.screen || verdictThresh.resume;
+                                        const sigColor = (v) => v == null ? null : v >= scT.pass ? T.green : v >= scT.consider ? T.amber : T.red;
                                         return (
                                           <div>
                                             <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, color: T.slate600, marginBottom: 6 }}>
@@ -2951,7 +2950,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                       })()}
                                     </div>
                                   )}
-                                  {layer.key === "reference" && renderReferenceLayer({
+                                  {layer.key === "reference" && renderReferenceLayer({ refThresh: verdictThresh.reference,
                                     refEmails, refLoadError, openRefs, toggleRef, T, isPhone,
                                   })}
                                 </td>
@@ -3054,14 +3053,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
         </div>
       </Section>
 
-      {/* Decline Candidate — moves out of active pipeline into Declined view,
-          or into Former when the reason is a past team member */}
-      {detail?.status !== "declined" && detail?.status !== "former" && (
+      {/* Decline Candidate — moves out of active pipeline into Declined view */}
+      {detail?.status !== "declined" && (
         <Section title="Decline Candidate" tone={T.redLt}>
           <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8 }}>
             Moves this candidate out of the active pipeline into the Declined view. Sets Final Decision to No Hire.
-            Picking <strong>Former team member</strong> is the one exception: it moves them to the Former view
-            instead, and leaves Final Decision alone.
           </div>
           <div style={{ marginBottom: 8 }}>
             <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Decline reason</label>
@@ -3086,14 +3082,12 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             <li><strong>Former team member — record kept for analysis.</strong> Someone who used to work here, scored after they left so their profile sits alongside the others.</li>
           </ul>
           <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8, padding: 8, background: T.white, borderRadius: 6, border: `1px solid ${T.slate200}` }}>
-            <strong>Decline letters go out in one batch every Monday at 8am.</strong> Declining
-            someone today does not email them today. The candidate gets a short, warm note from you.
-            It sends for every reason except <strong>Calibration record</strong> and
+            <strong>An email goes out the moment you hit Decline.</strong> The candidate gets a short,
+            warm note from you. It sends for every reason except <strong>Calibration record</strong> and
             <strong>Former team member</strong>, and it sends the same way when the system declines someone
-            by itself on a resume or assessment score. <strong>Candidate withdrew is the one exception</strong> —
-            that one sends right away, because it is a reply to someone who wrote in, and it is a different
-            note: thanks for closing the loop, apply again sometime. It never names a score or a reason,
-            and never goes out twice.
+            by itself on a resume or assessment score. Someone who withdrew gets a different note — thanks
+            for closing the loop, apply again sometime — instead of the one about going with other
+            candidates. It never names a score or a reason, and never goes out twice.
           </div>
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
@@ -3107,9 +3101,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                 cursor: (savingSection === "decline" || !detail?.decline_reason) ? "not-allowed" : "pointer",
               }}
             >
-              {savingSection === "decline"
-                ? "Saving..."
-                : detail?.decline_reason === "former_team" ? "Move to Former Team" : "Decline Candidate"}
+              {savingSection === "decline" ? "Declining..." : "Decline Candidate"}
             </button>
             <span style={{ fontSize: 10, color: T.slate500 }}>Reasoning uses the notes field above.</span>
           </div>
