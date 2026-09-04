@@ -11,7 +11,7 @@ import { T } from "../lib/theme.js";
 //
 // ONE flat page, Peter's layout (2026-09-04):
 //  * Row 1, one wrapping row: Log for (owner), first name, last initial,
-//    Relationship, GNC (yes/no). Date reads "Today" with a
+//    Relationship, a "GNC Used" checkbox. Date reads "Today" with a
 //    link to change it; the date box appears only when it is not today.
 //  * First name suggests customers already on file (rp_customer_suggest,
 //    eight matches per keystroke after two letters, nothing cached), so
@@ -23,9 +23,10 @@ import { T } from "../lib/theme.js";
 //    The pill you tapped last is the one being edited below it: type,
 //    Quoted / Sold / Quoted and sold / Canceled, premium and cars once
 //    money is involved. The pill shows what it has so far.
-//  * "Add Scorecard" adds the FIT conversation scorecard (10 parts, 1 to
-//    3 or blank) to the entry; it lands in fit_scorecards exactly as the
-//    Scorecards page writes it, and My week shows the week's average.
+//  * The FIT conversation scorecard is one compact row under the note:
+//    10 parts, tap 1 / 2 / 3, blank means it didn't come up. Score any
+//    part and it rides on the entry into fit_scorecards exactly as the
+//    Scorecards page writes it; My week shows the week's average.
 //  * Bottom row, only what applies: ECRM link (sale), Marketing type
 //    (sale or quote), Lead source (referral), then the note.
 //
@@ -69,16 +70,16 @@ const RELATIONSHIPS = [
 ];
 const TABS = ["log", "week"];
 const CARD_PARTS = [
-  { key: "demeanor_score",        label: "Demeanor" },
-  { key: "frogs_score",           label: "FROGS" },
-  { key: "intro_score",           label: "Intro" },
-  { key: "eligibility_score",     label: "Determine Eligibility" },
-  { key: "setup_gnc_score",       label: "Setup GNC" },
-  { key: "uncover_gap_score",     label: "Uncover the Gap" },
-  { key: "bridge_gap_score",      label: "Bridge the Gap" },
-  { key: "customize_close_score", label: "Customize & Close" },
-  { key: "set_followup_score",    label: "Set FU" },
-  { key: "review_referral_score", label: "Review & Referral" },
+  { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
+  { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
+  { key: "intro_score",           label: "Intro",                 short: "Intro" },
+  { key: "eligibility_score",     label: "Determine Eligibility", short: "Eligibility" },
+  { key: "setup_gnc_score",       label: "Setup GNC",             short: "Setup GNC" },
+  { key: "uncover_gap_score",     label: "Uncover the Gap",       short: "Uncover" },
+  { key: "bridge_gap_score",      label: "Bridge the Gap",        short: "Bridge" },
+  { key: "customize_close_score", label: "Customize & Close",     short: "Close" },
+  { key: "set_followup_score",    label: "Set FU",                short: "Set FU" },
+  { key: "review_referral_score", label: "Review & Referral",     short: "Rev & Ref" },
 ];
 
 // ---------- styles ----------
@@ -123,7 +124,6 @@ const addSelect = {
 const pill = { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, border: `1px solid ${T.blue}`, background: T.blueLt, color: T.blue };
 const pillX = { border: "none", background: "transparent", color: T.blue, fontSize: 16, lineHeight: 1, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" };
 const radioRow = { display: "flex", gap: 12, alignItems: "center", height: 41, fontSize: 14, color: T.slate800 };
-const scoreChip = (on) => ({ ...chip(on), padding: "5px 10px", fontSize: 12 });
 const STATUSES = [
   { key: "quoted",      label: "Quoted" },
   { key: "sold",        label: "Sold" },
@@ -218,7 +218,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [logFor, setLogFor] = useState(null);
   const [suggest, setSuggest] = useState([]);      // customer names on file that match what's typed
   const [relationship, setRelationship] = useState("");
-  const [gnc, setGnc] = useState("");
+  const [gnc, setGnc] = useState(false);
   const [source, setSource] = useState("");
   const [sourcedBy, setSourcedBy] = useState("");
   const [activities, setActivities] = useState([]);  // [{id, key}]
@@ -227,7 +227,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
   const [cReason, setCReason] = useState("");
-  const [card, setCard] = useState(null);                   // null = no scorecard on this entry; else {scores:{}, recTurned, recUrl}
+  const [scores, setScores] = useState({});                 // scorecard parts scored on this entry (blank = didn't come up)
+  const [recTurned, setRecTurned] = useState(false);
+  const [recUrl, setRecUrl] = useState("");
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -264,9 +266,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
   const dropPolicy = (id) => { setPolicies(list => list.filter(p => p.id !== id)); setActivePolicy(a => a === id ? null : a); };
-  const setScore = (k, v) => setCard(c => ({ ...c, scores: { ...c.scores, [k]: c.scores[k] === v ? null : v } }));
-  const cardScored = card ? CARD_PARTS.filter(pt => card.scores[pt.key] != null).length : 0;
-  const cardAvg = card && cardScored ? CARD_PARTS.reduce((s, pt) => s + (card.scores[pt.key] || 0), 0) / cardScored : null;
+  const setScore = (k, v) => setScores(sc => ({ ...sc, [k]: sc[k] === v ? null : v }));
+  const cardScored = CARD_PARTS.filter(pt => scores[pt.key] != null).length;
+  const cardAvg = cardScored ? CARD_PARTS.reduce((s, pt) => s + (scores[pt.key] || 0), 0) / cardScored : null;
 
   // ---- what is in the entry right now ----
   const hasSave = activities.some(a => a.key === "cancelation_saved");
@@ -283,7 +285,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const hasQuote = quoted.length > 0;
   const hasSale = sold.length > 0;
   const hasCxl = canceled.length > 0;
-  const hasCard = !!card && cardScored > 0;
+  const hasCard = cardScored > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
   const isReferral = source === "referral";
@@ -297,8 +299,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
   if (!customerOk) problems.push("Customer first name and last initial.");
-  if (!hasAnything) problems.push("Add an activity, a policy, or a scorecard.");
-  if (card && cardScored === 0) problems.push("Score at least one part of the conversation, or remove the scorecard.");
+  if (!hasAnything) problems.push("Add an activity or a policy, or score the conversation.");
   if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
   if (policies.some(p => needsType(p.line) && !p.type)) problems.push("Each Auto or Fire policy needs its type.");
   if (policies.some(p => needsMoney(p) && (p.premium === "" || !(Number(p.premium) >= 0)))) problems.push("Each sold or canceled policy needs its premium.");
@@ -314,7 +315,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (hasSale) {
     if (!relationship) problems.push("A sale needs the relationship type.");
     if (!source) problems.push("A sale needs the marketing type.");
-    if (gnc === "") problems.push("A sale needs to say whether Good Neighbor Connect was used.");
     if (!ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
   }
   if (hasSale && hasCxl) {
@@ -327,9 +327,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const reset = (keep) => {
     if (!keep) { setFirst(""); setInitial(""); setDate(today); setDateOpen(false); }
     setSuggest([]);
-    setRelationship(""); setGnc(""); setSource(""); setSourcedBy("");
+    setRelationship(""); setGnc(false); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
-    setPolicies([]); setActivePolicy(null); setCReason(""); setCard(null); setEcrm(""); setNote("");
+    setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote("");
     setAttempted(false);
   };
 
@@ -345,14 +345,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
         relationship_type: relationship || null,
-        gnc_used: gnc === "" ? null : gnc === "yes",
+        gnc_used: !!gnc,
         marketing_source: source || null,
         sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? { products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine })) } : null,
         cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p) })), reason: cReason.trim() || null } : null,
-        scorecard: hasCard ? { ...card.scores, recording_turned_in: !!card.recTurned, recording_url: card.recTurned ? (card.recUrl || null) : null } : null,
+        scorecard: hasCard ? { ...scores, recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || null) : null } : null,
       };
       const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
       if (error) { setErr(errText(error)); return; }
@@ -433,13 +433,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               {RELATIONSHIPS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
           </div>
-          <div style={{ flex: "0 0 auto" }}>
-            <label style={labelStyle}>GNC</label>
-            <div style={radioRow}>
-              <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input type="radio" name="gnc" checked={gnc === "yes"} onChange={() => setGnc("yes")} /> Yes</label>
-              <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input type="radio" name="gnc" checked={gnc === "no"} onChange={() => setGnc("no")} /> No</label>
-            </div>
-          </div>
+          <label style={{ ...radioRow, flex: "0 0 auto", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={gnc} onChange={e => setGnc(e.target.checked)} /> GNC Used
+          </label>
           {showDate && (
             <div style={field(150)}>
               <label style={labelStyle}>Date</label>
@@ -552,43 +548,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- scorecard: Add as a pill; the 10 parts below, 1 to 3 or blank ---- */}
-        <div style={blockStyle}>
-          <div style={{ ...wrapRow, alignItems: "center" }}>
-            {!card ? (
-              <button type="button" style={{ ...addSelect, textAlign: "left" }} onClick={() => setCard({ scores: {}, recTurned: false, recUrl: "" })}>+ Add Scorecard</button>
-            ) : (
-              <span style={pill}>
-                Scorecard{cardAvg != null ? ` · ${cardAvg.toFixed(2)}` : ""}
-                <button type="button" style={pillX} onClick={() => setCard(null)} aria-label="remove">×</button>
-              </span>
-            )}
-          </div>
-          {card && (
-            <div style={{ marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8, display: "grid", gap: 6 }}>
-              {CARD_PARTS.map(pt => (
-                <div key={pt.key} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                  <div style={{ flex: "1 1 150px", fontSize: 13, color: T.slate800 }}>{pt.label}</div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {[1, 2, 3].map(v => <span key={v} style={scoreChip(card.scores[pt.key] === v)} onClick={() => setScore(pt.key, v)}>{v}</span>)}
-                  </div>
-                </div>
-              ))}
-              <div style={{ ...wrapRow, alignItems: "center", marginTop: 4 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700 }}>
-                  <input type="checkbox" checked={!!card.recTurned} onChange={e => setCard(c => ({ ...c, recTurned: e.target.checked }))} /> Recording turned in
-                </label>
-                {card.recTurned && (
-                  <div style={field(220)}>
-                    <input style={inputBase} value={card.recUrl} onChange={e => setCard(c => ({ ...c, recUrl: e.target.value }))} placeholder="recording link" />
-                  </div>
-                )}
-                <span style={{ fontSize: 12, color: T.slate500 }}>Leave a part blank if it didn't come up. Tap a score again to clear it.</span>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* ---- bottom row: ECRM link (sale), marketing type (sale or quote), lead source (referral), note ---- */}
         <div style={{ ...wrapRow, ...blockStyle }}>
           {hasSale && (
@@ -619,6 +578,36 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             <label style={labelStyle}>Note {hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
             <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
           </div>
+        </div>
+
+        {/* ---- scorecard: one compact row, 10 parts, blank = didn't come up ---- */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ ...labelStyle, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
+            <span>Scorecard {cardAvg != null ? <span style={{ color: T.blue }}>· {cardAvg.toFixed(2)}</span> : <span style={hintStyle}>· blank means it didn't come up</span>}</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {CARD_PARTS.map(pt => (
+              <div key={pt.key} style={{ flex: "1 1 88px", minWidth: 88, padding: "6px 6px 5px", background: T.slate50, borderRadius: 8, textAlign: "center" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 4 }} title={pt.label}>{pt.short}</div>
+                <div style={{ display: "flex", justifyContent: "center", gap: 3 }}>
+                  {[1, 2, 3].map(v => (
+                    <span key={v} onClick={() => setScore(pt.key, v)} style={{
+                      width: 24, height: 24, lineHeight: "22px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none", boxSizing: "border-box",
+                      border: `1px solid ${scores[pt.key] === v ? T.blue : T.slate300}`, background: scores[pt.key] === v ? T.blue : T.white, color: scores[pt.key] === v ? T.white : T.slate600,
+                    }}>{v}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {hasCard && (
+            <div style={{ ...wrapRow, alignItems: "center", marginTop: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700 }}>
+                <input type="checkbox" checked={recTurned} onChange={e => setRecTurned(e.target.checked)} /> Recording turned in
+              </label>
+              {recTurned && <div style={field(220)}><input style={inputBase} value={recUrl} onChange={e => setRecUrl(e.target.value)} placeholder="recording link" /></div>}
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18, position: "sticky", bottom: 8, background: T.white, padding: "8px 0", zIndex: 3 }}>
@@ -750,7 +739,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
   useEffect(() => { load(); }, [load, refreshKey]);
 
   const mine = (r) => isAdmin || r.team_member_id === myTeamId;
-  const myRollup = rollup.filter(mine).filter(r => r.scorecards > 0 || r.pivots || r.review_asks || r.referral_asks || r.policy_reviews || r.google_reviews || r.referrals_sold);
+  const myRollup = rollup.filter(mine).filter(r => r.scorecards > 0 || r.pivots || r.policy_reviews);
   const visibleRows = rows.filter(mine);
   const teamNet = rows.reduce((s, r) => s + Number(r.net_points || 0), 0);
   const myActs = acts.filter(mine);
@@ -782,10 +771,10 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
       {myRollup.length > 0 && (
         <div style={cardStyle}>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Conversations this week</div>
-          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>Scorecard average is 1 to 3 across every part you scored. Asks are tracked, not paid; the outcome next to each is what pays.</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>Scorecard average is 1 to 3 across every part you scored. Pivots are tracked, not paid; the Policy Reviews next to them are what pays.</div>
           <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr>{isAdmin && <th style={tableTh}>Who</th>}<th style={tableTh}>Scorecards</th><th style={tableTh}>Average</th><th style={tableTh}>Pivots → Reviews</th><th style={tableTh}>Review asks → Google reviews</th><th style={tableTh}>Referral asks → Referrals sold</th></tr></thead>
+              <thead><tr>{isAdmin && <th style={tableTh}>Who</th>}<th style={tableTh}>Scorecards</th><th style={tableTh}>Average</th><th style={tableTh}>Pivots → Policy reviews</th></tr></thead>
               <tbody>
                 {myRollup.map(r => (
                   <tr key={r.team_member_id}>
@@ -793,8 +782,6 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
                     <td style={tableTd}>{r.scorecards}</td>
                     <td style={tableTd}>{r.scorecard_avg == null ? "\u2014" : Number(r.scorecard_avg).toFixed(2)}</td>
                     <td style={tableTd}>{r.pivots} → {r.policy_reviews}</td>
-                    <td style={tableTd}>{r.review_asks} → {r.google_reviews}</td>
-                    <td style={tableTd}>{r.referral_asks} → {r.referrals_sold}</td>
                   </tr>
                 ))}
               </tbody>
