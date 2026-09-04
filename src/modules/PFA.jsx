@@ -847,15 +847,8 @@ function ReconciliationsTab({ pfaAccountId }) {
               <li>If the difference is not $0.00, nothing is sent and a message goes out instead so it can be looked at.</li>
               <li>Print the emailed form and file it with the statement. That is the compliance record.</li>
             </ol>
-            <div style={{ fontWeight: 700, color: T.slate900, marginBottom: 4 }}>What the reader looks for in that email</div>
-            <ul style={{ margin: "0 0 14px 0", paddingLeft: 18 }}>
-              <li>The subject has the word <strong>PFA</strong> in it.</li>
-              <li>The subject or the file name has the word <strong>statement</strong> in it.</li>
-              <li>The subject does not have the word reconciliation in it.</li>
-              <li>The attachment is a PDF.</li>
-            </ul>
             <div style={{ padding: "8px 10px", borderRadius: 8, background: T.blueLt, border: `1px solid ${T.slate200}` }}>
-              Name the attachment <strong>YY_MM Statement.pdf</strong> &mdash; for example, 26_08 Statement.pdf for the August 2026 statement.
+              Name the attachment <strong>YY_MM Statement.pdf</strong>
             </div>
             <div style={{ marginTop: 10, color: T.slate500 }}>
               If the statement has not arrived by the 1st, a reminder goes out every morning until it does.
