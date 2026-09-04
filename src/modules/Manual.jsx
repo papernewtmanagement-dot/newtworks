@@ -1226,63 +1226,15 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     return () => { cancelled = true; };
   }, []);
 
-  // Cross-manual includes. resolveInclude normally only sees rows of the
-  // CURRENT manual, so an [Included from: X] pointing at a page in another
-  // manual rendered a yellow "Missing include" banner (Retention >
-  // Appointments needs the Welcome script, which lives in the Admin manual).
-  // Loading every manual's rows up front would drag hundreds of KB of body
-  // text onto every page view, so instead this fetches ONLY the titles that
-  // actually failed to resolve here, and only when one does. The effect
-  // re-runs as foreignRows grows, so a chain that reaches into a second
-  // manual and out again converges after a couple of passes.
-  const [foreignRows, setForeignRows] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    const known = new Set(
-      [...(allRows || []), ...(foreignRows || [])]
-        .map((r) => String(r?.title || "").trim().toLowerCase())
-        .filter(Boolean)
-    );
-    const scan = [
-      String(page?.content || ""),
-      ...(excerptRows || []).map((r) => String(r?.content || "")),
-      ...(foreignRows || []).map((r) => String(r?.content || "")),
-    ];
-    const wanted = [];
-    const seen = new Set();
-    for (const src of scan) {
-      for (const ref of extractTransclusionMarkers(src)) {
-        if (ref.kind !== "include") continue;
-        const key = ref.title.trim().toLowerCase();
-        if (!key || known.has(key) || seen.has(key)) continue;
-        seen.add(key);
-        wanted.push(ref.title.trim());
-      }
-    }
-    if (wanted.length === 0) return undefined;
-    (async () => {
-      try {
-        const { data, error: e } = await supabase
-          .from("manuals")
-          .select("id, title, content, manual_type, is_active, version")
-          .eq("agency_id", AGENCY_ID)
-          .eq("is_active", true)
-          .in("title", wanted);
-        if (cancelled || e || !Array.isArray(data) || data.length === 0) return;
-        setForeignRows((prev) => {
-          const have = new Set((prev || []).map((r) => String(r.title || "").trim().toLowerCase()));
-          const add = data.filter((r) => !have.has(String(r.title || "").trim().toLowerCase()));
-          return add.length === 0 ? prev : [...(prev || []), ...add];
-        });
-      } catch (_err) { /* silent — cross-manual includes are best-effort */ }
-    })();
-    return () => { cancelled = true; };
-  }, [page?.content, allRows, excerptRows, foreignRows]);
-
-  // allRows goes in LAST so a same-manual title always wins a collision.
+  // Include markers resolve ONLY against the current manual's rows, by design.
+  // Cross-manual includes were built on 2026-09-04 and reverted the same day:
+  // Peter does not want a page in one manual pulling content out of another.
+  // If a step needs content that lives in a different manual, the content is in
+  // the wrong manual — move it, don't reach for it. See operational_rule
+  // "Manuals — no cross-manual embedding".
   const resolveInclude = useMemo(
-    () => makeIncludeResolver(buildIncludeLookup([...(foreignRows || []), ...(allRows || [])])),
-    [allRows, foreignRows]
+    () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
+    [allRows]
   );
   const resolveGlossary = useMemo(
     () => makeGlossaryResolver(buildGlossaryLookup(glossaryRows || [])),
