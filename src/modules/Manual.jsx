@@ -1226,9 +1226,63 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     return () => { cancelled = true; };
   }, []);
 
+  // Cross-manual includes. resolveInclude normally only sees rows of the
+  // CURRENT manual, so an [Included from: X] pointing at a page in another
+  // manual rendered a yellow "Missing include" banner (Retention >
+  // Appointments needs the Welcome script, which lives in the Admin manual).
+  // Loading every manual's rows up front would drag hundreds of KB of body
+  // text onto every page view, so instead this fetches ONLY the titles that
+  // actually failed to resolve here, and only when one does. The effect
+  // re-runs as foreignRows grows, so a chain that reaches into a second
+  // manual and out again converges after a couple of passes.
+  const [foreignRows, setForeignRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const known = new Set(
+      [...(allRows || []), ...(foreignRows || [])]
+        .map((r) => String(r?.title || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const scan = [
+      String(page?.content || ""),
+      ...(excerptRows || []).map((r) => String(r?.content || "")),
+      ...(foreignRows || []).map((r) => String(r?.content || "")),
+    ];
+    const wanted = [];
+    const seen = new Set();
+    for (const src of scan) {
+      for (const ref of extractTransclusionMarkers(src)) {
+        if (ref.kind !== "include") continue;
+        const key = ref.title.trim().toLowerCase();
+        if (!key || known.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        wanted.push(ref.title.trim());
+      }
+    }
+    if (wanted.length === 0) return undefined;
+    (async () => {
+      try {
+        const { data, error: e } = await supabase
+          .from("manuals")
+          .select("id, title, content, manual_type, is_active, version")
+          .eq("agency_id", AGENCY_ID)
+          .eq("is_active", true)
+          .in("title", wanted);
+        if (cancelled || e || !Array.isArray(data) || data.length === 0) return;
+        setForeignRows((prev) => {
+          const have = new Set((prev || []).map((r) => String(r.title || "").trim().toLowerCase()));
+          const add = data.filter((r) => !have.has(String(r.title || "").trim().toLowerCase()));
+          return add.length === 0 ? prev : [...(prev || []), ...add];
+        });
+      } catch (_err) { /* silent — cross-manual includes are best-effort */ }
+    })();
+    return () => { cancelled = true; };
+  }, [page?.content, allRows, excerptRows, foreignRows]);
+
+  // allRows goes in LAST so a same-manual title always wins a collision.
   const resolveInclude = useMemo(
-    () => makeIncludeResolver(buildIncludeLookup(allRows || [])),
-    [allRows]
+    () => makeIncludeResolver(buildIncludeLookup([...(foreignRows || []), ...(allRows || [])])),
+    [allRows, foreignRows]
   );
   const resolveGlossary = useMemo(
     () => makeGlossaryResolver(buildGlossaryLookup(glossaryRows || [])),
@@ -1368,8 +1422,8 @@ What I\'d like to discuss:
         .newtworks-handbook-body .newtworks-info-btn:hover, .newtworks-handbook-body .newtworks-info-btn:focus-visible { background: ${T.blue}33; border-color: ${T.blue}; outline: none; }
         .newtworks-info-popover { padding: 12px 14px; max-width: min(360px, calc(100vw - 32px)); border: 1px solid ${T.blue}; border-radius: 6px; background: white; color: ${T.slate900}; font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
         .newtworks-info-popover a { color: ${T.blue}; text-decoration: underline; }
-        .newtworks-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 22px 0 8px 0; }
-        .newtworks-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 18px 0 6px 0; }
+        .newtworks-handbook-body h3 { font-size: 16px; font-weight: 700; color: ${T.slate900}; margin: 26px 0 10px 0; padding: 5px 10px; background: linear-gradient(to right, ${T.blue}14, transparent 50%); border-left: 3px solid ${T.blue}66; border-radius: 5px; }
+        .newtworks-handbook-body h4 { font-size: 14px; font-weight: 700; color: ${T.slate800}; margin: 20px 0 8px 0; padding: 3px 0 3px 9px; border-left: 2px solid ${T.slate300}; }
         .newtworks-handbook-body p { margin: 0 0 14px 0; }
         .newtworks-handbook-body ul, .newtworks-handbook-body ol { margin: 8px 0 16px 0; padding-left: 24px; }
         .newtworks-handbook-body li { margin-bottom: 6px; }
@@ -1564,6 +1618,13 @@ What I\'d like to discuss:
           .newtworks-handbook-body h2 {
             background: none !important; border-left: 2pt solid #444 !important;
             border-radius: 0 !important; padding: 2pt 0 2pt 8pt !important;
+          }
+          .newtworks-handbook-body h3 {
+            background: none !important; border-left: 1pt solid #777 !important;
+            border-radius: 0 !important; padding: 1pt 0 1pt 7pt !important;
+          }
+          .newtworks-handbook-body h4 {
+            border-left: 1pt solid #aaa !important; padding: 0 0 0 7pt !important;
           }
           .newtworks-handbook-body a { color: #000 !important; text-decoration: underline; }
           .newtworks-handbook-body code, .newtworks-handbook-body pre { background: none !important; }
