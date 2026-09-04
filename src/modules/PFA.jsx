@@ -698,6 +698,7 @@ function ReconciliationsTab({ pfaAccountId }) {
   const [recomputingId, setRecomputingId] = useState(null);
   const [recomputeMsg, setRecomputeMsg] = useState("");
   const [sendingId, setSendingId] = useState(null);
+  const [howOpen, setHowOpen] = useState(false);
 
   const loadRows = useCallback(() => {
     if (!pfaAccountId) return;
@@ -826,6 +827,42 @@ function ReconciliationsTab({ pfaAccountId }) {
 
   return (
     <div>
+      <div style={{ ...cardStyle, marginBottom: 12, padding: 0 }}>
+        <button type="button" onClick={() => setHowOpen(v => !v)}
+          style={{
+            width: "100%", textAlign: "left", padding: "12px 14px", background: "transparent",
+            border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, color: T.slate900,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+          <span style={{ color: T.slate500 }}>{howOpen ? "\u25be" : "\u25b8"}</span>
+          How the monthly filing works
+        </button>
+        {howOpen && (
+          <div style={{ padding: "0 14px 14px 14px", fontSize: 13, color: T.slate700, lineHeight: 1.55 }}>
+            <ol style={{ margin: "0 0 14px 0", paddingLeft: 18 }}>
+              <li>Frost sends the statement. Forward it to paper.newt.management@gmail.com. That is the only manual step.</li>
+              <li>Newtworks reads the statement in &mdash; deposits, checks and balances.</li>
+              <li>Reconciliation runs at noon every day for any statement not yet reconciled.</li>
+              <li>If the difference is $0.00, the State Farm form is built and emailed to the agent&rsquo;s State Farm address on its own.</li>
+              <li>If the difference is not $0.00, nothing is sent and a message goes out instead so it can be looked at.</li>
+              <li>Print the emailed form and file it with the statement. That is the compliance record.</li>
+            </ol>
+            <div style={{ fontWeight: 700, color: T.slate900, marginBottom: 4 }}>What the reader looks for in that email</div>
+            <ul style={{ margin: "0 0 14px 0", paddingLeft: 18 }}>
+              <li>The subject has the word <strong>PFA</strong> in it.</li>
+              <li>The subject or the file name has the word <strong>statement</strong> in it.</li>
+              <li>The subject does not have the word reconciliation in it.</li>
+              <li>The attachment is a PDF.</li>
+            </ul>
+            <div style={{ padding: "8px 10px", borderRadius: 8, background: T.blueLt, border: `1px solid ${T.slate200}` }}>
+              Name the attachment <strong>YY_MM Statement.pdf</strong> &mdash; for example, 26_08 Statement.pdf for the August 2026 statement.
+            </div>
+            <div style={{ marginTop: 10, color: T.slate500 }}>
+              If the statement has not arrived by the 1st, a reminder goes out every morning until it does.
+            </div>
+          </div>
+        )}
+      </div>
       {recomputeMsg && (
         <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: T.slate50, border: `1px solid ${T.slate200}`, fontSize: 13, color: T.slate800 }}>
           {recomputeMsg}
