@@ -9,18 +9,18 @@ import { T } from "../lib/theme.js";
 // /production; the old /activity route still resolves). Team capture
 // for Retention Points, sales, quotes, and cancelations.
 //
-// ONE flat page, four blocks: customer, Relationship type + Good
-// Neighbor Connect, "What happened" (every Retention Points item in
-// one chip row), and Policies. Note and ECRM link sit behind one small
-// link and open on their own when something needs them.
-//
-// Policies is ONE list, not three. Each row is a policy (a household can
-// have two auto policies and a home and a boat) with what happened to it
-// marked right on the row: Quoted, Sold, Canceled. Quoted and Sold can
-// both be on (quoted and bound the same day); Sold and Canceled cannot.
-// Auto and Fire rows carry a type (Private Passenger, Classic, GAINSCO,
-// Home, RDP, PLUP, and so on) read from product_types, so adding a type
-// later never touches this file.
+// ONE flat page, Peter's layout (2026-09-04):
+//  * Row 1: every first field on one wrapping row (name, initial, date,
+//    Log for, Relationship type, Good Neighbor Connect).
+//  * Retention activity: one "Add Retention Activity" dropdown. Picking
+//    an item adds a pill with an x; pills sit on the same wrapping row.
+//    The same item can be added twice (two policy changes = two pills =
+//    two rows on the server).
+//  * Policies: the same pattern. "Add Policy" dropdown adds a row; the
+//    row holds the line, its type, a Quoted / Sold / Canceled dropdown,
+//    then premium and cars when Sold or Canceled. Marketing type sits on
+//    the Add Policy row. Auto and Fire types come from product_types.
+//  * ECRM link and note always shown, on one row.
 //
 // Layout follows the web-form research Peter asked for (2026-09-04):
 //  * Fewer visible choices. Three policy blocks became one list with one
@@ -94,8 +94,19 @@ const chipRow = { display: "flex", flexWrap: "wrap", gap: 8 };
 const gridForm = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 };
 const policyRow = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" };
 const removeBtn = { ...btnGhost, color: T.red, borderColor: T.slate300, alignSelf: "center", whiteSpace: "nowrap" };
-const linkBtn = { background: "none", border: "none", padding: 0, color: T.blue, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
-const miniChip = (on) => ({ ...chip(on), padding: "6px 10px", fontSize: 12 });
+const wrapRow = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" };
+const field = (min = 150) => ({ flex: `1 1 ${min}px`, minWidth: 0 });
+const addSelect = {
+  ...inputBase, width: "auto", flex: "0 1 auto", color: T.blue, fontWeight: 700,
+  border: `1px dashed ${T.blue}`, background: T.blueLt, cursor: "pointer",
+};
+const pill = { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, border: `1px solid ${T.blue}`, background: T.blueLt, color: T.blue };
+const pillX = { border: "none", background: "transparent", color: T.blue, fontSize: 16, lineHeight: 1, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" };
+const STATUSES = [
+  { key: "quoted",   label: "Quoted" },
+  { key: "sold",     label: "Sold" },
+  { key: "canceled", label: "Canceled" },
+];
 
 // ---------- helpers ----------
 function todayCentral() {
@@ -127,34 +138,6 @@ let _pid = 0;
 const newPolicyId = () => `p${++_pid}`;
 
 // ---------- shared field blocks ----------
-function CustomerFields({ first, setFirst, initial, setInitial }) {
-  const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.` : "";
-  return (
-    <>
-      <div>
-        <label style={labelStyle}>Customer first name</label>
-        <input style={inputBase} value={first} onChange={e => setFirst(e.target.value)} placeholder="Anna" />
-      </div>
-      <div>
-        <label style={labelStyle}>Last initial {preview ? <span style={hintStyle}>→ {preview}</span> : null}</label>
-        <input style={inputBase} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
-      </div>
-    </>
-  );
-}
-
-function LogForPicker({ canLogForOthers, roster, value, onChange }) {
-  if (!canLogForOthers) return null;
-  return (
-    <div>
-      <label style={labelStyle}>Log for</label>
-      <select style={inputBase} value={value || ""} onChange={e => onChange(e.target.value || null)}>
-        <option value="">Myself</option>
-        {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
-      </select>
-    </div>
-  );
-}
 
 function Notice({ kind, children }) {
   if (!children) return null;
@@ -163,19 +146,6 @@ function Notice({ kind, children }) {
   return <div style={{ padding: "10px 12px", borderRadius: 8, background: bg, color: fg, fontSize: 13, fontWeight: 600, marginTop: 12 }}>{children}</div>;
 }
 
-function TypeField({ types, value, onChange, line }) {
-  const opts = types[line] || [];
-  if (!opts.length) return null;
-  return (
-    <div>
-      <label style={labelStyle}>Type</label>
-      <select style={inputBase} value={value || ""} onChange={e => onChange(e.target.value)}>
-        <option value="">Pick one</option>
-        {opts.map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
-      </select>
-    </div>
-  );
-}
 
 function typeLabel(types, line, key) {
   const t = (types[line] || []).find(x => x.type_key === key);
@@ -218,19 +188,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [first, setFirst] = useState("");
   const [initial, setInitial] = useState("");
   const [date, setDate] = useState(today);
-  const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
   const [relationship, setRelationship] = useState("");
   const [gnc, setGnc] = useState("");
   const [source, setSource] = useState("");
   const [sourcedBy, setSourcedBy] = useState("");
-  const [checked, setChecked] = useState({});
+  const [activities, setActivities] = useState([]);  // [{id, key}]
   const [saveLine, setSaveLine] = useState("");
   const [saveReason, setSaveReason] = useState("");
-  const [policies, setPolicies] = useState([]);   // [{id, line, type, quoted, sold, canceled, premium, vehicles, isNewLine}]
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [cReason, setCReason] = useState("");
-  const [extraOpen, setExtraOpen] = useState(false);
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -238,37 +205,28 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [ok, setOk] = useState("");
   const [attempted, setAttempted] = useState(false); // show what's missing only after a Log tap
 
-  // every Retention Points item in one row: service tasks first, then the rest
+  // every Retention Points item, service tasks first
   const items = useMemo(() => {
     const all = (values || []).filter(v => v.category === "logged");
-    const svc = all.filter(v => v.activity_key.startsWith(SERVICE_PREFIX));
-    const rest = all.filter(v => !v.activity_key.startsWith(SERVICE_PREFIX));
-    return [...svc, ...rest];
+    return [...all.filter(v => v.activity_key.startsWith(SERVICE_PREFIX)), ...all.filter(v => !v.activity_key.startsWith(SERVICE_PREFIX))];
   }, [values]);
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
 
-  const toggleChecked = (k) => setChecked(c => ({ ...c, [k]: !c[k] }));
-  const addPolicy = (line) => setPolicies(list => [...list, { id: newPolicyId(), line, type: "", quoted: false, sold: false, canceled: false, premium: "", vehicles: "1", isNewLine: true }]);
+  const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key }]); };
+  const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
+  const addPolicy = (line) => { if (line) setPolicies(list => [...list, { id: newPolicyId(), line, type: "", status: "", premium: "", vehicles: "1", isNewLine: true }]); };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
   const dropPolicy = (id) => setPolicies(list => list.filter(p => p.id !== id));
-  const toggleStatus = (p, field) => {
-    const patch = { [field]: !p[field] };
-    if (field === "sold" && patch.sold) patch.canceled = false;      // sold and canceled cannot both be on
-    if (field === "canceled" && patch.canceled) patch.sold = false;
-    editPolicy(p.id, patch);
-  };
 
   // ---- what is in the entry right now ----
-  const activityItems = [];
-  for (const k of Object.keys(checked)) {
-    if (!checked[k] || !byKey[k]) continue;
-    if (k === "cancelation_saved") activityItems.push({ activity_key: k, save_line: saveLine, save_reason: saveReason.trim() });
-    else activityItems.push({ activity_key: k });
-  }
+  const hasSave = activities.some(a => a.key === "cancelation_saved");
+  const hasReview = activities.some(a => a.key === "policy_review");
+  const activityItems = activities.filter(a => byKey[a.key]).map(a =>
+    a.key === "cancelation_saved" ? { activity_key: a.key, save_line: saveLine, save_reason: saveReason.trim() } : { activity_key: a.key });
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
-  const quoted = policies.filter(p => p.quoted);
-  const sold = policies.filter(p => p.sold);
-  const canceled = policies.filter(p => p.canceled);
+  const quoted = policies.filter(p => p.status === "quoted");
+  const sold = policies.filter(p => p.status === "sold");
+  const canceled = policies.filter(p => p.status === "canceled");
   const saleTotal = sold.reduce((s, p) => s + (Number(p.premium) || 0), 0);
 
   const hasActivity = activityItems.length > 0;
@@ -280,28 +238,24 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
   const needsType = (line) => (types[line] || []).length > 0;
-  const needsMoney = (p) => p.sold || p.canceled;
-  const showDate = dateOpen || date !== today;
-  const showExtra = extraOpen || hasSale || !!checked.policy_review || !!ecrm || !!note;
-  const counts = {};
-  for (const p of policies) counts[p.line] = (counts[p.line] || 0) + 1;
+  const needsMoney = (p) => p.status === "sold" || p.status === "canceled";
 
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
   if (!customerOk) problems.push("Customer first name and last initial.");
-  if (!hasAnything) problems.push("Tap what happened, or add a policy.");
-  if (policies.some(p => !p.quoted && !p.sold && !p.canceled)) problems.push("Each policy needs Quoted, Sold, or Canceled marked.");
+  if (!hasAnything) problems.push("Add a retention activity or a policy.");
+  if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
   if (policies.some(p => needsType(p.line) && !p.type)) problems.push("Each Auto or Fire policy needs its type.");
   if (policies.some(p => needsMoney(p) && (p.premium === "" || !(Number(p.premium) >= 0)))) problems.push("Each sold or canceled policy needs its premium.");
   if (policies.some(p => needsMoney(p) && p.line === "auto" && !(Number(p.vehicles) >= 1))) problems.push("Each sold or canceled auto policy needs its number of cars.");
   if ((hasActivity || hasQuote) && date < addDays(today, -7)) problems.push("Activity and quotes are logged within 7 days. Pick a later date or split the entry.");
   if (hasSale && date < addDays(today, -30)) problems.push("A sale is logged within 30 days of the bind.");
   if (hasCxl && date < addDays(today, -90)) problems.push("A cancelation is logged within 90 days.");
-  if (checked.cancelation_saved) {
+  if (hasSave) {
     if (date !== today) problems.push("A save is logged the same business day it comes in. Set the date to today.");
     if (!saveLine || !saveReason.trim()) problems.push("The save needs the policy line at risk and the reason the customer gave.");
   }
-  if (checked.policy_review && !note.trim()) problems.push("The policy review needs a note on what you covered.");
+  if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
   if (hasSale) {
     if (!relationship) problems.push("A sale needs the relationship type.");
     if (!source) problems.push("A sale needs the marketing type.");
@@ -316,11 +270,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
 
   const reset = () => {
-    setFirst(""); setInitial(""); setDate(today); setDateOpen(false);
+    setFirst(""); setInitial(""); setDate(today);
     setRelationship(""); setGnc(""); setSource(""); setSourcedBy("");
-    setChecked({}); setSaveLine(""); setSaveReason("");
-    setPolicies([]); setPickerOpen(false); setCReason("");
-    setExtraOpen(false); setEcrm(""); setNote("");
+    setActivities([]); setSaveLine(""); setSaveReason("");
+    setPolicies([]); setCReason(""); setEcrm(""); setNote("");
     setAttempted(false);
   };
 
@@ -353,38 +306,45 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
+  const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.` : "";
+
   return (
     <div>
       <div style={cardStyle}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>What happened with this customer?</div>
-        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>Tap what happened. Skip what didn't. One button saves it all.</div>
+        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>Add what happened. One button saves it all.</div>
 
-        {/* ---- customer ---- */}
-        <div style={gridForm}>
-          <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
-          <LogForPicker canLogForOthers={isOwner} roster={roster} value={logFor} onChange={setLogFor} />
-          {showDate && (
-            <div>
-              <label style={labelStyle}>Date</label>
-              <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
+        {/* ---- row 1: every first field, wrapping ---- */}
+        <div style={wrapRow}>
+          <div style={field(140)}>
+            <label style={labelStyle}>First name</label>
+            <input style={inputBase} value={first} onChange={e => setFirst(e.target.value)} placeholder="Anna" />
+          </div>
+          <div style={field(90)}>
+            <label style={labelStyle}>Last initial {preview ? <span style={hintStyle}>→ {preview}</span> : null}</label>
+            <input style={inputBase} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
+          </div>
+          <div style={field(150)}>
+            <label style={labelStyle}>Date</label>
+            <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
+          </div>
+          {isOwner && (
+            <div style={field(140)}>
+              <label style={labelStyle}>Log for</label>
+              <select style={inputBase} value={logFor || ""} onChange={e => setLogFor(e.target.value || null)}>
+                <option value="">Myself</option>
+                {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+              </select>
             </div>
           )}
-        </div>
-        {!showDate && (
-          <div style={{ marginTop: 8, fontSize: 13, color: T.slate500 }}>
-            Today · <button type="button" style={linkBtn} onClick={() => setDateOpen(true)}>change the date</button>
-          </div>
-        )}
-
-        <div style={{ ...gridForm, marginTop: 12 }}>
-          <div>
+          <div style={field(160)}>
             <label style={labelStyle}>Relationship type</label>
             <select style={inputBase} value={relationship} onChange={e => setRelationship(e.target.value)}>
               <option value="">Pick one</option>
               {RELATIONSHIPS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
           </div>
-          <div>
+          <div style={field(160)}>
             <label style={labelStyle}>Good Neighbor Connect used?</label>
             <select style={inputBase} value={gnc} onChange={e => setGnc(e.target.value)}>
               <option value="">Pick one</option>
@@ -394,27 +354,30 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           </div>
         </div>
 
-        {/* ---- what happened: every Retention Points item, one row ---- */}
+        {/* ---- retention activity: Add dropdown + pills on one wrapping row ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>What happened</div>
-          <div style={chipRow}>
-            {items.map(v => (
-              <span key={v.activity_key} style={chip(!!checked[v.activity_key])} onClick={() => toggleChecked(v.activity_key)}>
-                {v.label} · ${fmtPts(v.points)}
+          <div style={{ ...wrapRow, alignItems: "center" }}>
+            <select style={addSelect} value="" onChange={e => addActivity(e.target.value)}>
+              <option value="">+ Add Retention Activity</option>
+              {items.map(v => <option key={v.activity_key} value={v.activity_key}>{v.label} · ${fmtPts(v.points)}</option>)}
+            </select>
+            {activities.map(a => byKey[a.key] && (
+              <span key={a.id} style={pill}>
+                {byKey[a.key].label} · ${fmtPts(byKey[a.key].points)}
+                <button type="button" style={pillX} onClick={() => dropActivity(a.id)} aria-label="remove">×</button>
               </span>
             ))}
-            {items.length === 0 && <span style={{ fontSize: 12, color: T.slate500 }}>Nothing is set up to log yet.</span>}
           </div>
-          {checked.cancelation_saved && (
-            <div style={{ ...gridForm, marginTop: 12, padding: 12, background: T.slate50, borderRadius: 8 }}>
-              <div>
+          {hasSave && (
+            <div style={{ ...wrapRow, marginTop: 10, padding: 12, background: T.slate50, borderRadius: 8 }}>
+              <div style={field(160)}>
                 <label style={labelStyle}>Policy line at risk</label>
                 <select style={inputBase} value={saveLine} onChange={e => setSaveLine(e.target.value)}>
                   <option value="">Pick one</option>
                   {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                 </select>
               </div>
-              <div style={{ gridColumn: "1 / -1" }}>
+              <div style={field(260)}>
                 <label style={labelStyle}>Reason the customer gave</label>
                 <input style={inputBase} value={saveReason} onChange={e => setSaveReason(e.target.value)} placeholder="Rate went up at renewal; found a cheaper quote" />
               </div>
@@ -422,74 +385,71 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- policies: one list, what happened marked on each row ---- */}
+        {/* ---- policies: Add dropdown + marketing type, then one row per policy ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Policies</div>
-          {!pickerOpen && policies.length === 0 ? (
-            <div style={chipRow}>
-              <span style={{ ...chip(false), borderStyle: "dashed", color: T.blue }} onClick={() => setPickerOpen(true)}>+ Add a policy</span>
+          <div style={wrapRow}>
+            <select style={addSelect} value="" onChange={e => addPolicy(e.target.value)}>
+              <option value="">+ Add Policy</option>
+              {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+            <div style={field(170)}>
+              <label style={labelStyle}>Marketing type</label>
+              <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
+                <option value="">Pick one</option>
+                {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
+              </select>
             </div>
-          ) : (
-            <>
-              <div style={{ ...gridForm, marginBottom: 12 }}>
-                <div>
-                  <label style={labelStyle}>Marketing type</label>
-                  <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
-                    <option value="">Pick one</option>
-                    {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
-                  </select>
-                </div>
-                {isReferral && (
-                  <div>
-                    <label style={labelStyle}>Who sourced the lead?</label>
-                    <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
-                      <option value="">{logFor ? "The person logged for" : "Me"}</option>
-                      {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
-                    </select>
-                  </div>
-                )}
+            {isReferral && (
+              <div style={field(160)}>
+                <label style={labelStyle}>Who sourced the lead?</label>
+                <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
+                  <option value="">{logFor ? "The person logged for" : "Me"}</option>
+                  {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+                </select>
               </div>
-              <div style={chipRow}>
-                {PRODUCTS.map(p => (
-                  <span key={p.key} style={chip(!!counts[p.key])} onClick={() => addPolicy(p.key)}>
-                    {p.label}{counts[p.key] ? ` · ${counts[p.key]}` : ""}
-                  </span>
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>Tap a line once per policy. Then mark what happened to each one.</div>
-            </>
-          )}
+            )}
+          </div>
 
           {policies.length > 0 && (
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
               {policies.map(p => (
-                <div key={p.id} style={policyRow}>
-                  <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{PRODUCT_LABEL[p.line]}</div>
-                  <TypeField types={types} line={p.line} value={p.type} onChange={v => editPolicy(p.id, { type: v })} />
-                  <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                    <span style={miniChip(p.quoted)} onClick={() => toggleStatus(p, "quoted")}>Quoted</span>
-                    <span style={miniChip(p.sold)} onClick={() => toggleStatus(p, "sold")}>Sold</span>
-                    <span style={miniChip(p.canceled)} onClick={() => toggleStatus(p, "canceled")}>Canceled</span>
-                    <button type="button" style={{ ...removeBtn, marginLeft: "auto" }} onClick={() => dropPolicy(p.id)}>Remove</button>
+                <div key={p.id} style={{ ...wrapRow, padding: 10, background: T.slate50, borderRadius: 8 }}>
+                  <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{PRODUCT_LABEL[p.line]}</div>
+                  {needsType(p.line) && (
+                    <div style={field(150)}>
+                      <label style={labelStyle}>Type</label>
+                      <select style={inputBase} value={p.type} onChange={e => editPolicy(p.id, { type: e.target.value })}>
+                        <option value="">Pick one</option>
+                        {(types[p.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div style={field(130)}>
+                    <label style={labelStyle}>What happened</label>
+                    <select style={inputBase} value={p.status} onChange={e => editPolicy(p.id, { status: e.target.value })}>
+                      <option value="">Pick one</option>
+                      {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+                    </select>
                   </div>
                   {needsMoney(p) && (
-                    <div>
+                    <div style={field(120)}>
                       <label style={labelStyle}>Premium</label>
                       <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={p.premium} onChange={e => editPolicy(p.id, { premium: e.target.value })} placeholder="0.00" />
                     </div>
                   )}
                   {needsMoney(p) && p.line === "auto" && (
-                    <div>
+                    <div style={field(80)}>
                       <label style={labelStyle}>Cars</label>
                       <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editPolicy(p.id, { vehicles: e.target.value })} />
                     </div>
                   )}
-                  {p.sold && relationship === "existing" && (
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate700, paddingBottom: 10 }}>
+                  {p.status === "sold" && relationship === "existing" && (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }}>
                       <input type="checkbox" checked={!!p.isNewLine} onChange={e => editPolicy(p.id, { isNewLine: e.target.checked })} />
-                      New line for this household
+                      New line
                     </label>
                   )}
+                  <button type="button" style={{ ...removeBtn, marginLeft: "auto", marginBottom: 6 }} onClick={() => dropPolicy(p.id)}>×</button>
                 </div>
               ))}
               {hasCxl && (
@@ -507,22 +467,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- note + ECRM link: folded unless something needs them ---- */}
-        <div style={blockStyle}>
-          {!showExtra ? (
-            <button type="button" style={linkBtn} onClick={() => setExtraOpen(true)}>+ Add a note or ECRM link</button>
-          ) : (
-            <div style={gridForm}>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={labelStyle}>ECRM link {hasSale ? <span style={{ color: T.red }}>(required for a sale)</span> : <span style={hintStyle}>(optional)</span>}</label>
-                <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
-              </div>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={labelStyle}>Note {checked.policy_review ? <span style={{ color: T.red }}>(what you covered, required for a policy review)</span> : <span style={hintStyle}>(optional)</span>}</label>
-                <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
-              </div>
-            </div>
-          )}
+        {/* ---- ECRM link + note on one row ---- */}
+        <div style={{ ...wrapRow, ...blockStyle }}>
+          <div style={field(240)}>
+            <label style={labelStyle}>ECRM link {hasSale ? <span style={{ color: T.red }}>(required for a sale)</span> : null}</label>
+            <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
+          </div>
+          <div style={field(240)}>
+            <label style={labelStyle}>Note {hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
+            <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
+          </div>
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
