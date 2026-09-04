@@ -100,15 +100,16 @@ const wrapRow = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-
 const linkBtn = { background: "none", border: "none", padding: 0, color: T.blue, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const field = (min = 150) => ({ flex: `1 1 ${min}px`, minWidth: 0 });
 const addSelect = {
-  ...inputBase, width: "auto", flex: "0 1 auto", color: T.blue, fontWeight: 700,
+  ...inputBase, width: 190, flex: "0 0 190px", color: T.blue, fontWeight: 700,
   border: `1px dashed ${T.blue}`, background: T.blueLt, cursor: "pointer",
 };
 const pill = { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, border: `1px solid ${T.blue}`, background: T.blueLt, color: T.blue };
 const pillX = { border: "none", background: "transparent", color: T.blue, fontSize: 16, lineHeight: 1, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" };
 const STATUSES = [
-  { key: "quoted",   label: "Quoted" },
-  { key: "sold",     label: "Sold" },
-  { key: "canceled", label: "Canceled" },
+  { key: "quoted",      label: "Quoted" },
+  { key: "sold",        label: "Sold" },
+  { key: "quoted_sold", label: "Quoted and sold" },
+  { key: "canceled",    label: "Canceled" },
 ];
 
 // ---------- helpers ----------
@@ -210,6 +211,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
   const [attempted, setAttempted] = useState(false); // show what's missing only after a Log tap
+  const [last, setLast] = useState(null);            // {result, first, initial, date} of the entry just logged, for Undo / Log another
 
   // every Retention Points item, least expensive first
   const items = useMemo(() => (values || []).filter(v => v.category === "logged")
@@ -241,8 +243,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const activityItems = activities.filter(a => byKey[a.key]).map(a =>
     a.key === "cancelation_saved" ? { activity_key: a.key, save_line: saveLine, save_reason: saveReason.trim() } : { activity_key: a.key });
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
-  const quoted = policies.filter(p => p.status === "quoted");
-  const sold = policies.filter(p => p.status === "sold");
+  const quoted = policies.filter(p => p.status === "quoted" || p.status === "quoted_sold");
+  const sold = policies.filter(p => p.status === "sold" || p.status === "quoted_sold");
   const canceled = policies.filter(p => p.status === "canceled");
   const saleTotal = sold.reduce((s, p) => s + (Number(p.premium) || 0), 0);
 
@@ -255,7 +257,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
   const needsType = (line) => (types[line] || []).length > 0;
-  const needsMoney = (p) => p.status === "sold" || p.status === "canceled";
+  const isSold = (p) => p.status === "sold" || p.status === "quoted_sold";
+  const needsMoney = (p) => isSold(p) || p.status === "canceled";
   const showDate = dateOpen || date !== today;
   const showSuggest = suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
@@ -288,8 +291,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   }
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
 
-  const reset = () => {
-    setFirst(""); setInitial(""); setDate(today); setDateOpen(false); setSuggest([]);
+  const reset = (keep) => {
+    if (!keep) { setFirst(""); setInitial(""); setDate(today); setDateOpen(false); }
+    setSuggest([]);
     setRelationship(""); setGnc(""); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
     setPolicies([]); setCReason(""); setEcrm(""); setNote("");
@@ -320,9 +324,27 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       if (error) { setErr(errText(error)); return; }
       if (!data?.ok) { setErr(errText(data)); return; }
       setOk(summarizeEntry(data));
+      setLast({ result: data, first: first.trim(), initial: initial.trim(), date });
       reset();
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+  };
+
+  const undo = async () => {
+    if (!last || busy) return;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("rp_undo_entry", { p_result: last.result });
+      if (error) { setErr(errText(error)); return; }
+      setOk(`Undone. ${data?.undone || 0} row${data?.undone === 1 ? "" : "s"} removed.`);
+      setLast(null);
+      onLogged?.();
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+  };
+  const logAnother = () => {
+    if (!last) return;
+    setFirst(last.first); setInitial(last.initial); setDate(last.date);
+    setOk(""); setLast(null);
   };
 
   const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.` : "";
@@ -463,7 +485,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                       <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editPolicy(p.id, { vehicles: e.target.value })} />
                     </div>
                   )}
-                  {p.status === "sold" && relationship === "existing" && (
+                  {isSold(p) && relationship === "existing" && (
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }}>
                       <input type="checkbox" checked={!!p.isNewLine} onChange={e => editPolicy(p.id, { isNewLine: e.target.checked })} />
                       New line
@@ -530,6 +552,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         )}
         <Notice kind="error">{err}</Notice>
         <Notice kind="ok">{ok}</Notice>
+        {ok && last && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8, fontSize: 13 }}>
+            <button type="button" style={linkBtn} onClick={undo} disabled={busy}>Undo</button>
+            <button type="button" style={linkBtn} onClick={logAnother}>Log another for {last.first} {last.initial.toUpperCase()}.</button>
+          </div>
+        )}
       </div>
       <PendingSaves refreshKey={refreshKey} />
     </div>
