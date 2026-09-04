@@ -11883,8 +11883,18 @@ async function maybeArchiveThread(
       },
     });
     if (!res.ok) {
-      console.error(`[archive] thread ${threadId}: GMAIL_MODIFY_THREAD_LABELS failed: ${res.error}`);
-      return;
+      // A thread Gmail no longer has cannot be sitting in the inbox. Returning
+      // early without stamping meant the sweep re-tried every DELETED thread on
+      // every run, forever, burning a Composio call each time — eight July
+      // threads were stuck in that loop. Stamp them so they stop coming back.
+      // Any OTHER failure (auth, rate limit, transient) still leaves the stamp
+      // off so the next run genuinely retries it.
+      const gone = /not\s*found|404|requested entity/i.test(String(res.error ?? ""));
+      if (!gone) {
+        console.error(`[archive] thread ${threadId}: GMAIL_MODIFY_THREAD_LABELS failed: ${res.error}`);
+        return;
+      }
+      console.warn(`[archive] thread ${threadId}: gone from Gmail, marking archived so the sweep stops retrying`);
     }
     await sb
       .from("documents")
