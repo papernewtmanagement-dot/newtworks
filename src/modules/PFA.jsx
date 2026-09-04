@@ -845,7 +845,8 @@ function ReconciliationsTab({ pfaAccountId }) {
               <li>Reconciliation runs at noon every day for any statement not yet reconciled.</li>
               <li>If the difference is $0.00, the State Farm form is built and emailed to the agent&rsquo;s State Farm address on its own.</li>
               <li>If the difference is not $0.00, nothing is sent and a message goes out instead so it can be looked at.</li>
-              <li>Print the emailed form and file it with the statement. That is the compliance record.</li>
+              <li>Print the emailed form, sign and date it, and file it with the statement. That is the compliance record.</li>
+              <li>On the State Farm side, download the month&rsquo;s Altered Money Report, sign and date it, and file it with the other two.</li>
             </ol>
             <div style={{ padding: "8px 10px", borderRadius: 8, background: T.blueLt, border: `1px solid ${T.slate200}` }}>
               Name the attachment <strong>YY_MM Statement.pdf</strong>

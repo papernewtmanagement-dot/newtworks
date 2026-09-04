@@ -598,7 +598,11 @@ async function run(req: Request): Promise<Response> {
     cleared_notes: [],
   });
 
-  const fileName = `PFA_Reconciliation_${statementPeriodEnd}.pdf`;
+  // Named to match the statement Peter forwards in ("YY_MM Statement.pdf"),
+  // so the pair files together for the month: "26_08 Reconciliation.pdf".
+  const yy = String(statementPeriodEnd).slice(2, 4);
+  const mm = String(statementPeriodEnd).slice(5, 7);
+  const fileName = `${yy}_${mm} Reconciliation.pdf`;
 
   // Stage the PDF with Composio first -- `attachment` needs an s3key, not bytes.
   const staged = await stageFileWithComposio({
