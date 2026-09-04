@@ -557,9 +557,15 @@ const YearOnePath = ({ path, isPhone }) => {
 };
 
 // ─── Tab ─────────────────────────────────────────────────────
-export default function EarningPotentialTab() {
+// Everyone sees Earning Potential (Peter 2026-09-04). The Retention and
+// Life Specialist curves are admin only; a non-admin gets Sales alone and
+// an ?erole= for the other two falls back to sales.
+const ADMIN_ONLY_ROLES = ["retention", "life_specialist"];
+
+export default function EarningPotentialTab({ isAdmin = false } = {}) {
   const _vp = useViewport();
-  const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", ROLE_ORDER);
+  const allowedRoles = isAdmin ? ROLE_ORDER : ROLE_ORDER.filter(r => !ADMIN_ONLY_ROLES.includes(r));
+  const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", allowedRoles);
   const [highlighted, setHighlighted] = useState("rock");
   const [data, setData] = useState(null);
   const [y1, setY1] = useState(null);
@@ -579,9 +585,9 @@ export default function EarningPotentialTab() {
   useEffect(() => { load(); }, []);
 
   const roles = useMemo(() => {
-    const list = Array.isArray(data?.roles) ? data.roles : [];
+    const list = (Array.isArray(data?.roles) ? data.roles : []).filter(r => allowedRoles.includes(r.role_key));
     return [...list].sort((a, b) => ROLE_ORDER.indexOf(a.role_key) - ROLE_ORDER.indexOf(b.role_key));
-  }, [data]);
+  }, [data, isAdmin]);
   const role = roles.find(r => r.role_key === roleKey) || roles[0] || null;
   const tiers = Array.isArray(role?.tiers) ? role.tiers : [];
   const curve = role?.curve || null;
