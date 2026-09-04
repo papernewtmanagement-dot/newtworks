@@ -225,6 +225,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
   const [suggest, setSuggest] = useState([]);      // customer names on file that match what's typed
+  const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
   const [relationship, setRelationship] = useState("");
   const [gnc, setGnc] = useState(false);
   const [source, setSource] = useState("");
@@ -264,6 +265,22 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   }, [first]);
   const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); setSuggest([]); };
 
+  // what this customer has on file, once the name is complete
+  useEffect(() => {
+    const f = first.trim(), i = initial.trim();
+    if (!f || !/^[A-Za-z]$/.test(i)) { setOnFile([]); return undefined; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.rpc("rp_sold_on_file", { p_customer_first: f, p_customer_last_initial: i });
+      if (alive) setOnFile(Array.isArray(data) ? data : []);
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [first, initial]);
+  // the sold policy on file that a canceled row would be matched to (same line, same type first, most recent, not already canceled)
+  const soldMatch = (p) => onFile
+    .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.sale_date <= date) && (!date || r.window_end > date))
+    .sort((a, b) => ((b.product_type === p.type) - (a.product_type === p.type)) || (a.sale_date < b.sale_date ? 1 : -1))[0] || null;
+
   const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key }]); };
   const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
   const addPolicy = (line) => {
@@ -273,6 +290,20 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setActivePolicy(id);
   };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
+  // Canceled: bring in the premium and cars we recorded on the sale, editable; blank when nothing is on file
+  const setStatus = (p, status) => {
+    const patch = { status };
+    if (status === "canceled") {
+      const m = soldMatch(p);
+      patch.matchedId = m ? m.sale_product_id : null;
+      if (m && p.premium === "") patch.premium = String(m.premium ?? "");
+      if (m && p.line === "auto" && m.vehicle_count) patch.vehicles = String(m.vehicle_count);
+      if (m && !p.type && m.product_type) patch.type = m.product_type;
+    } else {
+      patch.matchedId = null;
+    }
+    editPolicy(p.id, patch);
+  };
   const dropPolicy = (id) => { setPolicies(list => list.filter(p => p.id !== id)); setActivePolicy(a => a === id ? null : a); };
   const setScore = (k, v) => setScores(sc => ({ ...sc, [k]: sc[k] === v ? null : v }));
   const cardScored = CARD_PARTS.filter(pt => scores[pt.key] != null).length;
@@ -349,6 +380,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     try {
       const row = (p) => ({ line_of_business: p.line, product_type: p.type || null });
       const money = (p) => ({ premium: Number(p.premium), vehicle_count: p.line === "auto" ? Number(p.vehicles) : null });
+      const matched = (p) => ({ matched_sale_product_id: p.matchedId || null });
       const payload = {
         customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
@@ -359,7 +391,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? { products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine })) } : null,
-        cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p) })), reason: cReason.trim() || null } : null,
+        cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })), reason: cReason.trim() || null } : null,
         scorecard: hasCard ? { ...scores, recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || null) : null } : null,
       };
       const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
@@ -390,6 +422,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
 
   const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.` : "";
+  useEffect(() => { /* keep matches fresh if the name changes after a row was marked canceled */
+    setPolicies(list => list.map(p => p.status === "canceled" ? { ...p, matchedId: (soldMatch(p) || {}).sale_product_id || null } : p));
+  }, [onFile]);
   const policyPill = (p) => {
     const bits = [PRODUCT_SHORT[p.line]];
     const t = (types[p.line] || []).find(x => x.type_key === p.type); if (t) bits.push(t.label);
@@ -517,14 +552,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               )}
               <div style={field(150)}>
                 <label style={labelStyle}>What happened</label>
-                <select style={inputBase} value={active.status} onChange={e => editPolicy(active.id, { status: e.target.value })}>
+                <select style={inputBase} value={active.status} onChange={e => setStatus(active, e.target.value)}>
                   <option value="">Pick one</option>
                   {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
                 </select>
               </div>
               {needsMoney(active) && (
-                <div style={field(120)}>
-                  <label style={labelStyle}>Premium</label>
+                <div style={field(140)}>
+                  <label style={labelStyle}>Premium{active.status === "canceled" ? (() => { const m = soldMatch(active); return m
+                    ? <span style={{ color: T.blue, fontWeight: 400 }}> · on file ${fmtPts(m.premium)}, sold {fmtDate(m.sale_date)}</span>
+                    : <span style={hintStyle}> · no sale on file</span>; })() : null}</label>
                   <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={active.premium} onChange={e => editPolicy(active.id, { premium: e.target.value })} placeholder="0.00" />
                 </div>
               )}
@@ -913,8 +950,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
 export default function ActivityLog({ userRole }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
-  const isOwnerRole = userRole === "owner";
-  const [tab, setTab, tabHref] = useTabParam("tab", "log", isOwnerRole ? [...TABS, "earnings"] : TABS);
+  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings"]);
   const [values, setValues] = useState([]);
   const [sources, setSources] = useState([]);
   const [types, setTypes] = useState({});
@@ -957,7 +993,7 @@ export default function ActivityLog({ userRole }) {
   const tabs = [
     { id: "log", label: "Log" },
     { id: "week", label: "My week" },
-    ...(isOwnerRole ? [{ id: "earnings", label: "Earning Potential" }] : []),  // owner only (Peter 2026-08-28); moved here from Team 2026-09-04
+    { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
   ];
 
   return (
@@ -979,7 +1015,7 @@ export default function ActivityLog({ userRole }) {
 
       {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
-      {tab === "earnings" && isOwnerRole && <EarningPotentialTab />}
+      {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
     </div>
   );
 }
