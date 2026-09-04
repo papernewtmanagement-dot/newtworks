@@ -706,6 +706,7 @@ function VoteView({ me }) {
 function MyRequestsView({ me }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -719,6 +720,30 @@ function MyRequestsView({ me }) {
     load();
   }, [me?.id]);
 
+  // Delete a request that was submitted by mistake. Hard delete. Votes and
+  // notification-log rows cascade off with it, so nothing is left dangling.
+  async function destroy(req) {
+    if (!confirm("Delete this request? This cannot be undone.")) return;
+    setDeletingId(req.id);
+    try {
+      const { data, error } = await supabase
+        .from("time_off_requests")
+        .delete()
+        .eq("id", req.id)
+        .select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert("Delete returned 0 rows. You may not have permission to delete this request.");
+        return;
+      }
+      setRequests(prev => prev.filter(x => x.id !== req.id));
+    } catch (e) {
+      alert("Delete failed: " + (e?.message || "unknown"));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   if (loading) return <div style={{ color: "#64748b" }}>Loading…</div>;
   if (!requests.length) return <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>No requests yet.</div>;
 
@@ -726,7 +751,7 @@ function MyRequestsView({ me }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {requests.map(r => (
         <div key={r.id} style={cardStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 600 }}>{formatRequestLabel(r)}</div>
               <div style={{ fontSize: 13, color: "#64748b" }}>
@@ -738,6 +763,16 @@ function MyRequestsView({ me }) {
           </div>
           {r.notes && <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}>{r.notes}</div>}
           {r.decision_note && <div style={{ marginTop: 6, fontSize: 13, color: "#1e40af" }}>Decision note: {r.decision_note}</div>}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => destroy(r)}
+              disabled={deletingId === r.id}
+              style={{ ...btnBase, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca", opacity: deletingId === r.id ? 0.6 : 1 }}
+            >
+              {deletingId === r.id ? "Deleting…" : "Delete request"}
+            </button>
+          </div>
         </div>
       ))}
     </div>
