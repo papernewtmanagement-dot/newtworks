@@ -6,28 +6,24 @@ import { T } from "../lib/theme.js";
 
 // ============================================================
 // ActivityLog — the Production module (nav label "Production", route
-// /production; the old /activity route still resolves). Team capture for
-// Retention Points, sales, quotes, and cancellations.
+// /production; the old /activity route still resolves). Team capture
+// for Retention Points, sales, quotes, and cancelations.
 //
-// ONE flat entry page, in the order Peter set: customer block, then
-// Relationship Type and Good Neighbor Connect (they apply to quotes
-// and sales both), service tasks, the "Also" items, cancellation,
-// Marketing type (with who sourced the lead when it is a referral),
-// quote, sale, then ECRM link and note, and one Log button.
+// ONE flat page, in Peter's order: customer block, Relationship type
+// and Good Neighbor Connect, service tasks, the "Also" items,
+// Canceled, Marketing type (with who sourced the lead on a referral),
+// Quoted, Sold, then ECRM link and note, and one Log button.
 //
-// The button calls rp_log_entry, a SECURITY DEFINER RPC that writes
-// every part in one transaction (it wraps rp_log_activity /
-// rp_log_quote / rp_log_sale / rp_log_cancellation). Any failure rolls
-// the whole entry back, so nothing is ever half-saved. The signed-in
-// team member is resolved server-side; only the owner may log on
-// someone else's behalf.
+// Quoted, Sold, and Canceled are lists of POLICIES, not sets of lines.
+// A household can have two auto policies and a home and a boat, so
+// clicking a bubble ADDS one policy of that line; click it again for a
+// second. Auto and Fire policies carry a type (Private Passenger,
+// Classic, GAINSCO, Home, RDP, PLUP, and so on) read from the
+// product_types table, so adding a type later never touches this file.
 //
-// Service tasks are chips: pick every kind that happened. The sale
-// block derives Multiline Sold + Referral Sold credits itself; nobody
-// logs those by hand. Point values are read from
-// retention_point_values so a value change never touches this file.
-// Week view calls compute_weekly_retention_points (the same number the
-// pay function will consume).
+// The button calls rp_log_entry, which writes every part in one
+// transaction. Any failure rolls the whole entry back. Only the owner
+// may log on someone else's behalf, enforced server-side.
 // ============================================================
 
 const PRODUCTS = [
@@ -79,6 +75,8 @@ const chip = (on) => ({
 });
 const chipRow = { display: "flex", flexWrap: "wrap", gap: 8 };
 const gridForm = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 };
+const policyRow = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" };
+const removeBtn = { ...btnGhost, color: T.red, borderColor: T.slate300, alignSelf: "center", whiteSpace: "nowrap" };
 
 // ---------- helpers ----------
 function todayCentral() {
@@ -106,6 +104,8 @@ function fmtPts(n) {
 function errText(e) {
   return e?.message || e?.error || (typeof e === "string" ? e : "Something went wrong.");
 }
+let _pid = 0;
+const newPolicyId = () => `p${++_pid}`;
 
 // ---------- shared field blocks ----------
 function CustomerFields({ first, setFirst, initial, setInitial }) {
@@ -144,6 +144,41 @@ function Notice({ kind, children }) {
   return <div style={{ padding: "10px 12px", borderRadius: 8, background: bg, color: fg, fontSize: 13, fontWeight: 600, marginTop: 12 }}>{children}</div>;
 }
 
+// The bubbles that add a policy. Clicking Auto adds one auto policy;
+// clicking it again adds a second. The count sits on the bubble.
+function PolicyPicker({ list, onAdd }) {
+  const counts = {};
+  for (const p of list) counts[p.line] = (counts[p.line] || 0) + 1;
+  return (
+    <div style={chipRow}>
+      {PRODUCTS.map(p => (
+        <span key={p.key} style={chip(!!counts[p.key])} onClick={() => onAdd(p.key)}>
+          {p.label}{counts[p.key] ? ` · ${counts[p.key]}` : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TypeField({ types, value, onChange, line }) {
+  const opts = types[line] || [];
+  if (!opts.length) return null;
+  return (
+    <div>
+      <label style={labelStyle}>Type</label>
+      <select style={inputBase} value={value || ""} onChange={e => onChange(e.target.value)}>
+        <option value="">Pick one</option>
+        {opts.map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function typeLabel(types, line, key) {
+  const t = (types[line] || []).find(x => x.type_key === key);
+  return t ? t.label : null;
+}
+
 // Plain-English wrap-up of what rp_log_entry saved.
 function summarizeEntry(data) {
   const parts = [];
@@ -155,52 +190,43 @@ function summarizeEntry(data) {
       (pend.length ? ` (save clears ${fmtDate(pend[0].credit_available_on)})` : ""));
   }
   const q = data?.quote;
-  if (q) parts.push(`quote: ${(q.products_discussed || []).map(k => PRODUCT_SHORT[k] || k).join(", ")}`);
+  if (q) parts.push(`quoted ${q.policies} polic${q.policies === 1 ? "y" : "ies"}`);
   const s = data?.sale;
   if (s) {
     const credits = (s.credits || []).map(c => c.activity_key === "multiline_sold" ? `Multiline (${PRODUCT_SHORT[c.line] || c.line})` : "Referral Sold");
-    parts.push(`sale: $${fmtPts(s.total_premium)} premium` +
+    parts.push(`sold ${s.policies} polic${s.policies === 1 ? "y" : "ies"} for $${fmtPts(s.total_premium)} premium` +
       (credits.length ? `, credited ${credits.join(", ")} = $${fmtPts(s.retention_points)}` : ", no multiline or referral credit"));
   }
-  const cs = Array.isArray(data?.cancellation) ? data.cancellation : (data?.cancellation ? [data.cancellation] : []);
+  const cs = Array.isArray(data?.cancelation) ? data.cancelation : [];
   if (cs.length) {
     const lines = cs.map(c => PRODUCT_SHORT[c.policy_line] || c.policy_line).join(", ");
     const voided = cs.reduce((n, c) => n + Number(c.saves_voided || 0), 0);
-    parts.push(`cancelled: ${lines}` + (voided > 0 ? `, ${voided} unpaid save${voided === 1 ? "" : "s"} taken back` : ""));
+    parts.push(`canceled: ${lines}` + (voided > 0 ? `, ${voided} unpaid save${voided === 1 ? "" : "s"} taken back` : ""));
   }
   return `Logged for ${data?.customer || "the customer"}: ${parts.join("; ")}.`;
 }
 
 // =====================================================================
 // Entry page — one customer, one contact, everything that happened, on
-// one flat page. One Log button; one RPC (rp_log_entry) that saves all
-// of it or none of it.
+// one flat page. One Log button; one RPC that saves all of it or none.
 // =====================================================================
-function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
+function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey }) {
   const today = todayCentral();
-  // customer block
   const [first, setFirst] = useState("");
   const [initial, setInitial] = useState("");
   const [date, setDate] = useState(today);
   const [logFor, setLogFor] = useState(null);
-  // shared by quotes and sales
   const [relationship, setRelationship] = useState("");
   const [gnc, setGnc] = useState("");
   const [source, setSource] = useState("");
   const [sourcedBy, setSourcedBy] = useState("");
-  // activity
-  const [checked, setChecked] = useState({});  // activity_key -> true (service tasks and the "Also" items alike)
+  const [checked, setChecked] = useState({});
   const [saveLine, setSaveLine] = useState("");
   const [saveReason, setSaveReason] = useState("");
-  // cancellation
-  const [cLines, setCLines] = useState({});    // product key -> true
+  const [canceled, setCanceled] = useState([]);   // [{id, line, type}]
   const [cReason, setCReason] = useState("");
-  // quote
-  const [qProds, setQProds] = useState({});
-  // sale
-  const [vehicles, setVehicles] = useState("");
-  const [sProds, setSProds] = useState({});    // key -> { premium, policy_count, is_new_line }
-  // bottom
+  const [quoted, setQuoted] = useState([]);       // [{id, line, type}]
+  const [sold, setSold] = useState([]);           // [{id, line, type, premium, policyCount, vehicles, isNewLine}]
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -212,59 +238,63 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
 
   const toggleChecked = (k) => setChecked(c => ({ ...c, [k]: !c[k] }));
-  const toggleSaleProduct = (k) => setSProds(p => {
-    const n = { ...p };
-    if (n[k]) delete n[k]; else n[k] = { premium: "", policy_count: 1, is_new_line: true };
-    return n;
-  });
-  const setSaleProd = (k, field, val) => setSProds(p => ({ ...p, [k]: { ...p[k], [field]: val } }));
+  const addPolicy = (setter, extra) => (line) => setter(list => [...list, { id: newPolicyId(), line, type: "", ...extra }]);
+  const editPolicy = (setter) => (id, field, val) => setter(list => list.map(p => p.id === id ? { ...p, [field]: val } : p));
+  const dropPolicy = (setter) => (id) => setter(list => list.filter(p => p.id !== id));
+
+  const addCanceled = addPolicy(setCanceled, {});
+  const addQuoted = addPolicy(setQuoted, {});
+  const addSold = addPolicy(setSold, { premium: "", policyCount: 1, vehicles: "", isNewLine: true });
+  const editSold = editPolicy(setSold);
 
   // ---- what is in the entry right now ----
   const activityItems = [];
   for (const k of Object.keys(checked)) {
     if (!checked[k] || !byKey[k]) continue;
-    if (k === "cancellation_saved") activityItems.push({ activity_key: k, save_line: saveLine, save_reason: saveReason.trim() });
+    if (k === "cancelation_saved") activityItems.push({ activity_key: k, save_line: saveLine, save_reason: saveReason.trim() });
     else activityItems.push({ activity_key: k });
   }
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
-  const cancelled = PRODUCTS.filter(p => cLines[p.key]).map(p => p.key);
-  const quoteChosen = PRODUCTS.filter(p => qProds[p.key]).map(p => p.key);
-  const saleSelected = PRODUCTS.filter(p => sProds[p.key]);
-  const saleTotal = saleSelected.reduce((s, p) => s + (Number(sProds[p.key].premium) || 0), 0);
-  const hasAuto = !!sProds.auto;
+  const saleTotal = sold.reduce((s, p) => s + (Number(p.premium) || 0), 0);
 
   const hasActivity = activityItems.length > 0;
-  const hasCxl = cancelled.length > 0;
-  const hasQuote = quoteChosen.length > 0;
-  const hasSale = saleSelected.length > 0;
+  const hasCxl = canceled.length > 0;
+  const hasQuote = quoted.length > 0;
+  const hasSale = sold.length > 0;
   const hasAnything = hasActivity || hasCxl || hasQuote || hasSale;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
   const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
+  const needsType = (line) => (types[line] || []).length > 0;
+  const missingType = (list) => list.some(p => needsType(p.line) && !p.type);
 
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
   if (!customerOk) problems.push("Customer first name and last initial.");
-  if (!hasAnything) problems.push("Add what happened: a service task, a cancellation, a quote, or a sale.");
+  if (!hasAnything) problems.push("Add what happened: a service task, a cancelation, a quote, or a sale.");
   if ((hasActivity || hasQuote) && date < addDays(today, -7)) problems.push("Activity and quotes are logged within 7 days. Pick a later date or split the entry.");
   if (hasSale && date < addDays(today, -30)) problems.push("A sale is logged within 30 days of the bind.");
-  if (hasCxl && date < addDays(today, -90)) problems.push("A cancellation is logged within 90 days.");
-  if (checked.cancellation_saved) {
+  if (hasCxl && date < addDays(today, -90)) problems.push("A cancelation is logged within 90 days.");
+  if (checked.cancelation_saved) {
     if (date !== today) problems.push("A save is logged the same business day it comes in. Set the date to today.");
     if (!saveLine || !saveReason.trim()) problems.push("The save needs the policy line at risk and the reason the customer gave.");
   }
   if (checked.policy_review && !note.trim()) problems.push("The policy review needs a note on what you covered.");
+  if (missingType(canceled)) problems.push("Every canceled policy needs its type.");
+  if (missingType(quoted)) problems.push("Every quoted policy needs its type.");
+  if (missingType(sold)) problems.push("Every sold policy needs its type.");
   if (hasSale) {
-    if (!relationship) problems.push("Sale: pick the relationship type.");
-    if (!source) problems.push("Sale: pick the marketing type.");
-    if (gnc === "") problems.push("Sale: was Good Neighbor Connect used?");
-    if (!ecrm.trim()) problems.push("Sale: the ECRM opportunity link is required.");
-    if (saleSelected.some(p => sProds[p.key].premium === "" || !(Number(sProds[p.key].premium) >= 0))) problems.push("Sale: every product needs its premium.");
-    if (hasAuto && !(Number(vehicles) >= 1)) problems.push("Sale: how many cars?");
+    if (!relationship) problems.push("A sale needs the relationship type.");
+    if (!source) problems.push("A sale needs the marketing type.");
+    if (gnc === "") problems.push("A sale needs to say whether Good Neighbor Connect was used.");
+    if (!ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
+    if (sold.some(p => p.premium === "" || !(Number(p.premium) >= 0))) problems.push("Every sold policy needs its premium.");
+    if (sold.some(p => p.line === "auto" && !(Number(p.vehicles) >= 1))) problems.push("Every sold auto policy needs its number of cars.");
   }
   if (hasSale && hasCxl) {
-    const clash = cancelled.filter(k => sProds[k]);
-    if (clash.length) problems.push(`${clash.map(k => PRODUCT_SHORT[k]).join(", ")} is both sold and cancelled in this entry. Log those as two entries.`);
+    const soldLines = new Set(sold.map(p => p.line));
+    const clash = [...new Set(canceled.filter(p => soldLines.has(p.line)).map(p => p.line))];
+    if (clash.length) problems.push(`${clash.map(k => PRODUCT_SHORT[k]).join(", ")} is both sold and canceled in this entry. Log those as two entries.`);
   }
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
   const canSubmit = !busy && problems.length === 0;
@@ -274,9 +304,7 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
     setFirst(""); setInitial(""); setDate(today);
     setRelationship(""); setGnc(""); setSource(""); setSourcedBy("");
     setChecked({}); setSaveLine(""); setSaveReason("");
-    setCLines({}); setCReason("");
-    setQProds({});
-    setVehicles(""); setSProds({});
+    setCanceled([]); setCReason(""); setQuoted([]); setSold([]);
     setEcrm(""); setNote("");
   };
 
@@ -293,14 +321,18 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
         marketing_source: source || null,
         sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
-        cancellation: hasCxl ? { policy_lines: cancelled, reason: cReason.trim() || null } : null,
-        quote: hasQuote ? { products_discussed: quoteChosen } : null,
+        cancelation: hasCxl ? {
+          items: canceled.map(p => ({ line_of_business: p.line, product_type: p.type || null })),
+          reason: cReason.trim() || null,
+        } : null,
+        quote: hasQuote ? { items: quoted.map(p => ({ line_of_business: p.line, product_type: p.type || null })) } : null,
         sale: hasSale ? {
-          vehicle_count: hasAuto ? Number(vehicles) : null,
-          products: saleSelected.map(p => ({
-            line_of_business: p.key, premium: Number(sProds[p.key].premium),
-            policy_count: Math.max(1, Number(sProds[p.key].policy_count) || 1),
-            is_new_line: householdFresh ? true : !!sProds[p.key].is_new_line,
+          products: sold.map(p => ({
+            line_of_business: p.line, product_type: p.type || null,
+            premium: Number(p.premium),
+            policy_count: Math.max(1, Number(p.policyCount) || 1),
+            vehicle_count: p.line === "auto" ? Number(p.vehicles) : null,
+            is_new_line: householdFresh ? true : !!p.isNewLine,
           })),
         } : null,
       };
@@ -321,7 +353,6 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Log an entry</div>
         <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>One customer, one contact, everything that happened. One button saves it all.</div>
 
-        {/* ---- customer ---- */}
         <div style={gridForm}>
           <CustomerFields first={first} setFirst={setFirst} initial={initial} setInitial={setInitial} />
           <div>
@@ -331,17 +362,16 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
           <LogForPicker canLogForOthers={isOwner} roster={roster} value={logFor} onChange={setLogFor} />
         </div>
 
-        {/* ---- relationship type + GNC: apply to quotes and sales ---- */}
         <div style={{ ...gridForm, marginTop: 12 }}>
           <div>
-            <label style={labelStyle}>Relationship type <span style={hintStyle}>(quotes and sales)</span></label>
+            <label style={labelStyle}>Relationship type</label>
             <select style={inputBase} value={relationship} onChange={e => setRelationship(e.target.value)}>
               <option value="">Pick one</option>
               {RELATIONSHIPS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
           </div>
           <div>
-            <label style={labelStyle}>Good Neighbor Connect used? <span style={hintStyle}>(quotes and sales)</span></label>
+            <label style={labelStyle}>Good Neighbor Connect used?</label>
             <select style={inputBase} value={gnc} onChange={e => setGnc(e.target.value)}>
               <option value="">Pick one</option>
               <option value="yes">Yes</option>
@@ -378,7 +408,7 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
               </span>
             ))}
           </div>
-          {checked.cancellation_saved && (
+          {checked.cancelation_saved && (
             <div style={{ ...gridForm, marginTop: 12, padding: 12, background: T.slate50, borderRadius: 8 }}>
               <div>
                 <label style={labelStyle}>Policy line at risk</label>
@@ -396,28 +426,33 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
           )}
         </div>
 
-        {/* ---- cancellation ---- */}
+        {/* ---- canceled ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Cancelled <span style={hintStyle}>(mark every policy that cancelled)</span></div>
-          <div style={chipRow}>
-            {PRODUCTS.map(p => (
-              <span key={p.key} style={chip(!!cLines[p.key])} onClick={() => setCLines(x => ({ ...x, [p.key]: !x[p.key] }))}>{p.label}</span>
-            ))}
-          </div>
-          {hasCxl && (
-            <div style={{ marginTop: 12 }}>
-              <label style={labelStyle}>Reason <span style={hintStyle}>(optional)</span></label>
-              <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
-              <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>If someone logged a save on this customer and line and that credit has not been paid yet, this takes it back.</div>
+          <div style={blockTitle}>Canceled <span style={hintStyle}>(click a line for each policy that canceled)</span></div>
+          <PolicyPicker list={canceled} onAdd={addCanceled} />
+          {canceled.length > 0 && (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              {canceled.map(p => (
+                <div key={p.id} style={policyRow}>
+                  <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{PRODUCT_LABEL[p.line]}</div>
+                  <TypeField types={types} line={p.line} value={p.type} onChange={v => editPolicy(setCanceled)(p.id, "type", v)} />
+                  <button type="button" style={removeBtn} onClick={() => dropPolicy(setCanceled)(p.id)}>Remove</button>
+                </div>
+              ))}
+              <div>
+                <label style={labelStyle}>Reason <span style={hintStyle}>(optional)</span></label>
+                <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
+                <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>If someone logged a save on this customer and line and that credit has not been paid yet, this takes it back.</div>
+              </div>
             </div>
           )}
         </div>
 
-        {/* ---- marketing type: applies to quotes and sales ---- */}
+        {/* ---- marketing type ---- */}
         <div style={blockStyle}>
-          <div style={{ ...gridForm }}>
+          <div style={gridForm}>
             <div>
-              <label style={labelStyle}>Marketing type <span style={hintStyle}>(quotes and sales)</span></label>
+              <label style={labelStyle}>Marketing type</label>
               <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
                 <option value="">Pick one</option>
                 {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
@@ -435,53 +470,56 @@ function EntryPage({ values, sources, isOwner, roster, onLogged, refreshKey }) {
           </div>
         </div>
 
-        {/* ---- quote ---- */}
+        {/* ---- quoted ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Quoted <span style={hintStyle}>(click every product you discussed, not just the one they asked about)</span></div>
-          <div style={chipRow}>
-            {PRODUCTS.map(p => <span key={p.key} style={chip(!!qProds[p.key])} onClick={() => setQProds(x => ({ ...x, [p.key]: !x[p.key] }))}>{p.label}</span>)}
-          </div>
+          <div style={blockTitle}>Quoted <span style={hintStyle}>(click a line for each policy you quoted, twice for two)</span></div>
+          <PolicyPicker list={quoted} onAdd={addQuoted} />
+          {quoted.length > 0 && (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              {quoted.map(p => (
+                <div key={p.id} style={policyRow}>
+                  <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{PRODUCT_LABEL[p.line]}</div>
+                  <TypeField types={types} line={p.line} value={p.type} onChange={v => editPolicy(setQuoted)(p.id, "type", v)} />
+                  <button type="button" style={removeBtn} onClick={() => dropPolicy(setQuoted)(p.id)}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* ---- sale ---- */}
+        {/* ---- sold ---- */}
         <div style={blockStyle}>
-          <div style={blockTitle}>Sold <span style={hintStyle}>(click every product, then its premium)</span></div>
-          <div style={chipRow}>
-            {PRODUCTS.map(p => <span key={p.key} style={chip(!!sProds[p.key])} onClick={() => toggleSaleProduct(p.key)}>{p.label}</span>)}
-          </div>
-          {saleSelected.length > 0 && (
+          <div style={blockTitle}>Sold <span style={hintStyle}>(click a line for each policy you wrote, twice for two)</span></div>
+          <PolicyPicker list={sold} onAdd={addSold} />
+          {sold.length > 0 && (
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              {saleSelected.map(p => (
-                <div key={p.key} style={{ ...gridForm, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" }}>
-                  <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{p.label}</div>
+              {sold.map(p => (
+                <div key={p.id} style={policyRow}>
+                  <div style={{ fontWeight: 700, color: T.slate800, alignSelf: "center" }}>{PRODUCT_LABEL[p.line]}</div>
+                  <TypeField types={types} line={p.line} value={p.type} onChange={v => editSold(p.id, "type", v)} />
                   <div>
                     <label style={labelStyle}>Premium</label>
-                    <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={sProds[p.key].premium} onChange={e => setSaleProd(p.key, "premium", e.target.value)} placeholder="0.00" />
+                    <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={p.premium} onChange={e => editSold(p.id, "premium", e.target.value)} placeholder="0.00" />
                   </div>
-                  {p.key === "auto" && (
+                  {p.line === "auto" && (
                     <div>
-                      <label style={labelStyle}>How many cars?</label>
-                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={vehicles} onChange={e => setVehicles(e.target.value)} placeholder="1" />
+                      <label style={labelStyle}>Cars</label>
+                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editSold(p.id, "vehicles", e.target.value)} placeholder="1" />
                     </div>
                   )}
-                  <div>
-                    <label style={labelStyle}>Policies</label>
-                    <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={sProds[p.key].policy_count} onChange={e => setSaleProd(p.key, "policy_count", e.target.value)} />
-                  </div>
                   {relationship === "existing" && (
                     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate700, paddingBottom: 10 }}>
-                      <input type="checkbox" checked={!!sProds[p.key].is_new_line} onChange={e => setSaleProd(p.key, "is_new_line", e.target.checked)} />
-                      New line for this household
+                      <input type="checkbox" checked={!!p.isNewLine} onChange={e => editSold(p.id, "isNewLine", e.target.checked)} />
+                      New line
                     </label>
                   )}
+                  <button type="button" style={removeBtn} onClick={() => dropPolicy(setSold)(p.id)}>Remove</button>
                 </div>
               ))}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "baseline" }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Total premium: ${fmtPts(saleTotal)}</div>
                 <span style={{ fontSize: 12, color: T.slate500 }}>
-                  {householdFresh && saleSelected.length > 1
-                    ? "Nothing in force before this, so every line beyond the biggest one counts as a multiline."
-                    : "Multiline Sold and Referral Sold are credited automatically to whoever sourced the sale."}
+                  Multiline pays once per line. Two auto policies is still one auto line for the household.
                 </span>
               </div>
             </div>
@@ -542,7 +580,7 @@ function PendingSaves({ refreshKey }) {
     <div style={{ ...cardStyle, marginTop: 16 }}>
       <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Saves still waiting to clear</div>
       <div style={{ fontSize: 13, color: T.slate500, marginBottom: 14 }}>
-        A save pays once the policy has stayed active 30 days. If one of these cancelled anyway, log the cancellation above and the credit comes off before it is ever paid.
+        A save pays once the policy has stayed active 30 days. If one of these canceled anyway, log the cancelation above and the credit comes off before it is ever paid.
       </div>
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -765,6 +803,7 @@ export default function ActivityLog({ userRole }) {
   const [tab, setTab, tabHref] = useTabParam("tab", "log", TABS);
   const [values, setValues] = useState([]);
   const [sources, setSources] = useState([]);
+  const [types, setTypes] = useState({});
   const [roster, setRoster] = useState([]);
   const [myTeamId, setMyTeamId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -777,15 +816,23 @@ export default function ActivityLog({ userRole }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [v, s, r, me] = await Promise.all([
+      const [v, s, pt, r, me] = await Promise.all([
         supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
+        supabase.from("product_types").select("line_of_business, type_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category").eq("agency_id", AGENCY_ID).eq("is_active", true).order("first_name"),
         supabase.rpc("current_team_member_id"),
       ]);
       if (!alive) return;
       setValues(Array.isArray(v.data) ? v.data : []);
       setSources(Array.isArray(s.data) ? s.data : []);
+      // types under each line, e.g. { auto: [Private Passenger, Classic, ...] }.
+      // A line with no rows logs as the line itself.
+      const grouped = {};
+      for (const t of (Array.isArray(pt.data) ? pt.data : [])) {
+        (grouped[t.line_of_business] = grouped[t.line_of_business] || []).push(t);
+      }
+      setTypes(grouped);
       setRoster((Array.isArray(r.data) ? r.data : []).filter(t => !t.archived_at && !t.is_test_user && !t.is_admin_backoffice && t.category === "agency"));
       setMyTeamId(me?.data || null);
     })();
@@ -815,7 +862,7 @@ export default function ActivityLog({ userRole }) {
         ))}
       </div>
 
-      {tab === "log"  && <EntryPage values={values} sources={sources} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
     </div>
   );
