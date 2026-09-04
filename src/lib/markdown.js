@@ -297,32 +297,46 @@ function transclusionEditButton(kind, title) {
   );
 }
 
-function expandIncludes(md, resolveInclude, visited, depth, markEdit) {
-  if (!resolveInclude) return md;
+// One expander for both marker kinds. A fragment pulled in by either marker
+// may itself carry markers of EITHER kind — an excerpt that includes a page
+// (Inbound Calls → Mortgage/Loan Protection), a page that embeds an excerpt
+// (Mortgage/Loan Protection → Added/Replaced Auto Details) — so every
+// resolved body is sent back through both regexes. Before 2026-09-04 the two
+// kinds ran as separate whole-document passes (includes first, excerpts
+// second), which meant an [Included from:] marker sitting inside excerpt
+// content was never expanded and rendered as literal text. The cycle guard
+// keys on kind + title so the same title can legitimately exist in both
+// namespaces.
+function expandTransclusions(md, ctx, visited, depth) {
   if (depth > MAX_INCLUDE_DEPTH) return md;
-  return md.replace(INCLUDE_LINE_RE, (_match, rawTarget) => {
+  const { resolveInclude, resolveExcerpt, markEdit } = ctx || {};
+  const replaceOne = (kind, resolver) => (_match, rawTarget) => {
     // Unescape Confluence-style escaped asterisks in titles like `\*Extended Life Process`
     const target = String(rawTarget).replace(/\\\*/g, "*").trim();
-    const key = target.toLowerCase();
+    const key = kind + "::" + target.toLowerCase();
 
-    if (visited.has(key)) return bannerCycle(target);
+    if (visited.has(key)) return bannerCycle(target, kind);
 
     let resolved;
     try {
-      resolved = resolveInclude(target);
+      resolved = resolver(target);
     } catch (_e) {
       resolved = null;
     }
 
-    if (!resolved || resolved.status === "missing") return bannerMissing(target);
-    if (resolved.status === "empty") return bannerEmpty(target);
-    if (resolved.status !== "ok" || typeof resolved.md !== "string") return bannerMissing(target);
+    if (!resolved || resolved.status === "missing") return bannerMissing(target, kind);
+    if (resolved.status === "empty") return bannerEmpty(target, kind);
+    if (resolved.status !== "ok" || typeof resolved.md !== "string") return bannerMissing(target, kind);
 
     const nextVisited = new Set(visited);
     nextVisited.add(key);
-    const expanded = expandIncludes(resolved.md, resolveInclude, nextVisited, depth + 1, markEdit);
-    return markEdit ? `${transclusionEditButton("include", target)}\n\n${expanded}` : expanded;
-  });
+    const expanded = expandTransclusions(resolved.md, ctx, nextVisited, depth + 1);
+    return markEdit ? `${transclusionEditButton(kind, target)}\n\n${expanded}` : expanded;
+  };
+  let out = md;
+  if (typeof resolveInclude === "function") out = out.replace(INCLUDE_LINE_RE, replaceOne("include", resolveInclude));
+  if (typeof resolveExcerpt === "function") out = out.replace(EXCERPT_LINE_RE, replaceOne("excerpt", resolveExcerpt));
+  return out;
 }
 
 // ─── Marker discovery (admin edit-affordance UI only) ─────────
@@ -359,35 +373,8 @@ export function extractTransclusionMarkers(md) {
 // macro. Semantically identical to [Included from: X] (title lookup + inline
 // substitution), but the source table is different: excerpts live in a
 // dedicated `manual_type='excerpt'` scope, loaded via a separate query in
-// the consumer (see Manual.jsx). Cycle guard + banner reuse the include
-// machinery with a "excerpt" kind label.
-
-function expandExcerpts(md, resolveExcerpt, visited, depth, markEdit) {
-  if (!resolveExcerpt) return md;
-  if (depth > MAX_INCLUDE_DEPTH) return md;
-  return md.replace(EXCERPT_LINE_RE, (_match, rawTarget) => {
-    const target = String(rawTarget).replace(/\\\*/g, "*").trim();
-    const key = target.toLowerCase();
-
-    if (visited.has(key)) return bannerCycle(target, "excerpt");
-
-    let resolved;
-    try {
-      resolved = resolveExcerpt(target);
-    } catch (_e) {
-      resolved = null;
-    }
-
-    if (!resolved || resolved.status === "missing") return bannerMissing(target, "excerpt");
-    if (resolved.status === "empty") return bannerEmpty(target, "excerpt");
-    if (resolved.status !== "ok" || typeof resolved.md !== "string") return bannerMissing(target, "excerpt");
-
-    const nextVisited = new Set(visited);
-    nextVisited.add(key);
-    const expanded = expandExcerpts(resolved.md, resolveExcerpt, nextVisited, depth + 1, markEdit);
-    return markEdit ? `${transclusionEditButton("excerpt", target)}\n\n${expanded}` : expanded;
-  });
-}
+// the consumer (see Manual.jsx). Both kinds are expanded together by
+// expandTransclusions above.
 
 // ─── Glossary preprocessing ───────────────────────────────────
 // {{glossary:tag}}     → replaced with a callout block rendering the term + definition
@@ -841,12 +828,12 @@ export function mdToHtml(md, options = {}) {
   let src = String(md || "");
   const markEdit = !!(options && options.markTransclusions);
 
-  if (options && typeof options.resolveInclude === "function") {
-    src = expandIncludes(src, options.resolveInclude, new Set(), 0, markEdit);
-  }
-
-  if (options && typeof options.resolveExcerpt === "function") {
-    src = expandExcerpts(src, options.resolveExcerpt, new Set(), 0, markEdit);
+  if (options && (typeof options.resolveInclude === "function" || typeof options.resolveExcerpt === "function")) {
+    src = expandTransclusions(src, {
+      resolveInclude: options.resolveInclude,
+      resolveExcerpt: options.resolveExcerpt,
+      markEdit,
+    }, new Set(), 0);
   }
 
   if (options && typeof options.resolveGlossary === "function") {
