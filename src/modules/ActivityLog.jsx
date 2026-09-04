@@ -11,7 +11,7 @@ import { T } from "../lib/theme.js";
 //
 // ONE flat page, Peter's layout (2026-09-04):
 //  * Row 1, one wrapping row: Log for (owner), first name, last initial,
-//    Relationship type, Good Neighbor Connect. Date reads "Today" with a
+//    Relationship, GNC (yes/no). Date reads "Today" with a
 //    link to change it; the date box appears only when it is not today.
 //  * First name suggests customers already on file (rp_customer_suggest,
 //    eight matches per keystroke after two letters, nothing cached), so
@@ -19,10 +19,15 @@ import { T } from "../lib/theme.js";
 //  * "Add Activity" dropdown, cheapest first. Each pick is a pill with
 //    an x; the same item can be added twice (two policy changes = two
 //    pills = two rows). Pivot is on the list at $0: tracked, not paid.
-//  * "Add Policy" dropdown adds a row: line, type, Quoted / Sold /
-//    Canceled, then premium and cars once Sold or Canceled.
-//  * Bottom row: ECRM link (only with a sale), Note, Marketing type (only
-//    with a sale or quote), Who sourced the lead (only on a referral).
+//  * "Add Policy" dropdown adds a pill on its own row, like activities.
+//    The pill you tapped last is the one being edited below it: type,
+//    Quoted / Sold / Quoted and sold / Canceled, premium and cars once
+//    money is involved. The pill shows what it has so far.
+//  * "Add Scorecard" adds the FIT conversation scorecard (10 parts, 1 to
+//    3 or blank) to the entry; it lands in fit_scorecards exactly as the
+//    Scorecards page writes it, and My week shows the week's average.
+//  * Bottom row, only what applies: ECRM link (sale), Marketing type
+//    (sale or quote), Lead source (referral), then the note.
 //
 // Layout follows the web-form research Peter asked for (2026-09-04):
 //  * Fewer visible choices. Three policy blocks became one list with one
@@ -63,6 +68,18 @@ const RELATIONSHIPS = [
   { key: "winback",  label: "Winback" },
 ];
 const TABS = ["log", "week"];
+const CARD_PARTS = [
+  { key: "demeanor_score",        label: "Demeanor" },
+  { key: "frogs_score",           label: "FROGS" },
+  { key: "intro_score",           label: "Intro" },
+  { key: "eligibility_score",     label: "Determine Eligibility" },
+  { key: "setup_gnc_score",       label: "Setup GNC" },
+  { key: "uncover_gap_score",     label: "Uncover the Gap" },
+  { key: "bridge_gap_score",      label: "Bridge the Gap" },
+  { key: "customize_close_score", label: "Customize & Close" },
+  { key: "set_followup_score",    label: "Set FU" },
+  { key: "review_referral_score", label: "Review & Referral" },
+];
 
 // ---------- styles ----------
 const inputBase = {
@@ -105,6 +122,8 @@ const addSelect = {
 };
 const pill = { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, border: `1px solid ${T.blue}`, background: T.blueLt, color: T.blue };
 const pillX = { border: "none", background: "transparent", color: T.blue, fontSize: 16, lineHeight: 1, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" };
+const radioRow = { display: "flex", gap: 12, alignItems: "center", height: 41, fontSize: 14, color: T.slate800 };
+const scoreChip = (on) => ({ ...chip(on), padding: "5px 10px", fontSize: 12 });
 const STATUSES = [
   { key: "quoted",      label: "Quoted" },
   { key: "sold",        label: "Sold" },
@@ -181,6 +200,8 @@ function summarizeEntry(data) {
     const voided = cs.reduce((n, c) => n + Number(c.saves_voided || 0), 0);
     parts.push(`canceled: ${lines}` + (voided > 0 ? `, ${voided} unpaid save${voided === 1 ? "" : "s"} taken back` : ""));
   }
+  const sc = data?.scorecard;
+  if (sc) parts.push(`scorecard ${sc.average_score == null ? "" : Number(sc.average_score).toFixed(2)} across ${sc.scored} part${sc.scored === 1 ? "" : "s"}`);
   return `Logged for ${data?.customer || "the customer"}: ${parts.join("; ")}.`;
 }
 
@@ -204,7 +225,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [saveLine, setSaveLine] = useState("");
   const [saveReason, setSaveReason] = useState("");
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
+  const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
   const [cReason, setCReason] = useState("");
+  const [card, setCard] = useState(null);                   // null = no scorecard on this entry; else {scores:{}, recTurned, recUrl}
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -233,9 +256,17 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
   const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key }]); };
   const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
-  const addPolicy = (line) => { if (line) setPolicies(list => [...list, { id: newPolicyId(), line, type: "", status: "", premium: "", vehicles: "1", isNewLine: true }]); };
+  const addPolicy = (line) => {
+    if (!line) return;
+    const id = newPolicyId();
+    setPolicies(list => [...list, { id, line, type: "", status: "", premium: "", vehicles: "1", isNewLine: true }]);
+    setActivePolicy(id);
+  };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
-  const dropPolicy = (id) => setPolicies(list => list.filter(p => p.id !== id));
+  const dropPolicy = (id) => { setPolicies(list => list.filter(p => p.id !== id)); setActivePolicy(a => a === id ? null : a); };
+  const setScore = (k, v) => setCard(c => ({ ...c, scores: { ...c.scores, [k]: c.scores[k] === v ? null : v } }));
+  const cardScored = card ? CARD_PARTS.filter(pt => card.scores[pt.key] != null).length : 0;
+  const cardAvg = card && cardScored ? CARD_PARTS.reduce((s, pt) => s + (card.scores[pt.key] || 0), 0) / cardScored : null;
 
   // ---- what is in the entry right now ----
   const hasSave = activities.some(a => a.key === "cancelation_saved");
@@ -252,7 +283,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const hasQuote = quoted.length > 0;
   const hasSale = sold.length > 0;
   const hasCxl = canceled.length > 0;
-  const hasAnything = hasActivity || hasQuote || hasSale || hasCxl;
+  const hasCard = !!card && cardScored > 0;
+  const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
   const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
@@ -265,7 +297,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
   if (!customerOk) problems.push("Customer first name and last initial.");
-  if (!hasAnything) problems.push("Add a retention activity or a policy.");
+  if (!hasAnything) problems.push("Add an activity, a policy, or a scorecard.");
+  if (card && cardScored === 0) problems.push("Score at least one part of the conversation, or remove the scorecard.");
   if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
   if (policies.some(p => needsType(p.line) && !p.type)) problems.push("Each Auto or Fire policy needs its type.");
   if (policies.some(p => needsMoney(p) && (p.premium === "" || !(Number(p.premium) >= 0)))) problems.push("Each sold or canceled policy needs its premium.");
@@ -296,7 +329,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setSuggest([]);
     setRelationship(""); setGnc(""); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
-    setPolicies([]); setCReason(""); setEcrm(""); setNote("");
+    setPolicies([]); setActivePolicy(null); setCReason(""); setCard(null); setEcrm(""); setNote("");
     setAttempted(false);
   };
 
@@ -319,6 +352,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? { products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine })) } : null,
         cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p) })), reason: cReason.trim() || null } : null,
+        scorecard: hasCard ? { ...card.scores, recording_turned_in: !!card.recTurned, recording_url: card.recTurned ? (card.recUrl || null) : null } : null,
       };
       const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
       if (error) { setErr(errText(error)); return; }
@@ -348,6 +382,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
 
   const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.` : "";
+  const policyPill = (p) => {
+    const bits = [PRODUCT_SHORT[p.line]];
+    const t = (types[p.line] || []).find(x => x.type_key === p.type); if (t) bits.push(t.label);
+    const st = STATUSES.find(x => x.key === p.status); bits.push(st ? st.label : "needs details");
+    if (needsMoney(p) && p.premium !== "") bits.push(`$${fmtPts(p.premium)}`);
+    return bits.join(" · ");
+  };
+  const active = policies.find(p => p.id === activePolicy) || null;
 
   return (
     <div>
@@ -358,7 +400,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         {/* ---- row 1: every first field, wrapping ---- */}
         <div style={wrapRow}>
           {isOwner && (
-            <div style={field(130)}>
+            <div style={{ flex: "0 1 120px", minWidth: 0 }}>
               <label style={labelStyle}>Log for</label>
               <select style={inputBase} value={logFor || ""} onChange={e => setLogFor(e.target.value || null)}>
                 <option value="">Myself</option>
@@ -380,24 +422,23 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             )}
           </div>
-          <div style={field(90)}>
-            <label style={labelStyle}>Last initial {preview ? <span style={hintStyle}>→ {preview}</span> : null}</label>
-            <input style={inputBase} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
+          <div style={{ flex: "0 0 58px" }}>
+            <label style={labelStyle}>Initial</label>
+            <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
           </div>
-          <div style={field(160)}>
-            <label style={labelStyle}>Relationship type</label>
+          <div style={{ flex: "0 1 150px", minWidth: 0 }}>
+            <label style={labelStyle}>Relationship</label>
             <select style={inputBase} value={relationship} onChange={e => setRelationship(e.target.value)}>
               <option value="">Pick one</option>
               {RELATIONSHIPS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
           </div>
-          <div style={field(160)}>
-            <label style={labelStyle}>Good Neighbor Connect used?</label>
-            <select style={inputBase} value={gnc} onChange={e => setGnc(e.target.value)}>
-              <option value="">Pick one</option>
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
+          <div style={{ flex: "0 0 auto" }}>
+            <label style={labelStyle}>GNC</label>
+            <div style={radioRow}>
+              <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input type="radio" name="gnc" checked={gnc === "yes"} onChange={() => setGnc("yes")} /> Yes</label>
+              <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input type="radio" name="gnc" checked={gnc === "no"} onChange={() => setGnc("no")} /> No</label>
+            </div>
           </div>
           {showDate && (
             <div style={field(150)}>
@@ -443,86 +484,121 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- policies: Add dropdown + marketing type, then one row per policy ---- */}
+        {/* ---- policies: Add dropdown + pills on one row; the pill tapped last is edited below ---- */}
         <div style={blockStyle}>
-          <div style={wrapRow}>
+          <div style={{ ...wrapRow, alignItems: "center" }}>
             <select style={addSelect} value="" onChange={e => addPolicy(e.target.value)}>
               <option value="">+ Add Policy</option>
               {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
+            {policies.map(p => (
+              <span key={p.id} style={{ ...pill, cursor: "pointer", outline: p.id === activePolicy ? `2px solid ${T.blue}` : "none" }} onClick={() => setActivePolicy(p.id)}>
+                {policyPill(p)}
+                <button type="button" style={pillX} onClick={e => { e.stopPropagation(); dropPolicy(p.id); }} aria-label="remove">×</button>
+              </span>
+            ))}
           </div>
 
-          {policies.length > 0 && (
-            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-              {policies.map(p => (
-                <div key={p.id} style={{ ...wrapRow, padding: 10, background: T.slate50, borderRadius: 8 }}>
-                  <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{PRODUCT_LABEL[p.line]}</div>
-                  {needsType(p.line) && (
-                    <div style={field(150)}>
-                      <label style={labelStyle}>Type</label>
-                      <select style={inputBase} value={p.type} onChange={e => editPolicy(p.id, { type: e.target.value })}>
-                        <option value="">Pick one</option>
-                        {(types[p.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  <div style={field(130)}>
-                    <label style={labelStyle}>What happened</label>
-                    <select style={inputBase} value={p.status} onChange={e => editPolicy(p.id, { status: e.target.value })}>
-                      <option value="">Pick one</option>
-                      {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
-                    </select>
-                  </div>
-                  {needsMoney(p) && (
-                    <div style={field(120)}>
-                      <label style={labelStyle}>Premium</label>
-                      <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={p.premium} onChange={e => editPolicy(p.id, { premium: e.target.value })} placeholder="0.00" />
-                    </div>
-                  )}
-                  {needsMoney(p) && p.line === "auto" && (
-                    <div style={field(80)}>
-                      <label style={labelStyle}>Cars</label>
-                      <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={p.vehicles} onChange={e => editPolicy(p.id, { vehicles: e.target.value })} />
-                    </div>
-                  )}
-                  {isSold(p) && relationship === "existing" && (
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }}>
-                      <input type="checkbox" checked={!!p.isNewLine} onChange={e => editPolicy(p.id, { isNewLine: e.target.checked })} />
-                      New line
-                    </label>
-                  )}
-                  <button type="button" style={{ ...removeBtn, marginLeft: "auto", marginBottom: 6 }} onClick={() => dropPolicy(p.id)}>×</button>
-                </div>
-              ))}
-              {hasCxl && (
-                <div>
-                  <label style={labelStyle}>Why did it cancel? <span style={hintStyle}>(optional)</span></label>
-                  <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
+          {active && (
+            <div style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
+              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{PRODUCT_LABEL[active.line]}</div>
+              {needsType(active.line) && (
+                <div style={field(150)}>
+                  <label style={labelStyle}>Type</label>
+                  <select style={inputBase} value={active.type} onChange={e => editPolicy(active.id, { type: e.target.value })}>
+                    <option value="">Pick one</option>
+                    {(types[active.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+                  </select>
                 </div>
               )}
-              {hasSale && (
-                <div style={{ fontSize: 13, color: T.slate700 }}>
-                  <strong>Total premium sold: ${fmtPts(saleTotal)}.</strong> <span style={{ color: T.slate500 }}>Multiline and Referral credits are added on their own, once per line.</span>
+              <div style={field(150)}>
+                <label style={labelStyle}>What happened</label>
+                <select style={inputBase} value={active.status} onChange={e => editPolicy(active.id, { status: e.target.value })}>
+                  <option value="">Pick one</option>
+                  {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+                </select>
+              </div>
+              {needsMoney(active) && (
+                <div style={field(120)}>
+                  <label style={labelStyle}>Premium</label>
+                  <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={active.premium} onChange={e => editPolicy(active.id, { premium: e.target.value })} placeholder="0.00" />
                 </div>
               )}
+              {needsMoney(active) && active.line === "auto" && (
+                <div style={field(70)}>
+                  <label style={labelStyle}>Cars</label>
+                  <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={active.vehicles} onChange={e => editPolicy(active.id, { vehicles: e.target.value })} />
+                </div>
+              )}
+              {isSold(active) && relationship === "existing" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }}>
+                  <input type="checkbox" checked={!!active.isNewLine} onChange={e => editPolicy(active.id, { isNewLine: e.target.checked })} />
+                  New line
+                </label>
+              )}
+              <button type="button" style={{ ...btnGhost, marginLeft: "auto", marginBottom: 6 }} onClick={() => setActivePolicy(null)}>Done</button>
+            </div>
+          )}
+          {hasCxl && (
+            <div style={{ marginTop: 10 }}>
+              <label style={labelStyle}>Why did it cancel? <span style={hintStyle}>(optional)</span></label>
+              <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
+            </div>
+          )}
+          {hasSale && (
+            <div style={{ fontSize: 13, color: T.slate700, marginTop: 8 }}>
+              <strong>Total premium sold: ${fmtPts(saleTotal)}.</strong> <span style={{ color: T.slate500 }}>Multiline and Referral credits are added on their own, once per line.</span>
             </div>
           )}
         </div>
 
-        {/* ---- bottom row: ECRM link (sale), note, marketing type (sale or quote), sourced by (referral) ---- */}
+        {/* ---- scorecard: Add as a pill; the 10 parts below, 1 to 3 or blank ---- */}
+        <div style={blockStyle}>
+          <div style={{ ...wrapRow, alignItems: "center" }}>
+            {!card ? (
+              <button type="button" style={{ ...addSelect, textAlign: "left" }} onClick={() => setCard({ scores: {}, recTurned: false, recUrl: "" })}>+ Add Scorecard</button>
+            ) : (
+              <span style={pill}>
+                Scorecard{cardAvg != null ? ` · ${cardAvg.toFixed(2)}` : ""}
+                <button type="button" style={pillX} onClick={() => setCard(null)} aria-label="remove">×</button>
+              </span>
+            )}
+          </div>
+          {card && (
+            <div style={{ marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8, display: "grid", gap: 6 }}>
+              {CARD_PARTS.map(pt => (
+                <div key={pt.key} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                  <div style={{ flex: "1 1 150px", fontSize: 13, color: T.slate800 }}>{pt.label}</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[1, 2, 3].map(v => <span key={v} style={scoreChip(card.scores[pt.key] === v)} onClick={() => setScore(pt.key, v)}>{v}</span>)}
+                  </div>
+                </div>
+              ))}
+              <div style={{ ...wrapRow, alignItems: "center", marginTop: 4 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700 }}>
+                  <input type="checkbox" checked={!!card.recTurned} onChange={e => setCard(c => ({ ...c, recTurned: e.target.checked }))} /> Recording turned in
+                </label>
+                {card.recTurned && (
+                  <div style={field(220)}>
+                    <input style={inputBase} value={card.recUrl} onChange={e => setCard(c => ({ ...c, recUrl: e.target.value }))} placeholder="recording link" />
+                  </div>
+                )}
+                <span style={{ fontSize: 12, color: T.slate500 }}>Leave a part blank if it didn't come up. Tap a score again to clear it.</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ---- bottom row: ECRM link (sale), marketing type (sale or quote), lead source (referral), note ---- */}
         <div style={{ ...wrapRow, ...blockStyle }}>
           {hasSale && (
-            <div style={field(220)}>
-              <label style={labelStyle}>ECRM link <span style={{ color: T.red }}>(required for a sale)</span></label>
+            <div style={field(200)}>
+              <label style={labelStyle}>ECRM link <span style={{ color: T.red }}>(required)</span></label>
               <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
             </div>
           )}
-          <div style={field(220)}>
-            <label style={labelStyle}>Note {hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
-            <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
-          </div>
           {(hasSale || hasQuote) && (
-            <div style={field(160)}>
+            <div style={{ flex: "0 1 150px", minWidth: 0 }}>
               <label style={labelStyle}>Marketing type</label>
               <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
                 <option value="">Pick one</option>
@@ -531,17 +607,21 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           )}
           {(hasSale || hasQuote) && isReferral && (
-            <div style={field(160)}>
-              <label style={labelStyle}>Who sourced the lead?</label>
+            <div style={{ flex: "0 1 140px", minWidth: 0 }}>
+              <label style={labelStyle}>Lead source</label>
               <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
                 <option value="">{logFor ? "The person logged for" : "Me"}</option>
                 {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
               </select>
             </div>
           )}
+          <div style={field(220)}>
+            <label style={labelStyle}>Note {hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
+            <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
+          </div>
         </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18, position: "sticky", bottom: 8, background: T.white, padding: "8px 0", zIndex: 3 }}>
           <button style={btnPrimary(busy)} disabled={busy} onClick={submit}>{busy ? "Saving…" : `Log it${activityTotal ? ` · $${fmtPts(activityTotal)}` : ""}`}</button>
         </div>
         {attempted && problems.length > 0 && (
@@ -632,6 +712,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
   const [acts, setActs] = useState([]);
   const [sales, setSales] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [rollup, setRollup] = useState([]);   // rp_week_rollup: scorecard average, asks vs outcomes, per member
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -647,7 +728,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const [p, a, s, q] = await Promise.all([
+      const [p, a, s, q, ru] = await Promise.all([
         supabase.rpc("compute_weekly_retention_points", { p_agency_id: AGENCY_ID, p_week_end_date: safeWeek }),
         supabase.from("retention_activity_log").select("id, team_member_id, activity_key, occurred_on, credited_week_end_date, credit_available_on, customer_label, note, save_reason, save_line, points, status, source, created_at")
           .eq("agency_id", AGENCY_ID).eq("status", "credited").or(`week_end_date.eq.${safeWeek},credited_week_end_date.eq.${safeWeek}`).order("occurred_on", { ascending: false }),
@@ -655,18 +736,21 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("sale_date", { ascending: false }),
         supabase.from("quote_log").select("id, team_member_id, quote_date, customer_label, is_existing_customer, products_discussed, status, created_at")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("quote_date", { ascending: false }),
+        supabase.rpc("rp_week_rollup", { p_week_end: safeWeek, p_team_member_id: null }),
       ]);
       if (p.error) throw p.error;
       setRows(Array.isArray(p.data) ? p.data : []);
       setActs(Array.isArray(a.data) ? a.data : []);
       setSales(Array.isArray(s.data) ? s.data : []);
       setQuotes(Array.isArray(q.data) ? q.data : []);
+      setRollup(Array.isArray(ru.data) ? ru.data : []);
     } catch (e) { setErr(errText(e)); } finally { setLoading(false); }
   }, [safeWeek]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
   const mine = (r) => isAdmin || r.team_member_id === myTeamId;
+  const myRollup = rollup.filter(mine).filter(r => r.scorecards > 0 || r.pivots || r.review_asks || r.referral_asks || r.policy_reviews || r.google_reviews || r.referrals_sold);
   const visibleRows = rows.filter(mine);
   const teamNet = rows.reduce((s, r) => s + Number(r.net_points || 0), 0);
   const myActs = acts.filter(mine);
@@ -693,6 +777,31 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
           <TabLink href={weekHref(addDays(safeWeek, 7))} onSelect={() => setWeekEnd(addDays(safeWeek, 7))} style={btnGhost} disabled={safeWeek >= weekEndOf(todayCentral())}>Next week →</TabLink>
         </div>
       </div>
+
+      {/* conversation scorecard average + asks against outcomes (rp_week_rollup) */}
+      {myRollup.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Conversations this week</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>Scorecard average is 1 to 3 across every part you scored. Asks are tracked, not paid; the outcome next to each is what pays.</div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr>{isAdmin && <th style={tableTh}>Who</th>}<th style={tableTh}>Scorecards</th><th style={tableTh}>Average</th><th style={tableTh}>Pivots → Reviews</th><th style={tableTh}>Review asks → Google reviews</th><th style={tableTh}>Referral asks → Referrals sold</th></tr></thead>
+              <tbody>
+                {myRollup.map(r => (
+                  <tr key={r.team_member_id}>
+                    {isAdmin && <td style={tableTd}>{nameOf(r.team_member_id)}</td>}
+                    <td style={tableTd}>{r.scorecards}</td>
+                    <td style={tableTd}>{r.scorecard_avg == null ? "\u2014" : Number(r.scorecard_avg).toFixed(2)}</td>
+                    <td style={tableTd}>{r.pivots} → {r.policy_reviews}</td>
+                    <td style={tableTd}>{r.review_asks} → {r.google_reviews}</td>
+                    <td style={tableTd}>{r.referral_asks} → {r.referrals_sold}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {err && <Notice kind="error">{err}</Notice>}
 
