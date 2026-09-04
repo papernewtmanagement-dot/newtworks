@@ -1,0 +1,7 @@
+-- Double-log guard in rp_log_activity (same person, item, customer, day, in a
+-- separate entry). rp_log_scorecard: FIT scorecard on the entry, written to
+-- fit_scorecards with tier + entry type from the same functions/trigger the
+-- Scorecards page uses. rp_log_entry carries a "scorecard" section; rp_undo_entry
+-- deletes the scorecard row it created. rp_week_rollup(week_end, member): scorecard
+-- count + average and asks vs outcomes per member for My week.
+-- Live definitions: migration scorecard_on_entry_double_log_guard_week_rollup in Supabase.
