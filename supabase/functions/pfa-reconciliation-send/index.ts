@@ -157,6 +157,16 @@ function fmtLongDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   return `${MONTH_NAMES[m - 1]} ${d}, ${y}`;
 }
+// Today in America/Chicago as YYYY-MM-DD. The agency runs on Central for every
+// date-bearing surface (calendar conventions principle), and a UTC "today" would
+// print tomorrow's date on the form for anything sent after 6 or 7 PM local.
+function todayCentralIso(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "01";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
 function fmtShortMMDD(iso: string): string {
   const [_, m, d] = iso.split("-").map(Number);
   return `${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -207,6 +217,7 @@ function drawTextRightAligned(ctx: DrawCtx, text: string, boxX: number, boxY: nu
 // =========================================================================
 interface ReconData {
   agent_name: string;
+  prepared_date: string;
   agent_code: string;
   bank_name: string;
   bank_mailing_address: string;
@@ -369,6 +380,9 @@ function buildPdfBytes(data: ReconData): Promise<Uint8Array> {
     const sigLineY = y;
     drawLine(ctx, MARGIN + 4, sigLineY, MARGIN + 300, sigLineY, COLOR_BLACK, 0.6);
     drawLine(ctx, MARGIN + 320, sigLineY, MARGIN + CONTENT_W - 4, sigLineY, COLOR_BLACK, 0.6);
+    // Date is pre-filled; the signature line is deliberately left blank because
+    // the signature is the agent's own certification and is signed by hand.
+    drawText(ctx, fmtLongDate(data.prepared_date), MARGIN + 330, sigLineY + 4, { size: 10 });
     drawText(ctx, "Signature", MARGIN + 130, sigLineY - 12, { size: 9, color: COLOR_GRAY });
     drawText(ctx, "Date",      MARGIN + 400, sigLineY - 12, { size: 9, color: COLOR_GRAY });
     y = sigLineY - 24;
@@ -542,6 +556,7 @@ async function run(req: Request): Promise<Response> {
   const acct = recon.pfa_accounts;
   const pdfData: ReconData = {
     agent_name: acct?.agent_name || "Peter J Story",
+    prepared_date: todayCentralIso(),
     agent_code: acct?.agent_code || "53-1BDD",
     bank_name: acct?.bank_name || "Frost Bank",
     bank_mailing_address: acct?.bank_mailing_address || "P.O. Box 1600, San Antonio TX 78296",
