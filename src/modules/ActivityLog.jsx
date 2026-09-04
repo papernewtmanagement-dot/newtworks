@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { T } from "../lib/theme.js";
+import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
 // ============================================================
 // ActivityLog — the Production module (nav label "Production", route
@@ -29,6 +30,11 @@ import { T } from "../lib/theme.js";
 //    Scorecards page writes it; My week shows the week's average.
 //  * Bottom row, only what applies: ECRM link (sale), Marketing type
 //    (sale or quote), Lead source (referral), then the note.
+//  * A canceled policy is matched server-side to the sale that wrote it
+//    (same customer + line, 6-month window on auto, 12 on the rest) and
+//    the Multiline credit comes back prorated; the green bar says so.
+//  * Earning Potential (owner only) lives here as its own tab, moved from
+//    Team; it is the shared EarningPotentialTab component untouched.
 //
 // Layout follows the web-form research Peter asked for (2026-09-04):
 //  * Fewer visible choices. Three policy blocks became one list with one
@@ -198,7 +204,9 @@ function summarizeEntry(data) {
   if (cs.length) {
     const lines = cs.map(c => PRODUCT_SHORT[c.policy_line] || c.policy_line).join(", ");
     const voided = cs.reduce((n, c) => n + Number(c.saves_voided || 0), 0);
-    parts.push(`canceled: ${lines}` + (voided > 0 ? `, ${voided} unpaid save${voided === 1 ? "" : "s"} taken back` : ""));
+    const back = cs.filter(c => Number(c.chargeback_points) > 0);
+    parts.push(`canceled: ${lines}` + (voided > 0 ? `, ${voided} unpaid save${voided === 1 ? "" : "s"} taken back` : "")
+      + (back.length ? `, $${fmtPts(back.reduce((n, c) => n + Number(c.chargeback_points), 0))} Multiline credit charged back (${back.map(c => `${PRODUCT_SHORT[c.policy_line]} sold ${fmtDate(c.matched_sale_date)}, ${Math.round(Number(c.window_fraction_left) * 100)}% of the window left`).join("; ")})` : ""));
   }
   const sc = data?.scorecard;
   if (sc) parts.push(`scorecard ${sc.average_score == null ? "" : Number(sc.average_score).toFixed(2)} across ${sc.scored} part${sc.scored === 1 ? "" : "s"}`);
@@ -905,7 +913,8 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
 export default function ActivityLog({ userRole }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
-  const [tab, setTab, tabHref] = useTabParam("tab", "log", TABS);
+  const isOwnerRole = userRole === "owner";
+  const [tab, setTab, tabHref] = useTabParam("tab", "log", isOwnerRole ? [...TABS, "earnings"] : TABS);
   const [values, setValues] = useState([]);
   const [sources, setSources] = useState([]);
   const [types, setTypes] = useState({});
@@ -948,6 +957,7 @@ export default function ActivityLog({ userRole }) {
   const tabs = [
     { id: "log", label: "Log" },
     { id: "week", label: "My week" },
+    ...(isOwnerRole ? [{ id: "earnings", label: "Earning Potential" }] : []),  // owner only (Peter 2026-08-28); moved here from Team 2026-09-04
   ];
 
   return (
@@ -969,6 +979,7 @@ export default function ActivityLog({ userRole }) {
 
       {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
+      {tab === "earnings" && isOwnerRole && <EarningPotentialTab />}
     </div>
   );
 }
