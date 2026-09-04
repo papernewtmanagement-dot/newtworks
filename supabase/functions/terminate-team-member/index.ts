@@ -1,4 +1,4 @@
-// terminate-team-member edge function (v1)
+// terminate-team-member edge function (v2)
 //
 // Orchestrates a State Farm team-member termination:
 //   1. Loads the team member + the "Termination" admin_pages checklist.
@@ -10,15 +10,21 @@
 //   4. Deactivates the linked users row if present.
 //   5. Sets both team_telegram_map.is_excluded_pjsagencybot=true AND is_excluded_paper_newt_bot=true (excluded_reason='terminated').
 //   6. Strips the person's block from the "Team List" processes page.
-//   7. Sends the email to Peter's State Farm address via Composio Gmail.
-//   8. Kicks the user from the team Telegram group (ban + unban → no permanent
+//   7. Removes BOTH of the person's email addresses from the standing team
+//      huddle calendar event (agency_huddle_config.calendar_event_id).
+//      Added 2026-09-03: before this, terminating someone left them on the
+//      Daily Kickoff invite forever. John Kostov was still on it two days
+//      after his 2026-09-01 termination because nothing in this flow touched
+//      the calendar at all.
+//   8. Sends the email to Peter's State Farm address via Composio Gmail.
+//   9. Kicks the user from the team Telegram group (ban + unban → no permanent
 //      ban list).
-//   9. Logs everything to automation_run_log; failures land in alerts so Peter
+//  10. Logs everything to automation_run_log; failures land in alerts so Peter
 //      can see + retry.
 //
-// Email + Telegram are best-effort: the DB state is the source of truth for
-// whether the termination happened. External failures create alerts but do
-// not roll back the archive.
+// Email, calendar and Telegram are best-effort: the DB state is the source of
+// truth for whether the termination happened. External failures create alerts
+// but do not roll back the archive.
 
 // deno-lint-ignore-file no-explicit-any
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -26,6 +32,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const COMPOSIO_GMAIL_URL = "https://backend.composio.dev/api/v3/tools/execute/GMAIL_SEND_EMAIL";
+const COMPOSIO_CAL_REMOVE_URL = "https://backend.composio.dev/api/v3/tools/execute/GOOGLECALENDAR_REMOVE_ATTENDEE";
 const NOTICE_RECIPIENT = "peter.story.yrru@statefarm.com";
 
 const sb = createClient(
@@ -239,7 +246,7 @@ ${checklistMdToHtml(checklistMd)}
 <ul style="line-height:1.7;font-size:13px;margin:8px 0 0 0;padding-left:20px;">
 <li>Archived in Newtworks database (<code>team.archived_at</code>)</li>
 <li>Linked user login deactivated (if any)</li>
-<li>Stripped from the Team List page in Processes</li>
+<li>Stripped from the Team List page in Processes</li>\n<li>Removed from the standing team huddle calendar invite (work + personal address)</li>
 <li>Excluded from both Telegram bots (<code>team_telegram_map.is_excluded_pjsagencybot=true, is_excluded_paper_newt_bot=true</code>)</li>
 <li>Kicked from the team Telegram group</li>
 </ul>
@@ -323,6 +330,65 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
       }
     } catch (e) {
       warnings.push(`processes strip exception: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // 7b) Remove from the standing team huddle calendar invite (best-effort).
+    // Added 2026-09-03. Removals run one at a time against the same event:
+    // concurrent attendee edits on one Google event race and can restore a
+    // guest that was just removed.
+    const calendarRemoved: string[] = [];
+    try {
+      const { data: huddle, error: hcErr } = await sb.from("agency_huddle_config")
+        .select("calendar_id, calendar_event_id, event_title")
+        .eq("agency_id", AGENCY_ID)
+        .maybeSingle();
+      const calEmails = [member.email_sf, member.email_personal]
+        .filter((e): e is string => typeof e === "string" && e.trim() !== "");
+      if (hcErr) {
+        warnings.push(`agency_huddle_config lookup: ${hcErr.message}`);
+      } else if (!huddle?.calendar_event_id || !huddle?.calendar_id) {
+        warnings.push("agency_huddle_config has no calendar_id/calendar_event_id — huddle invite removal skipped");
+      } else if (calEmails.length === 0) {
+        auditLog.push("No email on file — huddle invite removal skipped");
+      } else {
+        const apiKey = await getSetting("composio_api_key");
+        const userId = await getSetting("composio_user_id");
+        const calConn = await getSetting("composio_googlecalendar_account_id");
+        if (!apiKey || !userId || !calConn) {
+          warnings.push("Composio Google Calendar config missing in settings — huddle invite removal skipped");
+        } else {
+          for (const email of calEmails) {
+            const res = await fetch(COMPOSIO_CAL_REMOVE_URL, {
+              method: "POST",
+              headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: userId,
+                connected_account_id: calConn,
+                arguments: {
+                  calendar_id: huddle.calendar_id,
+                  event_id: huddle.calendar_event_id,
+                  attendee_email: email,
+                },
+              }),
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              warnings.push(`huddle invite removal ${email}: HTTP ${res.status}: ${text.slice(0, 250)}`);
+            } else {
+              calendarRemoved.push(email);
+            }
+          }
+          if (calendarRemoved.length > 0) {
+            auditLog.push(`Removed from ${huddle.event_title || "team huddle"} invite: ${calendarRemoved.join(", ")}`);
+          }
+        }
+      }
+    } catch (e) {
+      warnings.push(`huddle invite removal exception: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (calendarRemoved.length === 0) {
+      await logAlert("warning", `Huddle invite removal failed for ${fullName}`,
+        `${fullName} was terminated but could not be removed from the team huddle calendar invite. Remove them by hand in Google Calendar so they stop getting the meeting.`);
     }
 
     // 8) Send email via Composio Gmail (best-effort)
@@ -446,6 +512,7 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
       termination_date: body.termination_date,
       email_sent: emailSent,
       telegram_kicked: telegramKicked,
+      calendar_removed: calendarRemoved,
       audit_log: auditLog,
       warnings,
     });
