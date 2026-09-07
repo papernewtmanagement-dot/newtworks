@@ -290,10 +290,12 @@ const EDIT_FIELDS = {
     "eur",
     // Whiteboard Errors (free-form, weekly) — each line adds +1 to team requirements count
     "whiteboard_errors",
-    // Territory median lapse, auto + fire. Hand-entered weekly benchmark that drives the
+    // Territory top-ranked lapse, auto + fire (Peter 2026-09-06: the benchmark is the best
+    // agency in the territory, not the median). Hand-entered weekly benchmark that drives the
     // retention floor. Stored per week so it cannot drift; prefilled from the most recent
-    // prior week that has both values.
-    "territory_median_lapse_auto", "territory_median_lapse_fire",
+    // prior week that has both values. The older median columns stay on the row for history
+    // and as the fallback when no top-ranked value has been entered for a week.
+    "territory_top_lapse_auto", "territory_top_lapse_fire",
   ],
   // Agency Performance YTD fields — live on agency_snapshot (single source of truth).
   // Row keyed by (agency_id, snapshot_date=week_ending_date, cadence='weekly').
@@ -582,12 +584,13 @@ function useCPRData(weekDate) {
         }));
 
         // 2. Report row for this week
-        const { data: reportRow } = await supabase
+        const { data: reportRowStored } = await supabase
           .from("weekly_cpr_reports")
           .select("*")
           .eq("agency_id", AGENCY_ID)
           .eq("week_ending_date", weekDate)
           .maybeSingle();
+        let reportRow = reportRowStored;
 
         // 2b. Auto-recompute the full CPR outcome (won_the_week + MVP + payroll)
         // on page load so the banner and Payroll section always reflect current
@@ -599,6 +602,17 @@ function useCPRData(weekDate) {
               p_agency_id: AGENCY_ID,
               p_week_end_date: weekDate,
             });
+            // Re-read the row: the recompute just re-stamped won_the_week, the
+            // requirements buy-back and the floor factor on it. Reading it only
+            // BEFORE the recompute is how the page showed a stale +25 team
+            // buyback next to live net quotes (week ending 2026-09-05).
+            const { data: reportRowFresh } = await supabase
+              .from("weekly_cpr_reports")
+              .select("*")
+              .eq("agency_id", AGENCY_ID)
+              .eq("week_ending_date", weekDate)
+              .maybeSingle();
+            if (reportRowFresh) reportRow = reportRowFresh;
           } catch (_recomputeErr) {
             // Non-fatal: fall through with whatever stored values exist.
           }
@@ -754,22 +768,22 @@ function useCPRData(weekDate) {
           if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
         });
 
-        // 7b. Territory median lapse prefill — most recent prior week carrying both values.
+        // 7b. Territory top-ranked lapse prefill — most recent prior week carrying both values.
         // Entered by hand each week, so the fields open filled in and can be left alone
         // or typed over.
-        const { data: priorMedianRows } = await supabase
+        const { data: priorTopRows } = await supabase
           .from("weekly_cpr_reports")
-          .select("week_ending_date, territory_median_lapse_auto, territory_median_lapse_fire")
+          .select("week_ending_date, territory_top_lapse_auto, territory_top_lapse_fire")
           .eq("agency_id", AGENCY_ID)
           .lt("week_ending_date", weekDate)
-          .not("territory_median_lapse_auto", "is", null)
-          .not("territory_median_lapse_fire", "is", null)
+          .not("territory_top_lapse_auto", "is", null)
+          .not("territory_top_lapse_fire", "is", null)
           .order("week_ending_date", { ascending: false })
           .limit(1);
-        const priorMedianRow = (priorMedianRows || [])[0] || null;
-        const reportPrefills = priorMedianRow ? {
-          territory_median_lapse_auto: priorMedianRow.territory_median_lapse_auto,
-          territory_median_lapse_fire: priorMedianRow.territory_median_lapse_fire,
+        const priorTopRow = (priorTopRows || [])[0] || null;
+        const reportPrefills = priorTopRow ? {
+          territory_top_lapse_auto: priorTopRow.territory_top_lapse_auto,
+          territory_top_lapse_fire: priorTopRow.territory_top_lapse_fire,
         } : {};
 
         // 8. Cycle start + end (YYYY-MM-DD) for the week being viewed, and the cycle start
@@ -2903,14 +2917,15 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
         {editMode && (
           <div style={{ padding: "12px 14px", borderTop: `1px solid ${T.slate200}`, background: T.slate50 }}>
             <div style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, marginBottom: 6 }}>
-              Territory median lapse
+              Territory top-ranked lapse
             </div>
             <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8, lineHeight: 1.5 }}>
-              Rate, not a percentage — enter 0.2337, not 23.37. Opens prefilled from the most
-              recent week that has them. Leave blank and no retention floor applies this week.
+              The best agency in the territory, auto and fire. Rate, not a percentage: enter 0.1381,
+              not 13.81. Opens prefilled from the most recent week that has them. Leave blank and no
+              retention floor applies this week.
             </div>
             <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
-              {[["territory_median_lapse_auto", "Auto"], ["territory_median_lapse_fire", "Fire"]].map(([key, label]) => (
+              {[["territory_top_lapse_auto", "Auto"], ["territory_top_lapse_fire", "Fire"]].map(([key, label]) => (
                 <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <span style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{label}</span>
                   <NumberInput
@@ -4435,10 +4450,11 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
         <tbody>
           {row("Retention Pool THIS WEEK", Number((diag.qtd_pools?.qtd_retention_pool) || 0), diag.qtd_pools?.retention_floor_applied === true ? "weighted_hours share — lifted by the retention floor" : "weighted_hours share (a third of the pool)")}
           {(() => {
-            // Territory median lapse — the benchmark behind the retention floor.
+            // Territory top-ranked lapse — the benchmark behind the retention floor.
             // Retention takes the BIGGER of its normal third and
-            //   (bonus pool + this week's commissions) / 3 x factor,
-            // capped at the whole pool. No medians entered = no floor at all.
+            //   (bonus pool + this week's commissions) / 3 x factor.
+            // No cap. Nothing entered = no floor at all. Weeks that only ever had the
+            // older median entry still read on the median (fd.basis === "median").
             const qp = diag.qtd_pools || {};
             const fd = qp.retention_floor_detail || null;
             const factor = qp.retention_floor_factor;
@@ -4446,7 +4462,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
               return (
                 <tr>
                   <Td colSpan={3} style={{ paddingLeft: 28, color: T.slate500, fontSize: 11, fontStyle: "italic" }}>
-                    Territory median lapse not entered for this week — no retention floor applied.
+                    Territory top-ranked lapse not entered for this week — no retention floor applied.
                   </Td>
                 </tr>
               );
@@ -4471,10 +4487,10 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
               <Fragment>
                 <tr>
                   <Td colSpan={3} style={{ paddingLeft: 28, paddingTop: 8, color: T.slate900, fontWeight: 700, fontSize: 11 }}>
-                    Territory median lapse — retention floor
+                    {fd.basis === "median" ? "Territory median lapse — retention floor" : "Territory top-ranked lapse — retention floor"}
                   </Td>
                 </tr>
-                {line("Territory median — auto / fire", `${Number(fd.median_auto).toFixed(4)} / ${Number(fd.median_fire).toFixed(4)}`, "entered by hand for this week")}
+                {line(fd.basis === "median" ? "Territory median — auto / fire" : "Territory top-ranked — auto / fire", `${Number(fd.benchmark_auto ?? fd.median_auto).toFixed(4)} / ${Number(fd.benchmark_fire ?? fd.median_fire).toFixed(4)}`, "entered by hand for this week")}
                 {line("Ours — auto / fire", `${Number(fd.our_auto).toFixed(4)} / ${Number(fd.our_fire).toFixed(4)}`, "our own annualized lapse rate")}
                 {fd.prior_auto !== null && fd.prior_auto !== undefined &&
                   line("Prior week — auto / fire", `${Number(fd.prior_auto).toFixed(4)} / ${Number(fd.prior_fire).toFixed(4)}`, "the week before, same measure")}
@@ -4482,17 +4498,19 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
                   ? line("Improvement kicker", `−${Number(fd.improvement_auto).toFixed(4)} auto / −${Number(fd.improvement_fire).toFixed(4)} fire`, "we improved, so the improvement counts twice from where we were — for this week only")
                   : line("Improvement kicker", "none", "no improvement on the prior week; no kicker, no penalty")}
                 {line("Treated as — auto / fire", `${Number(fd.effective_auto).toFixed(4)} / ${Number(fd.effective_fire).toFixed(4)}`, "the rate the factor is actually computed on; the real rate above is what gets recorded")}
-                {line("Ratio — auto / fire", `${Number(fd.ratio_auto).toFixed(4)} / ${Number(fd.ratio_fire).toFixed(4)}`, "median divided by the treated-as rate; above 1.00 means we are ahead of the median")}
+                {line("Ratio — auto / fire", `${Number(fd.ratio_auto).toFixed(4)} / ${Number(fd.ratio_fire).toFixed(4)}`, fd.basis === "median" ? "median divided by the treated-as rate; above 1.00 means we are ahead of the median" : "the territory's best divided by the treated-as rate; 1.00 means we match them")}
                 {line("Blended ratio", Number(fd.blended_ratio).toFixed(4), `weighted by policies in force (${fmtInt(fd.pif_auto)} auto / ${fmtInt(fd.pif_fire)} fire)`)}
-                {line("Factor", Number(factor).toFixed(4), `0.50 x blended ratio, held between 0.25 and 1.00${fd.clamped ? " — clamped" : ""}. 0.50 = at the median`)}
-                {fd.half_capped === true &&
-                  line("Held at 0.50", "yes", "our raw rate is still worse than the median, so the kicker cannot carry the factor past half")}
+                {line("Factor", Number(factor).toFixed(4), fd.basis === "median"
+                  ? `0.50 x blended ratio, held between 0.25 and 1.00${fd.clamped ? " — clamped" : ""}. 0.50 = at the median`
+                  : `blended ratio as is, held between 0.25 and 1.00${fd.clamped ? " — clamped" : ""}. 1.00 = matching the best in the territory keeps the whole third; twice their lapse rate keeps half`)}
+                {(fd.par_capped === true || fd.half_capped === true) &&
+                  line(`Held at ${Number(fd.par ?? 0.5).toFixed(2)}`, "yes", "our raw rate is still worse than the benchmark, so the kicker cannot carry the factor past it")}
                 {line("Pre-commission pool", fmtMoneyCentsR(preComm), `bonus pool before the clamp (${fmtMoneyCentsR(poolRaw)}) plus THIS WEEK's commissions (${fmtMoneyCentsR(basisComm)}) added back`)}
                 {line("Floor", fmtMoneyCentsR(rawFloor), `pre-commission pool / 3 x factor. No cap. Compared against the normal third of ${fmtMoneyCentsR(normal)} — retention gets the bigger of the two`)}
                 <tr>
                   <Td style={{ paddingLeft: 28, color: applied ? T.green : T.slate600, fontSize: 11, fontWeight: 700 }}>Retention floor applied</Td>
                   <Td align="right" style={{ color: applied ? T.green : T.slate600, fontSize: 11, fontWeight: 700 }}>{applied ? "yes" : "no"}</Td>
-                  <Td style={{ color: capped && !applied ? T.amber : T.slate500, fontSize: 11, paddingLeft: 10 }}>{note}</Td>
+                  <Td style={{ color: T.slate500, fontSize: 11, paddingLeft: 10 }}>{note}</Td>
                 </tr>
               </Fragment>
             );
