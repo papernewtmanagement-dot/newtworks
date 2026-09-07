@@ -95,7 +95,7 @@ const fieldLabel = {
 };
 
 const inputBase = {
-  width: "100%", padding: "9px 11px", fontSize: 13,
+  width: "100%", boxSizing: "border-box", padding: "9px 11px", fontSize: 13,
   color: T.slate900, background: T.white,
   border: `1px solid ${T.slate300}`, borderRadius: 8,
   outline: "none",
@@ -233,7 +233,7 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onUpdateSte
       {/* Header */}
       <div style={{ marginBottom: 16 }}>
         <a
-          href="/onboarding"
+          href="/development"
           onClick={(e) => {
             if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
             e.preventDefault();
@@ -532,7 +532,9 @@ function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: T.white, borderRadius: 12, padding: 22,
-          maxWidth: 480, width: "100%", maxHeight: "90vh", overflowY: "auto",
+          boxSizing: "border-box",
+          maxWidth: 480, width: "100%", maxHeight: "90vh",
+          overflowY: "auto", overflowX: "hidden",
           boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
         }}
       >
@@ -559,7 +561,7 @@ function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
           )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
           <div>
             <label style={fieldLabel}>Start date</label>
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputBase} />
@@ -625,7 +627,7 @@ function PlanListCard({ plan, steps, teamMember, onOpen }) {
   const statusCol = STATUS_COLORS[plan.status] || STATUS_COLORS.active;
   return (
     <a
-      href={`/onboarding?plan=${plan.id}`}
+      href={`/development?plan=${plan.id}`}
       onClick={(e) => {
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
         e.preventDefault();
@@ -671,8 +673,7 @@ function ModuleHeader({ tab, tabHref, onSelectTab, action = null }) {
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>Onboarding</div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: T.slate500 }}>
             {tab === "template"
               ? "The master step list every new plan is built from."
               : "Onboarding plans in progress for new team members."}
@@ -681,8 +682,7 @@ function ModuleHeader({ tab, tabHref, onSelectTab, action = null }) {
         {action}
       </div>
       <div style={{
-        display: "flex", gap: 4, marginTop: 12,
-        overflowX: "auto", whiteSpace: "nowrap",
+        display: "flex", gap: 4, marginTop: 12, flexWrap: "wrap",
         borderBottom: `1px solid ${T.slate200}`,
       }}>
         {TABS.map(t => {
@@ -811,7 +811,7 @@ export default function Onboarding({ userRole, userId }) {
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
   // read on mount and the write on every setSelectedPlanId call.
   const [selectedPlanId, setSelectedPlanId] = useTabParam("plan", null);
-  const [tab, setTab, tabHref] = useTabParam("tab", "plans", ["plans", "template"]);
+  const [tab, setTab, tabHref] = useTabParam("subtab", "plans", ["plans", "template"]);
   const [showCreate, setShowCreate] = useState(false);
   const [actionError, setActionError] = useState("");
 

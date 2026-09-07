@@ -20,17 +20,15 @@ import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import { urlForState } from "./src/lib/routing.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
-import Licensing from "./src/modules/Licensing.jsx";
 import PFA from "./src/modules/PFA.jsx";
 // MarketingPoints module removed from nav 2026-07-12; per-person points now entered inline
 // on CPR Payroll section (Marketing row in edit mode). File kept in src/modules/ for now.
 import Marketing from "./src/modules/Marketing.jsx";
 import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
-import Onboarding from "./src/modules/Onboarding.jsx";
+import Development from "./src/modules/Development.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
-import Trivia from "./src/modules/Trivia.jsx";
 import ActivityLog from "./src/modules/ActivityLog.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -111,9 +109,7 @@ const NAV_ITEMS = [
   { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
-  { id: "onboarding",  label: "Onboarding",  icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
-  { id: "trivia",      label: "Trivia",      icon: "grid",          roles: TEAM_VISIBLE_ROLES },
-  { id: "licensing",   label: "Licensing",   icon: "shield",        roles: TEAM_VISIBLE_ROLES },
+  { id: "development", label: "Development", icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
   { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
@@ -680,7 +676,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary key="handbook" name="Handbook"><Manual manualType="handbook" userRole={userRole} /></ErrorBoundary>,
     processes:   <ErrorBoundary key="processes" name="Processes"><Manual manualType="processes" userRole={userRole} /></ErrorBoundary>,
-    onboarding:  <ErrorBoundary name="Onboarding"><Onboarding userRole={userRole} userId={userId} /></ErrorBoundary>,
+    development: <ErrorBoundary name="Development"><Development userRole={userRole} userId={userId} /></ErrorBoundary>,
     admin:       <ErrorBoundary key="admin" name="Admin"><Manual manualType="admin" userRole={userRole} /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
@@ -692,10 +688,8 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
-    trivia:      <ErrorBoundary name="Trivia"><Trivia userRole={userRole} userId={userId} /></ErrorBoundary>,
     production:  <ErrorBoundary name="Production"><ActivityLog userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
-    licensing:   <ErrorBoundary name="Licensing"><Licensing userRole={userRole} userId={userId} /></ErrorBoundary>,
     pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
     scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
   };
@@ -737,7 +731,15 @@ const KNOWN_MODULE_IDS = NAV_ITEMS.filter(n => n.type !== "divider").map(n => n.
 // Old module slugs that still resolve. /activity became /production on
 // 2026-09-02; bookmarks and old links land on the new module and the URL
 // effect rewrites the address bar to the canonical slug.
-const LEGACY_MODULE_ALIASES = { activity: "production" };
+const LEGACY_MODULE_ALIASES = {
+  activity: "production",
+  // 2026-09-07: Onboarding, Trivia and Licensing folded into one Development
+  // module as tabs. Old bookmarks land on Development; the ?area= param picks
+  // the right tab so /trivia and /licensing still open what they used to.
+  onboarding: "development",
+  trivia: "development",
+  licensing: "development",
+};
 function parseUrl(pathname) {
   const p = (pathname || "/").replace(/\/+$/, "") || "/";
   const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);

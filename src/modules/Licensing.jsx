@@ -132,7 +132,7 @@ function Pill({ bg, color, text }) {
 
 // ─── main component ────────────────────────────────────────
 
-export default function Licensing({ userRole, userId }) {
+export default function Licensing({ userRole, userId, embedded = false }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
 
   const [teamRows, setTeamRows]           = useState([]);
@@ -300,9 +300,11 @@ export default function Licensing({ userRole, userId }) {
   return (
     <div style={{ padding: 20, maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>
-          {isAdmin ? "CE & Licenses" : "My Licenses"}
-        </div>
+        {!embedded && (
+          <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em" }}>
+            {isAdmin ? "CE & Licenses" : "My Licenses"}
+          </div>
+        )}
         <div style={{ fontSize: 13, color: T.slate500, marginTop: 4, lineHeight: 1.5 }}>
           {isAdmin
             ? "Continuing education, license licenses, and one-time certifications for the whole team. Reminders auto-send at 90 / 60 / 30 / 14 / 7 / 1 days out and daily past due."

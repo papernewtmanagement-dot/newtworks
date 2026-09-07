@@ -352,7 +352,7 @@ function orderedOptions(options, attemptId, itemId) {
   return arr;
 }
 
-export default function Trivia({ userRole, userId }) {
+export default function Trivia({ userRole, userId, embedded = false }) {
   const vp = useViewport();
   const isAdmin = userRole === "owner" || userRole === "manager";
   const [tabRaw, setTabRaw, tabHref] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
@@ -757,9 +757,11 @@ export default function Trivia({ userRole, userId }) {
 
   return (
     <div style={s.page}>
-      <div style={s.headerBar}>
-        <div style={s.headerTitle}>Trivia</div>
-      </div>
+      {!embedded && (
+        <div style={s.headerBar}>
+          <div style={s.headerTitle}>Trivia</div>
+        </div>
+      )}
       <div style={s.tabBar}>
         <TabLink style={s.tabBtn(tab === "play")} href={tabHref("play")} onSelect={() => setTabRaw("play")}>Play</TabLink>
         {isAdmin && (
