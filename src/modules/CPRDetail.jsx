@@ -3918,7 +3918,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                       <Td style={{ paddingLeft: 32, fontSize: 12, fontStyle: "italic" }}>
                         <span style={{ color: T.red }}>Requirements adjustment</span>
                         {teamAdjDollars > 0 && (
-                          <span style={{ color: T.slate500 }}>
+                          <span style={{ color: T.red }}>
                             {` — ${fmtMoney(teamAdjDollars)} buyback of ${teamAdjQuotes} quote${teamAdjQuotes === 1 ? "" : "s"} to WtW`}
                           </span>
                         )}
