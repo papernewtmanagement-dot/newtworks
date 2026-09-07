@@ -1,0 +1,3 @@
+-- rp_spot_check_sample(month, limit): stable random sample of self-logged, credited, unverified rows for the month (admin).
+-- rp_verify_activity(id): admin stamps verified_at / verified_by.
+-- Live definition: migration rp_spot_check_sample_and_verify in Supabase.
