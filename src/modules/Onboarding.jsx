@@ -23,13 +23,16 @@ import { TabLink, useTabParam } from "../lib/routing.jsx";
 // ─── constants ─────────────────────────────────────
 const ADMIN_ROLES = ["owner", "manager"];
 
+// Week bands match the ramp table the agency has always run on: 1-2, 3-4,
+// 5-8, 9-13, 14+. The earlier labels here (Week 1 / Weeks 2-3 / Month 2 /
+// Month 3) did not line up with the steps sitting in each phase.
 const PHASE_LABELS = {
-  0: { name: "Pre-arrival",        blurb: "Signed offer, systems provisioned, workspace ready" },
-  1: { name: "Week 1",             blurb: "Orientation, paperwork, compliance training, first shadowing" },
-  2: { name: "Weeks 2-3",          blurb: "First independent work, daily wrap-ups, weekly 1:1s" },
-  3: { name: "Month 2",            blurb: "Reduced shadowing, real production or full retention cycle" },
-  4: { name: "Month 3",            blurb: "Volume expectations, cross-training, WtW contribution" },
-  5: { name: "Fully independent",  blurb: "Champions Circle pace, license verified, monthly audit rhythm" },
+  0: { name: "Before Day 1",   blurb: "Signed offer, licenses on file, systems and desk ready" },
+  1: { name: "Weeks 1-2",      blurb: "Orientation, paperwork, compliance training, shadowing. No production target." },
+  2: { name: "Weeks 3-4",      blurb: "First independent work, daily wrap-ups, weekly 1:1s" },
+  3: { name: "Weeks 5-8",      blurb: "Review cadence begins, Life pipeline starts, shadowing down to half" },
+  4: { name: "Weeks 9-13",     blurb: "Full quote share, weekly claims rhythm, cross-training" },
+  5: { name: "Week 14+",       blurb: "Fully independent. Champions Circle pace, license verified, monthly audit rhythm" },
 };
 
 const CATEGORY_COLORS = {
