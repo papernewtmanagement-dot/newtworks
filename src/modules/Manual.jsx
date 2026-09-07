@@ -1505,7 +1505,7 @@ What I\'d like to discuss:
            Peter 2026-08-08. Body content sits 12px in from its header so it
            stands apart; headers stay flush.
            WHY IT LIVES AT THE BOTTOM: the first two attempts set margin-left
-           near the top of this style block and were SILENTLY CANCELLED. The
+           near the top of this style block and were SILENTLY CANCELED. The
            element rules further down use the margin SHORTHAND
            (p -> margin: 0 0 14px 0; ul/ol -> margin: 8px 0 16px 0; blockquote
            and pre -> margin: 14px 0; table -> margin: 16px 0), and a shorthand

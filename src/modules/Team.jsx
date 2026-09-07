@@ -1252,11 +1252,13 @@ const StaffDirectory = ({ staff }) => {
         .select("id");
       if (resolveNote.error) warnings.push(`resolve termination note: ${resolveNote.error.message}`);
 
-      // 5) Cancel any still-open offboarding follow-up task for this person.
-      //    0 rows is OK (no open task to cancel).
+      // 5) Close any still-open offboarding follow-up task for this person.
+      //    0 rows is OK (no open task to close). Status vocabulary on tasks is
+      //    open / closed; the Tasks module reads any other value as open, so a
+      //    "cancelled" task used to come back as open (fixed 2026-09-07).
       const cancelTask = await supabase
         .from("tasks")
-        .update({ status: "cancelled", completed_at: nowIso, updated_at: nowIso })
+        .update({ status: "closed", completed_at: nowIso, updated_at: nowIso })
         .eq("agency_id", AGENCY_ID)
         .eq("related_id", member.id)
         .eq("module_reference", "hr_people")

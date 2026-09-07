@@ -363,10 +363,10 @@ function PendingRow({ req, onCancel }) {
 function ResolvedRow({ req }) {
   const isApproved  = req.status === "approved";
   const isDenied    = req.status === "denied";
-  const isCancelled = req.status === "cancelled";
+  const isCanceled  = req.status === "canceled";
   const pillBg    = isApproved ? T.greenLt : isDenied ? T.redLt : T.slate100;
   const pillColor = isApproved ? T.green   : isDenied ? T.red   : T.slate600;
-  const label     = isApproved ? "Approved" : isDenied ? "Denied" : "Cancelled";
+  const label     = isApproved ? "Approved" : isDenied ? "Denied" : "Canceled";
   return (
     <div style={{
       display: "flex", justifyContent: "space-between", alignItems: "center",

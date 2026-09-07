@@ -27,7 +27,7 @@ const STATUS_STYLES = {
   approved:             { bg: "#d1fae5", fg: "#065f46", label: "Approved" },
   denied:               { bg: "#fee2e2", fg: "#991b1b", label: "Denied" },
   expired:              { bg: "#f3f4f6", fg: "#6b7280", label: "Expired" },
-  cancelled:            { bg: "#f3f4f6", fg: "#6b7280", label: "Cancelled" },
+  canceled:             { bg: "#f3f4f6", fg: "#6b7280", label: "Canceled" },
   flagged_case_by_case: { bg: "#fde68a", fg: "#78350f", label: "Case-by-Case" }
 };
 
@@ -885,7 +885,7 @@ function HistoryEditModal({ request, team, onClose, onSaved, onDeleted }) {
             <select value={status} onChange={e => setStatus(e.target.value)} style={inp}>
               <option value="approved">Approved</option>
               <option value="denied">Denied</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="canceled">Canceled</option>
               <option value="expired">Expired</option>
               <option value="voting">Voting</option>
               <option value="awaiting_decision">Awaiting Decision</option>
