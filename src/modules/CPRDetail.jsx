@@ -3665,14 +3665,24 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   const diag = diagAny.residual_pool_diag || {};
   const weeklySalesPool     = Number(diag.weekly_sales_pool || 0);
   const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
+  // Retention Points (tracker step 7, 2026-09-07). Once settings.retention_points_go_live_week_end
+  // is set, every net point is a dollar, guaranteed, paid first out of the retention third; the
+  // Retention split under Team Bonus then shares out only what is left of the third. Until that
+  // key is set the mode is "hours", retention_points_pay is 0 on every row, and nothing here changes.
+  const pointsLive          = (diag.retention_points || {}).mode === "points";
+  const teamGuarantee       = pointsLive ? Number(diag.qtd_pools?.retention_guarantee_team_total || 0) : 0;
   // Envelope = weekly bonus pool. Normally an even three-way split: 13-wk sales points,
   // 4-wk sales points, retention. But when the retention floor kicks in, retention takes
   // MORE than a third and the two sales buckets share whatever is left — so the buckets
   // are read from the actual settled pools, never assumed to be equal thirds.
-  const weeklyBonusPool     = weeklySalesPool + weeklyRetentionPool;
-  const retentionBucketPool = weeklyRetentionPool;
+  const weeklyBonusPool     = weeklySalesPool + Math.max(0, weeklyRetentionPool - teamGuarantee);
+  const retentionBucketPool = Math.max(0, weeklyRetentionPool - teamGuarantee);
   const salesBucketPool     = weeklySalesPool / 2;
   const floorApplied        = diag.qtd_pools?.retention_floor_applied === true;
+  // d.bonus still carries the whole residual-pool bonus (sales share + retention share, guarantee
+  // included) so the digest email and every prior reader keep working. The page shows the guarantee
+  // on its own Retention Points line and the Team Bonus row net of it; the sums are unchanged.
+  const teamBonusNet        = d => Number(d.bonus || 0) - Number(d.retention_points_pay || 0);
 
   // v2 pay components — every element that hits a check under the residual-pool structure.
   // Base + Commission are payroll-cycle earnings.
@@ -3687,6 +3697,9 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
     // ALREADY net of this reduction via write_weekly_comp_v2's scale factor, so the sub-row is
     // purely informational and must never be summed separately in Week Total / OT Annual below).
     ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklyBonusPool)} pool)`],
+    // Retention Points: net points x $1, guaranteed, after the requirements-adjustment scale.
+    // Written to the row by write_weekly_comp_v2. Reads $0 until the go-live key is set.
+    ["retention_points_pay",          "Retention Points"],
     ["marketing_pool_earned_weekly",  "Marketing"],
     // Goals: expandable row displaying goals_bonus + health_bonus.
     // Expands to 6 sub-rows (5 goals_bonus $10 buckets from residual_pool_diag.goals_detail,
@@ -3871,7 +3884,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                         )}
                       </Td>
                       {sorted.map(d => (
-                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d.bonus)}</Td>
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(teamBonusNet(d))}</Td>
                       ))}
                     </tr>
                   );
@@ -4123,7 +4136,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week Total</Td>
                 {sorted.map(d => {
-                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
+                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? teamBonusNet(d) : d[k]) || 0), 0);
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const weeklyBenefits = leftDuringWeek(d.__left, weekDate) ? 0 : Number(member?.annual_benefits_value || 0) / 52;
                   const total = compsTotal + weeklyBenefits;
@@ -4149,7 +4162,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                   // Benefits flat-added (no compounding).
                   const ytdPaid = (d.payroll_ytd_paid === null || d.payroll_ytd_paid === undefined)
                     ? null : Number(d.payroll_ytd_paid);
-                  const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
+                  const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? teamBonusNet(d) : d[k]) || 0), 0);
                   const ytdWithThisWeek = ytdPaid === null ? null : ytdPaid + thisWeekTotal;
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const daysEmployedThisYear = (() => {
