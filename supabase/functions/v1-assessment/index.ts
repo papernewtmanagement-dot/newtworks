@@ -35,8 +35,15 @@
 //   - (Stint 3 -- the rating-scale follow-up section -- was removed
 //     2026-08-25 with the rest of the old personality system. There is no
 //     stint 3; stint 4 follows stint 2 directly.)
-//   - (Stint 4 -- the situational-judgement scenarios -- was removed
-//     2026-08-26 by Peter directive; stint 5 follows stint 2 directly.)
+//   - Stint 3 = selling judgement (section newtworks_v2_sjt, 16 scenarios,
+//     items 801-816, live 2026-09-07). The old procedural scenarios (stint 4)
+//     were removed 2026-08-26 because everyone passed them; this rebuild is
+//     keyed most/least by Peter on SELLING judgement. Two answers per item:
+//     response_label "<most><least>" in canonical letters (response_format
+//     sjt_most_least). Served after Stint 2, before Stint 5, with the same
+//     answered-item lock as Stint 2. PILOT: scored at finalize
+//     (apply_newtworks_v2_sjt_to_candidate) but carries no role-fit weight
+//     and no norm until 20 real sittings are in.
 //   - Retest items (within-sitting consistency checks, Meade & Craig 2012)
 //     live in Stint 1 alongside their facet's baseline items and are always
 //     served.
@@ -61,6 +68,7 @@ const SECTIONS = [
   "newtworks_v2_personality",
   "newtworks_v2_personality_fc_quad",
   "newtworks_v2_cognitive_gma",
+  "newtworks_v2_sjt",
   "newtworks_v2_screen",
 ];
 
@@ -404,14 +412,32 @@ const STINT2_PERSONALITY_SECTIONS = [
   "newtworks_v2_personality_fc_quad",
 ];
 
+// Stint 3 = selling-judgement scenarios (2026-09-07). One section; same lock
+// rule as stint 2, so retiring an item after the pilot never re-opens or
+// truncates a sitting that already started.
+const STINT3_SJT_SECTIONS = ["newtworks_v2_sjt"];
+
 async function loadStint2Items(supa: any, candidateId: string) {
-  for (const section of STINT2_PERSONALITY_SECTIONS) {
+  return loadLockedStintItems(supa, candidateId, 2, STINT2_PERSONALITY_SECTIONS);
+}
+
+async function loadStint3Items(supa: any, candidateId: string) {
+  return loadLockedStintItems(supa, candidateId, 3, STINT3_SJT_SECTIONS);
+}
+
+// Shared body of the stint-2 lock (2026-09-07 refactor, behaviour unchanged
+// for stint 2): once a candidate has answered ANY item of a section in this
+// stint, serve every currently-active item of that section PLUS whatever
+// they already answered, even if since deactivated. Not started -> whichever
+// items are currently active.
+async function loadLockedStintItems(supa: any, candidateId: string, stint: number, sections: string[]) {
+  for (const section of sections) {
     const { data: ids, error: idsErr } = await supa
       .from("hiregauge_instrument_items")
       .select("id")
       .eq("section", section)
-      .eq("stint", 2);
-    if (idsErr) throw new Error(`stint2_${section}_ids_fetch: ${idsErr.message}`);
+      .eq("stint", stint);
+    if (idsErr) throw new Error(`stint${stint}_${section}_ids_fetch: ${idsErr.message}`);
     const idList = (ids || []).map((r: any) => r.id);
     if (idList.length === 0) continue;
 
@@ -421,7 +447,7 @@ async function loadStint2Items(supa: any, candidateId: string) {
       .eq("candidate_id", candidateId)
       .eq("sitting", 1)
       .in("item_id", idList);
-    if (cntErr) throw new Error(`stint2_${section}_answered_check: ${cntErr.message}`);
+    if (cntErr) throw new Error(`stint${stint}_${section}_answered_check: ${cntErr.message}`);
 
     if ((count ?? 0) > 0) {
       // Already started this section -- serve every currently-ACTIVE item
@@ -440,7 +466,7 @@ async function loadStint2Items(supa: any, candidateId: string) {
         .eq("candidate_id", candidateId)
         .eq("sitting", 1)
         .in("item_id", idList);
-      if (ansErr) throw new Error(`stint2_${section}_answered_ids_fetch: ${ansErr.message}`);
+      if (ansErr) throw new Error(`stint${stint}_${section}_answered_ids_fetch: ${ansErr.message}`);
       const answeredIdSet = new Set((answeredRows || []).map((r: any) => r.item_id));
 
       // is_active must be selected explicitly here: ITEM_SELECT deliberately
@@ -453,21 +479,22 @@ async function loadStint2Items(supa: any, candidateId: string) {
       const { data, error } = await supa
         .from("hiregauge_instrument_items")
         .select(`${ITEM_SELECT}, is_active`)
-        .eq("stint", 2)
+        .eq("stint", stint)
         .eq("section", section)
         .order("item_number", { ascending: true });
-      if (error) throw new Error(`stint2_locked_items_fetch: ${error.message}`);
+      if (error) throw new Error(`stint${stint}_locked_items_fetch: ${error.message}`);
       return (data || []).filter((it: any) => it.is_active || answeredIdSet.has(it.id));
     }
   }
 
   // Not started yet -- normal behavior, whichever section is currently active.
-  return loadStintItems(supa, 2);
+  return loadStintItems(supa, stint);
 }
 
 async function loadProgress(supa: any, candidateId: string) {
   const stint1Items = await loadStint1Items(supa, candidateId);
   const stint2Items = await loadStint2Items(supa, candidateId);
+  const stint3Items = await loadStint3Items(supa, candidateId);
   const stint5Items = await loadStintItems(supa, 5);
   const answered = await loadAnswered(supa, candidateId);
 
@@ -477,20 +504,28 @@ async function loadProgress(supa: any, candidateId: string) {
   const stint2Answered = stint2Items.filter((it: any) => answered.has(it.id)).length;
   const stint2Done = stint1Done && stint2Items.length > 0 && stint2Answered >= stint2Items.length;
 
+  // Stint 3 (selling judgement, 2026-09-07) is unconditional once stint 2 is
+  // done. Zero items (section deactivated) means the stint is skipped, same
+  // as stint 5 -- never a dead end.
+  const stint3Answered = stint3Items.filter((it: any) => answered.has(it.id)).length;
+  const stint3Done = stint2Done && (stint3Items.length === 0 || stint3Answered >= stint3Items.length);
+
   // Stint 5 (written screen — "Part 2") is unconditional, same pattern as
-  // stint 2 — not trigger-gated — reachable once stint 2 is done (stints 3
-  // and 4 were removed 2026-08-25/26). Added
+  // stint 2 — not trigger-gated — reachable once stint 3 is done (stint 4
+  // was removed 2026-08-26; stint 3 was re-used for selling judgement
+  // 2026-09-07). Added
   // 2026-08-06: in-app replacement for the emailed Part 2 flow. Filter
   // economics are inherited for free — a candidate only reaches stint 5 by
   // clearing every earlier stint's exit gates, so there is no separate
   // "clears CTS" condition to reproduce here.
   const stint5Answered = stint5Items.filter((it: any) => answered.has(it.id)).length;
-  const stint5Done = stint2Done && (stint5Items.length === 0 || stint5Answered >= stint5Items.length);
+  const stint5Done = stint3Done && (stint5Items.length === 0 || stint5Answered >= stint5Items.length);
 
   return {
-    stint1Items, stint2Items, stint5Items, answered,
+    stint1Items, stint2Items, stint3Items, stint5Items, answered,
     stint1Total: stint1Items.length, stint1Answered, stint1Done,
     stint2Total: stint2Items.length, stint2Answered, stint2Done,
+    stint3Total: stint3Items.length, stint3Answered, stint3Done,
     stint5Total: stint5Items.length, stint5Answered, stint5Done,
   };
 }
@@ -566,6 +601,18 @@ function prepareItem(item: any, candidateId: string): any {
     out.item_text = "";
   }
 
+  // Selling-judgement items keep an authoring title and a theme key in
+  // choices, and their hypothesized_trait is the same theme key. All three
+  // hint at what the item is testing ("The favor", sjt_integrity), so none
+  // of them leaves the server.
+  if (out.response_format === "sjt_most_least") {
+    out.hypothesized_trait = null;
+    if (out.choices && typeof out.choices === "object" && !Array.isArray(out.choices)) {
+      const { title: _t, theme: _th, ...rest } = out.choices;
+      out.choices = rest;
+    }
+  }
+
   const ch = out.choices;
 
   if (Array.isArray(ch) && ch.length > 1) {
@@ -607,14 +654,16 @@ function canonicalLetter(reported: string, item: any, candidateId: string): stri
   if (!ch.options || typeof ch.options !== "object") return reported;
   const letters = optionLetters(ch.options);
   // Ranking items (forced_choice_quad, Phase 4) report EVERY display letter
-  // in rank order, most-like-me first, e.g. "CADB". Translate letter by
-  // letter with the same permutation. Anything that is not a clean
-  // permutation of the served letters is stored as reported rather than
-  // half-translated. Single-letter items are unchanged below.
+  // in rank order, most-like-me first, e.g. "CADB". Selling-judgement items
+  // (sjt_most_least, 2026-09-07) report TWO display letters, most then
+  // least, e.g. "CB". Both translate letter by letter with the same
+  // permutation. Anything that is not a string of distinct served letters is
+  // stored as reported rather than half-translated. Single-letter items are
+  // unchanged below.
   if (reported.length > 1) {
     const chars = reported.split("");
     const clean =
-      chars.length === letters.length &&
+      chars.length <= letters.length &&
       chars.every((c) => letters.includes(c)) &&
       new Set(chars).size === chars.length;
     if (!clean) return reported;
@@ -672,11 +721,13 @@ async function handleVerify(supa: any, cand: any) {
       });
     }
     const prog = await loadProgress(supa, cand.id);
-    const allDone = prog.stint1Done && prog.stint2Done && prog.stint5Done;
+    const allDone = prog.stint1Done && prog.stint2Done && prog.stint3Done && prog.stint5Done;
     const currentProgress = !prog.stint1Done
       ? { answered: prog.stint1Answered, total: prog.stint1Total }
       : !prog.stint2Done
       ? { answered: prog.stint2Answered, total: prog.stint2Total }
+      : !prog.stint3Done
+      ? { answered: prog.stint3Answered, total: prog.stint3Total }
       : { answered: prog.stint5Answered, total: prog.stint5Total };
     return json({
       ok: true,
@@ -719,6 +770,19 @@ async function handleServe(supa: any, cand: any) {
       });
     }
 
+    // Stint 3 (selling judgement). constrainedShuffle spreads same-theme
+    // scenarios apart, and prepareItems permutes the four options per
+    // candidate per item so the key never sits in a fixed position.
+    if (!prog.stint3Done) {
+      const unanswered = prog.stint3Items.filter((it: any) => !prog.answered.has(it.id));
+      return json({
+        stint: 3,
+        done: unanswered.length === 0,
+        items: prepareItems(constrainedShuffle(unanswered), cand.id),
+        progress: { answered: prog.stint3Answered, total: prog.stint3Total },
+      });
+    }
+
     if (prog.stint5Total === 0) {
       return json({ stint: 5, done: true, items: [], progress: { answered: 0, total: 0 } });
     }
@@ -750,13 +814,33 @@ async function handleSave(supa: any, cand: any, body: any) {
 
   const { data: item, error: iErr } = await supa
     .from("hiregauge_instrument_items")
-    .select("id, section, stint, is_active, answer_key, choices")
+    .select("id, section, stint, is_active, answer_key, choices, response_format")
     .eq("id", item_id)
     .maybeSingle();
   if (iErr) return json({ error: "item_fetch_failed", detail: iErr.message }, 500);
   if (!item) return json({ error: "item_not_found" }, 404);
   if (!SECTIONS.includes(item.section) || item.stint == null) {
     return json({ error: "item_not_active" }, 400);
+  }
+
+  // Selling-judgement items (sjt_most_least) carry TWO answers in one label:
+  // the display letter picked as "most likely" followed by the one picked as
+  // "least likely". Reject anything that is not exactly two different served
+  // letters -- a one-letter or repeated answer would be scored as a miss on
+  // the half it lacks and would quietly poison the pilot statistics.
+  if (item.response_format === "sjt_most_least") {
+    const raw = response_label == null ? "" : String(response_label).trim().toUpperCase();
+    const served = item?.choices?.options && typeof item.choices.options === "object"
+      ? optionLetters(item.choices.options)
+      : [];
+    const ok =
+      raw.length === 2 &&
+      raw[0] !== raw[1] &&
+      served.includes(raw[0]) &&
+      served.includes(raw[1]);
+    if (!ok) {
+      return json({ error: "invalid_response", detail: "expected two different option letters: most then least" }, 400);
+    }
   }
 
   // GMA items are validated against the candidate's own item set, not
@@ -784,12 +868,26 @@ async function handleSave(supa: any, cand: any, body: any) {
   let canonical_label: string | null =
     response_label == null ? null : String(response_label).trim();
   if (canonical_label != null) {
+    if (item.response_format === "sjt_most_least") canonical_label = canonical_label.toUpperCase();
     canonical_label = canonicalLetter(canonical_label, item, cand.id);
   }
 
+  // is_correct / response_value on the row are a save-time convenience only.
+  // For sjt_most_least: is_correct = both halves match the key, response_value
+  // = how many halves matched (0, 1, 2). The scorer
+  // (apply_newtworks_v2_sjt_to_candidate) recomputes from the current key and
+  // never reads these, so a re-key does not leave stale truth behind.
   let is_correct: boolean | null = null;
+  let stored_value: number | null = response_value ?? null;
   if (item.answer_key != null && canonical_label != null) {
-    is_correct = canonical_label === String(item.answer_key).trim();
+    const key = String(item.answer_key).trim();
+    if (item.response_format === "sjt_most_least" && key.length === 2 && canonical_label.length === 2) {
+      const matches = (canonical_label[0] === key[0] ? 1 : 0) + (canonical_label[1] === key[1] ? 1 : 0);
+      is_correct = matches === 2;
+      stored_value = matches;
+    } else {
+      is_correct = canonical_label === key;
+    }
   }
 
   const answered_at_iso = new Date().toISOString();
@@ -808,7 +906,7 @@ async function handleSave(supa: any, cand: any, body: any) {
         agency_id: AGENCY_ID,
         candidate_id: cand.id,
         item_id,
-        response_value: response_value ?? null,
+        response_value: stored_value,
         response_label: canonical_label ?? null,
         is_correct,
         sitting: 1,
@@ -875,6 +973,9 @@ async function handleFinalize(supa: any, cand: any) {
     }
     if (prog.stint2Total > 0 && !prog.stint2Done) {
       return json({ error: "assessment_incomplete", stage: "stint_2", answered: prog.stint2Answered, total: prog.stint2Total }, 409);
+    }
+    if (prog.stint3Total > 0 && !prog.stint3Done) {
+      return json({ error: "assessment_incomplete", stage: "stint_3", answered: prog.stint3Answered, total: prog.stint3Total }, 409);
     }
     if (prog.stint5Total > 0 && !prog.stint5Done) {
       return json({ error: "assessment_incomplete", stage: "stint_5", answered: prog.stint5Answered, total: prog.stint5Total }, 409);
@@ -963,6 +1064,17 @@ async function handleFinalize(supa: any, cand: any) {
       gma_result = error ? { error: error.message } : data;
     } catch (e: any) {
       gma_result = { error: e?.message ?? "unknown" };
+    }
+
+    // Selling judgement (stint 3, 2026-09-07). Best-effort like GMA. Writes
+    // sjt_score / sjt_topic_detail; carries no role-fit weight during the
+    // pilot, so a failure here changes nobody's verdict.
+    let sjt_result: any = null;
+    try {
+      const { data, error } = await supa.rpc("apply_newtworks_v2_sjt_to_candidate", { p_candidate_id: cand.id });
+      sjt_result = error ? { error: error.message } : data;
+    } catch (e: any) {
+      sjt_result = { error: e?.message ?? "unknown" };
     }
 
     let im_result: any = null;
@@ -1107,6 +1219,7 @@ async function handleFinalize(supa: any, cand: any) {
       facets_scored: rows.length,
       total_items_scored: totalItemsScored,
       gma: gma_result,
+      selling_judgement: sjt_result,
       impression_management: im_result,
     });
   } catch (e: any) {

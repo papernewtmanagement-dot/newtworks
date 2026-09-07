@@ -69,17 +69,22 @@ const V2_FACET_LABELS = {
 const ROLE_FIT_INPUT_LABELS = {
   ...V2_FACET_LABELS,
   gma: "General Mental Ability",
-  sjt: "Situational Judgment",
+  sjt: "Selling Judgment",
 };
 
-// SJT (situational judgement test) topics — hypothesized_trait values on
-// newtworks_v2_sjt items, keys into sjt_topic_detail jsonb.
+// Selling-judgement scenario themes (2026-09-07 rebuild) — hypothesized_trait
+// values on newtworks_v2_sjt items, keys into sjt_topic_detail jsonb. Display
+// groupings only; the score is the single composite.
 const SJT_TOPIC_LABELS = {
-  sjt_compliance_licensing_boundary: "Compliance — Licensing Boundary",
-  sjt_compliance_outbound_consent:   "Compliance — Outbound Consent",
-  sjt_composure_under_load:          "Composure Under Load",
-  sjt_escalation_judgment:           "Escalation Judgment",
-  sjt_honesty_integrity:             "Honesty & Integrity",
+  sjt_discovery:       "Discovery",
+  sjt_first_no:        "The first no",
+  sjt_price_objection: "Price objections",
+  sjt_walking_away:    "Walking away",
+  sjt_referrals:       "Referrals",
+  sjt_follow_up:       "Follow-up",
+  sjt_cross_sell:      "Cross-sell",
+  sjt_integrity:       "Integrity under pressure",
+  sjt_prioritization:  "Prioritization",
 };
 
 // Reliability (careless-response) composite — six detection methods, per
@@ -855,7 +860,7 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
 
   const imBand = detail?.impression_management_band;
 
-  const sjtScore = detail?.sjt_score; // 0-100
+  const sjtScore = detail?.sjt_score; // raw 0-100, matches / 32
 
   // GMA total, as percent correct — canonical live-count formula from the
   // role-fit payload. NEVER client-derive this from detail.gma_total_accuracy
@@ -863,6 +868,11 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
   const gmaRoleFits = v2RoleFits || {};
   const gmaBestRoleKey = (Array.isArray(bestFit) && bestFit[0]?.best_role) || Object.keys(gmaRoleFits)[0];
   const gmaPct = gmaRoleFits?.[gmaBestRoleKey]?.inputs?.gma?.value ?? null;
+  // Selling judgment percentile against the local applicant norm, from the
+  // same role-fit payload. NULL while the section is in pilot (no 'sjt' norm
+  // row yet), so the raw score is shown unbanded until then -- chance on a
+  // most/least scenario is 25%, so raw percent is not a pass scale.
+  const sjtPct = gmaRoleFits?.[gmaBestRoleKey]?.inputs?.sjt?.value ?? null;
 
   const facetRows = Array.isArray(v2Facets) ? v2Facets : null;
   const facetByTrait = {};
@@ -1134,12 +1144,18 @@ function renderAssessmentLayerV2({ detail, v2Facets, v2Percentiles, bestFit, v2R
             {sjtScore != null && (() => {
               const topicRows = detail?.sjt_topic_detail && typeof detail.sjt_topic_detail === "object"
                 ? Object.entries(detail.sjt_topic_detail) : [];
+              const pilot = sjtPct == null;
               return (
                 <div>
-                  <AssessRow label="Situational Judgment" value={sjtScore} band={competencyBand(sjtScore)} />
+                  <AssessRow
+                    label={pilot ? "Selling Judgment (pilot — not weighted yet)" : "Selling Judgment"}
+                    value={pilot ? Math.round(Number(sjtScore)) : sjtPct}
+                    band={pilot ? "none" : competencyBand(sjtPct)}
+                  />
                   <AdminBreakdown isAdmin={isAdmin}>
+                    <div>Raw: {sjtScore}% of most/least matches{pilot ? " — no norm yet, no role-fit weight" : ` (${sjtPct} pctile)`}</div>
                     {topicRows.length === 0 ? (
-                      <div>No topic detail available.</div>
+                      <div>No theme detail available.</div>
                     ) : (
                       topicRows.map(([topic, t]) => (
                         <div key={topic} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>

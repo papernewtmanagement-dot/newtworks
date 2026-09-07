@@ -550,27 +550,38 @@ export default function CandidateAssessment({ candidateId, token }) {
     // 2026-08-26: stint 4 (scenarios) removed; stint 2 copy rewritten for the
     // ranking blocks (the old text described rating statements, and the time
     // estimate came from the Likert era -- measured block pace is ~27 s each).
+    // 2026-09-07: stint 3 re-used for the selling-judgement scenarios
+    // (most/least). Copy uses behavioural-tendency wording ("would you"), not
+    // "should" -- that is the instruction the key was written against.
     const eyebrow =
       stint === 2
         ? "Section 2"
+        : stint === 3
+        ? "Section 3"
         : stint === 5
         ? "Part 2 — final section"
         : "Follow-up section";
     const headline =
       stint === 2
         ? "Nice work — the problem-solving section is done."
+        : stint === 3
+        ? "One more short section — real situations from the job."
         : stint === 5
         ? "Last part — a few written questions."
         : "A few follow-up questions.";
     const bodyLead =
       stint === 2
         ? "Next is the longest part of the assessment. Each screen shows four short statements about how you naturally think and work. Tap them in order from most like you to least like you — first tap is most like you. Go with your first instinct; there are no right answers."
+        : stint === 3
+        ? "Each screen describes a situation you would run into in this job, with four things you could do. Tap the one you would MOST likely do, then the one you would LEAST likely do. Pick what you would actually do, not what sounds best on paper."
         : stint === 5
         ? "This part is not timed — take your time and answer in your own words. Quality of thought matters more than speed."
         : "Based on how you answered so far, I'd like to ask a few follow-up questions on a couple of areas where a clearer read would help. This is normal — the assessment adds questions when it needs more signal, not because anything is wrong.";
     const bodyCount =
       stint === 2
         ? `${remaining} screens — most people finish this section in about 30 minutes. You can leave and come back; your progress is saved.`
+        : stint === 3
+        ? `${remaining} situations — about 10 minutes. You can leave and come back; your progress is saved.`
         : stint === 5
         ? `${remaining} written questions. No time limit.`
         : remaining > 0
@@ -765,6 +776,8 @@ export default function CandidateAssessment({ candidateId, token }) {
             >
               {stint === 2
                 ? "Section 2"
+                : stint === 3
+                ? "Section 3"
                 : stint === 5
                 ? "Part 2 — final section"
                 : stint > 1
@@ -1054,6 +1067,132 @@ function ForcedChoiceQuadItem({ item, onAnswer, selected, saving, vp }) {
   );
 }
 
+// Selling-judgement scenario (stint 3, 2026-09-07). Four options; the
+// candidate picks the one they would MOST likely do and the one they would
+// LEAST likely do. First tap = most, second tap = least; tapping a pick again
+// clears it; with both picked, tapping a third option replaces the least
+// pick (the more recent decision). Reports { label: most + least } only when
+// both are chosen -- the endpoint rejects anything else. Option text is a
+// plain string here (the ranking block wraps its text in { text }); both are
+// tolerated so a future bank change does not blank the screen.
+function SjtMostLeastItem({ item, onAnswer, selected, saving, vp }) {
+  const options = item?.choices?.options || {};
+  const letters = ["A", "B", "C", "D", "E", "F"].filter((L) => options[L] != null);
+  const optionText = (L) => {
+    const o = options[L];
+    if (o == null) return "";
+    return typeof o === "string" ? o : o?.text ?? "";
+  };
+  const [picks, setPicks] = useState(() => {
+    const l = typeof selected?.label === "string" ? selected.label : "";
+    if (l.length === 2 && letters.includes(l[0]) && letters.includes(l[1]) && l[0] !== l[1]) {
+      return { most: l[0], least: l[1] };
+    }
+    return { most: null, least: null };
+  });
+  if (letters.length < 2) return null;
+
+  const report = (next) => {
+    setPicks(next);
+    onAnswer(next.most && next.least ? { label: `${next.most}${next.least}` } : null);
+  };
+
+  const tap = (L) => {
+    if (saving) return;
+    if (picks.most === L) return report({ most: null, least: picks.least });
+    if (picks.least === L) return report({ most: picks.most, least: null });
+    if (!picks.most) return report({ most: L, least: picks.least });
+    return report({ most: picks.most, least: L });
+  };
+
+  const reset = () => {
+    if (saving) return;
+    report({ most: null, least: null });
+  };
+
+  const nextPrompt = !picks.most
+    ? "Tap the one you would MOST likely do."
+    : !picks.least
+    ? "Now tap the one you would LEAST likely do."
+    : "Tap a pick to change it, or press Next.";
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12, lineHeight: 1.4 }}>
+        {nextPrompt}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {letters.map((L) => {
+          const isMost = picks.most === L;
+          const isLeast = picks.least === L;
+          const bg = isMost ? T.blueLt : isLeast ? T.amberLt : T.white;
+          const border = isMost ? T.blue : isLeast ? T.amber : T.slate200;
+          return (
+            <button
+              key={`${item?.id ?? "x"}-${L}`}
+              disabled={saving}
+              onClick={() => tap(L)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                width: "100%",
+                padding: "12px 14px",
+                background: bg,
+                border: `1px solid ${border}`,
+                borderRadius: 8,
+                textAlign: "left",
+                fontSize: 15,
+                color: T.slate900,
+                cursor: saving ? "wait" : "pointer",
+                transition: "background 0.15s, border-color 0.15s",
+                lineHeight: 1.4,
+                boxSizing: "border-box",
+              }}
+            >
+              <span style={{ flex: 1 }}>{optionText(L)}</span>
+              {isMost || isLeast ? (
+                <span
+                  style={{
+                    flexShrink: 0,
+                    padding: "3px 8px",
+                    borderRadius: 12,
+                    background: isMost ? T.blue : T.amber,
+                    color: T.white,
+                    fontSize: vp?.isPhone ? 11 : 12,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {isMost ? "Most likely" : "Least likely"}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      {picks.most || picks.least ? (
+        <button
+          disabled={saving}
+          onClick={reset}
+          style={{
+            marginTop: 10,
+            padding: "4px 0",
+            background: "transparent",
+            border: "none",
+            color: T.slate500,
+            fontSize: 13,
+            textDecoration: "underline",
+            cursor: saving ? "wait" : "pointer",
+          }}
+        >
+          Start over
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function ResponseControls({ item, candidateId, onAnswer, selected, saving, vp }) {
   // Stint 5 (written screen) free-text items. Checked first -- these carry
   // no choices and no scale_max, so without this check they would silently
@@ -1089,6 +1228,28 @@ function ResponseControls({ item, candidateId, onAnswer, selected, saving, vp })
   ) {
     return (
       <ForcedChoiceQuadItem
+        key={item.id}
+        item={item}
+        onAnswer={onAnswer}
+        selected={selected}
+        saving={saving}
+        vp={vp}
+      />
+    );
+  }
+
+  // Selling-judgement scenario (stint 3, added 2026-09-07). choices is an
+  // OBJECT ({ options: {A..D} }) like the ranking block, so it is checked
+  // before the Array.isArray branch and the Likert fallback. Two picks per
+  // item: most likely, then least likely. Keyed on item.id so the picks reset
+  // on every new scenario.
+  if (
+    item?.response_format === "sjt_most_least" &&
+    item?.choices?.options &&
+    typeof item.choices.options === "object"
+  ) {
+    return (
+      <SjtMostLeastItem
         key={item.id}
         item={item}
         onAnswer={onAnswer}
