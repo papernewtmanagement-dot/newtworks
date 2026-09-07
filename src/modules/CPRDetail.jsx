@@ -4399,7 +4399,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             const twh = Number(diag.team_totals?.team_weekly_health || 0);
             const pph = diag.team_totals?.per_person_health || [];
             const perPerson = (Array.isArray(pph) ? pph : []).filter(p => Number(p.weekly_health) > 0).map(p => `${(p.name||"").split(" ")[0]} $${Number(p.weekly_health).toFixed(2)}`).join(" + ");
-            return `source: team.weekly_health_benefit_agency_paid × the weeks each person was actually on the team this cycle — accrual only, not paycheck actuals. $${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) over ${weeksElapsedQtd} wks — OUTSIDE burden`;
+            return `source: team.weekly_health_benefit_agency_paid × the weeks each person was actually on the team this cycle; a departing teammate's stops the week they leave — accrual only, not paycheck actuals. $${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) over ${weeksElapsedQtd} wks — OUTSIDE burden`;
           })())}
           {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre wages")}
           {row("− Team base salaries (in pool)", -qtdBaseInPool, "source: payroll_detail SALARY+HOURLY+REGULAR lines (real paycheck actuals). Fallback: time_clock × pay_rate for hourly, else config pay_rate × 40 hrs × the Mon–Fri workdays employed that week. × tenure_mult.")}
