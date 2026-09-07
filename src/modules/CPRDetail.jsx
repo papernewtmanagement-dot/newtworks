@@ -3841,7 +3841,19 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
               <tr>
                 <Th align="left">Component</Th>
                 {sorted.map(d => (
-                  <Th key={d.team_member_id} align="right">{firstName(d.__name)}</Th>
+                  <Th key={d.team_member_id} align="right">
+                    {firstName(d.__name)}
+                    {leftDuringWeek(d.__left, weekDate) && (
+                      // Terminated during this week: base for days worked + commission only.
+                      // No pool share, goals, manager bonus (Peter 2026-09-06).
+                      <span
+                        title="Left during this week — paid base for days worked plus commission only"
+                        style={{ display: "block", fontSize: 10, fontWeight: 600, color: T.slate400, textTransform: "none", letterSpacing: 0 }}
+                      >
+                        left {new Date(d.__left + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" })}
+                      </span>
+                    )}
+                  </Th>
                 ))}
               </tr>
             </thead>
@@ -4387,10 +4399,12 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             const twh = Number(diag.team_totals?.team_weekly_health || 0);
             const pph = diag.team_totals?.per_person_health || [];
             const perPerson = (Array.isArray(pph) ? pph : []).filter(p => Number(p.weekly_health) > 0).map(p => `${(p.name||"").split(" ")[0]} $${Number(p.weekly_health).toFixed(2)}`).join(" + ");
-            return `source: team.weekly_health_benefit_agency_paid × weeks elapsed — accrual only, not paycheck actuals. $${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) × ${weeksElapsedQtd} wks — OUTSIDE burden`;
+            return `source: team.weekly_health_benefit_agency_paid × the weeks each person was actually on the team this cycle — accrual only, not paycheck actuals. $${twh.toFixed(2)}/wk (${perPerson || "no agency-paid health"}) over ${weeksElapsedQtd} wks — OUTSIDE burden`;
           })())}
           {row("÷ (1 + burden 8%)", cashAvailPreBase, "= cash available pre wages")}
-          {row("− Team base salaries (in pool)", -qtdBaseInPool, "source: payroll_detail SALARY+HOURLY+REGULAR lines (real paycheck actuals). Fallback: time_clock × pay_rate for hourly, else config pay_rate × 40 hrs. × tenure_mult.")}
+          {row("− Team base salaries (in pool)", -qtdBaseInPool, "source: payroll_detail SALARY+HOURLY+REGULAR lines (real paycheck actuals). Fallback: time_clock × pay_rate for hourly, else config pay_rate × 40 hrs × the Mon–Fri workdays employed that week. × tenure_mult.")}
+          {Number(sub.qtd_departure_recapture || 0) > 0 &&
+            row("− Departure recapture QTD", -Number(sub.qtd_departure_recapture || 0), "a teammate left: the base that stopped being charged to the pool is held back instead of going to the rest of the team — 100% of the freed base in the week they leave, easing straight-line to 0 over 52 weeks (the new-hire growth budget in reverse). Only the part that was in the pool (× tenure_mult at departure).")}
           {row("− Team commissions QTD", -qtdActualComm, "source: payroll_detail COMMISSION line (real paycheck actuals). Fallback: wctd.commission (CPR-computed value) for current in-flight week before payroll transmits. 1 SP = $1; eats WHOLE pool.")}
           {row("− Manager Bonus QTD", -Number((diag.qtd_subtractions?.qtd_manager_bonus_actual) || 0), "source: payroll_detail raw_earnings items where key matches Manage (real paycheck actuals — SurePayroll labels bonus '4Manage'/'5Manage', frozen historical carry 'OldMang' excluded automatically). Fallback: wctd.manager_bonus (CPR-computed rule) for weeks lacking a payroll row.")}
           {row("− Team bonuses paid QTD (prior weeks)", -Number((diag.qtd_subtractions?.qtd_bonus_paid_prior) || 0), "source: payroll_detail BONUS line (real paycheck actuals) for weeks < this one. Fallback: wctd.bonus (CPR-written) for weeks lacking a payroll row. This week's bonus is not subtracted here — it IS what remains at the bottom.")}
@@ -6043,6 +6057,7 @@ function sortByTenure(details, team) {
       __name: teamById[d.team_member_id]?.full_name || "(unknown)",
       __title: teamById[d.team_member_id]?.sp_title || null,
       __raise: teamById[d.team_member_id]?.sp_raise || null,
+      __left: teamById[d.team_member_id]?.end_date || null,
       __hire: teamById[d.team_member_id]?.hire_date || "9999-12-31",
     }))
     .sort((a, b) => {
