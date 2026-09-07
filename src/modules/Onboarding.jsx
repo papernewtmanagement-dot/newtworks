@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
-import { useTabParam } from "../lib/routing.jsx";
+import { TabLink, useTabParam } from "../lib/routing.jsx";
 
 // ─── constants ─────────────────────────────────────
 const ADMIN_ROLES = ["owner", "manager"];
@@ -660,6 +660,148 @@ function PlanListCard({ plan, steps, teamMember, onOpen }) {
   );
 }
 
+// ─── tabs + template library ────────────────────────
+const TABS = [
+  { id: "plans",    label: "Plans" },
+  { id: "template", label: "Template" },
+];
+
+function ModuleHeader({ tab, tabHref, onSelectTab, action = null }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>Onboarding</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
+            {tab === "template"
+              ? "The master step list every new plan is built from."
+              : "Onboarding plans in progress for new team members."}
+          </div>
+        </div>
+        {action}
+      </div>
+      <div style={{
+        display: "flex", gap: 4, marginTop: 12,
+        overflowX: "auto", whiteSpace: "nowrap",
+        borderBottom: `1px solid ${T.slate200}`,
+      }}>
+        {TABS.map(t => {
+          const on = t.id === tab;
+          return (
+            <TabLink
+              key={t.id}
+              href={tabHref(t.id)}
+              onSelect={() => onSelectTab(t.id)}
+              style={{
+                flexShrink: 0, padding: "8px 14px", fontSize: 13, fontWeight: 600,
+                color: on ? T.blue : T.slate600,
+                background: "transparent",
+                borderBottom: `2px solid ${on ? T.blue : "transparent"}`,
+                marginBottom: -1, textDecoration: "none",
+              }}
+            >{t.label}</TabLink>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function appliesToText(t) {
+  const bits = [];
+  if (t.applies_to_roles?.length) bits.push(t.applies_to_roles.join(", "));
+  if (t.applies_to_role_categories?.length) bits.push(t.applies_to_role_categories.join(", "));
+  if (t.applies_to_role_levels?.length) bits.push(t.applies_to_role_levels.join(", "));
+  return bits.length ? bits.join(" · ") : "Everyone";
+}
+
+// Read-only view of onboarding_step_templates — the library each new plan is
+// compiled from. Editing lives in the database for now; this tab is the place
+// the template can actually be read without opening the create-plan popup.
+function TemplateTab() {
+  const [state, setState] = useState({ loading: true, error: null, rows: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!supabase || !AGENCY_ID) {
+      setState({ loading: false, error: "Supabase not configured.", rows: [] });
+      return;
+    }
+    supabase
+      .from("onboarding_step_templates")
+      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes")
+      .eq("agency_id", AGENCY_ID)
+      .eq("is_active", true)
+      .order("phase", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        setState({ loading: false, error: err ? err.message : null, rows: data || [] });
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (state.loading) {
+    return <div style={{ padding: 30, textAlign: "center", color: T.slate500, fontSize: 13 }}>Loading template…</div>;
+  }
+  if (state.error) {
+    return <Card style={{ background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{state.error}</div></Card>;
+  }
+  if (!state.rows.length) {
+    return (
+      <Card>
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800, marginBottom: 6 }}>No template steps yet</div>
+        <div style={{ fontSize: 12, color: T.slate500 }}>Nothing is set up in the step library, so a new plan would come out empty.</div>
+      </Card>
+    );
+  }
+
+  const phases = [...new Set(state.rows.map(r => r.phase))].sort((a, b) => a - b);
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 14, background: T.blueLt, border: `1px solid ${T.blue}` }}>
+        <div style={{ fontSize: 12, color: T.slate800, lineHeight: 1.55 }}>
+          {state.rows.length} steps. Creating a plan copies the ones that match that person's role into their own
+          checklist. Changing this list does not change plans that are already running.
+        </div>
+      </Card>
+
+      {phases.map(ph => {
+        const rows = state.rows.filter(r => r.phase === ph);
+        const label = PHASE_LABELS[ph] || { name: `Phase ${ph}`, blurb: "" };
+        return (
+          <Card key={ph} style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{label.name}</div>
+              {label.blurb && <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>{label.blurb}</div>}
+            </div>
+            {rows.map((r, i) => {
+              const cat = CATEGORY_COLORS[r.category] || { fg: T.slate700, bg: T.slate100, label: r.category || "Step" };
+              return (
+                <div key={r.id} style={{
+                  padding: "10px 0",
+                  borderTop: i === 0 ? "none" : `1px solid ${T.slate200}`,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>{r.title}</div>
+                    <Pill fg={cat.fg} bg={cat.bg}>{cat.label}</Pill>
+                    {!r.is_required && <Pill>Optional</Pill>}
+                  </div>
+                  {r.description && (
+                    <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5, marginBottom: 3 }}>{r.description}</div>
+                  )}
+                  <div style={{ fontSize: 11, color: T.slate500 }}>Applies to: {appliesToText(r)}</div>
+                </div>
+              );
+            })}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
@@ -669,6 +811,7 @@ export default function Onboarding({ userRole, userId }) {
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
   // read on mount and the write on every setSelectedPlanId call.
   const [selectedPlanId, setSelectedPlanId] = useTabParam("plan", null);
+  const [tab, setTab, tabHref] = useTabParam("tab", "plans", ["plans", "template"]);
   const [showCreate, setShowCreate] = useState(false);
   const [actionError, setActionError] = useState("");
 
@@ -785,6 +928,15 @@ export default function Onboarding({ userRole, userId }) {
   }
 
   // Admin view
+  if (tab === "template") {
+    return (
+      <div style={{ padding: 20 }}>
+        <ModuleHeader tab={tab} tabHref={tabHref} onSelectTab={setTab} />
+        <TemplateTab />
+      </div>
+    );
+  }
+
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
 
   if (selectedPlan) {
@@ -816,15 +968,12 @@ export default function Onboarding({ userRole, userId }) {
 
   return (
     <div style={{ padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>Onboarding</div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
-            New-hire schedules compiled from the admin hiring processes library.
-          </div>
-        </div>
-        <Button variant="primary" onClick={() => setShowCreate(true)}>+ New plan</Button>
-      </div>
+      <ModuleHeader
+        tab={tab}
+        tabHref={tabHref}
+        onSelectTab={setTab}
+        action={<Button variant="primary" onClick={() => setShowCreate(true)}>+ New plan</Button>}
+      />
 
       {actionError && <Card style={{ marginBottom: 12, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
 
