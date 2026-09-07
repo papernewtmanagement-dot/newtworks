@@ -4042,13 +4042,14 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                 ];
               })}
               {/* Benefits row — sourced from team.annual_benefits_value / 52.
-                  Imputed non-cash value (group health). Included in Week Total.
-                  Excluded from On-Time annualization (flat-added below to avoid compounding). */}
+                  Imputed non-cash value (group health + life stipend). Included in Week Total.
+                  Excluded from On-Time annualization (flat-added below to avoid compounding).
+                  A teammate who left during the week shows none (Peter 2026-09-07). */}
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate700 }}>Benefits</Td>
                 {sorted.map(d => {
                   const member = (team || []).find(t => t.id === d.team_member_id);
-                  const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
+                  const weeklyBenefits = leftDuringWeek(d.__left, weekDate) ? 0 : Number(member?.annual_benefits_value || 0) / 52;
                   return (
                     <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(weeklyBenefits)}</Td>
                   );
@@ -4124,7 +4125,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                 {sorted.map(d => {
                   const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
                   const member = (team || []).find(t => t.id === d.team_member_id);
-                  const weeklyBenefits = Number(member?.annual_benefits_value || 0) / 52;
+                  const weeklyBenefits = leftDuringWeek(d.__left, weekDate) ? 0 : Number(member?.annual_benefits_value || 0) / 52;
                   const total = compsTotal + weeklyBenefits;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>
@@ -4162,7 +4163,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     const effectiveStart = startDt > ys ? startDt : ys;
                     return Math.max(1, Math.floor((dt - effectiveStart) / 86400000) + 1);
                   })();
-                  const annualBenefits = Number(member?.annual_benefits_value || 0);
+                  const annualBenefits = leftDuringWeek(d.__left, weekDate) ? 0 : Number(member?.annual_benefits_value || 0);
                   const onTimeAnnual = ytdWithThisWeek === null ? null : ((ytdWithThisWeek * 365) / daysEmployedThisYear) + annualBenefits;
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
