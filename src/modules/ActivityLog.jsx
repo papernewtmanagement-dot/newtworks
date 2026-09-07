@@ -738,6 +738,84 @@ function PendingSaves({ refreshKey }) {
 }
 
 // =====================================================================
+// Monthly spot-check (core principle 450). Admin only. Ten random
+// self-logged entries from the chosen month, stable until verified.
+// Verify stamps verified_at; Remove is the same void the tables use.
+// =====================================================================
+function SpotCheck({ isAdmin }) {
+  const today = todayCentral();
+  const prevMonth = (() => { const [y, m] = today.split("-").map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return d.toISOString().slice(0, 10); })();
+  const [month, setMonth] = useState(prevMonth);
+  const [rows, setRows] = useState([]);
+  const [remaining, setRemaining] = useState(0);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState("");
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_spot_check_sample", { p_month: month, p_limit: 10 });
+      if (!alive) return;
+      if (error) { setErr(errText(error)); return; }
+      const list = Array.isArray(data) ? data : [];
+      setRows(list); setRemaining(list.length ? Number(list[0].remaining) : 0);
+    })();
+    return () => { alive = false; };
+  }, [isAdmin, month, tick]);
+
+  const act = async (fn, id) => {
+    setErr(""); setBusyId(id);
+    try {
+      const { error } = await fn();
+      if (error) setErr(errText(error)); else setTick(t => t + 1);
+    } finally { setBusyId(null); }
+  };
+  const monthLabel = (iso) => { const [y, m] = iso.split("-").map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }); };
+  const months = [0, 1, 2].map(k => { const [y, m] = today.split("-").map(Number); return new Date(Date.UTC(y, m - 1 - k, 1)).toISOString().slice(0, 10); });
+
+  if (!isAdmin) return null;
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Spot-check</div>
+        <select style={{ ...inputBase, width: "auto" }} value={month} onChange={e => setMonth(e.target.value)}>
+          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </div>
+      <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
+        Ten random self-logged entries from the month, the same ten until you clear them. Open the ECRM link, check the note, tap Verified. {remaining > 10 ? `${remaining} still unverified this month.` : remaining > 0 ? `${remaining} left this month.` : "Nothing left to check this month."}
+      </div>
+      {rows.length > 0 && (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td style={tableTd}>{r.first_name || "\u2014"}</td>
+                  <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
+                  <td style={tableTd}>{r.label || r.activity_key}</td>
+                  <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
+                  <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
+                  <td style={tableTd}>{fmtPts(r.points)}</td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                    <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id }), r.id)}>Verified</button>
+                    <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Notice kind="error">{err}</Notice>
+    </div>
+  );
+}
+
+// =====================================================================
 // Week view — points table + this week's entries
 // =====================================================================
 function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
@@ -800,6 +878,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <SpotCheck isAdmin={isAdmin} />
       <div style={{ ...cardStyle, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Week of {fmtDate(weekStart)} – {fmtDate(safeWeek)}</div>
