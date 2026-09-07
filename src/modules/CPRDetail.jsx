@@ -3912,16 +3912,17 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     return (Number(wa.team_dollars_prorated_to_person) || 0) + (Number(wa.individual_dollars) || 0) > 0;
                   });
                   const teamAdjDollars = sorted.reduce((sum, d) => sum + (Number(d.residual_pool_diag?.wtw_requirements_adjustment?.team_dollars_prorated_to_person) || 0), 0);
-                  const teamAdjNote = teamAdjDollars > 0 ? (
-                    <tr key={`${key}-adj-note`}>
-                      <Td colSpan={sorted.length + 1} style={{ paddingLeft: 32, color: T.red, fontSize: 12, fontStyle: "italic" }}>
-                        Team landed {Math.round(teamAdjDollars / 10)} quote{Math.round(teamAdjDollars / 10) === 1 ? "" : "s"} short on net — {fmtMoneyCents(teamAdjDollars)} adjusted out of the bonus pool before the split.
-                      </Td>
-                    </tr>
-                  ) : null;
+                  const teamAdjQuotes = Math.round(teamAdjDollars / 10);
                   const adjRow = anyAdj ? (
                     <tr key={`${key}-adj`}>
-                      <Td style={{ paddingLeft: 32, color: T.slate500, fontSize: 12, fontStyle: "italic" }}>Requirements adjustment</Td>
+                      <Td style={{ paddingLeft: 32, fontSize: 12, fontStyle: "italic" }}>
+                        <span style={{ color: T.red }}>Requirements adjustment</span>
+                        {teamAdjDollars > 0 && (
+                          <span style={{ color: T.slate500 }}>
+                            {` — ${fmtMoney(teamAdjDollars)} buyback of ${teamAdjQuotes} quote${teamAdjQuotes === 1 ? "" : "s"} to WtW`}
+                          </span>
+                        )}
+                      </Td>
                       {sorted.map(d => {
                         const wa = d.residual_pool_diag?.wtw_requirements_adjustment || {};
                         const teamPortion = Number(wa.team_dollars_prorated_to_person) || 0;
@@ -3950,7 +3951,6 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", salesBucketPool),
                     subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  salesBucketPool),
                     subRow("ret",  "Retention split",   "ret_share_ratio_pct",  retentionBucketPool),
-                    ...(teamAdjNote ? [teamAdjNote] : []),
                     ...(adjRow ? [adjRow] : []),
                   ];
                 }
