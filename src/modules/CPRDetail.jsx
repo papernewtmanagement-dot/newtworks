@@ -509,7 +509,7 @@ function useCPRData(weekDate) {
     cycleStartISO: null,  // cycle start for the week being viewed (YYYY-MM-DD), from current_cycle_info
     cycleEndISO: null,    // cycle end (close Saturday) for the week being viewed, from current_cycle_info
     currentCycleStartISO: null, // cycle start as of TODAY — weeks before this are archival/read-only
-    runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, location}}}
+    runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, paid_off, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, buyback, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
     section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
@@ -939,6 +939,7 @@ function useCPRData(weekDate) {
           if (!runtimeHours[h.team_member_id]) runtimeHours[h.team_member_id] = {};
           runtimeHours[h.team_member_id][h.day_label] = {
             hours: h.hours != null ? Number(h.hours) : null,
+            paid_off: h.paid_time_off_hours != null ? Number(h.paid_time_off_hours) : 0,
             location: h.location || null,
             work_date: h.work_date || null,
           };
@@ -3211,7 +3212,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
   if (!details || details.length === 0) {
     return (
       <div>
-        <SectionHeader icon="🕐" title="Hours Worked" />
+        <SectionHeader icon="🕐" title="Hours" />
         <Card><Awaiting /></Card>
       </div>
     );
@@ -3221,7 +3222,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
   const DAY_LABELS = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri" };
   return (
     <div>
-      <SectionHeader icon="🕐" title="Hours Worked" />
+      <SectionHeader icon="🕐" title="Hours" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -3236,21 +3237,40 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
               {sorted.map(d => {
                 const tmHours = runtimeHours?.[d.team_member_id] || {};
                 let total = 0;
-                DAYS.forEach(day => { total += Number(tmHours[day]?.hours) || 0; });
+                DAYS.forEach(day => {
+                  total += Number(tmHours[day]?.hours) || 0;
+                  total += Number(tmHours[day]?.paid_off) || 0;
+                });
                 return (
                   <tr key={d.team_member_id}>
                     <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
                     {DAYS.map(day => {
                       const cell = tmHours[day];
-                      // Off entire day (no hours or 0 hours) renders blank — no icon either.
-                      if (!cell || cell.hours == null || Number(cell.hours) === 0) {
+                      const worked = Number(cell?.hours) || 0;
+                      const paidOff = Number(cell?.paid_off) || 0;
+                      // Nothing worked and nothing paid renders blank — no icon either.
+                      if (!cell || (worked === 0 && paidOff === 0)) {
                         return <Td key={day} align="center">—</Td>;
+                      }
+                      // Paid day off with no punches. Shown muted with the 🟡 marker.
+                      // Paid time off is NOT hours worked and never counts toward the
+                      // 40-hour overtime line (29 CFR 778.218) — this figure is for
+                      // pay visibility only. Do not feed it into an overtime check.
+                      if (worked === 0) {
+                        return (
+                          <Td key={day} align="center">
+                            <span style={{ color: T.slate500 }}>{paidOff.toFixed(2)} 🟡</span>
+                          </Td>
+                        );
                       }
                       const loc = cell.location;
                       const icon = loc === "remote" ? " 🟣" : (loc === "in_office" || loc === "office") ? " 🟢" : "";
                       return (
                         <Td key={day} align="center">
-                          <span>{Number(cell.hours).toFixed(2)}{icon}</span>
+                          <span>{worked.toFixed(2)}{icon}</span>
+                          {paidOff > 0 ? (
+                            <span style={{ color: T.slate500 }}>{" + " + paidOff.toFixed(2) + " 🟡"}</span>
+                          ) : null}
                         </Td>
                       );
                     })}
@@ -3260,6 +3280,9 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
               })}
             </tbody>
           </table>
+        </div>
+        <div style={{ padding: "8px 14px", borderTop: `1px solid ${T.slate200}`, fontSize: 12, color: T.slate500 }}>
+          🟢 in office · 🟣 remote · 🟡 paid time off, included in the total but not hours worked
         </div>
       </Card>
     </div>
