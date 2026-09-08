@@ -60,11 +60,9 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 const PRODUCTS = [
   { key: "auto",     label: "Auto",                 short: "Auto" },
   { key: "fire",     label: "Fire (home / renters)", short: "Fire" },
-  { key: "business", label: "Business",             short: "Business" },
   { key: "life",     label: "Life",                 short: "Life" },
   { key: "health",   label: "Health",               short: "Health" },
-  { key: "ips",      label: "Investment (IPS)",     short: "IPS" },
-  { key: "bank",     label: "Bank",                 short: "Bank" },
+  { key: "variable", label: "Variable",             short: "Variable" },
 ];
 const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
 const PRODUCT_SHORT = Object.fromEntries(PRODUCTS.map(p => [p.key, p.short]));
@@ -206,7 +204,7 @@ function summarizeEntry(data) {
     const voided = cs.reduce((n, c) => n + Number(c.saves_voided || 0), 0);
     const back = cs.filter(c => Number(c.chargeback_points) > 0);
     parts.push(`canceled: ${lines}` + (voided > 0 ? `, ${voided} unpaid save${voided === 1 ? "" : "s"} taken back` : "")
-      + (back.length ? `, $${fmtPts(back.reduce((n, c) => n + Number(c.chargeback_points), 0))} Multiline credit charged back (${back.map(c => `${PRODUCT_SHORT[c.policy_line]} sold ${fmtDate(c.matched_sale_date)}, ${Math.round(Number(c.window_fraction_left) * 100)}% of the window left`).join("; ")})` : ""));
+      + (back.length ? `, $${fmtPts(back.reduce((n, c) => n + Number(c.chargeback_points), 0))} Multiline credit charged back (${back.map(c => `${PRODUCT_SHORT[c.policy_line]} sold ${fmtDate(c.matched_submitted_date)}, ${Math.round(Number(c.window_fraction_left) * 100)}% of the window left`).join("; ")})` : ""));
   }
   const sc = data?.scorecard;
   if (sc) parts.push(`scorecard ${sc.average_score == null ? "" : Number(sc.average_score).toFixed(2)} across ${sc.scored} part${sc.scored === 1 ? "" : "s"}`);
@@ -278,8 +276,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   }, [first, initial]);
   // the sold policy on file that a canceled row would be matched to (same line, same type first, most recent, not already canceled)
   const soldMatch = (p) => onFile
-    .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.sale_date <= date) && (!date || r.window_end > date))
-    .sort((a, b) => ((b.product_type === p.type) - (a.product_type === p.type)) || (a.sale_date < b.sale_date ? 1 : -1))[0] || null;
+    .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.submitted_date <= date) && (!date || r.window_end > date))
+    .sort((a, b) => ((b.product_type === p.type) - (a.product_type === p.type)) || (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
 
   const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key }]); };
   const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
@@ -560,7 +558,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               {needsMoney(active) && (
                 <div style={field(140)}>
                   <label style={labelStyle}>Premium{active.status === "canceled" ? (() => { const m = soldMatch(active); return m
-                    ? <span style={{ color: T.blue, fontWeight: 400 }}> · on file ${fmtPts(m.premium)}, sold {fmtDate(m.sale_date)}</span>
+                    ? <span style={{ color: T.blue, fontWeight: 400 }}> · on file ${fmtPts(m.premium)}, sold {fmtDate(m.submitted_date)}</span>
                     : <span style={hintStyle}> · no sale on file</span>; })() : null}</label>
                   <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={active.premium} onChange={e => editPolicy(active.id, { premium: e.target.value })} placeholder="0.00" />
                 </div>
@@ -844,8 +842,8 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
         supabase.rpc("compute_weekly_retention_points", { p_agency_id: AGENCY_ID, p_week_end_date: safeWeek }),
         supabase.from("retention_activity_log").select("id, team_member_id, activity_key, occurred_on, credited_week_end_date, credit_available_on, customer_label, note, save_reason, save_line, points, status, source, created_at")
           .eq("agency_id", AGENCY_ID).eq("status", "credited").or(`week_end_date.eq.${safeWeek},credited_week_end_date.eq.${safeWeek}`).order("occurred_on", { ascending: false }),
-        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, sale_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, premium, policy_count, is_new_line)")
-          .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("sale_date", { ascending: false }),
+        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, issued_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, premium, policy_count, is_new_line)")
+          .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("submitted_date", { ascending: false }),
         supabase.from("quote_log").select("id, team_member_id, quote_date, customer_label, is_existing_customer, products_discussed, status, created_at")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("quote_date", { ascending: false }),
         supabase.rpc("rp_week_rollup", { p_week_end: safeWeek, p_team_member_id: null }),
@@ -981,7 +979,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
             <tbody>
               {mySales.map(r => (
                 <tr key={r.id}>
-                  <td style={tableTd}>{fmtDate(r.sale_date)}</td>
+                  <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
                   <td style={tableTd}>{nameOf(r.team_member_id)}{r.sourced_by_team_member_id !== r.team_member_id ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}</td>
                   <td style={tableTd}>{r.customer_label}</td>
                   <td style={tableTd}>{r.household_status === "new" ? "New" : r.household_status === "winback" ? "Winback" : "Existing"}</td>
