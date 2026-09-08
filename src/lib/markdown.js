@@ -233,6 +233,10 @@ const EXCERPT_LINE_RE = /^[ \t]*\*?\[Embedded excerpt from:\s*([^\]\n]+?)\]\*?[ 
 const GLOSSARY_TAG_RE = /\{\{glossary:([a-z0-9_-]+)\}\}/gi;
 const GLOSSARY_ALL_RE = /\{\{glossary_all\}\}/gi;
 const FAQ_TAG_RE = /\{\{faq:\s*([a-z0-9_]+)\s*\}\}/gi;
+// A whole line holding nothing but FAQ markers (one or several). The block
+// parser treats such a line as its own block, one <p> per marker, so that
+// adjacent marker lines are never glued into a single paragraph.
+const FAQ_LINE_RE = /^[ \t]*(?:\{\{faq:\s*[a-z0-9_]+\s*\}\}[ \t]*)+$/i;
 const MAX_INCLUDE_DEPTH = 6;
 
 const BANNER_STYLE_MISSING =
@@ -457,7 +461,12 @@ function expandGlossary(md, resolveGlossary) {
 // this renderer (see buildFaqLookup below) — draft/retired rows never reach
 // this function, so there is no separate filter to apply here.
 
-const FAQ_HTML_MARKER_RE = /<p>\{\{faq:\s*([a-z0-9_]+)\s*\}\}<\/p>/gi;
+// A <p> that holds nothing but markers. One marker is the shape the block
+// parser emits for a marker line (see FAQ_LINE_RE in mdToHtml). Several
+// markers is what the paragraph collector emits when markers were written
+// on one line, or when a marker line was authored somewhere the block rule
+// does not reach (inside a raw HTML passthrough, for example).
+const FAQ_HTML_MARKER_RE = /<p>((?:\s*\{\{faq:\s*[a-z0-9_]+\s*\}\}\s*)+)<\/p>/gi;
 
 function renderFaqAnswer(answer) {
   const lines = String(answer || "")
@@ -483,13 +492,24 @@ function renderFaqGroup(rows) {
 
 function applyFaqSubstitution(html, resolveFaq) {
   if (!resolveFaq) return html;
-  return html.replace(FAQ_HTML_MARKER_RE, (_m, rawKey) => {
+  const renderKey = (rawKey) => {
     const key = String(rawKey).trim().toLowerCase();
     let rows;
     try { rows = resolveFaq(key); } catch (_e) { rows = null; }
     if (!Array.isArray(rows) || rows.length === 0) return "";
     return renderFaqGroup(rows);
-  });
+  };
+  // 1. Paragraphs made only of markers — swap the whole <p> for the Q&A.
+  let out = html.replace(FAQ_HTML_MARKER_RE, (_m, inner) =>
+    Array.from(inner.matchAll(FAQ_TAG_RE), (mm) => renderKey(mm[1])).join("")
+  );
+  // 2. Anything still standing (a marker inside a list item, a table cell,
+  //    or a paragraph that also carries prose) is swapped in place. The raw
+  //    tag must never reach the reader — Daily Kickoff showed 112 of them
+  //    as literal text on 2026-09-08 because every one was on a consecutive
+  //    line and the collector had joined them into nine-marker paragraphs.
+  out = out.replace(FAQ_TAG_RE, (_m, rawKey) => renderKey(rawKey));
+  return out;
 }
 
 // ─── Strip markdown to a short preview for sidebar ────────────
@@ -1091,6 +1111,18 @@ export function mdToHtml(md, options = {}) {
           out.push("</li>");
         }
         out.push("<li>" + inlineMd(content));
+      }
+      i++; continue;
+    }
+
+    // Knowledge & FAQ marker line — its own block, one <p> per marker, so the
+    // post-parse swap (applyFaqSubstitution) always finds the shape it wants.
+    // Without this, consecutive marker lines fall into the paragraph collector
+    // below and get space-joined into one <p> the swap cannot match.
+    if (FAQ_LINE_RE.test(line)) {
+      flushPara(); flushList();
+      for (const m of line.matchAll(FAQ_TAG_RE)) {
+        out.push(`<p>{{faq: ${m[1].toLowerCase()}}}</p>`);
       }
       i++; continue;
     }
