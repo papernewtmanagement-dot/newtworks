@@ -63,6 +63,7 @@ BEGIN
 END $function$;
 
 DROP FUNCTION IF EXISTS public.rp_sold_on_file(text, text);
+
 CREATE FUNCTION public.rp_sold_on_file(p_customer_first text, p_customer_last_initial text)
  RETURNS TABLE(sale_product_id uuid, sale_id uuid, submitted_date date, line_of_business text, product_type text, premium numeric, vehicle_count integer, already_canceled boolean, window_end date)
  LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp'
