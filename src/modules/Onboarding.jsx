@@ -26,14 +26,49 @@ const ADMIN_ROLES = ["owner", "manager"];
 // Week bands match the ramp table the agency has always run on: 1-2, 3-4,
 // 5-8, 9-13, 14+. The earlier labels here (Week 1 / Weeks 2-3 / Month 2 /
 // Month 3) did not line up with the steps sitting in each phase.
+// Fallback only. The real phase list lives in onboarding_phases so milestones
+// can be added without a deploy.
 const PHASE_LABELS = {
-  0: { name: "Before Day 1",   blurb: "Signed offer, licenses on file, systems and desk ready" },
-  1: { name: "Weeks 1-2",      blurb: "Orientation, paperwork, compliance training, shadowing. No production target." },
-  2: { name: "Weeks 3-4",      blurb: "First independent work, daily wrap-ups, weekly 1:1s" },
-  3: { name: "Weeks 5-8",      blurb: "Review cadence begins, Life pipeline starts, shadowing down to half" },
-  4: { name: "Weeks 9-13",     blurb: "Full quote share, weekly claims rhythm, cross-training" },
-  5: { name: "Week 14+",       blurb: "Fully independent. Champions Circle pace, license verified, monthly audit rhythm" },
+  10: { name: "On offer",                    blurb: "Offer out. Licensing starts, prior appointments end." },
+  15: { name: "References and background",   blurb: "Runs as soon as they reply to the offer email." },
+  20: { name: "Two weeks before start",      blurb: "System access, equipment, cards, nameplate." },
+  25: { name: "Once they have an alias",     blurb: "Softphone and logins." },
+  30: { name: "Once they have an extension", blurb: "Team list and call flow." },
+  35: { name: "Workspace ready",             blurb: "Desk, hardware, keys. Confirmed working before Day 1." },
+  40: { name: "Friday before start",         blurb: "Welcome call, schedule, printed packet." },
+  50: { name: "Day 1",                       blurb: "Tech setup, paperwork, keys, first walkthrough." },
+  55: { name: "Weeks 1-2",                   blurb: "Orientation, courses, shadowing. No production target." },
+  60: { name: "Weeks 3-4",                   blurb: "First independent work, daily wrap-ups, weekly 1:1s." },
+  65: { name: "Weeks 5-8",                   blurb: "Review cadence begins, Life pipeline starts, half shadow." },
+  70: { name: "Weeks 9-13",                  blurb: "Full quote share, weekly claims rhythm, cross-training." },
+  75: { name: "Week 14+",                    blurb: "Fully independent. Champions Circle pace, monthly audit rhythm." },
 };
+
+const STAGE_LABELS = {
+  offer:     { label: "Offer stage", fg: T.purple, bg: T.purpleLt },
+  pre_start: { label: "Before Day 1", fg: T.gold,  bg: T.goldLt },
+  ramp:      { label: "On the job",   fg: T.blue,  bg: T.blueLt },
+};
+
+// Sub-items arrive either as a flat list of strings or as groups the old paper
+// checklists used ({ group, items }). Normalize both to groups.
+function subGroups(substeps) {
+  if (!Array.isArray(substeps)) return [];
+  const out = [];
+  let flat = null;
+  substeps.forEach(s => {
+    if (s && typeof s === "object" && Array.isArray(s.items)) {
+      out.push({ group: s.group || null, items: s.items.filter(x => typeof x === "string") });
+    } else if (typeof s === "string") {
+      if (!flat) { flat = { group: null, items: [] }; out.push(flat); }
+      flat.items.push(s);
+    }
+  });
+  return out.filter(g => g.items.length);
+}
+function subAll(substeps) {
+  return subGroups(substeps).reduce((acc, g) => acc.concat(g.items), []);
+}
 
 const CATEGORY_COLORS = {
   licensing:      { fg: T.green,  bg: T.greenLt,  label: "Licensing" },
@@ -112,6 +147,8 @@ function useOnboardingData(userId, isAdmin) {
     plans: [],           // all plans visible to this user
     steps: [],           // all steps for those plans
     team: [],            // full active roster (for admin create form + name resolution)
+    phases: [],          // onboarding_phases — milestone list, newest source of truth
+    candidates: [],      // hiring candidates a plan can be started on at offer
     myTeamMemberId: null,
   });
 
@@ -121,24 +158,35 @@ function useOnboardingData(userId, isAdmin) {
       return;
     }
     try {
-      const [plansRes, teamRes] = await Promise.all([
+      const [plansRes, teamRes, phasesRes, candsRes] = await Promise.all([
         supabase.from("team_onboarding_plans")
-          .select("id, agency_id, team_member_id, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, target_end_date, status, notes, created_by, created_at, updated_at")
+          .select("id, agency_id, team_member_id, candidate_id, attached_at, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, target_end_date, status, notes, created_by, created_at, updated_at")
           .eq("agency_id", AGENCY_ID)
           .order("created_at", { ascending: false }),
         supabase.from("team_directory")
           .select("id, first_name, last_name, nickname, role, role_category, role_level, category, is_active, is_admin_backoffice, is_test_user, archived_at, user_id, start_date")
           .eq("agency_id", AGENCY_ID),
+        supabase.from("onboarding_phases")
+          .select("phase, name, blurb, stage")
+          .eq("agency_id", AGENCY_ID)
+          .eq("is_active", true)
+          .order("phase", { ascending: true }),
+        supabase.from("hiring_candidates")
+          .select("id, candidate_name, first_name, last_name, status, offer_job_title, offer_role_key, offer_start_date")
+          .eq("agency_id", AGENCY_ID)
+          .in("status", ["interview", "reference_check", "offer", "hired"]),
       ]);
 
       const plans = plansRes.data || [];
       const team = teamRes.data || [];
+      const phases = phasesRes.data || [];
+      const candidates = candsRes.data || [];
 
       let steps = [];
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -151,7 +199,7 @@ function useOnboardingData(userId, isAdmin) {
         myTeamMemberId = mine?.id || null;
       }
 
-      setState({ loading: false, error: null, plans, steps, team, myTeamMemberId });
+      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId });
     } catch (e) {
       setState(s => ({ ...s, loading: false, error: e.message || "Failed to load onboarding data." }));
     }
@@ -200,7 +248,7 @@ function progress(steps) {
 }
 
 // ─── plan detail (steps by phase/category) ───────────────
-function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin }) {
+function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName }) {
   const [expandedStep, setExpandedStep] = useState(null);
   const [editingNote, setEditingNote] = useState(null); // {stepId, text}
   const [savingId, setSavingId] = useState(null);
@@ -251,9 +299,10 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSub
           <div style={{ flex: 1, minWidth: 240 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
               <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-                {memberName(teamMember)}
+                {subjectName}
               </div>
               <Pill fg={statusCol.fg} bg={statusCol.bg}>{statusCol.label}</Pill>
+              {isCandidate && <Pill fg={T.purple} bg={T.purpleLt}>Not on the team yet</Pill>}
             </div>
             <div style={{ fontSize: 12, color: T.slate500 }}>
               {plan.role_snapshot || "—"}
@@ -305,15 +354,20 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSub
 
       {/* Phases */}
       {byPhase.map(([phase, phaseSteps]) => {
-        const meta = PHASE_LABELS[phase] || { name: `Phase ${phase}`, blurb: "" };
+        const meta = phaseMeta(phase);
         const phaseP = progress(phaseSteps);
 
         return (
           <Card key={phase} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{meta.name}</div>
-                <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>{meta.blurb}</div>
+                {meta.stage && STAGE_LABELS[meta.stage] && (
+                  <Pill fg={STAGE_LABELS[meta.stage].fg} bg={STAGE_LABELS[meta.stage].bg}>
+                    {STAGE_LABELS[meta.stage].label}
+                  </Pill>
+                )}
+                <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{meta.blurb}</div>
               </div>
               <div style={{ fontSize: 11, color: T.slate500 }}>{phaseP.done}/{phaseP.total}</div>
             </div>
@@ -330,7 +384,8 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSub
                 const isExpanded = expandedStep === step.id;
                 const isEditingThis = editingNote?.stepId === step.id;
                 const isSaving = savingId === step.id;
-                const subs = Array.isArray(step.substeps) ? step.substeps : [];
+                const groups = subGroups(step.substeps);
+                const subs = subAll(step.substeps);
                 const subsDone = Array.isArray(step.substeps_done) ? step.substeps_done : [];
                 const done = !!step.completed_at;
 
@@ -373,7 +428,12 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSub
                               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
                             )}
                           </div>
-                          <Pill fg={cc.fg} bg={cc.bg} style={{ flexShrink: 0 }}>{cc.label}</Pill>
+                          <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            {step.owner_kind !== "new_hire" && (
+                              <Pill fg={T.purple} bg={T.purpleLt}>{ownerName(step)}</Pill>
+                            )}
+                            <Pill fg={cc.fg} bg={cc.bg}>{cc.label}</Pill>
+                          </div>
                         </div>
 
                         {step.description && (
@@ -382,38 +442,50 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSub
                           </div>
                         )}
 
-                        {subs.length > 0 && (
-                          <div style={{ marginTop: 8, display: "grid", gap: 5 }}>
-                            {subs.map((label, ix) => {
-                              const sd = subsDone.includes(label);
-                              return (
-                                <button
-                                  key={ix}
-                                  onClick={() => onToggleSubstep(step, label)}
-                                  style={{
-                                    display: "flex", gap: 7, alignItems: "flex-start",
-                                    background: "none", border: "none", padding: 0,
-                                    cursor: "pointer", textAlign: "left", width: "100%",
-                                  }}
-                                >
-                                  <span style={{
-                                    width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                                    marginTop: 2, boxSizing: "border-box",
-                                    background: sd ? T.green : T.white,
-                                    border: `1.5px solid ${sd ? T.green : T.slate300}`,
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                  }}>
-                                    {sd && <span style={{ color: T.white, fontSize: 9, lineHeight: 1 }}>✓</span>}
-                                  </span>
-                                  <span style={{
-                                    fontSize: 12, lineHeight: 1.4,
-                                    color: sd ? T.slate400 : T.slate700,
-                                    textDecoration: sd ? "line-through" : "none",
-                                  }}>{label}</span>
-                                </button>
-                              );
-                            })}
-                            <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>
+                        {groups.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            {groups.map((g, gi) => (
+                              <div key={gi} style={{ marginTop: gi === 0 ? 0 : 10 }}>
+                                {g.group && (
+                                  <div style={{
+                                    fontSize: 10, fontWeight: 700, color: T.slate500,
+                                    textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4,
+                                  }}>{g.group}</div>
+                                )}
+                                <div style={{ display: "grid", gap: 5 }}>
+                                  {g.items.map((label, ix) => {
+                                    const sd = subsDone.includes(label);
+                                    return (
+                                      <button
+                                        key={ix}
+                                        onClick={() => onToggleSubstep(step, label)}
+                                        style={{
+                                          display: "flex", gap: 7, alignItems: "flex-start",
+                                          background: "none", border: "none", padding: 0,
+                                          cursor: "pointer", textAlign: "left", width: "100%",
+                                        }}
+                                      >
+                                        <span style={{
+                                          width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                                          marginTop: 2, boxSizing: "border-box",
+                                          background: sd ? T.green : T.white,
+                                          border: `1.5px solid ${sd ? T.green : T.slate300}`,
+                                          display: "flex", alignItems: "center", justifyContent: "center",
+                                        }}>
+                                          {sd && <span style={{ color: T.white, fontSize: 9, lineHeight: 1 }}>✓</span>}
+                                        </span>
+                                        <span style={{
+                                          fontSize: 12, lineHeight: 1.4,
+                                          color: sd ? T.slate400 : T.slate700,
+                                          textDecoration: sd ? "line-through" : "none",
+                                        }}>{label}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                            <div style={{ fontSize: 10, color: T.slate400, marginTop: 6 }}>
                               {subsDone.length}/{subs.length} done
                             </div>
                           </div>
@@ -483,8 +555,11 @@ function PlanDetail({ plan, steps, teamMember, onBack, onToggleStep, onToggleSub
 }
 
 // ─── create-plan modal ──────────────────────────────
-function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
+function CreatePlanModal({ team, candidates, existingPlans, onClose, onCreated }) {
+  const [subjectKind, setSubjectKind] = useState("team");   // "team" | "candidate"
   const [teamMemberId, setTeamMemberId] = useState("");
+  const [candidateId, setCandidateId] = useState("");
+  const [candRole, setCandRole] = useState("");             // Sales | Retention
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [targetEndDate, setTargetEndDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -492,22 +567,37 @@ function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const runningPlans = useMemo(
+    () => (existingPlans || []).filter(p => p.status === "active" || p.status === "paused"),
+    [existingPlans]
+  );
+
   // Eligible: active, non-admin_backoffice, non-test, no existing active/paused plan
   const eligible = useMemo(() => {
-    const busyIds = new Set(
-      existingPlans
-        .filter(p => p.status === "active" || p.status === "paused")
-        .map(p => p.team_member_id)
-    );
+    const busyIds = new Set(runningPlans.map(p => p.team_member_id));
     return team
       .filter(t => t.is_active && !t.is_admin_backoffice && !t.is_test_user && !t.archived_at && !busyIds.has(t.id))
       .sort((a, b) => (a.first_name || "").localeCompare(b.first_name || ""));
-  }, [team, existingPlans]);
+  }, [team, runningPlans]);
+
+  // A plan can start the moment an offer goes out, before they are on the team.
+  const eligibleCandidates = useMemo(() => {
+    const busyIds = new Set(runningPlans.map(p => p.candidate_id));
+    return (candidates || [])
+      .filter(c => !busyIds.has(c.id))
+      .sort((a, b) => (a.first_name || a.candidate_name || "").localeCompare(b.first_name || b.candidate_name || ""));
+  }, [candidates, runningPlans]);
 
   // Preview: query which templates would apply, without actually creating
   useEffect(() => {
-    if (!teamMemberId) { setPreview(null); return; }
-    const member = team.find(t => t.id === teamMemberId);
+    let member = null;
+    if (subjectKind === "team") {
+      if (!teamMemberId) { setPreview(null); return; }
+      member = team.find(t => t.id === teamMemberId) || null;
+    } else {
+      if (!candidateId) { setPreview(null); return; }
+      member = { role: null, role_category: candRole || null, role_level: null };
+    }
     if (!member) { setPreview(null); return; }
 
     let cancelled = false;
@@ -535,16 +625,19 @@ function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
       });
 
     return () => { cancelled = true; };
-  }, [teamMemberId, team]);
+  }, [subjectKind, teamMemberId, candidateId, candRole, team]);
 
   const submit = async () => {
     setError("");
-    if (!teamMemberId) { setError("Pick a teammate."); return; }
+    if (subjectKind === "team" && !teamMemberId) { setError("Pick a teammate."); return; }
+    if (subjectKind === "candidate" && !candidateId) { setError("Pick a candidate."); return; }
     if (!startDate) { setError("Pick a start date."); return; }
     setBusy(true);
     try {
-      const { data, error: err } = await supabase.rpc("create_onboarding_plan_from_templates", {
-        p_team_member_id: teamMemberId,
+      const { data, error: err } = await supabase.rpc("create_onboarding_plan", {
+        p_team_member_id: subjectKind === "team" ? teamMemberId : null,
+        p_candidate_id: subjectKind === "candidate" ? candidateId : null,
+        p_role_category: subjectKind === "candidate" ? (candRole || null) : null,
         p_start_date: startDate,
         p_target_end_date: targetEndDate || null,
         p_notes: notes || null,
@@ -575,26 +668,80 @@ function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
       >
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Create onboarding plan</div>
         <div style={{ fontSize: 12, color: T.slate500, marginBottom: 18 }}>
-          Compiles the appropriate steps from the onboarding step library based on this teammate's role, category, and level.
+          Pulls the steps that match the role. Start it at offer and the licensing and pre-start
+          milestones are already there.
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={fieldLabel}>Teammate</label>
-          <select value={teamMemberId} onChange={(e) => setTeamMemberId(e.target.value)} style={inputBase}>
-            <option value="">Pick someone…</option>
-            {eligible.map(t => (
-              <option key={t.id} value={t.id}>
-                {memberName(t)} — {t.role || "no role"}
-                {t.role_category ? ` (${t.role_category})` : ""}
-              </option>
-            ))}
-          </select>
-          {eligible.length === 0 && (
-            <div style={{ fontSize: 11, color: T.amber, marginTop: 6 }}>
-              No eligible teammates. Everyone active either has an active plan already or is admin/back-office.
-            </div>
-          )}
+          <label style={fieldLabel}>Who is this for</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[
+              { id: "team", label: "On the team" },
+              { id: "candidate", label: "Still a candidate" },
+            ].map(o => {
+              const on = subjectKind === o.id;
+              return (
+                <button
+                  key={o.id}
+                  onClick={() => setSubjectKind(o.id)}
+                  style={{
+                    flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 600,
+                    color: on ? T.white : T.slate700,
+                    background: on ? T.blue : T.white,
+                    border: `1px solid ${on ? T.blue : T.slate300}`,
+                    borderRadius: 8, cursor: "pointer", boxSizing: "border-box",
+                  }}
+                >{o.label}</button>
+              );
+            })}
+          </div>
         </div>
+
+        {subjectKind === "team" ? (
+          <div style={{ marginBottom: 14 }}>
+            <label style={fieldLabel}>Teammate</label>
+            <select value={teamMemberId} onChange={(e) => setTeamMemberId(e.target.value)} style={inputBase}>
+              <option value="">Pick someone…</option>
+              {eligible.map(t => (
+                <option key={t.id} value={t.id}>
+                  {memberName(t)} — {t.role || "no role"}
+                  {t.role_category ? ` (${t.role_category})` : ""}
+                </option>
+              ))}
+            </select>
+            {eligible.length === 0 && (
+              <div style={{ fontSize: 11, color: T.amber, marginTop: 6 }}>
+                No eligible teammates. Everyone active either has a plan already or is admin/back-office.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ marginBottom: 14 }}>
+            <label style={fieldLabel}>Candidate</label>
+            <select value={candidateId} onChange={(e) => setCandidateId(e.target.value)} style={inputBase}>
+              <option value="">Pick someone…</option>
+              {eligibleCandidates.map(c => (
+                <option key={c.id} value={c.id}>
+                  {`${c.first_name || ""} ${c.last_name || ""}`.trim() || c.candidate_name}
+                  {c.offer_job_title ? ` — ${c.offer_job_title}` : ` — ${c.status}`}
+                </option>
+              ))}
+            </select>
+            {eligibleCandidates.length === 0 && (
+              <div style={{ fontSize: 11, color: T.amber, marginTop: 6 }}>
+                No candidates at interview or later without a plan.
+              </div>
+            )}
+            <div style={{ marginTop: 10 }}>
+              <label style={fieldLabel}>Which side</label>
+              <select value={candRole} onChange={(e) => setCandRole(e.target.value)} style={inputBase}>
+                <option value="">Not decided yet — shared steps only</option>
+                <option value="Sales">Sales</option>
+                <option value="Retention">Retention</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
           <div>
@@ -657,7 +804,7 @@ function CreatePlanModal({ team, existingPlans, onClose, onCreated }) {
 }
 
 // ─── plan list card ────────────────────────────────
-function PlanListCard({ plan, steps, teamMember, onOpen }) {
+function PlanListCard({ plan, steps, subjectName, isCandidate, onOpen }) {
   const p = progress(steps);
   const statusCol = STATUS_COLORS[plan.status] || STATUS_COLORS.active;
   return (
@@ -674,8 +821,9 @@ function PlanListCard({ plan, steps, teamMember, onOpen }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{memberName(teamMember)}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{subjectName}</div>
               <Pill fg={statusCol.fg} bg={statusCol.bg}>{statusCol.label}</Pill>
+              {isCandidate && <Pill fg={T.purple} bg={T.purpleLt}>Offer stage</Pill>}
             </div>
             <div style={{ fontSize: 11, color: T.slate500 }}>
               {plan.role_snapshot || "—"}
@@ -753,7 +901,7 @@ function appliesToText(t) {
 // Read-only view of onboarding_step_templates — the library each new plan is
 // compiled from. Editing lives in the database for now; this tab is the place
 // the template can actually be read without opening the create-plan popup.
-function TemplateTab() {
+function TemplateTab({ phaseMeta, ownerName }) {
   const [state, setState] = useState({ loading: true, error: null, rows: [] });
 
   useEffect(() => {
@@ -764,7 +912,7 @@ function TemplateTab() {
     }
     supabase
       .from("onboarding_step_templates")
-      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps")
+      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to")
       .eq("agency_id", AGENCY_ID)
       .eq("is_active", true)
       .order("phase", { ascending: true })
@@ -803,13 +951,18 @@ function TemplateTab() {
       </Card>
       {phases.map(ph => {
         const rows = state.rows.filter(r => r.phase === ph);
-        const label = PHASE_LABELS[ph] || { name: `Phase ${ph}`, blurb: "" };
+        const label = phaseMeta(ph);
         return (
           <Card key={ph} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{label.name}</div>
-                {label.blurb && <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>{label.blurb}</div>}
+                {label.stage && STAGE_LABELS[label.stage] && (
+                  <Pill fg={STAGE_LABELS[label.stage].fg} bg={STAGE_LABELS[label.stage].bg}>
+                    {STAGE_LABELS[label.stage].label}
+                  </Pill>
+                )}
+                {label.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{label.blurb}</div>}
               </div>
               <div style={{ fontSize: 11, color: T.slate500 }}>{rows.length} steps</div>
             </div>
@@ -821,7 +974,7 @@ function TemplateTab() {
             }}>
               {rows.map(r => {
                 const cat = CATEGORY_COLORS[r.category] || { fg: T.slate700, bg: T.slate100, label: r.category || "Step" };
-                const subs = Array.isArray(r.substeps) ? r.substeps : [];
+                const groups = subGroups(r.substeps);
                 return (
                   <div key={r.id} style={{
                     border: `1px solid ${T.slate200}`, borderRadius: 8,
@@ -834,18 +987,31 @@ function TemplateTab() {
                           <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
                         )}
                       </div>
-                      <Pill fg={cat.fg} bg={cat.bg} style={{ flexShrink: 0 }}>{cat.label}</Pill>
+                      <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {r.owner_kind !== "new_hire" && (
+                          <Pill fg={T.purple} bg={T.purpleLt}>{ownerName(r)}</Pill>
+                        )}
+                        <Pill fg={cat.fg} bg={cat.bg}>{cat.label}</Pill>
+                      </div>
                     </div>
                     {r.description && (
                       <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, lineHeight: 1.45 }}>{r.description}</div>
                     )}
-                    {subs.length > 0 && (
-                      <ul style={{ margin: "8px 0 0", paddingLeft: 18, display: "grid", gap: 3 }}>
-                        {subs.map((label2, ix) => (
-                          <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{label2}</li>
-                        ))}
-                      </ul>
-                    )}
+                    {groups.map((g, gi) => (
+                      <div key={gi} style={{ marginTop: 8 }}>
+                        {g.group && (
+                          <div style={{
+                            fontSize: 10, fontWeight: 700, color: T.slate500,
+                            textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3,
+                          }}>{g.group}</div>
+                        )}
+                        <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
+                          {g.items.map((label2, ix) => (
+                            <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{label2}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                     <div style={{ fontSize: 10, color: T.slate400, marginTop: 8 }}>
                       {appliesToText(r)}
                     </div>
@@ -863,7 +1029,7 @@ function TemplateTab() {
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
-  const { loading, error, plans, steps, team, myTeamMemberId, reload } = useOnboardingData(userId, isAdmin);
+  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, reload } = useOnboardingData(userId, isAdmin);
 
   // URL-persisted so refresh keeps the same plan open. Replaces the prior
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
@@ -878,6 +1044,41 @@ export default function Onboarding({ userRole, userId }) {
     team.forEach(t => m.set(t.id, t));
     return m;
   }, [team]);
+
+  const candidateById = useMemo(() => {
+    const m = new Map();
+    (candidates || []).forEach(c => m.set(c.id, c));
+    return m;
+  }, [candidates]);
+
+  const phaseMeta = useCallback((phase) => {
+    const row = (phases || []).find(p => p.phase === phase);
+    if (row) return { name: row.name, blurb: row.blurb || "", stage: row.stage };
+    const fb = PHASE_LABELS[phase];
+    return fb ? { ...fb, stage: null } : { name: `Phase ${phase}`, blurb: "", stage: null };
+  }, [phases]);
+
+  // "Alvi" / "Peter" / whoever owns a step that is not the new hire's own.
+  const ownerName = useCallback((step) => {
+    if (step.assigned_to) {
+      const t = (team || []).find(x => x.id === step.assigned_to);
+      if (t) return memberName(t);
+    }
+    if (step.owner_kind === "agent") return "Peter";
+    if (step.owner_kind === "admin") return "Admin";
+    return "New hire";
+  }, [team]);
+
+  const candidateName = useCallback((c) => {
+    if (!c) return "Candidate";
+    const n = `${c.first_name || ""} ${c.last_name || ""}`.trim();
+    return n || c.candidate_name || "Candidate";
+  }, []);
+
+  const subjectName = useCallback((plan) => {
+    if (plan.team_member_id) return memberName(teamById.get(plan.team_member_id));
+    return candidateName(candidateById.get(plan.candidate_id));
+  }, [teamById, candidateById, candidateName]);
 
   const stepsByPlan = useMemo(() => {
     const m = new Map();
@@ -910,7 +1111,7 @@ export default function Onboarding({ userRole, userId }) {
   // Ticking the last sub-item completes the step; unticking any re-opens it.
   const handleToggleSubstep = async (step, label) => {
     setActionError("");
-    const subs = Array.isArray(step.substeps) ? step.substeps : [];
+    const subs = subAll(step.substeps);
     const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
     const next = cur.includes(label) ? cur.filter(l => l !== label) : [...cur, label];
     const allDone = subs.length > 0 && subs.every(s => next.includes(s));
@@ -994,7 +1195,10 @@ export default function Onboarding({ userRole, userId }) {
         <PlanDetail
           plan={activePlan}
           steps={stepsByPlan.get(activePlan.id) || []}
-          teamMember={teamById.get(activePlan.team_member_id)}
+          subjectName={subjectName(activePlan)}
+          isCandidate={!activePlan.team_member_id}
+          phaseMeta={phaseMeta}
+          ownerName={ownerName}
           onBack={() => setSelectedPlanId(null)}
           onToggleStep={handleToggleStep}
           onToggleSubstep={handleToggleSubstep}
@@ -1013,7 +1217,7 @@ export default function Onboarding({ userRole, userId }) {
     return (
       <div style={{ padding: 20 }}>
         <ModuleHeader tab={tab} tabHref={tabHref} onSelectTab={setTab} />
-        <TemplateTab />
+        <TemplateTab phaseMeta={phaseMeta} ownerName={ownerName} />
       </div>
     );
   }
@@ -1026,7 +1230,10 @@ export default function Onboarding({ userRole, userId }) {
         <PlanDetail
           plan={selectedPlan}
           steps={stepsByPlan.get(selectedPlan.id) || []}
-          teamMember={teamById.get(selectedPlan.team_member_id)}
+          subjectName={subjectName(selectedPlan)}
+          isCandidate={!selectedPlan.team_member_id}
+          phaseMeta={phaseMeta}
+          ownerName={ownerName}
           onBack={() => setSelectedPlanId(null)}
           onToggleStep={handleToggleStep}
           onToggleSubstep={handleToggleSubstep}
@@ -1086,7 +1293,8 @@ export default function Onboarding({ userRole, userId }) {
                 key={plan.id}
                 plan={plan}
                 steps={stepsByPlan.get(plan.id) || []}
-                teamMember={teamById.get(plan.team_member_id)}
+                subjectName={subjectName(plan)}
+                isCandidate={!plan.team_member_id}
                 onOpen={setSelectedPlanId}
               />
             ))}
@@ -1097,6 +1305,7 @@ export default function Onboarding({ userRole, userId }) {
       {showCreate && (
         <CreatePlanModal
           team={team}
+          candidates={candidates}
           existingPlans={plans}
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
