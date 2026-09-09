@@ -72,7 +72,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing customer" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "week"];
+const TABS = ["log", "issued", "week"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -816,6 +816,102 @@ function SpotCheck({ isAdmin }) {
 // =====================================================================
 // Week view — points table + this week's entries
 // =====================================================================
+function IssuedTab({ types, refreshKey }) {
+  const [rows, setRows] = useState(null);
+  const [dates, setDates] = useState({});
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState("");
+
+  const load = useCallback(async () => {
+    const r = await supabase.rpc("rp_pending_issue");
+    setRows(Array.isArray(r.data) ? r.data : []);
+  }, []);
+  useEffect(() => { load(); }, [load, refreshKey]);
+
+  const mark = async (row) => {
+    setBusy(row.sale_product_id); setErr(""); setDone("");
+    const r = await supabase.rpc("rp_mark_issued", {
+      p_items: [{ sale_product_id: row.sale_product_id, issued_date: dates[row.sale_product_id] || todayCentral() }],
+    });
+    setBusy(null);
+    if (r.error) { setErr(errText(r.error)); return; }
+    setDone(`${row.customer_label} — ${PRODUCT_SHORT[row.line_of_business] || row.line_of_business} marked issued.`);
+    load();
+  };
+
+  if (rows === null) return <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>;
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ fontSize: 13, color: T.slate500 }}>
+        Policies that have been submitted but are not issued yet. Set the date it issued and mark it.
+      </div>
+      {err && <Notice kind="error">{err}</Notice>}
+      {done && <Notice kind="ok">{done}</Notice>}
+      {rows.length === 0 ? (
+        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>Everything submitted has been issued. Nothing waiting.</div>
+      ) : (
+        <div style={{ ...cardStyle, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={tableTh}>Customer</th>
+                <th style={tableTh}>Policy</th>
+                <th style={tableTh}>Submitted</th>
+                <th style={tableTh}>Waiting</th>
+                <th style={tableTh}>Issued</th>
+                <th style={tableTh}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.sale_product_id}>
+                  <td style={tableTd}>
+                    {r.customer_label}
+                    {r.seller && <div style={{ fontSize: 11, color: T.slate500 }}>{r.seller}</div>}
+                  </td>
+                  <td style={tableTd}>
+                    {typeLabel(types || {}, r.line_of_business, r.product_type) || PRODUCT_SHORT[r.line_of_business] || r.line_of_business}
+                    <div style={{ fontSize: 11, color: T.slate500 }}>
+                      ${fmtPts(r.premium)}{r.vehicle_count ? ` · ${r.vehicle_count} car${r.vehicle_count > 1 ? "s" : ""}` : ""}
+                    </div>
+                  </td>
+                  <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
+                  <td style={{ ...tableTd, color: r.days_waiting > 14 ? T.red : T.slate600, fontWeight: r.days_waiting > 14 ? 700 : 400 }}>
+                    {r.days_waiting}d
+                  </td>
+                  <td style={tableTd}>
+                    <input
+                      type="date"
+                      value={dates[r.sale_product_id] || todayCentral()}
+                      min={r.submitted_date}
+                      max={todayCentral()}
+                      onChange={e => setDates(d => ({ ...d, [r.sale_product_id]: e.target.value }))}
+                      style={{ fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}` }}
+                    />
+                  </td>
+                  <td style={tableTd}>
+                    <button
+                      onClick={() => mark(r)}
+                      disabled={busy === r.sale_product_id}
+                      style={{
+                        padding: "6px 12px", borderRadius: 7, border: "none", cursor: "pointer",
+                        background: T.blue, color: "#fff", fontSize: 13, fontWeight: 700,
+                        opacity: busy === r.sale_product_id ? 0.6 : 1,
+                      }}
+                    >Mark issued</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("week", weekEndOf(todayCentral()));
   const [rows, setRows] = useState([]);
@@ -842,7 +938,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
         supabase.rpc("compute_weekly_retention_points", { p_agency_id: AGENCY_ID, p_week_end_date: safeWeek }),
         supabase.from("retention_activity_log").select("id, team_member_id, activity_key, occurred_on, credited_week_end_date, credit_available_on, customer_label, note, save_reason, save_line, points, status, source, created_at")
           .eq("agency_id", AGENCY_ID).eq("status", "credited").or(`week_end_date.eq.${safeWeek},credited_week_end_date.eq.${safeWeek}`).order("occurred_on", { ascending: false }),
-        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, issued_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, premium, policy_count, is_new_line)")
+        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, premium, policy_count, is_new_line)")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("submitted_date", { ascending: false }),
         supabase.from("quote_log").select("id, team_member_id, quote_date, customer_label, is_existing_customer, products_discussed, status, created_at")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("quote_date", { ascending: false }),
@@ -1069,6 +1165,7 @@ export default function ActivityLog({ userRole }) {
   const bump = () => setRefreshKey(k => k + 1);
   const tabs = [
     { id: "log", label: "Log" },
+    { id: "issued", label: "To be issued" },
     { id: "week", label: "My week" },
     { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
   ];
@@ -1091,6 +1188,7 @@ export default function ActivityLog({ userRole }) {
       </div>
 
       {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
     </div>
