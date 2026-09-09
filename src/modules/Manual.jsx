@@ -1468,6 +1468,17 @@ What I\'d like to discuss:
         }
         .newtworks-handbook-body details[open] > summary + * { padding-top: 10px; }
         .newtworks-handbook-body details[open] > *:last-child { padding-bottom: 12px; }
+        /* Side-by-side columns from the {{columns}} … {{column}} … {{/columns}}
+           block in src/lib/markdown.js. Two equal columns on a wide screen,
+           one stacked column under 640px. Built 2026-09-09 for the Daily
+           Kickoff week expanders: Financial Services beside Property & Casualty. */
+        .newtworks-handbook-body .nw-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 26px; align-items: start; margin: 8px 0; }
+        .newtworks-handbook-body .nw-col { min-width: 0; }
+        .newtworks-handbook-body .nw-col > :first-child { margin-top: 0; }
+        .newtworks-handbook-body .nw-col details { margin-left: 0; }
+        @media (max-width: 640px) {
+          .newtworks-handbook-body .nw-columns { grid-template-columns: 1fr; }
+        }
         /* Lists inside an OPEN expander get the SAME indent step they have on a
            normal page. Peter 2026-08-10: "when bullets are not inside an
            expanding section, they always indent a certain amount when compared
@@ -1542,6 +1553,7 @@ What I\'d like to discuss:
            documented above. Do not "tidy" these into shorthand. */
         @media print {
           html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+          .newtworks-handbook-body .nw-columns { display: block !important; }
           body * { visibility: hidden !important; }
           .nw-manual-print, .nw-manual-print * { visibility: visible !important; }
           .nw-manual-print {

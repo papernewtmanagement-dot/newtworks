@@ -237,6 +237,14 @@ const FAQ_TAG_RE = /\{\{faq:\s*([a-z0-9_]+)\s*\}\}/gi;
 // parser treats such a line as its own block, one <p> per marker, so that
 // adjacent marker lines are never glued into a single paragraph.
 const FAQ_LINE_RE = /^[ \t]*(?:\{\{faq:\s*[a-z0-9_]+\s*\}\}[ \t]*)+$/i;
+// {{columns}} … {{column}} … {{/columns}} — side-by-side columns. Each
+// column is parsed as full markdown (lists, expanders, FAQ markers all
+// resolve), so a page can put two tracks next to each other without a pipe
+// table. Renders as .nw-columns / .nw-col, a CSS grid in the Manual.jsx
+// style block that stacks to one column on narrow screens. Not nestable.
+const COLUMNS_OPEN_RE = /^\s*\{\{columns\}\}\s*$/i;
+const COLUMN_SPLIT_RE = /^\s*\{\{column\}\}\s*$/i;
+const COLUMNS_CLOSE_RE = /^\s*\{\{\/columns\}\}\s*$/i;
 const MAX_INCLUDE_DEPTH = 6;
 
 const BANNER_STYLE_MISSING =
@@ -911,6 +919,28 @@ export function mdToHtml(md, options = {}) {
       i++; continue;
     }
     if (inCode) { codeBuf.push(line); i++; continue; }
+
+    // Columns block — see COLUMNS_OPEN_RE. Collects up to the closing marker,
+    // splits on {{column}} lines, and parses every column with the same
+    // options so transclusions, glossary, charts and FAQ markers inside a
+    // column behave exactly as they do on the page. Built 2026-09-09 for the
+    // Daily Kickoff week expanders (Financial Services beside P&C).
+    if (COLUMNS_OPEN_RE.test(line)) {
+      flushPara(); flushList();
+      const cols = [[]];
+      i++;
+      while (i < lines.length && !COLUMNS_CLOSE_RE.test(lines[i])) {
+        if (COLUMN_SPLIT_RE.test(lines[i])) cols.push([]);
+        else cols[cols.length - 1].push(lines[i]);
+        i++;
+      }
+      i++; // the {{/columns}} line itself
+      const inner = cols
+        .map((c) => `<div class="nw-col">${mdToHtml(c.join("\n"), options)}</div>`)
+        .join("");
+      out.push(`<div class="nw-columns">${inner}</div>`);
+      continue;
+    }
 
     // HTML block passthrough
     const htmlOpen = new RegExp(`^\\s*<(${PASSTHROUGH_TAGS.join("|")})\\b`, "i").exec(line);
