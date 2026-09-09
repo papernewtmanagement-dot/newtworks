@@ -509,7 +509,7 @@ function useCPRData(weekDate) {
     cycleStartISO: null,  // cycle start for the week being viewed (YYYY-MM-DD), from current_cycle_info
     cycleEndISO: null,    // cycle end (close Saturday) for the week being viewed, from current_cycle_info
     currentCycleStartISO: null, // cycle start as of TODAY — weeks before this are archival/read-only
-    runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, time_off, paid_off, location}}}
+    runtimeHours: {},    // {team_member_id: {mon|tue|wed|thu|fri: {hours, paid_off, location}}}
     runtimeReqs: {},     // {team_member_id: {carryover, missed, cost, total, paid, owed, buyback, net_quotes, quotes_discussed, personal_misses, team_misses}}
     section11: null,     // get_cpr_section_11 result — SMVC & Scorecard data
     section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
@@ -939,7 +939,6 @@ function useCPRData(weekDate) {
           if (!runtimeHours[h.team_member_id]) runtimeHours[h.team_member_id] = {};
           runtimeHours[h.team_member_id][h.day_label] = {
             hours: h.hours != null ? Number(h.hours) : null,
-            time_off: h.time_off_hours != null ? Number(h.time_off_hours) : 0,
             paid_off: h.paid_time_off_hours != null ? Number(h.paid_time_off_hours) : 0,
             location: h.location || null,
             work_date: h.work_date || null,
@@ -3232,22 +3231,23 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
                 <Th align="left">Person</Th>
                 {DAYS.map(day => <Th key={day} align="center">{DAY_LABELS[day]}</Th>)}
                 <Th align="right">Worked</Th>
-                <Th align="right">Time Off</Th>
+                <Th align="right">PTO</Th>
               </tr>
             </thead>
             <tbody>
               {sorted.map(d => {
                 const tmHours = runtimeHours?.[d.team_member_id] || {};
                 // Two separate totals (Peter 2026-09-08): hours actually worked, and
-                // hours of time off. Never summed into one figure — worked hours are
-                // what the retention split and any overtime question read, time off is
-                // neither. time_off covers paid AND unpaid; paid_off is the paid subset
-                // and only drives the per-day marker.
+                // PTO. Never summed into one figure — worked hours are what the
+                // retention split and any overtime question read, PTO is neither.
+                // PTO is PAID time off only (Peter 2026-09-09). Unpaid absence is
+                // deliberately not shown anywhere: it is simply hours that never
+                // appear. Do not add an unpaid figure or an unpaid marker.
                 let totalWorked = 0;
-                let totalOff = 0;
+                let totalPto = 0;
                 DAYS.forEach(day => {
                   totalWorked += Number(tmHours[day]?.hours) || 0;
-                  totalOff    += Number(tmHours[day]?.time_off) || 0;
+                  totalPto    += Number(tmHours[day]?.paid_off) || 0;
                 });
                 return (
                   <tr key={d.team_member_id}>
@@ -3255,19 +3255,18 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
                     {DAYS.map(day => {
                       const cell = tmHours[day];
                       const worked = Number(cell?.hours) || 0;
-                      const timeOff = Number(cell?.time_off) || 0;
                       const paidOff = Number(cell?.paid_off) || 0;
-                      // 🟡 paid time off, ⚪ unpaid. Time off is NOT hours worked and
-                      // never counts toward the 40-hour overtime line (29 CFR 778.218).
-                      const offIcon = paidOff > 0 ? " 🟡" : " ⚪";
-                      // Nothing worked and nothing off renders blank — no icon either.
-                      if (!cell || (worked === 0 && timeOff === 0)) {
+                      // 🟡 marks PTO. PTO is NOT hours worked and never counts toward
+                      // the 40-hour overtime line (29 CFR 778.218). Unpaid absence is
+                      // deliberately unmarked — it is just hours that do not appear.
+                      // Nothing worked and no PTO renders blank, no icon.
+                      if (!cell || (worked === 0 && paidOff === 0)) {
                         return <Td key={day} align="center">—</Td>;
                       }
                       if (worked === 0) {
                         return (
                           <Td key={day} align="center">
-                            <span style={{ color: T.slate500 }}>{timeOff.toFixed(2)}{offIcon}</span>
+                            <span style={{ color: T.slate500 }}>{paidOff.toFixed(2)} 🟡</span>
                           </Td>
                         );
                       }
@@ -3276,14 +3275,14 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
                       return (
                         <Td key={day} align="center">
                           <span>{worked.toFixed(2)}{icon}</span>
-                          {timeOff > 0 ? (
-                            <span style={{ color: T.slate500 }}>{" + " + timeOff.toFixed(2) + offIcon}</span>
+                          {paidOff > 0 ? (
+                            <span style={{ color: T.slate500 }}>{" + " + paidOff.toFixed(2) + " 🟡"}</span>
                           ) : null}
                         </Td>
                       );
                     })}
                     <Td align="right" style={{ fontWeight: 700 }}>{totalWorked > 0 ? totalWorked.toFixed(2) : "—"}</Td>
-                    <Td align="right" style={{ fontWeight: 700, color: T.slate500 }}>{totalOff > 0 ? totalOff.toFixed(2) : "—"}</Td>
+                    <Td align="right" style={{ fontWeight: 700, color: T.slate500 }}>{totalPto > 0 ? totalPto.toFixed(2) : "—"}</Td>
                   </tr>
                 );
               })}
@@ -3291,7 +3290,7 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
           </table>
         </div>
         <div style={{ padding: "8px 14px", borderTop: `1px solid ${T.slate200}`, fontSize: 12, color: T.slate500 }}>
-          🟢 in office · 🟣 remote · 🟡 paid time off · ⚪ unpaid time off. Time off is totalled separately and is not hours worked.
+          🟢 in office · 🟣 remote · 🟡 PTO. PTO is totalled separately and is not hours worked.
         </div>
       </Card>
     </div>
