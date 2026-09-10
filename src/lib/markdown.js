@@ -843,11 +843,16 @@ function expandCharts(md) {
   return md.replace(CHART_RE, (_m, spec) => renderChart(spec));
 }
 
-// ─── Opener picker ────────────────────────────────────────────
-// One script can have several ways to open it — one for each list we work,
-// and each of those in two flavors: a pivot (we are already on a call with
-// them and we turn the conversation) and an outbound call (we are the ones
-// calling). Marker lines group them at the top of the page:
+// ─── Script selector ──────────────────────────────────────────
+// One script page can hold many ways to open the same conversation, and the
+// middle of the page can read differently depending on how the call is going.
+// Three dropdowns at the top of the page decide what shows:
+//
+//   which opener   — the list or the moment we are working from
+//   which flavor   — pivot on a call we are already on, or an outbound call
+//   how it is going — engaged and has time, or not engaged and no time
+//
+// The markers in the page content:
 //
 //   [Opener: Birthday | pivot]
 //   …the words…
@@ -855,17 +860,27 @@ function expandCharts(md) {
 //   …the words…
 //   [Openers end]
 //
-// Everything from the first marker to [Openers end] is replaced by a small
-// picker plus the one opening that is chosen right now. The choice lives in
-// the page address (?opener= and ?omode=), so a refresh keeps it and a
-// right-click can open it in a new tab.
+//   [Engaged: no]
+//   …the words for a call with no time…
+//   [Engaged: yes]
+//   …the words for a call with time…
+//   [Engaged end]
 //
-// options.openerState = { value, mode, hrefForOpener(slug), hrefForMode(m) }
-// When it is missing (the content editor preview) the first opener shows and
-// the picker renders as plain, unclickable chips.
+// Engaged blocks can appear as many times as needed, anywhere on the page,
+// including inside an opener. Everything not chosen is dropped before the
+// page is built, so it never reaches the screen or the printer.
+//
+// The three choices live in the page address (?opener= ?omode= ?eng=), so a
+// refresh keeps them and a link can point at one exact version.
+//
+// options.openerState = { value, mode, engaged, hrefFor… } — supplied by
+// Manual.jsx. When it is missing (the content editor preview) the first
+// opener shows and the dropdowns render disabled.
 
 const OPENER_MARK_RE = /^[ \t]*\*?\[Opener:\s*([^\]|\n]+?)\s*\|\s*([^\]\n]+?)\s*\]\*?[ \t]*$/;
-const OPENER_END_RE = /^[ \t]*\*?\[Openers end\]\*?[ \t]*$/;
+const OPENER_END_RE = /^[ \t]*\*?\[Openers end\]\*?[ \t]*$/i;
+const ENGAGED_MARK_RE = /^[ \t]*\*?\[Engaged:\s*(yes|no)\s*\]\*?[ \t]*$/i;
+const ENGAGED_END_RE = /^[ \t]*\*?\[Engaged end\]\*?[ \t]*$/i;
 
 function openerSlug(s) {
   return String(s)
@@ -874,82 +889,104 @@ function openerSlug(s) {
     .replace(/^-|-$/g, "") || "opener";
 }
 
-function expandOpeners(md, options) {
+function expandSelector(md, options) {
   const src = String(md || "");
-  if (src.indexOf("[Opener:") === -1) return src;
-  const lines = src.split(/\r?\n/);
-
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (OPENER_MARK_RE.test(lines[i])) { start = i; break; }
-  }
-  if (start < 0) return src;
-
-  let end = lines.length;
-  let endMarker = false;
-  for (let i = start; i < lines.length; i++) {
-    if (OPENER_END_RE.test(lines[i])) { end = i; endMarker = true; break; }
-  }
-
-  // Collect every panel in the region, grouped by opener.
-  const groups = [];
-  let cur = null;
-  for (let i = start; i < end; i++) {
-    const m = OPENER_MARK_RE.exec(lines[i]);
-    if (m) {
-      const label = m[1].trim();
-      const slug = openerSlug(label);
-      const mode = /^out/i.test(m[2].trim()) ? "outbound" : "pivot";
-      let g = groups.find((x) => x.slug === slug);
-      if (!g) { g = { slug, label, modes: {} }; groups.push(g); }
-      g.modes[mode] = [];
-      cur = g.modes[mode];
-    } else if (cur) {
-      cur.push(lines[i]);
-    }
-  }
-  if (!groups.length) return src;
+  const hasOpeners = src.indexOf("[Opener:") !== -1;
+  const hasEngaged = src.indexOf("[Engaged:") !== -1;
+  if (!hasOpeners && !hasEngaged) return src;
 
   const st = (options && options.openerState) || {};
-  const active = groups.find((g) => g.slug === st.value) || groups[0];
-  let mode = st.mode === "outbound" ? "outbound" : "pivot";
-  if (!active.modes[mode]) mode = active.modes.pivot ? "pivot" : "outbound";
+  const engaged = st.engaged === "engaged" ? "yes" : "no";
+  let lines = src.split(/\r?\n/);
 
-  const chip = (label, on, href, dataAttr) => {
-    const cls = "nw-opener-chip" + (on ? " nw-on" : "");
-    if (!href) return `<span class="${cls}">${escapeHtml(label)}</span>`;
-    return `<a class="${cls}" href="${escapeAttr(href)}" ${dataAttr}>${escapeHtml(label)}</a>`;
+  // ── Openers: collect, choose one, drop the rest ──────────────
+  const groups = [];
+  let active = null;
+  let mode = st.mode === "outbound" ? "outbound" : "pivot";
+
+  if (hasOpeners) {
+    let start = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (OPENER_MARK_RE.test(lines[i])) { start = i; break; }
+    }
+    if (start >= 0) {
+      let end = lines.length;
+      let endMarker = false;
+      for (let i = start; i < lines.length; i++) {
+        if (OPENER_END_RE.test(lines[i])) { end = i; endMarker = true; break; }
+      }
+      let cur = null;
+      for (let i = start; i < end; i++) {
+        const m = OPENER_MARK_RE.exec(lines[i]);
+        if (m) {
+          const label = m[1].trim();
+          const slug = openerSlug(label);
+          const flavor = /^out/i.test(m[2].trim()) ? "outbound" : "pivot";
+          let g = groups.find((x) => x.slug === slug);
+          if (!g) { g = { slug, label, modes: {} }; groups.push(g); }
+          g.modes[flavor] = [];
+          cur = g.modes[flavor];
+        } else if (cur) {
+          cur.push(lines[i]);
+        }
+      }
+      if (groups.length) {
+        active = groups.find((g) => g.slug === st.value) || groups[0];
+        if (!active.modes[mode]) mode = active.modes.pivot ? "pivot" : "outbound";
+        const panel = active.modes[mode] || [];
+        lines = lines.slice(0, start).concat(panel, lines.slice(endMarker ? end + 1 : end));
+      }
+    }
+  }
+
+  // ── Engagement: keep only the chosen branch ──────────────────
+  if (hasEngaged) {
+    const kept = [];
+    let keep = true;
+    for (let i = 0; i < lines.length; i++) {
+      const m = ENGAGED_MARK_RE.exec(lines[i]);
+      if (m) { keep = m[1].toLowerCase() === engaged; continue; }
+      if (ENGAGED_END_RE.test(lines[i])) { keep = true; continue; }
+      if (keep) kept.push(lines[i]);
+    }
+    lines = kept;
+  }
+
+  // ── The dropdowns ────────────────────────────────────────────
+  const live = typeof st.hrefForOpener === "function";
+  const sel = (param, opts, current, title) => {
+    const parts = [];
+    parts.push(
+      `<select class="nw-picker-select" data-nw-param="${param}" title="${escapeAttr(title)}"` +
+      (live ? "" : " disabled") + `>`
+    );
+    opts.forEach(([value, label]) => {
+      parts.push(
+        `<option value="${escapeAttr(value)}"${value === current ? " selected" : ""}>` +
+        escapeHtml(label) + `</option>`
+      );
+    });
+    parts.push(`</select>`);
+    return parts.join("");
   };
 
-  const html = [];
-  html.push(`<div class="nw-openers">`);
-  html.push(`<div class="nw-opener-label">Pick an opener</div>`);
-  html.push(`<div class="nw-opener-pick">`);
-  groups.forEach((g) => {
-    const href = typeof st.hrefForOpener === "function" ? st.hrefForOpener(g.slug) : null;
-    html.push(chip(g.label, g.slug === active.slug, href, `data-nw-opener="${escapeAttr(g.slug)}"`));
-  });
-  html.push(`</div>`);
+  const bar = [];
+  bar.push(`<div class="nw-picker">`);
+  if (active) {
+    bar.push(sel("opener", groups.map((g) => [g.slug, g.label]), active.slug, "Which opener"));
+    const modeOpts = [];
+    if (active.modes.pivot) modeOpts.push(["pivot", "Pivot on a call"]);
+    if (active.modes.outbound) modeOpts.push(["outbound", "Outbound call"]);
+    if (modeOpts.length > 1) bar.push(sel("omode", modeOpts, mode, "Pivot or outbound call"));
+  }
+  if (hasEngaged) {
+    bar.push(sel("eng", [["notime", "Not engaged or no time"], ["engaged", "Engaged and has time"]],
+      engaged === "yes" ? "engaged" : "notime", "How the call is going"));
+  }
+  bar.push(`</div>`);
 
-  const modeLabels = { pivot: "Pivot on a call", outbound: "Outbound call" };
-  html.push(`<div class="nw-opener-pick nw-opener-modes">`);
-  ["pivot", "outbound"].forEach((m) => {
-    if (!active.modes[m]) return;
-    const href = typeof st.hrefForMode === "function" ? st.hrefForMode(m) : null;
-    html.push(chip(modeLabels[m], m === mode, href, `data-nw-omode="${escapeAttr(m)}"`));
-  });
-  html.push(`</div>`);
-
-  html.push(`<div class="nw-opener-body">`);
-  const bodyMd = (active.modes[mode] || []).join("\n");
-  html.push(mdToHtml(bodyMd, options) || "");
-  html.push(`</div>`);
-  html.push(`</div>`);
-
-  const tail = lines.slice(endMarker ? end + 1 : end);
-  return lines.slice(0, start).concat([html.join("\n")]).concat(tail).join("\n");
+  return bar.join("\n") + "\n\n" + lines.join("\n");
 }
-
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
   let src = String(md || "");
@@ -971,7 +1008,7 @@ export function mdToHtml(md, options = {}) {
   src = expandCharts(src);
   src = expandLines(src);
   src = expandRows(src);
-  src = expandOpeners(src, options);
+  src = expandSelector(src, options);
 
   if (!src.trim()) return "";
 

@@ -985,6 +985,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // carry [Opener: ...] markers use these.
   const [openerPick, setOpenerPick] = useTabParam("opener", null);
   const [openerMode, setOpenerMode] = useTabParam("omode", "pivot", ["pivot", "outbound"]);
+  const [engaged, setEngaged] = useTabParam("eng", "notime", ["notime", "engaged"]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [form, setForm] = useState(null);
@@ -1274,11 +1275,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       openerState: {
         value: openerPick,
         mode: openerMode,
+        engaged,
         hrefForOpener: (slug) => hrefWithParam("opener", slug, null),
-        hrefForMode: (m) => hrefWithParam("omode", m, "pivot"),
       },
     }),
-    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode, openerPick, openerMode]
+    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode, openerPick, openerMode, engaged]
   );
 
   // ── Included-section quick editor ─────────────────────────────
@@ -1306,6 +1307,23 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
+  // The three dropdowns at the top of a script page are raw HTML inside the
+  // rendered body, so React never sees their change event. Listen for it on
+  // the body itself and push the choice into the page address.
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root) return;
+    const onChange = (e) => {
+      const el = e.target;
+      if (!el || !el.classList || !el.classList.contains("nw-picker-select")) return;
+      const param = el.getAttribute("data-nw-param");
+      if (param === "opener") setOpenerPick(el.value);
+      else if (param === "omode") setOpenerMode(el.value);
+      else if (param === "eng") setEngaged(el.value);
+    };
+    root.addEventListener("change", onChange);
+    return () => root.removeEventListener("change", onChange);
+  }, [html, setOpenerPick, setOpenerMode, setEngaged]);
   // A closed expander is hidden by the browser itself, so its text would be
   // missing from a printed page even though it is sitting right there in the
   // document. This opens every expander the moment the print dialog is asked
@@ -1345,18 +1363,6 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // buttons are raw HTML (rendered via dangerouslySetInnerHTML), so this is
   // the only way to hook them up to openFragment.
   const handleBodyClick = useCallback((e) => {
-    // Opener picker chips. They are real links so right-click and middle-click
-    // behave normally; a plain left-click just swaps what the page shows.
-    const chip = e.target?.closest?.(".nw-opener-chip");
-    if (chip) {
-      handleModuleLinkClick(e, () => {
-        const pick = chip.getAttribute("data-nw-opener");
-        const m = chip.getAttribute("data-nw-omode");
-        if (pick) setOpenerPick(pick);
-        if (m) setOpenerMode(m);
-      });
-      return;
-    }
     const btn = e.target?.closest?.(".nw-transclusion-edit-btn");
     if (!btn) return;
     e.preventDefault();
@@ -1364,7 +1370,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     const title = btn.getAttribute("data-transclusion-title");
     if (!kind || !title) return;
     openFragment({ kind, title });
-  }, [openFragment, setOpenerPick, setOpenerMode]);
+  }, [openFragment]);
   const askContext = useMemo(() => {
     return `I\'m looking at this page from ${cfg.askContextLabel}:
 
@@ -1410,18 +1416,13 @@ What I\'d like to discuss:
         .newtworks-handbook-body pre code { background: transparent; padding: 0; }
         .newtworks-handbook-body a { color: ${T.blue}; text-decoration: underline; text-decoration-color: ${T.blue}66; }
         .newtworks-handbook-body a:hover { text-decoration-color: ${T.blue}; }
-        /* Opener picker — the chips at the top of a script page that choose
-           which opening is showing and whether it is the pivot or the
-           outbound-call version. */
-        .newtworks-handbook-body .nw-openers { margin: 4px 0 20px 0; }
-        .newtworks-handbook-body .nw-opener-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: ${T.slate500}; margin-bottom: 8px; }
-        .newtworks-handbook-body .nw-opener-pick { display: flex; flex-wrap: wrap; gap: 6px; }
-        .newtworks-handbook-body .nw-opener-modes { margin-top: 8px; }
-        .newtworks-handbook-body .nw-opener-chip { display: inline-block; box-sizing: border-box; padding: 7px 14px; border: 1px solid ${T.slate200}; border-radius: 999px; background: ${T.white}; color: ${T.slate700}; font-size: 13px; font-weight: 600; line-height: 1.2; text-decoration: none; cursor: pointer; }
-        .newtworks-handbook-body .nw-opener-chip:hover { border-color: ${T.blue}; color: ${T.blue}; text-decoration: none; }
-        .newtworks-handbook-body .nw-opener-chip.nw-on { background: ${T.blue}; border-color: ${T.blue}; color: ${T.white}; }
-        .newtworks-handbook-body .nw-opener-chip.nw-on:hover { color: ${T.white}; }
-        .newtworks-handbook-body .nw-opener-body { margin-top: 16px; }
+        /* The three dropdowns at the top of a script page. Sticky, so they
+           stay in reach while the script scrolls under them. */
+        .newtworks-handbook-body .nw-picker { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px 0; padding: 10px 0; background: ${T.white}; border-bottom: 1px solid ${T.slate200}; }
+        .newtworks-handbook-body .nw-picker-select { box-sizing: border-box; max-width: 100%; padding: 8px 30px 8px 12px; border: 1px solid ${T.slate300}; border-radius: 8px; background: ${T.white}; color: ${T.slate900}; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1.2; cursor: pointer; }
+        .newtworks-handbook-body .nw-picker-select:hover { border-color: ${T.blue}; }
+        .newtworks-handbook-body .nw-picker-select:focus-visible { outline: 2px solid ${T.blue}; outline-offset: 1px; }
+        .newtworks-handbook-body .nw-picker-select[disabled] { opacity: 0.7; cursor: default; }
         .newtworks-handbook-body hr { border: 0; border-top: 1px solid ${T.slate200}; margin: 24px 0; }
         .newtworks-handbook-body blockquote {
           background: ${T.blueLt};
