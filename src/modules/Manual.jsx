@@ -975,6 +975,65 @@ function nwEnableSmoothDetails(container) {
 // to the top of the reading pane so it stays in reach while the script
 // scrolls under it.
 function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpener, onMode, onEngaged, vp }) {
+  // Two tries at position:sticky failed here — whichever box actually scrolls
+  // in this layout, the bar scrolled away with the page. So the bar is pinned
+  // with position:fixed instead, and a same-height spacer holds its place in
+  // the flow. Left edge, width and top are measured off the spacer and the
+  // scrolling box, so the bar lines up with the page and sits just below the
+  // app header. Peter 2026-09-10: "make them stick."
+  const holderRef = useRef(null);
+  const barRef = useRef(null);
+  const [box, setBox] = useState(null);
+  const [barH, setBarH] = useState(56);
+
+  useEffect(() => {
+    const holder = holderRef.current;
+    if (!holder || typeof window === "undefined") return undefined;
+
+    const scrollBoxOf = (node) => {
+      let el = node?.parentElement;
+      while (el && el !== document.body) {
+        const st = window.getComputedStyle(el);
+        if (/(auto|scroll)/.test(st.overflowY)) return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const h = holderRef.current;
+      if (!h) return;
+      const r = h.getBoundingClientRect();
+      const scroller = scrollBoxOf(h);
+      const scrollerTop = scroller ? scroller.getBoundingClientRect().top : 58;
+      const top = Math.max(0, scrollerTop) + (vp?.isPhone ? 38 : 0);
+      const next = { left: Math.round(r.left), width: Math.round(r.width), top: Math.round(top) };
+      setBox((prev) => (
+        prev && prev.left === next.left && prev.width === next.width && prev.top === next.top
+          ? prev
+          : next
+      ));
+      const bh = barRef.current?.offsetHeight;
+      if (bh) setBarH((prev) => (prev === bh ? prev : bh));
+    };
+    const schedule = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(measure);
+    };
+
+    measure();
+    window.addEventListener("resize", schedule);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    if (ro) ro.observe(holder);
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", schedule);
+      if (ro) ro.disconnect();
+    };
+  }, [vp?.isPhone, groups.length, hasEngaged]);
+
   const selStyle = {
     boxSizing: "border-box",
     maxWidth: "100%",
@@ -992,57 +1051,67 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
   const modes = [];
   if (opener?.modes?.pivot) modes.push(["pivot", "Pivot on a call"]);
   if (opener?.modes?.outbound) modes.push(["outbound", "Outbound call"]);
+
+  const barStyle = box
+    ? {
+        position: "fixed",
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        zIndex: 60,
+      }
+    : { position: "relative" };
+
   return (
-    <div
-      className="nw-print-hide"
-      style={{
-        position: "sticky",
-        top: vp?.isPhone ? 44 : 0,
-        zIndex: 30,
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 8,
-        margin: "0 0 18px 0",
-        padding: "10px 0",
-        background: T.slate50,
-        borderBottom: `1px solid ${T.slate200}`,
-      }}
-    >
-      {groups.length > 0 && (
-        <select
-          value={opener?.slug || ""}
-          onChange={(e) => onOpener(e.target.value)}
-          style={selStyle}
-          title="Which opener"
-        >
-          {groups.map((g) => (
-            <option key={g.slug} value={g.slug}>{g.label}</option>
-          ))}
-        </select>
-      )}
-      {modes.length > 1 && (
-        <select
-          value={openerMode}
-          onChange={(e) => onMode(e.target.value)}
-          style={selStyle}
-          title="Pivot or outbound call"
-        >
-          {modes.map(([v, label]) => (
-            <option key={v} value={v}>{label}</option>
-          ))}
-        </select>
-      )}
-      {hasEngaged && (
-        <select
-          value={engaged}
-          onChange={(e) => onEngaged(e.target.value)}
-          style={selStyle}
-          title="How the call is going"
-        >
-          <option value="notime">Not engaged or no time</option>
-          <option value="engaged">Engaged and has time</option>
-        </select>
-      )}
+    <div ref={holderRef} className="nw-print-hide" style={{ height: box ? barH : "auto", marginBottom: 18 }}>
+      <div
+        ref={barRef}
+        style={{
+          ...barStyle,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          padding: "10px 0",
+          background: T.slate50,
+          borderBottom: `1px solid ${T.slate200}`,
+        }}
+      >
+        {groups.length > 0 && (
+          <select
+            value={opener?.slug || ""}
+            onChange={(e) => onOpener(e.target.value)}
+            style={selStyle}
+            title="Which opener"
+          >
+            {groups.map((g) => (
+              <option key={g.slug} value={g.slug}>{g.label}</option>
+            ))}
+          </select>
+        )}
+        {modes.length > 1 && (
+          <select
+            value={openerMode}
+            onChange={(e) => onMode(e.target.value)}
+            style={selStyle}
+            title="Pivot or outbound call"
+          >
+            {modes.map(([v, label]) => (
+              <option key={v} value={v}>{label}</option>
+            ))}
+          </select>
+        )}
+        {hasEngaged && (
+          <select
+            value={engaged}
+            onChange={(e) => onEngaged(e.target.value)}
+            style={selStyle}
+            title="How the call is going"
+          >
+            <option value="notime">Not engaged or no time</option>
+            <option value="engaged">Engaged and has time</option>
+          </select>
+        )}
+      </div>
     </div>
   );
 }
