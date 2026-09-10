@@ -1007,19 +1007,21 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
       const scroller = scrollBoxOf(h);
       const sRect = scroller ? scroller.getBoundingClientRect() : null;
       const hRect = h.getBoundingClientRect();
-      const gutter = sRect ? hRect.left - sRect.left : 0;
-      // Line the rail up with the top of the card rather than the top of the
-      // reading pane. The holder sits at the top of the card, so its distance
-      // from the top of the scrollable content is the card's own start —
-      // constant no matter how far the page is scrolled. Peter 2026-09-10.
+      // Measure the CARD, not the holder inside it. The holder sits inside the
+      // card's padding, so measuring it made the gutter look wider than it is
+      // and left no gap on the right. The card's own edges give a true 16px
+      // margin either side, and a top that lines up with the card. Peter 2026-09-10.
+      const card = h.parentElement;
+      const cRect = card ? card.getBoundingClientRect() : hRect;
+      const gutter = sRect ? cRect.left - sRect.left : 0;
       const cardOffset = sRect
-        ? Math.min(320, Math.max(12, Math.round(hRect.top - sRect.top + (scroller.scrollTop || 0))))
+        ? Math.min(400, Math.max(12, Math.round(cRect.top - sRect.top + (scroller.scrollTop || 0))))
         : 24;
       const next = gutter >= RAIL_MIN
         ? {
             left: Math.round(sRect.left + 16),
             top: Math.round(Math.max(0, sRect.top) + cardOffset),
-            width: Math.round((gutter - 32) * 0.75),
+            width: Math.round(gutter - 32),
           }
         : null;
       setRail((prev) => {
