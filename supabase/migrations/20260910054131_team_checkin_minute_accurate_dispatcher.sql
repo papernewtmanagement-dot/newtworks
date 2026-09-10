@@ -53,3 +53,15 @@ BEGIN
   RETURN v_fired;
 END;
 $function$;
+
+-- Applied alongside this migration via direct statements (recorded here so a
+-- fresh reset reproduces production):
+--   Recipe cron_expression + input_config.local_time restored to Peter's locked
+--   times: morning reminder 25 8 / 08:25, morning tag missing 30 8 / 08:30,
+--   morning compile 40 8 / 08:40, midday 0 12 / 12:00, midday tag missing
+--   15 12 / 12:15, midday compile 30 12 / 12:30, EOD 0 17 / 17:00, EOD tag
+--   missing 15 17 / 17:15, EOD compile 30 17 / 17:30. All America/Chicago.
+--   pg_cron job 23 'team-checkin-minute-tick':
+--     SELECT cron.schedule('team-checkin-minute-tick',
+--       '0,15,25,30,40 13,14,17,18,22,23 * * 1-5',
+--       'SELECT public.run_due_team_checkin_recipes();');
