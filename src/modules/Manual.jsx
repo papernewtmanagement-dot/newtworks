@@ -26,7 +26,7 @@ import { useViewport } from "../lib/hooks.js";
 
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
-import { handleModuleLinkClick, useTabParam, hrefWithParam } from "../lib/routing.jsx";
+import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -92,6 +92,7 @@ function iconForNode(n) {
 // [Included from: X] transclusion via the resolveInclude option.
 import {
   mdToHtml,
+  scanSelector,
   previewText,
   buildIncludeLookup,
   makeIncludeResolver,
@@ -968,6 +969,84 @@ function nwEnableSmoothDetails(container) {
   });
 }
 
+// ─── Script selector bar ──────────────────────────────────────
+// Three dropdowns that decide what a script page shows: which opener, pivot
+// or outbound call, and whether the person is engaged or has no time. Sticky
+// to the top of the reading pane so it stays in reach while the script
+// scrolls under it.
+function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpener, onMode, onEngaged, vp }) {
+  const selStyle = {
+    boxSizing: "border-box",
+    maxWidth: "100%",
+    padding: "8px 12px",
+    border: `1px solid ${T.slate300}`,
+    borderRadius: 8,
+    background: T.white,
+    color: T.slate900,
+    fontFamily: "inherit",
+    fontSize: 13,
+    fontWeight: 600,
+    lineHeight: 1.2,
+    cursor: "pointer",
+  };
+  const modes = [];
+  if (opener?.modes?.pivot) modes.push(["pivot", "Pivot on a call"]);
+  if (opener?.modes?.outbound) modes.push(["outbound", "Outbound call"]);
+  return (
+    <div
+      className="nw-print-hide"
+      style={{
+        position: "sticky",
+        top: vp?.isPhone ? 44 : 0,
+        zIndex: 30,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        margin: "0 0 18px 0",
+        padding: "10px 0",
+        background: T.slate50,
+        borderBottom: `1px solid ${T.slate200}`,
+      }}
+    >
+      {groups.length > 0 && (
+        <select
+          value={opener?.slug || ""}
+          onChange={(e) => onOpener(e.target.value)}
+          style={selStyle}
+          title="Which opener"
+        >
+          {groups.map((g) => (
+            <option key={g.slug} value={g.slug}>{g.label}</option>
+          ))}
+        </select>
+      )}
+      {modes.length > 1 && (
+        <select
+          value={openerMode}
+          onChange={(e) => onMode(e.target.value)}
+          style={selStyle}
+          title="Pivot or outbound call"
+        >
+          {modes.map(([v, label]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
+        </select>
+      )}
+      {hasEngaged && (
+        <select
+          value={engaged}
+          onChange={(e) => onEngaged(e.target.value)}
+          style={selStyle}
+          title="How the call is going"
+        >
+          <option value="notime">Not engaged or no time</option>
+          <option value="engaged">Engaged and has time</option>
+        </select>
+      )}
+    </div>
+  );
+}
+
 function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
@@ -1276,11 +1355,32 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
         value: openerPick,
         mode: openerMode,
         engaged,
-        hrefForOpener: (slug) => hrefWithParam("opener", slug, null),
       },
     }),
     [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode, openerPick, openerMode, engaged]
   );
+
+  // ── Script selector ───────────────────────────────────────────
+  // The dropdowns that decide which opener shows and how the call is going.
+  // The same list drives the filtering inside mdToHtml, so the two agree.
+  const selector = useMemo(() => scanSelector(bodyMd), [bodyMd]);
+  const activeOpener = useMemo(
+    () => selector.groups.find((g) => g.slug === openerPick) || selector.groups[0] || null,
+    [selector, openerPick]
+  );
+  const activeMode = activeOpener && !activeOpener.modes[openerMode]
+    ? (activeOpener.modes.pivot ? "pivot" : "outbound")
+    : openerMode;
+  // Landing on a page by link keeps whatever the link asked for. Moving to a
+  // different page afterwards starts that page clean.
+  const lastPageId = useRef(page?.id || null);
+  useEffect(() => {
+    if (lastPageId.current === (page?.id || null)) return;
+    lastPageId.current = page?.id || null;
+    setOpenerPick(null);
+    setOpenerMode("pivot");
+    setEngaged("notime");
+  }, [page?.id, setOpenerPick, setOpenerMode, setEngaged]);
 
   // ── Included-section quick editor ─────────────────────────────
   // Edit affordance now lives inline, as a pencil button markTransclusions
@@ -1307,23 +1407,6 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
-  // The three dropdowns at the top of a script page are raw HTML inside the
-  // rendered body, so React never sees their change event. Listen for it on
-  // the body itself and push the choice into the page address.
-  useEffect(() => {
-    const root = bodyRef.current;
-    if (!root) return;
-    const onChange = (e) => {
-      const el = e.target;
-      if (!el || !el.classList || !el.classList.contains("nw-picker-select")) return;
-      const param = el.getAttribute("data-nw-param");
-      if (param === "opener") setOpenerPick(el.value);
-      else if (param === "omode") setOpenerMode(el.value);
-      else if (param === "eng") setEngaged(el.value);
-    };
-    root.addEventListener("change", onChange);
-    return () => root.removeEventListener("change", onChange);
-  }, [html, setOpenerPick, setOpenerMode, setEngaged]);
   // A closed expander is hidden by the browser itself, so its text would be
   // missing from a printed page even though it is sitting right there in the
   // document. This opens every expander the moment the print dialog is asked
@@ -1394,6 +1477,19 @@ What I\'d like to discuss:
 
   return (
     <div className="nw-manual-print" style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
+      {mode === "view" && (selector.groups.length > 0 || selector.hasEngaged) && (
+        <ScriptPicker
+          groups={selector.groups}
+          hasEngaged={selector.hasEngaged}
+          opener={activeOpener}
+          openerMode={activeMode}
+          engaged={engaged}
+          onOpener={setOpenerPick}
+          onMode={setOpenerMode}
+          onEngaged={setEngaged}
+          vp={_vp}
+        />
+      )}
       {/* Inline style block for HTML-rendered handbook content.
           Scoped via a wrapper class so it can't bleed into other modules. */}
       <style>{`
@@ -1416,13 +1512,6 @@ What I\'d like to discuss:
         .newtworks-handbook-body pre code { background: transparent; padding: 0; }
         .newtworks-handbook-body a { color: ${T.blue}; text-decoration: underline; text-decoration-color: ${T.blue}66; }
         .newtworks-handbook-body a:hover { text-decoration-color: ${T.blue}; }
-        /* The three dropdowns at the top of a script page. Sticky, so they
-           stay in reach while the script scrolls under them. */
-        .newtworks-handbook-body .nw-picker { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px 0; padding: 10px 0; background: ${T.white}; border-bottom: 1px solid ${T.slate200}; }
-        .newtworks-handbook-body .nw-picker-select { box-sizing: border-box; max-width: 100%; padding: 8px 30px 8px 12px; border: 1px solid ${T.slate300}; border-radius: 8px; background: ${T.white}; color: ${T.slate900}; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1.2; cursor: pointer; }
-        .newtworks-handbook-body .nw-picker-select:hover { border-color: ${T.blue}; }
-        .newtworks-handbook-body .nw-picker-select:focus-visible { outline: 2px solid ${T.blue}; outline-offset: 1px; }
-        .newtworks-handbook-body .nw-picker-select[disabled] { opacity: 0.7; cursor: default; }
         .newtworks-handbook-body hr { border: 0; border-top: 1px solid ${T.slate200}; margin: 24px 0; }
         .newtworks-handbook-body blockquote {
           background: ${T.blueLt};

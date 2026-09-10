@@ -889,6 +889,40 @@ function openerSlug(s) {
     .replace(/^-|-$/g, "") || "opener";
 }
 
+// Reads the opener markers out of a page without rendering anything. The
+// manual page uses this to build the dropdowns in React; the filter below
+// uses the same list so both agree on which opener is showing.
+export function scanSelector(md) {
+  const src = String(md || "");
+  const groups = [];
+  if (src.indexOf("[Opener:") !== -1) {
+    const lines = src.split(/\r?\n/);
+    let started = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (OPENER_END_RE.test(lines[i])) break;
+      const m = OPENER_MARK_RE.exec(lines[i]);
+      if (!m) continue;
+      started = true;
+      const label = m[1].trim();
+      const slug = openerSlug(label);
+      const flavor = /^out/i.test(m[2].trim()) ? "outbound" : "pivot";
+      let g = groups.find((x) => x.slug === slug);
+      if (!g) { g = { slug, label, modes: {} }; groups.push(g); }
+      g.modes[flavor] = true;
+    }
+    if (!started) groups.length = 0;
+  }
+  sortOpeners(groups);
+  return { groups, hasEngaged: src.indexOf("[Engaged:") !== -1 };
+}
+
+// The dropdown reads alphabetically, not in the order the openers happen to
+// sit in the page. Peter 2026-09-10.
+function sortOpeners(groups) {
+  groups.sort((a, b) => a.label.localeCompare(b.label, "en", { sensitivity: "base" }));
+  return groups;
+}
+
 function expandSelector(md, options) {
   const src = String(md || "");
   const hasOpeners = src.indexOf("[Opener:") !== -1;
@@ -931,6 +965,7 @@ function expandSelector(md, options) {
         }
       }
       if (groups.length) {
+        sortOpeners(groups);
         active = groups.find((g) => g.slug === st.value) || groups[0];
         if (!active.modes[mode]) mode = active.modes.pivot ? "pivot" : "outbound";
         const panel = active.modes[mode] || [];
@@ -952,40 +987,7 @@ function expandSelector(md, options) {
     lines = kept;
   }
 
-  // ── The dropdowns ────────────────────────────────────────────
-  const live = typeof st.hrefForOpener === "function";
-  const sel = (param, opts, current, title) => {
-    const parts = [];
-    parts.push(
-      `<select class="nw-picker-select" data-nw-param="${param}" title="${escapeAttr(title)}"` +
-      (live ? "" : " disabled") + `>`
-    );
-    opts.forEach(([value, label]) => {
-      parts.push(
-        `<option value="${escapeAttr(value)}"${value === current ? " selected" : ""}>` +
-        escapeHtml(label) + `</option>`
-      );
-    });
-    parts.push(`</select>`);
-    return parts.join("");
-  };
-
-  const bar = [];
-  bar.push(`<div class="nw-picker">`);
-  if (active) {
-    bar.push(sel("opener", groups.map((g) => [g.slug, g.label]), active.slug, "Which opener"));
-    const modeOpts = [];
-    if (active.modes.pivot) modeOpts.push(["pivot", "Pivot on a call"]);
-    if (active.modes.outbound) modeOpts.push(["outbound", "Outbound call"]);
-    if (modeOpts.length > 1) bar.push(sel("omode", modeOpts, mode, "Pivot or outbound call"));
-  }
-  if (hasEngaged) {
-    bar.push(sel("eng", [["notime", "Not engaged or no time"], ["engaged", "Engaged and has time"]],
-      engaged === "yes" ? "engaged" : "notime", "How the call is going"));
-  }
-  bar.push(`</div>`);
-
-  return bar.join("\n") + "\n\n" + lines.join("\n");
+  return lines.join("\n");
 }
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
