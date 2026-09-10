@@ -1,4 +1,18 @@
-// telegram edge function (v16)
+// telegram edge function (v19)
+// v19 (2026-09-10):
+//   - EMOJI REACTION ACKS. A clean single check-in submitted by the sender for
+//     themselves now gets a random emoji reaction on their own message instead
+//     of a reply bubble. Peter directive: the ack replies were two thirds of all
+//     bot traffic in the team channel and ate the screen.
+//     Replies are KEPT wherever something actually needs saying: proxy entries
+//     (someone logging for someone else), multi-person messages, corrections,
+//     parse failures, and every other command. A reaction is silent, so anything
+//     that needs the teammate's attention still gets words.
+//     setMessageReaction failure falls back to the old reply, so a Telegram-side
+//     restriction degrades instead of losing the acknowledgement entirely.
+//     Emoji are drawn from Telegram's fixed allowed-reaction set - bots cannot
+//     use arbitrary emoji here. Adding one outside that set makes the call fail.
+//
 // v16 (2026-07-06):
 //   - is_excluded → is_excluded_pjsagencybot rename (per-bot exclusion split)
 //
@@ -32,6 +46,10 @@ const BOT_USERNAME = "pjsagencybot";
 // openai/gpt-oss-120b 2026-08-08, matching chatbot/document-processor.
 const GROQ_MODEL = "openai/gpt-oss-120b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+// Telegram restricts bot reactions to a fixed set. Every emoji below is in it.
+// Do not add one without checking - an unlisted emoji fails the whole call.
+const REACTION_POOL = ["👍", "🔥", "👏", "🎉", "💯", "🏆", "👌", "🙏", "🤝", "⚡", "🫡", "😎", "🤩"];
 
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -96,6 +114,32 @@ async function sendReply(chatId: number, text: string, replyToMessageId?: number
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
   } catch (e) { console.error("sendReply failed:", e); }
+}
+
+// Silent acknowledgement: a random allowed emoji on the teammate's own message.
+// Returns false if Telegram refuses, so the caller can fall back to a reply.
+async function setReaction(chatId: number, messageId: number): Promise<boolean> {
+  const token = await getSetting("telegram_bot_token");
+  if (!token) return false;
+  const emoji = REACTION_POOL[Math.floor(Math.random() * REACTION_POOL.length)];
+  try {
+    const res = await fetch(`${TELEGRAM_API_BASE}${token}/setMessageReaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: [{ type: "emoji", emoji }],
+      }),
+    });
+    const data = await res.json();
+    if (data?.ok === true) return true;
+    console.error("setMessageReaction rejected:", JSON.stringify(data));
+    return false;
+  } catch (e) {
+    console.error("setReaction failed:", e);
+    return false;
+  }
 }
 
 async function handleAction(body: any): Promise<Response> {
@@ -533,6 +577,8 @@ async function handleBotCommand(
         "/team — current team standings (alias: /where, /stats)\n" +
         "/correct [Name] Q/S — fix a typo on the most recent entry (alias: /fix, /update)\n" +
         "/help — this message\n\n" +
+        "A thumbs up or similar reaction on your message means it logged. " +
+        "If something needed attention I'll reply in words instead.\n\n" +
         "You can also @-mention me or reply to me — I'll chat back.",
         messageId);
       return jsonResponse({ ok: true, command: cmd });
@@ -749,8 +795,14 @@ async function handleBotCommand(
   }
 }
 
+// v19: a clean single self-submission gets a silent reaction. Anything with a
+// wrinkle in it - proxy, several people in one message - still gets words,
+// because those are the cases where a teammate needs to see what was recorded.
 async function ackWork(chatId: number, messageId: number, written: any[]): Promise<void> {
   if (written.length === 0) return;
+  if (written.length === 1 && !written[0].proxy) {
+    if (await setReaction(chatId, messageId)) return;
+  }
   if (written.length === 1) {
     const w = written[0];
     const txt = w.proxy ? `✅ ${w.for}: ${w.quotes}/${w.sales} logged (via you)` : `✅ Got it, ${w.for} — ${w.quotes}/${w.sales} logged`;
@@ -762,6 +814,9 @@ async function ackWork(chatId: number, messageId: number, written: any[]): Promi
 
 async function ackHealth(chatId: number, messageId: number, written: any[]): Promise<void> {
   if (written.length === 0) return;
+  if (written.length === 1 && !written[0].proxy) {
+    if (await setReaction(chatId, messageId)) return;
+  }
   const describe = (w: any) => {
     if (w.override !== null && w.override !== undefined) return `${w.override}/5`;
     if (w.hit_today === true) return "💪 hit";
