@@ -843,6 +843,113 @@ function expandCharts(md) {
   return md.replace(CHART_RE, (_m, spec) => renderChart(spec));
 }
 
+// ─── Opener picker ────────────────────────────────────────────
+// One script can have several ways to open it — one for each list we work,
+// and each of those in two flavors: a pivot (we are already on a call with
+// them and we turn the conversation) and an outbound call (we are the ones
+// calling). Marker lines group them at the top of the page:
+//
+//   [Opener: Birthday | pivot]
+//   …the words…
+//   [Opener: Birthday | outbound call]
+//   …the words…
+//   [Openers end]
+//
+// Everything from the first marker to [Openers end] is replaced by a small
+// picker plus the one opening that is chosen right now. The choice lives in
+// the page address (?opener= and ?omode=), so a refresh keeps it and a
+// right-click can open it in a new tab.
+//
+// options.openerState = { value, mode, hrefForOpener(slug), hrefForMode(m) }
+// When it is missing (the content editor preview) the first opener shows and
+// the picker renders as plain, unclickable chips.
+
+const OPENER_MARK_RE = /^[ \t]*\*?\[Opener:\s*([^\]|\n]+?)\s*\|\s*([^\]\n]+?)\s*\]\*?[ \t]*$/;
+const OPENER_END_RE = /^[ \t]*\*?\[Openers end\]\*?[ \t]*$/;
+
+function openerSlug(s) {
+  return String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "opener";
+}
+
+function expandOpeners(md, options) {
+  const src = String(md || "");
+  if (src.indexOf("[Opener:") === -1) return src;
+  const lines = src.split(/\r?\n/);
+
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (OPENER_MARK_RE.test(lines[i])) { start = i; break; }
+  }
+  if (start < 0) return src;
+
+  let end = lines.length;
+  let endMarker = false;
+  for (let i = start; i < lines.length; i++) {
+    if (OPENER_END_RE.test(lines[i])) { end = i; endMarker = true; break; }
+  }
+
+  // Collect every panel in the region, grouped by opener.
+  const groups = [];
+  let cur = null;
+  for (let i = start; i < end; i++) {
+    const m = OPENER_MARK_RE.exec(lines[i]);
+    if (m) {
+      const label = m[1].trim();
+      const slug = openerSlug(label);
+      const mode = /^out/i.test(m[2].trim()) ? "outbound" : "pivot";
+      let g = groups.find((x) => x.slug === slug);
+      if (!g) { g = { slug, label, modes: {} }; groups.push(g); }
+      g.modes[mode] = [];
+      cur = g.modes[mode];
+    } else if (cur) {
+      cur.push(lines[i]);
+    }
+  }
+  if (!groups.length) return src;
+
+  const st = (options && options.openerState) || {};
+  const active = groups.find((g) => g.slug === st.value) || groups[0];
+  let mode = st.mode === "outbound" ? "outbound" : "pivot";
+  if (!active.modes[mode]) mode = active.modes.pivot ? "pivot" : "outbound";
+
+  const chip = (label, on, href, dataAttr) => {
+    const cls = "nw-opener-chip" + (on ? " nw-on" : "");
+    if (!href) return `<span class="${cls}">${escapeHtml(label)}</span>`;
+    return `<a class="${cls}" href="${escapeAttr(href)}" ${dataAttr}>${escapeHtml(label)}</a>`;
+  };
+
+  const html = [];
+  html.push(`<div class="nw-openers">`);
+  html.push(`<div class="nw-opener-label">Pick an opener</div>`);
+  html.push(`<div class="nw-opener-pick">`);
+  groups.forEach((g) => {
+    const href = typeof st.hrefForOpener === "function" ? st.hrefForOpener(g.slug) : null;
+    html.push(chip(g.label, g.slug === active.slug, href, `data-nw-opener="${escapeAttr(g.slug)}"`));
+  });
+  html.push(`</div>`);
+
+  const modeLabels = { pivot: "Pivot on a call", outbound: "Outbound call" };
+  html.push(`<div class="nw-opener-pick nw-opener-modes">`);
+  ["pivot", "outbound"].forEach((m) => {
+    if (!active.modes[m]) return;
+    const href = typeof st.hrefForMode === "function" ? st.hrefForMode(m) : null;
+    html.push(chip(modeLabels[m], m === mode, href, `data-nw-omode="${escapeAttr(m)}"`));
+  });
+  html.push(`</div>`);
+
+  html.push(`<div class="nw-opener-body">`);
+  const bodyMd = (active.modes[mode] || []).join("\n");
+  html.push(mdToHtml(bodyMd, options) || "");
+  html.push(`</div>`);
+  html.push(`</div>`);
+
+  const tail = lines.slice(endMarker ? end + 1 : end);
+  return lines.slice(0, start).concat([html.join("\n")]).concat(tail).join("\n");
+}
+
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
   let src = String(md || "");
@@ -864,6 +971,7 @@ export function mdToHtml(md, options = {}) {
   src = expandCharts(src);
   src = expandLines(src);
   src = expandRows(src);
+  src = expandOpeners(src, options);
 
   if (!src.trim()) return "";
 

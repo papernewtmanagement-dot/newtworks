@@ -26,7 +26,7 @@ import { useViewport } from "../lib/hooks.js";
 
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
-import { handleModuleLinkClick } from "../lib/routing.jsx";
+import { handleModuleLinkClick, useTabParam, hrefWithParam } from "../lib/routing.jsx";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -979,6 +979,12 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   //   edit       — inline form editing THIS page
   //   new-child  — inline form authoring a new child page under THIS page
   const [mode, setMode] = useState("view");
+  // Which opener the page is showing, and whether it is the pivot version or
+  // the outbound-call version. Lives in the page address so a refresh keeps
+  // the choice and a right-click can open it in a new tab. Only pages that
+  // carry [Opener: ...] markers use these.
+  const [openerPick, setOpenerPick] = useTabParam("opener", null);
+  const [openerMode, setOpenerMode] = useTabParam("omode", "pivot", ["pivot", "outbound"]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [form, setForm] = useState(null);
@@ -1265,8 +1271,14 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     () => mdToHtml(bodyMd, {
       resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq,
       markTransclusions: isAdmin && mode === "view",
+      openerState: {
+        value: openerPick,
+        mode: openerMode,
+        hrefForOpener: (slug) => hrefWithParam("opener", slug, null),
+        hrefForMode: (m) => hrefWithParam("omode", m, "pivot"),
+      },
     }),
-    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode]
+    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode, openerPick, openerMode]
   );
 
   // ── Included-section quick editor ─────────────────────────────
@@ -1333,6 +1345,18 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // buttons are raw HTML (rendered via dangerouslySetInnerHTML), so this is
   // the only way to hook them up to openFragment.
   const handleBodyClick = useCallback((e) => {
+    // Opener picker chips. They are real links so right-click and middle-click
+    // behave normally; a plain left-click just swaps what the page shows.
+    const chip = e.target?.closest?.(".nw-opener-chip");
+    if (chip) {
+      handleModuleLinkClick(e, () => {
+        const pick = chip.getAttribute("data-nw-opener");
+        const m = chip.getAttribute("data-nw-omode");
+        if (pick) setOpenerPick(pick);
+        if (m) setOpenerMode(m);
+      });
+      return;
+    }
     const btn = e.target?.closest?.(".nw-transclusion-edit-btn");
     if (!btn) return;
     e.preventDefault();
@@ -1340,7 +1364,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     const title = btn.getAttribute("data-transclusion-title");
     if (!kind || !title) return;
     openFragment({ kind, title });
-  }, [openFragment]);
+  }, [openFragment, setOpenerPick, setOpenerMode]);
   const askContext = useMemo(() => {
     return `I\'m looking at this page from ${cfg.askContextLabel}:
 
@@ -1386,6 +1410,18 @@ What I\'d like to discuss:
         .newtworks-handbook-body pre code { background: transparent; padding: 0; }
         .newtworks-handbook-body a { color: ${T.blue}; text-decoration: underline; text-decoration-color: ${T.blue}66; }
         .newtworks-handbook-body a:hover { text-decoration-color: ${T.blue}; }
+        /* Opener picker — the chips at the top of a script page that choose
+           which opening is showing and whether it is the pivot or the
+           outbound-call version. */
+        .newtworks-handbook-body .nw-openers { margin: 4px 0 20px 0; }
+        .newtworks-handbook-body .nw-opener-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: ${T.slate500}; margin-bottom: 8px; }
+        .newtworks-handbook-body .nw-opener-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+        .newtworks-handbook-body .nw-opener-modes { margin-top: 8px; }
+        .newtworks-handbook-body .nw-opener-chip { display: inline-block; box-sizing: border-box; padding: 7px 14px; border: 1px solid ${T.slate200}; border-radius: 999px; background: ${T.white}; color: ${T.slate700}; font-size: 13px; font-weight: 600; line-height: 1.2; text-decoration: none; cursor: pointer; }
+        .newtworks-handbook-body .nw-opener-chip:hover { border-color: ${T.blue}; color: ${T.blue}; text-decoration: none; }
+        .newtworks-handbook-body .nw-opener-chip.nw-on { background: ${T.blue}; border-color: ${T.blue}; color: ${T.white}; }
+        .newtworks-handbook-body .nw-opener-chip.nw-on:hover { color: ${T.white}; }
+        .newtworks-handbook-body .nw-opener-body { margin-top: 16px; }
         .newtworks-handbook-body hr { border: 0; border-top: 1px solid ${T.slate200}; margin: 24px 0; }
         .newtworks-handbook-body blockquote {
           background: ${T.blueLt};
