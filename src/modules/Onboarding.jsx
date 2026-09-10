@@ -70,6 +70,23 @@ function subAll(substeps) {
   return subGroups(substeps).reduce((acc, g) => acc.concat(g.items), []);
 }
 
+// A phase with more than one track draws one column per track — the two
+// offer-stage columns both have to finish before the next milestone opens.
+function trackColumns(steps) {
+  const names = [];
+  steps.forEach(s => {
+    const t = s.track || null;
+    if (!names.includes(t)) names.push(t);
+  });
+  if (names.length <= 1) return null;
+  return names.map(n => ({ name: n, steps: steps.filter(s => (s.track || null) === n) }));
+}
+
+const trackHeadStyle = {
+  fontSize: 11, fontWeight: 700, color: T.slate600,
+  textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2,
+};
+
 const CATEGORY_COLORS = {
   licensing:      { fg: T.green,  bg: T.greenLt,  label: "Licensing" },
   documents:      { fg: T.blue,   bg: T.blueLt,   label: "Documents" },
@@ -174,7 +191,7 @@ function useOnboardingData(userId, isAdmin) {
         supabase.from("hiring_candidates")
           .select("id, candidate_name, first_name, last_name, status, offer_job_title, offer_role_key, offer_start_date")
           .eq("agency_id", AGENCY_ID)
-          .in("status", ["interview", "reference_check", "offer", "hired"]),
+          .in("status", ["reference_check", "offer"]),
       ]);
 
       const plans = plansRes.data || [];
@@ -186,7 +203,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, blocked_by")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -262,6 +279,14 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
       map.get(s.phase).push(s);
     });
     return [...map.entries()].sort((a, b) => a[0] - b[0]);
+  }, [steps]);
+
+  // template_key -> title, for every step in this plan that is not done yet.
+  // Anything listing one of these as a blocker stays locked.
+  const blockersOpen = useMemo(() => {
+    const m = new Map();
+    steps.forEach(s => { if (!s.completed_at && s.template_key) m.set(s.template_key, s.title); });
+    return m;
   }, [steps]);
 
   const handleToggle = async (step) => {
@@ -372,14 +397,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
               <div style={{ fontSize: 11, color: T.slate500 }}>{phaseP.done}/{phaseP.total}</div>
             </div>
 
-            {/* Two columns on a wide screen, one on a phone. Keeps the list
-                from running down the left edge forever. */}
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: 10, alignItems: "start",
-            }}>
-              {phaseSteps.map(step => {
+            {(() => {
+            const renderStep = (step) => {
                 const cc = CATEGORY_COLORS[step.category] || { fg: T.slate600, bg: T.slate100, label: step.category || "Step" };
                 const isExpanded = expandedStep === step.id;
                 const isEditingThis = editingNote?.stepId === step.id;
@@ -388,22 +407,27 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const subs = subAll(step.substeps);
                 const subsDone = Array.isArray(step.substeps_done) ? step.substeps_done : [];
                 const done = !!step.completed_at;
+                const waitingOn = (step.blocked_by || [])
+                  .filter(k => blockersOpen.has(k))
+                  .map(k => blockersOpen.get(k));
+                const locked = !done && waitingOn.length > 0;
 
                 return (
                   <div key={step.id} style={{
-                    border: `1px solid ${T.slate200}`, borderRadius: 8,
+                    border: `1px solid ${locked ? T.slate100 : T.slate200}`, borderRadius: 8,
                     padding: "10px 12px", boxSizing: "border-box",
                     background: done ? T.slate50 : T.white,
+                    opacity: locked ? 0.55 : 1,
                   }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                       <button
-                        onClick={() => handleToggle(step)}
-                        disabled={isSaving}
+                        onClick={() => { if (!locked) handleToggle(step); }}
+                        disabled={isSaving || locked}
                         style={{
                           width: 20, height: 20, borderRadius: 4, flexShrink: 0, boxSizing: "border-box",
                           background: done ? T.green : T.white,
                           border: `1.5px solid ${done ? T.green : T.slate300}`,
-                          cursor: isSaving ? "wait" : "pointer",
+                          cursor: locked ? "not-allowed" : (isSaving ? "wait" : "pointer"),
                           display: "flex", alignItems: "center", justifyContent: "center",
                           marginTop: 1,
                         }}
@@ -442,7 +466,13 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           </div>
                         )}
 
-                        {groups.length > 0 && (
+                        {locked && (
+                          <div style={{ fontSize: 11, color: T.amber, marginTop: 4, fontWeight: 600 }}>
+                            Waiting on: {waitingOn.join(", ")}
+                          </div>
+                        )}
+
+                        {!locked && groups.length > 0 && (
                           <div style={{ marginTop: 8 }}>
                             {groups.map((g, gi) => (
                               <div key={gi} style={{ marginTop: gi === 0 ? 0 : 10 }}>
@@ -545,8 +575,26 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                     </div>
                   </div>
                 );
-              })}
-            </div>
+            };
+
+            const cols = trackColumns(phaseSteps);
+            const gridStyle = {
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+              gap: cols ? 16 : 10, alignItems: "start",
+            };
+            if (!cols) return <div style={gridStyle}>{phaseSteps.map(renderStep)}</div>;
+            return (
+              <div style={gridStyle}>
+                {cols.map(c => (
+                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start" }}>
+                    {c.name && <div style={trackHeadStyle}>{c.name}</div>}
+                    {c.steps.map(renderStep)}
+                  </div>
+                ))}
+              </div>
+            );
+            })()}
           </Card>
         );
       })}
@@ -912,7 +960,7 @@ function TemplateTab({ phaseMeta, ownerName }) {
     }
     supabase
       .from("onboarding_step_templates")
-      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to")
+      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, blocked_by")
       .eq("agency_id", AGENCY_ID)
       .eq("is_active", true)
       .order("phase", { ascending: true })
@@ -940,6 +988,7 @@ function TemplateTab({ phaseMeta, ownerName }) {
   }
 
   const phases = [...new Set(state.rows.map(r => r.phase))].sort((a, b) => a - b);
+  const titleByKey = new Map(state.rows.map(r => [r.template_key, r.title]));
 
   return (
     <div>
@@ -967,14 +1016,11 @@ function TemplateTab({ phaseMeta, ownerName }) {
               <div style={{ fontSize: 11, color: T.slate500 }}>{rows.length} steps</div>
             </div>
 
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: 10, alignItems: "start",
-            }}>
-              {rows.map(r => {
+            {(() => {
+            const renderRow = (r) => {
                 const cat = CATEGORY_COLORS[r.category] || { fg: T.slate700, bg: T.slate100, label: r.category || "Step" };
                 const groups = subGroups(r.substeps);
+                const after = (r.blocked_by || []).map(k => titleByKey.get(k) || k);
                 return (
                   <div key={r.id} style={{
                     border: `1px solid ${T.slate200}`, borderRadius: 8,
@@ -1012,13 +1058,36 @@ function TemplateTab({ phaseMeta, ownerName }) {
                         </ul>
                       </div>
                     ))}
-                    <div style={{ fontSize: 10, color: T.slate400, marginTop: 8 }}>
+                    {after.length > 0 && (
+                      <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
+                        After: {after.join(", ")}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: T.slate400, marginTop: 6 }}>
                       {appliesToText(r)}
                     </div>
                   </div>
                 );
-              })}
-            </div>
+            };
+
+            const cols = trackColumns(rows);
+            const gridStyle = {
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+              gap: cols ? 16 : 10, alignItems: "start",
+            };
+            if (!cols) return <div style={gridStyle}>{rows.map(renderRow)}</div>;
+            return (
+              <div style={gridStyle}>
+                {cols.map(c => (
+                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start" }}>
+                    {c.name && <div style={trackHeadStyle}>{c.name}</div>}
+                    {c.steps.map(renderRow)}
+                  </div>
+                ))}
+              </div>
+            );
+            })()}
           </Card>
         );
       })}
