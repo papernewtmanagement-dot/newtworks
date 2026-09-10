@@ -54,7 +54,7 @@ BEGIN
   IF v_chat_id IS NULL THEN RAISE EXCEPTION 'telegram_team_group_chat_id not set'; END IF;
 
   IF v_checkin_type = 'morning' THEN
-    v_text := E'\U0001F305 Kickoff in 5!\n\n';
+    v_text := E'🌅 Kickoff in 5!\n\n';
 
     SELECT quote_text, attribution, video_url INTO v_quote
     FROM public.health_quotes
@@ -63,10 +63,10 @@ BEGIN
     IF v_quote.quote_text IS NOT NULL THEN
       v_text := v_text || '"' || v_quote.quote_text || '"';
       IF v_quote.attribution IS NOT NULL THEN
-        v_text := v_text || ' \u2014 ' || v_quote.attribution;
+        v_text := v_text || ' — ' || v_quote.attribution;
       END IF;
       IF v_quote.video_url IS NOT NULL THEN
-        v_text := v_text || E'\n\u25B6\uFE0F ' || v_quote.video_url;
+        v_text := v_text || E'\n▶️ ' || v_quote.video_url;
       END IF;
       v_text := v_text || E'\n\n';
     END IF;
@@ -89,29 +89,29 @@ BEGIN
         v_outcome_line := NULL;
         IF v_prior_outcome.won_the_week IS NOT NULL THEN
           IF v_prior_outcome.won_the_week THEN
-            v_outcome_line := '\U0001F3C6 Won last week';
+            v_outcome_line := '🏆 Won last week';
             IF v_prior_outcome.carryover > 0 THEN
               v_outcome_line := v_outcome_line
-                || format(' \u2014 +%s quotes carryover into this week', v_prior_outcome.carryover);
+                || format(' — +%s quotes carryover into this week', v_prior_outcome.carryover);
             END IF;
           ELSE
-            v_outcome_line := '\u274C Missed last week';
+            v_outcome_line := '❌ Missed last week';
             IF v_prior_outcome.carryover > 0 THEN
               v_outcome_line := v_outcome_line
-                || format(' \u2014 +%s quotes carryover into this week', v_prior_outcome.carryover);
+                || format(' — +%s quotes carryover into this week', v_prior_outcome.carryover);
             END IF;
           END IF;
         END IF;
 
         IF v_outcome_line IS NOT NULL THEN
-          v_header_label := format(E'\U0001F4CA EOD %s (last week close)\n%s',
+          v_header_label := format(E'📊 EOD %s (last week close)\n%s',
                                     to_char(v_last_eod_date, 'Mon DD'),
                                     v_outcome_line);
         ELSE
-          v_header_label := format('\U0001F4CA EOD %s (last week close)', to_char(v_last_eod_date, 'Mon DD'));
+          v_header_label := format('📊 EOD %s (last week close)', to_char(v_last_eod_date, 'Mon DD'));
         END IF;
       ELSE
-        v_header_label := format('\U0001F4CA EOD %s', to_char(v_last_eod_date, 'Mon DD'));
+        v_header_label := format('📊 EOD %s', to_char(v_last_eod_date, 'Mon DD'));
       END IF;
 
       SELECT * INTO v_block FROM public.render_team_status_block(
@@ -138,11 +138,11 @@ BEGIN
     END IF;
 
   ELSIF v_checkin_type = 'midday' THEN
-    v_text := E'\u2600\uFE0F Midday\n\n'
+    v_text := E'☀️ Midday\n\n'
       || E'Quotes this week / SP this quarter\n\n'
       || E'If someone''s busy, answer for them.';
   ELSE
-    v_text := E'\U0001F319 EOD\n\n'
+    v_text := E'🌙 EOD\n\n'
       || E'Quotes this week / SP this quarter\n\n'
       || E'If someone''s busy, answer for them.';
   END IF;
@@ -155,9 +155,9 @@ BEGIN
 
   IF v_pending_votes > 0 THEN
     IF v_pending_votes = 1 THEN
-      v_text := v_text || E'\n\n\U0001F5F3\uFE0F Vote Required';
+      v_text := v_text || E'\n\n🗳️ Vote Required';
     ELSE
-      v_text := v_text || E'\n\n\U0001F5F3\uFE0F Vote Required (' || v_pending_votes::text || ')';
+      v_text := v_text || E'\n\n🗳️ Vote Required (' || v_pending_votes::text || ')';
     END IF;
   END IF;
 
@@ -165,26 +165,26 @@ BEGIN
   -- separator bar and gated on prior EOD data existing, which had nothing to do
   -- with health. Both removed.
   IF v_checkin_type = 'morning' THEN
-    v_text := v_text || E'\n\n\U0001F3C3 Get started on your health goal! We''ll check in at 7 pm.';
+    v_text := v_text || E'\n\n🏃 Get started on your health goal! We''ll check in at 7 pm.';
   END IF;
 
   IF v_checkin_type = 'eod' THEN
     v_parse_mode := 'HTML';
-    v_text := v_text || E'\n\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n'
-      || E'\U0001F4B0 <a href="' || v_pfa_url || E'">Don''t forget deposit records</a>';
+    v_text := v_text || E'\n\n━━━━━━━━━━━━━━━━━━━\n'
+      || E'💰 <a href="' || v_pfa_url || E'">Don''t forget deposit records</a>';
   END IF;
 
   IF v_checkin_type = 'eod' AND v_dow = 5 THEN
     v_parse_mode := 'HTML';
-    v_text := v_text || E'\n\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n'
-      || E'\U0001F4DD Weekly wrapup \u2014 email paper.newt.management@gmail.com:\n\n'
+    v_text := v_text || E'\n\n━━━━━━━━━━━━━━━━━━━\n'
+      || E'📝 Weekly wrapup — email paper.newt.management@gmail.com:\n\n'
       || E'1. Remember <a href="' || v_fit_url || E'">FIT Scorecard</a>.\n'
       || E'2. Main obstacle this week.\n'
-      || E'3. One goal next week \u2014 1% SP gain?\n'
+      || E'3. One goal next week — 1% SP gain?\n'
       || E'4. One office efficiency idea?\n'
       || E'5. Brags for each teammate.\n\n'
-      || E'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n'
-      || E'\U0001F4EC Reply to Peter''s CPR email if you haven''t.';
+      || E'━━━━━━━━━━━━━━━━━━━\n'
+      || E'📬 Reply to Peter''s CPR email if you haven''t.';
   END IF;
 
   v_response := public.telegram_send_message(v_chat_id, v_text, v_parse_mode);
