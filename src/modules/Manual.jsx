@@ -981,7 +981,7 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
   // scrolls. position:sticky was tried twice in this layout and never held.
   // Too narrow for a gutter (tablet, phone) → it stays in the card, in flow.
   // Peter 2026-09-10.
-  const RAIL_MIN = 190;
+  const RAIL_MIN = 210;
   const holderRef = useRef(null);
   const [rail, setRail] = useState(null);
 
@@ -1043,8 +1043,12 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
   const selStyle = {
     boxSizing: "border-box",
     width: rail ? "100%" : undefined,
+    minWidth: 0,
     maxWidth: "100%",
-    padding: "8px 12px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    padding: "8px 10px",
     border: `1px solid ${T.slate300}`,
     borderRadius: 8,
     background: T.white,
@@ -1056,8 +1060,8 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
     cursor: "pointer",
   };
   const modes = [];
-  if (opener?.modes?.pivot) modes.push(["pivot", "Pivot on a call"]);
-  if (opener?.modes?.outbound) modes.push(["outbound", "Outbound call"]);
+  if (opener?.modes?.pivot) modes.push(["pivot", "Pivot"]);
+  if (opener?.modes?.outbound) modes.push(["outbound", "Outbound"]);
 
   const barStyle = rail
     ? {
@@ -1068,7 +1072,9 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
         zIndex: 60,
         display: "flex",
         flexDirection: "column",
+        alignItems: "stretch",
         gap: 8,
+        maxWidth: rail.width,
       }
     : {
         display: "flex",
@@ -1113,8 +1119,8 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
             style={selStyle}
             title="How the call is going"
           >
-            <option value="notime">Not engaged or no time</option>
-            <option value="engaged">Engaged and has time</option>
+            <option value="notime">No time</option>
+            <option value="engaged">Engaged</option>
           </select>
         )}
       </div>
