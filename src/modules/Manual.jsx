@@ -975,16 +975,15 @@ function nwEnableSmoothDetails(container) {
 // to the top of the reading pane so it stays in reach while the script
 // scrolls under it.
 function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpener, onMode, onEngaged, vp }) {
-  // Two tries at position:sticky failed here — whichever box actually scrolls
-  // in this layout, the bar scrolled away with the page. So the bar is pinned
-  // with position:fixed instead, and a same-height spacer holds its place in
-  // the flow. Left edge, width and top are measured off the spacer and the
-  // scrolling box, so the bar lines up with the page and sits just below the
-  // app header. Peter 2026-09-10: "make them stick."
+  // Lives at the top of the card. When the window is wide enough there is
+  // empty space to the left of the 880px card — the bar moves into that gutter
+  // and is pinned there with fixed positioning, so it holds while the script
+  // scrolls. position:sticky was tried twice in this layout and never held.
+  // Too narrow for a gutter (tablet, phone) → it stays in the card, in flow.
+  // Peter 2026-09-10.
+  const RAIL_MIN = 190;
   const holderRef = useRef(null);
-  const barRef = useRef(null);
-  const [box, setBox] = useState(null);
-  const [barH, setBarH] = useState(56);
+  const [rail, setRail] = useState(null);
 
   useEffect(() => {
     const holder = holderRef.current;
@@ -1005,18 +1004,22 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
       raf = 0;
       const h = holderRef.current;
       if (!h) return;
-      const r = h.getBoundingClientRect();
       const scroller = scrollBoxOf(h);
-      const scrollerTop = scroller ? scroller.getBoundingClientRect().top : 58;
-      const top = Math.max(0, scrollerTop) + (vp?.isPhone ? 38 : 0);
-      const next = { left: Math.round(r.left), width: Math.round(r.width), top: Math.round(top) };
-      setBox((prev) => (
-        prev && prev.left === next.left && prev.width === next.width && prev.top === next.top
-          ? prev
-          : next
-      ));
-      const bh = barRef.current?.offsetHeight;
-      if (bh) setBarH((prev) => (prev === bh ? prev : bh));
+      const sRect = scroller ? scroller.getBoundingClientRect() : null;
+      const hRect = h.getBoundingClientRect();
+      const gutter = sRect ? hRect.left - sRect.left : 0;
+      const next = gutter >= RAIL_MIN
+        ? {
+            left: Math.round(sRect.left + 16),
+            top: Math.round(Math.max(0, sRect.top) + 24),
+            width: Math.round(gutter - 32),
+          }
+        : null;
+      setRail((prev) => {
+        if (!prev && !next) return prev;
+        if (prev && next && prev.left === next.left && prev.top === next.top && prev.width === next.width) return prev;
+        return next;
+      });
     };
     const schedule = () => {
       if (raf) return;
@@ -1026,16 +1029,20 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
     measure();
     window.addEventListener("resize", schedule);
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
-    if (ro) ro.observe(holder);
+    if (ro) {
+      ro.observe(holder);
+      if (holder.parentElement) ro.observe(holder.parentElement);
+    }
     return () => {
       if (raf) window.cancelAnimationFrame(raf);
       window.removeEventListener("resize", schedule);
       if (ro) ro.disconnect();
     };
-  }, [vp?.isPhone, groups.length, hasEngaged]);
+  }, [vp?.isPhone, vp?.isTablet, groups.length, hasEngaged]);
 
   const selStyle = {
     boxSizing: "border-box",
+    width: rail ? "100%" : undefined,
     maxWidth: "100%",
     padding: "8px 12px",
     border: `1px solid ${T.slate300}`,
@@ -1052,30 +1059,29 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
   if (opener?.modes?.pivot) modes.push(["pivot", "Pivot on a call"]);
   if (opener?.modes?.outbound) modes.push(["outbound", "Outbound call"]);
 
-  const barStyle = box
+  const barStyle = rail
     ? {
         position: "fixed",
-        left: box.left,
-        top: box.top,
-        width: box.width,
+        left: rail.left,
+        top: rail.top,
+        width: rail.width,
         zIndex: 60,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
       }
-    : { position: "relative" };
+    : {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        paddingBottom: 12,
+        marginBottom: 4,
+        borderBottom: `1px solid ${T.slate200}`,
+      };
 
   return (
-    <div ref={holderRef} className="nw-print-hide" style={{ height: box ? barH : "auto", marginBottom: 18 }}>
-      <div
-        ref={barRef}
-        style={{
-          ...barStyle,
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          padding: "10px 0",
-          background: T.slate50,
-          borderBottom: `1px solid ${T.slate200}`,
-        }}
-      >
+    <div ref={holderRef} className="nw-print-hide" style={{ height: rail ? 0 : "auto", marginBottom: rail ? 0 : 16 }}>
+      <div style={barStyle}>
         {groups.length > 0 && (
           <select
             value={opener?.slug || ""}
@@ -1546,19 +1552,6 @@ What I\'d like to discuss:
 
   return (
     <div className="nw-manual-print" style={{ maxWidth: 880, margin: "0 auto", padding: _pad }}>
-      {mode === "view" && (selector.groups.length > 0 || selector.hasEngaged) && (
-        <ScriptPicker
-          groups={selector.groups}
-          hasEngaged={selector.hasEngaged}
-          opener={activeOpener}
-          openerMode={activeMode}
-          engaged={engaged}
-          onOpener={setOpenerPick}
-          onMode={setOpenerMode}
-          onEngaged={setEngaged}
-          vp={_vp}
-        />
-      )}
       {/* Inline style block for HTML-rendered handbook content.
           Scoped via a wrapper class so it can't bleed into other modules. */}
       <style>{`
@@ -1958,6 +1951,19 @@ What I\'d like to discuss:
         border: `1px solid ${T.slate200}`,
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
+        {mode === "view" && (selector.groups.length > 0 || selector.hasEngaged) && (
+          <ScriptPicker
+            groups={selector.groups}
+            hasEngaged={selector.hasEngaged}
+            opener={activeOpener}
+            openerMode={activeMode}
+            engaged={engaged}
+            onOpener={setOpenerPick}
+            onMode={setOpenerMode}
+            onEngaged={setEngaged}
+            vp={_vp}
+          />
+        )}
         {isAdmin && (mode === "edit" || mode === "new-child") && form ? (
           <ManualEditForm form={form} setForm={setForm} vp={_vp} allRows={allRows} currentPageId={page?.confluence_page_id} mode={mode} />
         ) : cfg.dynamicPages[page?.confluence_page_id] === "team_roster" ? (
