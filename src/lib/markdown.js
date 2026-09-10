@@ -881,6 +881,15 @@ const OPENER_MARK_RE = /^[ \t]*\*?\[Opener:\s*([^\]|\n]+?)\s*\|\s*([^\]\n]+?)\s*
 const OPENER_END_RE = /^[ \t]*\*?\[Openers end\]\*?[ \t]*$/i;
 const ENGAGED_MARK_RE = /^[ \t]*\*?\[Engaged:\s*(yes|no)\s*\]\*?[ \t]*$/i;
 const ENGAGED_END_RE = /^[ \t]*\*?\[Engaged end\]\*?[ \t]*$/i;
+// Any section of the page can be tied to the choices at the top:
+//   [Engaged: yes] / [Engaged: no] … [Engaged end]
+//   [Mode: pivot] / [Mode: outbound] … [Mode end]
+//   [Only: Birthday, COP Term] … [Only end]      show for those openers only
+//   [Except: Mortgage/Loan] … [Except end]       show for everything but those
+// Repeating an opener of the same type before its end switches branch, the way
+// [Engaged: no] … [Engaged: yes] … [Engaged end] reads.
+const BLOCK_OPEN_RE = /^[ \t]*\*?\[(Engaged|Mode|Only|Except):\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
+const BLOCK_END_RE = /^[ \t]*\*?\[(Engaged|Mode|Only|Except) end\]\*?[ \t]*$/i;
 
 function openerSlug(s) {
   return String(s)
@@ -927,7 +936,11 @@ function expandSelector(md, options) {
   const src = String(md || "");
   const hasOpeners = src.indexOf("[Opener:") !== -1;
   const hasEngaged = src.indexOf("[Engaged:") !== -1;
-  if (!hasOpeners && !hasEngaged) return src;
+  const hasBranches = hasEngaged
+    || src.indexOf("[Mode:") !== -1
+    || src.indexOf("[Only:") !== -1
+    || src.indexOf("[Except:") !== -1;
+  if (!hasOpeners && !hasBranches) return src;
 
   const st = (options && options.openerState) || {};
   const engaged = st.engaged === "engaged" ? "yes" : "no";
@@ -974,18 +987,43 @@ function expandSelector(md, options) {
     }
   }
 
-  // ── Engagement: keep only the chosen branch ──────────────────
-  if (hasEngaged) {
-    const kept = [];
-    let keep = true;
-    for (let i = 0; i < lines.length; i++) {
-      const m = ENGAGED_MARK_RE.exec(lines[i]);
-      if (m) { keep = m[1].toLowerCase() === engaged; continue; }
-      if (ENGAGED_END_RE.test(lines[i])) { keep = true; continue; }
-      if (keep) kept.push(lines[i]);
+  // ── Keep only the branches the three choices call for ────────
+  const activeSlug = active ? active.slug : null;
+  const branchKeeps = (type, arg) => {
+    const t = type.toLowerCase();
+    const a = String(arg || "").trim();
+    if (t === "engaged") return a.toLowerCase() === engaged;
+    if (t === "mode") return (/^out/i.test(a) ? "outbound" : "pivot") === mode;
+    const wanted = a.split(",").map((x) => openerSlug(x)).filter(Boolean);
+    if (t === "only") return activeSlug ? wanted.includes(activeSlug) : false;
+    return activeSlug ? !wanted.includes(activeSlug) : true;
+  };
+
+  const stack = [];
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const open = BLOCK_OPEN_RE.exec(lines[i]);
+    if (open) {
+      const type = open[1].toLowerCase();
+      const keep = branchKeeps(type, open[2]);
+      if (stack.length && stack[stack.length - 1].type === type) {
+        stack[stack.length - 1].keep = keep;
+      } else {
+        stack.push({ type, keep });
+      }
+      continue;
     }
-    lines = kept;
+    const close = BLOCK_END_RE.exec(lines[i]);
+    if (close) {
+      const type = close[1].toLowerCase();
+      for (let j = stack.length - 1; j >= 0; j--) {
+        if (stack[j].type === type) { stack.splice(j, 1); break; }
+      }
+      continue;
+    }
+    if (stack.every((f) => f.keep)) kept.push(lines[i]);
   }
+  lines = kept;
 
   return lines.join("\n");
 }
