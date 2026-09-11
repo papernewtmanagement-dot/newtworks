@@ -24,7 +24,6 @@ import PFA from "./src/modules/PFA.jsx";
 // MarketingPoints module removed from nav 2026-07-12; per-person points now entered inline
 // on CPR Payroll section (Marketing row in edit mode). File kept in src/modules/ for now.
 import Marketing from "./src/modules/Marketing.jsx";
-import FitScorecards from "./src/modules/FitScorecards.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
 import Development from "./src/modules/Development.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
@@ -111,7 +110,6 @@ const NAV_ITEMS = [
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   { id: "development", label: "Development", icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
   { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
-  { id: "scorecards",  label: "Scorecards",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
@@ -691,7 +689,6 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     production:  <ErrorBoundary name="Production"><ActivityLog userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
-    scorecards:  <ErrorBoundary name="FIT Scorecards"><FitScorecards userRole={userRole} userId={userId} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors

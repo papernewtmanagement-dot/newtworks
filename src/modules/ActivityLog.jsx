@@ -12,7 +12,7 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //
 // ONE flat page, Peter's layout (2026-09-04):
 //  * Row 1, one wrapping row: Log for (owner), first name, last initial,
-//    Relationship, a "GNC Used" checkbox. Date reads "Today" with a
+//    Relationship (New / Existing / Winback). Date reads "Today" with a
 //    link to change it; the date box appears only when it is not today.
 //  * First name suggests customers already on file (rp_customer_suggest,
 //    eight matches per keystroke after two letters, nothing cached), so
@@ -36,7 +36,12 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //  * Earning Potential (owner only) lives here as its own tab, moved from
 //    Team; it is the shared EarningPotentialTab component untouched.
 //  * My week is the scoreboard: whole team, ranked, four point cards plus
-//    the conversation card in one row, this week's totals beside the title.
+//    the conversation card in one row; your own week (with the conversation
+//    score) sits beside the title on every tab.
+//  * Scorecard is x / 1 / 2 / 3 and every part is scored on a quote or sale;
+//    GNC Used is Setup GNC scored 3. Marketing source and Relationship are
+//    required on every entry. Autopay is per policy: a tick on a sold policy,
+//    or line + type + premium on the activity; the server allows one per policy.
 //
 // Layout follows the web-form research Peter asked for (2026-09-04):
 //  * Fewer visible choices. Three policy blocks became one list with one
@@ -71,8 +76,8 @@ const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
 const PRODUCT_SHORT = Object.fromEntries(PRODUCTS.map(p => [p.key, p.short]));
 const SERVICE_PREFIX = "service_task";
 const RELATIONSHIPS = [
-  { key: "new",      label: "New household" },
-  { key: "existing", label: "Existing customer" },
+  { key: "new",      label: "New" },
+  { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
 const TABS = ["log", "issued", "week", "changes"];
@@ -228,7 +233,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [suggest, setSuggest] = useState([]);      // customer names on file that match what's typed
   const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
   const [relationship, setRelationship] = useState("");
-  const [gnc, setGnc] = useState(false);
   const [source, setSource] = useState("");
   const [sourcedBy, setSourcedBy] = useState("");
   const [activities, setActivities] = useState([]);  // [{id, key}]
@@ -282,7 +286,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.submitted_date <= date) && (!date || r.window_end > date))
     .sort((a, b) => ((b.product_type === p.type) - (a.product_type === p.type)) || (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
 
-  const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key }]); };
+  const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key, line: "", type: "", premium: "" }]); };
+  const editActivity = (id, patch) => setActivities(list => list.map(a => a.id === id ? { ...a, ...patch } : a));
   const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
   const addPolicy = (line) => {
     if (!line) return;
@@ -307,14 +312,17 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
   const dropPolicy = (id) => { setPolicies(list => list.filter(p => p.id !== id)); setActivePolicy(a => a === id ? null : a); };
   const setScore = (k, v) => setScores(sc => ({ ...sc, [k]: sc[k] === v ? null : v }));
-  const cardScored = CARD_PARTS.filter(pt => scores[pt.key] != null).length;
-  const cardAvg = cardScored ? CARD_PARTS.reduce((s, pt) => s + (scores[pt.key] || 0), 0) / cardScored : null;
+  const cardChosen = CARD_PARTS.filter(pt => scores[pt.key] != null).length;          // x counts as chosen
+  const cardScored = CARD_PARTS.filter(pt => Number(scores[pt.key]) > 0).length;       // x is not a score
+  const cardAvg = cardScored ? CARD_PARTS.reduce((s, pt) => s + (Number(scores[pt.key]) > 0 ? scores[pt.key] : 0), 0) / cardScored : null;
 
   // ---- what is in the entry right now ----
   const hasSave = activities.some(a => a.key === "cancelation_saved");
   const hasReview = activities.some(a => a.key === "policy_review");
   const activityItems = activities.filter(a => byKey[a.key]).map(a =>
-    a.key === "cancelation_saved" ? { activity_key: a.key, save_line: saveLine, save_reason: saveReason.trim() } : { activity_key: a.key });
+    a.key === "cancelation_saved" ? { activity_key: a.key, save_line: saveLine, save_reason: saveReason.trim() }
+    : a.key === "autopay_enrollment" ? { activity_key: a.key, policy_line: a.line, product_type: a.type || null, premium: a.premium === "" ? null : Number(a.premium) }
+    : { activity_key: a.key });
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
   const quoted = policies.filter(p => p.status === "quoted" || p.status === "quoted_sold");
   const sold = policies.filter(p => p.status === "sold" || p.status === "quoted_sold");
@@ -326,6 +334,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const hasSale = sold.length > 0;
   const hasCxl = canceled.length > 0;
   const hasCard = cardScored > 0;
+  const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
   const isReferral = source === "referral";
@@ -352,11 +361,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (!saveLine || !saveReason.trim()) problems.push("The save needs the policy line at risk and the reason the customer gave.");
   }
   if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
-  if (hasSale) {
-    if (!relationship) problems.push("A sale needs the relationship type.");
-    if (!source) problems.push("A sale needs the marketing type.");
-    if (!ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
-  }
+  if (!relationship) problems.push("Pick the relationship.");
+  if (!source) problems.push("Pick the marketing source.");
+  if (hasSale && !ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
+  if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
+  if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
   if (hasSale && hasCxl) {
     const soldLines = new Set(sold.map(p => p.line));
     const clash = [...new Set(canceled.filter(p => soldLines.has(p.line)).map(p => p.line))];
@@ -367,7 +376,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const reset = (keep) => {
     if (!keep) { setFirst(""); setInitial(""); setDate(today); setDateOpen(false); }
     setSuggest([]);
-    setRelationship(""); setGnc(false); setSource(""); setSourcedBy("");
+    setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
     setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote("");
     setAttempted(false);
@@ -386,12 +395,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
         relationship_type: relationship || null,
-        gnc_used: !!gnc,
+        gnc_used: scores.setup_gnc_score === 3,
         marketing_source: source || null,
         sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
-        sale: hasSale ? { products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine })) } : null,
+        sale: hasSale ? { products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay })) } : null,
         cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })), reason: cReason.trim() || null } : null,
         scorecard: hasCard ? { ...scores, recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || null) : null } : null,
       };
@@ -477,9 +486,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               {RELATIONSHIPS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
           </div>
-          <label style={{ ...radioRow, flex: "0 0 auto", gap: 6, cursor: "pointer" }}>
-            <input type="checkbox" checked={gnc} onChange={e => setGnc(e.target.checked)} /> GNC Used
-          </label>
           {showDate && (
             <div style={field(150)}>
               <label style={labelStyle}>Date</label>
@@ -507,6 +513,31 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </span>
             ))}
           </div>
+          {activities.filter(a => a.key === "autopay_enrollment").map(a => (
+            <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
+              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>Autopay on</div>
+              <div style={field(130)}>
+                <label style={labelStyle}>Line</label>
+                <select style={inputBase} value={a.line} onChange={e => editActivity(a.id, { line: e.target.value, type: "" })}>
+                  <option value="">Pick one</option>
+                  {PRODUCTS.map(pr => <option key={pr.key} value={pr.key}>{pr.label}</option>)}
+                </select>
+              </div>
+              {needsType(a.line) && (
+                <div style={field(150)}>
+                  <label style={labelStyle}>Type</label>
+                  <select style={inputBase} value={a.type} onChange={e => editActivity(a.id, { type: e.target.value })}>
+                    <option value="">Pick one</option>
+                    {(types[a.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+                  </select>
+                </div>
+              )}
+              <div style={field(130)}>
+                <label style={labelStyle}>Premium</label>
+                <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={a.premium} onChange={e => editActivity(a.id, { premium: e.target.value })} placeholder="0.00" />
+              </div>
+            </div>
+          ))}
           {hasSave && (
             <div style={{ ...wrapRow, marginTop: 10, padding: 12, background: T.slate50, borderRadius: 8 }}>
               <div style={field(160)}>
@@ -572,6 +603,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                   <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={active.vehicles} onChange={e => editPolicy(active.id, { vehicles: e.target.value })} />
                 </div>
               )}
+              {isSold(active) && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }} title="The policy went on automatic payment as you set it up. One autopay credit per policy.">
+                  <input type="checkbox" checked={!!active.autopay} onChange={e => editPolicy(active.id, { autopay: e.target.checked })} />
+                  Autopay
+                </label>
+              )}
               {isSold(active) && relationship === "existing" && (
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }}>
                   <input type="checkbox" checked={!!active.isNewLine} onChange={e => editPolicy(active.id, { isNewLine: e.target.checked })} />
@@ -594,7 +631,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- bottom row: ECRM link (sale), marketing type (sale or quote), lead source (referral), note ---- */}
+        {/* ---- bottom row: ECRM link (sale), marketing source (always), lead source (referral), note ---- */}
         <div style={{ ...wrapRow, ...blockStyle }}>
           {hasSale && (
             <div style={field(200)}>
@@ -602,16 +639,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
             </div>
           )}
-          {(hasSale || hasQuote) && (
-            <div style={{ flex: "0 1 150px", minWidth: 0 }}>
-              <label style={labelStyle}>Marketing type</label>
+          <div style={{ flex: "0 1 150px", minWidth: 0 }}>
+              <label style={labelStyle}>Marketing source</label>
               <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
                 <option value="">Pick one</option>
                 {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
               </select>
-            </div>
-          )}
-          {(hasSale || hasQuote) && isReferral && (
+          </div>
+          {isReferral && (
             <div style={{ flex: "0 1 140px", minWidth: 0 }}>
               <label style={labelStyle}>Lead source</label>
               <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
@@ -626,21 +661,23 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           </div>
         </div>
 
-        {/* ---- scorecard: one compact row, 10 parts, blank = didn't come up ---- */}
+        {/* ---- scorecard: one compact row, 10 parts, x / 1 / 2 / 3; every part on a quote or sale ---- */}
         <div style={{ marginTop: 14 }}>
           <div style={{ ...labelStyle, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
-            <span>Scorecard {cardAvg != null ? <span style={{ color: T.blue }}>· {cardAvg.toFixed(2)}</span> : <span style={hintStyle}>· blank means it didn't come up</span>}</span>
+            <span>Scorecard {cardAvg != null ? <span style={{ color: T.blue }}>· {cardAvg.toFixed(2)}</span> : null}{needsCard ? <span style={{ color: T.red }}> (every part)</span> : null}</span>
+            <span style={hintStyle}>x didn't do it · 1 did it poorly, didn't land · 2 did it well, didn't land · 3 did it well, landed. Setup GNC at 3 means GNC was used.</span>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {CARD_PARTS.map(pt => (
               <div key={pt.key} style={{ flex: "1 1 88px", minWidth: 88, padding: "6px 6px 5px", background: T.slate50, borderRadius: 8, textAlign: "center" }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: T.slate600, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 4 }} title={pt.label}>{pt.short}</div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 3 }}>
-                  {[1, 2, 3].map(v => (
-                    <span key={v} onClick={() => setScore(pt.key, v)} style={{
-                      width: 24, height: 24, lineHeight: "22px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none", boxSizing: "border-box",
-                      border: `1px solid ${scores[pt.key] === v ? T.blue : T.slate300}`, background: scores[pt.key] === v ? T.blue : T.white, color: scores[pt.key] === v ? T.white : T.slate600,
-                    }}>{v}</span>
+                  {[0, 1, 2, 3].map(v => (
+                    <span key={v} onClick={() => setScore(pt.key, v)} title={v === 0 ? "Didn't do it" : v === 1 ? "Did it poorly, didn't land" : v === 2 ? "Did it well, didn't land" : "Did it well, landed"} style={{
+                      width: 22, height: 24, lineHeight: "22px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none", boxSizing: "border-box",
+                      border: `1px solid ${scores[pt.key] === v ? (v === 0 ? T.slate500 : T.blue) : T.slate300}`,
+                      background: scores[pt.key] === v ? (v === 0 ? T.slate500 : T.blue) : T.white, color: scores[pt.key] === v ? T.white : T.slate600,
+                    }}>{v === 0 ? "x" : v}</span>
                   ))}
                 </div>
               </div>
@@ -822,6 +859,7 @@ function SpotCheck({ isAdmin }) {
 function IssuedTab({ types, refreshKey }) {
   const [rows, setRows] = useState(null);
   const [dates, setDates] = useState({});
+  const [prems, setPrems] = useState({});   // issued premium per policy, defaults to what was submitted
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
@@ -834,8 +872,10 @@ function IssuedTab({ types, refreshKey }) {
 
   const mark = async (row) => {
     setBusy(row.sale_product_id); setErr(""); setDone("");
+    const prem = prems[row.sale_product_id] === undefined ? String(row.premium ?? "") : prems[row.sale_product_id];
+    if (prem === "" || !(Number(prem) >= 0)) { setBusy(null); setErr("Enter the issued premium first."); return; }
     const r = await supabase.rpc("rp_mark_issued", {
-      p_items: [{ sale_product_id: row.sale_product_id, issued_date: dates[row.sale_product_id] || todayCentral() }],
+      p_items: [{ sale_product_id: row.sale_product_id, issued_date: dates[row.sale_product_id] || todayCentral(), issued_premium: Number(prem) }],
     });
     setBusy(null);
     if (r.error) { setErr(errText(r.error)); return; }
@@ -848,7 +888,7 @@ function IssuedTab({ types, refreshKey }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ fontSize: 13, color: T.slate500 }}>
-        Policies that have been submitted but are not issued yet. Set the date it issued and mark it.
+        Policies that have been submitted but are not issued yet. Enter the issued premium, set the date it issued, and mark it.
       </div>
       {err && <Notice kind="error">{err}</Notice>}
       {done && <Notice kind="ok">{done}</Notice>}
@@ -863,6 +903,7 @@ function IssuedTab({ types, refreshKey }) {
                 <th style={tableTh}>Policy</th>
                 <th style={tableTh}>Submitted</th>
                 <th style={tableTh}>Waiting</th>
+                <th style={tableTh}>Issued premium</th>
                 <th style={tableTh}>Issued</th>
                 <th style={tableTh}></th>
               </tr>
@@ -883,6 +924,13 @@ function IssuedTab({ types, refreshKey }) {
                   <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
                   <td style={{ ...tableTd, color: r.days_waiting > 14 ? T.red : T.slate600, fontWeight: r.days_waiting > 14 ? 700 : 400 }}>
                     {r.days_waiting}d
+                  </td>
+                  <td style={tableTd}>
+                    <input type="number" inputMode="decimal" min="0" step="0.01"
+                      value={prems[r.sale_product_id] === undefined ? String(r.premium ?? "") : prems[r.sale_product_id]}
+                      onChange={e => setPrems(d => ({ ...d, [r.sale_product_id]: e.target.value }))}
+                      style={{ fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, width: 110 }}
+                    />
                   </td>
                   <td style={tableTd}>
                     <input
@@ -1234,7 +1282,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
         </div>
       );
     }
-    if (Number(r.reduction_pct) > 0) rows.push(<div key="red" style={{ ...itemLine, color: T.red }}><span>Team missed {fmtPts(r.missed_pct)}% of calls</span><strong>−{fmtPts(r.reduction_pct)}% of gross</strong></div>);
+    if (Number(r.reduction_pct) > 0) rows.push(<div key="red" style={{ ...itemLine, color: T.red }}><span>Missed {fmtPts(r.missed_pct)}% calls</span><strong>−{fmtPts(r.reduction_pct)}% of gross</strong></div>);
     return rows;
   };
 
@@ -1253,12 +1301,6 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
             <TabLink href={weekHref(addDays(safeWeek, 7))} onSelect={() => setWeekEnd(addDays(safeWeek, 7))} style={btnGhost} disabled={safeWeek >= weekEndOf(todayCentral())}>Next week →</TabLink>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginTop: 12 }}>
-          <Stat label="Marketing Points" value={fmtPts(team.marketing)} />
-          <Stat label="HH Quotes" value={Number(team.quotes || 0)} />
-          <Stat label="Sales Points" value={fmtPts(team.sales)} />
-          <Stat label="Retention Points" value={fmtMoney(team.retention_net)} />
-        </div>
       </div>
 
       {err && <Notice kind="error">{err}</Notice>}
@@ -1276,7 +1318,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
           renderItems={salesItems} open={open.s} onToggle={toggle("s")} />
         <ScoreCard title="Retention Points" total={fmtMoney(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
           rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtMoney(p.retention?.net)}
-          subOf={p => `${fmtMoney(p.retention?.gross)} gross · team missed ${fmtPts(p.retention?.missed_pct)}%`}
+          subOf={p => `${fmtMoney(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
           renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />
         <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Scorecard average, 1 to 3. Pivots are tracked, not paid." people={people}
           rankOf={p => Number(p.conversations?.avg || 0)} valueOf={p => p.conversations?.avg == null ? "—" : Number(p.conversations.avg).toFixed(2)}
@@ -1287,7 +1329,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
         <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Sales this week</div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th><th style={tableTh}>Household</th><th style={tableTh}>Products</th><th style={tableTh}>Cars</th><th style={tableTh}>Premium</th><th style={tableTh}>Source</th><th style={tableTh}>GNC</th><th style={tableTh}></th></tr></thead>
+            <thead><tr><th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th><th style={tableTh}>Relationship</th><th style={tableTh}>Products</th><th style={tableTh}>Cars</th><th style={tableTh}>Premium</th><th style={tableTh}>Source</th><th style={tableTh}>GNC</th><th style={tableTh}></th></tr></thead>
             <tbody>
               {sales.map(r => (
                 <tr key={r.id}>
@@ -1325,7 +1367,7 @@ export default function ActivityLog({ userRole }) {
   const [roster, setRoster] = useState([]);
   const [myTeamId, setMyTeamId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [head, setHead] = useState(null);   // this week's team totals, shown beside the title on every tab
+  const [head, setHead] = useState(null);   // this week's scoreboard, shown beside the title on every tab (your own row; team when you have none)
   const isAdmin = ["owner", "manager"].includes(userRole);
   // Logging on someone else's behalf is the owner's alone. The server enforces
   // it too (rp_resolve_actor), so hiding the picker is not the only thing
@@ -1361,9 +1403,9 @@ export default function ActivityLog({ userRole }) {
   useEffect(() => {
     let alive = true;
     supabase.rpc("rp_week_scoreboard", { p_week_end: weekEndOf(todayCentral()) })
-      .then(r => { if (alive && r?.data?.ok) setHead(r.data.team || null); });
+      .then(r => { if (alive && r?.data?.ok) setHead(r.data); });
     return () => { alive = false; };
-  }, [refreshKey]);
+  }, [refreshKey, myTeamId]);
 
   const bump = () => setRefreshKey(k => k + 1);
   const tabs = [
@@ -1381,15 +1423,26 @@ export default function ActivityLog({ userRole }) {
           <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Production</div>
           <div style={{ fontSize: 13, color: T.slate500 }}>What you wrote, quoted, kept, and lost. Logged as it happens.</div>
         </div>
-        {head && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }} title="This week, whole team">
-            {[["Marketing", fmtPts(head.marketing)], ["HH Quotes", Number(head.quotes || 0)], ["Sales Pts", fmtPts(head.sales)], ["Retention", `$${fmtPts(head.retention_net)}`]].map(([l, v]) => (
+        {head && (() => {
+          const me = (Array.isArray(head.people) ? head.people : []).find(p => p.team_member_id === myTeamId);
+          const t = head.team || {};
+          const cardN = (head.people || []).reduce((s, p) => s + Number(p.conversations?.scorecards || 0), 0);
+          const teamAvg = cardN ? (head.people || []).reduce((s, p) => s + Number(p.conversations?.avg || 0) * Number(p.conversations?.scorecards || 0), 0) / cardN : null;
+          const conv = me ? me.conversations?.avg : teamAvg;
+          const chips = me
+            ? [["Marketing", fmtPts(me.marketing?.points)], ["HH Quotes", Number(me.quotes?.count || 0)], ["Sales Pts", fmtPts(me.sales?.points)], ["Retention", `$${fmtPts(me.retention?.net)}`]]
+            : [["Marketing", fmtPts(t.marketing)], ["HH Quotes", Number(t.quotes || 0)], ["Sales Pts", fmtPts(t.sales)], ["Retention", `$${fmtPts(t.retention_net)}`]];
+          chips.push(["Conversations", conv == null ? "—" : Number(conv).toFixed(2)]);
+          return (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }} title={me ? "Your week so far" : "Team, this week so far"}>
+            {chips.map(([l, v]) => (
               <span key={l} style={{ display: "inline-flex", gap: 5, alignItems: "baseline", padding: "5px 10px", borderRadius: 999, background: T.blueLt, color: T.blue, fontSize: 12, fontWeight: 600 }}>
                 <span style={{ fontWeight: 500, opacity: 0.8 }}>{l}</span><strong style={{ fontSize: 13 }}>{v}</strong>
               </span>
             ))}
           </div>
-        )}
+          );
+        })()}
       </div>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
         {tabs.map(t => (
