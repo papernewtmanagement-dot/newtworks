@@ -321,6 +321,48 @@ function parsePaymentSectionBonuses(text: string, period: PeriodInfo): CompRecap
   return rows;
 }
 
+// --- Information-section REPORTABLE BENEFITS ---------------------------------
+//   1REPORTABLE BENEFITS: CURRENT YEAR-TO-DATE
+//   1MEDICAL INSURANCE CONTRIBUTION 2,118.94 16,951.52
+//   1GROUP DENTAL INSURANCE CONTRIBUTION 66.38 531.04
+//   1LIFE INSURANCE CONTRIBUTION 16.00 128.00
+//   1 TOTAL REPORTABLE BENEFITS ******** 2,201.32 *** 17,610.56
+// State Farm's contributions to Peter's medical, dental and life insurance.
+// Not cash: counted as part of his pay for tax purposes AND tax deductible, so
+// each current-period line books twice (Peter 2026-09-11): income
+// (reportable_benefit -> 4140) and expense (deduction_sf_benefit -> 6115, life
+// 6110). The pair nets to zero, so deposit math is unaffected. Appears on the
+// second statement of each month; first statements show 0.00 current.
+// Before 2026-09-11 nothing captured these; Jan-Aug 2026 were backfilled.
+function parseReportableBenefits(text: string, period: PeriodInfo): CompRecapRow[] {
+  const flat = text.replace(/\\(?=[*&])/g, "").replace(/\s+/g, " ");
+  const rows: CompRecapRow[] = [];
+  const seen = new Set<string>();
+  const blockRe = /REPORTABLE\s+BENEFITS\s*:(.*?)TOTAL\s+REPORTABLE\s+BENEFITS/gi;
+  let block: RegExpExecArray | null;
+  while ((block = blockRe.exec(flat)) !== null) {
+    // The last item is followed by the "1" marker of the TOTAL line; drop it.
+    const body = block[1].replace(/\s1\s*$/, "");
+    for (const chunk of body.split(/\s1\s?(?=[A-Z])|^\s*1\s?(?=[A-Z])/)) {
+      const item = chunk.trim();
+      if (!item) continue;
+      const m = item.match(/^(.+?)\s+([\d,]*\.\d{2}-?)(?:\s+([\d,]*\.\d{2}-?))?$/);
+      if (!m || !m[3]) continue;
+      const current = parseAmount(m[2]);
+      if (current === null || current === 0) continue;
+      const description = m[1].trim();
+      if (!description || seen.has(description)) continue;
+      seen.add(description);
+      const base = { period_year: period.year, period_month: period.month, period_day: period.day,
+                     comp_type: period.comp_type, amount: current,
+                     is_aipp_eligible: false, is_scorecard_eligible: false };
+      rows.push({ ...base, comp_category: "reportable_benefit", description });
+      rows.push({ ...base, comp_category: "deduction_sf_benefit", description: `${description} (expense)` });
+    }
+  }
+  return rows;
+}
+
 // --- Stated net payable ------------------------------------------------------
 // What State Farm says it is paying: the "ACTUAL DEPOSIT" line(s) on the
 // statement, or the final (main-code) "NET PAYABLE" if no deposit line is
@@ -415,6 +457,8 @@ export function parseCompRecapText(text: string): {
   for (const r of parseExpenseReimbursements(text, period)) rows.push(r);
   // Additive pass: awards, bonuses and AIPP payments in the payment section.
   for (const r of parsePaymentSectionBonuses(text, period)) rows.push(r);
+  // Additive pass: SF benefit contributions (income + matching expense).
+  for (const r of parseReportableBenefits(text, period)) rows.push(r);
 
   return { rows, period, texas_current_total: texasTotal };
 }
