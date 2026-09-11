@@ -2056,7 +2056,7 @@ const CATEGORY_RULES: CatRule[] = [
   // Life (SFL — traditional life)
   { test: /FIRST YEAR WRITING/i,                 category: "life_new",      aipp: false },
   { test: /RENEWAL WRITING/i,                    category: "life_renewal",  aipp: false },
-  { test: /^SERVICING$/i,                        category: "life_renewal",  aipp: false }, // SFL bare-word SERVICING
+  { test: /^(SFL\s+)?SERVICING$/i,               category: "life_renewal",  aipp: false }, // SFL SERVICING, bare or as the first SFL line (2026-09-11: "AR (04) SFL SERVICING" fell to other)
   // Fire — Lloyds + TCM-fire + generic FIRE (order matters: Lloyds first)
   { test: /LLYD NEW BUSINESS|LLOYDS NEW/i,       category: "fire_new",      aipp: true  },
   { test: /RENEWAL SERVICE - LLOYDS/i,           category: "fire_renewal",  aipp: true  },
