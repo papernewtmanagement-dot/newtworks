@@ -1254,6 +1254,23 @@ function expandCommits(md, slots) {
   });
 }
 
+// ─── Page hosts ───────────────────────────────────────────────
+// Two more empty host elements Manual.jsx fills with portals (Peter 2026-09-11):
+//   {{daily-checklist}} — the team's daily tick list on Daily Wrap-up. Items come
+//                         from checklist_items; ticks go to daily_checklist_ticks
+//                         through daily_checklist_tick(). Same rows the CPR audits.
+//   {{kickoff-telegram}} — today's morning Telegram message, exactly as sent, on
+//                         the Daily Kickoff page (kickoff_morning_message()).
+const PAGE_HOST_RE = /\{\{(daily-checklist|kickoff-telegram)\}\}/gi;
+
+function expandPageHosts(md, slots) {
+  if (md.indexOf("{{daily-checklist}}") === -1 && md.indexOf("{{kickoff-telegram}}") === -1) return md;
+  return md.replace(PAGE_HOST_RE, (_m, kind) => {
+    slots.push(`<div class="nw-page-host" data-nw-host="${kind.toLowerCase()}"></div>`);
+    return RP_SLOT(slots.length - 1);
+  });
+}
+
 function applyRoleplaySlots(html, slots) {
   if (!slots.length) return html;
   return html.replace(/(?:<p>\s*)?NWRPSLOT(\d+)END(?:\s*<\/p>)?/g, (_m, n) => slots[Number(n)] || "");
@@ -1284,6 +1301,7 @@ export function mdToHtml(md, options = {}) {
   const rpSlots = [];
   src = expandRoleplays(src, options, rpSlots);
   src = expandCommits(src, rpSlots);
+  src = expandPageHosts(src, rpSlots);
 
   if (!src.trim()) return "";
 

@@ -1419,6 +1419,151 @@ function KickoffCommits({ hosts, week }) {
   );
 }
 
+// ─── Daily team checklist ─────────────────────────────────────
+// The Daily Wrap-up team items as a tick list (Peter 2026-09-11). One shared list
+// for the whole team: any teammate ticks an item, the tick keeps the name and time.
+// Items come from checklist_items, the same rows the CPR audits once a week, so the
+// two lists cannot drift. A tick costs nothing; the CPR audit is where a miss costs
+// quotes. "Still open from yesterday" carries the previous workday's open items until
+// they are ticked, and the at-risk line is the running warning for this CPR week.
+const CHECKLIST_CARD = { background: "#F8FAF3", borderRadius: 7, padding: "10px 12px", margin: "8px 0 14px 0" };
+
+function nwCentralTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d)) return "";
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+}
+
+function DailyChecklistCard({ host }) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null); // item id in flight
+
+  const load = useCallback(async () => {
+    const { data, error: e } = await supabase.rpc("daily_checklist_state");
+    if (e) { setError(e.message); return; }
+    setState(data || null);
+    setError(null);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const tick = async (itemId, date, on) => {
+    setBusy(itemId);
+    const { error: e } = await supabase.rpc("daily_checklist_tick", { p_item_id: itemId, p_date: date, p_on: on });
+    setBusy(null);
+    if (e) { setError(e.message); return; }
+    await load();
+  };
+
+  if (!host) return null;
+  let body;
+  if (error && !state) {
+    body = <div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{error}</div>;
+  } else if (!state) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>Loading the team list…</div>;
+  } else {
+    const items = Array.isArray(state.items) ? state.items : [];
+    const carry = state.carry && Array.isArray(state.carry.open) ? state.carry.open : [];
+    const risk = Array.isArray(state.at_risk) ? state.at_risk : [];
+    const done = items.filter((it) => it.ticked_at).length;
+    const canTick = !!state.me;
+    const row = (it, date, ticked) => (
+      <label key={`${it.id}-${date}`} style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "3px 0", cursor: canTick ? "pointer" : "default" }}>
+        <input
+          type="checkbox"
+          checked={!!ticked}
+          disabled={!canTick || busy === it.id}
+          onChange={(e) => tick(it.id, date, e.target.checked)}
+          style={{ marginTop: 3, flexShrink: 0 }}
+        />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ color: ticked ? T.slate500 : T.slate900, textDecoration: ticked ? "line-through" : "none" }}>{it.title}</span>
+          {ticked && it.ticked_by ? (
+            <span style={{ color: T.slate500, fontSize: 12, marginLeft: 6 }}>{it.ticked_by} {nwCentralTime(it.ticked_at)}</span>
+          ) : null}
+        </span>
+      </label>
+    );
+    body = (
+      <>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+          <strong>📋 Team list · {state.label}{state.is_today ? "" : " (last workday)"} · {done} of {items.length} cleared{done === items.length && items.length ? " ✅" : ""}</strong>
+          {state.leader ? <span style={{ color: T.slate500, fontSize: 12 }}>Owner this week: {state.leader}</span> : null}
+        </div>
+        {!canTick && <div style={{ color: T.slate500, fontSize: 12, marginBottom: 4 }}>Sign in with a team login to tick items.</div>}
+        {items.map((it) => row(it, state.date, !!it.ticked_at))}
+        {carry.length > 0 && (
+          <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${T.slate200}` }}>
+            <div style={{ fontWeight: 700, color: T.amber || "#b45309", marginBottom: 2 }}>Still open from {state.carry.label}</div>
+            {carry.map((it) => row(it, state.carry.date, false))}
+          </div>
+        )}
+        {risk.length > 0 && (
+          <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${T.slate200}`, fontSize: 13 }}>
+            <strong style={{ color: T.red }}>This week at risk: {risk.length} item{risk.length === 1 ? "" : "s"}</strong>
+            <span style={{ color: T.slate600 }}> · +1 quote each, per person, if the CPR confirms it</span>
+            <div style={{ color: T.slate600, fontSize: 12, marginTop: 2 }}>
+              {risk.map((r) => `${r.title} (${(Array.isArray(r.days) ? r.days : []).join(", ")})`).join("; ")}
+            </div>
+          </div>
+        )}
+        {error && <div style={{ color: T.red, fontSize: 12, fontWeight: 600, marginTop: 6 }}>{error}</div>}
+      </>
+    );
+  }
+  return createPortal(<div style={CHECKLIST_CARD}>{body}</div>, host);
+}
+
+// ─── Kickoff Telegram on the page ─────────────────────────────
+// The morning Telegram message, word for word, so the room reads numbers, calls and
+// the checklist bridge off the same screen the kickoff runs on (Peter 2026-09-11).
+// Before 8:25 it shows the most recent morning message with its date.
+function nwLinkify(text) {
+  const parts = String(text || "").split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, i) => (/^https?:\/\//.test(part)
+    ? <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a>
+    : <Fragment key={i}>{part}</Fragment>));
+}
+
+function KickoffTelegram({ host }) {
+  const [msg, setMsg] = useState(undefined); // undefined = loading, null = none
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error: e } = await supabase.rpc("kickoff_morning_message");
+      if (!alive) return;
+      if (e) { setError(e.message); setMsg(null); return; }
+      setMsg(data || null);
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (!host) return null;
+  let body;
+  if (error) {
+    body = <div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{error}</div>;
+  } else if (msg === undefined) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>Loading this morning's Telegram…</div>;
+  } else if (!msg || !msg.text) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>No morning Telegram on record yet.</div>;
+  } else {
+    const d = new Date(`${msg.date}T12:00:00`);
+    const when = isNaN(d) ? msg.date : d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    body = (
+      <>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>
+          📣 {msg.is_today ? "This morning's Telegram" : `Last morning Telegram (${when})`}
+          {msg.sent_at ? <span style={{ color: T.slate500, fontWeight: 400, fontSize: 12 }}> · sent {nwCentralTime(msg.sent_at)}</span> : null}
+          {!msg.is_today ? <span style={{ color: T.slate500, fontWeight: 400, fontSize: 12 }}> · today's goes out at 8:25</span> : null}
+        </div>
+        <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.5 }}>{nwLinkify(msg.text)}</div>
+      </>
+    );
+  }
+  return createPortal(<div style={CHECKLIST_CARD}>{body}</div>, host);
+}
+
 function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
@@ -1801,16 +1946,25 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // [Commits] in markdown.js); KickoffCommits mounts the picker into them.
   // Re-found whenever the body HTML is replaced, since that swaps the nodes.
   const [commitHosts, setCommitHosts] = useState({ pick: null, bridge: null });
+  // Page hosts: {{daily-checklist}} and {{kickoff-telegram}} (see markdown.js).
+  const [pageHosts, setPageHosts] = useState({ checklist: null, telegram: null });
   useEffect(() => {
     const root = bodyRef.current;
     const next = { pick: null, bridge: null };
+    const nextPage = { checklist: null, telegram: null };
     if (root) {
       root.querySelectorAll(".nw-commit-host").forEach((el) => {
         const kind = el.getAttribute("data-nw-commit");
         if (kind === "pick" || kind === "bridge") next[kind] = el;
       });
+      root.querySelectorAll(".nw-page-host").forEach((el) => {
+        const kind = el.getAttribute("data-nw-host");
+        if (kind === "daily-checklist") nextPage.checklist = el;
+        if (kind === "kickoff-telegram") nextPage.telegram = el;
+      });
     }
     setCommitHosts((prev) => (prev.pick === next.pick && prev.bridge === next.bridge ? prev : next));
+    setPageHosts((prev) => (prev.checklist === nextPage.checklist && prev.telegram === nextPage.telegram ? prev : nextPage));
   }, [html, mode]);
   // Role play pickers: a random card on load, a random card for whatever
   // springboard is picked, and the refresh button steps to the next one.
@@ -2373,6 +2527,8 @@ What I\'d like to discuss:
       {(commitHosts.pick || commitHosts.bridge) ? (
         <KickoffCommits hosts={commitHosts} week={activeWeek} />
       ) : null}
+      {pageHosts.checklist ? <DailyChecklistCard host={pageHosts.checklist} /> : null}
+      {pageHosts.telegram ? <KickoffTelegram host={pageHosts.telegram} /> : null}
 
       {isAdmin && fragmentStack.length > 0 && (
         <FragmentEditModal

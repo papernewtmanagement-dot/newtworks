@@ -1731,8 +1731,109 @@ function CodeRedsYellowsSection({ details, team, weekEnding, editMode, formDetai
   );
 }
 
-// 6 — Team Checklist (full enumeration)
-function TeamChecklistSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+// 6 — Team Checklist
+// Weeks ending 2026-09-12 and later audit the shared checklist_items rows (the same
+// list the team ticks daily on the Daily Wrap-up page) through cpr_checklist_get /
+// cpr_checklist_save. Earlier weeks keep the eleven legacy report columns so history
+// and its pay math never move. Edit-form keys for the live list are "chk:<item_id>";
+// doSave routes them to the RPC instead of the weekly_cpr_reports UPDATE.
+const CHECKLIST_CUTOVER = "2026-09-12";
+const CHECKLIST_KEY_PREFIX = "chk:";
+
+function TeamChecklistLive({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  const [live, setLive] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    if (!supabase || !report?.id) return undefined;
+    let alive = true;
+    (async () => {
+      const { data, error: e } = await supabase.rpc("cpr_checklist_get", { p_report_id: report.id });
+      if (!alive) return;
+      if (e) { setError(e.message); return; }
+      setLive(data || null);
+      setError(null);
+    })();
+    return () => { alive = false; };
+  }, [report?.id, editMode]);
+
+  if (error) {
+    return <Card><div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{error}</div></Card>;
+  }
+  if (!live) return <Card><Awaiting /></Card>;
+  const items = Array.isArray(live.items) ? live.items : [];
+  const workdays = Array.isArray(live.workdays) ? live.workdays : [];
+  const valueOf = (it) => {
+    const k = CHECKLIST_KEY_PREFIX + it.id;
+    return editMode && Object.prototype.hasOwnProperty.call(formReport || {}, k) ? formReport[k] : it.done === true;
+  };
+  const hits = items.filter((it) => it.done === true).length;
+  const dayLabel = (iso) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return isNaN(d) ? iso : d.toLocaleDateString("en-US", { weekday: "narrow" });
+  };
+  return (
+    <Card>
+      <div style={{ fontSize: 12, color: T.slate600, marginBottom: 8 }}>
+        {hits} of {items.length} verified · the dots are the team's daily ticks (hover for who and when)
+      </div>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", fontSize: 10, fontWeight: 800, color: T.slate500, letterSpacing: 0.6, textTransform: "uppercase", padding: "4px 6px" }}>Item</th>
+              {workdays.map((d) => (
+                <th key={d} style={{ fontSize: 10, fontWeight: 800, color: T.slate500, padding: "4px 4px", textAlign: "center" }}>{dayLabel(d)}</th>
+              ))}
+              <th style={{ fontSize: 10, fontWeight: 800, color: T.slate500, letterSpacing: 0.6, textTransform: "uppercase", padding: "4px 6px", textAlign: "center" }}>CPR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => {
+              const val = valueOf(it);
+              const dirty = editMode ? isReportDirty(CHECKLIST_KEY_PREFIX + it.id) : false;
+              const ticks = it.ticks && typeof it.ticks === "object" ? it.ticks : {};
+              return (
+                <tr key={it.id} style={{ borderTop: `1px solid ${T.slate200}`, background: dirty ? (T.amber50 || "#fef3c7") : "transparent" }}>
+                  <td style={{ fontSize: 12, color: T.slate700, padding: "5px 6px" }}>{it.title}</td>
+                  {workdays.map((d) => {
+                    const t = ticks[d];
+                    const title = t ? `${t.by || "?"} · ${t.at ? new Date(t.at).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}` : "not ticked";
+                    return (
+                      <td key={d} title={title} style={{ textAlign: "center", padding: "5px 4px", fontSize: 13, color: t ? T.green : T.slate300 }}>{t ? "●" : "○"}</td>
+                    );
+                  })}
+                  <td style={{ textAlign: "center", padding: "3px 6px" }}>
+                    {editMode ? (
+                      <Checkbox checked={val === true} onChange={(v) => onReportChange(CHECKLIST_KEY_PREFIX + it.id, v)} dirty={dirty} />
+                    ) : (
+                      val === true ? <span style={{ color: T.green }}>✓</span> : <span style={{ color: T.red }}>✕</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function TeamChecklistSection({ report, weekDate, editMode, formReport, isReportDirty, onReportChange }) {
+  if (report && weekDate && weekDate >= CHECKLIST_CUTOVER) {
+    return (
+      <div>
+        <SectionHeader icon="✅" title="Team Checklist" />
+        <TeamChecklistLive
+          report={report}
+          editMode={editMode}
+          formReport={formReport}
+          isReportDirty={isReportDirty}
+          onReportChange={onReportChange}
+        />
+      </div>
+    );
+  }
   if (!report) {
     return (
       <div>
@@ -6226,15 +6327,33 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
     edit.setSaving(true); edit.setSaveError(null);
     try {
       const ops = [];
-      // Report-level UPDATE
+      // Report-level UPDATE. Team checklist marks ("chk:<item_id>") go to the
+      // weekly_cpr_checklist audit rows through cpr_checklist_save, not the report row.
       if (edit.dirty.report.size > 0 && data.report?.id) {
         const patch = {};
-        for (const f of edit.dirty.report) patch[f] = edit.form.report[f];
-        ops.push(
-          supabase.from("weekly_cpr_reports")
-            .update(patch).eq("id", data.report.id)
-            .then(r => r.error ? Promise.reject(new Error("report: " + r.error.message)) : r)
-        );
+        const marks = {};
+        let markCount = 0;
+        for (const f of edit.dirty.report) {
+          if (f.startsWith(CHECKLIST_KEY_PREFIX)) {
+            marks[f.slice(CHECKLIST_KEY_PREFIX.length)] = edit.form.report[f] === true;
+            markCount += 1;
+          } else {
+            patch[f] = edit.form.report[f];
+          }
+        }
+        if (Object.keys(patch).length > 0) {
+          ops.push(
+            supabase.from("weekly_cpr_reports")
+              .update(patch).eq("id", data.report.id)
+              .then(r => r.error ? Promise.reject(new Error("report: " + r.error.message)) : r)
+          );
+        }
+        if (markCount > 0) {
+          ops.push(
+            supabase.rpc("cpr_checklist_save", { p_report_id: data.report.id, p_marks: marks })
+              .then(r => r.error ? Promise.reject(new Error("checklist: " + r.error.message)) : r)
+          );
+        }
       }
       // Agency-snapshot UPDATE (8 YTD fields; row keyed by agency_id + week_ending_date + weekly)
       if (edit.dirty.snapshot.size > 0 && data.snapshot?.id) {
@@ -6636,6 +6755,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <Section>
         <TeamChecklistSection
           report={data.report}
+          weekDate={weekDate}
           editMode={edit.active}
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
