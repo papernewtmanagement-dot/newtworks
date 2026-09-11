@@ -903,6 +903,21 @@ export default function Manual({ manualType, userRole }) {
 // scrollHeight (not a manual sum of children) drives the expand target so
 // margins/padding on the content are measured correctly automatically —
 // summing child offsetHeights was tried first and undercounts spacing.
+// Role play pickers (see [Roleplay:] in markdown.js). Shows one card for the
+// chosen springboard, picked at random. fresh=true avoids repeating the card
+// already showing when there is more than one to choose from.
+function nwRoleplayShow(rp, fresh) {
+  const sel = rp.querySelector("select.nw-rp-select");
+  const label = sel ? sel.value : null;
+  const cards = Array.from(rp.querySelectorAll(".nw-rp-card"));
+  const pool = cards.filter((c) => !label || c.getAttribute("data-rp-label") === label);
+  if (!pool.length) return;
+  const current = pool.find((c) => !c.hidden);
+  const choices = fresh && current && pool.length > 1 ? pool.filter((c) => c !== current) : pool;
+  const next = choices[Math.floor(Math.random() * choices.length)];
+  cards.forEach((c) => { c.hidden = c !== next; });
+}
+
 function nwEnableSmoothDetails(container) {
   if (!container) return;
   const nodes = container.querySelectorAll("details");
@@ -1497,6 +1512,31 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
+  // Role play pickers: a random card on load, a random card for whatever
+  // springboard is picked, and a new one each time a week is closed so the
+  // next opening mixes it up.
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root) return undefined;
+    root.querySelectorAll(".nw-rp").forEach((rp) => nwRoleplayShow(rp, false));
+    const onChange = (e) => {
+      const sel = e.target;
+      if (!sel || !sel.classList || !sel.classList.contains("nw-rp-select")) return;
+      const rp = sel.closest(".nw-rp");
+      if (rp) nwRoleplayShow(rp, false);
+    };
+    const onToggle = (e) => {
+      const d = e.target;
+      if (!d || d.tagName !== "DETAILS" || d.open || d.closest(".nw-rp")) return;
+      d.querySelectorAll(".nw-rp").forEach((rp) => nwRoleplayShow(rp, true));
+    };
+    root.addEventListener("change", onChange);
+    root.addEventListener("toggle", onToggle, true);
+    return () => {
+      root.removeEventListener("change", onChange);
+      root.removeEventListener("toggle", onToggle, true);
+    };
+  }, [html]);
   // A closed expander is hidden by the browser itself, so its text would be
   // missing from a printed page even though it is sitting right there in the
   // document. This opens every expander the moment the print dialog is asked
@@ -1631,6 +1671,16 @@ What I\'d like to discuss:
            paddings, same plain-triangle caret — not translated through design
            tokens or redesigned. Do not "improve" this without a new preview
            approved first; that is exactly what went wrong last time. */
+        .newtworks-handbook-body .nw-rp { margin: 8px 0 2px 0; }
+        .newtworks-handbook-body .nw-rp-select {
+          font: inherit; font-size: 13px; padding: 4px 8px; margin: 0 0 8px 0;
+          border: 1px solid #CBD5C0; border-radius: 6px; background: #fff; max-width: 100%;
+        }
+        .newtworks-handbook-body .nw-rp-card {
+          background: #F8FAF3; border-radius: 7px; padding: 8px 12px;
+        }
+        .newtworks-handbook-body .nw-rp-card p { margin: 4px 0; }
+        .newtworks-handbook-body .nw-rp-card details { margin: 6px 0 2px 0; }
         .newtworks-handbook-body details { margin: 6px 0 6px 10px; }
         .newtworks-handbook-body details:not([open]) { background: #F8FAF3; border-radius: 7px; }
         .newtworks-handbook-body details:not([open]) > summary { padding: 8px 12px 8px 30px; }

@@ -1027,6 +1027,102 @@ function expandSelector(md, options) {
 
   return lines.join("\n");
 }
+// ─── Role play pickers ────────────────────────────────────────
+// Daily Kickoff role plays. A week's scenarios are written once, anywhere on
+// the page, and shown where the {{roleplay: id}} token sits (usually inside
+// the week's springboard cell, since a table cell cannot hold the block).
+//
+//   [Roleplay: wk2-fs]
+//   [Scenario: New baby]
+//   …card markdown…
+//   [Scenario: New baby]          ← same label again = another customer for it
+//   …card markdown…
+//   [Scenario: College]
+//   …card markdown…
+//   [Roleplay end]
+//
+// Renders a dropdown of the distinct labels (hidden when there is only one)
+// and every card, all but one hidden. Manual.jsx picks a card at random for
+// the chosen label on load, whenever the dropdown changes, and again each
+// time the week around it is closed, so the next opening shows a new one.
+// A block with no token anywhere renders where it was written.
+const RP_START_RE = /^[ \t]*\*?\[Roleplay:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
+const RP_SCEN_RE = /^[ \t]*\*?\[Scenario:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
+const RP_END_RE = /^[ \t]*\*?\[Roleplay end\]\*?[ \t]*$/i;
+const RP_TOKEN_RE = /\{\{roleplay:\s*([a-z0-9_-]+)\s*\}\}/gi;
+const RP_SLOT = (n) => `NWRPSLOT${n}END`;
+
+function renderRoleplay(block, options) {
+  const order = [];
+  const names = new Map();
+  for (const sc of block.scenarios) {
+    const slug = openerSlug(sc.label);
+    if (!names.has(slug)) { names.set(slug, sc.label); order.push(slug); }
+  }
+  if (!order.length) return "";
+  const select = order.length > 1
+    ? `<select class="nw-rp-select" aria-label="Springboard">` +
+      order.map((sl) => `<option value="${sl}">${escapeHtml(names.get(sl))}</option>`).join("") +
+      `</select>`
+    : "";
+  let shown = false;
+  const cards = block.scenarios.map((sc) => {
+    const slug = openerSlug(sc.label);
+    const show = !shown && slug === order[0];
+    if (show) shown = true;
+    const body = mdToHtml(sc.lines.join("\n"), options);
+    return `<div class="nw-rp-card" data-rp-label="${slug}"${show ? "" : " hidden"}>${body}</div>`;
+  }).join("");
+  return `<div class="nw-rp">${select}<div class="nw-rp-cards">${cards}</div></div>`;
+}
+
+function expandRoleplays(md, options, slots) {
+  if (md.indexOf("[Roleplay:") === -1 && md.indexOf("{{roleplay:") === -1) return md;
+  const lines = md.split(/\r?\n/);
+  const blocks = new Map();
+  const kept = [];
+  let cur = null;
+  let scen = null;
+  for (const line of lines) {
+    if (!cur) {
+      const m = RP_START_RE.exec(line);
+      if (m) { cur = { id: m[1].trim().toLowerCase(), scenarios: [] }; scen = null; continue; }
+      kept.push(line);
+      continue;
+    }
+    if (RP_END_RE.test(line)) {
+      blocks.set(cur.id, cur);
+      kept.push(`@@NWRPBLOCK:${cur.id}@@`);
+      cur = null; scen = null;
+      continue;
+    }
+    const s = RP_SCEN_RE.exec(line);
+    if (s) { scen = { label: s[1].trim(), lines: [] }; cur.scenarios.push(scen); continue; }
+    if (scen) scen.lines.push(line);
+  }
+  if (cur) { blocks.set(cur.id, cur); kept.push(`@@NWRPBLOCK:${cur.id}@@`); }
+  let out = kept.join("\n");
+  const used = new Set();
+  const slotFor = (id) => {
+    const block = blocks.get(id);
+    if (!block) return "";
+    slots.push(renderRoleplay(block, options));
+    return RP_SLOT(slots.length - 1);
+  };
+  out = out.replace(RP_TOKEN_RE, (_m, rawId) => {
+    const id = String(rawId).toLowerCase();
+    used.add(id);
+    return slotFor(id);
+  });
+  out = out.replace(/^@@NWRPBLOCK:([^@\n]+)@@$/gm, (_m, id) => (used.has(id) ? "" : slotFor(id)));
+  return out;
+}
+
+function applyRoleplaySlots(html, slots) {
+  if (!slots.length) return html;
+  return html.replace(/(?:<p>\s*)?NWRPSLOT(\d+)END(?:\s*<\/p>)?/g, (_m, n) => slots[Number(n)] || "");
+}
+
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
   let src = String(md || "");
@@ -1049,6 +1145,8 @@ export function mdToHtml(md, options = {}) {
   src = expandLines(src);
   src = expandRows(src);
   src = expandSelector(src, options);
+  const rpSlots = [];
+  src = expandRoleplays(src, options, rpSlots);
 
   if (!src.trim()) return "";
 
@@ -1324,6 +1422,7 @@ export function mdToHtml(md, options = {}) {
   if (options && typeof options.resolveFaq === "function") {
     result = applyFaqSubstitution(result, options.resolveFaq);
   }
+  result = applyRoleplaySlots(result, rpSlots);
 
   return result;
 }
