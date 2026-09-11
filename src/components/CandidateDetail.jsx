@@ -3108,8 +3108,9 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             warm note from you, and the wording matches the reason. Didn't meet standard, No-show, Offer
             withdrawn, and Candidate withdrew each have their own letter. When the system declines someone
             by itself on a resume or assessment score, they get the Didn't meet standard letter. Nothing goes
-            to <strong>Calibration record</strong> or <strong>Former team member</strong>. A withdrawal note
-            goes out the moment you hit Decline. Every other decline goes out in the Monday morning batch.
+            to <strong>Calibration record</strong> or <strong>Former team member</strong>. No-show, Offer
+            withdrawn, and Candidate withdrew send the moment you hit Decline. Didn't meet standard and the
+            automatic declines go out in the Monday morning batch.
             It never names a score or a reason, and never goes out twice.
           </div>
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
