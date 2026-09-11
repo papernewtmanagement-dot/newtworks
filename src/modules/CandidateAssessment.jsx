@@ -555,15 +555,15 @@ export default function CandidateAssessment({ candidateId, token }) {
     // "should" -- that is the instruction the key was written against.
     const eyebrow =
       stint === 2
-        ? "Section 2"
+        ? "Section 2 of 3"
         : stint === 3
         ? "Section 3"
         : stint === 5
-        ? "Part 2 — final section"
+        ? "Section 3 of 3 (last one)"
         : "Follow-up section";
     const headline =
       stint === 2
-        ? "Nice work — the problem-solving section is done."
+        ? "Keep going. Section 1 is done, two sections left."
         : stint === 3
         ? "One more short section — real situations from the job."
         : stint === 5
@@ -775,14 +775,14 @@ export default function CandidateAssessment({ candidateId, token }) {
               }}
             >
               {stint === 2
-                ? "Section 2"
+                ? "Section 2 of 3"
                 : stint === 3
                 ? "Section 3"
                 : stint === 5
-                ? "Part 2 — final section"
+                ? "Section 3 of 3 (last one)"
                 : stint > 1
                 ? "Follow-up section"
-                : "Section 1"}
+                : "Section 1 of 3"}
             </span>
             <span>
               {Math.min(currentIdx + 1, items.length)} of {items.length}
