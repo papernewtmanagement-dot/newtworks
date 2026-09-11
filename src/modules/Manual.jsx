@@ -918,6 +918,19 @@ function nwRoleplayShow(rp, fresh) {
   cards.forEach((c) => { c.hidden = c !== next; });
 }
 
+// Refresh button: step to the next card for the chosen springboard, so every
+// customer comes around before any repeats.
+function nwRoleplayNext(rp) {
+  const sel = rp.querySelector("select.nw-rp-select");
+  const label = sel ? sel.value : null;
+  const cards = Array.from(rp.querySelectorAll(".nw-rp-card"));
+  const pool = cards.filter((c) => !label || c.getAttribute("data-rp-label") === label);
+  if (pool.length < 2) return;
+  const at = pool.findIndex((c) => !c.hidden);
+  const next = pool[(at + 1) % pool.length];
+  cards.forEach((c) => { c.hidden = c !== next; });
+}
+
 function nwEnableSmoothDetails(container) {
   if (!container) return;
   const nodes = container.querySelectorAll("details");
@@ -1587,8 +1600,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
   // Role play pickers: a random card on load, a random card for whatever
-  // springboard is picked, and a new one each time a week is closed so the
-  // next opening mixes it up.
+  // springboard is picked, and the refresh button steps to the next one.
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return undefined;
@@ -1599,16 +1611,18 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       const rp = sel.closest(".nw-rp");
       if (rp) nwRoleplayShow(rp, false);
     };
-    const onToggle = (e) => {
-      const d = e.target;
-      if (!d || d.tagName !== "DETAILS" || d.open || d.closest(".nw-rp")) return;
-      d.querySelectorAll(".nw-rp").forEach((rp) => nwRoleplayShow(rp, true));
+    const onClick = (e) => {
+      const btn = e.target?.closest?.(".nw-rp-next");
+      if (!btn) return;
+      e.preventDefault();
+      const rp = btn.closest(".nw-rp");
+      if (rp) nwRoleplayNext(rp);
     };
     root.addEventListener("change", onChange);
-    root.addEventListener("toggle", onToggle, true);
+    root.addEventListener("click", onClick);
     return () => {
       root.removeEventListener("change", onChange);
-      root.removeEventListener("toggle", onToggle, true);
+      root.removeEventListener("click", onClick);
     };
   }, [html]);
   // A closed expander is hidden by the browser itself, so its text would be
@@ -1746,10 +1760,16 @@ What I\'d like to discuss:
            tokens or redesigned. Do not "improve" this without a new preview
            approved first; that is exactly what went wrong last time. */
         .newtworks-handbook-body .nw-rp { margin: 8px 0 2px 0; }
+        .newtworks-handbook-body .nw-rp-bar { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 0; }
         .newtworks-handbook-body .nw-rp-select {
-          font: inherit; font-size: 13px; padding: 4px 8px; margin: 0 0 8px 0;
+          font: inherit; font-size: 13px; padding: 4px 8px; margin: 0; min-width: 0;
           border: 1px solid #CBD5C0; border-radius: 6px; background: #fff; max-width: 100%;
         }
+        .newtworks-handbook-body .nw-rp-next {
+          font: inherit; font-size: 15px; line-height: 1; padding: 4px 8px; cursor: pointer;
+          border: 1px solid #CBD5C0; border-radius: 6px; background: #fff; color: #334155;
+        }
+        .newtworks-handbook-body .nw-rp-next:hover { background: #F8FAF3; }
         .newtworks-handbook-body .nw-rp-card {
           background: #F8FAF3; border-radius: 7px; padding: 8px 12px;
         }

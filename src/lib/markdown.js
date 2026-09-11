@@ -1070,8 +1070,8 @@ function expandSelector(md, options) {
 //
 // Renders a dropdown of the distinct labels (hidden when there is only one)
 // and every card, all but one hidden. Manual.jsx picks a card at random for
-// the chosen label on load, whenever the dropdown changes, and again each
-// time the week around it is closed, so the next opening shows a new one.
+// the chosen label on load and whenever the dropdown changes. The refresh
+// button beside it steps to the next customer for that label.
 // A block with no token anywhere renders where it was written.
 const RP_START_RE = /^[ \t]*\*?\[Roleplay:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const RP_SCEN_RE = /^[ \t]*\*?\[Scenario:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
@@ -1092,6 +1092,10 @@ function renderRoleplay(block, options) {
       order.map((sl) => `<option value="${sl}">${escapeHtml(names.get(sl))}</option>`).join("") +
       `</select>`
     : "";
+  const next = block.scenarios.length > 1
+    ? `<button type="button" class="nw-rp-next" title="Another customer" aria-label="Another customer">↻</button>`
+    : "";
+  const bar = select || next ? `<div class="nw-rp-bar">${select}${next}</div>` : "";
   let shown = false;
   const cards = block.scenarios.map((sc) => {
     const slug = openerSlug(sc.label);
@@ -1100,7 +1104,7 @@ function renderRoleplay(block, options) {
     const body = mdToHtml(sc.lines.join("\n"), options);
     return `<div class="nw-rp-card" data-rp-label="${slug}"${show ? "" : " hidden"}>${body}</div>`;
   }).join("");
-  return `<div class="nw-rp">${select}<div class="nw-rp-cards">${cards}</div></div>`;
+  return `<div class="nw-rp">${bar}<div class="nw-rp-cards">${cards}</div></div>`;
 }
 
 function expandRoleplays(md, options, slots) {
