@@ -40,6 +40,12 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //    score) sits beside the title on every tab.
 //  * Canceled has its own tab: search the customer, tap the policy, log it.
 //    Not on file → this entry page opens in a popup with Canceled allowed.
+//  * A sold line the household already has on file asks: replaces it, added,
+//    or a different household. "Replaces it" cancels the old policy in the
+//    same click (second rp_log_entry, replacement: true, no chargeback); the
+//    answer is stored on the sale and shown on My week. A repeat quote for
+//    the same household in a week is flagged here and marked on My week;
+//    HH Quotes count distinct households, so it never counts twice.
 //  * Scorecard is x / 1 / 2 / 3 (x averages as 0) and every part is scored on a quote or sale;
 //    GNC Used is Setup GNC scored 3. Marketing source and Relationship are
 //    required on every entry. Autopay is per policy: a tick on a sold policy,
@@ -230,6 +236,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [first, setFirst] = useState(presetFirst || "");
   const statuses = allowCancel ? STATUSES : STATUSES.filter(st => st.key !== "canceled");
   const [dupQuotes, setDupQuotes] = useState([]);   // this week's quotes already on file for this household
+  const [onFileAnswer, setOnFileAnswer] = useState({}); // policy id -> "replaces" | "added" | "different" when the household already has that line
   const [initial, setInitial] = useState("");
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
@@ -359,6 +366,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const isSold = (p) => p.status === "sold" || p.status === "quoted_sold";
   const needsMoney = (p) => isSold(p) || p.status === "canceled";
   const showDate = dateOpen || date !== today;
+  const oldOnFile = (p) => onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
+  const flagged = sold.filter(p => oldOnFile(p));
+  const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
   const showSuggest = suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
@@ -382,6 +392,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (hasSale && !ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
   if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
+  if (flagged.some(p => !onFileAnswer[p.id])) problems.push("Say whether the new policy replaces the one on file, is added to it, or is a different household.");
   if (hasSale && hasCxl) {
     const soldLines = new Set(sold.map(p => p.line));
     const clash = [...new Set(canceled.filter(p => soldLines.has(p.line)).map(p => p.line))];
@@ -394,7 +405,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setSuggest([]);
     setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
-    setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote("");
+    setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote(""); setOnFileAnswer({});
     setAttempted(false);
   };
 
@@ -416,15 +427,32 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
-        sale: hasSale ? { products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay })) } : null,
+        sale: hasSale ? {
+          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: oldOnFile(p) ? false : (householdFresh ? true : !!p.isNewLine), autopay: !!p.autopay })),
+          on_file_answer: flagged.length ? (replaces.length ? "replaces" : flagged.some(p => onFileAnswer[p.id] === "added") ? "added" : "different") : null,
+          replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
+        } : null,
         cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })), reason: cReason.trim() || null } : null,
         scorecard: hasCard ? { ...scores, recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || null) : null } : null,
       };
       const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
       if (error) { setErr(errText(error)); return; }
       if (!data?.ok) { setErr(errText(data)); return; }
-      setOk(summarizeEntry(data));
-      setLast({ result: data, first: first.trim(), initial: initial.trim(), date });
+      let summary = summarizeEntry(data);
+      let cxlResult = null;
+      if (replaces.length) {
+        // the confirmed replacements cancel the old policies now, in the same click; no chargeback (the household kept the line)
+        const items = replaces.map(p => { const o = oldOnFile(p); return { line_of_business: o.line_of_business, product_type: o.product_type || null, premium: Number(o.premium ?? 0),
+          vehicle_count: o.line_of_business === "auto" ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
+        const c = await supabase.rpc("rp_log_entry", { p_payload: {
+          customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date, team_member_id: logFor, relationship_type: "existing",
+          cancelation: { items, reason: "Replaced by the new policy logged with the sale" },
+        } });
+        if (c.error || !c.data?.ok) summary += ` The old ${replaces.map(p => PRODUCT_SHORT[p.line]).join(", ")} could not be canceled: ${errText(c.error || c.data)}. Cancel it on the Canceled tab.`;
+        else { cxlResult = c.data; summary += ` Old ${replaces.map(p => PRODUCT_SHORT[p.line]).join(", ")} canceled as replaced, no chargeback.`; }
+      }
+      setOk(summary);
+      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), date });
       reset();
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
@@ -434,9 +462,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (!last || busy) return;
     setBusy(true);
     try {
+      let undone = 0;
+      if (last.cxlResult) {
+        const u = await supabase.rpc("rp_undo_entry", { p_result: last.cxlResult });
+        if (u.error) { setErr(errText(u.error)); return; }
+        undone += Number(u.data?.undone || 0);
+      }
       const { data, error } = await supabase.rpc("rp_undo_entry", { p_result: last.result });
       if (error) { setErr(errText(error)); return; }
-      setOk(`Undone. ${data?.undone || 0} row${data?.undone === 1 ? "" : "s"} removed.`);
+      undone += Number(data?.undone || 0);
+      setOk(`Undone. ${undone} row${undone === 1 ? "" : "s"} removed.`);
       setLast(null);
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
@@ -640,11 +675,18 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
             </div>
           )}
-          {sold.filter(p => onFile.some(r => r.line_of_business === p.line && !r.already_canceled)).map(p => {
-            const r = onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0];
+          {flagged.map(p => {
+            const r = oldOnFile(p);
+            const oldLabel = typeLabel(types, r.line_of_business, r.product_type) || PRODUCT_SHORT[p.line];
+            const pick = (v) => setOnFileAnswer(a => ({ ...a, [p.id]: v }));
             return (
-              <div key={p.id} style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
-                {preview} already has {PRODUCT_SHORT[p.line]} on file (sold {fmtDate(r.submitted_date)}, ${fmtPts(r.premium)}). If this one replaces it, cancel the old one on the Canceled tab so premium and cars are not counted twice.
+              <div key={p.id} style={{ padding: "10px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+                <div>{preview} already has {oldLabel} on file: ${fmtPts(r.premium)}{r.vehicle_count ? `, ${plural(r.vehicle_count, "car")}` : ""}, sold {fmtDate(r.submitted_date)}. This new {PRODUCT_SHORT[p.line]}:</div>
+                <div style={{ ...chipRow, marginTop: 8 }}>
+                  <span style={chip(onFileAnswer[p.id] === "replaces")} onClick={() => pick("replaces")}>Replaces it — cancel the old one for me</span>
+                  <span style={chip(onFileAnswer[p.id] === "added")} onClick={() => pick("added")}>Added — they keep both</span>
+                  <span style={chip(onFileAnswer[p.id] === "different")} onClick={() => pick("different")}>Different household</span>
+                </div>
               </div>
             );
           })}
@@ -1419,7 +1461,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
     try {
       const [b, s] = await Promise.all([
         supabase.rpc("rp_week_scoreboard", { p_week_end: safeWeek }),
-        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, product_type, premium, policy_count, is_new_line, issued_date)")
+        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, on_file_answer, sales_log_products(line_of_business, product_type, premium, policy_count, is_new_line, issued_date)")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("submitted_date", { ascending: false }),
       ]);
       if (b.error) throw b.error;
@@ -1464,6 +1506,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
         <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
         <span>{it.types || (it.products || []).map(k => PRODUCT_SHORT[k] || k).join(", ") || "—"}</span>
         {it.source && <span style={{ color: T.slate400 }}>{it.source}</span>}
+        {it.dup && <span style={{ color: T.amber, fontWeight: 700 }} title="This household was already quoted this week. It counts once.">repeat this week</span>}
         {canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_quote", it.id, "quote")}>Remove</button>}
       </div>
     ));
@@ -1474,6 +1517,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
       <div key={it.id} style={itemLine}>
         <span>{fmtDate(it.issued_on)}</span><span>{it.customer || "—"}</span>
         <span>{it.type}{it.vehicles ? ` · ${plural(it.vehicles, "car")}` : ""}</span>
+        {it.on_file_answer && <span style={{ color: T.amber, fontWeight: 700 }}>{it.on_file_answer === "replaces" ? "replaced the old one" : it.on_file_answer === "added" ? "added to what's on file" : "different household"}</span>}
         <strong style={{ color: T.slate900 }}>{fmtMoney(it.premium)}</strong>
       </div>
     ));
@@ -1552,7 +1596,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
                   <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
                   <td style={tableTd}>{nameOf(r.team_member_id)}{r.sourced_by_team_member_id && r.sourced_by_team_member_id !== r.team_member_id ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}</td>
                   <td style={tableTd}>{r.customer_label}</td>
-                  <td style={tableTd}>{r.household_status === "new" ? "New" : r.household_status === "winback" ? "Winback" : "Existing"}</td>
+                  <td style={tableTd}>{r.household_status === "new" ? "New" : r.household_status === "winback" ? "Winback" : "Existing"}{r.on_file_answer && <div style={{ fontSize: 11, color: T.amber }}>{r.on_file_answer === "replaces" ? "replaced old policy" : r.on_file_answer === "added" ? "added to on-file" : "different household"}</div>}</td>
                   <td style={tableTd}>{(r.sales_log_products || []).map((p, i) => <div key={i}>{typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business} ${fmtPts(p.premium)}{p.issued_date ? "" : <span style={{ color: T.amber }}> · not issued</span>}</div>)}</td>
                   <td style={tableTd}>{r.vehicle_count ?? "—"}</td>
                   <td style={tableTd}>${fmtPts(r.total_premium)}</td>
