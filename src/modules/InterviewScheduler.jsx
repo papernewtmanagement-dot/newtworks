@@ -50,11 +50,48 @@ function timeOnly(display) {
   return parts[parts.length - 1].trim();
 }
 
+// Reminder emails link back here with ?respond=confirm|reschedule|withdraw.
+// The action runs once on load, then the query string is dropped so a
+// refresh doesn't repeat it.
+function readRespondParam() {
+  if (typeof window === "undefined") return null;
+  const v = new URLSearchParams(window.location.search).get("respond");
+  return ["confirm", "reschedule", "withdraw"].includes(v) ? v : null;
+}
+function clearRespondParam() {
+  if (typeof window === "undefined" || !window.history?.replaceState) return;
+  window.history.replaceState(null, "", window.location.pathname);
+}
+
 export default function InterviewScheduler({ token }) {
-  const [state, setState] = useState("loading"); // loading | error | pick | confirmed | expired
+  const [state, setState] = useState("loading"); // loading | error | pick | confirmed | acknowledged | withdrawn | expired
   const [payload, setPayload] = useState(null);
   const [picking, setPicking] = useState(null);
+  const [responding, setResponding] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [noticeMsg, setNoticeMsg] = useState("");
+
+  const handleRespond = useCallback(async (action) => {
+    setResponding(true);
+    setErrorMsg("");
+    const { ok, data } = await callScheduler("respond", { token, action });
+    setResponding(false);
+    if (!ok || !data?.ok) {
+      setErrorMsg(data?.error === "not_booked" ? "There's no booked time on this link yet." : (data?.error || "That didn't go through — please try again."));
+      return;
+    }
+    if (action === "confirm") {
+      setPayload((p) => ({ ...(p || {}), ...data, already_booked: true, confirmed: true }));
+      setState("acknowledged");
+    } else if (action === "withdraw") {
+      setPayload((p) => ({ ...(p || {}), ...data }));
+      setState("withdrawn");
+    } else {
+      setPayload((p) => ({ ...(p || {}), ...data, already_booked: false, confirmed: false, expired: false }));
+      setNoticeMsg("Your earlier time has been released. Pick a new one below.");
+      setState("pick");
+    }
+  }, [token]);
 
   const load = useCallback(async () => {
     setState("loading");
@@ -65,10 +102,15 @@ export default function InterviewScheduler({ token }) {
       return;
     }
     setPayload(data);
-    if (data.already_booked) setState("confirmed");
+    const respondTo = readRespondParam();
+    if (respondTo) clearRespondParam();
+    if (data.already_booked) {
+      if (respondTo) { await handleRespond(respondTo); return; }
+      setState(data.confirmed ? "acknowledged" : "confirmed");
+    }
     else if (data.expired) setState("expired");
     else setState("pick");
-  }, [token]);
+  }, [token, handleRespond]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -133,13 +175,45 @@ export default function InterviewScheduler({ token }) {
     );
   }
 
-  if (state === "confirmed") {
+  if (state === "withdrawn") {
     return wrap(
       <>
-        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>You're all set{payload?.first_name ? `, ${payload.first_name}` : ""}!</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Thanks for letting us know{payload?.first_name ? `, ${payload.first_name}` : ""}.</h2>
+        <p style={{ fontSize: 14, color: T?.slate600 || "#475569" }}>
+          Your time has been released and you won't get any more reminders. We appreciate you taking the time to apply, and we wish you the best.
+        </p>
+      </>
+    );
+  }
+
+  if (state === "confirmed" || state === "acknowledged") {
+    const confirmedNow = state === "acknowledged";
+    const btnBase = { padding: "10px 16px", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: responding ? "default" : "pointer", border: "none" };
+    return wrap(
+      <>
+        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
+          {confirmedNow ? "You're confirmed" : "You're all set"}{payload?.first_name ? `, ${payload.first_name}` : ""}!
+        </h2>
         <p style={{ fontSize: 15, marginBottom: 16 }}>
           <strong>{payload?.scheduled_start_display}</strong> (Central time)
         </p>
+        {errorMsg && (
+          <div style={{ background: "#fef2f2", color: "#b91c1c", fontSize: 13, padding: "8px 12px", borderRadius: 8, marginBottom: 12 }}>{errorMsg}</div>
+        )}
+        {!confirmedNow && (
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ fontSize: 14, marginBottom: 10 }}>Can you confirm you'll be there?</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button disabled={responding} onClick={() => handleRespond("confirm")} style={{ ...btnBase, background: T?.blue600 || "#2563eb", color: "#fff" }}>Yes, I'll be there</button>
+              <button disabled={responding} onClick={() => handleRespond("reschedule")} style={{ ...btnBase, background: T?.slate600 || "#475569", color: "#fff" }}>I need a different time</button>
+            </div>
+          </div>
+        )}
+        {confirmedNow && (
+          <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button disabled={responding} onClick={() => handleRespond("reschedule")} style={{ ...btnBase, background: T?.slate600 || "#475569", color: "#fff" }}>I need a different time</button>
+          </div>
+        )}
         {payload?.meet_url && (
           <a
             href={payload.meet_url}
@@ -159,7 +233,14 @@ export default function InterviewScheduler({ token }) {
           </p>
         )}
         <p style={{ fontSize: 13, color: T?.slate500 || "#64748b", marginTop: 12 }}>
-          A confirmation email is on its way to you with these details. We look forward to speaking with you.
+          {confirmedNow ? "We look forward to speaking with you." : "A confirmation email is on its way to you with these details. We look forward to speaking with you."}
+        </p>
+        <p style={{ fontSize: 12, color: T?.slate400 || "#94a3b8", marginTop: 16 }}>
+          No longer interested?{" "}
+          <button disabled={responding} onClick={() => handleRespond("withdraw")} style={{ border: "none", background: "transparent", color: T?.slate500 || "#64748b", textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0 }}>
+            Let us know
+          </button>{" "}
+          and we'll open the time up for someone else.
         </p>
       </>
     );
@@ -173,8 +254,13 @@ export default function InterviewScheduler({ token }) {
         Hi {payload?.first_name || "there"} — pick a time
       </h2>
       <p style={{ fontSize: 14, color: T?.slate500 || "#64748b", marginBottom: 12 }}>
-        About 35 minutes, over Google Meet. All times are Central.
+        About 30 minutes, over Google Meet. All times are Central.
       </p>
+      {noticeMsg && (
+        <div style={{ background: "#eff6ff", color: "#1e40af", fontSize: 13, padding: "8px 12px", borderRadius: 8, marginBottom: 12 }}>
+          {noticeMsg}
+        </div>
+      )}
       {payload?.prep_line && (
         <p style={{ fontSize: 13, color: T?.slate600 || "#475569", marginBottom: 20, background: T?.slate50 || "#f8fafc", padding: "10px 14px", borderRadius: 8 }}>
           {payload.prep_line}

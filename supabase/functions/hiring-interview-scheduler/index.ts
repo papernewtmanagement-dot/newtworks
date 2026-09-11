@@ -21,6 +21,19 @@
 //     race between two candidates picking the same slot), creates the
 //     calendar event with a fresh Google Meet link, emails confirmation.
 //
+//   mode="send_reminders"  (internal, shared_secret gated)
+//     Run once a day (7:59 Central, automation recipe "Interview Reminders").
+//     Two touches per booked interview, per Steiner et al. 2018 (Am J Manag
+//     Care 24:377) where two reminders beat one: a confirm-or-reschedule
+//     email two days before, and a morning-of reminder. Both carry
+//     Yes / Reschedule / No-longer-interested links.
+//
+//   mode="respond"  (public, token gated)
+//     The candidate answered a reminder link. confirm stamps the
+//     confirmation; reschedule cancels the calendar event, frees the slot
+//     and re-offers times; withdraw frees the slot and declines the
+//     candidate as candidate_withdrew.
+//
 //   mode="schedule_meet_greet"  (admin, session-token gated)
 //     The stage AFTER the interview, and it works the opposite way round:
 //     Peter picks the time, because the meeting has to suit two or three
@@ -45,7 +58,7 @@ import { escHtml } from "../_shared/html.ts";
 
 const TZ = "America/Chicago";
 const CALENDAR_ID = "primary";
-const INTERVIEW_MINUTES = 35;
+const INTERVIEW_MINUTES = 30;
 const LOOKAHEAD_DAYS = 45; // calendar days scanned forward for eligible slots
 const BOOKING_WINDOW_DAYS = 7; // link expiry
 const BOOKING_BASE_URL = "https://newtworks.vercel.app/schedule";
@@ -55,17 +68,31 @@ const BOOKING_BASE_URL = "https://newtworks.vercel.app/schedule";
 const MEET_GREET_DEFAULT_MINUTES = 30;
 const OFFICE_ADDRESS = "28120 US Hwy 281 N, Suite 125, San Antonio, TX 78260";
 
-// Fixed weekly interview schedule (Chicago local time), per Peter directive
-// 2026-08-12. getUTCDay()-style weekday numbering (0=Sun..6=Sat) applied to
-// a date built from Chicago-local Y/M/D — same convention isWeekend() uses.
-// Each day lists its offered start times in chronological order.
-const FIXED_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
-  1: [{ h: 10, m: 0 }, { h: 15, m: 30 }], // Monday
-  2: [{ h: 10, m: 0 }, { h: 15, m: 30 }], // Tuesday
-  3: [{ h: 10, m: 0 }],                   // Wednesday
-  4: [{ h: 15, m: 30 }],                  // Thursday
-  5: [{ h: 12, m: 30 }],                  // Friday (see isThirdFriday exclusion)
+// Weekly interview schedule (Chicago local time), Peter directive 2026-09-11.
+// getUTCDay()-style weekday numbering (0=Sun..6=Sat) applied to a date built
+// from Chicago-local Y/M/D — same convention isWeekend() uses.
+//
+// PRIMARY times are always offered. SECONDARY times are backups: they are
+// only offered once the primary times inside the 7-day offer window are
+// booked (see pickOffers). No Thursday-morning backup, no Wednesday-afternoon
+// backup — both Peter's call. Third Friday of the month has no slots at all.
+type SlotTier = "primary" | "secondary";
+const PRIMARY_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
+  1: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Monday
+  2: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Tuesday
+  3: [{ h: 10, m: 0 }, { h: 13, m: 0 }],                   // Wednesday
+  4: [{ h: 13, m: 0 }, { h: 15, m: 30 }],                  // Thursday
+  5: [{ h: 13, m: 0 }],                                    // Friday (see isThirdFriday exclusion)
 };
+const SECONDARY_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
+  1: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Monday
+  2: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Tuesday
+  3: [{ h: 10, m: 45 }],                   // Wednesday (no afternoon backup)
+  4: [{ h: 16, m: 15 }],                   // Thursday (no morning backup)
+  5: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Friday (see isThirdFriday exclusion)
+};
+const OFFER_COUNT = 4;        // how many open times a candidate is shown
+const OFFER_WINDOW_DAYS = 7;  // ... drawn from the next 7 days
 
 function isThirdFriday(y: number, m: number, d: number): boolean {
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
@@ -108,7 +135,7 @@ function isWeekend(y: number, m: number, d: number): boolean {
 // -------------------------------------------------------------------------
 // Slot computation
 // -------------------------------------------------------------------------
-interface Slot { start: string; end: string; dateKey: string; } // dateKey = Chicago YYYY-MM-DD
+interface Slot { start: string; end: string; dateKey: string; tier?: SlotTier; } // dateKey = Chicago YYYY-MM-DD
 
 interface ManualSlot { slot_date: string; start_time: string; end_time: string; }
 
@@ -135,13 +162,18 @@ async function fixedScheduleGrid(startFrom: Date, agencyId: string): Promise<Slo
   for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
     const cy = cursor.getUTCFullYear(), cm = cursor.getUTCMonth() + 1, cd = cursor.getUTCDate();
     const dow = cursor.getUTCDay();
-    const times = FIXED_TIMES_BY_WEEKDAY[dow];
-    if (times && !isThirdFriday(cy, cm, cd)) {
+    if (!isThirdFriday(cy, cm, cd)) {
       const dateKey = `${cy}-${String(cm).padStart(2, "0")}-${String(cd).padStart(2, "0")}`;
-      for (const t of times) {
-        const start = chicagoLocalToUtc(cy, cm, cd, t.h, t.m);
-        const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
-        grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey });
+      const tiers: [SlotTier, { h: number; m: number }[]][] = [
+        ["primary", PRIMARY_TIMES_BY_WEEKDAY[dow] ?? []],
+        ["secondary", SECONDARY_TIMES_BY_WEEKDAY[dow] ?? []],
+      ];
+      for (const [tier, times] of tiers) {
+        for (const t of times) {
+          const start = chicagoLocalToUtc(cy, cm, cd, t.h, t.m);
+          const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
+          grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey, tier });
+        }
       }
     }
     cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
@@ -157,7 +189,7 @@ async function fixedScheduleGrid(startFrom: Date, agencyId: string): Promise<Slo
       const [y, mo, d] = m.slot_date.split("-").map(Number);
       const start = chicagoLocalToUtc(y, mo, d, h, min);
       const end = chicagoLocalToUtc(y, mo, d, eh, emin);
-      grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey: m.slot_date });
+      grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey: m.slot_date, tier: "primary" });
     }
     grid.sort((a, b) => a.start.localeCompare(b.start));
   }
@@ -227,32 +259,25 @@ function isBlackedOut(slot: Slot, blackouts: Blackout[], recurring: RecurringBla
   return false;
 }
 
-// Peter directive 2026-08-12: offer exactly three times, spaced out —
-// first available day, skip a day, second offer, skip two days, final offer.
-// "Skip N days" = N full calendar days pass untouched before resuming the
-// search on day N+1 after the previous offer.
-function pickThreeOffers(perDayEarliest: Slot[]): Slot[] {
-  const byDateAsc = [...perDayEarliest].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
-  const findOnOrAfter = (dateKey: string): Slot | null =>
-    byDateAsc.find((s) => s.dateKey >= dateKey) || null;
-  const addDays = (dateKey: string, days: number): string => {
-    const [y, m, d] = dateKey.split("-").map(Number);
-    const dt = new Date(Date.UTC(y, m - 1, d + days));
-    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
-  };
-
+// Peter directive 2026-09-11: offer the next four open times inside seven
+// days. Primary times first; backup (secondary) times only once the primary
+// times in the window are used up; and if the whole window is full, the
+// earliest primary times beyond it so the candidate is never shown nothing.
+function pickOffers(free: Slot[], now: Date): Slot[] {
+  const windowEnd = new Date(now.getTime() + OFFER_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+  const byStart = [...free].sort((a, b) => a.start.localeCompare(b.start));
+  const inWindow = (s: Slot) => s.start <= windowEnd;
   const offers: Slot[] = [];
-  const offer1 = byDateAsc[0];
-  if (!offer1) return offers;
-  offers.push(offer1);
-
-  const offer2 = findOnOrAfter(addDays(offer1.dateKey, 2)); // skip 1 day
-  if (offer2) {
-    offers.push(offer2);
-    const offer3 = findOnOrAfter(addDays(offer2.dateKey, 3)); // skip 2 days
-    if (offer3) offers.push(offer3);
-  }
-  return offers;
+  const take = (pool: Slot[]) => {
+    for (const s of pool) {
+      if (offers.length >= OFFER_COUNT) break;
+      if (!offers.some((o) => o.start === s.start)) offers.push(s);
+    }
+  };
+  take(byStart.filter((s) => s.tier !== "secondary" && inWindow(s)));
+  take(byStart.filter((s) => s.tier === "secondary" && inWindow(s)));
+  take(byStart.filter((s) => s.tier !== "secondary" && !inWindow(s)));
+  return offers.sort((a, b) => a.start.localeCompare(b.start));
 }
 
 async function fetchBusy(creds: { apiKey: string; userId: string; accountId: string }, timeMin: string, timeMax: string): Promise<{ start: string; end: string }[]> {
@@ -301,15 +326,7 @@ async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
   ]);
 
   const free = grid.filter((s) => !overlapsBusy(s, busy) && !isBlackedOut(s, blackouts, recurring));
-
-  // Earliest available time per day (a day may offer two fixed times).
-  const earliestPerDay = new Map<string, Slot>();
-  for (const s of free) {
-    const existing = earliestPerDay.get(s.dateKey);
-    if (!existing || s.start < existing.start) earliestPerDay.set(s.dateKey, s);
-  }
-
-  return pickThreeOffers(Array.from(earliestPerDay.values()));
+  return pickOffers(free, now);
 }
 
 // -------------------------------------------------------------------------
@@ -320,7 +337,7 @@ const PREP_LINE = "This is an Interview AMA — please take some time beforehand
 function inviteEmailHtml(firstName: string, bookingUrl: string): string {
   return `<p>Hi ${escHtml(firstName)},</p>
 <p>Thank you for completing our assessment — we'd like to move forward with an Interview AMA.</p>
-<p>It's a video call (about 35 minutes) over Google Meet. Please pick a time that works for you:</p>
+<p>It's a video call (about 30 minutes) over Google Meet. Please pick a time that works for you:</p>
 <p><a href="${escHtml(bookingUrl)}">${escHtml(bookingUrl)}</a></p>
 <p>This link is valid for the next 7 days. Once you pick a time, you'll get a confirmation email with the Google Meet link.</p>
 <p>Looking forward to speaking with you.</p>
@@ -481,7 +498,7 @@ async function processAssessed(agencyId: string, candidateId?: string): Promise<
 async function getOffer(token: string): Promise<Response> {
   const { data: c, error } = await sb
     .from("hiring_candidates")
-    .select("first_name, candidate_name, position, interview_slots_offered, interview_booking_expires_at, interview_booked_at, interview_scheduled_start, interview_meet_url")
+    .select("first_name, candidate_name, position, interview_slots_offered, interview_booking_expires_at, interview_booked_at, interview_scheduled_start, interview_meet_url, interview_confirmed_at")
     .eq("interview_invite_token", token)
     .maybeSingle();
   if (error || !c) return corsJson({ ok: false, error: "not_found" }, 404);
@@ -490,6 +507,7 @@ async function getOffer(token: string): Promise<Response> {
     return corsJson({
       ok: true,
       already_booked: true,
+      confirmed: !!c.interview_confirmed_at,
       first_name: c.first_name || (c.candidate_name || "").split(" ")[0] || "there",
       scheduled_start: c.interview_scheduled_start,
       scheduled_start_display: formatChicago(c.interview_scheduled_start),
@@ -588,6 +606,10 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
     interview_calendar_event_id: eventId,
     interview_meet_url: meetUrl,
     interview_booked_at: new Date().toISOString(),
+    interview_confirmed_at: null,
+    interview_reminder_2d_sent_at: null,
+    interview_reminder_day_sent_at: null,
+    interview_reminder_response: null,
   }).eq("id", c.id);
   if (updErr) return corsJson({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
 
@@ -812,6 +834,239 @@ async function scheduleMeetGreet(agencyId: string, body: any): Promise<Response>
 }
 
 // -------------------------------------------------------------------------
+// Reminders + candidate responses
+// -------------------------------------------------------------------------
+type ReminderKind = "two_days" | "day_of";
+type RespondAction = "confirm" | "reschedule" | "withdraw";
+
+function chicagoDateKey(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(d).reduce((acc: any, p) => { acc[p.type] = p.value; return acc; }, {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function daysBetweenKeys(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split("-").map(Number);
+  const [ty, tm, td] = toKey.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+function respondUrl(token: string, action: RespondAction): string {
+  return `${BOOKING_BASE_URL}/${token}?respond=${action}`;
+}
+
+function responseButtonsHtml(token: string): string {
+  const btn = (action: RespondAction, label: string, bg: string) =>
+    `<a href="${escHtml(respondUrl(token, action))}" style="display:inline-block;margin:6px 8px 6px 0;padding:10px 16px;border-radius:8px;background:${bg};color:#fff;text-decoration:none;font-weight:600;">${label}</a>`;
+  return `<p>${btn("confirm", "Yes, I'll be there", "#2563eb")}${btn("reschedule", "I need a different time", "#475569")}</p>
+<p style="font-size:13px;color:#64748b;">No longer interested? <a href="${escHtml(respondUrl(token, "withdraw"))}">Let us know here</a> and we'll open the time up for someone else.</p>`;
+}
+
+function reminderEmailHtml(firstName: string, startLocal: string, meetUrl: string | null, token: string, kind: ReminderKind, confirmed: boolean): string {
+  const meetLine = meetUrl
+    ? `<p>Google Meet link: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a></p>`
+    : `<p>The Google Meet link is in your calendar invite.</p>`;
+  const opener = kind === "day_of"
+    ? `<p>Your Interview AMA with Story Agency is <strong>today, ${escHtml(startLocal)}</strong> (Central time). It's a 30-minute video call.</p>`
+    : `<p>A quick reminder that your Interview AMA with Story Agency is <strong>${escHtml(startLocal)}</strong> (Central time). It's a 30-minute video call over Google Meet.</p>`;
+  const ask = confirmed
+    ? `<p>You've already confirmed, so we're all set. If anything changes, use the links below.</p>${responseButtonsHtml(token)}`
+    : `<p>Can you confirm you'll be there? One tap:</p>${responseButtonsHtml(token)}`;
+  return `<p>Hi ${escHtml(firstName)},</p>
+${opener}
+${meetLine}
+${ask}
+<p>${escHtml(PREP_LINE)}</p>
+<p>Sincerely,<br/>Story Agency</p>`;
+}
+
+function reminderSubject(startLocal: string, kind: ReminderKind, confirmed: boolean): string {
+  if (kind === "day_of") return `Today: your Interview AMA with Story Agency (${startLocal})`;
+  return confirmed ? `Reminder: your Interview AMA is ${startLocal}` : `Still good for ${startLocal}? Your Interview AMA`;
+}
+
+async function cancelCalendarEvent(agencyId: string, eventId: string | null): Promise<{ ok: boolean; error?: string }> {
+  if (!eventId) return { ok: true };
+  const creds = await getCalendarCreds(agencyId);
+  if (!creds) return { ok: false, error: "calendar creds missing" };
+  const res = await callComposio({
+    apiKey: creds.apiKey,
+    userId: creds.userId,
+    connectedAccountId: creds.accountId,
+    toolSlug: "GOOGLECALENDAR_DELETE_EVENT",
+    toolArguments: { calendar_id: CALENDAR_ID, event_id: eventId, send_updates: "all" },
+  });
+  return res.ok ? { ok: true } : { ok: false, error: res.error ?? "unknown" };
+}
+
+// -------------------------------------------------------------------------
+// mode=send_reminders  (internal, shared_secret gated)
+// -------------------------------------------------------------------------
+// Two days before: confirm-or-reschedule ask. Morning of: reminder with the
+// Meet link (still carrying the response links if unconfirmed). A booking
+// made with less than two days' notice gets the ask the morning before, so
+// nobody is skipped. Idempotent per touch via the *_sent_at stamps.
+async function sendReminders(agencyId: string): Promise<Response> {
+  const now = new Date();
+  const todayKey = chicagoDateKey(now);
+  const { data: rows, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, status, interview_invite_token, interview_scheduled_start, interview_meet_url, interview_confirmed_at, interview_reminder_2d_sent_at, interview_reminder_day_sent_at")
+    .eq("agency_id", agencyId)
+    .not("interview_booked_at", "is", null)
+    .not("interview_scheduled_start", "is", null)
+    .gt("interview_scheduled_start", now.toISOString())
+    .neq("status", "declined")
+    .order("interview_scheduled_start", { ascending: true })
+    .limit(100);
+  if (error) return jsonResponse({ ok: false, error: error.message }, 500);
+
+  const gmailCreds = await getComposioGmailCreds(agencyId);
+  if (!gmailCreds.ok) return jsonResponse({ ok: false, error: `gmail creds: ${gmailCreds.error}` }, 500);
+
+  const results: any[] = [];
+  for (const c of rows ?? []) {
+    if (!c.email || !c.interview_invite_token) { results.push({ id: c.id, action: "skipped", reason: "no email or token" }); continue; }
+    const daysAhead = daysBetweenKeys(todayKey, chicagoDateKey(new Date(c.interview_scheduled_start)));
+    let kind: ReminderKind | null = null;
+    if (daysAhead === 0 && !c.interview_reminder_day_sent_at) kind = "day_of";
+    else if (daysAhead >= 1 && daysAhead <= 2 && !c.interview_reminder_2d_sent_at) kind = "two_days";
+    if (!kind) continue;
+
+    const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+    const startLocal = formatChicago(c.interview_scheduled_start);
+    const confirmed = !!c.interview_confirmed_at;
+    const sendRes = await sendGmail({
+      creds: gmailCreds.creds,
+      to: c.email,
+      subject: reminderSubject(startLocal, kind, confirmed),
+      html: reminderEmailHtml(firstName, startLocal, c.interview_meet_url, c.interview_invite_token, kind, confirmed),
+    });
+    if (!sendRes.ok) { results.push({ id: c.id, name: c.candidate_name, action: "send_failed", kind, error: sendRes.error }); continue; }
+    const stamp = kind === "day_of" ? { interview_reminder_day_sent_at: now.toISOString() } : { interview_reminder_2d_sent_at: now.toISOString() };
+    await sb.from("hiring_candidates").update(stamp).eq("id", c.id);
+    results.push({ id: c.id, name: c.candidate_name, action: "sent", kind, confirmed, days_ahead: daysAhead });
+
+    // Morning of, still no answer to the two-day ask -> Peter hears about it
+    // before he sits down for a call nobody joins. Telegram DM via the
+    // paper_newt bot, same channel the task reminders use.
+    if (kind === "day_of" && !confirmed) {
+      const dm = await notifyOwnerUnconfirmed(agencyId, c, startLocal);
+      results[results.length - 1].owner_notified = dm;
+    }
+  }
+  const sent = results.filter((r) => r.action === "sent").length;
+  return jsonResponse({
+    ok: true, today: todayKey, scanned: (rows ?? []).length, sent, results,
+    records_processed: sent,
+    output_summary: sent === 0 ? `no interview reminders due (${(rows ?? []).length} upcoming)` : `sent ${sent} interview reminder(s)`,
+  });
+}
+
+async function notifyOwnerUnconfirmed(agencyId: string, c: any, startLocal: string): Promise<boolean> {
+  try {
+    const { data: owner } = await sb
+      .from("team")
+      .select("telegram_user_id")
+      .eq("agency_id", agencyId)
+      .eq("role_level", "Owner")
+      .eq("is_excluded_paper_newt_bot", false)
+      .not("telegram_user_id", "is", null)
+      .limit(1)
+      .maybeSingle();
+    if (!owner?.telegram_user_id) return false;
+    const { data: full } = await sb.from("hiring_candidates").select("phone").eq("id", c.id).maybeSingle();
+    const name = c.candidate_name || c.first_name || "Candidate";
+    const phone = full?.phone ? `\nPhone: ${full.phone}` : "";
+    const text = `⚠️ Interview today, not confirmed\n\n${name} — ${startLocal} CT${phone}\n\nThey got the confirm ask two days ago and the morning-of reminder just now, no answer yet. Might be worth a text.`;
+    const { error } = await sb.rpc("telegram_send_message_v2", { p_chat_id: owner.telegram_user_id, p_text: text, p_bot: "paper_newt" });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------------------
+// mode=respond  (public, token-gated)
+// -------------------------------------------------------------------------
+async function respond(agencyId: string, token: string, action: RespondAction): Promise<Response> {
+  const { data: c, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, status, interview_booked_at, interview_scheduled_start, interview_calendar_event_id, interview_meet_url, interview_confirmed_at")
+    .eq("interview_invite_token", token)
+    .maybeSingle();
+  if (error || !c) return corsJson({ ok: false, error: "not_found" }, 404);
+  if (!c.interview_booked_at) return corsJson({ ok: false, error: "not_booked" }, 409);
+  const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+
+  if (action === "confirm") {
+    const { error: updErr } = await sb.from("hiring_candidates").update({
+      interview_confirmed_at: c.interview_confirmed_at || new Date().toISOString(),
+      interview_reminder_response: "confirmed",
+    }).eq("id", c.id);
+    if (updErr) return corsJson({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
+    return corsJson({
+      ok: true, action, first_name: firstName,
+      scheduled_start_display: formatChicago(c.interview_scheduled_start),
+      meet_url: c.interview_meet_url, prep_line: PREP_LINE,
+    });
+  }
+
+  // reschedule or withdraw: the booked time goes back on the board.
+  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id);
+  const cleared = {
+    interview_scheduled_start: null,
+    interview_scheduled_end: null,
+    interview_calendar_event_id: null,
+    interview_meet_url: null,
+    interview_booked_at: null,
+    interview_confirmed_at: null,
+    interview_reminder_2d_sent_at: null,
+    interview_reminder_day_sent_at: null,
+  };
+
+  if (action === "withdraw") {
+    const { error: updErr } = await sb.from("hiring_candidates").update({
+      ...cleared,
+      interview_reminder_response: "withdrew",
+      status: "declined",
+      decline_reason: "candidate_withdrew",
+      status_updated_at: new Date().toISOString(),
+    }).eq("id", c.id);
+    if (updErr) return corsJson({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
+    return corsJson({ ok: true, action, first_name: firstName, calendar_canceled: cancel.ok });
+  }
+
+  // reschedule
+  const slots = await computeOfferedSlots(agencyId);
+  if (!slots) return corsJson({ ok: false, error: "calendar_unavailable" }, 500);
+  const { error: updErr } = await sb.from("hiring_candidates").update({
+    ...cleared,
+    interview_reminder_response: "reschedule",
+    interview_slots_offered: slots,
+    interview_invite_sent_at: new Date().toISOString(),
+    interview_booking_expires_at: new Date(Date.now() + BOOKING_WINDOW_DAYS * 24 * 3600 * 1000).toISOString(),
+  }).eq("id", c.id);
+  if (updErr) return corsJson({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
+
+  if (c.email) {
+    const gmailCreds = await getComposioGmailCreds(agencyId);
+    if (gmailCreds.ok) {
+      await sendGmail({
+        creds: gmailCreds.creds,
+        to: c.email,
+        subject: "Pick a new time for your Interview AMA — Story Agency",
+        html: inviteEmailHtml(firstName, `${BOOKING_BASE_URL}/${token}`),
+      });
+    }
+  }
+  return corsJson({
+    ok: true, action, first_name: firstName, calendar_canceled: cancel.ok, prep_line: PREP_LINE,
+    slots: slots.map((s) => ({ start: s.start, end: s.end, display: formatChicago(s.start) })),
+  });
+}
+
+// -------------------------------------------------------------------------
 // Router
 // -------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
@@ -845,6 +1100,18 @@ Deno.serve(async (req: Request) => {
   if (mode === "claim_slot") {
     if (!body.token || !body.start) return corsJson({ ok: false, error: "missing token or start" }, 400);
     return await claimSlot(agencyId, body.token, body.start);
+  }
+
+  if (mode === "respond") {
+    if (!body.token) return corsJson({ ok: false, error: "missing token" }, 400);
+    if (!["confirm", "reschedule", "withdraw"].includes(body.action)) return corsJson({ ok: false, error: "bad action" }, 400);
+    return await respond(agencyId, body.token, body.action as RespondAction);
+  }
+
+  if (mode === "send_reminders") {
+    const denied = await requireSharedSecret(agencyId, body.shared_secret);
+    if (denied) return denied;
+    return await sendReminders(agencyId);
   }
 
   if (mode === "schedule_meet_greet") {

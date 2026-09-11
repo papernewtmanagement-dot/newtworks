@@ -33,17 +33,32 @@ function buildMonthGrid(monthDate) {
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-// Mirrors FIXED_TIMES_BY_WEEKDAY in the hiring-interview-scheduler edge
-// function — the actual predefined interview times. Keep these two in sync
-// if the schedule ever changes.
-const FIXED_TIMES_BY_WEEKDAY = {
-  1: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 15, m: 30, label: "3:30 PM" }], // Mon
-  2: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 15, m: 30, label: "3:30 PM" }], // Tue
-  3: [{ h: 10, m: 0, label: "10:00 AM" }],                                     // Wed
-  4: [{ h: 15, m: 30, label: "3:30 PM" }],                                     // Thu
-  5: [{ h: 12, m: 30, label: "12:30 PM" }],                                    // Fri
+// Mirrors PRIMARY_TIMES_BY_WEEKDAY / SECONDARY_TIMES_BY_WEEKDAY in the
+// hiring-interview-scheduler edge function — the actual predefined interview
+// times (Peter directive 2026-09-11). Keep these in sync if the schedule
+// ever changes. Backup (secondary) times are only offered to candidates once
+// the primary times in the next 7 days are booked.
+const PRIMARY_TIMES_BY_WEEKDAY = {
+  1: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Mon
+  2: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Tue
+  3: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }],                                     // Wed
+  4: [{ h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }],                                     // Thu
+  5: [{ h: 13, m: 0, label: "1:00 PM" }],                                                                         // Fri
 };
-const INTERVIEW_MINUTES = 35;
+const SECONDARY_TIMES_BY_WEEKDAY = {
+  1: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Mon
+  2: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Tue
+  3: [{ h: 10, m: 45, label: "10:45 AM" }],                                     // Wed (no afternoon backup)
+  4: [{ h: 16, m: 15, label: "4:15 PM" }],                                      // Thu (no morning backup)
+  5: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Fri
+};
+const FIXED_TIMES_BY_WEEKDAY = Object.fromEntries(
+  [1, 2, 3, 4, 5].map((d) => [d, [
+    ...PRIMARY_TIMES_BY_WEEKDAY[d].map((t) => ({ ...t, tier: "primary" })),
+    ...SECONDARY_TIMES_BY_WEEKDAY[d].map((t) => ({ ...t, tier: "secondary" })),
+  ]])
+);
+const INTERVIEW_MINUTES = 30;
 const TZ = "America/Chicago";
 
 function isThirdFriday(d) {
@@ -79,7 +94,7 @@ function chicagoKey(isoUtc) {
 function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurring, scheduledByKey }) {
   const weekday = dateObj.getDay();
   const fridayExcluded = isThirdFriday(dateObj);
-  const fixed = fridayExcluded ? [] : (FIXED_TIMES_BY_WEEKDAY[weekday] || []).map((s) => ({ h: s.h, m: s.m, label: s.label, source: "fixed" }));
+  const fixed = fridayExcluded ? [] : (FIXED_TIMES_BY_WEEKDAY[weekday] || []).map((s) => ({ h: s.h, m: s.m, label: s.label, source: "fixed", tier: s.tier }));
   const manual = (manualByDate.get(dateISO) || []).map((r) => {
     const [h, m] = r.start_time.split(":").map(Number);
     return { h, m, label: labelForTime(h, m), source: "manual", manualId: r.id, note: r.note };
@@ -158,7 +173,7 @@ function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualS
                 return (
                   <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 8, padding: "8px 12px" }}>
                     <div style={{ fontSize: 13, color: "#1e40af" }}>{slot.label} — {slot.candidate.name}</div>
-                    <span style={{ fontSize: 11, color: "#1e40af", fontWeight: 600 }}>Scheduled</span>
+                    <span style={{ fontSize: 11, color: slot.candidate.confirmed ? "#166534" : "#1e40af", fontWeight: 600 }}>{slot.candidate.confirmed ? "Confirmed ✓" : "Scheduled, not confirmed"}</span>
                   </div>
                 );
               }
@@ -179,7 +194,7 @@ function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualS
               }
               return (
                 <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 8, padding: "8px 12px" }}>
-                  <div style={{ fontSize: 13, color: "#166534" }}>{slot.label}{slot.source === "manual" ? " (manual)" : ""}{slot.note ? ` — ${slot.note}` : ""}</div>
+                  <div style={{ fontSize: 13, color: "#166534" }}>{slot.label}{slot.source === "manual" ? " (manual)" : ""}{slot.tier === "secondary" ? " (backup)" : ""}{slot.note ? ` — ${slot.note}` : ""}</div>
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                     {slot.source === "fixed" && (
                       <button
@@ -258,7 +273,7 @@ export default function InterviewSlotsManager() {
         .eq("agency_id", AGENCY_ID),
       supabase.from("hiring_interview_manual_slots").select("id, slot_date, start_time, end_time, note")
         .eq("agency_id", AGENCY_ID).gte("slot_date", gridStartIso).lte("slot_date", gridEndIso),
-      supabase.from("hiring_candidates").select("candidate_name, first_name, interview_scheduled_start")
+      supabase.from("hiring_candidates").select("candidate_name, first_name, interview_scheduled_start, interview_confirmed_at")
         .eq("agency_id", AGENCY_ID).eq("is_test_candidate", false)
         .not("interview_booked_at", "is", null)
         .gte("interview_scheduled_start", gridStart.toISOString())
@@ -295,7 +310,7 @@ export default function InterviewSlotsManager() {
     const m = new Map();
     for (const c of scheduled) {
       const key = chicagoKey(c.interview_scheduled_start);
-      m.set(key, { name: c.candidate_name || c.first_name || "Candidate" });
+      m.set(key, { name: c.candidate_name || c.first_name || "Candidate", confirmed: !!c.interview_confirmed_at });
     }
     return m;
   }, [scheduled]);
@@ -384,7 +399,8 @@ export default function InterviewSlotsManager() {
                     padding: s.status === "removed" ? 0 : "1px 4px",
                     borderRadius: 4,
                     display: "inline-block",
-                    background: s.status === "open" ? "#dcfce7" : s.status === "scheduled" ? "#e0f2fe" : "transparent",
+                    background: s.status === "open" ? (s.tier === "secondary" ? "transparent" : "#dcfce7") : s.status === "scheduled" ? "#e0f2fe" : "transparent",
+                    border: s.status === "open" && s.tier === "secondary" ? "1px dashed #86efac" : "none",
                     color: s.status === "open" ? "#166534" : s.status === "scheduled" ? "#1e40af" : T.slate400,
                     textDecoration: s.status === "removed" ? "line-through" : "none",
                     fontWeight: s.status === "scheduled" ? 700 : s.status === "open" ? 600 : 400,
@@ -395,7 +411,7 @@ export default function InterviewSlotsManager() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {labelForTime(s.h, s.m)}{s.status === "scheduled" ? ` ${s.candidate.name.split(" ")[0]}` : ""}
+                  {labelForTime(s.h, s.m)}{s.status === "scheduled" ? ` ${s.candidate.name.split(" ")[0]}${s.candidate.confirmed ? " ✓" : ""}` : (s.tier === "secondary" ? " backup" : "")}
                 </div>
               ))}
             </div>
