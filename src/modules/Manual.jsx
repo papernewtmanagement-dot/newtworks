@@ -1790,7 +1790,12 @@ What I\'d like to discuss:
            tokens or redesigned. Do not "improve" this without a new preview
            approved first; that is exactly what went wrong last time. */
         .newtworks-handbook-body .nw-rp { margin: 8px 0 2px 0; }
+        .newtworks-handbook-body .nw-rp-card[hidden] { display: none !important; }
         .newtworks-handbook-body .nw-rp-bar { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 0; }
+        .newtworks-handbook-body .nw-rp-bar .nw-rp-select { flex: 1 1 auto; min-width: 0; width: 100%; }
+        .newtworks-handbook-body .nw-rp-inline, .newtworks-handbook-body .nw-rp-inline .nw-rp-cards { display: inline; margin: 0; }
+        .newtworks-handbook-body .nw-rp-inline .nw-rp-card { display: inline; background: none; padding: 0; border-radius: 0; }
+        .newtworks-handbook-body .nw-rp-inline .nw-rp-next { font-size: 12px; padding: 1px 6px; margin-right: 2px; vertical-align: baseline; }
         .newtworks-handbook-body .nw-rp-select {
           font: inherit; font-size: 13px; padding: 4px 8px; margin: 0; min-width: 0;
           border: 1px solid #CBD5C0; border-radius: 6px; background: #fff; max-width: 100%;

@@ -1104,14 +1104,26 @@ function pickItems(md) {
 }
 const RP_SLOT = (n) => `NWRPSLOT${n}END`;
 
-function renderPick(title, options) {
+// {{pick: Title | Label}} renders on one line: refresh button, the label,
+// then the item itself. Quotes are flattened so they sit on that line too.
+function renderPick(title, label, options) {
   const res = options && typeof options.resolveInclude === "function" ? options.resolveInclude(title) : null;
   const items = res && res.status === "ok" ? pickItems(res.md) : [];
   if (!items.length) return "";
-  return renderRoleplay({
-    mode: "pick",
-    scenarios: items.map((md, i) => ({ label: `item ${i + 1}`, lines: [md] })),
-  }, options);
+  const flat = (md) => String(md)
+    .split("\n")
+    .map((l) => l.replace(/^\s*>\s?/, "").trim())
+    .filter(Boolean)
+    .map((l, i) => (i > 0 && /^[-—–]\s+/.test(l) ? "— " + l.replace(/^[-—–]\s+/, "") : l))
+    .join(" ");
+  const cards = items.map((md, i) =>
+    `<span class="nw-rp-card" data-rp-label="item-${i + 1}"${i === 0 ? "" : " hidden"}>${inlineMd(flat(md))}</span>`
+  ).join("");
+  const btn = items.length > 1
+    ? `<button type="button" class="nw-rp-next" title="Pick another" aria-label="Pick another">↻</button> `
+    : "";
+  const lab = label ? `<strong>${escapeHtml(label)}:</strong> ` : "";
+  return `<span class="nw-rp nw-rp-inline" data-rp-mode="pick">${btn}${lab}<span class="nw-rp-cards">${cards}</span></span>`;
 }
 
 function renderRoleplay(block, options) {
@@ -1187,8 +1199,9 @@ function expandRoleplays(md, options, slots) {
     return slotFor(id);
   });
   out = out.replace(/^@@NWRPBLOCK:([^@\n]+)@@$/gm, (_m, id) => (used.has(id) ? "" : slotFor(id)));
-  out = out.replace(PICK_TOKEN_RE, (_m, title) => {
-    slots.push(renderPick(title, options));
+  out = out.replace(PICK_TOKEN_RE, (_m, raw) => {
+    const [title, label] = String(raw).split("|").map((x) => x.trim());
+    slots.push(renderPick(title, label || "", options));
     return RP_SLOT(slots.length - 1);
   });
   return out;
