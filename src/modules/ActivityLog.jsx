@@ -35,6 +35,8 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //    the Multiline credit comes back prorated; the green bar says so.
 //  * Earning Potential (owner only) lives here as its own tab, moved from
 //    Team; it is the shared EarningPotentialTab component untouched.
+//  * My week is the scoreboard: whole team, ranked, four point cards plus
+//    the conversation card in one row, this week's totals beside the title.
 //
 // Layout follows the web-form research Peter asked for (2026-09-04):
 //  * Fewer visible choices. Three policy blocks became one list with one
@@ -59,10 +61,11 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
 const PRODUCTS = [
   { key: "auto",     label: "Auto",                 short: "Auto" },
-  { key: "fire",     label: "Fire (home / renters)", short: "Fire" },
+  { key: "fire",     label: "Fire",                 short: "Fire" },
   { key: "life",     label: "Life",                 short: "Life" },
   { key: "health",   label: "Health",               short: "Health" },
   { key: "variable", label: "Variable",             short: "Variable" },
+  { key: "bank",     label: "Bank",                 short: "Bank" },
 ];
 const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
 const PRODUCT_SHORT = Object.fromEntries(PRODUCTS.map(p => [p.key, p.short]));
@@ -1068,13 +1071,73 @@ function ChangesTab({ roster, values, types }) {
   );
 }
 
-function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
+// =====================================================================
+// My week — the scoreboard (Peter 2026-09-11). Everyone sees the whole
+// team, and every list is ranked. rp_week_scoreboard brings each
+// teammate's Marketing Points, HH Quotes, Sales Points, Retention Points
+// and conversation scorecards for the week, with the items behind every
+// number. Marketing Points come from marketing_point_values (base plus a
+// step for each prior event this year); Sales Points from
+// compute_sp_from_production on issued policies quarter to date (this
+// week = the quarter's total after this week minus after last week);
+// Retention Points from compute_weekly_retention_points.
+// =====================================================================
+const cardGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12, alignItems: "start" };
+const rowBtn = { display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "8px 0", border: "none", background: "transparent", fontFamily: "inherit", fontSize: 13, textAlign: "left" };
+const itemLine = { fontSize: 12, color: T.slate600, display: "flex", flexWrap: "wrap", gap: "2px 8px", alignItems: "center" };
+const miniBtn = { ...btnGhost, padding: "2px 7px", fontSize: 11 };
+const fmtMoney = (n) => `$${fmtPts(n)}`;
+const ratePct = (r) => r == null ? "—" : `${(Number(r) * 100).toFixed(2)}%`;
+const nth = (n) => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+const plural = (n, w) => `${n} ${w}${Number(n) === 1 ? "" : "s"}`;
+
+function Stat({ label, value }) {
+  return (
+    <div style={{ background: T.slate50, borderRadius: 8, padding: "8px 10px" }}>
+      <div style={{ fontSize: 11, color: T.slate500 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>{value}</div>
+    </div>
+  );
+}
+
+// One card: title, team total, then everyone ranked. Tap a name to see what
+// contributed. Cards without items (Conversations) are not expandable.
+function ScoreCard({ title, total, note, people, rankOf, valueOf, subOf, renderItems, open, onToggle }) {
+  const ranked = people.slice().sort((a, b) => (rankOf(b) - rankOf(a)) || String(a.first_name).localeCompare(String(b.first_name)));
+  return (
+    <div style={{ ...cardStyle, padding: "14px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: note ? 2 : 6 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{title}</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>{total}</div>
+      </div>
+      {note && <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>{note}</div>}
+      {ranked.map((p, i) => {
+        const isOpen = !!renderItems && open === p.team_member_id;
+        return (
+          <div key={p.team_member_id} style={{ borderTop: `1px solid ${T.slate100}` }}>
+            <button type="button" onClick={() => renderItems && onToggle(p.team_member_id)} style={{ ...rowBtn, cursor: renderItems ? "pointer" : "default" }}>
+              <span style={{ color: T.slate400, width: 16, flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: T.slate800 }}>
+                {p.first_name}
+                {subOf && <span style={{ display: "block", fontSize: 11, fontWeight: 400, color: T.slate500 }}>{subOf(p)}</span>}
+              </span>
+              <span style={{ fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>{valueOf(p)}</span>
+              {renderItems && <span style={{ color: T.slate400, width: 12, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>}
+            </button>
+            {isOpen && <div style={{ padding: "0 0 10px 22px", display: "grid", gap: 5 }}>{renderItems(p)}</div>}
+          </div>
+        );
+      })}
+      {people.length === 0 && <div style={{ fontSize: 12, color: T.slate500 }}>Nobody on the roster this week.</div>}
+    </div>
+  );
+}
+
+function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("week", weekEndOf(todayCentral()));
-  const [rows, setRows] = useState([]);
-  const [acts, setActs] = useState([]);
+  const [board, setBoard] = useState(null);
   const [sales, setSales] = useState([]);
-  const [quotes, setQuotes] = useState([]);
-  const [rollup, setRollup] = useState([]);   // rp_week_rollup: scorecard average, asks vs outcomes, per member
+  const [open, setOpen] = useState({});      // card -> team_member_id whose items are showing
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -1083,41 +1146,33 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
     for (const t of roster || []) m.set(t.id, t.first_name);
     return (id) => m.get(id) || "—";
   }, [roster]);
-  const labelOf = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v.label])), [values]);
+  const unit = (k) => Number(((values || []).find(v => v.activity_key === k) || {}).points || 0);
   const safeWeek = /^\d{4}-\d{2}-\d{2}$/.test(weekEnd || "") ? weekEnd : weekEndOf(todayCentral());
   const weekStart = addDays(safeWeek, -6);
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const [p, a, s, q, ru] = await Promise.all([
-        supabase.rpc("compute_weekly_retention_points", { p_agency_id: AGENCY_ID, p_week_end_date: safeWeek }),
-        supabase.from("retention_activity_log").select("id, team_member_id, activity_key, occurred_on, credited_week_end_date, credit_available_on, customer_label, note, save_reason, save_line, points, status, source, created_at")
-          .eq("agency_id", AGENCY_ID).eq("status", "credited").or(`week_end_date.eq.${safeWeek},credited_week_end_date.eq.${safeWeek}`).order("occurred_on", { ascending: false }),
-        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, premium, policy_count, is_new_line)")
+      const [b, s] = await Promise.all([
+        supabase.rpc("rp_week_scoreboard", { p_week_end: safeWeek }),
+        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, sales_log_products(line_of_business, product_type, premium, policy_count, is_new_line, issued_date)")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("submitted_date", { ascending: false }),
-        supabase.from("quote_log").select("id, team_member_id, quote_date, customer_label, is_existing_customer, products_discussed, status, created_at")
-          .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("quote_date", { ascending: false }),
-        supabase.rpc("rp_week_rollup", { p_week_end: safeWeek, p_team_member_id: null }),
       ]);
-      if (p.error) throw p.error;
-      setRows(Array.isArray(p.data) ? p.data : []);
-      setActs(Array.isArray(a.data) ? a.data : []);
+      if (b.error) throw b.error;
+      if (b.data && b.data.ok === false) throw new Error(b.data.error || "Could not load the week.");
+      setBoard(b.data || null);
       setSales(Array.isArray(s.data) ? s.data : []);
-      setQuotes(Array.isArray(q.data) ? q.data : []);
-      setRollup(Array.isArray(ru.data) ? ru.data : []);
     } catch (e) { setErr(errText(e)); } finally { setLoading(false); }
   }, [safeWeek]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  const mine = (r) => isAdmin || r.team_member_id === myTeamId;
-  const myRollup = rollup.filter(mine).filter(r => r.scorecards > 0 || r.pivots || r.policy_reviews);
-  const visibleRows = rows.filter(mine);
-  const teamNet = rows.reduce((s, r) => s + Number(r.net_points || 0), 0);
-  const myActs = acts.filter(mine);
-  const mySales = sales.filter(r => isAdmin || r.team_member_id === myTeamId || r.sourced_by_team_member_id === myTeamId);
-  const myQuotes = quotes.filter(mine);
+  const people = Array.isArray(board?.people) ? board.people : [];
+  const team = board?.team || {};
+  const canRemove = (tm) => isAdmin || tm === myTeamId;
+  const toggle = (card) => (id) => setOpen(o => ({ ...o, [card]: o[card] === id ? null : id }));
+  const cardN = people.reduce((s, p) => s + Number(p.conversations?.scorecards || 0), 0);
+  const teamAvg = cardN ? people.reduce((s, p) => s + Number(p.conversations?.avg || 0) * Number(p.conversations?.scorecards || 0), 0) / cardN : null;
 
   const voidRow = async (fn, id, what) => {
     if (!window.confirm(`Remove this ${what}?`)) return;
@@ -1126,101 +1181,106 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
     load();
   };
 
+  const marketingItems = (p) => {
+    const items = p.marketing?.items || [];
+    if (!items.length) return <div style={itemLine}>Nothing this week.</div>;
+    return items.map(it => (
+      <div key={it.id} style={itemLine}>
+        <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
+        <span>{it.label}{Number(it.nth) > 1 ? <span style={{ color: T.slate400 }}> · {nth(Number(it.nth))} this year</span> : null}</span>
+        <strong style={{ color: T.slate900 }}>{fmtPts(it.points)}</strong>
+      </div>
+    ));
+  };
+  const quoteItems = (p) => {
+    const items = p.quotes?.items || [];
+    if (!items.length) return <div style={itemLine}>No quotes this week.</div>;
+    return items.map(it => (
+      <div key={it.id} style={itemLine}>
+        <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
+        <span>{it.types || (it.products || []).map(k => PRODUCT_SHORT[k] || k).join(", ") || "—"}</span>
+        {it.source && <span style={{ color: T.slate400 }}>{it.source}</span>}
+        {canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_quote", it.id, "quote")}>Remove</button>}
+      </div>
+    ));
+  };
+  const salesItems = (p) => {
+    const s = p.sales || {};
+    const rows = (s.items || []).map(it => (
+      <div key={it.id} style={itemLine}>
+        <span>{fmtDate(it.issued_on)}</span><span>{it.customer || "—"}</span>
+        <span>{it.type}{it.vehicles ? ` · ${plural(it.vehicles, "car")}` : ""}</span>
+        <strong style={{ color: T.slate900 }}>{fmtMoney(it.premium)}</strong>
+      </div>
+    ));
+    if (!rows.length) rows.push(<div key="none" style={itemLine}>Nothing issued this week.</div>);
+    rows.push(<div key="qtd" style={{ ...itemLine, color: T.slate400 }}>Quarter to date {fmtPts(s.qtd_points)} · P&C rate {ratePct(s.pc_rate)} · L&H rate {ratePct(s.lh_rate)}</div>);
+    return rows;
+  };
+  const retentionItems = (p) => {
+    const r = p.retention || {};
+    const rows = [
+      <div key="hours" style={itemLine}><span>Hours in office</span><span>{fmtPts(r.hours_in_office)} × {fmtMoney(unit("hour_in_office"))}</span><strong style={{ color: T.slate900 }}>{fmtMoney(r.hour_points)}</strong></div>,
+      <div key="calls" style={itemLine}><span>Calls answered</span><span>{r.calls_answered} × {fmtMoney(unit("call_answered"))}</span><strong style={{ color: T.slate900 }}>{fmtMoney(r.call_points)}</strong></div>,
+    ];
+    for (const it of r.items || []) {
+      rows.push(
+        <div key={it.id} style={itemLine}>
+          <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
+          <span>{it.label}{it.clears_on ? <span style={{ color: T.amber }}> · clears {fmtDate(it.clears_on)}</span> : null}</span>
+          {it.note && <span style={{ color: T.slate400 }}>{it.note}</span>}
+          <strong style={{ color: T.slate900 }}>{fmtMoney(it.points)}</strong>
+          {it.source === "manual" && canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_activity", it.id, "entry")}>Remove</button>}
+        </div>
+      );
+    }
+    if (Number(r.reduction_pct) > 0) rows.push(<div key="red" style={{ ...itemLine, color: T.red }}><span>Team missed {fmtPts(r.missed_pct)}% of calls</span><strong>−{fmtPts(r.reduction_pct)}% of gross</strong></div>);
+    return rows;
+  };
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <SpotCheck isAdmin={isAdmin} />
-      <div style={{ ...cardStyle, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Week of {fmtDate(weekStart)} – {fmtDate(safeWeek)}</div>
-          <div style={{ fontSize: 12, color: T.slate500 }}>Sunday through Saturday. Hours and calls come from the systems; the rest from what was logged.</div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <TabLink href={weekHref(addDays(safeWeek, -7))} onSelect={() => setWeekEnd(addDays(safeWeek, -7))} style={btnGhost}>← Prior week</TabLink>
-          <TabLink href={weekHref(weekEndOf(todayCentral()))} onSelect={() => setWeekEnd(weekEndOf(todayCentral()))} style={btnGhost}>This week</TabLink>
-          <TabLink href={weekHref(addDays(safeWeek, 7))} onSelect={() => setWeekEnd(addDays(safeWeek, 7))} style={btnGhost} disabled={safeWeek >= weekEndOf(todayCentral())}>Next week →</TabLink>
-        </div>
-      </div>
-
-      {/* conversation scorecard average + asks against outcomes (rp_week_rollup) */}
-      {myRollup.length > 0 && (
-        <div style={cardStyle}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Conversations this week</div>
-          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>Scorecard average is 1 to 3 across every part you scored. Pivots are tracked, not paid; the Policy Reviews next to them are what pays.</div>
-          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr>{isAdmin && <th style={tableTh}>Who</th>}<th style={tableTh}>Scorecards</th><th style={tableTh}>Average</th><th style={tableTh}>Pivots → Policy reviews</th></tr></thead>
-              <tbody>
-                {myRollup.map(r => (
-                  <tr key={r.team_member_id}>
-                    {isAdmin && <td style={tableTd}>{nameOf(r.team_member_id)}</td>}
-                    <td style={tableTd}>{r.scorecards}</td>
-                    <td style={tableTd}>{r.scorecard_avg == null ? "\u2014" : Number(r.scorecard_avg).toFixed(2)}</td>
-                    <td style={tableTd}>{r.pivots} → {r.policy_reviews}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Week of {fmtDate(weekStart)} – {fmtDate(safeWeek)} {loading ? <span style={{ color: T.slate400, fontWeight: 400, fontSize: 13 }}>· loading…</span> : null}</div>
+            <div style={{ fontSize: 12, color: T.slate500 }}>Sunday through Saturday. Whole team, ranked. Tap a name to see what counted.</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <TabLink href={weekHref(addDays(safeWeek, -7))} onSelect={() => setWeekEnd(addDays(safeWeek, -7))} style={btnGhost}>← Prior week</TabLink>
+            <TabLink href={weekHref(weekEndOf(todayCentral()))} onSelect={() => setWeekEnd(weekEndOf(todayCentral()))} style={btnGhost}>This week</TabLink>
+            <TabLink href={weekHref(addDays(safeWeek, 7))} onSelect={() => setWeekEnd(addDays(safeWeek, 7))} style={btnGhost} disabled={safeWeek >= weekEndOf(todayCentral())}>Next week →</TabLink>
           </div>
         </div>
-      )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginTop: 12 }}>
+          <Stat label="Marketing Points" value={fmtPts(team.marketing)} />
+          <Stat label="HH Quotes" value={Number(team.quotes || 0)} />
+          <Stat label="Sales Points" value={fmtPts(team.sales)} />
+          <Stat label="Retention Points" value={fmtMoney(team.retention_net)} />
+        </div>
+      </div>
 
       {err && <Notice kind="error">{err}</Notice>}
 
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Retention Points {loading ? <span style={{ color: T.slate400, fontWeight: 400 }}>· loading…</span> : null}</div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr>
-              <th style={tableTh}>Who</th><th style={tableTh}>Hours in office</th><th style={tableTh}>Calls answered</th><th style={tableTh}>Team missed %</th>
-              <th style={tableTh}>Logged</th><th style={tableTh}>From sales</th><th style={tableTh}>Gross</th><th style={tableTh}>Reduction</th><th style={tableTh}>Net points</th>
-            </tr></thead>
-            <tbody>
-              {visibleRows.map(r => (
-                <tr key={r.team_member_id}>
-                  <td style={tableTd}><strong>{r.first_name}</strong> <span style={{ color: T.slate400, fontSize: 11 }}>{r.role_category}</span></td>
-                  <td style={tableTd}>{fmtPts(r.hours_in_office)} <span style={{ color: T.slate400 }}>(${fmtPts(r.hour_points)})</span></td>
-                  <td style={tableTd}>{r.calls_answered} <span style={{ color: T.slate400 }}>(${fmtPts(r.call_points)})</span></td>
-                  <td style={tableTd}>{fmtPts(r.missed_pct)}%</td>
-                  <td style={tableTd}>${fmtPts(r.logged_points)}</td>
-                  <td style={tableTd}>${fmtPts(r.derived_points)}</td>
-                  <td style={tableTd}>${fmtPts(r.gross_points)}</td>
-                  <td style={tableTd}>{fmtPts(r.reduction_pct)}%</td>
-                  <td style={{ ...tableTd, fontWeight: 700, color: T.slate900 }}>${fmtPts(r.net_points)}</td>
-                </tr>
-              ))}
-              {!loading && visibleRows.length === 0 && <tr><td style={tableTd} colSpan={9}>Nothing to show for this week yet.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Team total: <strong style={{ color: T.slate800 }}>${fmtPts(teamNet)}</strong> net points. One point = one dollar.</div>
-        {rows[0]?.detail && (
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>
-            Team missed {Number(rows[0].detail.team_missed_calls || 0)} of {Number(rows[0].detail.team_calls_answered || 0) + Number(rows[0].detail.team_missed_calls || 0)} calls. The phone rings everyone, so a call nobody picked up — hung up or left a voicemail — counts against the whole team.
-          </div>
-        )}
-      </div>
-
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Logged this week</div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Date</th>{isAdmin && <th style={tableTh}>Who</th>}<th style={tableTh}>What</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
-            <tbody>
-              {myActs.map(r => (
-                <tr key={r.id}>
-                  <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
-                  {isAdmin && <td style={tableTd}>{nameOf(r.team_member_id)}</td>}
-                  <td style={tableTd}>{labelOf[r.activity_key] || r.activity_key}{r.credit_available_on ? <div style={{ fontSize: 11, color: T.amber }}>clears {fmtDate(r.credit_available_on)}</div> : null}</td>
-                  <td style={tableTd}>{r.customer_label || "—"}</td>
-                  <td style={{ ...tableTd, maxWidth: 320 }}>{r.save_reason ? `${PRODUCT_LABEL[r.save_line] || r.save_line}: ${r.save_reason}` : (r.note || "—")}</td>
-                  <td style={tableTd}>${fmtPts(r.points)}</td>
-                  <td style={tableTd}>{r.source === "manual" ? <button style={btnGhost} onClick={() => voidRow("rp_void_activity", r.id, "entry")}>Remove</button> : <span style={{ fontSize: 11, color: T.slate400 }}>from sale</span>}</td>
-                </tr>
-              ))}
-              {!loading && myActs.length === 0 && <tr><td style={tableTd} colSpan={isAdmin ? 7 : 6}>Nothing logged yet this week.</td></tr>}
-            </tbody>
-          </table>
-        </div>
+      <div style={cardGrid}>
+        <ScoreCard title="Marketing Points" total={fmtPts(team.marketing)} people={people}
+          rankOf={p => Number(p.marketing?.points || 0)} valueOf={p => fmtPts(p.marketing?.points)}
+          renderItems={marketingItems} open={open.m} onToggle={toggle("m")} />
+        <ScoreCard title="HH Quotes" total={Number(team.quotes || 0)} people={people}
+          rankOf={p => Number(p.quotes?.count || 0)} valueOf={p => Number(p.quotes?.count || 0)}
+          renderItems={quoteItems} open={open.q} onToggle={toggle("q")} />
+        <ScoreCard title="Sales Points" total={fmtPts(team.sales)} note="Counted the week a policy issues." people={people}
+          rankOf={p => Number(p.sales?.points || 0)} valueOf={p => fmtPts(p.sales?.points)}
+          subOf={p => `${fmtPts(p.sales?.qtd_points)} this quarter`}
+          renderItems={salesItems} open={open.s} onToggle={toggle("s")} />
+        <ScoreCard title="Retention Points" total={fmtMoney(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
+          rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtMoney(p.retention?.net)}
+          subOf={p => `${fmtMoney(p.retention?.gross)} gross · team missed ${fmtPts(p.retention?.missed_pct)}%`}
+          renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />
+        <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Scorecard average, 1 to 3. Pivots are tracked, not paid." people={people}
+          rankOf={p => Number(p.conversations?.avg || 0)} valueOf={p => p.conversations?.avg == null ? "—" : Number(p.conversations.avg).toFixed(2)}
+          subOf={p => `${plural(p.conversations?.scorecards || 0, "scorecard")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
       </div>
 
       <div style={cardStyle}>
@@ -1229,42 +1289,21 @@ function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr><th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th><th style={tableTh}>Household</th><th style={tableTh}>Products</th><th style={tableTh}>Cars</th><th style={tableTh}>Premium</th><th style={tableTh}>Source</th><th style={tableTh}>GNC</th><th style={tableTh}></th></tr></thead>
             <tbody>
-              {mySales.map(r => (
+              {sales.map(r => (
                 <tr key={r.id}>
                   <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
-                  <td style={tableTd}>{nameOf(r.team_member_id)}{r.sourced_by_team_member_id !== r.team_member_id ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}</td>
+                  <td style={tableTd}>{nameOf(r.team_member_id)}{r.sourced_by_team_member_id && r.sourced_by_team_member_id !== r.team_member_id ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}</td>
                   <td style={tableTd}>{r.customer_label}</td>
                   <td style={tableTd}>{r.household_status === "new" ? "New" : r.household_status === "winback" ? "Winback" : "Existing"}</td>
-                  <td style={tableTd}>{(r.sales_log_products || []).map(p => `${PRODUCT_LABEL[p.line_of_business] || p.line_of_business} $${fmtPts(p.premium)}`).join(", ")}</td>
+                  <td style={tableTd}>{(r.sales_log_products || []).map((p, i) => <div key={i}>{typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business} ${fmtPts(p.premium)}{p.issued_date ? "" : <span style={{ color: T.amber }}> · not issued</span>}</div>)}</td>
                   <td style={tableTd}>{r.vehicle_count ?? "—"}</td>
                   <td style={tableTd}>${fmtPts(r.total_premium)}</td>
                   <td style={tableTd}>{r.marketing_source}</td>
                   <td style={tableTd}>{r.gnc_used ? "Yes" : "No"}</td>
-                  <td style={tableTd}><button style={btnGhost} onClick={() => voidRow("rp_void_sale", r.id, "sale")}>Remove</button></td>
+                  <td style={tableTd}>{canRemove(r.team_member_id) && <button style={btnGhost} onClick={() => voidRow("rp_void_sale", r.id, "sale")}>Remove</button>}</td>
                 </tr>
               ))}
-              {!loading && mySales.length === 0 && <tr><td style={tableTd} colSpan={10}>No sales logged this week.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Quotes this week <span style={{ color: T.slate400, fontWeight: 400 }}>· {myQuotes.length}</span></div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Date</th>{isAdmin && <th style={tableTh}>Who</th>}<th style={tableTh}>Customer</th><th style={tableTh}>Products discussed</th><th style={tableTh}></th></tr></thead>
-            <tbody>
-              {myQuotes.map(r => (
-                <tr key={r.id}>
-                  <td style={tableTd}>{fmtDate(r.quote_date)}</td>
-                  {isAdmin && <td style={tableTd}>{nameOf(r.team_member_id)}</td>}
-                  <td style={tableTd}>{r.customer_label}{r.is_existing_customer ? <span style={{ fontSize: 11, color: T.slate400 }}> · existing</span> : null}</td>
-                  <td style={tableTd}>{(r.products_discussed || []).map(k => PRODUCT_LABEL[k] || k).join(", ")}</td>
-                  <td style={tableTd}><button style={btnGhost} onClick={() => voidRow("rp_void_quote", r.id, "quote")}>Remove</button></td>
-                </tr>
-              ))}
-              {!loading && myQuotes.length === 0 && <tr><td style={tableTd} colSpan={isAdmin ? 5 : 4}>No quotes logged this week.</td></tr>}
+              {!loading && sales.length === 0 && <tr><td style={tableTd} colSpan={10}>No sales logged this week.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1286,6 +1325,7 @@ export default function ActivityLog({ userRole }) {
   const [roster, setRoster] = useState([]);
   const [myTeamId, setMyTeamId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [head, setHead] = useState(null);   // this week's team totals, shown beside the title on every tab
   const isAdmin = ["owner", "manager"].includes(userRole);
   // Logging on someone else's behalf is the owner's alone. The server enforces
   // it too (rp_resolve_actor), so hiding the picker is not the only thing
@@ -1318,6 +1358,13 @@ export default function ActivityLog({ userRole }) {
     return () => { alive = false; };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("rp_week_scoreboard", { p_week_end: weekEndOf(todayCentral()) })
+      .then(r => { if (alive && r?.data?.ok) setHead(r.data.team || null); });
+    return () => { alive = false; };
+  }, [refreshKey]);
+
   const bump = () => setRefreshKey(k => k + 1);
   const tabs = [
     { id: "log", label: "Log" },
@@ -1334,6 +1381,15 @@ export default function ActivityLog({ userRole }) {
           <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Production</div>
           <div style={{ fontSize: 13, color: T.slate500 }}>What you wrote, quoted, kept, and lost. Logged as it happens.</div>
         </div>
+        {head && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }} title="This week, whole team">
+            {[["Marketing", fmtPts(head.marketing)], ["HH Quotes", Number(head.quotes || 0)], ["Sales Pts", fmtPts(head.sales)], ["Retention", `$${fmtPts(head.retention_net)}`]].map(([l, v]) => (
+              <span key={l} style={{ display: "inline-flex", gap: 5, alignItems: "baseline", padding: "5px 10px", borderRadius: 999, background: T.blueLt, color: T.blue, fontSize: 12, fontWeight: 600 }}>
+                <span style={{ fontWeight: 500, opacity: 0.8 }}>{l}</span><strong style={{ fontSize: 13 }}>{v}</strong>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
         {tabs.map(t => (
@@ -1346,7 +1402,7 @@ export default function ActivityLog({ userRole }) {
 
       {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
-      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
+      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} values={values} types={types} />}
     </div>
