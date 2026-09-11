@@ -72,7 +72,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing customer" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "issued", "week"];
+const TABS = ["log", "issued", "week", "changes"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -912,6 +912,162 @@ function IssuedTab({ types, refreshKey }) {
   );
 }
 
+// =====================================================================
+// Changes — who changed what and when on this module (Peter 2026-09-10).
+// Admin only. Reads change_log_recent(); its rows come from the trigger on
+// the seven Production tables, so page clicks, undo, voids, issued marks,
+// and maintenance SQL all land here. Rows written by one Log click share a
+// txid and are shown as one group.
+// =====================================================================
+const CHANGE_LABEL = {
+  premium: "premium", total_premium: "total premium", issued_date: "issued", status: "status", void_reason: "void reason",
+  note: "note", customer_label: "customer", customer_first_name: "first name", customer_last_initial: "last initial",
+  marketing_source: "source", marketing_source_import: "source as imported", household_status: "relationship",
+  relationship_type: "relationship", submitted_date: "submitted", quote_date: "quote date", occurred_on: "date",
+  canceled_on: "canceled on", vehicle_count: "cars", policy_count: "policies", line_of_business: "line", policy_line: "line",
+  save_line: "line", product_type: "product", is_new_line: "new line", points: "points", activity_key: "activity",
+  save_reason: "save reason", reason: "reason", week_end_date: "week", credited_week_end_date: "credited week",
+  credit_available_on: "clears on", products_discussed: "products discussed", is_existing_customer: "existing customer",
+  gnc_used: "GNC used", ecrm_opportunity_url: "ECRM link", ecrm_url: "ECRM link", team_member_id: "person",
+  sourced_by_team_member_id: "sourced by", saves_voided: "saves voided", chargeback_points: "chargeback",
+  window_fraction_left: "window left", verified_at: "verified", scorecard_date: "date", average_score: "average",
+  recording_turned_in: "recording turned in", recording_url: "recording", opportunity_ref: "opportunity",
+};
+// Bookkeeping columns that say nothing a person needs to read.
+const CHANGE_HIDE = /^(id|agency_id|created_by|created_by_user_id|created_at|updated_at|voided_by|voided_at|verified_by|source|source_id|sales_log_id|quote_log_id|multiline_credit_id|matched_sale_product_id|chargeback_activity_id|entry_source|tenure_tier_at_entry|entry_type)$/;
+const CHANGE_WINDOWS = [
+  { days: 7,  label: "Last 7 days" },
+  { days: 30, label: "Last 30 days" },
+  { days: 90, label: "Last 90 days" },
+];
+
+function changeLabel(key) {
+  return CHANGE_LABEL[key] || key.replace(/_score$/, "").replace(/_/g, " ");
+}
+function changeWhen(ts) {
+  const d = new Date(ts);
+  return isNaN(d) ? "—" : d.toLocaleString("en-US", { timeZone: "America/Chicago", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function ChangeVal({ k, v, ctx }) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (/team_member_id$/.test(k)) return ctx.nameOf(v);
+  if (/(premium|points)$/.test(k)) return `$${fmtPts(v)}`;
+  if (k === "window_fraction_left") return `${Math.round(Number(v) * 100)}%`;
+  if (k === "activity_key") return ctx.labelOf[v] || v;
+  if (Array.isArray(v)) return v.map(x => PRODUCT_SHORT[x] || x).join(", ") || "—";
+  if (/^(line_of_business|policy_line|save_line)$/.test(k)) return PRODUCT_SHORT[v] || v;
+  if (k === "household_status" || k === "relationship_type") return (RELATIONSHIPS.find(r => r.key === v) || {}).label || v;
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return fmtDate(v.slice(0, 10));
+  return String(v);
+}
+// One line that says what the row is, for adds and removals.
+function changeSummary(r, ctx) {
+  const row = r.new_row || r.old_row || {};
+  const money = (k) => row[k] == null ? "" : ` · $${fmtPts(row[k])}`;
+  const cars = row.vehicle_count ? ` · ${row.vehicle_count} car${row.vehicle_count > 1 ? "s" : ""}` : "";
+  const line = (k) => PRODUCT_SHORT[row[k]] || row[k] || "";
+  const product = (k) => row.product_type ? ` ${typeLabel(ctx.types, row[k], row.product_type) || row.product_type}` : "";
+  switch (r.table_name) {
+    case "sales_log":              return `Sale${money("total_premium")}${cars}${row.marketing_source ? ` · ${row.marketing_source}` : ""}`;
+    case "sales_log_products":     return `${line("line_of_business")}${product("line_of_business")}${money("premium")}${cars}${row.issued_date ? ` · issued ${fmtDate(row.issued_date)}` : " · not issued"}`;
+    case "quote_log":              return `Quote${Array.isArray(row.products_discussed) && row.products_discussed.length ? ` · ${row.products_discussed.map(x => PRODUCT_SHORT[x] || x).join(", ")}` : ""}`;
+    case "quote_log_products":     return `Quoted ${line("line_of_business")}${product("line_of_business")}`;
+    case "cancelation_log":        return `Canceled ${line("policy_line")}${money("premium")}${row.canceled_on ? ` on ${fmtDate(row.canceled_on)}` : ""}${row.reason ? ` · ${row.reason}` : ""}`;
+    case "retention_activity_log": return `${ctx.labelOf[row.activity_key] || row.activity_key || "Activity"}${row.points != null ? ` · $${fmtPts(row.points)}` : ""}${row.credit_available_on ? ` · clears ${fmtDate(row.credit_available_on)}` : ""}`;
+    case "fit_scorecards":         return `FIT scorecard${row.average_score != null ? ` · ${Number(row.average_score).toFixed(2)}` : ""}`;
+    default:                       return r.item;
+  }
+}
+
+function ChangesTab({ roster, values, types }) {
+  const [days, setDays] = useState(30);
+  const [who, setWho] = useState("");
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const nameOf = useCallback((id) => (roster.find(t => t.id === id) || {}).first_name || (id ? "former teammate" : "—"), [roster]);
+  const labelOf = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v.label])), [values]);
+  const ctx = useMemo(() => ({ nameOf, labelOf, types: types || {} }), [nameOf, labelOf, types]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setErr("");
+      const r = await supabase.rpc("change_log_recent", { p_days: days, p_team_member_id: who || null, p_limit: 300 });
+      if (!alive) return;
+      if (r.error) { setErr(errText(r.error)); setRows([]); return; }
+      setRows(Array.isArray(r.data) ? r.data : []);
+    })();
+    return () => { alive = false; };
+  }, [days, who]);
+
+  const selectStyle = { ...inputBase, width: "auto", fontSize: 13, padding: "7px 10px" };
+  const verb = { insert: "Added", update: "Changed", delete: "Removed" };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 13, color: T.slate500 }}>Who changed what, and when. Everything on this module, newest first.</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <select value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
+            <option value="">Everyone</option>
+            {roster.map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+          </select>
+          <select value={days} onChange={e => setDays(Number(e.target.value))} style={selectStyle}>
+            {CHANGE_WINDOWS.map(w => <option key={w.days} value={w.days}>{w.label}</option>)}
+          </select>
+        </div>
+      </div>
+      {err && <Notice kind="error">{err}</Notice>}
+      {rows === null ? (
+        <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>No changes in the last {days} days.</div>
+      ) : (
+        <div style={{ ...cardStyle, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={tableTh}>When</th>
+                <th style={tableTh}>Who</th>
+                <th style={tableTh}>What</th>
+                <th style={tableTh}>Customer</th>
+                <th style={tableTh}>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const sameClick = i > 0 && rows[i - 1].txid === r.txid;
+                const fields = (r.changed_fields || []).filter(k => !CHANGE_HIDE.test(k));
+                return (
+                  <tr key={r.id} style={sameClick ? { background: T.slate50 } : undefined}>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : changeWhen(r.changed_at)}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : r.who}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                      <span style={{ fontWeight: 700, color: r.action === "delete" ? T.red : r.action === "update" ? T.amber : T.green }}>{verb[r.action] || r.action}</span> {r.item === "FIT scorecard" ? r.item : r.item.toLowerCase()}
+                    </td>
+                    <td style={tableTd}>{r.subject || "—"}</td>
+                    <td style={{ ...tableTd, maxWidth: 420 }}>
+                      {r.action === "update" ? (
+                        fields.length ? fields.map(k => (
+                          <div key={k}>
+                            <span style={{ color: T.slate500 }}>{changeLabel(k)}:</span>{" "}
+                            <ChangeVal k={k} v={(r.old_row || {})[k]} ctx={ctx} /> → <ChangeVal k={k} v={(r.new_row || {})[k]} ctx={ctx} />
+                          </div>
+                        )) : <span style={{ color: T.slate500 }}>{(r.changed_fields || []).map(changeLabel).join(", ") || "—"}</span>
+                      ) : changeSummary(r, ctx)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WeekView({ isAdmin, myTeamId, roster, values, refreshKey }) {
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("week", weekEndOf(todayCentral()));
   const [rows, setRows] = useState([]);
@@ -1168,6 +1324,7 @@ export default function ActivityLog({ userRole }) {
     { id: "issued", label: "To be issued" },
     { id: "week", label: "My week" },
     { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
+    ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
   ];
 
   return (
@@ -1191,6 +1348,7 @@ export default function ActivityLog({ userRole }) {
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} refreshKey={refreshKey} />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
+      {tab === "changes" && isAdmin && <ChangesTab roster={roster} values={values} types={types} />}
     </div>
   );
 }
