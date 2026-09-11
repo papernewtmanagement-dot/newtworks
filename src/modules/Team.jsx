@@ -545,11 +545,17 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
 // Read-only summary view. Reused for the Declined tab (walked-away applicants) and
 // the Former tab (past team members). Row tap opens CandidateDetail with full
 // history and the option to re-activate to any pipeline stage.
+// Short forms for the table. Full wording and help text live in CandidateDetail.jsx.
 const DECLINE_REASON_LABEL = {
-  active_applicant: "Active — declined",
-  offer_rescinded:  "Offer rescinded",
-  calibration_only: "Calibration",
-  former_team:      "Former team",
+  active_applicant:      "Didn't meet standard",
+  no_show:               "No-show",
+  candidate_withdrew:    "Withdrew",
+  offer_rescinded:       "Offer pulled back",
+  calibration_only:      "Calibration",
+  former_team:           "Former team",
+  resume_score:          "Auto: resume score",
+  assessment_score:      "Auto: assessment score",
+  bounced_undeliverable: "Email bounced",
 };
 
 const trim = (s, n) => {
@@ -642,7 +648,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
           <thead>
             <tr>
               <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("name",   "asc")}>Name{arrow("name")}</th>
-              <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("source", "asc")}>Source{arrow("source")}</th>
+              <th style={{ ...thBase, textAlign: "left"  }} onClick={() => toggleSort("source", "asc")}>Reason{arrow("source")}</th>
               <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("resume", "desc")}>Res{arrow("resume")}</th>
               <th style={{ ...thBase, textAlign: "right" }} onClick={() => toggleSort("assess",    "desc")}>Assess{arrow("assess")}</th>
               <th style={{ ...thBase, textAlign: "left"  }}>Notes</th>

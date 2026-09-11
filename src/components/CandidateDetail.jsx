@@ -9,8 +9,12 @@ import MeetGreetModal from "./MeetGreetModal.jsx";
 // ─── Constants ─────────────────────────────────────────────────────
 
 const DECLINE_REASON_LABEL = {
-  // Four reasons Peter picks by hand, three the system stamps on its own.
-  active_applicant:      "Real applicant — passed on",
+  // Five reasons Peter picks by hand, three the system stamps on its own.
+  // active_applicant is the stored code for "we passed on them"; it dates from
+  // the old candidate_source column and stays put so the check constraint and
+  // existing rows do not move. Only the wording changed (Peter, 2026-09-11).
+  active_applicant:      "Didn't meet our standard",
+  no_show:               "No-show for interview",
   candidate_withdrew:    "Candidate withdrew",
   offer_rescinded:       "Offer pulled back",
   calibration_only:      "Calibration record — not a real applicant",
@@ -3083,7 +3087,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
               style={{ padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, minWidth: 220 }}
             >
               <option value="">Select a reason...</option>
-              <option value="active_applicant">Real applicant — passed on</option>
+              <option value="active_applicant">Didn't meet our standard</option>
+              <option value="no_show">No-show for interview</option>
               <option value="candidate_withdrew">Candidate withdrew</option>
               <option value="offer_rescinded">Offer pulled back</option>
               <option value="calibration_only">Calibration record — not a real applicant</option>
@@ -3091,19 +3096,20 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             </select>
           </div>
           <ul style={{ fontSize: 11, color: T.slate600, margin: "0 0 8px 0", paddingLeft: 16, lineHeight: 1.5 }}>
-            <li><strong>Real applicant — passed on.</strong> Someone who actually applied for a job and you are turning down. This is the normal one.</li>
+            <li><strong>Didn't meet our standard.</strong> You looked and decided no, before any offer went out. This is the normal one.</li>
+            <li><strong>No-show for interview.</strong> They had an interview or meet and greet booked and did not show up or reschedule.</li>
             <li><strong>Candidate withdrew.</strong> They pulled out — you did not pass on them. Set for you automatically when someone emails in to say they are no longer interested.</li>
-            <li><strong>Offer pulled back.</strong> You made them an offer and then withdrew it.</li>
+            <li><strong>Offer pulled back.</strong> An offer went out and you took it back. The only difference from Didn't meet our standard is that an offer was already made.</li>
             <li><strong>Calibration record — not a real applicant.</strong> A resume or profile loaded in to test the scoring. Nobody applied, so there is nobody to write to.</li>
             <li><strong>Former team member — record kept for analysis.</strong> Someone who used to work here, scored after they left so their profile sits alongside the others.</li>
           </ul>
           <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8, padding: 8, background: T.white, borderRadius: 6, border: `1px solid ${T.slate200}` }}>
-            <strong>An email goes out the moment you hit Decline.</strong> The candidate gets a short,
+            <strong>An email goes out automatically.</strong> The candidate gets a short,
             warm note from you. It sends for every reason except <strong>Calibration record</strong> and
             <strong>Former team member</strong>, and it sends the same way when the system declines someone
             by itself on a resume or assessment score. Someone who withdrew gets a different note — thanks
-            for closing the loop, apply again sometime — instead of the one about going with other
-            candidates. It never names a score or a reason, and never goes out twice.
+            for closing the loop, apply again sometime — and it goes out the moment you hit Decline. Every
+            other decline goes out in the Monday morning batch. It never names a score or a reason, and never goes out twice.
           </div>
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
