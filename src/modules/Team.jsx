@@ -550,7 +550,7 @@ const DECLINE_REASON_LABEL = {
   active_applicant:      "Didn't meet standard",
   no_show:               "No-show",
   candidate_withdrew:    "Withdrew",
-  offer_rescinded:       "Offer pulled back",
+  offer_rescinded:       "Offer withdrawn",
   calibration_only:      "Calibration",
   former_team:           "Former team",
   resume_score:          "Auto: resume score",
