@@ -38,7 +38,9 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //  * My week is the scoreboard: whole team, ranked, four point cards plus
 //    the conversation card in one row; your own week (with the conversation
 //    score) sits beside the title on every tab.
-//  * Scorecard is x / 1 / 2 / 3 and every part is scored on a quote or sale;
+//  * Canceled has its own tab: search the customer, tap the policy, log it.
+//    Not on file → this entry page opens in a popup with Canceled allowed.
+//  * Scorecard is x / 1 / 2 / 3 (x averages as 0) and every part is scored on a quote or sale;
 //    GNC Used is Setup GNC scored 3. Marketing source and Relationship are
 //    required on every entry. Autopay is per policy: a tick on a sold policy,
 //    or line + type + premium on the activity; the server allows one per policy.
@@ -80,7 +82,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "issued", "week", "changes"];
+const TABS = ["log", "issued", "canceled", "week", "changes"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -223,9 +225,11 @@ function summarizeEntry(data) {
 // Entry page — one customer, one contact, everything that happened, on
 // one flat page. One Log button; one RPC that saves all of it or none.
 // =====================================================================
-function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey }) {
+function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "" }) {
   const today = todayCentral();
-  const [first, setFirst] = useState("");
+  const [first, setFirst] = useState(presetFirst || "");
+  const statuses = allowCancel ? STATUSES : STATUSES.filter(st => st.key !== "canceled");
+  const [dupQuotes, setDupQuotes] = useState([]);   // this week's quotes already on file for this household
   const [initial, setInitial] = useState("");
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
@@ -270,6 +274,19 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   }, [first]);
   const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); setSuggest([]); };
 
+  // same household quoted already this week? Logs anyway; the same household counts once for HH quotes.
+  useEffect(() => {
+    const f = first.trim(), i = initial.trim().toUpperCase();
+    if (!f || !/^[A-Z]$/.test(i)) { setDupQuotes([]); return undefined; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from("quote_log").select("id, team_member_id, quote_date")
+        .eq("agency_id", AGENCY_ID).eq("status", "active").eq("customer_label", `${f} ${i}.`).eq("week_end_date", weekEndOf(date));
+      if (alive) setDupQuotes(Array.isArray(data) ? data : []);
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [first, initial, date]);
+
   // what this customer has on file, once the name is complete
   useEffect(() => {
     const f = first.trim(), i = initial.trim();
@@ -313,8 +330,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const dropPolicy = (id) => { setPolicies(list => list.filter(p => p.id !== id)); setActivePolicy(a => a === id ? null : a); };
   const setScore = (k, v) => setScores(sc => ({ ...sc, [k]: sc[k] === v ? null : v }));
   const cardChosen = CARD_PARTS.filter(pt => scores[pt.key] != null).length;          // x counts as chosen
-  const cardScored = CARD_PARTS.filter(pt => Number(scores[pt.key]) > 0).length;       // x is not a score
-  const cardAvg = cardScored ? CARD_PARTS.reduce((s, pt) => s + (Number(scores[pt.key]) > 0 ? scores[pt.key] : 0), 0) / cardScored : null;
+  const cardAvg = cardChosen ? CARD_PARTS.reduce((s, pt) => s + (scores[pt.key] != null ? Number(scores[pt.key]) : 0), 0) / cardChosen : null;   // x averages as 0
 
   // ---- what is in the entry right now ----
   const hasSave = activities.some(a => a.key === "cancelation_saved");
@@ -333,7 +349,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const hasQuote = quoted.length > 0;
   const hasSale = sold.length > 0;
   const hasCxl = canceled.length > 0;
-  const hasCard = cardScored > 0;
+  const hasCard = cardChosen > 0;
   const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
@@ -362,7 +378,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   }
   if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
   if (!relationship) problems.push("Pick the relationship.");
-  if (!source) problems.push("Pick the marketing source.");
+  if ((hasSale || hasQuote) && !source) problems.push("Pick the marketing source.");
   if (hasSale && !ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
   if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
@@ -586,7 +602,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                 <label style={labelStyle}>What happened</label>
                 <select style={inputBase} value={active.status} onChange={e => setStatus(active, e.target.value)}>
                   <option value="">Pick one</option>
-                  {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+                  {statuses.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
                 </select>
               </div>
               {needsMoney(active) && (
@@ -624,6 +640,19 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
             </div>
           )}
+          {sold.filter(p => onFile.some(r => r.line_of_business === p.line && !r.already_canceled)).map(p => {
+            const r = onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0];
+            return (
+              <div key={p.id} style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+                {preview} already has {PRODUCT_SHORT[p.line]} on file (sold {fmtDate(r.submitted_date)}, ${fmtPts(r.premium)}). If this one replaces it, cancel the old one on the Canceled tab so premium and cars are not counted twice.
+              </div>
+            );
+          })}
+          {hasQuote && dupQuotes.length > 0 && (
+            <div style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+              {preview} was already quoted this week ({dupQuotes.map(d => `${(roster || []).find(t => t.id === d.team_member_id)?.first_name || "someone"} on ${fmtDate(d.quote_date)}`).join(", ")}). It still logs; the same household counts once for HH quotes.
+            </div>
+          )}
           {hasSale && (
             <div style={{ fontSize: 13, color: T.slate700, marginTop: 8 }}>
               <strong>Total premium sold: ${fmtPts(saleTotal)}.</strong> <span style={{ color: T.slate500 }}>Multiline and Referral credits are added on their own, once per line.</span>
@@ -631,7 +660,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
         </div>
 
-        {/* ---- bottom row: ECRM link (sale), marketing source (always), lead source (referral), note ---- */}
+        {/* ---- bottom row: ECRM link (sale), marketing source (quote or sale), lead source (referral), note ---- */}
         <div style={{ ...wrapRow, ...blockStyle }}>
           {hasSale && (
             <div style={field(200)}>
@@ -639,14 +668,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
             </div>
           )}
-          <div style={{ flex: "0 1 150px", minWidth: 0 }}>
+          {(hasSale || hasQuote) && (
+            <div style={{ flex: "0 1 150px", minWidth: 0 }}>
               <label style={labelStyle}>Marketing source</label>
               <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
                 <option value="">Pick one</option>
                 {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
               </select>
-          </div>
-          {isReferral && (
+            </div>
+          )}
+          {(hasSale || hasQuote) && isReferral && (
             <div style={{ flex: "0 1 140px", minWidth: 0 }}>
               <label style={labelStyle}>Lead source</label>
               <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
@@ -958,6 +989,191 @@ function IssuedTab({ types, refreshKey }) {
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+// =====================================================================
+// Canceled — its own tab (Peter 2026-09-11). Search the customer, pick the
+// policy that canceled, log it in two taps. Not on file? The full entry
+// page opens in a popup with the Canceled option turned on; the standard
+// Log tab does not offer Canceled at all.
+// =====================================================================
+function Modal({ title, onClose, children }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 8px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.slate50, borderRadius: 14, width: "min(980px, 100%)", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", padding: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px 10px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{title}</div>
+          <button type="button" style={btnGhost} onClick={onClose}>Close</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, onLogged, refreshKey }) {
+  const today = todayCentral();
+  const [q, setQ] = useState("");
+  const [suggest, setSuggest] = useState([]);
+  const [picked, setPicked] = useState(null);      // {customer_first_name, customer_last_initial, customer_label}
+  const [onFile, setOnFile] = useState([]);
+  const [drafts, setDrafts] = useState({});        // sale_product_id -> {open, date, premium, vehicles, reason}
+  const [recent, setRecent] = useState([]);
+  const [popup, setPopup] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const nameOf = (id) => (roster || []).find(t => t.id === id)?.first_name || "—";
+
+  useEffect(() => {
+    const s = q.trim();
+    if (s.length < 2) { setSuggest([]); return undefined; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.rpc("rp_customer_suggest", { p_prefix: s });
+      if (alive) setSuggest(Array.isArray(data) ? data : []);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q]);
+
+  useEffect(() => {
+    if (!picked) { setOnFile([]); return undefined; }
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.rpc("rp_sold_on_file", { p_customer_first: picked.customer_first_name, p_customer_last_initial: picked.customer_last_initial });
+      if (alive) setOnFile(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [picked, refreshKey]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from("cancelation_log").select("id, team_member_id, canceled_on, customer_label, policy_line, premium, reason, status")
+        .eq("agency_id", AGENCY_ID).eq("status", "active").gte("canceled_on", addDays(todayCentral(), -30)).order("canceled_on", { ascending: false }).limit(50);
+      if (alive) setRecent(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [refreshKey]);
+
+  const draft = (r) => drafts[r.sale_product_id] || {};
+  const edit = (r, patch) => setDrafts(d => ({ ...d, [r.sale_product_id]: { ...(d[r.sale_product_id] || {}), ...patch } }));
+  const cancelPolicy = async (r) => {
+    const d = draft(r);
+    const premium = d.premium === undefined ? String(r.premium ?? "") : d.premium;
+    const vehicles = d.vehicles === undefined ? String(r.vehicle_count || 1) : d.vehicles;
+    if (premium === "" || !(Number(premium) >= 0)) { setErr("Enter the premium."); return; }
+    if (r.line_of_business === "auto" && !(Number(vehicles) >= 1)) { setErr("How many cars were on it?"); return; }
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const payload = {
+        customer_first: picked.customer_first_name, customer_last_initial: picked.customer_last_initial, occurred_on: d.date || today,
+        relationship_type: "existing", team_member_id: null,
+        cancelation: { items: [{ line_of_business: r.line_of_business, product_type: r.product_type || null, premium: Number(premium),
+                                 vehicle_count: r.line_of_business === "auto" ? Number(vehicles) : null, matched_sale_product_id: r.sale_product_id }],
+                       reason: (d.reason || "").trim() || null },
+      };
+      const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
+      if (error) { setErr(errText(error)); return; }
+      if (!data?.ok) { setErr(errText(data)); return; }
+      setOk(summarizeEntry(data));
+      setDrafts(x => ({ ...x, [r.sale_product_id]: {} }));
+      onLogged?.();
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+  };
+  const removeCancel = async (id) => {
+    if (!window.confirm("Remove this cancelation?")) return;
+    const { data, error } = await supabase.rpc("rp_void_cancelation", { p_id: id, p_reason: null });
+    if (error || !data?.ok) { window.alert(errText(error || data)); return; }
+    onLogged?.();
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Who canceled?</div>
+        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12 }}>Start typing the first name. Pick the customer, then the policy.</div>
+        <div style={{ ...wrapRow, alignItems: "flex-end" }}>
+          <div style={{ ...field(220), position: "relative" }}>
+            <input style={inputBase} value={q} onChange={e => { setQ(e.target.value); setPicked(null); }} placeholder="Anna" autoComplete="off" />
+            {suggest.length > 0 && !picked && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
+                {suggest.map(c => (
+                  <button key={c.customer_label} type="button" onClick={() => { setPicked(c); setQ(c.customer_label); setSuggest([]); setOk(""); setErr(""); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
+                    {c.customer_label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" style={{ ...btnGhost, padding: "10px 14px" }} onClick={() => setPopup(true)}>Not on file? Log the customer</button>
+        </div>
+        {picked && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>{picked.customer_label} · on file</div>
+            {onFile.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>No sold policies on file. Use "Log the customer" to record the cancelation with the policy details.</div>}
+            {onFile.map(r => {
+              const d = draft(r);
+              const label = typeLabel(types || {}, r.line_of_business, r.product_type) || PRODUCT_SHORT[r.line_of_business] || r.line_of_business;
+              return (
+                <div key={r.sale_product_id} style={{ borderTop: `1px solid ${T.slate100}`, padding: "8px 0" }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                    <span style={{ fontWeight: 600, color: T.slate800 }}>{label}</span>
+                    <span style={{ fontSize: 12, color: T.slate500 }}>${fmtPts(r.premium)}{r.vehicle_count ? ` · ${plural(r.vehicle_count, "car")}` : ""} · sold {fmtDate(r.submitted_date)}</span>
+                    {r.already_canceled ? <span style={{ fontSize: 12, color: T.red, fontWeight: 600 }}>canceled</span>
+                      : <button type="button" style={btnGhost} onClick={() => edit(r, { open: !d.open })}>{d.open ? "Never mind" : "Canceled"}</button>}
+                  </div>
+                  {d.open && !r.already_canceled && (
+                    <div style={{ ...wrapRow, marginTop: 8, padding: 10, background: T.slate50, borderRadius: 8 }}>
+                      <div style={field(140)}><label style={labelStyle}>Canceled on</label><input type="date" style={inputBase} value={d.date || today} max={today} min={addDays(today, -90)} onChange={e => edit(r, { date: e.target.value })} /></div>
+                      <div style={field(120)}><label style={labelStyle}>Premium</label><input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={d.premium === undefined ? String(r.premium ?? "") : d.premium} onChange={e => edit(r, { premium: e.target.value })} /></div>
+                      {r.line_of_business === "auto" && <div style={field(70)}><label style={labelStyle}>Cars</label><input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={d.vehicles === undefined ? String(r.vehicle_count || 1) : d.vehicles} onChange={e => edit(r, { vehicles: e.target.value })} /></div>}
+                      <div style={field(200)}><label style={labelStyle}>Why <span style={hintStyle}>(optional)</span></label><input style={inputBase} value={d.reason || ""} onChange={e => edit(r, { reason: e.target.value })} placeholder="what they told us" /></div>
+                      <button type="button" style={btnPrimary(busy)} disabled={busy} onClick={() => cancelPolicy(r)}>{busy ? "Saving…" : "Log the cancelation"}</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <Notice kind="error">{err}</Notice>
+        <Notice kind="ok">{ok}</Notice>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Canceled in the last 30 days <span style={{ color: T.slate400, fontWeight: 400 }}>· {recent.length}</span></div>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr><th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th><th style={tableTh}>Line</th><th style={tableTh}>Premium</th><th style={tableTh}>Why</th><th style={tableTh}></th></tr></thead>
+            <tbody>
+              {recent.map(r => (
+                <tr key={r.id}>
+                  <td style={tableTd}>{fmtDate(r.canceled_on)}</td>
+                  <td style={tableTd}>{nameOf(r.team_member_id)}</td>
+                  <td style={tableTd}>{r.customer_label}</td>
+                  <td style={tableTd}>{PRODUCT_SHORT[r.policy_line] || r.policy_line}</td>
+                  <td style={tableTd}>${fmtPts(r.premium)}</td>
+                  <td style={{ ...tableTd, maxWidth: 320 }}>{r.reason || "—"}</td>
+                  <td style={tableTd}>{(isAdmin || r.team_member_id === myTeamId) && <button style={btnGhost} onClick={() => removeCancel(r.id)}>Remove</button>}</td>
+                </tr>
+              ))}
+              {recent.length === 0 && <tr><td style={tableTd} colSpan={7}>Nothing canceled in the last 30 days.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {popup && (
+        <Modal title="Log the customer" onClose={() => setPopup(false)}>
+          <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} refreshKey={refreshKey} allowCancel presetFirst={picked ? "" : q.trim()}
+            onLogged={() => { onLogged?.(); }} />
+        </Modal>
       )}
     </div>
   );
@@ -1411,6 +1627,7 @@ export default function ActivityLog({ userRole }) {
   const tabs = [
     { id: "log", label: "Log" },
     { id: "issued", label: "To be issued" },
+    { id: "canceled", label: "Canceled" },
     { id: "week", label: "My week" },
     { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
@@ -1455,6 +1672,7 @@ export default function ActivityLog({ userRole }) {
 
       {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
+      {tab === "canceled" && <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} values={values} types={types} />}
