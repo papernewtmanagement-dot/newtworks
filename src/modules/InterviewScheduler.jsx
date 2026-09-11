@@ -93,6 +93,28 @@ export default function InterviewScheduler({ token }) {
     }
   }, [token]);
 
+  // A booked candidate taking an earlier open time. The old event is
+  // canceled and the new one booked server-side; the page just shows the
+  // new time.
+  const handleRebook = useCallback(async (slot) => {
+    setPicking(slot.start);
+    setErrorMsg("");
+    const { ok, data } = await callScheduler("rebook", { token, start: slot.start });
+    setPicking(null);
+    if (ok && data?.ok) {
+      setPayload((p) => ({ ...(p || {}), scheduled_start_display: data.scheduled_start_display, meet_url: data.meet_url, earlier_slots: [], confirmed: false }));
+      setNoticeMsg("You're moved up. A new confirmation email and calendar invite are on the way.");
+      setState("confirmed");
+      return;
+    }
+    if (data?.error === "slot_taken") {
+      setErrorMsg("That time was just taken. Your current time still stands.");
+      setPayload((p) => ({ ...(p || {}), earlier_slots: Array.isArray(data.earlier_slots) ? data.earlier_slots : [] }));
+      return;
+    }
+    setErrorMsg(data?.error || "Couldn't move your time — your current time still stands.");
+  }, [token]);
+
   const load = useCallback(async () => {
     setState("loading");
     const { ok, data } = await callScheduler("get_offer", { token });
@@ -197,8 +219,29 @@ export default function InterviewScheduler({ token }) {
         <p style={{ fontSize: 15, marginBottom: 16 }}>
           <strong>{payload?.scheduled_start_display}</strong> (Central time)
         </p>
+        {noticeMsg && (
+          <div style={{ background: "#eff6ff", color: "#1e40af", fontSize: 13, padding: "8px 12px", borderRadius: 8, marginBottom: 12 }}>{noticeMsg}</div>
+        )}
         {errorMsg && (
           <div style={{ background: "#fef2f2", color: "#b91c1c", fontSize: 13, padding: "8px 12px", borderRadius: 8, marginBottom: 12 }}>{errorMsg}</div>
+        )}
+        {Array.isArray(payload?.earlier_slots) && payload.earlier_slots.length > 0 && (
+          <div style={{ marginBottom: 18, background: T?.slate50 || "#f8fafc", padding: "12px 14px", borderRadius: 8 }}>
+            <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Earlier times are open</p>
+            <p style={{ fontSize: 13, color: T?.slate500 || "#64748b", marginBottom: 10 }}>Tap one to move up. Do nothing and your current time stays.</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {payload.earlier_slots.map((s) => (
+                <button
+                  key={s.start}
+                  onClick={() => handleRebook(s)}
+                  disabled={picking !== null || responding}
+                  style={{ border: `1px solid ${T?.blue600 || "#2563eb"}`, background: "#fff", color: T?.blue600 || "#2563eb", padding: "8px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {picking === s.start ? "Moving…" : s.display}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {!confirmedNow && (
           <div style={{ marginBottom: 16 }}>
