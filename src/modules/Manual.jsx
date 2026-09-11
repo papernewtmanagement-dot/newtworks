@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 
@@ -1247,6 +1248,177 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
   );
 }
 
+// ─── Daily Kickoff commits ────────────────────────────────────
+// One commit per person per day (Peter 2026-09-11). The page renders two empty
+// host elements (see [Commits] and {{commit-bridge}} in markdown.js); the
+// picker below is mounted into them with portals, so it lives inside the
+// rendered markdown where the Close step and the Bridge step sit.
+//   pick   — the week's commit examples as radio buttons plus "Other" with a
+//            text box. Saving stores today's commit (Central date) for the
+//            signed-in teammate through kickoff_commit_save. Once saved, the
+//            commit shows with a "Hit it" button so the midday and EOD
+//            summaries can carry the mark.
+//   bridge — the next morning: the latest earlier commit (Monday shows
+//            Friday's) with a yes-or-no question. No "not yet": commits are
+//            daily.
+// A login with no team record sees the examples as a plain list and nothing
+// to save.
+const COMMIT_BTN = {
+  padding: "6px 12px", borderRadius: 7, border: "1px solid #CBD5C0", background: "#fff",
+  color: "#334155", font: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer",
+};
+const COMMIT_BTN_PRIMARY = { ...COMMIT_BTN, background: T.blue, borderColor: T.blue, color: T.white, fontWeight: 700 };
+const COMMIT_CARD = { background: "#F8FAF3", borderRadius: 7, padding: "10px 12px", margin: "8px 0 14px 0" };
+
+function nwCommitDayLabel(dateStr, todayStr) {
+  const d = new Date(`${dateStr}T12:00:00`);
+  const t = new Date(`${todayStr}T12:00:00`);
+  if (isNaN(d) || isNaN(t)) return "Last commit";
+  const days = Math.round((t - d) / 86400000);
+  if (days === 1) return "Yesterday's commit";
+  return `${d.toLocaleDateString("en-US", { weekday: "long" })}'s commit`;
+}
+
+function KickoffCommits({ hosts, week }) {
+  const [info, setInfo] = useState(null);      // { member_id, today_date, today, prior }
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [choice, setChoice] = useState(null);  // index into items, or "other"
+  const [other, setOther] = useState("");
+  const [changing, setChanging] = useState(false);
+
+  const items = useMemo(() => {
+    const raw = hosts.pick && typeof hosts.pick.getAttribute === "function" ? hosts.pick.getAttribute("data-nw-items") : null;
+    try {
+      const v = JSON.parse(raw || "[]");
+      return Array.isArray(v) ? v.map((x) => String(x)) : [];
+    } catch { return []; }
+  }, [hosts.pick]);
+
+  const load = useCallback(async () => {
+    const { data, error: e } = await supabase.rpc("kickoff_commits_mine");
+    if (e) { setError(e.message); return; }
+    setInfo(data && typeof data === "object" ? data : null);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    const text = choice === "other" ? other.trim() : (choice != null ? items[choice] : "");
+    if (!text) { setError("Pick a commit or write one."); return; }
+    setBusy(true); setError(null);
+    const { data, error: e } = await supabase.rpc("kickoff_commit_save", {
+      p_text: text,
+      p_source: choice === "other" ? "other" : "example",
+      p_week: Number.isFinite(Number(week)) && Number(week) > 0 ? Number(week) : null,
+    });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    setInfo((prev) => ({ ...(prev || {}), today: data }));
+    setChanging(false);
+  };
+
+  const mark = async (row, hit) => {
+    if (!row || !row.id) return;
+    setBusy(true); setError(null);
+    const { data, error: e } = await supabase.rpc("kickoff_commit_mark", { p_id: row.id, p_hit: hit });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    setInfo((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      if (prev.today && prev.today.id === row.id) next.today = data;
+      if (prev.prior && prev.prior.id === row.id) next.prior = data;
+      return next;
+    });
+  };
+
+  const today = info?.today || null;
+  const prior = info?.prior || null;
+  const canSave = !!info?.member_id;
+  const err = error ? <div style={{ color: T.red, fontSize: 12, fontWeight: 600, marginTop: 6 }}>{error}</div> : null;
+
+  const bridge = prior ? (
+    <div style={COMMIT_CARD}>
+      <div><strong>{nwCommitDayLabel(prior.commit_date, info?.today_date)}:</strong> {prior.commit_text}</div>
+      {prior.hit === true ? (
+        <div style={{ marginTop: 4 }}>✅ Hit it</div>
+      ) : prior.hit === false ? (
+        <div style={{ marginTop: 4 }}>❌ Missed it</div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          <span>Did you hit it?</span>
+          <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy} onClick={() => mark(prior, true)}>Yes</button>
+          <button type="button" style={COMMIT_BTN} disabled={busy} onClick={() => mark(prior, false)}>No</button>
+        </div>
+      )}
+      {err}
+    </div>
+  ) : null;
+
+  let pick;
+  if (!canSave) {
+    pick = items.length ? (
+      <ul>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
+    ) : null;
+  } else if (today && !changing) {
+    pick = (
+      <div style={COMMIT_CARD}>
+        <div><strong>Today's commit{today.hit === true ? " ✅" : today.hit === false ? " ❌" : ""}:</strong> {today.commit_text}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          {today.hit == null && (
+            <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy} onClick={() => mark(today, true)}>Hit it ✅</button>
+          )}
+          <button type="button" style={COMMIT_BTN} disabled={busy} onClick={() => { setChanging(true); setChoice(null); setOther(""); }}>Change</button>
+        </div>
+        {err}
+      </div>
+    );
+  } else {
+    pick = (
+      <div style={COMMIT_CARD}>
+        {items.map((t, i) => (
+          <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0", cursor: "pointer" }}>
+            <input type="radio" name="nw-commit" checked={choice === i} onChange={() => setChoice(i)} style={{ marginTop: 5, flexShrink: 0 }} />
+            <span>{t}</span>
+          </label>
+        ))}
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0", cursor: "pointer" }}>
+          <input type="radio" name="nw-commit" checked={choice === "other"} onChange={() => setChoice("other")} style={{ marginTop: 5, flexShrink: 0 }} />
+          <span style={{ flex: "1 1 200px", minWidth: 0 }}>
+            Other
+            {choice === "other" && (
+              <input
+                type="text"
+                value={other}
+                onChange={(e) => setOther(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
+                placeholder="your own commit, with a number"
+                maxLength={400}
+                autoFocus
+                style={{ display: "block", width: "100%", boxSizing: "border-box", marginTop: 6, padding: "6px 10px", font: "inherit", fontSize: 13, border: "1px solid #CBD5C0", borderRadius: 6, background: "#fff" }}
+              />
+            )}
+          </span>
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy || choice == null} onClick={save}>{busy ? "Saving…" : "Save commit"}</button>
+          {changing && today && (
+            <button type="button" style={COMMIT_BTN} disabled={busy} onClick={() => setChanging(false)}>Cancel</button>
+          )}
+        </div>
+        {err}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {hosts.bridge ? createPortal(bridge, hosts.bridge) : null}
+      {hosts.pick ? createPortal(pick, hosts.pick) : null}
+    </>
+  );
+}
+
 function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
@@ -1625,6 +1797,21 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
+  // Daily Kickoff commits: the markdown renders empty host elements (see
+  // [Commits] in markdown.js); KickoffCommits mounts the picker into them.
+  // Re-found whenever the body HTML is replaced, since that swaps the nodes.
+  const [commitHosts, setCommitHosts] = useState({ pick: null, bridge: null });
+  useEffect(() => {
+    const root = bodyRef.current;
+    const next = { pick: null, bridge: null };
+    if (root) {
+      root.querySelectorAll(".nw-commit-host").forEach((el) => {
+        const kind = el.getAttribute("data-nw-commit");
+        if (kind === "pick" || kind === "bridge") next[kind] = el;
+      });
+    }
+    setCommitHosts((prev) => (prev.pick === next.pick && prev.bridge === next.bridge ? prev : next));
+  }, [html, mode]);
   // Role play pickers: a random card on load, a random card for whatever
   // springboard is picked, and the refresh button steps to the next one.
   useEffect(() => {
@@ -2182,6 +2369,10 @@ What I\'d like to discuss:
           </div>
         )}
       </div>
+
+      {(commitHosts.pick || commitHosts.bridge) ? (
+        <KickoffCommits hosts={commitHosts} week={activeWeek} />
+      ) : null}
 
       {isAdmin && fragmentStack.length > 0 && (
         <FragmentEditModal

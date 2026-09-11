@@ -1207,6 +1207,53 @@ function expandRoleplays(md, options, slots) {
   return out;
 }
 
+// ─── Daily commits ────────────────────────────────────────────
+// Daily Kickoff commits (Peter 2026-09-11). The week's commit examples are
+// written as a plain list between [Commits] and [Commits end], wrapped in the
+// same [Week: N] blocks as the rest of the page, so only the current week's
+// lines survive the filter above. This renders an empty host element carrying
+// those lines; Manual.jsx mounts the picker into it (radio buttons plus
+// "Other"), saves the choice to daily_commits, and shows what is on file.
+// {{commit-bridge}} renders a second host where the next-morning question
+// ("did you hit it?") goes, usually under the Bridge step in Open.
+const COMMITS_START_RE = /^[ \t]*\*?\[Commits\]\*?[ \t]*$/i;
+const COMMITS_END_RE = /^[ \t]*\*?\[Commits end\]\*?[ \t]*$/i;
+const COMMIT_BRIDGE_RE = /\{\{commit-bridge\}\}/gi;
+const COMMIT_ITEM_RE = /^[ \t]*(?:[-*]|\d+\.)\s+(.+?)\s*$/;
+
+function renderCommitHost(kind, items) {
+  return `<div class="nw-commit-host" data-nw-commit="${kind}" data-nw-items="${escapeAttr(JSON.stringify(items || []))}"></div>`;
+}
+
+function expandCommits(md, slots) {
+  if (md.indexOf("[Commits]") === -1 && md.indexOf("{{commit-bridge}}") === -1) return md;
+  const kept = [];
+  let items = null;
+  for (const line of md.split(/\r?\n/)) {
+    if (items === null) {
+      if (COMMITS_START_RE.test(line)) { items = []; continue; }
+      kept.push(line);
+      continue;
+    }
+    if (COMMITS_END_RE.test(line)) {
+      slots.push(renderCommitHost("pick", items));
+      kept.push(RP_SLOT(slots.length - 1));
+      items = null;
+      continue;
+    }
+    const m = COMMIT_ITEM_RE.exec(line);
+    if (m) items.push(m[1]);
+  }
+  if (items !== null) {
+    slots.push(renderCommitHost("pick", items));
+    kept.push(RP_SLOT(slots.length - 1));
+  }
+  return kept.join("\n").replace(COMMIT_BRIDGE_RE, () => {
+    slots.push(renderCommitHost("bridge", []));
+    return RP_SLOT(slots.length - 1);
+  });
+}
+
 function applyRoleplaySlots(html, slots) {
   if (!slots.length) return html;
   return html.replace(/(?:<p>\s*)?NWRPSLOT(\d+)END(?:\s*<\/p>)?/g, (_m, n) => slots[Number(n)] || "");
@@ -1236,6 +1283,7 @@ export function mdToHtml(md, options = {}) {
   src = expandSelector(src, options);
   const rpSlots = [];
   src = expandRoleplays(src, options, rpSlots);
+  src = expandCommits(src, rpSlots);
 
   if (!src.trim()) return "";
 
