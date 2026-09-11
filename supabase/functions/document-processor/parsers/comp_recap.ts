@@ -256,6 +256,36 @@ function parseExpenseReimbursements(text: string, period: PeriodInfo): CompRecap
   return rows;
 }
 
+// --- Stated net payable ------------------------------------------------------
+// What State Farm says it is paying: the "ACTUAL DEPOSIT" line(s) on the
+// statement, or the final (main-code) "NET PAYABLE" if no deposit line is
+// present. Stored on documents.stated_net_payable. Two readers depend on it:
+//   - cash_register_gl_writer's commission-deposit guard (FIX 34, 2026-08-17)
+//   - comp_net_deposit_notice, the Paper Newt Management deposit message
+// Read straight off the statement, never summed from parsed lines: a line the
+// parser skips (awards and bonuses live in the payment section) would make a
+// sum silently wrong. 2026-08-31 proved it: parsed lines were $450.00 short
+// (CASH AWARD - LIFE) of the $19,105.98 SF deposited.
+// Until 2026-09-10 nothing in the processor wrote this column; the 15 values
+// on file came from a one-time backfill on 2026-08-17.
+export function extractStatedNetPayable(text: string): number | null {
+  const flat = text.replace(/\\(?=[*&])/g, "").replace(/\s+/g, " ");
+  const deposits: number[] = [];
+  for (const m of flat.matchAll(/ACTUAL\s+DEPOSIT\s+([\d,]*\.\d{2}-?)/gi)) {
+    const n = parseAmount(m[1]);
+    if (n !== null) deposits.push(n);
+  }
+  if (deposits.length > 0) {
+    return Math.round(deposits.reduce((a, b) => a + b, 0) * 100) / 100;
+  }
+  let last: number | null = null;
+  for (const m of flat.matchAll(/NET\s+PAYABLE\s+\**\s*([\d,]*\.\d{2}-?)/gi)) {
+    const n = parseAmount(m[1]);
+    if (n !== null) last = n;
+  }
+  return last;
+}
+
 // --- Main parser ------------------------------------------------------------
 export function parseCompRecapText(text: string): {
   rows: CompRecapRow[];
@@ -337,6 +367,13 @@ export async function parseCompRecap(opts: {
   if (parsed.rows.length === 0) {
     return { ok: false, error: "Parser yielded no rows (PDF malformed or no current-period activity)." };
   }
+  // Stated net payable goes on the document BEFORE the rows are inserted: the
+  // comp_recap insert trigger (trg_notify_comp_net_deposit) reads it.
+  const statedNetPayable = extractStatedNetPayable(opts.statementText);
+  if (statedNetPayable !== null) {
+    await sb.from("documents").update({ stated_net_payable: statedNetPayable }).eq("id", opts.documentId);
+  }
+
   // Idempotency: clear any prior rows from this source_document_id, then insert.
   await sb.from("comp_recap").delete().eq("source_document_id", opts.documentId);
   const { error } = await sb.from("comp_recap").insert(
