@@ -984,12 +984,44 @@ function nwEnableSmoothDetails(container) {
   });
 }
 
+// ─── Kickoff cycle: today's week and day ──────────────────────
+// The Daily Kickoff runs a 13-week cycle that restarts the first Monday of
+// every quarter. Worked out in Central time. Saturday and Sunday point at the
+// coming Monday, since that is the next kickoff. A quarter with a 14th week
+// stays on week 13.
+function nwKickoffToday() {
+  const DAY = 86400000;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago", year: "numeric", month: "numeric", day: "numeric",
+  }).formatToParts(new Date());
+  const get = (t) => Number((parts.find((p) => p.type === t) || {}).value);
+  let d = new Date(Date.UTC(get("year"), get("month") - 1, get("day")));
+  const dow = d.getUTCDay();
+  if (dow === 6) d = new Date(d.getTime() + 2 * DAY);
+  if (dow === 0) d = new Date(d.getTime() + DAY);
+  const firstMonday = (y, q) => {
+    const first = new Date(Date.UTC(y, q * 3, 1));
+    return new Date(first.getTime() + ((8 - first.getUTCDay()) % 7) * DAY);
+  };
+  let y = d.getUTCFullYear();
+  let q = Math.floor(d.getUTCMonth() / 3);
+  let start = firstMonday(y, q);
+  if (d < start) {
+    q -= 1;
+    if (q < 0) { q = 3; y -= 1; }
+    start = firstMonday(y, q);
+  }
+  const week = Math.min(13, Math.floor((d.getTime() - start.getTime()) / (7 * DAY)) + 1);
+  const day = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][d.getUTCDay()];
+  return { week: String(week), day };
+}
+
 // ─── Script selector bar ──────────────────────────────────────
 // Three dropdowns that decide what a script page shows: which opener, pivot
 // or outbound call, and whether the person is engaged or has no time. Sticky
 // to the top of the reading pane so it stays in reach while the script
 // scrolls under it.
-function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpener, onMode, onEngaged, vp }) {
+function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpener, onMode, onEngaged, vp, weeks = [], week, onWeek, days = [], day, onDay }) {
   // Lives at the top of the card. When the window is wide enough there is
   // empty space to the left of the 880px card — the bar moves into that gutter
   // and is pinned there with fixed positioning, so it holds while the script
@@ -1062,7 +1094,7 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
       window.removeEventListener("resize", schedule);
       if (ro) ro.disconnect();
     };
-  }, [vp?.isPhone, vp?.isTablet, groups.length, hasEngaged]);
+  }, [vp?.isPhone, vp?.isTablet, groups.length, hasEngaged, weeks.length, days.length]);
 
   const selStyle = {
     boxSizing: "border-box",
@@ -1136,6 +1168,30 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
             ))}
           </select>
         )}
+        {weeks.length > 0 && (
+          <select
+            value={week || ""}
+            onChange={(e) => onWeek(e.target.value)}
+            style={selStyle}
+            title="Which week of the cycle"
+          >
+            {weeks.map((w) => (
+              <option key={w.value} value={w.value}>{w.label}</option>
+            ))}
+          </select>
+        )}
+        {days.length > 0 && (
+          <select
+            value={day || ""}
+            onChange={(e) => onDay(e.target.value)}
+            style={selStyle}
+            title="Which day"
+          >
+            {days.map((d) => (
+              <option key={d.value} value={d.value}>{d.label}</option>
+            ))}
+          </select>
+        )}
         {hasEngaged && (
           <select
             value={engaged}
@@ -1170,6 +1226,9 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   const [openerPick, setOpenerPick] = useTabParam("opener", null);
   const [openerMode, setOpenerMode] = useTabParam("omode", "pivot", ["pivot", "outbound"]);
   const [engaged, setEngaged] = useTabParam("eng", "notime", ["notime", "engaged"]);
+  // Week and day on cycle pages (the Daily Kickoff). Empty means today.
+  const [weekPick, setWeekPick] = useTabParam("week", null);
+  const [dayPick, setDayPick] = useTabParam("day", null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [form, setForm] = useState(null);
@@ -1452,6 +1511,17 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     const raw = String(page?.content || "");
     return raw.replace(/^\s*#[ \t]+[^\n]*\n?/, "");
   }, [page?.content]);
+  const cycleOpts = useMemo(() => {
+    const sc = scanSelector(bodyMd);
+    return { weeks: sc.weeks || [], days: sc.days || [] };
+  }, [bodyMd]);
+  const todayCycle = useMemo(() => nwKickoffToday(), [page?.id]);
+  const activeWeek = cycleOpts.weeks.length
+    ? (cycleOpts.weeks.find((w) => w.value === weekPick) || cycleOpts.weeks.find((w) => w.value === todayCycle.week) || cycleOpts.weeks[0]).value
+    : null;
+  const activeDay = cycleOpts.days.length
+    ? (cycleOpts.days.find((x) => x.value === dayPick) || cycleOpts.days.find((x) => x.value === todayCycle.day) || cycleOpts.days[0]).value
+    : null;
   const html = useMemo(
     () => mdToHtml(bodyMd, {
       resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq,
@@ -1460,9 +1530,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
         value: openerPick,
         mode: openerMode,
         engaged,
+        week: activeWeek,
+        day: activeDay,
       },
     }),
-    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode, openerPick, openerMode, engaged]
+    [bodyMd, resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq, isAdmin, mode, openerPick, openerMode, engaged, activeWeek, activeDay]
   );
 
   // ── Script selector ───────────────────────────────────────────
@@ -1485,7 +1557,9 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     setOpenerPick(null);
     setOpenerMode("pivot");
     setEngaged("notime");
-  }, [page?.id, setOpenerPick, setOpenerMode, setEngaged]);
+    setWeekPick(null);
+    setDayPick(null);
+  }, [page?.id, setOpenerPick, setOpenerMode, setEngaged, setWeekPick, setDayPick]);
 
   // ── Included-section quick editor ─────────────────────────────
   // Edit affordance now lives inline, as a pencil button markTransclusions
@@ -2016,7 +2090,7 @@ What I\'d like to discuss:
         border: `1px solid ${T.slate200}`,
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
       }}>
-        {mode === "view" && (selector.groups.length > 0 || selector.hasEngaged) && (
+        {mode === "view" && (selector.groups.length > 0 || selector.hasEngaged || cycleOpts.weeks.length > 0 || cycleOpts.days.length > 0) && (
           <ScriptPicker
             groups={selector.groups}
             hasEngaged={selector.hasEngaged}
@@ -2027,6 +2101,12 @@ What I\'d like to discuss:
             onMode={setOpenerMode}
             onEngaged={setEngaged}
             vp={_vp}
+            weeks={cycleOpts.weeks}
+            week={activeWeek}
+            onWeek={setWeekPick}
+            days={cycleOpts.days}
+            day={activeDay}
+            onDay={setDayPick}
           />
         )}
         {isAdmin && (mode === "edit" || mode === "new-child") && form ? (

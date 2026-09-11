@@ -888,8 +888,14 @@ const ENGAGED_END_RE = /^[ \t]*\*?\[Engaged end\]\*?[ \t]*$/i;
 //   [Except: Mortgage/Loan] … [Except end]       show for everything but those
 // Repeating an opener of the same type before its end switches branch, the way
 // [Engaged: no] … [Engaged: yes] … [Engaged end] reads.
-const BLOCK_OPEN_RE = /^[ \t]*\*?\[(Engaged|Mode|Only|Except):\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
-const BLOCK_END_RE = /^[ \t]*\*?\[(Engaged|Mode|Only|Except) end\]\*?[ \t]*$/i;
+// Pages built on a weekly cycle (the Daily Kickoff) also carry
+//   [Week: 3] … [Week end]      shows only when week 3 is picked
+//   [Day: Monday] … [Day end]   shows only when Monday is picked
+// Both default to today's week of the cycle and today's day; see Manual.jsx.
+const BLOCK_OPEN_RE = /^[ \t]*\*?\[(Engaged|Mode|Only|Except|Week|Day):\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
+const BLOCK_END_RE = /^[ \t]*\*?\[(Engaged|Mode|Only|Except|Week|Day) end\]\*?[ \t]*$/i;
+const WEEK_MARK_RE = /^[ \t]*\*?\[Week:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
+const DAY_MARK_RE = /^[ \t]*\*?\[Day:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 
 function openerSlug(s) {
   return String(s)
@@ -922,7 +928,24 @@ export function scanSelector(md) {
     if (!started) groups.length = 0;
   }
   sortOpeners(groups);
-  return { groups, hasEngaged: src.indexOf("[Engaged:") !== -1 };
+  const weeks = [];
+  const days = [];
+  if (src.indexOf("[Week:") !== -1 || src.indexOf("[Day:") !== -1) {
+    for (const line of src.split(/\r?\n/)) {
+      const w = WEEK_MARK_RE.exec(line);
+      if (w) {
+        const v = openerSlug(w[1]);
+        if (!weeks.some((x) => x.value === v)) weeks.push({ value: v, label: `Week ${w[1].trim()}` });
+        continue;
+      }
+      const d = DAY_MARK_RE.exec(line);
+      if (d) {
+        const v = openerSlug(d[1]);
+        if (!days.some((x) => x.value === v)) days.push({ value: v, label: d[1].trim() });
+      }
+    }
+  }
+  return { groups, hasEngaged: src.indexOf("[Engaged:") !== -1, weeks, days };
 }
 
 // The dropdown reads alphabetically, not in the order the openers happen to
@@ -939,7 +962,9 @@ function expandSelector(md, options) {
   const hasBranches = hasEngaged
     || src.indexOf("[Mode:") !== -1
     || src.indexOf("[Only:") !== -1
-    || src.indexOf("[Except:") !== -1;
+    || src.indexOf("[Except:") !== -1
+    || src.indexOf("[Week:") !== -1
+    || src.indexOf("[Day:") !== -1;
   if (!hasOpeners && !hasBranches) return src;
 
   const st = (options && options.openerState) || {};
@@ -994,6 +1019,8 @@ function expandSelector(md, options) {
     const a = String(arg || "").trim();
     if (t === "engaged") return a.toLowerCase() === engaged;
     if (t === "mode") return (/^out/i.test(a) ? "outbound" : "pivot") === mode;
+    if (t === "week") return st.week == null ? true : openerSlug(a) === String(st.week);
+    if (t === "day") return st.day == null ? true : openerSlug(a) === String(st.day);
     const wanted = a.split(",").map((x) => openerSlug(x)).filter(Boolean);
     if (t === "only") return activeSlug ? wanted.includes(activeSlug) : false;
     return activeSlug ? !wanted.includes(activeSlug) : true;
