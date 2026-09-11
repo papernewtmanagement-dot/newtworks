@@ -1,4 +1,6 @@
-// telegram edge function (v20)
+// telegram edge function (v21)
+// v21 (2026-09-10 evening):
+//   - Health rest day now rotates between 😴 and 🥱 (Peter). A workout stays 👏.
 // v20 (2026-09-10):
 //   - TIERED REACTIONS. The random emoji pool is gone (it included praying
 //     hands, which does not read as cheering someone on). A work check-in now
@@ -60,7 +62,8 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 // Tiers are chosen in SQL (checkin_reaction_emoji); these are the only values used.
 const REACT_LOGGED = "👍"; // logged / below pace / rest day
 const REACT_ON_PACE = "👏"; // on pace / workout done
-const REACTION_ALLOWED = new Set([REACT_LOGGED, REACT_ON_PACE, "🔥", "🏆"]);
+const REACT_REST = ["😴", "🥱"]; // health rest day, rotated
+const REACTION_ALLOWED = new Set([REACT_LOGGED, REACT_ON_PACE, "🔥", "🏆", ...REACT_REST]);
 
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -844,7 +847,11 @@ async function ackHealth(chatId: number, messageId: number, written: any[]): Pro
   if (written.length === 1 && !written[0].proxy) {
     const w0 = written[0];
     const worked = w0.hit_today === true || (typeof w0.override === "number" && w0.override > 0);
-    if (await setReaction(chatId, messageId, worked ? REACT_ON_PACE : REACT_LOGGED)) return;
+    const rested = w0.hit_today === false;
+    const emoji = worked ? REACT_ON_PACE
+      : rested ? REACT_REST[Math.floor(Math.random() * REACT_REST.length)]
+      : REACT_LOGGED;
+    if (await setReaction(chatId, messageId, emoji)) return;
   }
   const describe = (w: any) => {
     if (w.override !== null && w.override !== undefined) return `${w.override}/5`;
