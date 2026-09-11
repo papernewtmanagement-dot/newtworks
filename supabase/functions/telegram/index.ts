@@ -1,4 +1,12 @@
-// telegram edge function (v19)
+// telegram edge function (v20)
+// v20 (2026-09-10):
+//   - TIERED REACTIONS. The random emoji pool is gone (it included praying
+//     hands, which does not read as cheering someone on). A work check-in now
+//     gets one emoji from this week's quote pace, picked by the database
+//     function checkin_reaction_emoji: 👍 logged, 👏 on pace, 🔥 ahead of
+//     pace, 🏆 way ahead. Behind pace still gets the plain thumbs up - nobody
+//     gets a negative mark. Health: 👏 for a workout, 👍 for a rest day.
+//     All four emoji are in Telegram's allowed reaction set.
 // v19 (2026-09-10):
 //   - EMOJI REACTION ACKS. A clean single check-in submitted by the sender for
 //     themselves now gets a random emoji reaction on their own message instead
@@ -49,7 +57,10 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 // Telegram restricts bot reactions to a fixed set. Every emoji below is in it.
 // Do not add one without checking - an unlisted emoji fails the whole call.
-const REACTION_POOL = ["👍", "🔥", "👏", "🎉", "💯", "🏆", "👌", "🙏", "🤝", "⚡", "🫡", "😎", "🤩"];
+// Tiers are chosen in SQL (checkin_reaction_emoji); these are the only values used.
+const REACT_LOGGED = "👍"; // logged / below pace / rest day
+const REACT_ON_PACE = "👏"; // on pace / workout done
+const REACTION_ALLOWED = new Set([REACT_LOGGED, REACT_ON_PACE, "🔥", "🏆"]);
 
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -116,12 +127,12 @@ async function sendReply(chatId: number, text: string, replyToMessageId?: number
   } catch (e) { console.error("sendReply failed:", e); }
 }
 
-// Silent acknowledgement: a random allowed emoji on the teammate's own message.
+// Silent acknowledgement: one emoji on the teammate's own message.
 // Returns false if Telegram refuses, so the caller can fall back to a reply.
-async function setReaction(chatId: number, messageId: number): Promise<boolean> {
+async function setReaction(chatId: number, messageId: number, emojiIn: string): Promise<boolean> {
   const token = await getSetting("telegram_bot_token");
   if (!token) return false;
-  const emoji = REACTION_POOL[Math.floor(Math.random() * REACTION_POOL.length)];
+  const emoji = REACTION_ALLOWED.has(emojiIn) ? emojiIn : REACT_LOGGED;
   try {
     const res = await fetch(`${TELEGRAM_API_BASE}${token}/setMessageReaction`, {
       method: "POST",
@@ -157,6 +168,21 @@ async function handleAction(body: any): Promise<Response> {
   return new Response(JSON.stringify(data), {
     status: tgRes.ok ? 200 : 502, headers: { "Content-Type": "application/json" },
   });
+}
+
+// Pace tier for a work check-in. Any failure falls back to the plain thumbs up.
+async function workReactionEmoji(teamId: string, quotes: number, checkinDate: string, checkinType: string): Promise<string> {
+  try {
+    const { data, error } = await sb.rpc("checkin_reaction_emoji", {
+      p_agency_id: AGENCY_ID, p_team_id: teamId, p_quotes: quotes,
+      p_checkin_date: checkinDate, p_checkin_type: checkinType,
+    });
+    if (error) { console.error("checkin_reaction_emoji failed:", error.message); return REACT_LOGGED; }
+    return typeof data === "string" && data ? data : REACT_LOGGED;
+  } catch (e) {
+    console.error("checkin_reaction_emoji threw:", e);
+    return REACT_LOGGED;
+  }
 }
 
 interface ParsedWorkResponse { matched_alias: string; quotes: number; sales_points: number; }
@@ -577,7 +603,7 @@ async function handleBotCommand(
         "/team — current team standings (alias: /where, /stats)\n" +
         "/correct [Name] Q/S — fix a typo on the most recent entry (alias: /fix, /update)\n" +
         "/help — this message\n\n" +
-        "A thumbs up or similar reaction on your message means it logged. " +
+        "A reaction on your message means it logged: 👍 logged, 👏 on pace, 🔥 ahead of pace, 🏆 way ahead. " +
         "If something needed attention I'll reply in words instead.\n\n" +
         "You can also @-mention me or reply to me — I'll chat back.",
         messageId);
@@ -739,9 +765,9 @@ async function handleBotCommand(
         };
         if (existing) await sb.from("team_checkins").update(payload).eq("id", existing.id);
         else await sb.from("team_checkins").insert(payload);
-        workWritten.push({ for: targetFirstName, quotes: p.quotes, sales: p.sales_points, proxy: !isOwnSubmission });
+        workWritten.push({ for: targetFirstName, team_id: targetTeamId, quotes: p.quotes, sales: p.sales_points, proxy: !isOwnSubmission });
       }
-      await ackWork(chatId, messageId, workWritten);
+      await ackWork(chatId, messageId, workWritten, today, checkinType);
       if (workWritten.length > 0) ctx.messageType = "checkin_work";
       return jsonResponse({ ok: true, command: cmd, written_count: workWritten.length, checkin_type: checkinType, details: workWritten });
     }
@@ -798,10 +824,11 @@ async function handleBotCommand(
 // v19: a clean single self-submission gets a silent reaction. Anything with a
 // wrinkle in it - proxy, several people in one message - still gets words,
 // because those are the cases where a teammate needs to see what was recorded.
-async function ackWork(chatId: number, messageId: number, written: any[]): Promise<void> {
+async function ackWork(chatId: number, messageId: number, written: any[], checkinDate: string, checkinType: string): Promise<void> {
   if (written.length === 0) return;
   if (written.length === 1 && !written[0].proxy) {
-    if (await setReaction(chatId, messageId)) return;
+    const emoji = await workReactionEmoji(written[0].team_id, written[0].quotes, checkinDate, checkinType);
+    if (await setReaction(chatId, messageId, emoji)) return;
   }
   if (written.length === 1) {
     const w = written[0];
@@ -815,7 +842,9 @@ async function ackWork(chatId: number, messageId: number, written: any[]): Promi
 async function ackHealth(chatId: number, messageId: number, written: any[]): Promise<void> {
   if (written.length === 0) return;
   if (written.length === 1 && !written[0].proxy) {
-    if (await setReaction(chatId, messageId)) return;
+    const w0 = written[0];
+    const worked = w0.hit_today === true || (typeof w0.override === "number" && w0.override > 0);
+    if (await setReaction(chatId, messageId, worked ? REACT_ON_PACE : REACT_LOGGED)) return;
   }
   const describe = (w: any) => {
     if (w.override !== null && w.override !== undefined) return `${w.override}/5`;
@@ -1023,7 +1052,7 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
           };
           if (existing) await sb.from("team_checkins").update(payload).eq("id", existing.id);
           else await sb.from("team_checkins").insert(payload);
-          workWritten.push({ for: targetFirstName, quotes: p.quotes, sales: p.sales_points, proxy: !isOwnSubmission });
+          workWritten.push({ for: targetFirstName, team_id: targetTeamId, quotes: p.quotes, sales: p.sales_points, proxy: !isOwnSubmission });
         }
       }
     }
@@ -1033,7 +1062,7 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
 
     if (isBotChat) return await handleConversation(text, sender, chatId, messageId, workWritten, healthWritten);
     if (workWritten.length > 0) {
-      await ackWork(chatId, messageId, workWritten);
+      await ackWork(chatId, messageId, workWritten, active!.checkin_date, active!.checkin_type);
       return jsonResponse({ ok: true, checkin: active, mode: "work", written_count: workWritten.length, details: workWritten });
     }
     if (healthWritten.length > 0) {
