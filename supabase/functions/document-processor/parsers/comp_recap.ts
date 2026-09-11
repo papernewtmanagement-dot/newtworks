@@ -70,7 +70,7 @@ function parsePeriod(text: string): PeriodInfo | null {
 
 // --- State header / description prefix --------------------------------------
 const STATE_CODE: Record<string, string> = {
-  ARKANSAS: "AR (04)", "NEW MEXICO": "NM (31)", OKLAHOMA: "OK (36)", TEXAS: "",
+  ARKANSAS: "AR (04)", LOUISIANA: "LA (18)", "NEW MEXICO": "NM (31)", OKLAHOMA: "OK (36)", TEXAS: "",
 };
 function detectStateHeader(raw: string): string | null {
   const cleaned = raw.replace(/^1\s*/, "").trim();
@@ -206,12 +206,10 @@ function dedupeLeadingWords(desc: string): string {
 //      whitespace-normalised scan of the full text handles both; the line loop
 //      would only handle the first.
 //
-// SCOPE NOTE -- deliberately NOT extended to the adjacent AWARDS & BONUSES
-// block in the same section. Scorecard and AIPP payouts land in comp_recap
-// under state_farm_bonuses via another path, and parsing them here as well
-// would double-count them into the AIPP and Scorecard bases. Reimbursements
-// only. Do not widen this without first establishing what writes the bonus
-// rows.
+// SCOPE NOTE -- reimbursements only. Awards, bonuses and AIPP payments are
+// handled by parsePaymentSectionBonuses below. The "another path" this note
+// used to point to was the retired LLM parser (replaced 2026-06-19); checked
+// 2026-09-10, nothing else writes state_farm_bonuses rows.
 function parseExpenseReimbursements(text: string, period: PeriodInfo): CompRecapRow[] {
   // Normalise: drop backslash escapes some extractors put before '*', then
   // flatten every run of whitespace (including newlines) to single spaces.
@@ -251,6 +249,73 @@ function parseExpenseReimbursements(text: string, period: PeriodInfo): CompRecap
         is_aipp_eligible: false,
         is_scorecard_eligible: false,
       });
+    }
+  }
+  return rows;
+}
+
+// --- Payment-section AWARDS & BONUSES and AIPP payments -----------------------
+// Real money State Farm pays that appears ONLY in the payment section:
+//   1 AWARDS & BONUSES: 1 CASH AWARD - LIFE 450.00 1,250.00 1 SCORECARD ...
+//   1 PAYABLE PER AGREEMENT: 1 PER SCHEDULES OF PAYMENT 19,583.18 ...
+//     1 AUTO AIPP PAYMENT 13,871.49 ...
+// Same money contract as everywhere else: two amounts = CURRENT then YTD,
+// one amount = YTD only (nothing paid this period). "PER SCHEDULES OF
+// PAYMENT" restates production and is always skipped.
+//
+// Why it exists: the retired LLM parser captured these as state_farm_bonuses
+// (AIPP Jan, Scorecard Mar, cash awards). The regex parser that replaced it on
+// 2026-06-19 skipped the whole payment section, and nothing else picked them
+// up. Caught 2026-09-10: the Aug 16-31 2026 CASH AWARD - LIFE $450.00 was
+// missing from comp_recap and the books while SF deposited it.
+//
+// Rows go to state_farm_bonuses with both eligibility flags false, matching the
+// rows the old parser wrote. Other-state pages keep their state prefix; their
+// current amounts are transferred into the main code's deposit.
+function parsePaymentSectionBonuses(text: string, period: PeriodInfo): CompRecapRow[] {
+  const flat = text.replace(/\\(?=[*&])/g, "").replace(/\s+/g, " ");
+  const rows: CompRecapRow[] = [];
+  const seen = new Set<string>();
+  const pageRe = /P\s*A\s*Y\s*M\s*E\s*N\s*T\s+S\s*E\s*C\s*T\s*I\s*O\s*N(.*?)(?=RECAPS\s+RIZ|I\s*N\s*F\s*O\s*R\s*M\s*A\s*T\s*I\s*O\s*N|P\s*R\s*O\s*D\s*U\s*C\s*T\s*I\s*O\s*N|$)/gi;
+  const blockRes = [
+    /AWARDS\s*&\s*BONUSES\s*:(.*?)TOTAL\s+AWARDS\s*&\s*BONUSES/gi,
+    /PAYABLE\s+PER\s+AGREEMENT\s*:(.*?)TOTAL\s+PAYABLE\s+PER\s+AGREEMENT/gi,
+  ];
+  let page: RegExpExecArray | null;
+  while ((page = pageRe.exec(flat)) !== null) {
+    const body = page[1];
+    const st = body.match(/(ARKANSAS|LOUISIANA|NEW MEXICO|OKLAHOMA|TEXAS)\s+CODE\s+\d{2}-/i);
+    const prefix = st ? (STATE_CODE[st[1].toUpperCase()] ?? "") : "";
+    for (const blockRe of blockRes) {
+      blockRe.lastIndex = 0;
+      let block: RegExpExecArray | null;
+      while ((block = blockRe.exec(body)) !== null) {
+        for (const chunk of block[1].split(/\s+1\s+|^\s*1\s+/)) {
+          const item = chunk.trim();
+          if (!item || /SCHEDULES\s+OF\s+PAYMENT/i.test(item)) continue;
+          const m = item.match(/^(.+?)\s+([\d,]*\.\d{2}-?)(?:\s+([\d,]*\.\d{2}-?))?$/);
+          if (!m || !m[3]) continue;
+          const current = parseAmount(m[2]);
+          if (current === null || current === 0) continue;
+          const desc = m[1].trim();
+          if (!desc) continue;
+          const description = prefix ? `${prefix} ${desc}` : desc;
+          const key = `${description}|${current}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push({
+            period_year: period.year,
+            period_month: period.month,
+            period_day: period.day,
+            comp_type: period.comp_type,
+            comp_category: "state_farm_bonuses",
+            description,
+            amount: current,
+            is_aipp_eligible: false,
+            is_scorecard_eligible: false,
+          });
+        }
+      }
     }
   }
   return rows;
@@ -348,6 +413,8 @@ export function parseCompRecapText(text: string): {
   // Additive pass: the EXPENSE REIMBURSEMENTS block inside the payment section,
   // which the loop above skips along with the rest of that section.
   for (const r of parseExpenseReimbursements(text, period)) rows.push(r);
+  // Additive pass: awards, bonuses and AIPP payments in the payment section.
+  for (const r of parsePaymentSectionBonuses(text, period)) rows.push(r);
 
   return { rows, period, texas_current_total: texasTotal };
 }
