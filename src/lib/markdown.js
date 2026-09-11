@@ -1073,11 +1073,46 @@ function expandSelector(md, options) {
 // the chosen label on load and whenever the dropdown changes. The refresh
 // button beside it steps to the next customer for that label.
 // A block with no token anywhere renders where it was written.
+// [Roleplay: id | shuffle] makes every card its own dropdown entry (objections):
+// a random one loads, and the refresh button jumps to another at random.
 const RP_START_RE = /^[ \t]*\*?\[Roleplay:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const RP_SCEN_RE = /^[ \t]*\*?\[Scenario:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const RP_END_RE = /^[ \t]*\*?\[Roleplay end\]\*?[ \t]*$/i;
 const RP_TOKEN_RE = /\{\{roleplay:\s*([a-z0-9_-]+)\s*\}\}/gi;
+// {{pick: Page Title}} — one item at random from another page in the same
+// manual, with a refresh button for another. Items are the page's list lines,
+// or its blockquotes, or failing both its paragraphs that carry a link.
+// Anything inside an expander on that page is skipped (rules, notes).
+const PICK_TOKEN_RE = /\{\{pick:\s*([^}\n]+?)\s*\}\}/gi;
+
+function pickItems(md) {
+  const src = String(md || "").replace(/<details[\s\S]*?<\/details>/gi, "");
+  const blocks = src.split(/\n[ \t]*\n/);
+  const lists = [];
+  const quotes = [];
+  const paras = [];
+  for (const raw of blocks) {
+    const b = raw.replace(/^\n+|\n+$/g, "");
+    if (!b.trim() || /^\s*#/.test(b)) continue;
+    const lines = b.split("\n");
+    if (lines.every((l) => /^\s*>/.test(l))) { quotes.push(b); continue; }
+    const listLines = lines.filter((l) => /^([-*]|\d+\.)\s+/.test(l));
+    if (listLines.length) { listLines.forEach((l) => lists.push(l.replace(/^([-*]|\d+\.)\s+/, ""))); continue; }
+    if (/\]\(https?:/.test(b)) paras.push(b);
+  }
+  return lists.length ? lists : quotes.length ? quotes : paras;
+}
 const RP_SLOT = (n) => `NWRPSLOT${n}END`;
+
+function renderPick(title, options) {
+  const res = options && typeof options.resolveInclude === "function" ? options.resolveInclude(title) : null;
+  const items = res && res.status === "ok" ? pickItems(res.md) : [];
+  if (!items.length) return "";
+  return renderRoleplay({
+    mode: "pick",
+    scenarios: items.map((md, i) => ({ label: `item ${i + 1}`, lines: [md] })),
+  }, options);
+}
 
 function renderRoleplay(block, options) {
   const order = [];
@@ -1087,13 +1122,14 @@ function renderRoleplay(block, options) {
     if (!names.has(slug)) { names.set(slug, sc.label); order.push(slug); }
   }
   if (!order.length) return "";
-  const select = order.length > 1
-    ? `<select class="nw-rp-select" aria-label="Springboard">` +
+  const mode = block.mode === "shuffle" || block.mode === "pick" ? block.mode : "";
+  const select = order.length > 1 && mode !== "pick"
+    ? `<select class="nw-rp-select" aria-label="${mode === "shuffle" ? "Objection" : "Springboard"}">` +
       order.map((sl) => `<option value="${sl}">${escapeHtml(names.get(sl))}</option>`).join("") +
       `</select>`
     : "";
   const next = block.scenarios.length > 1
-    ? `<button type="button" class="nw-rp-next" title="Another customer" aria-label="Another customer">↻</button>`
+    ? `<button type="button" class="nw-rp-next" title="Pick another" aria-label="Pick another">↻</button>`
     : "";
   const bar = select || next ? `<div class="nw-rp-bar">${select}${next}</div>` : "";
   let shown = false;
@@ -1104,11 +1140,11 @@ function renderRoleplay(block, options) {
     const body = mdToHtml(sc.lines.join("\n"), options);
     return `<div class="nw-rp-card" data-rp-label="${slug}"${show ? "" : " hidden"}>${body}</div>`;
   }).join("");
-  return `<div class="nw-rp">${bar}<div class="nw-rp-cards">${cards}</div></div>`;
+  return `<div class="nw-rp"${mode ? ` data-rp-mode="${mode}"` : ""}>${bar}<div class="nw-rp-cards">${cards}</div></div>`;
 }
 
 function expandRoleplays(md, options, slots) {
-  if (md.indexOf("[Roleplay:") === -1 && md.indexOf("{{roleplay:") === -1) return md;
+  if (md.indexOf("[Roleplay:") === -1 && md.indexOf("{{roleplay:") === -1 && md.indexOf("{{pick:") === -1) return md;
   const lines = md.split(/\r?\n/);
   const blocks = new Map();
   const kept = [];
@@ -1117,7 +1153,12 @@ function expandRoleplays(md, options, slots) {
   for (const line of lines) {
     if (!cur) {
       const m = RP_START_RE.exec(line);
-      if (m) { cur = { id: m[1].trim().toLowerCase(), scenarios: [] }; scen = null; continue; }
+      if (m) {
+        const [rawId, rawMode] = m[1].split("|");
+        cur = { id: rawId.trim().toLowerCase(), mode: String(rawMode || "").trim().toLowerCase(), scenarios: [] };
+        scen = null;
+        continue;
+      }
       kept.push(line);
       continue;
     }
@@ -1146,6 +1187,10 @@ function expandRoleplays(md, options, slots) {
     return slotFor(id);
   });
   out = out.replace(/^@@NWRPBLOCK:([^@\n]+)@@$/gm, (_m, id) => (used.has(id) ? "" : slotFor(id)));
+  out = out.replace(PICK_TOKEN_RE, (_m, title) => {
+    slots.push(renderPick(title, options));
+    return RP_SLOT(slots.length - 1);
+  });
   return out;
 }
 

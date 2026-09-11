@@ -931,6 +931,32 @@ function nwRoleplayNext(rp) {
   cards.forEach((c) => { c.hidden = c !== next; });
 }
 
+// Objection and bank pickers ([Roleplay: id | shuffle] and {{pick: Title}}):
+// a random entry, and on refresh a different random entry. With a dropdown,
+// the dropdown follows along so it always names what is showing.
+function nwRoleplayShuffle(rp, fresh) {
+  const sel = rp.querySelector("select.nw-rp-select");
+  const cards = Array.from(rp.querySelectorAll(".nw-rp-card"));
+  if (!cards.length) return;
+  if (sel) {
+    const opts = Array.from(sel.options).map((o) => o.value);
+    let choices = fresh ? opts.filter((v) => v !== sel.value) : opts;
+    if (!choices.length) choices = opts;
+    sel.value = choices[Math.floor(Math.random() * choices.length)];
+    let shown = false;
+    cards.forEach((c) => {
+      const hit = !shown && c.getAttribute("data-rp-label") === sel.value;
+      if (hit) shown = true;
+      c.hidden = !hit;
+    });
+    return;
+  }
+  const current = cards.find((c) => !c.hidden);
+  const choices = fresh && current && cards.length > 1 ? cards.filter((c) => c !== current) : cards;
+  const next = choices[Math.floor(Math.random() * choices.length)];
+  cards.forEach((c) => { c.hidden = c !== next; });
+}
+
 function nwEnableSmoothDetails(container) {
   if (!container) return;
   const nodes = container.querySelectorAll("details");
@@ -1604,7 +1630,9 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return undefined;
-    root.querySelectorAll(".nw-rp").forEach((rp) => nwRoleplayShow(rp, false));
+    root.querySelectorAll(".nw-rp").forEach((rp) => (
+      rp.hasAttribute("data-rp-mode") ? nwRoleplayShuffle(rp, false) : nwRoleplayShow(rp, false)
+    ));
     const onChange = (e) => {
       const sel = e.target;
       if (!sel || !sel.classList || !sel.classList.contains("nw-rp-select")) return;
@@ -1616,7 +1644,9 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
       if (!btn) return;
       e.preventDefault();
       const rp = btn.closest(".nw-rp");
-      if (rp) nwRoleplayNext(rp);
+      if (!rp) return;
+      if (rp.hasAttribute("data-rp-mode")) nwRoleplayShuffle(rp, true);
+      else nwRoleplayNext(rp);
     };
     root.addEventListener("change", onChange);
     root.addEventListener("click", onClick);
