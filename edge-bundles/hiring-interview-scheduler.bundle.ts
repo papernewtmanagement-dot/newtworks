@@ -640,6 +640,14 @@ function escHtml(s: string | null | undefined): string {
 //     and re-offers times; withdraw frees the slot and declines the
 //     candidate as candidate_withdrew.
 //
+//   mode="calendar_busy"  (admin, session-token gated)
+//     Busy Google Calendar events in a date range, so the Interview Slots
+//     calendar can show which slots are being knocked out and by what.
+//
+//   mode="move_bookings"  (admin session or shared_secret)
+//     Unbooks everyone in a date range (a week just closed), emails them
+//     why, and hands them fresh times.
+//
 //   mode="schedule_meet_greet"  (admin, session-token gated)
 //     The stage AFTER the interview, and it works the opposite way round:
 //     Peter picks the time, because the meeting has to suit two or three
@@ -675,29 +683,76 @@ const OFFICE_ADDRESS = "28120 US Hwy 281 N, Suite 125, San Antonio, TX 78260";
 // PRIMARY times are always offered. SECONDARY times are backups: they are
 // only offered once the primary times inside the 7-day offer window are
 // booked (see pickOffers). No Thursday-morning backup, no Wednesday-afternoon
-// backup — both Peter's call. Third Friday of the month has no slots at all.
+// backup — both Peter's call. Fridays: first Friday of the month has no
+// morning times; third Friday has no midday or end-of-day times (backups
+// included). See fridayTimeAllowed.
 type SlotTier = "primary" | "secondary";
 const PRIMARY_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
   1: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Monday
   2: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Tuesday
   3: [{ h: 10, m: 0 }, { h: 13, m: 0 }],                   // Wednesday
   4: [{ h: 13, m: 0 }, { h: 15, m: 30 }],                  // Thursday
-  5: [{ h: 13, m: 0 }],                                    // Friday (see isThirdFriday exclusion)
+  5: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Friday (see fridayTimeAllowed)
 };
 const SECONDARY_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
   1: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Monday
   2: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Tuesday
   3: [{ h: 10, m: 45 }],                   // Wednesday (no afternoon backup)
   4: [{ h: 16, m: 15 }],                   // Thursday (no morning backup)
-  5: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Friday (see isThirdFriday exclusion)
+  5: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Friday (see fridayTimeAllowed)
 };
 const OFFER_COUNT = 4;        // how many open times a candidate is shown
 const OFFER_WINDOW_DAYS = 7;  // ... drawn from the next 7 days
 
-function isThirdFriday(y: number, m: number, d: number): boolean {
+// nth Friday of the month for a Chicago-local Y/M/D (1 = first Friday).
+function fridayOrdinal(y: number, m: number, d: number): number | null {
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  if (dow !== 5) return false;
-  return Math.ceil(d / 7) === 3;
+  if (dow !== 5) return null;
+  return Math.ceil(d / 7);
+}
+// Peter directive 2026-09-11: first Friday of the month -> no morning
+// times; third Friday -> no midday or end-of-day times (backups included).
+function fridayTimeAllowed(y: number, m: number, d: number, hour: number): boolean {
+  const nth = fridayOrdinal(y, m, d);
+  if (nth === 1 && hour < 12) return false;
+  if (nth === 3 && hour >= 12) return false;
+  return true;
+}
+
+// Vacation weeks: a series (anchor Sunday + every N weeks) with per-occurrence
+// moves. Any date whose week (Sun–Sat) is a vacation week has no slots.
+function weekStartKey(dateKey: string): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
+  return dt.toISOString().slice(0, 10);
+}
+async function fetchVacationWeeks(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  const [{ data: series }, { data: moves }] = await Promise.all([
+    sb.from("hiring_interview_vacation_series").select("id, anchor_week_start, interval_weeks").eq("agency_id", agencyId).eq("is_active", true),
+    sb.from("hiring_interview_vacation_moves").select("series_id, original_week_start, moved_to_week_start").eq("agency_id", agencyId),
+  ]);
+  const fromMs = Date.parse(weekStartKey(fromDateKey)) - 7 * 86400000;
+  const toMs = Date.parse(weekStartKey(throughDateKey)) + 7 * 86400000;
+  for (const sr of series ?? []) {
+    const anchorMs = Date.parse(sr.anchor_week_start);
+    const step = Math.max(1, Number(sr.interval_weeks) || 13) * 7 * 86400000;
+    const moved = new Map<string, string>();
+    for (const mv of moves ?? []) if (mv.series_id === sr.id) moved.set(mv.original_week_start, mv.moved_to_week_start);
+    let k = Math.floor((fromMs - anchorMs) / step); if (k < 0) k = 0;
+    for (let ms = anchorMs + k * step; ms <= toMs; ms += step) {
+      const key = new Date(ms).toISOString().slice(0, 10);
+      const target = moved.get(key) ?? key;
+      out.add(target);
+    }
+    // a move can point into the window from an occurrence outside it
+    for (const [, to] of moved) if (Date.parse(to) >= fromMs && Date.parse(to) <= toMs) out.add(to);
+  }
+  return out;
+}
+function isVacationDate(dateKey: string, vacationWeeks: Set<string>): boolean {
+  return vacationWeeks.has(weekStartKey(dateKey));
 }
 
 function newToken(): string {
@@ -759,17 +814,21 @@ async function fixedScheduleGrid(startFrom: Date, agencyId: string): Promise<Slo
     .formatToParts(startFrom).reduce((acc: any, p) => { acc[p.type] = p.value; return acc; }, {});
   const y0 = +nowChicago.year, m0 = +nowChicago.month, d0 = +nowChicago.day;
   let cursor = new Date(Date.UTC(y0, m0 - 1, d0 + 1)); // start tomorrow, local
+  const firstKey = cursor.toISOString().slice(0, 10);
+  const lastKey = new Date(cursor.getTime() + LOOKAHEAD_DAYS * 86400000).toISOString().slice(0, 10);
+  const vacationWeeks = await fetchVacationWeeks(agencyId, firstKey, lastKey);
   for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
     const cy = cursor.getUTCFullYear(), cm = cursor.getUTCMonth() + 1, cd = cursor.getUTCDate();
     const dow = cursor.getUTCDay();
-    if (!isThirdFriday(cy, cm, cd)) {
-      const dateKey = `${cy}-${String(cm).padStart(2, "0")}-${String(cd).padStart(2, "0")}`;
+    const dateKey = `${cy}-${String(cm).padStart(2, "0")}-${String(cd).padStart(2, "0")}`;
+    if (!isVacationDate(dateKey, vacationWeeks)) {
       const tiers: [SlotTier, { h: number; m: number }[]][] = [
         ["primary", PRIMARY_TIMES_BY_WEEKDAY[dow] ?? []],
         ["secondary", SECONDARY_TIMES_BY_WEEKDAY[dow] ?? []],
       ];
       for (const [tier, times] of tiers) {
         for (const t of times) {
+          if (dow === 5 && !fridayTimeAllowed(cy, cm, cd, t.h)) continue;
           const start = chicagoLocalToUtc(cy, cm, cd, t.h, t.m);
           const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
           grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey, tier });
@@ -1188,12 +1247,13 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
 
 async function slotStillOpen(agencyId: string, creds: { apiKey: string; userId: string; accountId: string }, slot: Slot): Promise<boolean> {
   const dateKey = slot.dateKey || slot.start.slice(0, 10);
-  const [busy, blackouts, recurring] = await Promise.all([
+  const [busy, blackouts, recurring, vacation] = await Promise.all([
     fetchBusy(creds, slot.start, slot.end),
     fetchBlackouts(agencyId, dateKey, dateKey),
     fetchRecurringBlackouts(agencyId, dateKey),
+    fetchVacationWeeks(agencyId, dateKey, dateKey),
   ]);
-  return !overlapsBusy(slot, busy) && !isBlackedOut({ ...slot, dateKey }, blackouts, recurring);
+  return !overlapsBusy(slot, busy) && !isBlackedOut({ ...slot, dateKey }, blackouts, recurring) && !isVacationDate(dateKey, vacation);
 }
 
 // Creates the calendar event with a Meet link, writes the booking, emails
@@ -1698,6 +1758,113 @@ async function offerEarlierTimes(agencyId: string): Promise<{ offered: any[]; sk
 }
 
 // -------------------------------------------------------------------------
+// mode=calendar_busy  (admin, session-token gated)
+// -------------------------------------------------------------------------
+// The Interview Slots calendar asks for anything on Peter's Google Calendar
+// that would knock out a slot, so a removed slot is never invisible. Returns
+// timed, busy (non-transparent) events in the range, minus the interviews
+// themselves. All-day events count as busy for the whole day — which is
+// exactly why the compliance reminders had to be switched to "free".
+async function calendarBusy(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Response> {
+  const creds = await getCalendarCreds(agencyId);
+  if (!creds) return corsJson({ ok: false, error: "calendar_unavailable" }, 500);
+  const res = await callComposio({
+    apiKey: creds.apiKey,
+    userId: creds.userId,
+    connectedAccountId: creds.accountId,
+    toolSlug: "GOOGLECALENDAR_EVENTS_LIST",
+    toolArguments: {
+      calendarId: CALENDAR_ID,
+      timeMin: `${fromDateKey}T00:00:00-05:00`,
+      timeMax: `${throughDateKey}T23:59:59-05:00`,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 500,
+    },
+  });
+  if (!res.ok) return corsJson({ ok: false, error: res.error ?? "events_list_failed" }, 500);
+  const items = (res.data?.response_data?.items ?? res.data?.items ?? res.data?.data?.items ?? []) as any[];
+  const events = items
+    .filter((e) => e && e.status !== "cancelled" && e.transparency !== "transparent")
+    .filter((e) => !/^Interview AMA/.test(e.summary || "") && !/^Meet & Greet/.test(e.summary || ""))
+    .map((e) => {
+      const allDay = !!e.start?.date && !e.start?.dateTime;
+      return {
+        summary: e.summary || "(busy)",
+        all_day: allDay,
+        start: allDay ? `${e.start.date}T00:00:00-05:00` : e.start?.dateTime,
+        end: allDay ? `${e.end.date}T00:00:00-05:00` : e.end?.dateTime,
+      };
+    })
+    .filter((e) => e.start && e.end);
+  return corsJson({ ok: true, events });
+}
+
+// -------------------------------------------------------------------------
+// mode=move_bookings  (admin session OR internal shared_secret)
+// -------------------------------------------------------------------------
+// The week just closed (vacation moved, week blacked out): everyone booked in
+// the range is unbooked, told why, and handed fresh times. The event leaves
+// their calendar without a Google notice; the email is the notice.
+async function moveBookings(agencyId: string, fromDateKey: string, throughDateKey: string, reason: string): Promise<Response> {
+  const { data: rows, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, interview_invite_token, interview_scheduled_start, interview_calendar_event_id")
+    .eq("agency_id", agencyId)
+    .not("interview_booked_at", "is", null)
+    .neq("status", "declined")
+    .gte("interview_scheduled_start", `${fromDateKey}T00:00:00-05:00`)
+    .lt("interview_scheduled_start", `${throughDateKey}T23:59:59-05:00`);
+  if (error) return corsJson({ ok: false, error: error.message }, 500);
+
+  const gmailCreds = await getComposioGmailCreds(agencyId);
+  const moved: any[] = [];
+  for (const c of rows ?? []) {
+    const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+    const oldLocal = formatChicago(c.interview_scheduled_start);
+    await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "none");
+    const slots = (await computeOfferedSlots(agencyId)) ?? [];
+    const token = c.interview_invite_token || newToken();
+    const { error: updErr } = await sb.from("hiring_candidates").update({
+      interview_scheduled_start: null,
+      interview_scheduled_end: null,
+      interview_calendar_event_id: null,
+      interview_meet_url: null,
+      interview_booked_at: null,
+      interview_confirmed_at: null,
+      interview_reminder_3d_sent_at: null,
+      interview_reminder_1d_sent_at: null,
+      interview_unconfirmed_alerted_at: null,
+      interview_reminder_response: null,
+      interview_invite_token: token,
+      interview_slots_offered: slots,
+      interview_invite_sent_at: new Date().toISOString(),
+      interview_booking_expires_at: new Date(Date.now() + BOOKING_WINDOW_DAYS * 24 * 3600 * 1000).toISOString(),
+    }).eq("id", c.id);
+    if (updErr) { moved.push({ id: c.id, name: c.candidate_name, action: "db_update_failed", error: updErr.message }); continue; }
+
+    let emailed = false;
+    if (c.email && gmailCreds.ok) {
+      const bookingUrl = `${BOOKING_BASE_URL}/${token}`;
+      const sendRes = await sendGmail({
+        creds: gmailCreds.creds,
+        to: c.email,
+        subject: "We need to move your Interview AMA — Story Agency",
+        html: `<p>Hi ${escHtml(firstName)},</p>
+<p>${escHtml(reason)} so your Interview AMA time on <strong>${escHtml(oldLocal)}</strong> no longer works. Sorry about the change.</p>
+<p>Please pick a new time here — it's a 30-minute video call over Google Meet:</p>
+<p><a href="${escHtml(bookingUrl)}">${escHtml(bookingUrl)}</a></p>
+<p>This link is valid for the next 7 days. Once you pick a time, you'll get a fresh confirmation with the Google Meet link.</p>
+<p>Sincerely,<br/>Story Agency</p>`,
+      });
+      emailed = sendRes.ok;
+    }
+    moved.push({ id: c.id, name: c.candidate_name, was: oldLocal, emailed, slots_offered: slots.length });
+  }
+  return corsJson({ ok: true, moved, records_processed: moved.length, output_summary: `${moved.length} booking(s) moved out of ${fromDateKey}..${throughDateKey}` });
+}
+
+// -------------------------------------------------------------------------
 // mode=release_booking  (internal, shared_secret gated)
 // -------------------------------------------------------------------------
 // A booked candidate was declined in the pipeline. The event comes off the
@@ -1896,6 +2063,22 @@ Deno.serve(async (req: Request) => {
     if (denied) return denied;
     if (!body.candidate_id) return jsonResponse({ ok: false, error: "missing candidate_id" }, 400);
     return await releaseBooking(agencyId, body.candidate_id);
+  }
+
+  if (mode === "calendar_busy") {
+    const denied = await requireOwnerOrManager(req, agencyId);
+    if (denied) return denied;
+    if (!body.from || !body.through) return corsJson({ ok: false, error: "missing from/through" }, 400);
+    return await calendarBusy(agencyId, body.from, body.through);
+  }
+
+  if (mode === "move_bookings") {
+    // Admin from the slots calendar, or internal with the shared secret.
+    const deniedAdmin = body.shared_secret ? null : await requireOwnerOrManager(req, agencyId);
+    if (deniedAdmin) return deniedAdmin;
+    if (body.shared_secret) { const denied = await requireSharedSecret(agencyId, body.shared_secret); if (denied) return denied; }
+    if (!body.from || !body.through) return corsJson({ ok: false, error: "missing from/through" }, 400);
+    return await moveBookings(agencyId, body.from, body.through, body.reason || "Our schedule changed that week,");
   }
 
   if (mode === "offer_earlier") {

@@ -43,7 +43,7 @@ const PRIMARY_TIMES_BY_WEEKDAY = {
   2: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Tue
   3: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }],                                     // Wed
   4: [{ h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }],                                     // Thu
-  5: [{ h: 13, m: 0, label: "1:00 PM" }],                                                                         // Fri
+  5: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Fri
 };
 const SECONDARY_TIMES_BY_WEEKDAY = {
   1: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Mon
@@ -61,8 +61,55 @@ const FIXED_TIMES_BY_WEEKDAY = Object.fromEntries(
 const INTERVIEW_MINUTES = 30;
 const TZ = "America/Chicago";
 
-function isThirdFriday(d) {
-  return d.getDay() === 5 && Math.ceil(d.getDate() / 7) === 3;
+// Mirrors fridayTimeAllowed in the edge function: first Friday of the month
+// has no morning times; third Friday has no midday or end-of-day times.
+function fridayOrdinal(d) { return d.getDay() === 5 ? Math.ceil(d.getDate() / 7) : null; }
+function fridayTimeAllowed(d, hour) {
+  const nth = fridayOrdinal(d);
+  if (nth === 1 && hour < 12) return false;
+  if (nth === 3 && hour >= 12) return false;
+  return true;
+}
+function fridayRuleNote(d) {
+  const nth = fridayOrdinal(d);
+  if (nth === 1) return "First Friday of the month — no morning times.";
+  if (nth === 3) return "Third Friday of the month — no midday or end-of-day times.";
+  return null;
+}
+// Vacation weeks: Sun–Sat, keyed by the Sunday.
+function weekStartIso(dateISO) {
+  const d = new Date(dateISO + "T12:00:00");
+  d.setDate(d.getDate() - d.getDay());
+  return isoDayLocal(d);
+}
+function addDaysIso(dateISO, n) {
+  const d = new Date(dateISO + "T12:00:00");
+  d.setDate(d.getDate() + n);
+  return isoDayLocal(d);
+}
+// Every vacation week (Sunday key) that lands inside [fromISO, toISO],
+// honoring per-occurrence moves. Returns Map<weekStart, {seriesId, originalWeekStart, label}>.
+function vacationWeeksInRange(series, moves, fromISO, toISO) {
+  const out = new Map();
+  const fromMs = Date.parse(weekStartIso(fromISO) + "T12:00:00") - 7 * 86400000;
+  const toMs = Date.parse(weekStartIso(toISO) + "T12:00:00") + 7 * 86400000;
+  for (const sr of series) {
+    if (sr.is_active === false) continue;
+    const moved = new Map(moves.filter((m) => m.series_id === sr.id).map((m) => [m.original_week_start, m.moved_to_week_start]));
+    const anchorMs = Date.parse(sr.anchor_week_start + "T12:00:00");
+    const step = Math.max(1, Number(sr.interval_weeks) || 13) * 7 * 86400000;
+    let k = Math.floor((fromMs - anchorMs) / step); if (k < 0) k = 0;
+    for (let ms = anchorMs + k * step; ms <= toMs; ms += step) {
+      const key = isoDayLocal(new Date(ms));
+      const target = moved.get(key) || key;
+      out.set(target, { seriesId: sr.id, originalWeekStart: key, label: sr.label, moved: target !== key });
+    }
+    for (const [orig, to] of moved) {
+      const toMsX = Date.parse(to + "T12:00:00");
+      if (toMsX >= fromMs && toMsX <= toMs && !out.has(to)) out.set(to, { seriesId: sr.id, originalWeekStart: orig, label: sr.label, moved: true });
+    }
+  }
+  return out;
 }
 function pad2(n) { return String(n).padStart(2, "0"); }
 function timeToHHMMSS(h, m) { return `${pad2(h)}:${pad2(m)}:00`; }
@@ -91,10 +138,12 @@ function chicagoKey(isoUtc) {
 
 // Build the effective list of slot instances for one date: fixed schedule +
 // manual additions, each tagged open / scheduled / removed.
-function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurring, scheduledByKey }) {
+function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurring, scheduledByKey, vacationByWeek, busyEvents }) {
   const weekday = dateObj.getDay();
-  const fridayExcluded = isThirdFriday(dateObj);
-  const fixed = fridayExcluded ? [] : (FIXED_TIMES_BY_WEEKDAY[weekday] || []).map((s) => ({ h: s.h, m: s.m, label: s.label, source: "fixed", tier: s.tier }));
+  const vacation = vacationByWeek.get(weekStartIso(dateISO)) || null;
+  const fixed = (FIXED_TIMES_BY_WEEKDAY[weekday] || [])
+    .filter((s) => weekday !== 5 || fridayTimeAllowed(dateObj, s.h))
+    .map((s) => ({ h: s.h, m: s.m, label: s.label, source: "fixed", tier: s.tier }));
   const manual = (manualByDate.get(dateISO) || []).map((r) => {
     const [h, m] = r.start_time.split(":").map(Number);
     return { h, m, label: labelForTime(h, m), source: "manual", manualId: r.id, note: r.note };
@@ -121,18 +170,52 @@ function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurri
     const key = `${dateISO}|${timeToHHMMSS(slot.h, slot.m).slice(0, 5)}`;
     const scheduled = scheduledByKey.get(key);
     if (scheduled) return { ...slot, status: "scheduled", candidate: scheduled };
+    if (vacation) return { ...slot, status: "removed", removedWhole: true, reason: vacation.label };
     if (wholeDayRemoved) return { ...slot, status: "removed", removedWhole: true };
     const oneOffMatch = oneOffRemovals.find((r) => r.start_time === timeToHHMMSS(slot.h, slot.m));
     if (oneOffMatch) return { ...slot, status: "removed", blackoutId: oneOffMatch.id };
     const recurringMatch = recurring.find((r) => r.start_time === timeToHHMMSS(slot.h, slot.m) && recurringAppliesOn(r, dateISO, weekday));
     if (recurringMatch) return { ...slot, status: "removed", recurringId: recurringMatch.id };
+    const busy = busyOverlap(dateISO, slot, busyEvents);
+    if (busy) return { ...slot, status: "removed", removedWhole: true, reason: `busy: ${busy}` };
     return { ...slot, status: "open" };
   });
 
   return [...resolved, ...extraScheduled].sort((a, b) => (a.h * 60 + a.m) - (b.h * 60 + b.m));
 }
 
-function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualSlot, onAddManualSlot, onClose }) {
+// Google Calendar events (from the edge function) that would knock a slot
+// out. The scheduler skips any slot overlapping a busy event, so the calendar
+// has to show the same thing — with the event's name.
+const SCHEDULER_ENDPOINT = `${import.meta.env.VITE_SUPABASE_URL || ""}/functions/v1/hiring-interview-scheduler`;
+async function callSchedulerAdmin(mode, extra = {}) {
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess?.session?.access_token;
+    if (!token) return null;
+    const res = await fetch(SCHEDULER_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY || "" },
+      body: JSON.stringify({ mode, agency_id: AGENCY_ID, ...extra }),
+    });
+    return await res.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+function busyOverlap(dateISO, slot, busyEvents) {
+  if (!busyEvents || busyEvents.length === 0) return null;
+  const start = new Date(`${dateISO}T${timeToHHMMSS(slot.h, slot.m)}`);
+  const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
+  for (const e of busyEvents) {
+    const es = new Date(e.start), ee = new Date(e.end);
+    if (es < end && ee > start) return e.summary;
+  }
+  return null;
+}
+
+function DayModal({ dateISO, slots, vacation, onRemoveSlot, onRestoreSlot, onDeleteManualSlot, onAddManualSlot, onMoveVacation, onClose }) {
   const [addTime, setAddTime] = useState("09:00");
   const [addNote, setAddNote] = useState("");
   const [saving, setSaving] = useState(null);
@@ -140,7 +223,7 @@ function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualS
   const dateObj = new Date(dateISO + "T12:00:00");
   const displayDate = dateObj.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   const weekdayLabel = DOW_FULL[dateObj.getDay()];
-  const fridayExcluded = isThirdFriday(dateObj);
+  const fridayNote = fridayRuleNote(dateObj);
 
   const handleAdd = async () => {
     setSaving("add");
@@ -159,9 +242,23 @@ function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualS
           <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: T.slate400, lineHeight: 1 }}>×</button>
         </div>
 
-        {fridayExcluded && slots.length === 0 && (
-          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-            This is the 3rd Friday of the month — no interviews are ever offered on this day by default.
+        {fridayNote && (
+          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>{fridayNote}</div>
+        )}
+
+        {vacation && (
+          <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 8, padding: "10px 12px", marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#92400e" }}>
+              {vacation.label} — {new Date(weekStartIso(dateISO) + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })} to {new Date(addDaysIso(weekStartIso(dateISO), 6) + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              {vacation.moved ? " (moved)" : ""}
+            </div>
+            <div style={{ fontSize: 12, color: "#92400e", marginTop: 4 }}>No interview slots this week. Every 13 weeks by default.</div>
+            <button
+              onClick={() => onMoveVacation(vacation)}
+              style={{ marginTop: 8, border: "1px solid #f59e0b", background: "#fff", color: "#92400e", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+            >
+              Move this vacation week…
+            </button>
           </div>
         )}
 
@@ -180,7 +277,7 @@ function DayModal({ dateISO, slots, onRemoveSlot, onRestoreSlot, onDeleteManualS
               if (slot.status === "removed") {
                 return (
                   <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${T.slate200}`, background: T.slate50 || "#f8fafc", borderRadius: 8, padding: "8px 12px" }}>
-                    <div style={{ fontSize: 13, color: T.slate400, textDecoration: "line-through" }}>{slot.label}{slot.source === "manual" ? " (manual)" : ""}</div>
+                    <div style={{ fontSize: 13, color: T.slate400 }}><span style={{ textDecoration: "line-through" }}>{slot.label}{slot.source === "manual" ? " (manual)" : ""}</span>{slot.reason ? <span style={{ marginLeft: 8, fontSize: 11 }}>{slot.reason}</span> : null}</div>
                     {!slot.removedWhole && (
                       <button
                         onClick={() => onRestoreSlot(slot.blackoutId || slot.recurringId, !!slot.recurringId)}
@@ -252,6 +349,11 @@ export default function InterviewSlotsManager() {
   const [recurring, setRecurring] = useState([]);
   const [manualSlots, setManualSlots] = useState([]);
   const [scheduled, setScheduled] = useState([]);
+  const [vacationSeries, setVacationSeries] = useState([]);
+  const [vacationMoves, setVacationMoves] = useState([]);
+  const [busyEvents, setBusyEvents] = useState([]);
+  const [moveMode, setMoveMode] = useState(null); // { seriesId, originalWeekStart, label } while picking the new week
+  const [movingMsg, setMovingMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
 
@@ -266,7 +368,7 @@ export default function InterviewSlotsManager() {
     const gridEndIso = isoDayLocal(gridEnd);
     const gridEndPlus1 = new Date(gridEnd); gridEndPlus1.setDate(gridEndPlus1.getDate() + 1);
 
-    const [bo, rec, man, sched] = await Promise.all([
+    const [bo, rec, man, sched, vs, vm] = await Promise.all([
       supabase.from("hiring_interview_blackouts").select("id, blackout_date, start_time, end_time, note")
         .eq("agency_id", AGENCY_ID).gte("blackout_date", gridStartIso).lte("blackout_date", gridEndIso),
       supabase.from("hiring_interview_recurring_blackouts").select("id, weekday, start_time, end_time, note, starts_on, ends_on")
@@ -278,12 +380,24 @@ export default function InterviewSlotsManager() {
         .not("interview_booked_at", "is", null)
         .gte("interview_scheduled_start", gridStart.toISOString())
         .lt("interview_scheduled_start", gridEndPlus1.toISOString()),
+      supabase.from("hiring_interview_vacation_series").select("id, label, anchor_week_start, interval_weeks, is_active")
+        .eq("agency_id", AGENCY_ID),
+      supabase.from("hiring_interview_vacation_moves").select("id, series_id, original_week_start, moved_to_week_start")
+        .eq("agency_id", AGENCY_ID),
     ]);
     if (!bo.error) setBlackouts(bo.data || []);
     if (!rec.error) setRecurring(rec.data || []);
     if (!man.error) setManualSlots(man.data || []);
     if (!sched.error) setScheduled(sched.data || []);
+    if (!vs.error) setVacationSeries(vs.data || []);
+    if (!vm.error) setVacationMoves(vm.data || []);
     setLoading(false);
+
+    // Busy events on the Google Calendar for the visible grid — fetched
+    // through the scheduler so the calendar shows exactly what the scheduler
+    // would skip, and why. Failure just means no busy overlays.
+    const busy = await callSchedulerAdmin("calendar_busy", { from: gridStartIso, through: gridEndIso });
+    setBusyEvents(busy?.ok && Array.isArray(busy.events) ? busy.events : []);
   }, [monthDate]);
 
   useEffect(() => { load(); }, [load]);
@@ -315,7 +429,37 @@ export default function InterviewSlotsManager() {
     return m;
   }, [scheduled]);
 
-  const ctx = { manualByDate, blackoutsByDate, recurring, scheduledByKey };
+  const vacationByWeek = useMemo(() => {
+    const gridStart = new Date(monthDate); gridStart.setDate(1 - gridStart.getDay());
+    const gridEnd = new Date(gridStart); gridEnd.setDate(gridStart.getDate() + 41);
+    return vacationWeeksInRange(vacationSeries, vacationMoves, isoDayLocal(gridStart), isoDayLocal(gridEnd));
+  }, [vacationSeries, vacationMoves, monthDate]);
+
+  const ctx = { manualByDate, blackoutsByDate, recurring, scheduledByKey, vacationByWeek, busyEvents };
+
+  // Move a vacation occurrence to the week containing the clicked day. The
+  // week it leaves opens back up; the week it lands on closes, and anyone
+  // booked there is unbooked and emailed fresh times by the scheduler.
+  const handleMoveVacationTo = async (targetDateISO) => {
+    if (!moveMode) return;
+    const targetWeek = weekStartIso(targetDateISO);
+    setMovingMsg("Moving…");
+    if (targetWeek === moveMode.originalWeekStart) {
+      await supabase.from("hiring_interview_vacation_moves").delete()
+        .eq("agency_id", AGENCY_ID).eq("series_id", moveMode.seriesId).eq("original_week_start", moveMode.originalWeekStart);
+    } else {
+      await supabase.from("hiring_interview_vacation_moves").upsert(
+        { agency_id: AGENCY_ID, series_id: moveMode.seriesId, original_week_start: moveMode.originalWeekStart, moved_to_week_start: targetWeek },
+        { onConflict: "series_id,original_week_start" },
+      );
+    }
+    const res = await callSchedulerAdmin("move_bookings", { from: targetWeek, through: addDaysIso(targetWeek, 6), reason: "Peter is out of the office that week," });
+    const n = Array.isArray(res?.moved) ? res.moved.length : 0;
+    setMovingMsg(n > 0 ? `Vacation week moved. ${n} booked candidate${n === 1 ? "" : "s"} emailed new times.` : "Vacation week moved.");
+    setMoveMode(null);
+    await load();
+    setTimeout(() => setMovingMsg(""), 6000);
+  };
 
   const handleAddManualSlot = async (payload) => {
     await supabase.from("hiring_interview_manual_slots").insert({ agency_id: AGENCY_ID, ...payload });
@@ -356,8 +500,15 @@ export default function InterviewSlotsManager() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 13, color: T.slate500 }}>
-        Green = open for scheduling, blue = already booked, gray strikethrough = removed. Click a day to add a slot or remove one if something comes up.
+        Green = open for scheduling, dashed green = backup (offered once the main times that week are booked), blue = already booked (✓ = confirmed), gray strikethrough = removed — with the reason. Click a day to add a slot or remove one if something comes up.
       </div>
+      {moveMode && (
+        <div style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e", borderRadius: 8, padding: "8px 12px", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Click any day to move the {moveMode.label.toLowerCase()} to that week. The week it leaves opens back up.</span>
+          <button onClick={() => setMoveMode(null)} style={{ border: "none", background: "transparent", color: "#92400e", fontWeight: 600, cursor: "pointer", fontSize: 12 }}>Cancel</button>
+        </div>
+      )}
+      {movingMsg && <div style={{ fontSize: 12, color: T.slate500 }}>{movingMsg}</div>}
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 6 }}>
@@ -380,31 +531,37 @@ export default function InterviewSlotsManager() {
           return (
             <div
               key={iso}
-              onClick={() => setOpenDay(iso)}
+              onClick={() => moveMode ? handleMoveVacationTo(iso) : setOpenDay(iso)}
               style={{
                 minHeight: 76, borderRadius: 8, padding: 6, cursor: "pointer",
-                border: `1px solid ${iso === todayIso ? (T.blue600 || "#2563eb") : T.slate200}`,
-                background: "#fff",
+                border: `1px solid ${moveMode ? "#f59e0b" : iso === todayIso ? (T.blue600 || "#2563eb") : T.slate200}`,
+                background: vacationByWeek.has(weekStartIso(iso)) ? "#fffbeb" : "#fff",
                 opacity: inMonth ? 1 : 0.4,
               }}
             >
-              <div style={{ fontSize: 12, fontWeight: iso === todayIso ? 700 : 500, color: iso === todayIso ? (T.blue600 || "#2563eb") : T.slate600 }}>
-                {d.getDate()}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <div style={{ fontSize: 12, fontWeight: iso === todayIso ? 700 : 500, color: iso === todayIso ? (T.blue600 || "#2563eb") : T.slate600 }}>
+                  {d.getDate()}
+                </div>
+                {vacationByWeek.has(weekStartIso(iso)) && d.getDay() >= 1 && d.getDay() <= 5 && (
+                  <div style={{ fontSize: 9, color: "#92400e", fontWeight: 600 }}>vacation</div>
+                )}
               </div>
-              {slots.slice(0, 4).map((s, i) => (
+              {slots.map((s, i) => (
                 <div
                   key={i}
                   style={{
                     fontSize: 9.5, marginTop: 2, lineHeight: 1.4,
                     padding: s.status === "removed" ? 0 : "1px 4px",
                     borderRadius: 4,
-                    display: "inline-block",
+                    display: "block",
                     background: s.status === "open" ? (s.tier === "secondary" ? "transparent" : "#dcfce7") : s.status === "scheduled" ? "#e0f2fe" : "transparent",
                     border: s.status === "open" && s.tier === "secondary" ? "1px dashed #86efac" : "none",
                     color: s.status === "open" ? "#166534" : s.status === "scheduled" ? "#1e40af" : T.slate400,
                     textDecoration: s.status === "removed" ? "line-through" : "none",
                     fontWeight: s.status === "scheduled" ? 700 : s.status === "open" ? 600 : 400,
-                    width: "fit-content",
+                    width: "100%",
+                    boxSizing: "border-box",
                     maxWidth: "100%",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -425,6 +582,8 @@ export default function InterviewSlotsManager() {
         <DayModal
           dateISO={openDay}
           slots={slotsForDate(openDay, new Date(openDay + "T12:00:00"), ctx)}
+          vacation={vacationByWeek.get(weekStartIso(openDay)) || null}
+          onMoveVacation={(v) => { setMoveMode(v); setOpenDay(null); }}
           onRemoveSlot={handleRemoveSlot}
           onRestoreSlot={handleRestoreSlot}
           onDeleteManualSlot={handleDeleteManualSlot}
