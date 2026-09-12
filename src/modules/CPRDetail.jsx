@@ -515,8 +515,7 @@ function useCPRData(weekDate) {
     section11Prior: null, // get_cpr_section_11 result for prior week (drives WoW delta on rate rows)
     leaderboards: [],    // Gold/Silver/Bronze rows across 3 categories
     allStarCounts: [],   // running all-star counts per person per category
-    allStarCrossingsThisWeek: [],      // rows in all_star_crossings for this specific week (drives per-card badges)
-    trailblazerCrossingsThisWeek: [],  // rows in trailblazer_crossings for this specific week
+    crossingsLive: [],   // get_weekly_crossings_live — this week's All-Star / Trailblazer / leaderboard chips, recomputed at read time
     floorConfig: [],     // round_step + direction per category
     mvpThisWeek: null,   // mvp_history row for this week (name + SP + draws)
     quarterPrizeBudget: null, // budget dollars for the quarter containing this week
@@ -841,6 +840,10 @@ function useCPRData(weekDate) {
                 week_ending_date: wed,
                 commission: Number(r.commission) || 0,
                 sales_points: Number(r.sales_points) || 0,
+                // Null-preserving copy. sales_points above coerces a blank week to 0, which
+                // makes "never filled in" look identical to "genuinely zero". The carried-
+                // forward lookup in Team Activity needs to tell those apart.
+                sales_points_raw: r.sales_points == null ? null : Number(r.sales_points),
                 prod_total_count: Number(r.prod_total_count) || 0,
                 prod_issued_count: Number(r.prod_issued_count) || 0,
                 prod_issued_premium: Number(r.prod_issued_premium) || 0,
@@ -877,6 +880,7 @@ function useCPRData(weekDate) {
                   week_ending_date: wed,
                   commission: 0, // comp field — intentionally not exposed for teammates other than viewer/admin
                   sales_points: Number(r.sales_points) || 0,
+                  sales_points_raw: r.sales_points == null ? null : Number(r.sales_points),
                   prod_total_count: Number(r.prod_total_count) || 0,
                   prod_issued_count: Number(r.prod_issued_count) || 0,
                   prod_issued_premium: Number(r.prod_issued_premium) || 0,
@@ -1054,26 +1058,21 @@ function useCPRData(weekDate) {
           if (!cancelled) allStarCounts = asRows || [];
         } catch (e) { console.warn("all_star_counts fetch failed:", e); }
 
-        // This week's crossings — drive per-card badges on the Leaderboards section
-        let allStarCrossingsThisWeek = [];
+        // This week's crossings — All-Star, Trailblazer and any leaderboard record set
+        // this week. Recomputed live from the underlying rows, NOT read back from
+        // all_star_crossings / trailblazer_crossings / leaderboards. Those tables hold
+        // snapshots written once at week close; correcting a teammate's sales points
+        // afterward never moves them, so the banner kept showing a number and a badge that
+        // were no longer true (week ending 2026-09-12 showed 662.41 and an All-Star badge
+        // for a week that actually came in at 548.99, under the 650 floor).
+        // Peter standing policy: totals are computed on display, never read back.
+        let crossingsLive = [];
         try {
-          const { data: xRows } = await supabase
-            .from("all_star_crossings")
-            .select("team_member_id, category, value_at_crossing, floor_at_crossing")
-            .eq("agency_id", AGENCY_ID)
-            .eq("week_ending", weekDate);
-          if (!cancelled) allStarCrossingsThisWeek = xRows || [];
-        } catch (e) { console.warn("all_star_crossings fetch failed:", e); }
-
-        let trailblazerCrossingsThisWeek = [];
-        try {
-          const { data: tbRows } = await supabase
-            .from("trailblazer_crossings")
-            .select("team_member_id, category, value_at_crossing, floor_at_crossing")
-            .eq("agency_id", AGENCY_ID)
-            .eq("week_ending", weekDate);
-          if (!cancelled) trailblazerCrossingsThisWeek = tbRows || [];
-        } catch (e) { console.warn("trailblazer_crossings fetch failed:", e); }
+          const { data: xRows, error: xErr } = await supabase
+            .rpc("get_weekly_crossings_live", { p_agency_id: AGENCY_ID, p_week_end_date: weekDate });
+          if (xErr) throw xErr;
+          if (!cancelled) crossingsLive = xRows || [];
+        } catch (e) { console.warn("get_weekly_crossings_live failed:", e); }
 
         // Floor config (rounding step per category)
         let floorConfig = [];
@@ -1274,8 +1273,7 @@ function useCPRData(weekDate) {
           prizeCart,
           leaderboards,
           allStarCounts,
-          allStarCrossingsThisWeek,
-          trailblazerCrossingsThisWeek,
+          crossingsLive,
           floorConfig,
           mvpThisWeek,
           quarterPrizeBudget,
@@ -1976,7 +1974,7 @@ function PersonalChecklistSection({ details, team, weekEnding, editMode, formDet
 }
 
 // 8 — Requirements (per-person Last Wk / This Wk / Cost / Total / Paid / Next Wk)
-function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails, isDirty, onChange }) {
+function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails, isDirty, onChange, weekDate }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -1985,7 +1983,9 @@ function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails
       </div>
     );
   }
-  const sorted = sortByTenure(details, team);
+  // Anyone already gone before this week started is dropped — they never worked it.
+  // Same cut the server makes in get_weekly_cpr_requirements.
+  const sorted = sortByTenure(details, team).filter(d => !leftBeforeWeek(d.__left, weekDate));
   // Math (locked 2026-06-20):
   //   Total      = (Last Wk + This Wk + Modified) × Cost
   //   Paid       = team-pool allocation against the new Total (server-computed)
@@ -3309,7 +3309,7 @@ function CampaignsSection({ report, campaignPriors, weekDate, editMode, formRepo
 }
 
 // 16 — Hours Worked (Mon-Fri grid + total)
-function HoursWorkedSection({ details, team, runtimeHours }) {
+function HoursWorkedSection({ details, team, runtimeHours, weekDate }) {
   if (!details || details.length === 0) {
     return (
       <div>
@@ -3318,7 +3318,8 @@ function HoursWorkedSection({ details, team, runtimeHours }) {
       </div>
     );
   }
-  const sorted = sortByTenure(details, team);
+  // Gone before the week started — no hours to show.
+  const sorted = sortByTenure(details, team).filter(d => !leftBeforeWeek(d.__left, weekDate));
   const DAYS = ["mon", "tue", "wed", "thu", "fri"];
   const DAY_LABELS = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri" };
   return (
@@ -3422,6 +3423,26 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
   }
   const sorted = sortByTenure(details, team);
 
+  // Quarter Sales Points here are quarter-to-date, carried forward week to week. A row can
+  // be blank for THIS week — a teammate who has left writes no new production, and a row
+  // can simply not be filled in yet — but the quarter figure they built has not gone away.
+  // Peter 2026-09-11: a teammate who left keeps their row in Team Activity showing the
+  // quarter total they finished with, until the quarter closes.
+  // So use this week's value when there is one, otherwise their most recent non-blank week
+  // in this cycle. Same rule the server uses in get_cpr_detail_sales_points_qtd (latest
+  // non-null per person across the cycle). Applied to everyone, not only leavers, so the
+  // page and the server agree.
+  const effSalesPts = (d) => {
+    if (d.sales_points != null) return Number(d.sales_points) || 0;
+    const mine = (cycleWeeklyDetails || [])
+      .filter(x => x.team_member_id === d.team_member_id
+                && x.sales_points_raw != null
+                && x.week_ending_date <= weekDate)
+      .sort((a, b) => a.week_ending_date.localeCompare(b.week_ending_date));
+    const latest = mine.length ? mine[mine.length - 1] : null;
+    return latest ? Number(latest.sales_points_raw) || 0 : 0;
+  };
+
   // Team Net Quotes Total = sum of per-person Net Quotes shown above. As of 2026-08-15,
   // runtimeReqs[id].net_quotes already includes each person's individual WtW requirements
   // buy-back (get_weekly_cpr_requirements folds it in canonically now — see that function).
@@ -3440,7 +3461,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
   // team total (week ending 2026-08-29: stored 3677 vs 3347.10 actually on the rows).
   // Standing policy: totals are computed on display from the underlying rows.
   const teamSalesPtsTotal = sorted.reduce(
-    (acc, d) => acc + (Number(d.sales_points) || 0),
+    (acc, d) => acc + effSalesPts(d),
     0
   );
 
@@ -3595,7 +3616,19 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                       </Td>
                     ) : (
                       <Td align="right">
-                        {d.sales_points != null ? Number(d.sales_points).toFixed(2) : "—"}
+                        {(() => {
+                          const eff = effSalesPts(d);
+                          if (d.sales_points != null) return eff.toFixed(2);
+                          if (eff > 0) {
+                            return (
+                              <span
+                                title="Carried forward — no new production recorded this week"
+                                style={{ color: T.slate500 }}
+                              >{eff.toFixed(2)}</span>
+                            );
+                          }
+                          return "—";
+                        })()}
 
                         {(() => {
                           // WoW delta: this week's sales_points vs last week's, suppressed across cycle boundary.
@@ -3790,7 +3823,11 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
       </div>
     );
   }
-  const sorted = sortByTenure(details, team);
+  // Gone before the week started: no base, no pool share, nothing to pay. They stay only
+  // when a commission landed this week on business they wrote earlier, so that commission
+  // still gets paid out and shows on the sheet.
+  const sorted = sortByTenure(details, team)
+    .filter(d => !leftBeforeWeek(d.__left, weekDate) || Number(d.commission) > 0);
 
   // Pull weekly pool totals from residual_pool_diag (same across every detail row for the week).
   const diagAny = details.find(d => d.residual_pool_diag) || {};
@@ -3995,7 +4032,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                         title="Left during this week — paid base for days worked plus commission only"
                         style={{ display: "block", fontSize: 10, fontWeight: 600, color: T.slate400, textTransform: "none", letterSpacing: 0 }}
                       >
-                        left {new Date(d.__left + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" })}
+                        left {new Date(d.__left + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                       </span>
                     )}
                   </Th>
@@ -5216,7 +5253,9 @@ function LeaderboardsSection({ leaderboards, allStarCounts, floorConfig, team, w
 // surface EVERY week they occur, not only on winning weeks with an MVP.
 // Single-source: this is the ONLY surface listing per-week crossings; LeaderboardsSection
 // cards below show current records + All-Star floor only.
-function CrossingsBanner({ team, weekDate, allStarCrossingsThisWeek = [], trailblazerCrossingsThisWeek = [], leaderboards = [] }) {
+function CrossingsBanner({ team, weekDate, crossings = [] }) {
+  // Rows come from get_weekly_crossings_live, recomputed at read time. See the fetch for
+  // why this no longer reads the stored crossing tables.
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
   const CAT_META = {
     quarter_sp:   { label: "Quarterly Sales", fmt: v => fmtMoneyCents(v) },
@@ -5224,34 +5263,33 @@ function CrossingsBanner({ team, weekDate, allStarCrossingsThisWeek = [], trailb
     week_sp:      { label: "Weekly Sales",    fmt: v => fmtMoneyCents(v) },
     week_quotes:  { label: "Weekly Quotes",   fmt: v => Number(v).toFixed(0) },
   };
-  const tbChips = (trailblazerCrossingsThisWeek || []).map(r => {
-    const p = teamById[r.team_member_id];
-    const nm = p ? (p.nickname || p.first_name || "?") : "?";
-    const c = CAT_META[r.category] || { label: r.category, fmt: v => v };
-    return { key: "tb-" + r.team_member_id + "-" + r.category, icon: "▲", type: "Trailblazer", name: nm, catLabel: c.label, val: c.fmt(r.value_at_crossing),
-             bg: "#dbeafe", border: "#3b82f6", color: "#1e3a8a" };
-  });
-  const leaderboardChips = (leaderboards || [])
-    .filter(r => r.record_week_ending === weekDate)
+  const LOOK = {
+    trailblazer: { icon: "▲", type: "Trailblazer", bg: "#dbeafe", border: "#3b82f6", color: "#1e3a8a" },
+    all_star:    { icon: "⭐", type: "All-Star",    bg: "#fef9c3", border: "#eab308", color: "#713f12" },
+  };
+  const TIER_LOOK = {
+    1: { icon: "🥇", type: "Gold",   bg: "#fef3c7", border: "#f59e0b", color: "#78350f" },
+    2: { icon: "🥈", type: "Silver", bg: "#f1f5f9", border: "#94a3b8", color: "#334155" },
+    3: { icon: "🥉", type: "Bronze", bg: "#fef2e2", border: "#d97706", color: "#7c2d12" },
+  };
+  // Trailblazer first, then leaderboard records, then All-Star — same order as before.
+  const KIND_ORDER = { trailblazer: 0, leaderboard: 1, all_star: 2 };
+  const allChips = (crossings || [])
+    .slice()
+    .sort((a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9))
     .map(r => {
+      const look = r.kind === "leaderboard" ? (TIER_LOOK[r.tier] || TIER_LOOK[3]) : LOOK[r.kind];
+      if (!look) return null;
       const p = teamById[r.team_member_id];
       const nm = p ? (p.nickname || p.first_name || "?") : "?";
       const c = CAT_META[r.category] || { label: r.category, fmt: v => v };
-      const icon = r.tier === 1 ? "🥇" : r.tier === 2 ? "🥈" : "🥉";
-      const type = r.tier === 1 ? "Gold" : r.tier === 2 ? "Silver" : "Bronze";
-      const bg   = r.tier === 1 ? "#fef3c7" : r.tier === 2 ? "#f1f5f9" : "#fef2e2";
-      const bd   = r.tier === 1 ? "#f59e0b" : r.tier === 2 ? "#94a3b8" : "#d97706";
-      const col  = r.tier === 1 ? "#78350f" : r.tier === 2 ? "#334155" : "#7c2d12";
-      return { key: "pd-" + r.category + "-" + r.tier, icon, type, name: nm, catLabel: c.label, val: c.fmt(r.record_value), bg, border: bd, color: col };
-    });
-  const asChips = (allStarCrossingsThisWeek || []).map(r => {
-    const p = teamById[r.team_member_id];
-    const nm = p ? (p.nickname || p.first_name || "?") : "?";
-    const c = CAT_META[r.category] || { label: r.category, fmt: v => v };
-    return { key: "as-" + r.team_member_id + "-" + r.category, icon: "⭐", type: "All-Star", name: nm, catLabel: c.label, val: c.fmt(r.value_at_crossing),
-             bg: "#fef9c3", border: "#eab308", color: "#713f12" };
-  });
-  const allChips = [...tbChips, ...leaderboardChips, ...asChips];
+      return {
+        key: r.kind + "-" + r.team_member_id + "-" + r.category + "-" + (r.tier ?? ""),
+        icon: look.icon, type: look.type, name: nm, catLabel: c.label, val: c.fmt(r.value),
+        bg: look.bg, border: look.border, color: look.color,
+      };
+    })
+    .filter(Boolean);
   if (allChips.length === 0) return null;
   return (
     <div style={{
@@ -6193,6 +6231,20 @@ function leftDuringWeek(endDate, weekEndingISO) {
   return endDate <= weekEndingISO;
 }
 
+// Was this person already gone BEFORE this CPR week started? The CPR week runs Sunday
+// through Saturday, so the week starts on the week-ending Saturday minus 6 days. Someone
+// whose last day was before that never worked a minute of this week and does not belong
+// in Requirements, Hours or Payroll at all. A mid-week termination is a different case and
+// keeps its current behaviour (shows with zeros, no checklist, no code reds) — that one
+// uses leftDuringWeek. Server agrees: get_weekly_cpr_requirements drops these rows from
+// its return (migration cpr_requirements_hide_teammates_gone_before_week_start).
+function leftBeforeWeek(endDate, weekEndingISO) {
+  if (!endDate || !weekEndingISO) return false;
+  const start = new Date(weekEndingISO + "T00:00:00Z");
+  start.setUTCDate(start.getUTCDate() - 6);
+  return endDate < start.toISOString().slice(0, 10);
+}
+
 function sortByTenure(details, team) {
   // Annotate each detail row with the team member's name + hire_date
   const teamById = {};
@@ -6688,9 +6740,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       <CrossingsBanner
         team={data.team}
         weekDate={weekDate}
-        allStarCrossingsThisWeek={data.allStarCrossingsThisWeek}
-        trailblazerCrossingsThisWeek={data.trailblazerCrossingsThisWeek}
-        leaderboards={data.leaderboards}
+        crossings={data.crossingsLive}
       />
 
       {/* Quarter Close Banner — only on the final CPR of a quarter. Carries the Win the
@@ -6780,6 +6830,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         <RequirementsSection
           details={data.details} team={data.team}
           runtimeReqs={data.runtimeReqs}
+          weekDate={weekDate}
           editMode={edit.active}
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
@@ -6890,6 +6941,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         <HoursWorkedSection
           details={data.details} team={data.team}
           runtimeHours={data.runtimeHours}
+          weekDate={weekDate}
         />
       </Section>
 
