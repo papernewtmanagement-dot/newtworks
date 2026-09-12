@@ -1,0 +1,192 @@
+1|AP|enterprising|+|593A|6.00|I propose new ventures when the timing is right
+1|AP|political_skill_networking|+|N074|6.00|I find out who actually makes the decision
+1|AP|assertiveness|+|583B|5.67|I push back when a request seems unreasonable
+1|AP|achievement_striving|+|590A|5.67|I compare my own performance against the best performers
+2|AP|dispositional_optimism|+|N042|6.33|I assume a stalled deal can still come through
+2|AP|enterprising|+|586A|6.00|I champion bold ideas that could open new markets
+2|AP|political_skill_networking|+|586B|6.00|I understand how to navigate office dynamics smoothly
+2|AP|cautiousness|+|596A|6.00|I pause to consider alternatives before choosing one
+3|AP|customer_orientation|+|511A|8.00|I follow up to make sure a customer is satisfied
+3|AP|proactive_personality|+|518A|7.67|I anticipate a need and address it early
+3|AP|assertiveness|+|521A|7.67|I speak up clearly when something needs to change
+3|AP|compassion|+|561B|7.67|I respond with empathy to a frustrated customer
+4|AP|learning_goal_orientation|+|536B|7.00|I look for training that sharpens my abilities
+4|AP|customer_orientation|+|574A|7.00|I check back in after resolving a customer issue
+4|AP|political_skill_networking|+|539A|6.67|I know who to approach to move a project forward
+4|AP|dispositional_optimism|+|539B|6.67|I believe things will work out with effort
+5|AP|compassion|+|519A|7.00|I notice when a teammate is having a hard day
+5|AP|friendliness|+|534A|7.00|I put people at ease in conversation
+5|AP|self_efficacy|+|571B|7.00|I take on a challenge with confidence in the outcome
+5|AP|political_skill_networking|+|N073|6.67|I introduce myself to people at industry events
+6|AP|dispositional_optimism|+|597A|7.00|I expect good outcomes even during a rough stretch
+6|AP|achievement_striving|+|N002|7.00|I take on more work than the role requires
+6|AP|friendliness|+|N061|7.00|I learn the names of people I see regularly
+6|AP|self_efficacy|+|N090|7.00|I expect to figure out an unfamiliar system
+7|AP|self_efficacy|+|523A|7.33|I feel capable of learning what a role requires
+7|AP|compassion|+|567B|7.33|I offer support to a coworker under pressure
+7|AP|learning_goal_orientation|+|571A|7.00|I view a mistake as a lesson to learn from
+7|AP|cautiousness|+|580A|7.00|I check the numbers twice before sending them out
+8|AP|learning_goal_orientation|+|543B|8.00|I seek out new skills to improve at the job
+8|AP|customer_orientation|+|N037|8.00|I explain a policy again until the customer understands
+8|AP|self_discipline|+|533A|7.67|I resist distractions to keep working toward a goal
+8|AP|compassion|+|N025|7.67|I cover a shift for someone dealing with a hardship
+9|AP|achievement_striving|+|578A|7.33|I seek out challenging assignments over easy ones
+9|AP|self_discipline|+|N086|7.33|I do the same amount of calls every single day
+9|AP|political_skill_networking|+|577B|7.00|I connect people who can help each other
+9|AP|assertiveness|+|594A|7.00|I state an opinion directly in a team meeting
+10|AP|cooperation|+|503B|7.00|I adjust plans to fit the team's needs
+10|AP|dispositional_optimism|+|513A|7.00|I approach new challenges with a hopeful outlook
+10|AP|compassion|+|552B|7.00|I show genuine concern for someone's situation
+10|AP|friendliness|+|559A|7.00|I greet people warmly at the start of a call
+11|AP|achievement_striving|+|541A|8.00|I set ambitious targets and work to exceed them
+11|AP|emotional_stability|+|557A|8.00|I keep a level head during a crisis
+11|AP|dutifulness|+|588B|8.00|I honor a promise even when it's inconvenient
+11|AP|cooperation|+|516B|7.67|I pitch in to help a coworker finish a task
+12|AP|compassion|+|504B|7.33|I treat people kindly even during busy stretches
+12|AP|achievement_striving|+|547B|7.33|I push to finish tasks ahead of schedule
+12|AP|assertiveness|+|573A|7.33|I take the lead when a decision is needed
+12|AP|friendliness|+|503A|7.00|I make new teammates feel welcome quickly
+13|AP|cooperation|+|572B|7.33|I find common ground during a disagreement
+13|AP|learning_goal_orientation|+|550A|7.00|I study unfamiliar topics to build expertise
+13|AP|assertiveness|+|558A|7.00|I set clear expectations with a vendor or client
+13|AP|cautiousness|+|581A|7.00|I take time to verify facts before acting
+14|AP|self_discipline|+|531B|7.33|I finish tasks before moving to something easier
+14|AP|friendliness|+|530A|7.00|I show genuine warmth toward clients
+14|AP|cautiousness|+|597B|7.00|I think through options before making a decision
+14|AP|enterprising|+|N053|7.00|I start conversations that could turn into business
+15|AP|assertiveness|+|536A|7.00|I voice disagreement respectfully but firmly
+15|AP|political_skill_networking|+|591A|7.00|I build relationships that help get things done
+15|AP|learning_goal_orientation|+|N070|7.00|I ask a coworker to teach me their method
+15|AP|self_efficacy|+|569B|6.67|I trust personal skill to get through a setback
+16|AP|proactive_personality|+|532A|7.00|I bring new ideas to the team unprompted
+16|AP|self_efficacy|+|535A|7.00|I believe personal effort can overcome most obstacles
+16|AP|cautiousness|+|577A|7.00|I consider consequences before making a commitment
+16|AP|cooperation|+|N033|7.00|I give up my preference to keep the group moving
+17|AP|self_efficacy|+|524A|8.00|I feel confident tackling a difficult new task
+17|AP|customer_orientation|+|541B|8.00|I listen closely to what a customer actually needs
+17|AP|emotional_stability|+|523B|7.67|I recover quickly after a disappointing outcome
+17|AP|self_discipline|+|N085|7.67|I start the hardest task first each morning
+18|AP|cooperation|+|535B|7.00|I coordinate closely with others on a project
+18|AP|proactive_personality|+|559B|7.00|I look ahead for issues before they surface
+18|AP|political_skill_networking|+|553A|6.67|I read the room before raising a sensitive topic
+18|AP|enterprising|+|N054|6.67|I look for a market the agency has overlooked
+19|AP|dutifulness|+|N046|7.33|I do the step exactly as the process says
+19|AP|compassion|+|506B|7.00|I make space to hear someone out fully
+19|AP|self_efficacy|+|514B|7.00|I approach a hard problem believing it's solvable
+19|AP|enterprising|+|538B|7.00|I pursue fresh approaches to reach more customers
+20|AP|dutifulness|+|515B|8.00|I take responsibilities seriously from start to finish
+20|AP|cooperation|+|568B|8.00|I share credit when a project goes well
+20|AP|compassion|+|599B|8.00|I take time to listen to a customer's concerns
+20|AP|self_discipline|+|600A|7.67|I follow through on a plan despite competing demands
+21|AP|emotional_stability|+|598A|7.67|I maintain composure through a difficult conversation
+21|AP|dutifulness|+|N045|7.67|I finish the paperwork the same day it is due
+21|AP|dispositional_optimism|+|509A|7.33|I trust that hard work will pay off
+21|AP|assertiveness|+|N014|7.33|I ask a customer directly for their business
+22|AP|customer_orientation|+|507B|8.00|I go the extra step to solve a customer's problem
+22|AP|proactive_personality|+|511B|8.00|I spot an issue and fix it before it spreads
+22|AP|dutifulness|+|517B|8.00|I deliver on what I promised, on time
+22|AP|cooperation|+|563A|8.00|I work smoothly with teammates toward a shared goal
+23|AP|customer_orientation|+|561A|7.67|I tailor advice to fit a customer's situation
+23|AP|dutifulness|+|564A|7.67|I keep obligations even under time pressure
+23|AP|enterprising|+|508A|7.33|I spot opportunities others tend to miss
+23|AP|friendliness|+|567A|7.33|I connect easily with people from different backgrounds
+24|AP|self_discipline|+|542B|7.33|I hold to a commitment even when it's tedious
+24|AP|cautiousness|+|N022|7.33|I read the fine print before I sign anything
+24|AP|proactive_personality|+|N078|7.33|I follow up on something the team left behind
+24|AP|dispositional_optimism|+|506A|7.00|I keep a hopeful outlook through a slow quarter
+25|AP|customer_orientation|+|556A|7.67|I anticipate what a customer will need next
+25|AP|emotional_stability|+|N050|7.67|I stay even-keeled whether the month is good or bad
+25|AP|assertiveness|+|542A|7.33|I step forward to make the call when others hesitate
+25|AP|cautiousness|+|572A|7.33|I weigh risks carefully before committing to a plan
+26|AP|emotional_stability|+|N049|7.33|I bounce back the next morning after a bad day
+26|AP|enterprising|+|505A|7.00|I look for new ways to grow the business
+26|AP|cautiousness|+|537B|7.00|I review the details before signing off on work
+26|AP|friendliness|+|574B|7.00|I bring a friendly tone to every interaction
+27|AP|enterprising|+|555A|7.00|I take initiative to launch a new idea
+27|AP|learning_goal_orientation|+|560A|7.00|I take on tasks that stretch my current knowledge
+27|AP|proactive_personality|+|580B|7.00|I step in to solve a problem on sight
+27|AP|dispositional_optimism|+|576A|6.67|I look forward to what's ahead with confidence
+28|AP|emotional_stability|+|589B|7.33|I keep outward composure under stress
+28|AP|political_skill_networking|+|514A|7.00|I adapt my communication style to different personalities
+28|AP|cooperation|+|538A|7.00|I support a team decision even when preferences differ
+28|AP|dispositional_optimism|+|565A|7.00|I stay positive when a project hits obstacles
+29|AP|emotional_stability|+|516A|7.67|I stay composed after a setback
+29|AP|proactive_personality|+|N077|7.67|I rewrite a process that keeps causing the same problem
+29|AP|self_efficacy|+|578B|7.33|I trust my own ability to handle a tough situation
+29|AP|achievement_striving|+|N001|7.33|I chase a difficult account others have written off
+30|AP|dutifulness|+|502B|8.00|I complete tasks fully rather than cutting corners
+30|AP|emotional_stability|+|545A|8.00|I keep emotions steady during a stressful week
+30|AP|achievement_striving|+|582A|8.00|I take pride in producing top-quality work
+30|AP|learning_goal_orientation|+|592B|7.67|I welcome feedback as a chance to grow
+31|AP|self_discipline|+|502A|8.00|I keep working steadily until a task is done
+31|AP|proactive_personality|+|524B|8.00|I take action on a problem before being asked
+31|AP|customer_orientation|+|N038|8.00|I return a customer call the same day
+31|AP|achievement_striving|+|551A|7.67|I put in extra effort to reach a stretch goal
+32|AP|self_discipline|+|540A|8.00|I stick to a plan even when motivation dips
+32|AP|dutifulness|+|599A|8.00|I follow through on commitments unprompted
+32|AP|friendliness|+|598B|7.67|I build easy rapport with new customers
+32|AP|learning_goal_orientation|+|N069|7.67|I practice the part of the job I find hardest
+33|MX|cooperation|+|579B|6.67|I build consensus before moving a project forward
+33|MX|self_efficacy|+|N089|6.67|I take on a task before I know every answer
+33|MX|self_discipline|-|N088|3.33|I drift to email in the middle of work
+33|MX|political_skill_networking|-|N075|3.00|I raise a sensitive topic at the wrong moment
+34|MX|learning_goal_orientation|+|525A|6.67|I enjoy mastering a skill that's still developing
+34|MX|cautiousness|+|585A|6.67|I plan ahead rather than acting on impulse
+34|MX|achievement_striving|-|N004|3.33|I pick the easier of two assignments
+34|MX|proactive_personality|-|N079|3.33|I wait to be assigned before starting anything
+35|MX|friendliness|+|510A|5.00|I enjoy chatting with coworkers throughout the day
+35|MX|political_skill_networking|+|512B|5.00|I cultivate relationships that pay off down the road
+35|MX|dutifulness|-|N048|3.00|I miss a deadline to finish something else
+35|MX|proactive_personality|-|N080|3.00|I walk past a problem outside my own tasks
+36|MX|dutifulness|+|513B|7.00|I stick to agreed-upon procedures carefully
+36|MX|achievement_striving|+|530B|7.00|I keep raising the bar after each success
+36|MX|dispositional_optimism|-|N043|3.00|I expect a slow month to keep getting worse
+36|MX|learning_goal_orientation|-|N072|3.00|I skip training that covers unfamiliar material
+37|MX|self_efficacy|+|566B|6.67|I feel equipped to handle whatever the day brings
+37|MX|cooperation|+|N034|6.67|I hand off work to balance the team's load
+37|MX|assertiveness|-|N015|3.67|I stay quiet in a meeting rather than disagree
+37|MX|enterprising|-|N056|3.67|I leave new business ideas for someone else to raise
+38|MX|political_skill_networking|+|590B|5.67|I build a network of contacts across the industry
+38|MX|proactive_personality|+|548A|5.33|I initiate improvements on my own judgment alone
+38|MX|compassion|-|N028|3.00|I cut short a customer venting about their problem
+38|MX|emotional_stability|-|N051|3.00|I carry a bad call into the next one
+39|MX|achievement_striving|+|529B|6.67|I track progress toward goals regularly
+39|MX|compassion|+|549B|6.67|I check in on a struggling teammate
+39|MX|cautiousness|-|N024|3.67|I go with my gut instead of running the numbers
+39|MX|cooperation|-|N036|3.67|I hold to my approach when others want another
+40|MX|self_discipline|+|550B|7.00|I stay on schedule independently
+40|MX|emotional_stability|+|594B|7.00|I stay balanced when facing repeated frustrations
+40|MX|compassion|-|N027|3.33|I keep working while a teammate struggles nearby
+40|MX|dispositional_optimism|-|N044|3.33|I assume a stalled deal is already dead
+41|MX|customer_orientation|+|533B|7.67|I treat every customer interaction as important
+41|MX|learning_goal_orientation|+|555B|7.00|I read up on new methods to get better
+41|MX|cooperation|-|N035|4.33|I would rather work my own way than the group's
+41|MX|friendliness|-|N064|4.33|I eat lunch alone rather than join others
+42|MX|assertiveness|+|N013|6.67|I tell a manager when a deadline is unrealistic
+42|MX|cautiousness|+|N021|6.67|I sleep on a big decision before committing to it
+42|MX|dutifulness|-|N047|3.33|I let a small step slide to finish faster
+42|MX|self_efficacy|-|N091|3.33|I doubt I can handle an unfamiliar assignment
+43|MX|dispositional_optimism|+|N041|6.67|I expect the next call to go better
+43|MX|friendliness|+|N062|6.67|I strike up conversation with someone I just met
+43|MX|assertiveness|-|N016|3.33|I wait for someone else to raise the problem
+43|MX|self_discipline|-|N087|3.33|I put off a tedious task until later
+44|MX|self_discipline|+|532B|7.00|I maintain a consistent routine day to day
+44|MX|emotional_stability|+|544B|7.00|I stay grounded when plans change suddenly
+44|MX|enterprising|-|N055|4.67|I stay with what already works instead of experimenting
+44|MX|learning_goal_orientation|-|N071|4.67|I stick to methods I already know well
+45|MX|customer_orientation|+|554A|8.00|I put the customer's needs first in every interaction
+45|MX|dutifulness|+|554B|8.00|I meet deadlines even when no one is checking
+45|MX|cautiousness|-|N023|5.00|I decide quickly and adjust as I go
+45|MX|political_skill_networking|-|N076|4.67|I stay near people I already know at events
+46|MX|compassion|+|N026|6.67|I remember what a coworker is going through personally
+46|MX|enterprising|+|546A|6.33|I take calculated risks to pursue growth
+46|MX|achievement_striving|-|N003|4.00|I stop at good enough once the target is met
+46|MX|customer_orientation|-|N040|4.00|I answer only what a customer specifically asks
+47|MX|assertiveness|+|553B|6.67|I ask directly for what the team needs
+47|MX|proactive_personality|+|562B|6.67|I start a project ahead of the deadline
+47|MX|friendliness|-|N063|4.00|I keep to myself through most of the day
+47|MX|emotional_stability|-|N052|3.67|I get rattled when several things go wrong together
+48|MX|dispositional_optimism|+|534B|6.67|I see setbacks as temporary rather than permanent
+48|MX|enterprising|+|562A|6.67|I seek out opportunities to expand into new areas
+48|MX|customer_orientation|-|N039|4.33|I keep calls short to get through more of them
+48|MX|self_efficacy|-|N092|4.00|I want to see someone else do it first
