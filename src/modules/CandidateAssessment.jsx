@@ -513,7 +513,7 @@ export default function CandidateAssessment({ candidateId, token }) {
             an honest read on how you naturally think and work. Your best guess
             is fine on any question. Each answer locks in when you tap Next —
             you can't go back to a previous question, so check your pick
-            before moving on. Plan on about 30 minutes. You can refresh the
+            before moving on. Plan on about an hour. You can refresh the
             page and pick up where you left off.
           </div>
           <div
@@ -579,7 +579,7 @@ export default function CandidateAssessment({ candidateId, token }) {
         : "Based on how you answered so far, I'd like to ask a few follow-up questions on a couple of areas where a clearer read would help. This is normal — the assessment adds questions when it needs more signal, not because anything is wrong.";
     const bodyCount =
       stint === 2
-        ? `${remaining} screens — most people finish this section in about 20 minutes. You can leave and come back; your progress is saved.`
+        ? `${remaining} screens — most people finish this section in about 30 minutes. You can leave and come back; your progress is saved.`
         : stint === 3
         ? `${remaining} situations — about 10 minutes. You can leave and come back; your progress is saved.`
         : stint === 5
