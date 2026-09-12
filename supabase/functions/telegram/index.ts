@@ -1,4 +1,17 @@
-// telegram edge function (v21)
+// telegram edge function (v22)
+// v22 (2026-09-11):
+//   - MAPPING MOVED ONTO THE TEAM ROW. ensureUserMapped was still reading and
+//     writing team_telegram_map, a table that no longer exists. Every read and
+//     every insert failed silently; the function only kept working because it
+//     falls through to a first-name match against the team table. It now reads
+//     team.telegram_user_id directly, and stamps that column the first time it
+//     recognises someone by name. Exclusion is read from team too, so
+//     is_excluded_pjsagencybot is honoured again.
+//   - JOIN CAPTURE. A new_chat_members service message (no text, previously
+//     dropped on the "no_text" early return) now links the joiner to their team
+//     row and closes out their telegram_group_invites row. This is what lets the
+//     termination sweep find them later. If nobody can be identified, the admin
+//     group gets one line about it.
 // v21 (2026-09-10 evening):
 //   - Health rest day now rotates between 😴 and 🥱 (Peter). A workout stays 👏.
 // v20 (2026-09-10):
@@ -453,42 +466,101 @@ async function handleRecoverCheckins(body: any): Promise<Response> {
   });
 }
 
+const TEAM_MAP_COLS = "id, first_name, nickname, is_excluded_pjsagencybot";
+
+// Find an active team member whose first name or nickname matches the name on
+// the Telegram account. Used the first time we see someone.
+async function matchTeamByName(name: string | null): Promise<any | null> {
+  if (!name) return null;
+  const { data: byFirst } = await sb.from("team").select(TEAM_MAP_COLS)
+    .eq("agency_id", AGENCY_ID).ilike("first_name", name)
+    .is("archived_at", null).neq("is_test_user", true).maybeSingle();
+  if (byFirst) return byFirst;
+  const { data: byNick } = await sb.from("team").select(TEAM_MAP_COLS)
+    .eq("agency_id", AGENCY_ID).ilike("nickname", name)
+    .is("archived_at", null).neq("is_test_user", true).maybeSingle();
+  return byNick ?? null;
+}
+
+// Stamp team.telegram_user_id the first time an account is recognised, so the
+// termination sweep can find the person later. Never overwrites an existing id.
+async function stampTelegramUserId(teamId: string, telegramUserId: number): Promise<void> {
+  const { error } = await sb.from("team")
+    .update({ telegram_user_id: telegramUserId })
+    .eq("id", teamId).is("telegram_user_id", null);
+  if (error) console.error("stampTelegramUserId failed:", error.message);
+}
+
 async function ensureUserMapped(fromUser: any): Promise<{ team_id: string | null; first_name: string | null; excluded: boolean }> {
-  const { data: existing } = await sb.from("team_telegram_map")
-    .select("team_id, telegram_first_name, is_excluded_pjsagencybot")
-    .eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id).maybeSingle();
-  if (existing) {
-    await sb.from("team_telegram_map").update({
-      last_seen_at: new Date().toISOString(),
-      telegram_username: fromUser.username ?? null,
-      telegram_first_name: fromUser.first_name ?? null,
-      telegram_last_name: fromUser.last_name ?? null,
-      updated_at: new Date().toISOString(),
-    }).eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id);
-    return { team_id: existing.team_id, first_name: existing.telegram_first_name, excluded: existing.is_excluded_pjsagencybot };
-  }
   const firstName: string | null = fromUser.first_name ?? null;
-  let matchedTeamId: string | null = null;
-  let mappingMethod: "auto_first_name" | "auto_nickname" | "discovered_unmapped" = "discovered_unmapped";
-  if (firstName) {
-    const { data: byFirst } = await sb.from("team").select("id")
-      .eq("agency_id", AGENCY_ID).ilike("first_name", firstName)
-      .is("archived_at", null).neq("is_test_user", true).maybeSingle();
-    if (byFirst) { matchedTeamId = byFirst.id; mappingMethod = "auto_first_name"; }
-    else {
-      const { data: byNick } = await sb.from("team").select("id")
-        .eq("agency_id", AGENCY_ID).ilike("nickname", firstName)
-        .is("archived_at", null).neq("is_test_user", true).maybeSingle();
-      if (byNick) { matchedTeamId = byNick.id; mappingMethod = "auto_nickname"; }
-    }
+  const { data: byId } = await sb.from("team").select(TEAM_MAP_COLS)
+    .eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id).maybeSingle();
+  if (byId) {
+    return { team_id: byId.id, first_name: firstName ?? byId.first_name, excluded: byId.is_excluded_pjsagencybot === true };
   }
-  await sb.from("team_telegram_map").insert({
-    agency_id: AGENCY_ID, team_id: matchedTeamId,
-    telegram_user_id: fromUser.id, telegram_username: fromUser.username ?? null,
-    telegram_first_name: firstName, telegram_last_name: fromUser.last_name ?? null,
-    is_excluded_pjsagencybot: false, mapping_method: mappingMethod,
-  });
-  return { team_id: matchedTeamId, first_name: firstName, excluded: false };
+  const matched = await matchTeamByName(firstName);
+  if (matched) {
+    await stampTelegramUserId(matched.id, fromUser.id);
+    await closeInviteForTeamMember(matched.id, fromUser.id);
+    return { team_id: matched.id, first_name: firstName ?? matched.first_name, excluded: matched.is_excluded_pjsagencybot === true };
+  }
+  return { team_id: null, first_name: firstName, excluded: false };
+}
+
+// Close out the pending invite row once the person is in the group.
+async function closeInviteForTeamMember(teamId: string, telegramUserId: number): Promise<void> {
+  const { error } = await sb.from("telegram_group_invites")
+    .update({ joined_at: new Date().toISOString(), joined_telegram_user_id: telegramUserId })
+    .eq("agency_id", AGENCY_ID).eq("team_id", teamId).eq("route_key", "team")
+    .is("joined_at", null).is("revoked_at", null);
+  if (error) console.error("closeInviteForTeamMember failed:", error.message);
+}
+
+// Someone joined the team group. Work out who, link them, and close the invite.
+// Matching order: existing telegram_user_id, then name, then - if exactly one
+// invite is outstanding - that invite. Anything left over goes to the admin
+// group as a single line rather than being dropped silently.
+async function handleNewChatMembers(message: any): Promise<Response> {
+  const results: any[] = [];
+  for (const m of message.new_chat_members || []) {
+    if (m?.is_bot) continue;
+    const name = [m.first_name, m.last_name].filter(Boolean).join(" ") || String(m.id);
+
+    const { data: byId } = await sb.from("team").select("id")
+      .eq("agency_id", AGENCY_ID).eq("telegram_user_id", m.id).maybeSingle();
+    if (byId) {
+      await closeInviteForTeamMember(byId.id, m.id);
+      results.push({ name, matched: "existing", team_id: byId.id });
+      continue;
+    }
+
+    const matched = await matchTeamByName(m.first_name ?? null);
+    if (matched) {
+      await stampTelegramUserId(matched.id, m.id);
+      await closeInviteForTeamMember(matched.id, m.id);
+      results.push({ name, matched: "name", team_id: matched.id });
+      continue;
+    }
+
+    const { data: pending } = await sb.from("telegram_group_invites")
+      .select("id, team_id")
+      .eq("agency_id", AGENCY_ID).eq("route_key", "team")
+      .is("joined_at", null).is("revoked_at", null);
+    if (pending && pending.length === 1) {
+      await stampTelegramUserId(pending[0].team_id, m.id);
+      await closeInviteForTeamMember(pending[0].team_id, m.id);
+      results.push({ name, matched: "sole_pending_invite", team_id: pending[0].team_id });
+      continue;
+    }
+
+    results.push({ name, matched: "none", telegram_user_id: m.id });
+    await sb.rpc("telegram_send", {
+      p_route_key: "admin",
+      p_text: `\u2753 ${name} joined the team Telegram group and I could not match them to a team member. Set their Telegram id on the team record.`,
+      p_agency_id: AGENCY_ID,
+    });
+  }
+  return jsonResponse({ ok: true, mode: "new_chat_members", results });
 }
 
 async function findActiveCheckin(): Promise<{ checkin_date: string; checkin_type: string } | null> {
@@ -950,6 +1022,16 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
   const isEdit = !!update.edited_message;
   const message = update.message || update.edited_message;
   if (!message) return jsonResponse({ ok: true, ignored: "no_message" });
+  // A join is a service message with no text, so this has to come before the
+  // no_text return below.
+  if (Array.isArray(message.new_chat_members) && message.new_chat_members.length > 0) {
+    const teamGroupIdStr = await getSetting("telegram_team_group_chat_id");
+    if (teamGroupIdStr && String(message.chat?.id) === teamGroupIdStr) {
+      try { return await handleNewChatMembers(message); }
+      catch (e) { console.error("handleNewChatMembers failed:", e); return jsonResponse({ ok: false, error: String(e) }, 200); }
+    }
+    return jsonResponse({ ok: true, ignored: "join_not_team_group" });
+  }
   if (!message.text) return jsonResponse({ ok: true, ignored: "no_text" });
   const chatId = message.chat?.id;
   const fromUser = message.from;
