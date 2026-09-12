@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase.js";
 import TimeClock from "./TimeClock.jsx";
 import TimeOffRequests from "./TimeOffRequests.jsx";
 
@@ -21,6 +23,18 @@ export default function TimeHub({ embedded = false }) {
   // Param is "hours", not "tab": this now renders inside the Dashboard, whose
   // own tab bar owns ?tab=. Two tab groups may never share a param name.
   const [activeTab, setActiveTab, tabHref] = useTabParam("hours", "timeclock", ["timeclock","timeoff"]);
+  // The time clock is for hourly people. Salaried teammates never see it
+  // (Peter 2026-09-12) — they still get Time Off. my_pay_type returns only
+  // the viewer's own pay type, so nothing else about pay is exposed here.
+  const [payType, setPayType] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("my_pay_type").then(r => { if (alive) setPayType(r?.data || ""); });
+    return () => { alive = false; };
+  }, []);
+  const salaried = String(payType || "").toUpperCase() === "SALARY";
+  const visibleTabs = salaried ? TABS.filter(t => t.id !== "timeclock") : TABS;
+  const shownTab = salaried && activeTab === "timeclock" ? "timeoff" : activeTab;
 
   return (
     <div>
@@ -32,7 +46,7 @@ export default function TimeHub({ embedded = false }) {
           display: "flex",
           gap: 4
         }}>
-          {TABS.map(tab => (
+          {visibleTabs.map(tab => (
             <TabLink
               key={tab.id}
               href={tabHref(tab.id)}
@@ -40,12 +54,12 @@ export default function TimeHub({ embedded = false }) {
               style={{
                 padding: "10px 18px",
                 border: "none",
-                borderBottom: activeTab === tab.id ? "3px solid #0f172a" : "3px solid transparent",
+                borderBottom: shownTab === tab.id ? "3px solid #0f172a" : "3px solid transparent",
                 background: "transparent",
                 cursor: "pointer",
                 fontSize: 15,
-                fontWeight: activeTab === tab.id ? 600 : 500,
-                color: activeTab === tab.id ? "#0f172a" : "#64748b",
+                fontWeight: shownTab === tab.id ? 600 : 500,
+                color: shownTab === tab.id ? "#0f172a" : "#64748b",
                 marginBottom: -1
               }}
             >
@@ -55,8 +69,8 @@ export default function TimeHub({ embedded = false }) {
         </div>
       </div>
       <div>
-        {activeTab === "timeclock" && <TimeClock />}
-        {activeTab === "timeoff" && <TimeOffRequests />}
+        {shownTab === "timeclock" && !salaried && <TimeClock />}
+        {shownTab === "timeoff" && <TimeOffRequests />}
       </div>
     </div>
   );

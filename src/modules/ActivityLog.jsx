@@ -1235,10 +1235,14 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
       </div>
 
       {popup && (
-        <Modal title="Log the customer" onClose={() => setPopup(false)}>
+        <div style={cardStyle}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Log the customer</div>
+            <button type="button" style={linkBtn} onClick={() => setPopup(false)}>Close</button>
+          </div>
           <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} refreshKey={refreshKey} allowCancel presetFirst={picked ? "" : q.trim()}
             onLogged={() => { onLogged?.(); }} />
-        </Modal>
+        </div>
       )}
     </div>
   );
@@ -1638,13 +1642,27 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
 }
 
 // =====================================================================
-// Checklist tab — the daily team list and your weekly wrap-up on one
+// Checklist tab — the daily team list and the weekly wrap-up on one
 // screen (Peter 2026-09-12). Ticks write to daily_checklist_ticks through
 // daily_checklist_tick; the wrap-up writes straight into the CPR record
 // (weekly_cpr_team_detail) through my_wrapup_save, in the same six-part
-// shape the wrap-up email parser already stores, so the CPR reads it
-// unchanged. Replaces the Daily Wrap-up and weekly wrap-up pages in the
-// processes manual.
+// shape the wrap-up email parser used to store, so the CPR reads it
+// unchanged. Replaces the Daily Wrap-up page and the wrap-up email.
+//
+// Three things Peter set on 2026-09-12:
+//  * The wrap-up is not open all week. It opens on its own on the last
+//    workday of the CPR week (Friday, or the last workday before a
+//    closure) and stays open through the weekend. Every other day it is
+//    one collapsed line with a link to open it early. No checkbox gates
+//    it: a trigger you have to remember is worse than a cue that shows
+//    up by itself (Gollwitzer 1999 on cue-bound intentions), and the
+//    team list grows a self-ticking "Weekly wrap-up" row on that day so
+//    the progress is visible without adding a step.
+//  * Code Reds and Code Yellows are raised here any day, stored in
+//    code_flags, and rolled into the CPR week automatically. No more
+//    Code Red emails.
+//  * Every item carries the explanation that used to live on the Daily
+//    Wrap-up processes page, behind the ⓘ on the right of the row.
 // =====================================================================
 
 // Sections are lines starting "1. " .. "6. ", taken in ascending order
@@ -1663,20 +1681,50 @@ function splitWrapup(text) {
   return out;
 }
 
+// Small markdown render for the help panels: bold, bullets, numbers, breaks.
+function helpHtml(md) {
+  const esc = String(md || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/\n/g, "<br/>");
+}
+
+function HelpPanel({ item }) {
+  const [excerpt, setExcerpt] = useState(null);
+  useEffect(() => {
+    if (!item.help_excerpt_id) return undefined;
+    let alive = true;
+    supabase.from("manuals").select("content").eq("id", item.help_excerpt_id).maybeSingle()
+      .then(r => { if (alive) setExcerpt(r?.data?.content || ""); });
+    return () => { alive = false; };
+  }, [item.help_excerpt_id]);
+  const body = item.help_text || excerpt;
+  return (
+    <div style={{ margin: "2px 0 10px 26px", padding: "10px 12px", background: T.slate50, borderRadius: 8, fontSize: 12.5, color: T.slate700, lineHeight: 1.6 }}>
+      {body == null && item.help_excerpt_id ? "Loading…"
+        : body ? <span dangerouslySetInnerHTML={{ __html: helpHtml(body) }} />
+        : <span style={{ color: T.slate500 }}>No extra detail on this one.</span>}
+    </div>
+  );
+}
+
 function ChecklistTab() {
   const _vp = useViewport();
   const [state, setState] = useState(null);
+  const [openHelp, setOpenHelp] = useState(null);
   const [wrap, setWrap] = useState(null);
   const [parts, setParts] = useState(["", "", "", "", "", ""]);
   const [inbox, setInbox] = useState(false);
-  const [reds, setReds] = useState("");
-  const [yellows, setYellows] = useState("");
-  const [showCodes, setShowCodes] = useState(false);
+  const [wrapOpen, setWrapOpen] = useState(false);
+  const [flags, setFlags] = useState([]);
+  const [flagDraft, setFlagDraft] = useState(null);   // {severity, note, correction}
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
   const [tickKey, setTickKey] = useState(0);
+  const [flagKey, setFlagKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -1684,6 +1732,13 @@ function ChecklistTab() {
       .then(r => { if (alive) setState(r?.data || null); });
     return () => { alive = false; };
   }, [tickKey]);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("code_flags_mine", { p_week_ending: null })
+      .then(r => { if (alive) setFlags(Array.isArray(r?.data) ? r.data : []); });
+    return () => { alive = false; };
+  }, [flagKey]);
 
   // Loaded once. Never reload under the user's typing.
   useEffect(() => {
@@ -1694,9 +1749,6 @@ function ChecklistTab() {
       setWrap(d);
       setParts(splitWrapup(d.wrapup_text));
       setInbox(!!d.inbox_done);
-      setReds(d.code_reds || "");
-      setYellows(d.code_yellows || "");
-      if ((d.code_reds || "").trim() || (d.code_yellows || "").trim()) setShowCodes(true);
     });
     return () => { alive = false; };
   }, []);
@@ -1715,7 +1767,7 @@ function ChecklistTab() {
   const save = async () => {
     setSaving(true); setErr(""); setOk("");
     const { data, error } = await supabase.rpc("my_wrapup_save", {
-      p_parts: parts, p_inbox_done: inbox, p_code_reds: reds, p_code_yellows: yellows, p_week_ending: null,
+      p_parts: parts, p_inbox_done: inbox, p_code_reds: null, p_code_yellows: null, p_week_ending: null,
     });
     setSaving(false);
     if (error) { setErr(error.message || "Could not save the wrap-up."); return; }
@@ -1723,11 +1775,36 @@ function ChecklistTab() {
     setWrap(w => (w ? { ...w, wrapup_done: !!data?.wrapup_done } : w));
   };
 
+  const addFlag = async () => {
+    if (!flagDraft?.note?.trim()) { setErr("Say what happened."); return; }
+    setBusy(true); setErr("");
+    const { error } = await supabase.rpc("code_flag_add", {
+      p_severity: flagDraft.severity, p_note: flagDraft.note.trim(),
+      p_correction: (flagDraft.correction || "").trim() || null, p_date: null,
+    });
+    setBusy(false);
+    if (error) { setErr(error.message || "Could not save that."); return; }
+    setFlagDraft(null);
+    setFlagKey(k => k + 1);
+  };
+
+  const dropFlag = async (id) => {
+    const { error } = await supabase.rpc("code_flag_delete", { p_id: id });
+    if (error) { setErr(error.message); return; }
+    setFlagKey(k => k + 1);
+  };
+
   const items = Array.isArray(state?.items) ? state.items : [];
   const cleared = items.filter(i => i.ticked_at).length;
   const carryOpen = Array.isArray(state?.carry?.open) ? state.carry.open : [];
   const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
   const answered = parts.filter(p => (p || "").trim()).length;
+  // The cue: the wrap-up opens itself on the last workday of the week and
+  // stays open over the weekend. Any other day it is one line.
+  const wrapCue = !!state?.is_last_workday;
+  const showWrap = wrapCue || wrapOpen;
+  const reds = flags.filter(f => f.severity === "red");
+  const yellows = flags.filter(f => f.severity === "yellow");
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: _vp.isPhone ? "1fr" : "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
@@ -1761,23 +1838,82 @@ function ChecklistTab() {
           {items.length === 0
             ? <div style={{ fontSize: 13, color: T.slate500 }}>No items for this day.</div>
             : items.map(it => (
-                <label key={it.id} style={{
-                  display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px",
-                  borderBottom: `1px solid ${T.slate100}`, cursor: busy ? "wait" : "pointer",
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={!!it.ticked_at}
-                    onChange={() => toggle(it)}
-                    disabled={busy}
-                    style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box" }}
-                  />
-                  <span style={{ flex: 1, fontSize: 13, lineHeight: 1.4, color: it.ticked_at ? T.slate500 : T.slate800 }}>{it.title}</span>
-                  {it.ticked_at && (
-                    <span style={{ fontSize: 11, color: T.slate400, whiteSpace: "nowrap", flexShrink: 0 }}>{it.ticked_by}</span>
-                  )}
-                </label>
+                <div key={it.id}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px", borderBottom: openHelp === it.id ? "none" : `1px solid ${T.slate100}` }}>
+                    <input
+                      type="checkbox"
+                      id={`chk_${it.id}`}
+                      checked={!!it.ticked_at}
+                      onChange={() => toggle(it)}
+                      disabled={busy}
+                      style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
+                    />
+                    <label htmlFor={`chk_${it.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: busy ? "wait" : "pointer", color: it.ticked_at ? T.slate500 : T.slate800 }}>{it.title}</label>
+                    {it.ticked_at && (
+                      <span style={{ fontSize: 11, color: T.slate400, whiteSpace: "nowrap", flexShrink: 0 }}>{it.ticked_by}</span>
+                    )}
+                    <button type="button" title="What this means" aria-label="What this means"
+                      onClick={() => setOpenHelp(h => (h === it.id ? null : it.id))}
+                      style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${openHelp === it.id ? T.blue : T.slate300}`, background: openHelp === it.id ? T.blueLt : T.white, color: openHelp === it.id ? T.blue : T.slate500 }}>i</button>
+                  </div>
+                  {openHelp === it.id && <HelpPanel item={it} />}
+                </div>
               ))}
+        </div>
+
+        {/* Code Reds / Yellows — any day, no email */}
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Code Reds & Yellows</div>
+            <span style={{ fontSize: 11, color: T.slate500 }}>this week · {reds.length} red, {yellows.length} yellow</span>
+          </div>
+
+          {flags.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {flags.map(f => (
+                <div key={f.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.slate100}` }}>
+                  <span style={{ flexShrink: 0 }}>{f.severity === "red" ? "🔴" : "🟡"}</span>
+                  <div style={{ flex: 1, fontSize: 12.5, color: T.slate800, lineHeight: 1.5 }}>
+                    {f.note}
+                    {f.correction && <div style={{ color: T.slate500 }}>Fix: {f.correction}</div>}
+                    <div style={{ color: T.slate400, fontSize: 11 }}>{fmtDate(f.flag_date)}</div>
+                  </div>
+                  <button type="button" onClick={() => dropFlag(f.id)} style={{ ...btnGhost, color: T.red, flexShrink: 0 }}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!flagDraft ? (
+            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <button type="button" onClick={() => setFlagDraft({ severity: "red", note: "", correction: "" })} style={{ ...linkBtn, color: T.red }}>+ Add a Code Red</button>
+              <button type="button" onClick={() => setFlagDraft({ severity: "yellow", note: "", correction: "" })} style={{ ...linkBtn, color: T.amber }}>+ Add a Code Yellow</button>
+            </div>
+          ) : (
+            <div style={{ marginTop: 10, display: "grid", gap: 10, padding: 12, background: T.slate50, borderRadius: 8 }}>
+              <div style={chipRow}>
+                {["red", "yellow"].map(s => (
+                  <span key={s} onClick={() => setFlagDraft(d => ({ ...d, severity: s }))} style={chip(flagDraft.severity === s)}>
+                    {s === "red" ? "🔴 Code Red" : "🟡 Code Yellow"}
+                  </span>
+                ))}
+              </div>
+              <div>
+                <label style={labelStyle}>What happened</label>
+                <textarea rows={2} value={flagDraft.note} onChange={e => setFlagDraft(d => ({ ...d, note: e.target.value }))}
+                          style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
+              </div>
+              <div>
+                <label style={labelStyle}>The correction <span style={hintStyle}>optional</span></label>
+                <textarea rows={2} value={flagDraft.correction} onChange={e => setFlagDraft(d => ({ ...d, correction: e.target.value }))}
+                          style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <button type="button" onClick={addFlag} disabled={busy} style={btnPrimary(busy)}>{busy ? "Saving…" : "Save it"}</button>
+                <button type="button" onClick={() => setFlagDraft(null)} style={linkBtn}>Never mind</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1785,22 +1921,32 @@ function ChecklistTab() {
       <div style={cardStyle}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Your wrap-up</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Weekly wrap-up</div>
             <div style={{ fontSize: 12, color: T.slate500 }}>
-              {wrap?.week_ending ? `Week ending ${wrap.week_ending}` : "Loading"} · goes straight onto the CPR
+              {wrap?.week_ending ? `Week ending ${fmtDate(wrap.week_ending)}` : "Loading"} · goes straight onto the CPR
             </div>
           </div>
-          <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>
+          {showWrap && <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>}
         </div>
 
-        {wrap && wrap.ok === false && (
+        {!showWrap && (
+          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
+            {answered === 6
+              ? <span style={{ color: T.green, fontWeight: 600 }}>Done for this week.</span>
+              : <>Opens on the last workday of the week. </>}
+            {" "}
+            <button type="button" onClick={() => setWrapOpen(true)} style={linkBtn}>{answered > 0 ? "Open it" : "Start it early"}</button>
+          </div>
+        )}
+
+        {showWrap && wrap && wrap.ok === false && (
           <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This login is not matched to a teammate, so there is no wrap-up to write.</div>
         )}
-        {wrap?.ok && !wrap.report_id && (
+        {showWrap && wrap?.ok && !wrap.report_id && (
           <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This week's CPR is not open yet. The wrap-up opens with it.</div>
         )}
 
-        {wrap?.ok && wrap.report_id && (
+        {showWrap && wrap?.ok && wrap.report_id && (
           <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
             {prompts.map((p, i) => (
               <div key={p.n}>
@@ -1820,26 +1966,6 @@ function ChecklistTab() {
               <span style={{ fontSize: 13, color: T.slate800 }}>My inbox is cleared</span>
             </label>
 
-            {!showCodes ? (
-              <button type="button" onClick={() => setShowCodes(true)}
-                      style={{ justifySelf: "start", background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12, fontWeight: 600, color: T.blue }}>
-                + Add a Code Red or Code Yellow
-              </button>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                <div>
-                  <label style={{ ...labelStyle, color: T.red }}>🔴 Code Reds</label>
-                  <textarea rows={2} value={reds} onChange={e => setReds(e.target.value)}
-                            style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
-                </div>
-                <div>
-                  <label style={{ ...labelStyle, color: T.amber }}>🟡 Code Yellows</label>
-                  <textarea rows={2} value={yellows} onChange={e => setYellows(e.target.value)}
-                            style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
-                </div>
-              </div>
-            )}
-
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
               <button type="button" onClick={save} disabled={saving} style={btnPrimary(saving)}>
                 {saving ? "Saving…" : "Save wrap-up"}
@@ -1851,6 +1977,29 @@ function ChecklistTab() {
 
         {err && <div style={{ marginTop: 10, fontSize: 12, color: T.red, fontWeight: 600 }}>{err}</div>}
       </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// Log tab — opens with "Canceling something?" (Peter 2026-09-12). The
+// Canceled tab is gone: No keeps today's entry page, Yes drops the
+// cancelation search in its place, same code as before, no popup.
+// =====================================================================
+function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, onLogged, refreshKey }) {
+  const [canceling, setCanceling] = useState(false);
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ ...cardStyle, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Canceling something?</span>
+        <div style={chipRow}>
+          <span onClick={() => setCanceling(false)} style={chip(!canceling)}>No</span>
+          <span onClick={() => setCanceling(true)} style={chip(canceling)}>Yes</span>
+        </div>
+      </div>
+      {canceling
+        ? <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />
+        : <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />}
     </div>
   );
 }
@@ -1914,7 +2063,6 @@ export default function ActivityLog({ userRole, userId }) {
   const tabs = [
     { id: "log", label: "Log" },
     { id: "checklist", label: "Checklist" },
-    { id: "canceled", label: "Canceled" },
     { id: "hours", label: "Hours" },
     { id: "deposits", label: "Deposits" },
     { type: "divider", id: "_dv_week" },
@@ -1965,10 +2113,9 @@ export default function ActivityLog({ userRole, userId }) {
         ))}
       </div>
 
-      {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {(tab === "log" || tab === "canceled") && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
-      {tab === "canceled" && <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
       {tab === "hours" && <TimeHub embedded />}
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
