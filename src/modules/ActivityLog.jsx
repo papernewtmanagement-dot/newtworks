@@ -40,10 +40,13 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //    score) sits beside the title on every tab.
 //  * Canceled has its own tab: search the customer, tap the policy, log it.
 //    Not on file → this entry page opens in a popup with Canceled allowed.
+//  * The household key is first name + last initial + phone last four
+//    (required on every record; older rows without a phone match any phone).
 //  * A sold line the household already has on file asks: replaces it, added,
 //    or a different household. "Replaces it" cancels the old policy in the
-//    same click (second rp_log_entry, replacement: true, no chargeback); the
-//    answer is stored on the sale and shown on My week. A repeat quote for
+//    same click (second rp_log_entry, replacement: true) as a normal
+//    cancelation — chargeback and multiline rules unchanged; the answer is
+//    stored on the sale and shown on My week. A repeat quote for
 //    the same household in a week is flagged here and marked on My week;
 //    HH Quotes count distinct households, so it never counts twice.
 //  * Scorecard is x / 1 / 2 / 3 (x averages as 0) and every part is scored on a quote or sale;
@@ -238,6 +241,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [dupQuotes, setDupQuotes] = useState([]);   // this week's quotes already on file for this household
   const [onFileAnswer, setOnFileAnswer] = useState({}); // policy id -> "replaces" | "added" | "different" when the household already has that line
   const [initial, setInitial] = useState("");
+  const [phone, setPhone] = useState("");            // customer phone, last four digits: part of the household key
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
@@ -274,12 +278,13 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (q.length < 2) { setSuggest([]); return undefined; }
     let alive = true;
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc("rp_customer_suggest", { p_prefix: q });
+      const { data } = await supabase.rpc("rp_customer_suggest2", { p_prefix: q });
       if (alive) setSuggest(Array.isArray(data) ? data : []);
     }, 250);
     return () => { alive = false; clearTimeout(t); };
   }, [first]);
-  const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); setSuggest([]); };
+  const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); setSuggest([]); };
+  const phoneOk = /^\d{4}$/.test(phone);
 
   // same household quoted already this week? Logs anyway; the same household counts once for HH quotes.
   useEffect(() => {
@@ -287,12 +292,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (!f || !/^[A-Z]$/.test(i)) { setDupQuotes([]); return undefined; }
     let alive = true;
     const t = setTimeout(async () => {
-      const { data } = await supabase.from("quote_log").select("id, team_member_id, quote_date")
+      let qq = supabase.from("quote_log").select("id, team_member_id, quote_date")
         .eq("agency_id", AGENCY_ID).eq("status", "active").eq("customer_label", `${f} ${i}.`).eq("week_end_date", weekEndOf(date));
+      if (phoneOk) qq = qq.or(`phone_last4.is.null,phone_last4.eq.${phone}`);
+      const { data } = await qq;
       if (alive) setDupQuotes(Array.isArray(data) ? data : []);
     }, 300);
     return () => { alive = false; clearTimeout(t); };
-  }, [first, initial, date]);
+  }, [first, initial, date, phone]);
 
   // what this customer has on file, once the name is complete
   useEffect(() => {
@@ -300,11 +307,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (!f || !/^[A-Za-z]$/.test(i)) { setOnFile([]); return undefined; }
     let alive = true;
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc("rp_sold_on_file", { p_customer_first: f, p_customer_last_initial: i });
+      const { data } = await supabase.rpc("rp_sold_on_file2", { p_customer_first: f, p_customer_last_initial: i, p_phone_last4: phoneOk ? phone : null });
       if (alive) setOnFile(Array.isArray(data) ? data : []);
     }, 300);
     return () => { alive = false; clearTimeout(t); };
-  }, [first, initial]);
+  }, [first, initial, phone]);
   // the sold policy on file that a canceled row would be matched to (same line, same type first, most recent, not already canceled)
   const soldMatch = (p) => onFile
     .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.submitted_date <= date) && (!date || r.window_end > date))
@@ -374,6 +381,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
   if (!customerOk) problems.push("Customer first name and last initial.");
+  if (!phoneOk) problems.push("Customer phone, last four digits.");
   if (!hasAnything) problems.push("Add an activity or a policy, or score the conversation.");
   if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
   if (policies.some(p => needsType(p.line) && !p.type)) problems.push("Each Auto or Fire policy needs its type.");
@@ -401,7 +409,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
 
   const reset = (keep) => {
-    if (!keep) { setFirst(""); setInitial(""); setDate(today); setDateOpen(false); }
+    if (!keep) { setFirst(""); setInitial(""); setPhone(""); setDate(today); setDateOpen(false); }
     setSuggest([]);
     setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]); setSaveLine(""); setSaveReason("");
@@ -419,7 +427,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       const money = (p) => ({ premium: Number(p.premium), vehicle_count: p.line === "auto" ? Number(p.vehicles) : null });
       const matched = (p) => ({ matched_sale_product_id: p.matchedId || null });
       const payload = {
-        customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date,
+        customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
         relationship_type: relationship || null,
         gnc_used: scores.setup_gnc_score === 3,
@@ -428,7 +436,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? {
-          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: oldOnFile(p) ? false : (householdFresh ? true : !!p.isNewLine), autopay: !!p.autopay })),
+          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay })),
           on_file_answer: flagged.length ? (replaces.length ? "replaces" : flagged.some(p => onFileAnswer[p.id] === "added") ? "added" : "different") : null,
           replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
         } : null,
@@ -445,14 +453,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         const items = replaces.map(p => { const o = oldOnFile(p); return { line_of_business: o.line_of_business, product_type: o.product_type || null, premium: Number(o.premium ?? 0),
           vehicle_count: o.line_of_business === "auto" ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
         const c = await supabase.rpc("rp_log_entry", { p_payload: {
-          customer_first: first.trim(), customer_last_initial: initial.trim(), occurred_on: date, team_member_id: logFor, relationship_type: "existing",
+          customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
           cancelation: { items, reason: "Replaced by the new policy logged with the sale" },
         } });
         if (c.error || !c.data?.ok) summary += ` The old ${replaces.map(p => PRODUCT_SHORT[p.line]).join(", ")} could not be canceled: ${errText(c.error || c.data)}. Cancel it on the Canceled tab.`;
-        else { cxlResult = c.data; summary += ` Old ${replaces.map(p => PRODUCT_SHORT[p.line]).join(", ")} canceled as replaced, no chargeback.`; }
+        else { cxlResult = c.data; summary += ` Old policy ${summarizeEntry(c.data).replace(/^Logged for [^:]*: /, "")}`; }
       }
       setOk(summary);
-      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), date });
+      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), phone, date });
       reset();
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
@@ -478,11 +486,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
   const logAnother = () => {
     if (!last) return;
-    setFirst(last.first); setInitial(last.initial); setDate(last.date);
+    setFirst(last.first); setInitial(last.initial); setPhone(last.phone || ""); setDate(last.date);
     setOk(""); setLast(null);
   };
 
-  const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.` : "";
+  const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.${phoneOk ? ` ·${phone}` : ""}` : "";
   useEffect(() => { /* keep matches fresh if the name changes after a row was marked canceled */
     setPolicies(list => list.map(p => p.status === "canceled" ? { ...p, matchedId: (soldMatch(p) || {}).sale_product_id || null } : p));
   }, [onFile]);
@@ -520,7 +528,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                 {suggest.map(c => (
                   <button key={c.customer_label} type="button" onClick={() => pickCustomer(c)}
                     style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
-                    {c.customer_label} <span style={{ color: T.slate400, fontSize: 12 }}>on file</span>
+                    {c.customer_label}{c.phone_last4 ? <span style={{ color: T.slate500 }}> ·{c.phone_last4}</span> : null} <span style={{ color: T.slate400, fontSize: 12 }}>{Number(c.policies_on_file) > 0 ? plural(c.policies_on_file, "policy").replace("policys", "policies") + " on file" : "on file"}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ""}</span>
                   </button>
                 ))}
               </div>
@@ -529,6 +537,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           <div style={{ flex: "0 0 58px" }}>
             <label style={labelStyle}>Initial</label>
             <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
+          </div>
+          <div style={{ flex: "0 0 92px" }}>
+            <label style={labelStyle}>Phone last 4</label>
+            <input style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} inputMode="numeric" onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
           </div>
           <div style={{ flex: "0 1 150px", minWidth: 0 }}>
             <label style={labelStyle}>Relationship</label>
@@ -1076,17 +1088,18 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
     if (s.length < 2) { setSuggest([]); return undefined; }
     let alive = true;
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc("rp_customer_suggest", { p_prefix: s });
+      const { data } = await supabase.rpc("rp_customer_suggest2", { p_prefix: s });
       if (alive) setSuggest(Array.isArray(data) ? data : []);
     }, 250);
     return () => { alive = false; clearTimeout(t); };
   }, [q]);
+  const [cxlPhone, setCxlPhone] = useState("");      // phone last four on the cancelation record
 
   useEffect(() => {
     if (!picked) { setOnFile([]); return undefined; }
     let alive = true;
     (async () => {
-      const { data } = await supabase.rpc("rp_sold_on_file", { p_customer_first: picked.customer_first_name, p_customer_last_initial: picked.customer_last_initial });
+      const { data } = await supabase.rpc("rp_sold_on_file2", { p_customer_first: picked.customer_first_name, p_customer_last_initial: picked.customer_last_initial, p_phone_last4: picked.phone_last4 || null });
       if (alive) setOnFile(Array.isArray(data) ? data : []);
     })();
     return () => { alive = false; };
@@ -1110,10 +1123,11 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
     const vehicles = d.vehicles === undefined ? String(r.vehicle_count || 1) : d.vehicles;
     if (premium === "" || !(Number(premium) >= 0)) { setErr("Enter the premium."); return; }
     if (r.line_of_business === "auto" && !(Number(vehicles) >= 1)) { setErr("How many cars were on it?"); return; }
+    if (!/^\d{4}$/.test(cxlPhone)) { setErr("Customer phone, last four digits."); return; }
     setBusy(true); setErr(""); setOk("");
     try {
       const payload = {
-        customer_first: picked.customer_first_name, customer_last_initial: picked.customer_last_initial, occurred_on: d.date || today,
+        customer_first: picked.customer_first_name, customer_last_initial: picked.customer_last_initial, phone_last4: cxlPhone, occurred_on: d.date || today,
         relationship_type: "existing", team_member_id: null,
         cancelation: { items: [{ line_of_business: r.line_of_business, product_type: r.product_type || null, premium: Number(premium),
                                  vehicle_count: r.line_of_business === "auto" ? Number(vehicles) : null, matched_sale_product_id: r.sale_product_id }],
@@ -1145,9 +1159,9 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
             {suggest.length > 0 && !picked && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
                 {suggest.map(c => (
-                  <button key={c.customer_label} type="button" onClick={() => { setPicked(c); setQ(c.customer_label); setSuggest([]); setOk(""); setErr(""); }}
+                  <button key={`${c.customer_label}|${c.phone_last4 || ""}`} type="button" onClick={() => { setPicked(c); setQ(c.customer_label); setCxlPhone(c.phone_last4 || ""); setSuggest([]); setOk(""); setErr(""); }}
                     style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
-                    {c.customer_label}
+                    {c.customer_label}{c.phone_last4 ? <span style={{ color: T.slate500 }}> ·{c.phone_last4}</span> : null} <span style={{ color: T.slate400, fontSize: 12 }}>{Number(c.policies_on_file) > 0 ? `${c.policies_on_file} on file` : "no policies on file"}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ""}</span>
                   </button>
                 ))}
               </div>
@@ -1157,7 +1171,13 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
         </div>
         {picked && (
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>{picked.customer_label} · on file</div>
+            <div style={{ ...wrapRow, alignItems: "flex-end", marginBottom: 6 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, paddingBottom: 10 }}>{picked.customer_label}{picked.phone_last4 ? ` ·${picked.phone_last4}` : ""} · on file</div>
+              <div style={{ flex: "0 0 92px" }}>
+                <label style={labelStyle}>Phone last 4</label>
+                <input style={{ ...inputBase, textAlign: "center" }} value={cxlPhone} maxLength={4} inputMode="numeric" onChange={e => setCxlPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
+              </div>
+            </div>
             {onFile.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>No sold policies on file. Use "Log the customer" to record the cancelation with the policy details.</div>}
             {onFile.map(r => {
               const d = draft(r);
@@ -1503,7 +1523,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
     if (!items.length) return <div style={itemLine}>No quotes this week.</div>;
     return items.map(it => (
       <div key={it.id} style={itemLine}>
-        <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
+        <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}{it.phone ? <span style={{ color: T.slate400 }}> ·{it.phone}</span> : null}</span>
         <span>{it.types || (it.products || []).map(k => PRODUCT_SHORT[k] || k).join(", ") || "—"}</span>
         {it.source && <span style={{ color: T.slate400 }}>{it.source}</span>}
         {it.dup && <span style={{ color: T.amber, fontWeight: 700 }} title="This household was already quoted this week. It counts once.">repeat this week</span>}
@@ -1515,7 +1535,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
     const s = p.sales || {};
     const rows = (s.items || []).map(it => (
       <div key={it.id} style={itemLine}>
-        <span>{fmtDate(it.issued_on)}</span><span>{it.customer || "—"}</span>
+        <span>{fmtDate(it.issued_on)}</span><span>{it.customer || "—"}{it.phone ? <span style={{ color: T.slate400 }}> ·{it.phone}</span> : null}</span>
         <span>{it.type}{it.vehicles ? ` · ${plural(it.vehicles, "car")}` : ""}</span>
         {it.on_file_answer && <span style={{ color: T.amber, fontWeight: 700 }}>{it.on_file_answer === "replaces" ? "replaced the old one" : it.on_file_answer === "added" ? "added to what's on file" : "different household"}</span>}
         <strong style={{ color: T.slate900 }}>{fmtMoney(it.premium)}</strong>
