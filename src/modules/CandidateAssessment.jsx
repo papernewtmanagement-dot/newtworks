@@ -485,7 +485,7 @@ export default function CandidateAssessment({ candidateId, token }) {
             }}
           >
             You've been invited to complete a short assessment. It's a series of
-            statements you'll respond to on a simple rating scale, plus a few quick
+            short screens where you rank four statements by how much they sound like you, plus a few quick
             problem-solving questions.
           </div>
           <div
@@ -579,7 +579,7 @@ export default function CandidateAssessment({ candidateId, token }) {
         : "Based on how you answered so far, I'd like to ask a few follow-up questions on a couple of areas where a clearer read would help. This is normal — the assessment adds questions when it needs more signal, not because anything is wrong.";
     const bodyCount =
       stint === 2
-        ? `${remaining} screens — most people finish this section in about 30 minutes. You can leave and come back; your progress is saved.`
+        ? `${remaining} screens — most people finish this section in about 20 minutes. You can leave and come back; your progress is saved.`
         : stint === 3
         ? `${remaining} situations — about 10 minutes. You can leave and come back; your progress is saved.`
         : stint === 5
