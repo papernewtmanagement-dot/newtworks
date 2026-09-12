@@ -1,4 +1,12 @@
-// telegram edge function (v22)
+// telegram edge function (v23)
+// v23 (2026-09-11):
+//   - /iam COMMAND. Someone whose Telegram name does not match their team
+//     record can now claim themselves: "/iam Tommy" stamps team.telegram_user_id
+//     and closes any outstanding group invite. Agency members only. Refuses if
+//     the name is already claimed by a different Telegram account, or if the
+//     sender is already tied to a different team member. Aliases: /whoami,
+//     /identify. The daily group-membership sweep posts a nag naming anyone
+//     still unmatched and pointing them at this command.
 // v22 (2026-09-11):
 //   - MAPPING MOVED ONTO THE TEAM ROW. ensureUserMapped was still reading and
 //     writing team_telegram_map, a table that no longer exists. Every read and
@@ -677,6 +685,7 @@ async function handleBotCommand(
         "/me — your most recent numbers\n" +
         "/team — current team standings (alias: /where, /stats)\n" +
         "/correct [Name] Q/S — fix a typo on the most recent entry (alias: /fix, /update)\n" +
+        "/iam [YourName] — tell me which team member you are (alias: /whoami, /identify)\n" +
         "/help — this message\n\n" +
         "A reaction on your message means it logged: 👍 logged, 👏 on pace, 🔥 ahead of pace, 🏆 way ahead. " +
         "If something needed attention I'll reply in words instead.\n\n" +
@@ -888,6 +897,54 @@ async function handleBotCommand(
       const totalLine = snap.checkin_date ? `\n\nTeam total (Last EOD ${snap.checkin_date}): ${snap.total_q}/${snap.total_s}` : "";
       await sendReply(chatId, `✏️ Corrected:\n${lines.join("\n")}${totalLine}`, messageId);
       return jsonResponse({ ok: true, command: cmd, corrections: lines.length });
+    }
+
+    case "iam":
+    case "whoami":
+    case "identify": {
+      // Claim a team record. Needed when someone's Telegram display name does
+      // not match their first name or nickname, which is the only way the bot
+      // can recognise a new joiner on its own.
+      const claimed = (args.trim() || fromUser.first_name || "").trim();
+      if (!claimed) {
+        await sendReply(chatId, "Usage: /iam YourName — e.g. /iam Tommy", messageId);
+        return jsonResponse({ ok: true, command: cmd, no_args: true });
+      }
+
+      // Already tied to a team member? Say so and stop.
+      const { data: mine } = await sb.from("team").select("id, first_name")
+        .eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id).maybeSingle();
+      if (mine) {
+        await sendReply(chatId, `You're already set up as ${mine.first_name}. Ping Peter if that's wrong.`, messageId);
+        return jsonResponse({ ok: true, command: cmd, already: mine.id });
+      }
+
+      const target = await matchTeamByName(claimed);
+      if (!target) {
+        await sendReply(chatId, `I don't have a team member called ${claimed}. Try your first name, or ping Peter.`, messageId);
+        return jsonResponse({ ok: true, command: cmd, not_found: claimed });
+      }
+
+      const { data: full } = await sb.from("team")
+        .select("id, first_name, category, telegram_user_id")
+        .eq("id", target.id).maybeSingle();
+      if (!full) {
+        await sendReply(chatId, "Something went wrong looking that up. Ping Peter.", messageId);
+        return jsonResponse({ ok: false, command: cmd });
+      }
+      if (full.category !== "agency") {
+        await sendReply(chatId, `${full.first_name} isn't on the agency team list, so this group isn't the right place. Ping Peter.`, messageId);
+        return jsonResponse({ ok: true, command: cmd, not_agency: full.id });
+      }
+      if (full.telegram_user_id !== null && full.telegram_user_id !== fromUser.id) {
+        await sendReply(chatId, `${full.first_name} is already tied to a different Telegram account. Peter needs to clear it first.`, messageId);
+        return jsonResponse({ ok: true, command: cmd, taken: full.id });
+      }
+
+      await stampTelegramUserId(full.id, fromUser.id);
+      await closeInviteForTeamMember(full.id, fromUser.id);
+      await sendReply(chatId, `Got it — you're ${full.first_name}. Your check-ins will land on your record from now on.`, messageId);
+      return jsonResponse({ ok: true, command: cmd, linked: full.id });
     }
 
     default:
