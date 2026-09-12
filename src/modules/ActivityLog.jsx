@@ -1808,8 +1808,10 @@ function ChecklistTab() {
   const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
   const answered = parts.filter(p => (p || "").trim()).length;
   // The cue: the wrap-up opens itself on the last workday of the week and
-  // stays open over the weekend. Any other day it is one line.
-  const wrapCue = !!state?.is_last_workday;
+  // stays open over the weekend — and early for anyone already off for the
+  // rest of the week, since their last workday is today. Any other day it is
+  // one line they can open themselves.
+  const wrapCue = !!state?.is_last_workday || !!wrap?.wrap_cue;
   const showWrap = wrapCue || wrapOpen;
   const reds = flags.filter(f => f.severity === "red");
   const yellows = flags.filter(f => f.severity === "yellow");
@@ -1955,11 +1957,17 @@ function ChecklistTab() {
           {showWrap && <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>}
         </div>
 
+        {showWrap && wrap?.off_rest_of_week && (
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: T.blueLt, color: T.blue, fontSize: 12, lineHeight: 1.5 }}>
+            You're off the rest of the week, so this is your last workday. Wrap up before you go.
+          </div>
+        )}
+
         {!showWrap && (
           <div style={{ marginTop: 12, fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
             {answered === 6
               ? <span style={{ color: T.green, fontWeight: 600 }}>Done for this week.</span>
-              : <>Opens on the last workday of the week. </>}
+              : <>Opens on your last workday of the week. </>}
             {" "}
             <button type="button" onClick={() => setWrapOpen(true)} style={linkBtn}>{answered > 0 ? "Open it" : "Start it early"}</button>
           </div>
