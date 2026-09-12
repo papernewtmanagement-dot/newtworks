@@ -43,10 +43,7 @@ const V2_FACET_LABELS = {
   achievement_striving:       "Achievement Striving",
   assertiveness:              "Assertiveness",
   compassion:                 "Compassion",
-  competitiveness:            "Competitiveness",
   learning_goal_orientation:  "Learning Goal Orientation",
-  prove_goal_orientation:     "Prove Goal Orientation",
-  avoid_goal_orientation:     "Avoid Goal Orientation",
   self_discipline:            "Self-Discipline",
   emotional_stability:        "Emotional Stability",
   dutifulness:                "Dutifulness",
@@ -54,21 +51,15 @@ const V2_FACET_LABELS = {
   self_efficacy:              "Self-Efficacy",
   proactive_personality:      "Proactive Personality",
   cautiousness:                "Cautiousness",
-  anxiety:                    "Anxiety",
   friendliness:               "Friendliness",
-  anger:                      "Anger",
   cooperation:                "Cooperation",
-  trust:                      "Trust",
   dispositional_optimism:     "Dispositional Optimism",
   political_skill_networking: "Political Skill (Networking)",
   enterprising:                "Enterprising",
-  sincerity:                  "Sincerity",
-  fairness:                   "Fairness",
-  greed_avoidance:            "Greed-Avoidance",
 };
 
-// Role Fit input labels — the 27 weighted inputs behind every
-// newtworks_all_role_fits() role score (25 facets + gma + sjt). Used only by
+// Role Fit input labels — the 18 weighted inputs behind every
+// newtworks_all_role_fits() role score (16 facets + gma + sjt; nine facets dropped 2026-09-11). Used only by
 // the admin-only Role Fit breakdown expander (Peter directive 2026-08-14).
 const ROLE_FIT_INPUT_LABELS = {
   ...V2_FACET_LABELS,
@@ -2817,7 +2808,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                     {layer.key === "assessment" && c.key === "character" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
-                                        title="Character components from measured personality facets. C = Concern for Others (compassion, cooperation, trust) · W = Hard Work Ethic (self-discipline, achievement striving, dutifulness) · R = Personal Responsibility (dutifulness, self-efficacy). A component with no facet data shows a dash. Honesty is not measured here — it belongs to the interview and reference layers."
+                                        title="Character components from measured personality facets. C = Concern for Others (compassion, cooperation) · W = Hard Work Ethic (self-discipline, achievement striving, dutifulness) · R = Personal Responsibility (dutifulness, self-efficacy). A component with no facet data shows a dash. Honesty is not measured here — it belongs to the interview and reference layers."
                                       >
                                         C {detail?.assessment_character_concern != null ? Math.round(Number(detail.assessment_character_concern)) : "—"}
                                         {" · "}
@@ -2829,17 +2820,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
                                     {layer.key === "assessment" && c.key === "commitment" && (
                                       <div
                                         style={{ fontSize: subDetailFont, color: T.slate600, marginTop: 2, fontWeight: 500, letterSpacing: 0.2, lineHeight: 1.3 }}
-                                        title="IPIP-sourced commitment facets: Ach = Achievement striving · Comp = Competitiveness · Prv = Prove-goal orientation · Lrn = Learning-goal orientation · Avd = Avoid-goal orientation (reversed before averaging) · Ent = Enterprising interest."
+                                        title="IPIP-sourced commitment facets: Ach = Achievement striving · Lrn = Learning-goal orientation · Ent = Enterprising interest."
                                       >
                                         Ach {commitPct("achievement_striving")}
                                         {" · "}
-                                        Comp {commitPct("competitiveness")}
-                                        {" · "}
-                                        Prv {commitPct("prove_goal_orientation")}
-                                        {" · "}
                                         Lrn {commitPct("learning_goal_orientation")}
-                                        {" · "}
-                                        Avd(rev) {commitPct("avoid_goal_orientation", true)}
                                         {" · "}
                                         Ent {commitPct("enterprising")}
                                       </div>
