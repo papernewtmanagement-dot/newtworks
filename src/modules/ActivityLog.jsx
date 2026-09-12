@@ -2,6 +2,9 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import TimeHub from "./TimeHub.jsx";
+import PFA from "./PFA.jsx";
+import Development from "./Development.jsx";
 import { T } from "../lib/theme.js";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
@@ -91,7 +94,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "issued", "canceled", "week", "changes"];
+const TABS = ["log", "canceled", "hours", "deposits", "week", "issued", "development", "changes"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -1637,7 +1640,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
 // =====================================================================
 // Module shell
 // =====================================================================
-export default function ActivityLog({ userRole }) {
+export default function ActivityLog({ userRole, userId }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings"]);
@@ -1688,11 +1691,18 @@ export default function ActivityLog({ userRole }) {
   }, [refreshKey, myTeamId]);
 
   const bump = () => setRefreshKey(k => k + 1);
+  // Ordered by how often a tab gets touched (Peter 2026-09-11). Thin dividers
+  // separate daily work from weekly work from the occasional stuff.
   const tabs = [
     { id: "log", label: "Log" },
-    { id: "issued", label: "To be issued" },
     { id: "canceled", label: "Canceled" },
-    { id: "week", label: "My week" },
+    { id: "hours", label: "Hours" },
+    { id: "deposits", label: "Deposits" },
+    { type: "divider", id: "_dv_week" },
+    { id: "week", label: "Scoreboard" },
+    { id: "issued", label: "To be issued" },
+    { type: "divider", id: "_dv_rare" },
+    { id: "development", label: "Development" },
     { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
   ];
@@ -1701,8 +1711,8 @@ export default function ActivityLog({ userRole }) {
     <div style={{ padding: _pad, display: "grid", gap: 16 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Production</div>
-          <div style={{ fontSize: 13, color: T.slate500 }}>What you wrote, quoted, kept, and lost. Logged as it happens.</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Dashboard</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>Everything you touch in a day, in one place.</div>
         </div>
         {head && (() => {
           const me = (Array.isArray(head.people) ? head.people : []).find(p => p.team_member_id === myTeamId);
@@ -1727,10 +1737,12 @@ export default function ActivityLog({ userRole }) {
       </div>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
         {tabs.map(t => (
-          <TabLink key={t.id} href={tabHref(t.id)} onSelect={() => setTab(t.id)} style={{
-            flexShrink: 0, padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: "none",
-            background: tab === t.id ? T.blueLt : "transparent", color: tab === t.id ? T.blue : T.slate600,
-          }}>{t.label}</TabLink>
+          t.type === "divider"
+            ? <span key={t.id} aria-hidden="true" style={{ flexShrink: 0, alignSelf: "stretch", width: 1, background: T.slate200, margin: "2px 6px" }} />
+            : <TabLink key={t.id} href={tabHref(t.id)} onSelect={() => setTab(t.id)} style={{
+                flexShrink: 0, padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: "none",
+                background: tab === t.id ? T.blueLt : "transparent", color: tab === t.id ? T.blue : T.slate600,
+              }}>{t.label}</TabLink>
         ))}
       </div>
 
@@ -1738,6 +1750,9 @@ export default function ActivityLog({ userRole }) {
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
       {tab === "canceled" && <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
+      {tab === "hours" && <TimeHub embedded />}
+      {tab === "deposits" && <PFA userRole={userRole} embedded />}
+      {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} values={values} types={types} />}
     </div>

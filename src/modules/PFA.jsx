@@ -1147,9 +1147,11 @@ function ClosesTab() {
 // =====================================================================
 // Default export — role dispatch + tabs
 // =====================================================================
-export default function PFA({ userRole }) {
+export default function PFA({ userRole, embedded = false }) {
   const isAdmin = userRole === "owner" || userRole === "manager";
-  const [activeTab, setActiveTab, tabHref] = useTabParam("tab", "today", ["today","statements","closes","recon","ledger"]);
+  // Param is "dep", not "tab": this now renders inside the Dashboard, whose own
+  // tab bar owns ?tab=. Two tab groups may never share a param name.
+  const [activeTab, setActiveTab, tabHref] = useTabParam("dep", "today", ["today","statements","closes","recon","ledger"]);
   const [pfaAccountId, setPfaAccountId] = useState(null);
   const [pfaAccountError, setPfaAccountError] = useState(false);
   const [pfaAccountRetryTick, setPfaAccountRetryTick] = useState(0);
@@ -1200,9 +1202,10 @@ export default function PFA({ userRole }) {
   ];
 
   return (
-    <div style={{ flex: 1, background: T.slate50, padding: "24px 20px 40px", overflowY: "auto" }}>
-      <div style={{ maxWidth: isAdmin ? 1100 : 560, margin: "0 auto" }}>
-        {/* Header */}
+    <div style={{ flex: 1, background: embedded ? "transparent" : T.slate50, padding: embedded ? 0 : "24px 20px 40px", overflowY: "auto" }}>
+      <div style={{ maxWidth: isAdmin ? 1100 : 560, margin: embedded ? 0 : "0 auto" }}>
+        {/* Header — hidden when embedded; the Dashboard already carries a title */}
+        {!embedded && (
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, lineHeight: 1.2 }}>
             Premium Fund Account
@@ -1213,6 +1216,7 @@ export default function PFA({ userRole }) {
               : "Record every customer premium payment (check, cash, transfer) taken today. Press Close Day when the deposit is done."}
           </div>
         </div>
+        )}
 
         {/* Admin tabs */}
         {isAdmin && pfaAccountError && (

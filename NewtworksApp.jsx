@@ -1,6 +1,5 @@
  import { useState, useEffect, createContext, useContext } from "react";
 
-import Dashboard from "./src/modules/Dashboard.jsx";
 import Financials from "./src/modules/Financials.jsx";
 import PersistentMemory from "./src/modules/PersistentMemory.jsx";
 import ComplianceCenter from "./src/modules/ComplianceCenter.jsx";
@@ -16,16 +15,13 @@ import MonthlyClose from "./src/modules/MonthlyClose.jsx";
 import CashRegister from "./src/modules/CashRegister.jsx";
 import CorePrinciples from "./src/modules/CorePrinciples.jsx";
 import Manual from "./src/modules/Manual.jsx";
-import TimeHub from "./src/modules/TimeHub.jsx";
 import CPRDetail from "./src/modules/CPRDetail.jsx";
 import { urlForState } from "./src/lib/routing.jsx";
 import CPRList from "./src/modules/CPRList.jsx";
-import PFA from "./src/modules/PFA.jsx";
 // MarketingPoints module removed from nav 2026-07-12; per-person points now entered inline
 // on CPR Payroll section (Marketing row in edit mode). File kept in src/modules/ for now.
 import Marketing from "./src/modules/Marketing.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
-import Development from "./src/modules/Development.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
 import ActivityLog from "./src/modules/ActivityLog.jsx";
@@ -104,12 +100,8 @@ const NAV_ITEMS = [
   { id: "dashboard",   label: "Dashboard",   icon: "grid",          roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_team_top" },
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
-  { id: "production",  label: "Production",  icon: "check",         roles: TEAM_VISIBLE_ROLES },
-  { id: "time",        label: "Hours",       icon: "clock",         roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
-  { id: "development", label: "Development", icon: "calendar",      roles: TEAM_VISIBLE_ROLES },
-  { id: "pfa",         label: "Deposits",    icon: "dollar",        roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
@@ -668,13 +660,12 @@ const ComingSoon = ({ module }) => (
 // This shell routes to each module component.
 const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
   const modules = {
-    dashboard:   <ErrorBoundary name="Dashboard"><Dashboard onNavigate={onNavigate} userRole={userRole} /></ErrorBoundary>,
+    dashboard:   <ErrorBoundary name="Dashboard"><ActivityLog userRole={userRole} userId={userId} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList userRole={userRole} /></ErrorBoundary>,
     financials:  <ErrorBoundary name="Financials"><Financials /></ErrorBoundary>,
     principles:  <ErrorBoundary name="Core Principles"><CorePrinciples /></ErrorBoundary>,
     handbook:    <ErrorBoundary key="handbook" name="Handbook"><Manual manualType="handbook" userRole={userRole} /></ErrorBoundary>,
     processes:   <ErrorBoundary key="processes" name="Processes"><Manual manualType="processes" userRole={userRole} /></ErrorBoundary>,
-    development: <ErrorBoundary name="Development"><Development userRole={userRole} userId={userId} /></ErrorBoundary>,
     admin:       <ErrorBoundary key="admin" name="Admin"><Manual manualType="admin" userRole={userRole} /></ErrorBoundary>,
     memory:      <ErrorBoundary name="Memory"><PersistentMemory /></ErrorBoundary>,
     automations: <ErrorBoundary name="Automations"><Automations /></ErrorBoundary>,
@@ -684,11 +675,8 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     hr:          <ErrorBoundary name="Team"><Team userRole={userRole} /></ErrorBoundary>,
     book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
-    time:        <ErrorBoundary name="Time"><TimeHub /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
-    production:  <ErrorBoundary name="Production"><ActivityLog userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
-    pfa:         <ErrorBoundary name="PFA"><PFA userRole={userRole} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
@@ -728,15 +716,43 @@ const KNOWN_MODULE_IDS = NAV_ITEMS.filter(n => n.type !== "divider").map(n => n.
 // Old module slugs that still resolve. /activity became /production on
 // 2026-09-02; bookmarks and old links land on the new module and the URL
 // effect rewrites the address bar to the canonical slug.
+// 2026-09-12: Production BECAME the Dashboard. The old Dashboard module is
+// gone, and Hours, Deposits and Development are now tabs inside it, so every
+// one of those old slugs resolves to the dashboard module.
 const LEGACY_MODULE_ALIASES = {
-  activity: "production",
-  // 2026-09-07: Onboarding, Trivia and Licensing folded into one Development
-  // module as tabs. Old bookmarks land on Development; the ?area= param picks
-  // the right tab so /trivia and /licensing still open what they used to.
+  activity: "dashboard",
+  production: "dashboard",
+  time: "dashboard",
+  pfa: "dashboard",
+  development: "dashboard",
+  onboarding: "dashboard",
+  trivia: "dashboard",
+  licensing: "dashboard",
+};
+// An old slug that became a TAB also seeds ?tab= once, so /pfa still lands on
+// Deposits rather than dumping the person on the default Log tab. Runs before
+// the first render, so the tab hook reads the seeded value on mount.
+const LEGACY_TAB_SEED = {
+  time: "hours",
+  pfa: "deposits",
+  development: "development",
   onboarding: "development",
   trivia: "development",
   licensing: "development",
 };
+function seedLegacyTab(pathname) {
+  if (typeof window === "undefined") return;
+  const p = (pathname || "/").replace(/\/+$/, "") || "/";
+  const m = /^\/([a-z][a-z0-9-]*)(?:\/.*)?$/.exec(p);
+  const seed = m ? LEGACY_TAB_SEED[m[1]] : null;
+  if (!seed) return;
+  try {
+    const sp = new URLSearchParams(window.location.search || "");
+    if (sp.get("tab")) return;
+    sp.set("tab", seed);
+    window.history.replaceState(null, "", `/?${sp.toString()}`);
+  } catch (_) {}
+}
 function parseUrl(pathname) {
   const p = (pathname || "/").replace(/\/+$/, "") || "/";
   const cprMatch = /^\/cpr\/(\d{4}-\d{2}-\d{2})$/.exec(p);
@@ -794,7 +810,7 @@ export default function NewtworksApp() {
 
   // Initial route read from the URL — refresh lands you on the same page.
   const _initialRoute = (typeof window !== "undefined")
-    ? parseUrl(window.location.pathname)
+    ? (() => { seedLegacyTab(window.location.pathname); return parseUrl(window.location.pathname); })()
     : { module: "dashboard", cprWeekDate: null };
   const [activeModule, setActiveModule] = useState(_initialRoute.module);
   // CPR detail deep-link state: set when URL matches /cpr/YYYY-MM-DD, cleared on close.

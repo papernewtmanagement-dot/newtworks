@@ -21,19 +21,21 @@ const AREAS = [
   { id: "licensing",  label: "Licensing" },
 ];
 
-export default function Development({ userRole, userId }) {
+export default function Development({ userRole, userId, embedded = false }) {
   const [area, setArea, areaHref] = useTabParam(
     "area", "onboarding", ["onboarding", "trivia", "licensing"]
   );
 
   return (
     <div>
-      <div style={{ padding: "20px 20px 0" }}>
+      <div style={{ padding: embedded ? 0 : "20px 20px 0" }}>
+        {!embedded && (
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
           Development
         </div>
+        )}
         <div style={{
-          display: "flex", gap: 4, flexWrap: "wrap", marginTop: 12,
+          display: "flex", gap: 4, flexWrap: "wrap", marginTop: embedded ? 0 : 12,
           borderBottom: `1px solid ${T.slate200}`,
         }}>
           {AREAS.map(a => {

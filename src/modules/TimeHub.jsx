@@ -17,12 +17,14 @@ const TABS = [
   { id: "timeoff",   label: "Time Off" }
 ];
 
-export default function TimeHub() {
-  const [activeTab, setActiveTab, tabHref] = useTabParam("tab", "timeclock", ["timeclock","timeoff"]);
+export default function TimeHub({ embedded = false }) {
+  // Param is "hours", not "tab": this now renders inside the Dashboard, whose
+  // own tab bar owns ?tab=. Two tab groups may never share a param name.
+  const [activeTab, setActiveTab, tabHref] = useTabParam("hours", "timeclock", ["timeclock","timeoff"]);
 
   return (
     <div>
-      <div style={{ borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
+      <div style={{ borderBottom: "1px solid #e2e8f0", background: "#fff", marginTop: embedded ? -8 : 0 }}>
         <div style={{
           maxWidth: 1200,
           margin: "0 auto",
