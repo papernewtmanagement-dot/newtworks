@@ -260,7 +260,7 @@ Send it before Saturday so it lands in this week's CPR — reply to any wrap-up 
 
   let telegramResult: Record<string, unknown>;
   if (dryRun) {
-    telegramResult = { would_send: true, chat_id: -5377408548, text_preview: telegramText, dry_run: true };
+    telegramResult = { would_send: true, chat_id: -1004345855139, text_preview: telegramText, dry_run: true };
   } else {
     // Pull chat_id from settings for defense in depth (default matches op-rule)
     const { data: chatIdSetting } = await sb
@@ -268,7 +268,7 @@ Send it before Saturday so it lands in this week's CPR — reply to any wrap-up 
       .select("setting_value")
       .eq("setting_key", "telegram_team_group_chat_id")
       .maybeSingle();
-    const chatId = chatIdSetting?.setting_value ? parseInt(chatIdSetting.setting_value, 10) : -5377408548;
+    const chatId = chatIdSetting?.setting_value ? parseInt(chatIdSetting.setting_value, 10) : -1004345855139;
 
     const tgRes = await sb.rpc("telegram_send_message_v2", {
       p_chat_id: chatId,
