@@ -193,7 +193,7 @@ export async function processWrapupNoSendMode(
     const body =
 `Hey ${tm.first_name},
 
-Haven't seen your wrap-up email land yet. Send it before Saturday so it lands in this week's CPR.
+Haven't seen your wrap-up yet. Fill it in on the Dashboard, Checklist tab, before Saturday so it lands in this week's CPR.
 
 The six items:
 
@@ -256,7 +256,7 @@ Reply here or fire a fresh email — whichever's easier.
   const telegramText =
 `📝 Wrap-up not in yet from: ${missingNames}
 
-Send it before Saturday so it lands in this week's CPR — reply to any wrap-up thread or fire a fresh email.`;
+Fill it in on the Dashboard, Checklist tab, before Saturday so it lands in this week's CPR.`;
 
   let telegramResult: Record<string, unknown>;
   if (dryRun) {

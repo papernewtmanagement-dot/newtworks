@@ -1725,6 +1725,7 @@ function ChecklistTab() {
   const [ok, setOk] = useState("");
   const [tickKey, setTickKey] = useState(0);
   const [flagKey, setFlagKey] = useState(0);
+  const [personal, setPersonal] = useState([]);
 
   useEffect(() => {
     let alive = true;
@@ -1732,6 +1733,13 @@ function ChecklistTab() {
       .then(r => { if (alive) setState(r?.data || null); });
     return () => { alive = false; };
   }, [tickKey]);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("personal_checklist_items", { p_week_ending: null })
+      .then(r => { if (alive) setPersonal(Array.isArray(r?.data) ? r.data : []); });
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -1860,6 +1868,24 @@ function ChecklistTab() {
                 </div>
               ))}
         </div>
+
+        {personal.length > 0 && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Your own items</div>
+            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone does these for themselves. Not ticked here — the CPR checks them.</div>
+            {personal.map(it => (
+              <div key={it.id}>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 2px", borderBottom: openHelp === it.id ? "none" : `1px solid ${T.slate100}` }}>
+                  <span style={{ flex: 1, fontSize: 13, lineHeight: 1.4, color: T.slate700 }}>{it.title}</span>
+                  <button type="button" title="What this means" aria-label="What this means"
+                    onClick={() => setOpenHelp(h => (h === it.id ? null : it.id))}
+                    style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${openHelp === it.id ? T.blue : T.slate300}`, background: openHelp === it.id ? T.blueLt : T.white, color: openHelp === it.id ? T.blue : T.slate500 }}>i</button>
+                </div>
+                {openHelp === it.id && <HelpPanel item={it} />}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Code Reds / Yellows — any day, no email */}
         <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
