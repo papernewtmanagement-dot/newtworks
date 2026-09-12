@@ -932,14 +932,14 @@ async function handleSave(supa: any, cand: any, body: any) {
 }
 
 // Maps hypothesized_trait -> hiring_candidates column name for the
-// personality facet write-back. 1:1 with migration 20260731194800's 21
-// parallel columns.
+// personality facet write-back. 16 facets since 2026-09-12: sincerity,
+// fairness, greed_avoidance, anxiety, anger, trust, competitiveness,
+// prove_goal_orientation and avoid_goal_orientation are no longer measured
+// and their columns were dropped (migration drop_nine_facet_columns); a
+// scorer row for any of them is skipped by the unmapped-trait guard below.
 const FACET_COLUMNS: Record<string, string> = {
   achievement_striving: "achievement_striving",
-  competitiveness: "competitiveness",
   learning_goal_orientation: "learning_goal_orientation",
-  prove_goal_orientation: "prove_goal_orientation",
-  avoid_goal_orientation: "avoid_goal_orientation",
   self_discipline: "self_discipline",
   emotional_stability: "emotional_stability",
   assertiveness: "assertiveness",
@@ -948,18 +948,12 @@ const FACET_COLUMNS: Record<string, string> = {
   self_efficacy: "self_efficacy",
   proactive_personality: "proactive_personality",
   cautiousness: "cautiousness",
-  anxiety: "anxiety",
   friendliness: "friendliness",
-  anger: "anger",
   cooperation: "cooperation",
-  trust: "trust",
   compassion: "compassion",
   dispositional_optimism: "dispositional_optimism",
   political_skill_networking: "political_skill_networking",
   enterprising: "enterprising",
-  sincerity: "sincerity",
-  fairness: "fairness",
-  greed_avoidance: "greed_avoidance",
 };
 
 async function handleFinalize(supa: any, cand: any) {
