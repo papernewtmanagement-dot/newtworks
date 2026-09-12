@@ -94,7 +94,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "canceled", "hours", "deposits", "week", "issued", "development", "changes"];
+const TABS = ["log", "checklist", "canceled", "hours", "deposits", "week", "issued", "development", "changes"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -1638,6 +1638,224 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
 }
 
 // =====================================================================
+// Checklist tab — the daily team list and your weekly wrap-up on one
+// screen (Peter 2026-09-12). Ticks write to daily_checklist_ticks through
+// daily_checklist_tick; the wrap-up writes straight into the CPR record
+// (weekly_cpr_team_detail) through my_wrapup_save, in the same six-part
+// shape the wrap-up email parser already stores, so the CPR reads it
+// unchanged. Replaces the Daily Wrap-up and weekly wrap-up pages in the
+// processes manual.
+// =====================================================================
+
+// Sections are lines starting "1. " .. "6. ", taken in ascending order
+// only, so an answer that happens to begin with a number is left alone.
+function splitWrapup(text) {
+  const out = ["", "", "", "", "", ""];
+  if (!text || !String(text).trim()) return out;
+  const buf = [[], [], [], [], [], []];
+  let cur = -1;
+  for (const ln of String(text).split("\n")) {
+    const m = ln.match(/^(\d)\.\s+\S/);
+    if (m && Number(m[1]) === cur + 2) { cur = Number(m[1]) - 1; continue; }
+    if (cur >= 0) buf[cur].push(ln);
+  }
+  for (let i = 0; i < 6; i++) out[i] = buf[i].join("\n").trim();
+  return out;
+}
+
+function ChecklistTab() {
+  const _vp = useViewport();
+  const [state, setState] = useState(null);
+  const [wrap, setWrap] = useState(null);
+  const [parts, setParts] = useState(["", "", "", "", "", ""]);
+  const [inbox, setInbox] = useState(false);
+  const [reds, setReds] = useState("");
+  const [yellows, setYellows] = useState("");
+  const [showCodes, setShowCodes] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [tickKey, setTickKey] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("daily_checklist_state", { p_date: null })
+      .then(r => { if (alive) setState(r?.data || null); });
+    return () => { alive = false; };
+  }, [tickKey]);
+
+  // Loaded once. Never reload under the user's typing.
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("my_wrapup_get", { p_week_ending: null }).then(r => {
+      if (!alive || !r?.data) return;
+      const d = r.data;
+      setWrap(d);
+      setParts(splitWrapup(d.wrapup_text));
+      setInbox(!!d.inbox_done);
+      setReds(d.code_reds || "");
+      setYellows(d.code_yellows || "");
+      if ((d.code_reds || "").trim() || (d.code_yellows || "").trim()) setShowCodes(true);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const toggle = async (item) => {
+    if (!state?.date || busy) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.rpc("daily_checklist_tick", {
+      p_item_id: item.id, p_date: state.date, p_on: !item.ticked_at,
+    });
+    setBusy(false);
+    if (error) { setErr(error.message || "Could not save that tick."); return; }
+    setTickKey(k => k + 1);
+  };
+
+  const save = async () => {
+    setSaving(true); setErr(""); setOk("");
+    const { data, error } = await supabase.rpc("my_wrapup_save", {
+      p_parts: parts, p_inbox_done: inbox, p_code_reds: reds, p_code_yellows: yellows, p_week_ending: null,
+    });
+    setSaving(false);
+    if (error) { setErr(error.message || "Could not save the wrap-up."); return; }
+    setOk(data?.wrapup_done ? "Saved — all six answered." : "Saved. Some answers are still blank.");
+    setWrap(w => (w ? { ...w, wrapup_done: !!data?.wrapup_done } : w));
+  };
+
+  const items = Array.isArray(state?.items) ? state.items : [];
+  const cleared = items.filter(i => i.ticked_at).length;
+  const carryOpen = Array.isArray(state?.carry?.open) ? state.carry.open : [];
+  const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
+  const answered = parts.filter(p => (p || "").trim()).length;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: _vp.isPhone ? "1fr" : "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
+
+      {/* ── Daily team list ───────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Team list</div>
+            <div style={{ fontSize: 12, color: T.slate500 }}>
+              {state?.label || "Loading"}{state?.leader ? ` · ${state.leader} leads this week` : ""}
+            </div>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: cleared === items.length && items.length ? T.green : T.slate600 }}>
+            {cleared} of {items.length} cleared
+          </span>
+        </div>
+
+        {carryOpen.length > 0 && (
+          <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 12, lineHeight: 1.5 }}>
+            <strong>Still open from {state?.carry?.label}:</strong> {carryOpen.map(o => o.title).join(" · ")}
+          </div>
+        )}
+        {Number(state?.at_risk_count || 0) > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12, color: T.red, fontWeight: 600 }}>
+            This week at risk: {state.at_risk_count} item{Number(state.at_risk_count) === 1 ? "" : "s"}
+          </div>
+        )}
+
+        <div style={{ marginTop: 12 }}>
+          {items.length === 0
+            ? <div style={{ fontSize: 13, color: T.slate500 }}>No items for this day.</div>
+            : items.map(it => (
+                <label key={it.id} style={{
+                  display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px",
+                  borderBottom: `1px solid ${T.slate100}`, cursor: busy ? "wait" : "pointer",
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={!!it.ticked_at}
+                    onChange={() => toggle(it)}
+                    disabled={busy}
+                    style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box" }}
+                  />
+                  <span style={{ flex: 1, fontSize: 13, lineHeight: 1.4, color: it.ticked_at ? T.slate500 : T.slate800 }}>{it.title}</span>
+                  {it.ticked_at && (
+                    <span style={{ fontSize: 11, color: T.slate400, whiteSpace: "nowrap", flexShrink: 0 }}>{it.ticked_by}</span>
+                  )}
+                </label>
+              ))}
+        </div>
+      </div>
+
+      {/* ── Weekly wrap-up ────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Your wrap-up</div>
+            <div style={{ fontSize: 12, color: T.slate500 }}>
+              {wrap?.week_ending ? `Week ending ${wrap.week_ending}` : "Loading"} · goes straight onto the CPR
+            </div>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>
+        </div>
+
+        {wrap && wrap.ok === false && (
+          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This login is not matched to a teammate, so there is no wrap-up to write.</div>
+        )}
+        {wrap?.ok && !wrap.report_id && (
+          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This week's CPR is not open yet. The wrap-up opens with it.</div>
+        )}
+
+        {wrap?.ok && wrap.report_id && (
+          <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+            {prompts.map((p, i) => (
+              <div key={p.n}>
+                <label style={labelStyle}>{p.n}. {p.title} <span style={hintStyle}>{p.hint}</span></label>
+                <textarea
+                  rows={2}
+                  value={parts[i] || ""}
+                  onChange={e => setParts(v => { const n = [...v]; n[i] = e.target.value; return n; })}
+                  style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }}
+                />
+              </div>
+            ))}
+
+            <label style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer" }}>
+              <input type="checkbox" checked={inbox} onChange={e => setInbox(e.target.checked)}
+                     style={{ width: 16, height: 16, accentColor: T.blue, boxSizing: "border-box" }} />
+              <span style={{ fontSize: 13, color: T.slate800 }}>My inbox is cleared</span>
+            </label>
+
+            {!showCodes ? (
+              <button type="button" onClick={() => setShowCodes(true)}
+                      style={{ justifySelf: "start", background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12, fontWeight: 600, color: T.blue }}>
+                + Add a Code Red or Code Yellow
+              </button>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <div>
+                  <label style={{ ...labelStyle, color: T.red }}>🔴 Code Reds</label>
+                  <textarea rows={2} value={reds} onChange={e => setReds(e.target.value)}
+                            style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
+                </div>
+                <div>
+                  <label style={{ ...labelStyle, color: T.amber }}>🟡 Code Yellows</label>
+                  <textarea rows={2} value={yellows} onChange={e => setYellows(e.target.value)}
+                            style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+              <button type="button" onClick={save} disabled={saving} style={btnPrimary(saving)}>
+                {saving ? "Saving…" : "Save wrap-up"}
+              </button>
+              {ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>}
+            </div>
+          </div>
+        )}
+
+        {err && <div style={{ marginTop: 10, fontSize: 12, color: T.red, fontWeight: 600 }}>{err}</div>}
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
 // Module shell
 // =====================================================================
 export default function ActivityLog({ userRole, userId }) {
@@ -1695,6 +1913,7 @@ export default function ActivityLog({ userRole, userId }) {
   // separate daily work from weekly work from the occasional stuff.
   const tabs = [
     { id: "log", label: "Log" },
+    { id: "checklist", label: "Checklist" },
     { id: "canceled", label: "Canceled" },
     { id: "hours", label: "Hours" },
     { id: "deposits", label: "Deposits" },
@@ -1747,6 +1966,7 @@ export default function ActivityLog({ userRole, userId }) {
       </div>
 
       {tab === "log"  && <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "checklist" && <ChecklistTab />}
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
       {tab === "canceled" && <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
