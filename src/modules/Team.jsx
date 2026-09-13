@@ -2781,7 +2781,9 @@ const HypotheticalHireForecast = () => {
       const ytdRows = ytdRes.status === "fulfilled" ? (ytdRes.value.data || []) : [];
       setYtd(ytdRows.reduce((s, r) => s + parseFloat(r.growth_budget_ytd || 0), 0));
       const ci = ceilingRes.status === "fulfilled" ? (ceilingRes.value.data || null) : null;
-      setCeiling(parseFloat(ci?.ceiling_annual || 0));
+      // Budget available, not the bare ceiling: base recaptured from a departure is
+      // added back and is exactly what pays for a replacement hire's ramp.
+      setCeiling(parseFloat(ci?.effective_ceiling_annual || 0) || parseFloat(ci?.ceiling_annual || 0));
     }
     loadContext();
     return () => { cancelled = true; };
@@ -2891,13 +2893,13 @@ const HypotheticalHireForecast = () => {
 
           {ceiling > 0 && fcResult.summary && (
             <div style={{ marginTop:12, padding:10, background:T.blueLt, borderRadius:8, fontSize:11, color:T.slate700 }}>
-              <strong style={{ color:T.slate900 }}>Ceiling impact:</strong>{" "}
+              <strong style={{ color:T.slate900 }}>Budget impact:</strong>{" "}
               Year-1 forecast of {$(fcResult.summary.year_1_growth_budget_total)} +
               current YTD spend {$(ytd)} =
               {" "}{$(parseFloat(fcResult.summary.year_1_growth_budget_total || 0) + ytd)} projected combined.
               {(parseFloat(fcResult.summary.year_1_growth_budget_total || 0) + ytd) > ceiling
-                ? <span style={{ color:T.red, fontWeight:700 }}> Would exceed ceiling ({$(ceiling)}).</span>
-                : <span style={{ color:T.green, fontWeight:700 }}> Within ceiling ({$(ceiling)}).</span>}
+                ? <span style={{ color:T.red, fontWeight:700 }}> Would exceed budget available ({$(ceiling)}).</span>
+                : <span style={{ color:T.green, fontWeight:700 }}> Within budget available ({$(ceiling)}).</span>}
             </div>
           )}
         </div>
