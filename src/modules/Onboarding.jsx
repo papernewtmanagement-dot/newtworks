@@ -79,7 +79,18 @@ function trackColumns(steps) {
     if (!names.includes(t)) names.push(t);
   });
   if (names.length <= 1) return null;
-  return names.map(n => ({ name: n, steps: steps.filter(s => (s.track || null) === n) }));
+  // track_order decides which column sits on the left.
+  const rank = (n) => {
+    const hit = steps.find(s => (s.track || null) === n);
+    return hit && typeof hit.track_order === "number" ? hit.track_order : 0;
+  };
+  names.sort((a, b) => rank(a) - rank(b));
+  return names.map(n => ({
+    name: n,
+    steps: steps
+      .filter(s => (s.track || null) === n)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+  }));
 }
 
 const trackHeadStyle = {
@@ -203,7 +214,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, blocked_by")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -960,7 +971,7 @@ function TemplateTab({ phaseMeta, ownerName }) {
     }
     supabase
       .from("onboarding_step_templates")
-      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, blocked_by")
+      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by")
       .eq("agency_id", AGENCY_ID)
       .eq("is_active", true)
       .order("phase", { ascending: true })
