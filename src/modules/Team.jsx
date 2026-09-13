@@ -2691,7 +2691,11 @@ const GrowthBudgetHeader = () => {
   }, []);
 
   const $ = (n) => "$" + Math.round(parseFloat(n)||0).toLocaleString();
-  const ceiling         = parseFloat(ceilingInfo?.ceiling_annual || 0);
+  const baseCeiling     = parseFloat(ceilingInfo?.ceiling_annual || 0);
+  // Base held back from the team bonus pool when a teammate left is added back to the
+  // budget (Peter 2026-09-13) — it is what funds the next hire's ramp.
+  const recaptureYtd    = parseFloat(ceilingInfo?.recapture_ytd_dollars || 0);
+  const ceiling         = parseFloat(ceilingInfo?.effective_ceiling_annual || 0) || (baseCeiling + recaptureYtd);
   const yearStart       = new Date(new Date().getFullYear(), 0, 1);
   const daysElapsed     = Math.max(1, Math.floor((new Date() - yearStart) / 86400000) + 1);
   const proratedCeiling = ceiling * (daysElapsed / 365);
@@ -2721,6 +2725,11 @@ const GrowthBudgetHeader = () => {
         <div style={{ fontSize:12, fontWeight:700, color:statusColor, minWidth:38, textAlign:"right" }}>
           {ceiling > 0 ? `${pct(ytd, ceiling)}%` : "—"}
         </div>
+        {recaptureYtd > 0 && (
+          <div style={{ width:"100%", fontSize:11, color:T.green }}>
+            Includes {$(recaptureYtd)} added back from departures (on top of the {$(baseCeiling)} ceiling)
+          </div>
+        )}
       </div>
 
       {/* Ramping list — one compact line per teammate, always visible */}

@@ -681,12 +681,20 @@ function useFinancialsData(entity) {
             const ceiling = growthCeilingRes?.data || {};
             const ytd = parseFloat(gb.total_growth_budget_ytd_dollars || 0);
             const ceil = parseFloat(ceiling.ceiling_annual || 0);
+            // Departure recapture (Peter 2026-09-13): base held out of the team bonus pool
+            // when a teammate left is money that funds the next hire's ramp, so it is added
+            // back to the budget rather than counted as spend. Utilization runs against the
+            // effective ceiling = standing ceiling + recapture YTD.
+            const recapture = parseFloat(ceiling.recapture_ytd_dollars || 0);
+            const effCeil = parseFloat(ceiling.effective_ceiling_annual || 0) || (ceil + recapture);
             return {
               salary_ramp_ytd:   parseFloat(gb.salary_ramp_ytd_dollars || 0),
               licensing_ytd:     parseFloat(gb.licensing_ytd_dollars || 0),
               total_ytd:         ytd,
               ceiling_annual:    ceil,
-              utilization_pct:   ceil > 0 ? (ytd / ceil) * 100 : 0,
+              recapture_ytd:     recapture,
+              effective_ceiling: effCeil,
+              utilization_pct:   effCeil > 0 ? (ytd / effCeil) * 100 : 0,
               new_hires_ramping: parseInt(gb.active_new_hires_ramping || 0, 10),
               weeks_ramping_ytd: parseFloat(gb.total_weeks_ramping_ytd || 0),
               licensing_entries: parseInt(gb.licensing_entries_ytd || 0, 10),
@@ -1048,7 +1056,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
           <Card>
             <CardHeader
               title="Growth Budget — YTD"
-              sub={`Ramp cost + licensing vs ceiling (10% of on-time annual gross ex-Scorecard)`}
+              sub={`Ramp cost + licensing vs ceiling (10% of on-time annual gross ex-Scorecard), plus base added back from departures`}
             />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
               <div>
@@ -1056,8 +1064,13 @@ const OverviewSection = ({ period, setPeriod, data }) => {
                 <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.total_ytd)}</div>
               </div>
               <div>
-                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Annual Ceiling</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.ceiling_annual)}</div>
+                <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Budget Available</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{fmtMoneyR(data.growthBudget.effective_ceiling)}</div>
+                {data.growthBudget.recapture_ytd > 0 && (
+                  <div style={{ fontSize: 10, color: T.green, marginTop: 2 }}>
+                    {fmtMoneyR(data.growthBudget.ceiling_annual)} ceiling + {fmtMoneyR(data.growthBudget.recapture_ytd)} added back from departures
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ marginBottom: 10 }}>
@@ -1069,7 +1082,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
               </div>
               <ProgressBar
                 value={data.growthBudget.total_ytd}
-                max={data.growthBudget.ceiling_annual || 1}
+                max={data.growthBudget.effective_ceiling || 1}
                 color={data.growthBudget.utilization_pct > 100 ? T.red : data.growthBudget.utilization_pct > 80 ? T.amber : T.green}
               />
             </div>
