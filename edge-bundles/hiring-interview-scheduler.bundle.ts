@@ -1010,47 +1010,50 @@ const toDisplay = (s: Slot) => ({ start: s.start, end: s.end, display: formatChi
 // -------------------------------------------------------------------------
 // Email bodies
 // -------------------------------------------------------------------------
-const PREP_LINE = "This is an Interview AMA — please take some time beforehand to research Story Agency and State Farm, and come ready with your own questions for us.";
+// Every candidate letter is a row in public.hiring_email_templates. Peter reads
+// and edits them in the app under Team > Growth > Email Templates, and the
+// {{tokens}} get filled in here. Nothing is hardcoded on purpose: a copy kept
+// in this file would quietly win over whatever he last saved.
 
-function inviteEmailHtml(firstName: string, bookingUrl: string): string {
-  return `<p>Hi ${escHtml(firstName)},</p>
-<p>Thank you for completing our assessment — we'd like to move forward with an Interview AMA.</p>
-<p>It's a video call (about 30 minutes) over Google Meet. Please pick a time that works for you:</p>
-<p><a href="${escHtml(bookingUrl)}">${escHtml(bookingUrl)}</a></p>
-<p>This link is valid for the next 7 days. Once you pick a time, you'll get a confirmation email with the Google Meet link.</p>
-<p>Looking forward to speaking with you.</p>
-<p>Sincerely,<br/>Story Agency</p>`;
+type Tpl = { subject: string; body: string };
+let tplCache: { at: number; map: Map<string, Tpl> } | null = null;
+const TPL_TTL_MS = 30_000;
+
+async function loadTemplates(agencyId: string): Promise<Map<string, Tpl>> {
+  if (tplCache && Date.now() - tplCache.at < TPL_TTL_MS) return tplCache.map;
+  const { data, error } = await sb
+    .from("hiring_email_templates")
+    .select("template_key, subject, body_html")
+    .eq("agency_id", agencyId);
+  if (error) throw new Error(`hiring_email_templates unreadable: ${error.message}`);
+  const map = new Map<string, Tpl>();
+  for (const r of data ?? []) map.set(r.template_key, { subject: r.subject ?? "", body: r.body_html ?? "" });
+  tplCache = { at: Date.now(), map };
+  return map;
 }
 
-function confirmationEmailHtml(firstName: string, startLocal: string, meetUrl: string): string {
-  return `<p>Hi ${escHtml(firstName)},</p>
-<p>You're confirmed for <strong>${escHtml(startLocal)}</strong> (Central time).</p>
-<p>This will be a video call over Google Meet: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a></p>
-<p>${escHtml(PREP_LINE)}</p>
-<p>A calendar invite is on its way to this email address as well. Looking forward to speaking with you.</p>
-<p>Sincerely,<br/>Story Agency</p>`;
+function fillTokens(text: string, vars: Record<string, string>): string {
+  let out = text;
+  for (const [k, v] of Object.entries(vars)) out = out.split(`{{${k}}}`).join(v ?? "");
+  return out;
 }
 
-function meetGreetEmailHtml(
-  firstName: string,
-  whenLocal: string,
-  isVideo: boolean,
-  locationText: string,
-  meetUrl: string | null,
-  note: string,
-): string {
-  const wherePara = isVideo
-    ? `<p>It's a video call over Google Meet${meetUrl ? `: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a>` : ""}.</p>`
-    : `<p>We'll meet at our office:<br/>${escHtml(locationText)}</p>`;
-  const notePara = note ? `<p>${escHtml(note)}</p>` : "";
-  return `<p>Hi ${escHtml(firstName)},</p>
-<p>Thank you for the conversation — we'd like you to meet the rest of the team.</p>
-<p>You're set for <strong>${escHtml(whenLocal)}</strong> (Central time).</p>
-${wherePara}
-<p>This one is less formal than the interview. It's a chance for you to meet the people you'd be working alongside, and for them to meet you — so come with questions.</p>
-${notePara}
-<p>A calendar invite is on its way to this email address as well. If that time doesn't work, just reply to this email and we'll find another.</p>
-<p>Sincerely,<br/>Story Agency</p>`;
+async function renderEmail(
+  agencyId: string,
+  key: string,
+  vars: Record<string, string>,
+): Promise<{ subject: string; html: string }> {
+  const t = (await loadTemplates(agencyId)).get(key);
+  if (!t) throw new Error(`hiring email template "${key}" not found`);
+  return { subject: fillTokens(t.subject, vars), html: fillTokens(t.body, vars) };
+}
+
+// The one sentence telling a candidate how to prepare. Shared by the
+// confirmation, every reminder, and the booking page, so it lives in its own
+// row and is edited once.
+async function prepLine(agencyId: string): Promise<string> {
+  const t = (await loadTemplates(agencyId)).get("snippet_prep_line");
+  return t?.body ?? "";
 }
 
 // Naive "YYYY-MM-DDTHH:MM:SS" in Chicago local time — the format Composio's
@@ -1152,11 +1155,15 @@ async function processAssessed(agencyId: string, candidateId?: string): Promise<
       const bookingUrl = `${BOOKING_BASE_URL}/${token}`;
       let emailSent = false;
       if (gmailCreds.ok) {
+        const letter = await renderEmail(agencyId, "interview_invite", {
+          first_name: escHtml(firstName),
+          booking_url: escHtml(bookingUrl),
+        });
         const sendRes = await sendGmail({
           creds: gmailCreds.creds,
           to: c.email,
-          subject: "Next step: schedule your Interview AMA — Story Agency",
-          html: inviteEmailHtml(firstName, bookingUrl),
+          subject: letter.subject,
+          html: letter.html,
         });
         emailSent = sendRes.ok;
       }
@@ -1193,7 +1200,7 @@ async function getOffer(agencyId: string, token: string): Promise<Response> {
       scheduled_start_display: formatChicago(c.interview_scheduled_start),
       meet_url: c.interview_meet_url,
       earlier_slots: earlier.map(toDisplay),
-      prep_line: PREP_LINE,
+      prep_line: await prepLine(agencyId),
     });
   }
 
@@ -1205,7 +1212,7 @@ async function getOffer(agencyId: string, token: string): Promise<Response> {
     expired,
     first_name: c.first_name || (c.candidate_name || "").split(" ")[0] || "there",
     position: c.position || null,
-    prep_line: PREP_LINE,
+    prep_line: await prepLine(agencyId),
     slots: expired ? [] : slots.map((s) => ({ start: s.start, end: s.end, display: formatChicago(s.start) })),
   });
 }
@@ -1309,16 +1316,22 @@ async function bookCandidate(agencyId: string, creds: { apiKey: string; userId: 
   if (c.email) {
     const gmailCreds = await getComposioGmailCreds(agencyId);
     if (gmailCreds.ok) {
+      const letter = await renderEmail(agencyId, moved ? "interview_confirmation_moved" : "interview_confirmation", {
+        first_name: escHtml(firstName),
+        when: escHtml(startLocalStr),
+        meet_url: escHtml(meetUrl || ""),
+        prep_line: escHtml(await prepLine(agencyId)),
+      });
       await sendGmail({
         creds: gmailCreds.creds,
         to: c.email,
-        subject: moved ? "You're moved up — Interview AMA rescheduled" : "You're confirmed — Interview AMA scheduled",
-        html: confirmationEmailHtml(firstName, startLocalStr, meetUrl || ""),
+        subject: letter.subject,
+        html: letter.html,
       });
     }
   }
 
-  return corsJson({ ok: true, moved, scheduled_start: chosen.start, scheduled_start_display: startLocalStr, meet_url: meetUrl, prep_line: PREP_LINE });
+  return corsJson({ ok: true, moved, scheduled_start: chosen.start, scheduled_start_display: startLocalStr, meet_url: meetUrl, prep_line: await prepLine(agencyId) });
 }
 
 // -------------------------------------------------------------------------
@@ -1527,11 +1540,19 @@ async function scheduleMeetGreet(agencyId: string, body: any): Promise<Response>
   if (c.email) {
     const gmailCreds = await getComposioGmailCreds(agencyId);
     if (gmailCreds.ok) {
+      const letter = await renderEmail(agencyId, "meet_greet", {
+        first_name: escHtml(firstName),
+        when: escHtml(whenLocal),
+        where_block: isVideo
+          ? `<p>It's a video call over Google Meet${meetUrl ? `: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a>` : ""}.</p>`
+          : `<p>We'll meet at our office:<br/>${escHtml(locationText)}</p>`,
+        note_block: note ? `<p>${escHtml(note)}</p>` : "",
+      });
       const sendRes = await sendGmail({
         creds: gmailCreds.creds,
         to: c.email,
-        subject: "You're set — meet the team",
-        html: meetGreetEmailHtml(firstName, whenLocal, isVideo, locationText, meetUrl, note),
+        subject: letter.subject,
+        html: letter.html,
       });
       emailed = sendRes.ok;
       if (!sendRes.ok) emailError = sendRes.error;
@@ -1584,40 +1605,6 @@ function responseButtonsHtml(token: string): string {
     `<a href="${escHtml(respondUrl(token, action))}" style="display:inline-block;margin:6px 8px 6px 0;padding:10px 16px;border-radius:8px;background:${bg};color:#fff;text-decoration:none;font-weight:600;">${label}</a>`;
   return `<p>${btn("confirm", "Yes, I'll be there", "#2563eb")}${btn("reschedule", "I need a different time", "#475569")}</p>
 <p style="font-size:13px;color:#64748b;">No longer interested? <a href="${escHtml(respondUrl(token, "withdraw"))}">Let us know here</a> and we'll open the time up for someone else.</p>`;
-}
-
-function reminderEmailHtml(firstName: string, startLocal: string, meetUrl: string | null, token: string, kind: ReminderKind, confirmed: boolean): string {
-  const meetLine = meetUrl
-    ? `<p>Google Meet link: <a href="${escHtml(meetUrl)}">${escHtml(meetUrl)}</a></p>`
-    : `<p>The Google Meet link is in your calendar invite.</p>`;
-  const opener = kind === "day_before"
-    ? `<p>Your Interview AMA with Story Agency is <strong>tomorrow, ${escHtml(startLocal)}</strong> (Central time). It's a 30-minute video call.</p>`
-    : `<p>A quick reminder that your Interview AMA with Story Agency is <strong>${escHtml(startLocal)}</strong> (Central time). It's a 30-minute video call over Google Meet.</p>`;
-  const ask = confirmed
-    ? `<p>You've already confirmed, so we're all set. If anything changes, use the links below.</p>${responseButtonsHtml(token)}`
-    : `<p>Can you confirm you'll be there? One tap:</p>${responseButtonsHtml(token)}`;
-  return `<p>Hi ${escHtml(firstName)},</p>
-${opener}
-${meetLine}
-${ask}
-<p>${escHtml(PREP_LINE)}</p>
-<p>Sincerely,<br/>Story Agency</p>`;
-}
-
-function reminderSubject(startLocal: string, kind: ReminderKind, confirmed: boolean): string {
-  if (kind === "day_before") return `Tomorrow: your Interview AMA with Story Agency (${startLocal})`;
-  return confirmed ? `Reminder: your Interview AMA is ${startLocal}` : `Still good for ${startLocal}? Your Interview AMA`;
-}
-
-function earlierTimeEmailHtml(firstName: string, currentLocal: string, token: string, options: Slot[]): string {
-  const items = options.map((o) => `<li>${escHtml(formatChicago(o.start))}</li>`).join("");
-  return `<p>Hi ${escHtml(firstName)},</p>
-<p>An earlier time opened up for your Interview AMA with Story Agency. You're currently set for <strong>${escHtml(currentLocal)}</strong> (Central time).</p>
-<p>Open earlier times:</p>
-<ul>${items}</ul>
-<p>Want one? Pick it here: <a href="${escHtml(BOOKING_BASE_URL + "/" + token)}">${escHtml(BOOKING_BASE_URL + "/" + token)}</a></p>
-<p>If you do nothing, your current time stays exactly as it is.</p>
-<p>Sincerely,<br/>Story Agency</p>`;
 }
 
 async function cancelCalendarEvent(agencyId: string, eventId: string | null, sendUpdates: "all" | "none" = "all"): Promise<{ ok: boolean; error?: string }> {
@@ -1681,11 +1668,21 @@ async function sendReminders(agencyId: string): Promise<Response> {
     if (daysAhead === 1 && !c.interview_reminder_1d_sent_at) kind = "day_before";
     else if (daysAhead >= 2 && daysAhead <= 3 && !c.interview_reminder_3d_sent_at) kind = "three_days";
     if (!kind) continue;
+    const reminderKey = `interview_reminder_${kind === "day_before" ? "1day" : "3day"}_${confirmed ? "confirmed" : "unconfirmed"}`;
+    const letter = await renderEmail(agencyId, reminderKey, {
+      first_name: escHtml(firstName),
+      when: escHtml(startLocal),
+      meet_line: c.interview_meet_url
+        ? `<p>Google Meet link: <a href="${escHtml(c.interview_meet_url)}">${escHtml(c.interview_meet_url)}</a></p>`
+        : `<p>The Google Meet link is in your calendar invite.</p>`,
+      response_buttons: responseButtonsHtml(c.interview_invite_token),
+      prep_line: escHtml(await prepLine(agencyId)),
+    });
     const sendRes = await sendGmail({
       creds: gmailCreds.creds,
       to: c.email,
-      subject: reminderSubject(startLocal, kind, confirmed),
-      html: reminderEmailHtml(firstName, startLocal, c.interview_meet_url, c.interview_invite_token, kind, confirmed),
+      subject: letter.subject,
+      html: letter.html,
     });
     if (!sendRes.ok) { results.push({ id: c.id, name: c.candidate_name, action: "send_failed", kind, error: sendRes.error }); continue; }
     const stamp = kind === "day_before" ? { interview_reminder_1d_sent_at: now.toISOString() } : { interview_reminder_3d_sent_at: now.toISOString() };
@@ -1744,11 +1741,17 @@ async function offerEarlierTimes(agencyId: string): Promise<{ offered: any[]; sk
     const options = earlierOptions(free, c.interview_scheduled_start, now);
     if (options.length === 0) { skipped++; continue; }
     const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+    const letter = await renderEmail(agencyId, "interview_earlier_time", {
+      first_name: escHtml(firstName),
+      when: escHtml(formatChicago(c.interview_scheduled_start)),
+      options_list: options.map((o) => `<li>${escHtml(formatChicago(o.start))}</li>`).join(""),
+      booking_url: escHtml(`${BOOKING_BASE_URL}/${c.interview_invite_token}`),
+    });
     const sendRes = await sendGmail({
       creds: gmailCreds.creds,
       to: c.email,
-      subject: "An earlier interview time opened up — Story Agency",
-      html: earlierTimeEmailHtml(firstName, formatChicago(c.interview_scheduled_start), c.interview_invite_token, options),
+      subject: letter.subject,
+      html: letter.html,
     });
     if (!sendRes.ok) { offered.push({ id: c.id, name: c.candidate_name, action: "send_failed", error: sendRes.error }); continue; }
     await sb.from("hiring_candidates").update({ interview_earlier_offer_sent_at: now.toISOString() }).eq("id", c.id);
@@ -1846,16 +1849,17 @@ async function moveBookings(agencyId: string, fromDateKey: string, throughDateKe
     let emailed = false;
     if (c.email && gmailCreds.ok) {
       const bookingUrl = `${BOOKING_BASE_URL}/${token}`;
+      const letter = await renderEmail(agencyId, "interview_moved_by_us", {
+        first_name: escHtml(firstName),
+        reason: escHtml(reason),
+        old_when: escHtml(oldLocal),
+        booking_url: escHtml(bookingUrl),
+      });
       const sendRes = await sendGmail({
         creds: gmailCreds.creds,
         to: c.email,
-        subject: "We need to move your Interview AMA — Story Agency",
-        html: `<p>Hi ${escHtml(firstName)},</p>
-<p>${escHtml(reason)} so your Interview AMA time on <strong>${escHtml(oldLocal)}</strong> no longer works. Sorry about the change.</p>
-<p>Please pick a new time here — it's a 30-minute video call over Google Meet:</p>
-<p><a href="${escHtml(bookingUrl)}">${escHtml(bookingUrl)}</a></p>
-<p>This link is valid for the next 7 days. Once you pick a time, you'll get a fresh confirmation with the Google Meet link.</p>
-<p>Sincerely,<br/>Story Agency</p>`,
+        subject: letter.subject,
+        html: letter.html,
       });
       emailed = sendRes.ok;
     }
@@ -1944,7 +1948,7 @@ async function respond(agencyId: string, token: string, action: RespondAction): 
     return corsJson({
       ok: true, action, first_name: firstName,
       scheduled_start_display: formatChicago(c.interview_scheduled_start),
-      meet_url: c.interview_meet_url, prep_line: PREP_LINE,
+      meet_url: c.interview_meet_url, prep_line: await prepLine(agencyId),
     });
   }
 
@@ -1990,17 +1994,21 @@ async function respond(agencyId: string, token: string, action: RespondAction): 
   if (c.email) {
     const gmailCreds = await getComposioGmailCreds(agencyId);
     if (gmailCreds.ok) {
+      const letter = await renderEmail(agencyId, "interview_rebook", {
+        first_name: escHtml(firstName),
+        booking_url: escHtml(`${BOOKING_BASE_URL}/${token}`),
+      });
       await sendGmail({
         creds: gmailCreds.creds,
         to: c.email,
-        subject: "Pick a new time for your Interview AMA — Story Agency",
-        html: inviteEmailHtml(firstName, `${BOOKING_BASE_URL}/${token}`),
+        subject: letter.subject,
+        html: letter.html,
       });
     }
   }
   const earlier = await offerEarlierTimes(agencyId);
   return corsJson({
-    ok: true, action, first_name: firstName, calendar_canceled: cancel.ok, prep_line: PREP_LINE, earlier_offers: earlier.offered.length,
+    ok: true, action, first_name: firstName, calendar_canceled: cancel.ok, prep_line: await prepLine(agencyId), earlier_offers: earlier.offered.length,
     slots: slots.map(toDisplay),
   });
 }
