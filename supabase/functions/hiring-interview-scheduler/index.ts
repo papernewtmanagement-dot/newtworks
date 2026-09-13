@@ -76,6 +76,7 @@ import { requireSharedSecret, requireOwnerOrManager } from "../_shared/auth.ts";
 import { callComposio } from "../_shared/composio.ts";
 import { getComposioGmailCreds, sendGmail } from "../_shared/gmail.ts";
 import { escHtml } from "../_shared/html.ts";
+import { insertAlert } from "../_shared/alerts.ts";
 
 const TZ = "America/Chicago";
 const CALENDAR_ID = "primary";
@@ -1427,6 +1428,138 @@ async function respond(agencyId: string, token: string, action: RespondAction): 
 }
 
 // -------------------------------------------------------------------------
+// Offer letter
+// -------------------------------------------------------------------------
+// The letter body is markdown, written by Peter in Team > Growth > Email
+// Templates and filled in by the offer form. Gmail needs HTML, so it is
+// converted here at send time. Sending raw markdown puts literal asterisks and
+// bracket syntax in front of the candidate.
+//
+// Supported, because that is what the letter actually uses:
+//   **bold**, [text](url), "- " bullets nested by two spaces per level,
+//   blank-line-separated paragraphs. A line that is nothing but bold text is
+//   treated as a section heading and gets the heading spacing.
+
+function offerInline(text: string): string {
+  let out = escHtml(text);
+  // Links first: the label can itself contain bold.
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label, url) => `<a href="${url}">${label}</a>`);
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  return out;
+}
+
+export function offerMarkdownToHtml(md: string): string {
+  const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  let openLists = 0;
+
+  const closeLists = (toDepth: number) => {
+    while (openLists > toDepth) { out.push("</ul>"); openLists--; }
+  };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    if (line.trim() === "") { closeLists(0); continue; }
+
+    const bullet = line.match(/^(\s*)-\s+(.*)$/);
+    if (bullet) {
+      // Two spaces per level. Anything shallower than a full level rounds down,
+      // so a stray single space cannot silently create a new nesting level.
+      const depth = Math.floor(bullet[1].length / 2) + 1;
+      while (openLists < depth) { out.push("<ul>"); openLists++; }
+      closeLists(depth);
+      out.push(`<li>${offerInline(bullet[2])}</li>`);
+      continue;
+    }
+
+    closeLists(0);
+    const heading = line.trim().match(/^\*\*(.+)\*\*$/);
+    if (heading) {
+      out.push(`<p style="margin:22px 0 8px 0;"><strong>${escHtml(heading[1])}</strong></p>`);
+      continue;
+    }
+    out.push(`<p>${offerInline(line.trim())}</p>`);
+  }
+  closeLists(0);
+
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a1a1a;max-width:640px;">\n${out.join("\n")}\n</div>`;
+}
+
+// Mails the offer letter already filed on the candidate row. The database
+// trigger trg_send_offer_letter calls this the moment the offer form saves,
+// which is the only path that puts a letter body on the row.
+//
+// One decider: the trigger dispatches, this function decides. offer_sent_at is
+// the duplicate stop — it is stamped only on a successful send, and a row that
+// already carries it is skipped, so bouncing a candidate out of Offer and back
+// cannot mail them twice.
+async function sendOfferLetter(agencyId: string, candidateId: string): Promise<Response> {
+  const { data: c, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, status, offer_letter_body, offer_sent_at, is_test_candidate")
+    .eq("agency_id", agencyId)
+    .eq("id", candidateId)
+    .maybeSingle();
+
+  if (error) return jsonResponse({ ok: false, error: error.message }, 500);
+  if (!c) return jsonResponse({ ok: false, error: "candidate not found" }, 404);
+
+  if (c.is_test_candidate === true) return jsonResponse({ ok: true, action: "skipped", reason: "test candidate" });
+  if (c.status !== "offer")         return jsonResponse({ ok: true, action: "skipped", reason: "not in offer stage" });
+  if (c.offer_sent_at)              return jsonResponse({ ok: true, action: "skipped", reason: "already sent" });
+  if (!c.offer_letter_body)         return jsonResponse({ ok: true, action: "skipped", reason: "no letter body" });
+
+  const name = c.candidate_name || c.first_name || "the candidate";
+
+  if (!c.email) {
+    await insertAlert({
+      agencyId, alertType: "offer_letter_send_failed", severity: "high",
+      title: `Offer letter not sent — no email address for ${name}`,
+      message: `${name} was moved to the Offer stage and the letter is ready, but there is no email address on the record. Add one and move them out of Offer and back to send it.`,
+      moduleReference: "team", relatedId: c.id,
+    });
+    return jsonResponse({ ok: false, action: "failed", reason: "no email address" }, 200);
+  }
+
+  const { data: tpl } = await sb
+    .from("offer_letter_templates")
+    .select("subject")
+    .eq("agency_id", agencyId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  const subject = tpl?.subject || "Reference Check & Next Steps";
+  const html = offerMarkdownToHtml(c.offer_letter_body);
+
+  const gmailCreds = await getComposioGmailCreds(agencyId);
+  if (!gmailCreds.ok) {
+    await insertAlert({
+      agencyId, alertType: "offer_letter_send_failed", severity: "critical",
+      title: `Offer letter not sent to ${name} — Gmail is not connected`,
+      message: `${name}'s offer letter is ready but Gmail could not be reached: ${gmailCreds.error}. Reconnect Gmail, then move them out of Offer and back to send it.`,
+      moduleReference: "team", relatedId: c.id,
+    });
+    return jsonResponse({ ok: false, action: "failed", reason: gmailCreds.error }, 200);
+  }
+
+  const sendRes = await sendGmail({ creds: gmailCreds.creds, to: c.email, subject, html });
+
+  if (!sendRes.ok) {
+    await insertAlert({
+      agencyId, alertType: "offer_letter_send_failed", severity: "critical",
+      title: `Offer letter not sent to ${name}`,
+      message: `Gmail refused the send: ${sendRes.error}. The letter is still on the candidate record. Fix the problem, then move them out of Offer and back to try again.`,
+      moduleReference: "team", relatedId: c.id,
+    });
+    return jsonResponse({ ok: false, action: "failed", reason: sendRes.error }, 200);
+  }
+
+  await sb.from("hiring_candidates").update({ offer_sent_at: new Date().toISOString() }).eq("id", c.id);
+
+  return jsonResponse({ ok: true, action: "sent", to: c.email, subject });
+}
+
+// -------------------------------------------------------------------------
 // Router
 // -------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
@@ -1436,6 +1569,13 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json(); } catch { body = {}; }
   const agencyId = body.agency_id || AGENCY_ID_DEFAULT;
   const mode = body.mode;
+
+  if (mode === "send_offer_letter") {
+    const denied = await requireSharedSecret(agencyId, body.shared_secret);
+    if (denied) return denied;
+    if (!body.candidate_id) return jsonResponse({ ok: false, error: "missing candidate_id" }, 400);
+    return await sendOfferLetter(agencyId, body.candidate_id);
+  }
 
   if (mode === "process_assessed") {
     const denied = await requireSharedSecret(agencyId, body.shared_secret);

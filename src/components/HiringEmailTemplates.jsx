@@ -81,7 +81,7 @@ export default function HiringEmailTemplates() {
         .order("sort_order", { ascending: true }),
       supabase
         .from("offer_letter_templates")
-        .select("id, template_key, title, body_md, is_active, updated_at")
+        .select("id, template_key, title, subject, body_md, is_active, updated_at")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", true),
     ]);
@@ -93,11 +93,11 @@ export default function HiringEmailTemplates() {
       title: r.title || "Offer letter",
       stage: "Offer",
       sort_order: 135,
-      subject: "",
+      subject: r.subject || "",
       body_html: r.body_md || "",
       tokens: [],
-      description: "The offer letter itself. The offer form fills in the name, pay and dates, then files the finished copy on the candidate.",
-      sent_when: "Manually, from the offer form on the candidate record.",
+      description: "The offer letter itself. The offer form fills in the name, pay and dates before it sends.",
+      sent_when: "Automatically, the moment you save the offer form after moving a candidate to the Offer stage.",
       updated_at: r.updated_at,
     }));
     const all = [...(tpl.error ? [] : (tpl.data || [])).map((r) => ({ ...r, source: "hiring" })), ...offerRows];
@@ -133,7 +133,7 @@ export default function HiringEmailTemplates() {
     const { error } = current.source === "offer"
       ? await supabase
           .from("offer_letter_templates")
-          .update({ body_md: draft.body_html })
+          .update({ subject: draft.subject, body_md: draft.body_html })
           .eq("id", current.id)
       : await supabase
           .from("hiring_email_templates")
@@ -185,7 +185,7 @@ export default function HiringEmailTemplates() {
           )}
         </div>
 
-        {!isSnippet && !isOffer && (
+        {!isSnippet && (
           <label style={{ display: "block", marginBottom: 12 }}>
             <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 5 }}>Subject line</span>
             <input
@@ -258,7 +258,7 @@ export default function HiringEmailTemplates() {
           </button>
           {showPreview && (
             <div style={{ marginTop: 10 }}>
-              {!isSnippet && !isOffer && (
+              {!isSnippet && (
                 <div style={{ fontSize: 12, color: T.slate700, marginBottom: 8 }}>
                   <strong>{fillTokens(draft.subject, previewExtra)}</strong>
                 </div>
