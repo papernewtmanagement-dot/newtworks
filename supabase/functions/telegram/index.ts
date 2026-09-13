@@ -1075,7 +1075,40 @@ Rules for your reply:
   return jsonResponse({ ok: false, mode: "conversation", error: "llm_failed" });
 }
 
+// A reaction on a check-in is how a teammate proves they read it (Peter
+// 2026-09-11). The reaction lands on the reminder message; the nag fifteen
+// minutes later names whoever has not reacted. Recorded here before the reminder
+// is deleted at :30, so the record survives.
+async function handleMessageReaction(mr: any): Promise<Response> {
+  const teamGroupIdStr = await getSetting("telegram_team_group_chat_id");
+  if (!teamGroupIdStr || String(mr.chat?.id) !== teamGroupIdStr) {
+    return jsonResponse({ ok: true, ignored: "reaction_not_team_group" });
+  }
+  const telegramUserId = mr.user?.id;
+  if (!telegramUserId) {
+    // Anonymous admin reactions carry actor_chat instead of user. Nothing to map.
+    return jsonResponse({ ok: true, ignored: "reaction_no_user" });
+  }
+  const newReaction = Array.isArray(mr.new_reaction) ? mr.new_reaction : [];
+  const emoji = newReaction.find((r: any) => r?.type === "emoji")?.emoji ?? null;
+  const { data, error } = await sb.rpc("team_checkin_record_ack", {
+    p_message_id: mr.message_id,
+    p_telegram_user_id: telegramUserId,
+    p_emoji: emoji,
+    p_removed: newReaction.length === 0,
+  });
+  if (error) {
+    console.error("team_checkin_record_ack failed:", error.message);
+    return jsonResponse({ ok: false, error: error.message }, 200);
+  }
+  return jsonResponse({ ok: true, ack: data });
+}
+
 async function handleTelegramWebhook(update: any): Promise<Response> {
+  if (update.message_reaction) {
+    try { return await handleMessageReaction(update.message_reaction); }
+    catch (e) { console.error("handleMessageReaction failed:", e); return jsonResponse({ ok: false, error: String(e) }, 200); }
+  }
   const isEdit = !!update.edited_message;
   const message = update.message || update.edited_message;
   if (!message) return jsonResponse({ ok: true, ignored: "no_message" });
