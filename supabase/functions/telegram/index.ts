@@ -1,4 +1,12 @@
-// telegram edge function (v25)
+// telegram edge function (v26)
+// v26 (2026-09-14):
+//   - Retired the recoverCheckins action and handleRecoverCheckins. It re-read
+//     typed quote/sales numbers out of old group messages; Production is the
+//     source now. public.telegram_recover_checkins dropped with it.
+//   - The bot's chat answers read the same rendered status block the team sees,
+//     straight from Production, instead of the old typed end-of-day snapshot.
+//   - Dead helpers removed: getLastEodSnapshot, stripCommandPrefix,
+//     loadWorkTeamAliases (only the retired commands used them).
 // v25 (2026-09-14):
 //   - A text message in the team group counts as having seen the check-in,
 //     the same as reacting. Taking a reaction back no longer undoes it.
@@ -57,7 +65,6 @@
 //   - is_excluded → is_excluded_pjsagencybot rename (per-bot exclusion split)
 //
 // v15 changes vs v14:
-//   - RECOVERY FILTER: handleRecoverCheckins now ONLY considers messages
 //     starting with /checkin (work) or /health (health). The bare-N/M
 //     scan over chatter is gone — eliminates false positives from casual
 //     messages that happen to contain N/M patterns. Args after the prefix
@@ -189,7 +196,10 @@ async function setReaction(chatId: number, messageId: number, emojiIn: string): 
 async function handleAction(body: any): Promise<Response> {
   const action = body.action || body.method;
   if (!action) return jsonResponse({ error: "missing 'action'" }, 400);
-  if (action === "recoverCheckins") return await handleRecoverCheckins(body);
+  // recoverCheckins retired 2026-09-14: it re-read typed quote/sales numbers out
+  // of old group messages. Production is the source now, so there is nothing to
+  // recover. public.telegram_recover_checkins was dropped with it.
+  if (action === "recoverCheckins") return jsonResponse({ ok: false, error: "recoverCheckins retired" }, 410);
   const token = await getSetting("telegram_bot_token");
   if (!token) return jsonResponse({ error: "telegram_bot_token not set" }, 500);
   const { action: _a, method: _m, ...payload } = body;
@@ -305,186 +315,6 @@ function todayCt(): string {
   }).format(new Date());
 }
 
-// Strip /checkin or /health prefix (with optional @botname suffix) and
-// return the args. Case-insensitive. Returns null if the text does NOT start
-// with the given command prefix.
-function stripCommandPrefix(text: string, command: string): string | null {
-  const re = new RegExp(`^/${command}(?:@\\w+)?(?:\\s+([\\s\\S]+))?$`, "i");
-  const m = text.trim().match(re);
-  if (!m) return null;
-  return (m[1] || "").trim();
-}
-
-// ---------------------------------------------------------------------------
-// recoverCheckins (v15: prefix-required)
-// ---------------------------------------------------------------------------
-async function handleRecoverCheckins(body: any): Promise<Response> {
-  const checkinDate: string | undefined = body.checkin_date;
-  const checkinType: string | undefined = body.checkin_type;
-  if (!checkinDate || !checkinType) {
-    return jsonResponse({ error: "missing checkin_date or checkin_type" }, 400);
-  }
-  const teamGroupChatIdStr = await getSetting("telegram_team_group_chat_id");
-  if (!teamGroupChatIdStr) return jsonResponse({ error: "team_group_chat_id not set" }, 500);
-  const teamGroupChatId = parseInt(teamGroupChatIdStr, 10);
-  const isHealth = checkinType === "health_eve";
-  const prefix = isHealth ? "health" : "checkin";
-
-  // Wide UTC window to safely cover the CT day; precise CT filter in JS.
-  const wideStart = new Date(`${checkinDate}T00:00:00Z`);
-  wideStart.setUTCHours(wideStart.getUTCHours() - 7);
-  const wideEnd = new Date(`${checkinDate}T23:59:59Z`);
-  wideEnd.setUTCHours(wideEnd.getUTCHours() + 7);
-
-  const { data: rawCandidates, error: candErr } = await sb
-    .from("telegram_group_messages")
-    .select("id, telegram_message_id, telegram_user_id, telegram_first_name, team_id, text, sent_at, message_type, is_bot")
-    .eq("agency_id", AGENCY_ID)
-    .eq("telegram_chat_id", teamGroupChatId)
-    .gte("sent_at", wideStart.toISOString())
-    .lte("sent_at", wideEnd.toISOString())
-    .order("sent_at", { ascending: true });
-
-  if (candErr) return jsonResponse({ error: `candidate fetch failed: ${candErr.message}` }, 500);
-
-  // v15: require the prefix. Strip it and keep candidates with non-empty args.
-  const candidates: Array<any & { args: string }> = [];
-  for (const c of (rawCandidates || []) as any[]) {
-    if (c.is_bot) continue;
-    if (!c.text) continue;
-    const args = stripCommandPrefix(c.text, prefix);
-    if (args === null) continue;
-    if (!args) continue; // prefix with no args is a usage error, not a checkin
-    const ctDate = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date(c.sent_at));
-    if (ctDate !== checkinDate) continue;
-    candidates.push({ ...c, args });
-  }
-
-  if (candidates.length === 0) {
-    return jsonResponse({ ok: true, recovered_count: 0, scanned: 0, candidates: 0 });
-  }
-
-  // Defensive: skip messages whose telegram_message_id already produced a
-  // checkin row for today (any type for work, single type for health).
-  const messageIds = candidates.map((c: any) => c.telegram_message_id);
-  const alreadyMessageIds = new Set<number>();
-  if (isHealth) {
-    const { data: existing } = await sb.from("team_health_checkins")
-      .select("source_message_id").eq("agency_id", AGENCY_ID)
-      .eq("log_date", checkinDate).in("source_message_id", messageIds);
-    for (const r of existing || []) alreadyMessageIds.add((r as any).source_message_id);
-  } else {
-    const { data: existing } = await sb.from("team_checkins")
-      .select("source_message_id").eq("agency_id", AGENCY_ID)
-      .eq("checkin_date", checkinDate).in("source_message_id", messageIds);
-    for (const r of existing || []) alreadyMessageIds.add((r as any).source_message_id);
-  }
-  const filteredCandidates = candidates.filter((c: any) => !alreadyMessageIds.has(c.telegram_message_id));
-  if (filteredCandidates.length === 0) {
-    return jsonResponse({ ok: true, recovered_count: 0, scanned: candidates.length, candidates: candidates.length });
-  }
-
-  // Load team and aliases.
-  const { data: allTeam } = await sb.from("team")
-    .select("id, first_name, nickname, include_in_team_checkins, include_in_health_checkins, category, role")
-    .eq("agency_id", AGENCY_ID).is("archived_at", null).neq("is_test_user", true);
-  const expectedTeam = (allTeam || []).filter((t: any) => {
-    if (isHealth) {
-      if (t.include_in_health_checkins === true) return true;
-      if (t.include_in_health_checkins === false) return false;
-      return t.category === "agency";
-    } else {
-      if (t.include_in_team_checkins === true) return true;
-      if (t.include_in_team_checkins === false) return false;
-      return t.category === "agency" && t.role !== "Owner";
-    }
-  });
-  const aliasToTeamId = new Map<string, string>();
-  const teamIdToFirstName = new Map<string, string>();
-  const aliases: string[] = [];
-  for (const t of expectedTeam as any[]) {
-    aliasToTeamId.set(t.first_name.toLowerCase(), t.id);
-    teamIdToFirstName.set(t.id, t.first_name);
-    aliases.push(t.first_name);
-    if (t.nickname && t.nickname.toLowerCase() !== t.first_name.toLowerCase()) {
-      aliasToTeamId.set(t.nickname.toLowerCase(), t.id);
-      aliases.push(t.nickname);
-    }
-  }
-  const existingTeamIds = new Set<string>();
-  if (isHealth) {
-    const { data: rows } = await sb.from("team_health_checkins")
-      .select("team_id").eq("agency_id", AGENCY_ID).eq("log_date", checkinDate);
-    for (const r of rows || []) existingTeamIds.add((r as any).team_id);
-  } else {
-    const { data: rows } = await sb.from("team_checkins")
-      .select("team_id").eq("agency_id", AGENCY_ID).eq("checkin_date", checkinDate).eq("checkin_type", checkinType);
-    for (const r of rows || []) existingTeamIds.add((r as any).team_id);
-  }
-  const recovered: any[] = [];
-  const weekStart = isHealth ? sundayWeekStart(checkinDate) : null;
-
-  for (const msg of filteredCandidates as any[]) {
-    let senderDefaultAlias: string | null = null;
-    if (msg.team_id && teamIdToFirstName.has(msg.team_id)) senderDefaultAlias = teamIdToFirstName.get(msg.team_id)!;
-    // v15: parse the args (post-prefix), not the full text.
-    const parsed: any[] = isHealth
-      ? parseHealthCheckinMessage(msg.args, aliases, senderDefaultAlias)
-      : parseWorkCheckinMessage(msg.args, aliases, senderDefaultAlias);
-    if (parsed.length === 0) continue;
-    let usedThisMessage = false;
-    for (const p of parsed) {
-      const targetTeamId = aliasToTeamId.get(p.matched_alias.toLowerCase());
-      if (!targetTeamId) continue;
-      if (existingTeamIds.has(targetTeamId)) continue;
-      const targetFirstName = teamIdToFirstName.get(targetTeamId) || p.matched_alias;
-      const isOwnSubmission = msg.team_id === targetTeamId;
-      if (isHealth) {
-        const payload = {
-          agency_id: AGENCY_ID, team_id: targetTeamId, log_date: checkinDate, week_start_date: weekStart,
-          hit_today: p.hit_today, week_total_override: p.week_total_override,
-          raw_response: msg.text, parse_status: "parsed" as const,
-          telegram_user_id: isOwnSubmission ? msg.telegram_user_id : null, telegram_first_name: targetFirstName,
-          submitted_by_team_id: msg.team_id, submitted_by_telegram_user_id: msg.telegram_user_id,
-          source_message_id: msg.telegram_message_id, submitted_at: msg.sent_at,
-        };
-        const { error } = await sb.from("team_health_checkins").insert(payload);
-        if (error) { console.error("recover insert health failed:", error.message); continue; }
-      } else {
-        const payload = {
-          agency_id: AGENCY_ID, checkin_date: checkinDate, checkin_type: checkinType, team_id: targetTeamId,
-          telegram_user_id: isOwnSubmission ? msg.telegram_user_id : null, telegram_first_name: targetFirstName, raw_message: msg.text,
-          quotes_week: p.quotes, sales_points_quarter: p.sales_points, parse_status: "parsed",
-          submitted_by_team_id: msg.team_id, submitted_by_telegram_user_id: msg.telegram_user_id,
-          source_message_id: msg.telegram_message_id, received_at: msg.sent_at,
-        };
-        const { error } = await sb.from("team_checkins").insert(payload);
-        if (error) { console.error("recover insert work failed:", error.message); continue; }
-      }
-      existingTeamIds.add(targetTeamId);
-      usedThisMessage = true;
-      recovered.push({
-        for: targetFirstName, target_team_id: targetTeamId, proxy: !isOwnSubmission,
-        from_message_id: msg.telegram_message_id, sent_at: msg.sent_at,
-        ...(isHealth ? { hit_today: p.hit_today, override: p.week_total_override }
-                     : { quotes: p.quotes, sales: p.sales_points }),
-      });
-    }
-    if (usedThisMessage) {
-      await sb.from("telegram_group_messages")
-        .update({ message_type: isHealth ? "checkin_health" : "checkin_work" })
-        .eq("id", msg.id);
-    }
-  }
-
-  return jsonResponse({
-    ok: true, recovered_count: recovered.length, scanned: filteredCandidates.length,
-    candidates: candidates.length, details: recovered,
-  });
-}
-
 const TEAM_MAP_COLS = "id, first_name, nickname, is_excluded_pjsagencybot";
 
 // Find an active team member whose first name or nickname matches the name on
@@ -591,26 +421,6 @@ async function findActiveCheckin(): Promise<{ checkin_date: string; checkin_type
   return data ? { checkin_date: data.checkin_date, checkin_type: data.checkin_type } : null;
 }
 
-async function getLastEodSnapshot(): Promise<{ checkin_date: string | null; per_person: { name: string; quotes: number; sales: number }[]; total_q: number; total_s: number; }> {
-  const { data: latest } = await sb.from("team_checkins")
-    .select("checkin_date").eq("agency_id", AGENCY_ID).eq("checkin_type", "eod")
-    .order("checkin_date", { ascending: false }).limit(1).maybeSingle();
-  if (!latest) return { checkin_date: null, per_person: [], total_q: 0, total_s: 0 };
-  const { data: rows } = await sb.from("team_checkins")
-    .select("quotes_week, sales_points_quarter, team:team_id(first_name, nickname)")
-    .eq("agency_id", AGENCY_ID).eq("checkin_date", latest.checkin_date).eq("checkin_type", "eod");
-  let totalQ = 0, totalS = 0;
-  const per_person = (rows || []).map((r: any) => {
-    const t = r.team || {};
-    const name = (t.nickname && t.nickname.length > 0) ? t.nickname : t.first_name;
-    const q = Number(r.quotes_week) || 0;
-    const s = Number(r.sales_points_quarter) || 0;
-    totalQ += q; totalS += s;
-    return { name, quotes: q, sales: s };
-  }).sort((a, b) => a.name.localeCompare(b.name));
-  return { checkin_date: latest.checkin_date, per_person, total_q: totalQ, total_s: totalS };
-}
-
 function parseBotCommand(text: string): { command: string; args: string } | null {
   if (!text.startsWith("/")) return null;
   const m = text.match(/^\/(\w+)(?:@(\w+))?(?:\s+([\s\S]*))?$/);
@@ -620,36 +430,6 @@ function parseBotCommand(text: string): { command: string; args: string } | null
   const args = m[3] || "";
   if (at && at !== BOT_USERNAME) return null;
   return { command: cmd, args };
-}
-
-// v15: shared helper for /checkin and /correct — load the work-scope team
-// roster and build the alias maps.
-async function loadWorkTeamAliases(): Promise<{
-  aliasToTeamId: Map<string, string>;
-  teamIdToFirstName: Map<string, string>;
-  aliases: string[];
-}> {
-  const { data: allTeam } = await sb.from("team")
-    .select("id, first_name, nickname, include_in_team_checkins, category, role")
-    .eq("agency_id", AGENCY_ID).is("archived_at", null).neq("is_test_user", true);
-  const expectedTeam = (allTeam || []).filter((t: any) => {
-    if (t.include_in_team_checkins === true) return true;
-    if (t.include_in_team_checkins === false) return false;
-    return t.category === "agency" && t.role !== "Owner";
-  });
-  const aliasToTeamId = new Map<string, string>();
-  const teamIdToFirstName = new Map<string, string>();
-  const aliases: string[] = [];
-  for (const t of expectedTeam as any[]) {
-    aliasToTeamId.set(t.first_name.toLowerCase(), t.id);
-    teamIdToFirstName.set(t.id, t.first_name);
-    aliases.push(t.first_name);
-    if (t.nickname && t.nickname.toLowerCase() !== t.first_name.toLowerCase()) {
-      aliasToTeamId.set(t.nickname.toLowerCase(), t.id);
-      aliases.push(t.nickname);
-    }
-  }
-  return { aliasToTeamId, teamIdToFirstName, aliases };
 }
 
 async function loadHealthTeamAliases(): Promise<{
@@ -909,11 +689,18 @@ async function callGroq(systemPrompt: string, userText: string): Promise<string 
 }
 
 async function handleConversation(text: string, sender: { team_id: string | null; first_name: string | null }, chatId: number, messageId: number, justWrittenWork: any[] = [], justWrittenHealth: any[] = []): Promise<Response> {
-  const snap = await getLastEodSnapshot();
   const senderName = sender.first_name || "Teammate";
-  const standingsLine = snap.checkin_date
-    ? `Last EOD (${snap.checkin_date}): ${snap.per_person.map((p) => `${p.name} ${p.quotes}/${p.sales}`).join(", ")}. Team total ${snap.total_q}/${snap.total_s}.`
-    : "No recent team data on record.";
+  let standingsLine = "No recent team data on record.";
+  try {
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }))
+      .toISOString().slice(0, 10);
+    const { data, error } = await sb.rpc("render_team_status_block", {
+      p_agency_id: AGENCY_ID, p_as_of_date: today, p_fresh_type: "eod",
+      p_header_label: "Where the team stands", p_wtw_as_of_date: today,
+    });
+    const blockText = Array.isArray(data) ? data[0]?.block_text : (data as any)?.block_text;
+    if (!error && blockText) standingsLine = blockText;
+  } catch (e) { console.error("status block for chat context failed:", e); }
   let justLoggedLine = "";
   if (justWrittenWork.length > 0) {
     justLoggedLine = "\nJust logged this message: " + justWrittenWork.map((w) => `${w.for} ${w.quotes}/${w.sales}${w.proxy ? " (proxy)" : ""}`).join(", ") + ".";
