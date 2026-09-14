@@ -3829,8 +3829,8 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   const sorted = sortByTenure(details, team)
     .filter(d => !leftBeforeWeek(d.__left, weekDate) || Number(d.commission) > 0);
 
-  // Pull weekly pool totals from residual_pool_diag (same across every detail row for the week).
-  const diagAny = details.find(d => d.residual_pool_diag) || {};
+  // Pull weekly pool totals from residual_pool_diag. A teammate who left before the week keeps a detail row whose diag carries none of the pool keys, so match on the key itself, not on the diag existing.
+  const diagAny = details.find(d => d.residual_pool_diag?.weekly_sales_pool != null) || {};
   const diag = diagAny.residual_pool_diag || {};
   const weeklySalesPool     = Number(diag.weekly_sales_pool || 0);
   const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
@@ -4904,7 +4904,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       {/* ───── 7. RETENTION POINTS BREAKDOWN (added alongside section 6, never instead of it) ───── */}
       <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>7. Retention points breakdown (this week)</div>
       {(() => {
-        const rp0 = ((sorted[0] || {}).residual_pool_diag || {}).retention_points || {};
+        const rp0 = (sorted.find(d => d.residual_pool_diag?.retention_points)?.residual_pool_diag || {}).retention_points || {};
         const isPoints = rp0.mode === "points";
         return (
           <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
@@ -6973,7 +6973,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       /></Section>
 
       {/* 22. Win the Quarter (condensed) + Prize Cart, single section */}
-      <Section><WtQAndPrizeCartSection diag={data.details?.[0]?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} /></Section>
+      <Section><WtQAndPrizeCartSection diag={(data.details || []).find(d => d.residual_pool_diag?.carveouts_detail)?.residual_pool_diag || null} prizeCart={data.prizeCart} team={data.team} /></Section>
 
       {/* Footer signoff */}
       <div style={{
