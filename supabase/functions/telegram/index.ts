@@ -1,4 +1,13 @@
-// telegram edge function (v23)
+// telegram edge function (v25)
+// v25 (2026-09-14):
+//   - A text message in the team group counts as having seen the check-in,
+//     the same as reacting. Taking a reaction back no longer undoes it.
+//   - No fallback pace emoji. checkin_reaction_emoji works the pace out and
+//     returns the sleeping face when someone is behind; null means that person
+//     has no quote or sales seat and gets no emoji at all.
+//   - The thumbs up is only the bot saying "got it". It is not a score.
+//   - Retired /checkin, /correct (and /fix, /update), /me, /team (and /where,
+//     /stats). Quotes and sales come from Production; nothing is typed in.
 // v23 (2026-09-11):
 //   - /iam COMMAND. Someone whose Telegram name does not match their team
 //     record can now claim themselves: "/iam Tommy" stamps team.telegram_user_id
