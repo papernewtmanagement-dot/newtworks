@@ -780,6 +780,11 @@ Deno.serve(async (req: Request) => {
         error_message: `Recipe lookup failed: ${msg}`.slice(0, 2000),
         duration_seconds: 0,
         output_summary: `Recipe lookup failed before the recipe could run (triggered_by ${triggeredBy})`,
+        // Marks the row as "written before the recipe ever ran". Without it,
+        // resweep_failed_automation_dispatches() reads this row as proof the
+        // recipe already ran and skips the retry — switching off the retry for
+        // exactly the transient failure it exists to catch.
+        is_pre_run_failure: true,
       });
       if (logErr) console.error(`automation_run_log insert failed after recipe lookup error: ${logErr.message}`);
     } catch (logCrash) {
