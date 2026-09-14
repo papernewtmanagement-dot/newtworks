@@ -6,6 +6,7 @@ import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
 import { T } from "../lib/theme.js";
+import { mdToHtml } from "../lib/markdown.js";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
 // ============================================================
@@ -2194,14 +2195,6 @@ function splitWrapup(text) {
 }
 
 // Small markdown render for the help panels: bold, bullets, numbers, breaks.
-function helpHtml(md) {
-  const esc = String(md || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/\n/g, "<br/>");
-}
-
 function HelpPanel({ item }) {
   const [excerpt, setExcerpt] = useState(null);
   useEffect(() => {
@@ -2215,7 +2208,7 @@ function HelpPanel({ item }) {
   return (
     <div style={{ margin: "2px 0 10px 26px", padding: "10px 12px", background: T.slate50, borderRadius: 8, fontSize: 12.5, color: T.slate700, lineHeight: 1.6 }}>
       {body == null && item.help_excerpt_id ? "Loading…"
-        : body ? <span dangerouslySetInnerHTML={{ __html: helpHtml(body) }} />
+        : body ? <span dangerouslySetInnerHTML={{ __html: mdToHtml(body) }} />
         : <span style={{ color: T.slate500 }}>No extra detail on this one.</span>}
     </div>
   );
