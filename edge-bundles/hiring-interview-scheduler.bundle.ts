@@ -628,7 +628,8 @@ function escHtml(s: string | null | undefined): string {
 //
 //   mode="release_booking"  (internal, shared_secret gated)
 //     Fired by the hiring_candidates trigger when a booked candidate is
-//     declined: cancels the calendar event quietly and frees the slot.
+//     declined: cancels the calendar event and frees the slot. The candidate
+//     gets the Google cancellation notice.
 //
 //   mode="offer_earlier"  (internal, shared_secret gated)
 //     Emails booked candidates whose interview is still days away when an
@@ -1919,9 +1920,15 @@ async function moveBookings(agencyId: string, fromDateKey: string, throughDateKe
 // mode=release_booking  (internal, shared_secret gated)
 // -------------------------------------------------------------------------
 // A booked candidate was declined in the pipeline. The event comes off the
-// calendar without a notification (the decline letter is the message; a
-// Google cancellation arriving first would be a cold way to hear it), the
-// booking fields clear, and the freed time is offered to whoever is waiting.
+// calendar WITH the notification, the booking fields clear, and the freed
+// time is offered to whoever is waiting.
+//
+// Peter 2026-09-14: the cancellation used to go out silently, on the idea
+// that the decline letter should break the news first. It does not work.
+// The decline letter waits for a batch, so a candidate declined an hour
+// before their interview sat there with a live meeting on their calendar and
+// no word from us. He is not showing up, so they have to be told at once,
+// and the calendar notice is the only message that is instant.
 async function releaseBooking(agencyId: string, candidateId: string): Promise<Response> {
   const { data: c, error } = await sb
     .from("hiring_candidates")
@@ -1932,7 +1939,7 @@ async function releaseBooking(agencyId: string, candidateId: string): Promise<Re
   if (error || !c) return jsonResponse({ ok: false, error: "not_found" }, 404);
   if (!c.interview_booked_at && !c.interview_calendar_event_id) return jsonResponse({ ok: true, released: false, reason: "nothing booked" });
 
-  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "none", {
+  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "all", {
     candidateId: c.id,
     name: c.candidate_name || "Candidate",
     when: c.interview_scheduled_start ? formatChicago(c.interview_scheduled_start) : null,
