@@ -2237,7 +2237,6 @@ function ChecklistTab() {
   const [ok, setOk] = useState("");
   const [tickKey, setTickKey] = useState(0);
   const [flagKey, setFlagKey] = useState(0);
-  const [personal, setPersonal] = useState([]);
 
   useEffect(() => {
     let alive = true;
@@ -2245,13 +2244,6 @@ function ChecklistTab() {
       .then(r => { if (alive) setState(r?.data || null); });
     return () => { alive = false; };
   }, [tickKey]);
-
-  useEffect(() => {
-    let alive = true;
-    supabase.rpc("personal_checklist_items", { p_week_ending: null })
-      .then(r => { if (alive) setPersonal(Array.isArray(r?.data) ? r.data : []); });
-    return () => { alive = false; };
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -2273,11 +2265,11 @@ function ChecklistTab() {
     return () => { alive = false; };
   }, []);
 
-  const toggle = async (item) => {
+  const toggle = async (item, on) => {
     if (!state?.date || busy) return;
     setBusy(true); setErr("");
     const { error } = await supabase.rpc("daily_checklist_tick", {
-      p_item_id: item.id, p_date: state.date, p_on: !item.ticked_at,
+      p_item_id: item.id, p_date: state.date, p_on: on,
     });
     setBusy(false);
     if (error) { setErr(error.message || "Could not save that tick."); return; }
@@ -2316,7 +2308,7 @@ function ChecklistTab() {
 
   const items = Array.isArray(state?.items) ? state.items : [];
   const cleared = items.filter(i => i.ticked_at).length;
-  const carryOpen = Array.isArray(state?.carry?.open) ? state.carry.open : [];
+  const personal = Array.isArray(state?.personal) ? state.personal : [];
   const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
   const answered = parts.filter(p => (p || "").trim()).length;
   // The cue: the wrap-up opens itself on the last workday of the week and
@@ -2345,11 +2337,6 @@ function ChecklistTab() {
           </span>
         </div>
 
-        {carryOpen.length > 0 && (
-          <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 12, lineHeight: 1.5 }}>
-            <strong>Still open from {state?.carry?.label}:</strong> {carryOpen.map(o => o.title).join(" · ")}
-          </div>
-        )}
         {Number(state?.at_risk_count || 0) > 0 && (
           <div style={{ marginTop: 8, fontSize: 12, color: T.red, fontWeight: 600 }}>
             This week at risk: {state.at_risk_count} item{Number(state.at_risk_count) === 1 ? "" : "s"}
@@ -2366,7 +2353,7 @@ function ChecklistTab() {
                       type="checkbox"
                       id={`chk_${it.id}`}
                       checked={!!it.ticked_at}
-                      onChange={() => toggle(it)}
+                      onChange={() => toggle(it, !it.ticked_at)}
                       disabled={busy}
                       style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
                     />
@@ -2386,11 +2373,22 @@ function ChecklistTab() {
         {personal.length > 0 && (
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Personal checklist</div>
-            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone does these for themselves. Not ticked here — the CPR checks them.</div>
+            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
             {personal.map(it => (
               <div key={it.id}>
                 <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 2px", borderBottom: openHelp === it.id ? "none" : `1px solid ${T.slate100}` }}>
-                  <span style={{ flex: 1, fontSize: 13, lineHeight: 1.4, color: T.slate700 }}>{it.title}</span>
+                  <input
+                    type="checkbox"
+                    id={`chk_${it.id}`}
+                    checked={!!it.mine}
+                    onChange={() => toggle(it, !it.mine)}
+                    disabled={busy}
+                    style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
+                  />
+                  <label htmlFor={`chk_${it.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: busy ? "wait" : "pointer", color: it.mine ? T.slate500 : T.slate800 }}>{it.title}</label>
+                  {Array.isArray(it.ticked_by) && it.ticked_by.length > 0 && (
+                    <span style={{ fontSize: 11, color: T.slate400, textAlign: "right", flexShrink: 0 }}>{it.ticked_by.join(", ")}</span>
+                  )}
                   <button type="button" title="What this means" aria-label="What this means"
                     onClick={() => setOpenHelp(h => (h === it.id ? null : it.id))}
                     style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${openHelp === it.id ? T.blue : T.slate300}`, background: openHelp === it.id ? T.blueLt : T.white, color: openHelp === it.id ? T.blue : T.slate500 }}>i</button>
