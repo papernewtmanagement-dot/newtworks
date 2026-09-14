@@ -1179,7 +1179,32 @@ Deno.serve(async (req: Request) => {
   if (!recipeId) return jsonResponse({ error: "Missing recipe_id in body" }, 400);
   if (typeof body.shared_secret !== "string" || body.shared_secret.length === 0) return jsonResponse({ error: "Missing shared_secret in body" }, 401);
   const { data: recipe, error: recipeErr } = await sb.from("automation_recipes").select("*").eq("id", recipeId).maybeSingle();
-  if (recipeErr || !recipe) return jsonResponse({ error: `Recipe ${recipeId} not found: ${recipeErr?.message || "no row"}` }, 404);
+  // A failed READ and a missing ROW are different things and must answer
+  // differently. This used to be one branch returning 404 for both, so a
+  // database outage (gateway timeout on the recipe lookup) was reported to
+  // the caller as "this recipe does not exist" and left nothing at all in
+  // automation_run_log — the run simply vanished. Split 2026-09-14.
+  if (recipeErr) {
+    const msg = recipeErr.message || String(recipeErr);
+    // The database is the thing that may be down, so the log write itself can
+    // fail or throw. Never let that mask the outage we are trying to report.
+    try {
+      const { error: logErr } = await sb.from("automation_run_log").insert({
+        agency_id: AGENCY_ID_DEFAULT,
+        recipe_id: recipeId,
+        status: "failed",
+        records_processed: 0,
+        error_message: `Recipe lookup failed: ${msg}`.slice(0, 2000),
+        duration_seconds: 0,
+        output_summary: `Recipe lookup failed before the recipe could run (triggered_by ${triggeredBy})`,
+      });
+      if (logErr) console.error(`automation_run_log insert failed after recipe lookup error: ${logErr.message}`);
+    } catch (logCrash) {
+      console.error(`automation_run_log insert threw after recipe lookup error: ${logCrash instanceof Error ? logCrash.message : String(logCrash)}`);
+    }
+    return jsonResponse({ error: `Recipe lookup failed for ${recipeId}: ${msg}`, retryable: true }, 503);
+  }
+  if (!recipe) return jsonResponse({ error: `Recipe ${recipeId} not found: no row` }, 404);
   if (!recipe.agency_id) return jsonResponse({ error: `Recipe ${recipeId} has no agency_id set.` }, 500);
   let expectedSecret: string | null;
   try { expectedSecret = await getSetting(recipe.agency_id, "automation_runner_cron_secret"); }
