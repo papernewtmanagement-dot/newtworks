@@ -1536,6 +1536,11 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
 
   const people = Array.isArray(board?.people) ? board.people : [];
   const team = board?.team || {};
+  // Peter 2026-09-14. Weeks through 2026-09-12 show Marketing and Sales only, from
+  // what was reported, because the capture module was still being built. The server
+  // says which blocks a week is allowed to show; older sessions default to all four.
+  const show = board?.show || { marketing: true, sales: true, quotes: true, retention: true };
+  const reported = board?.mode === "reported";
   const canRemove = (tm) => isAdmin || tm === myTeamId;
   const toggle = (card) => (id) => setOpen(o => ({ ...o, [card]: o[card] === id ? null : id }));
   const cardN = people.reduce((s, p) => s + Number(p.conversations?.scorecards || 0), 0);
@@ -1624,6 +1629,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Week of {fmtDate(weekStart)} – {fmtDate(safeWeek)} {loading ? <span style={{ color: T.slate400, fontWeight: 400, fontSize: 13 }}>· loading…</span> : null}</div>
             <div style={{ fontSize: 12, color: T.slate500 }}>Sunday through Saturday. Whole team, ranked. Tap a name to see what counted.</div>
+            {reported && <div style={{ fontSize: 12, color: T.slate500 }}>Marketing and Sales only this week, from what was reported at the time.</div>}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <TabLink href={weekHref(addDays(safeWeek, -7))} onSelect={() => setWeekEnd(addDays(safeWeek, -7))} style={btnGhost}>← Prior week</TabLink>
@@ -1639,23 +1645,23 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
         <ScoreCard title="Marketing Points" total={fmtPts(team.marketing)} people={people}
           rankOf={p => Number(p.marketing?.points || 0)} valueOf={p => fmtPts(p.marketing?.points)}
           renderItems={marketingItems} open={open.m} onToggle={toggle("m")} />
-        <ScoreCard title="HH Quotes" total={Number(team.quotes || 0)} people={people}
+        {show.quotes && <ScoreCard title="HH Quotes" total={Number(team.quotes || 0)} people={people}
           rankOf={p => Number(p.quotes?.count || 0)} valueOf={p => Number(p.quotes?.count || 0)}
-          renderItems={quoteItems} open={open.q} onToggle={toggle("q")} />
+          renderItems={quoteItems} open={open.q} onToggle={toggle("q")} />}
         <ScoreCard title="Sales Points" total={fmtPts(team.sales)} note="Counted the week a policy issues." people={people}
           rankOf={p => Number(p.sales?.points || 0)} valueOf={p => fmtPts(p.sales?.points)}
           subOf={p => `${fmtPts(p.sales?.qtd_points)} this quarter`}
           renderItems={salesItems} open={open.s} onToggle={toggle("s")} />
-        <ScoreCard title="Retention Points" total={fmtMoney(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
+        {show.retention && <ScoreCard title="Retention Points" total={fmtMoney(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
           rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtMoney(p.retention?.net)}
           subOf={p => `${fmtMoney(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
-          renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />
+          renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />}
         <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Scorecard average, 1 to 3. Pivots are tracked, not paid." people={people}
           rankOf={p => Number(p.conversations?.avg || 0)} valueOf={p => p.conversations?.avg == null ? "—" : Number(p.conversations.avg).toFixed(2)}
           subOf={p => `${plural(p.conversations?.scorecards || 0, "scorecard")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
       </div>
 
-      <div style={cardStyle}>
+      {!reported && (<div style={cardStyle}>
         <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Sales this week</div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1691,7 +1697,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>)}
     </div>
   );
 }
