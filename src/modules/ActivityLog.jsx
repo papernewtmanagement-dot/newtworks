@@ -1664,9 +1664,9 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
           rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtMoney(p.retention?.net)}
           subOf={p => `${fmtMoney(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
           renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />}
-        <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Scorecard average, 1 to 3. Pivots are tracked, not paid." people={people}
+        <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Conversation score, 1 to 3. Pivots are tracked, not paid." people={people}
           rankOf={p => Number(p.conversations?.avg || 0)} valueOf={p => p.conversations?.avg == null ? "—" : Number(p.conversations.avg).toFixed(2)}
-          subOf={p => `${plural(p.conversations?.scorecards || 0, "scorecard")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
+          subOf={p => `${plural(p.conversations?.scorecards || 0, "scored conversation")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
       </div>
 
       {!reported && (<div style={cardStyle}>
