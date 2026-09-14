@@ -116,14 +116,20 @@ const inputBase = {
 };
 // Money reads right-aligned so the digits line up column to column.
 const moneyInput = { ...inputBase, textAlign: "right" };
-// Password managers (LastPass, 1Password, Dashlane) read these customer boxes
-// as login fields and offer to fill them. Spread this onto every one of them:
-// these are each vendor's own opt-out. Suppressing one box only moves the
-// offer to the next one, so they all carry it.
-const noPwManager = {
-  autoComplete: "off",
-  "data-lpignore": "true", "data-1p-ignore": true, "data-form-type": "other",
-};
+// Password managers (LastPass, 1Password, Bitwarden, Dashlane, Proton Pass)
+// read these customer boxes as login or address fields and put their icon in
+// them. Spread this onto every one: the data attributes are each vendor's own
+// opt-out. Two things the attributes alone do not cover, both handled here:
+// LastPass ignores autoComplete "off", so each box gets a nonsense token
+// instead; and when a box has no name or id LastPass falls back to guessing
+// from the nearby label, so each box gets a meaningless name and id. Pass a
+// short opaque key that says nothing about the field.
+// Suppressing one box only moves the offer to the next one, so they all carry it.
+const noPwManager = (key) => ({
+  name: `nw${key}`, id: `nw${key}`, autoComplete: `nw${key}-x`,
+  "data-lpignore": "true", "data-1p-ignore": true, "data-bwignore": true,
+  "data-protonpass-ignore": true, "data-form-type": "other",
+});
 const labelStyle = { fontSize: 12, fontWeight: 600, color: T.slate600, marginBottom: 6, display: "block" };
 const hintStyle = { color: T.slate400, fontWeight: 400 };
 const cardStyle = {
@@ -546,7 +552,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
           <div ref={nameBoxRef} style={{ ...field(150), position: "relative" }}>
             <label style={labelStyle}>First name</label>
-            <input {...noPwManager} style={inputBase} value={first} placeholder="Anna"
+            <input {...noPwManager("a1")} style={inputBase} value={first} placeholder="Anna"
               onChange={e => { setFirst(e.target.value); setSuggestOpen(true); }}
               onFocus={() => setSuggestOpen(true)}
               onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
@@ -563,11 +569,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           </div>
           <div style={{ flex: "0 0 78px" }}>
             <label style={labelStyle}>Initial</label>
-            <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" {...noPwManager} />
+            <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" {...noPwManager("a2")} />
           </div>
           <div style={{ flex: "0 0 126px" }}>
             <label style={labelStyle}>Phone last 4</label>
-            <input {...noPwManager} type="tel" inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
+            <input {...noPwManager("a3")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
           </div>
           <div style={{ flex: "0 1 150px", minWidth: 0 }}>
             <label style={labelStyle}>Relationship</label>
@@ -1191,7 +1197,7 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
         <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12 }}>Start typing the first name. Pick the customer, then the policy.</div>
         <div style={{ ...wrapRow, alignItems: "flex-end" }}>
           <div ref={nameBoxRef} style={{ ...field(220), position: "relative" }}>
-            <input {...noPwManager} style={inputBase} value={q} placeholder="Anna"
+            <input {...noPwManager("b1")} style={inputBase} value={q} placeholder="Anna"
               onChange={e => { setQ(e.target.value); setPicked(null); setSuggestOpen(true); }}
               onFocus={() => setSuggestOpen(true)}
               onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
@@ -1214,7 +1220,7 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
               <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, paddingBottom: 10 }}>{picked.customer_label}{picked.phone_last4 ? ` ·${picked.phone_last4}` : ""} · on file</div>
               <div style={{ flex: "0 0 126px" }}>
                 <label style={labelStyle}>Phone last 4</label>
-                <input {...noPwManager} type="tel" inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={cxlPhone} maxLength={4} onChange={e => setCxlPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
+                <input {...noPwManager("b2")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={cxlPhone} maxLength={4} onChange={e => setCxlPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
               </div>
             </div>
             {onFile.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>No sold policies on file. Use "Log the customer" to record the cancelation with the policy details.</div>}
