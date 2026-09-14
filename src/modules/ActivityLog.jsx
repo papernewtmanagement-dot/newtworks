@@ -30,7 +30,7 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //  * The FIT conversation scorecard is one compact row under the note:
 //    10 parts, tap 1 / 2 / 3, blank means it didn't come up. Score any
 //    part and it rides on the entry into fit_scorecards exactly as the
-//    Scorecards page writes it; My week shows the week's average.
+//    Scorecards page writes it; Scoreboard shows the week's average.
 //  * Bottom row, only what applies: ECRM link (sale), Marketing type
 //    (sale or quote), Lead source (referral), then the note.
 //  * A canceled policy is matched server-side to the sale that wrote it
@@ -38,7 +38,7 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //    the Multiline credit comes back prorated; the green bar says so.
 //  * Earning Potential (owner only) lives here as its own tab, moved from
 //    Team; it is the shared EarningPotentialTab component untouched.
-//  * My week is the scoreboard: whole team, ranked, four point cards plus
+//  * Scoreboard is the week's standings: whole team, ranked, four point cards plus
 //    the conversation card in one row; your own week (with the conversation
 //    score) sits beside the title on every tab.
 //  * Canceled has its own tab: search the customer, tap the policy, log it.
@@ -49,8 +49,8 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 //    or a different household. "Replaces it" cancels the old policy in the
 //    same click (second rp_log_entry, replacement: true) as a normal
 //    cancelation — chargeback and multiline rules unchanged; the answer is
-//    stored on the sale and shown on My week. A repeat quote for
-//    the same household in a week is flagged here and marked on My week;
+//    stored on the sale and shown on the Scoreboard. A repeat quote for
+//    the same household in a week is flagged here and marked on the Scoreboard;
 //    HH Quotes count distinct households, so it never counts twice.
 //  * Scorecard is x / 1 / 2 / 3 (x averages as 0) and every part is scored on a quote or sale;
 //    GNC Used is Setup GNC scored 3. Marketing source and Relationship are
@@ -1439,7 +1439,7 @@ function ChangesTab({ roster, values, types }) {
 }
 
 // =====================================================================
-// My week — the scoreboard (Peter 2026-09-11). Everyone sees the whole
+// Scoreboard — the week's standings (Peter 2026-09-11). Everyone sees the whole
 // team, and every list is ranked. rp_week_scoreboard brings each
 // teammate's Marketing Points, HH Quotes, Sales Points, Retention Points
 // and conversation scorecards for the week, with the items behind every
