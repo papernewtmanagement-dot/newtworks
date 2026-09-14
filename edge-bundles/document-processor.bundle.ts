@@ -9885,50 +9885,59 @@ interface OneRefResult {
   note?: string;
 }
 
-// Two people send these and they title them differently, so both shapes are
-// first-class. Reply/forward prefixes are stripped up front rather than being
-// baked into each pattern.
+// ONE generic gate, not a catalogue of who writes subjects which way. If the
+// subject is about a reference, it is a reference email. The candidate name is
+// whatever survives once the reference vocabulary, the number and the
+// separators are stripped out. Peter's ruling 2026-09-14: stop chasing
+// individual subject-line conventions, they will never stop arriving.
 const PREFIX_RE = /^(?:\s*(?:fwd?|re):\s*)+/i;
 
-// Shape A — Marie: "Reference 2 - Maximus Moody". Peter forwards his own
-// as "Reference Check - Bryson Hayman", so ONE qualifying word is allowed
-// between the word reference and the separator. Number optional, hyphen or
-// dash variants, anchored so an ordinary sentence containing the word
-// "reference" cannot match.
-const SUBJECT_LEADING_RE = /^references?\s*(check|checks|for)?\s*(\d+)?\s*[-–—:]\s*(.+?)\s*$/i;
+// The gate. The word has to be present as a word, not as a fragment.
+const MENTIONS_REFERENCE_RE = /\breferences?\b/i;
 
-// Shape B — Stephanie: "Rodney References", "Bryson Reference 2". The name
-// comes first and is usually the first name alone.
-const SUBJECT_TRAILING_RE = /^(.+?)\s*[-–—:]?\s*references?\s*(\d+)?\s*$/i;
+// Reference vocabulary and connective filler. Everything matched here is
+// removed; the remainder is the name.
+const NOISE_RE =
+  /\b(?:references?|checks?|checking|completed?|requests?(?:ed)?|updated?|notes?|call|for|on|with|the|of|from|re)\b/gi;
 
-// One to four capitalised words — what stops "please send references" being
-// read as a candidate called "please send". Shape B always uses it. Shape A
-// uses it only when the qualifying word is present, because that form is
-// looser than the bare "Reference - Name" anchor.
+// A short standalone number anywhere in the subject is the reference number.
+const NUMBER_RE = /\b(\d{1,2})\b/;
+
+// Separators left behind once the noise is gone. A full stop is deliberately
+// NOT in this set, so "Anna S." keeps its full stop.
+const EDGE_JUNK_RE = /^[\s\-–—:,;|/#]+|[\s\-–—:,;|/#]+$/g;
+
+// One to four name-shaped words. This is what stops "please send references"
+// being read as a candidate called "please send". Capitalisation is the
+// signal, and it is relaxed only when the subject carried an explicit
+// reference number, which is evidence enough on its own.
 const LOOKS_LIKE_A_NAME_RE = /^[A-Z][\p{L}'’.\-]*(?:\s+[A-Z][\p{L}'’.\-]*){0,3}$/u;
+const LOOKS_LIKE_A_NAME_ANYCASE_RE = /^\p{L}[\p{L}'’.\-]*(?:\s+\p{L}[\p{L}'’.\-]*){0,3}$/u;
 
 function parseReferenceSubject(
   subject: string,
 ): { candidateName: string; referenceNumber: number | null } | null {
   const bare = subject.replace(PREFIX_RE, "").trim();
+  if (!MENTIONS_REFERENCE_RE.test(bare)) return null;
 
-  const a = SUBJECT_LEADING_RE.exec(bare);
-  if (a && (!a[1] || LOOKS_LIKE_A_NAME_RE.test(a[3].trim()))) {
-    return {
-      candidateName: a[3].trim(),
-      referenceNumber: a[2] ? parseInt(a[2], 10) : null,
-    };
-  }
+  const num = NUMBER_RE.exec(bare);
+  const referenceNumber = num ? parseInt(num[1], 10) : null;
 
-  const b = SUBJECT_TRAILING_RE.exec(bare);
-  if (b && LOOKS_LIKE_A_NAME_RE.test(b[1].trim())) {
-    return {
-      candidateName: b[1].trim(),
-      referenceNumber: b[2] ? parseInt(b[2], 10) : null,
-    };
-  }
+  const residue = bare
+    .replace(NOISE_RE, " ")
+    .replace(NUMBER_RE, " ")
+    .replace(/\s+/g, " ")
+    .replace(EDGE_JUNK_RE, "")
+    .trim();
 
-  return null;
+  if (!residue) return null;
+
+  const nameTest = referenceNumber === null
+    ? LOOKS_LIKE_A_NAME_RE
+    : LOOKS_LIKE_A_NAME_ANYCASE_RE;
+  if (!nameTest.test(residue)) return null;
+
+  return { candidateName: residue, referenceNumber };
 }
 
 // Team/Hiring. Processed reference threads leave the inbox and file here, and
@@ -10191,7 +10200,11 @@ async function processOneReferenceMessage(
     related_id: candidateId,
   });
 
-  if (threadId && !archivedThreads.has(threadId)) {
+  // A thread only leaves the inbox once the reference is linked to a real
+  // candidate. The subject gate is generic now, so an unmatched name is more
+  // likely to be something that was never a reference at all. That has to stay
+  // visible in the inbox rather than being filed away silently.
+  if (candidateId && threadId && !archivedThreads.has(threadId)) {
     const arcRes = await callComposio({
       apiKey: ctx.composioApiKey,
       userId: ctx.composioUserId,
