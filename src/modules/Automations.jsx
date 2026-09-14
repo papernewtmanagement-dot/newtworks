@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
+import { describeSchedule } from "../lib/cron.js";
 import EmptyState from "../components/EmptyState.jsx";
 
 // ============================================================
@@ -446,7 +447,7 @@ const Recipes = ({ recipes, onToggle }) => {
                     )}
                   </div>
                   <div style={{ fontSize:11, color:T.slate400 }}>
-                    {recipe.cron_label} · Last run: {recipe.last_run_at} · {recipe.run_count_30d} runs/30 days · {recipe.success_rate}% success
+                    {describeSchedule(recipe)} · Last run: {recipe.last_run_at} · {recipe.run_count_30d} runs/30 days · {recipe.success_rate}% success
                   </div>
                 </div>
 
@@ -481,7 +482,7 @@ const Recipes = ({ recipes, onToggle }) => {
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:8, marginBottom:12 }}>
                     {[
-                      { label:"Trigger",    value:recipe.cron_label },
+                      { label:"Trigger",    value:describeSchedule(recipe) },
                       { label:"Action",     value:recipe.composio_action || "Internal only" },
                       { label:"Connection", value:recipe.composio_connection ? recipe.composio_connection.charAt(0).toUpperCase()+recipe.composio_connection.slice(1) : "None needed" },
                       { label:"Processing", value:recipe.uses_groq?"Groq (free LLM)":"None" },
