@@ -1607,18 +1607,69 @@ function responseButtonsHtml(token: string): string {
 <p style="font-size:13px;color:#64748b;">No longer interested? <a href="${escHtml(respondUrl(token, "withdraw"))}">Let us know here</a> and we'll open the time up for someone else.</p>`;
 }
 
-async function cancelCalendarEvent(agencyId: string, eventId: string | null, sendUpdates: "all" | "none" = "all"): Promise<{ ok: boolean; error?: string }> {
+async function cancelCalendarEvent(
+  agencyId: string,
+  eventId: string | null,
+  sendUpdates: "all" | "none" = "all",
+  who?: { candidateId: string; name: string; when: string | null },
+): Promise<{ ok: boolean; error?: string }> {
   if (!eventId) return { ok: true };
   const creds = await getCalendarCreds(agencyId);
   if (!creds) return { ok: false, error: "calendar creds missing" };
-  const res = await callComposio({
-    apiKey: creds.apiKey,
-    userId: creds.userId,
-    connectedAccountId: creds.accountId,
-    toolSlug: "GOOGLECALENDAR_DELETE_EVENT",
-    toolArguments: { calendar_id: CALENDAR_ID, event_id: eventId, send_updates: sendUpdates },
+
+  // Google refuses a delete now and again for no lasting reason. One retry
+  // turns most of those into a clean cancellation. Peter 2026-09-14: two
+  // candidates declined a minute apart, one interview came off the calendar
+  // and the other was left sitting there.
+  let lastError = "unknown";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+    const res = await callComposio({
+      apiKey: creds.apiKey,
+      userId: creds.userId,
+      connectedAccountId: creds.accountId,
+      toolSlug: "GOOGLECALENDAR_DELETE_EVENT",
+      toolArguments: { calendar_id: CALENDAR_ID, event_id: eventId, send_updates: sendUpdates },
+    });
+    if (res.ok) return { ok: true };
+    lastError = res.error ?? "unknown";
+  }
+
+  // Still on the calendar. Say so out loud. This used to be a true/false in a
+  // response nobody reads, so a meeting stayed booked with nothing pointing
+  // at it and the time never came back.
+  const nameLine = who?.name ?? "A candidate";
+  const whenLine = who?.when ? ` at ${who.when}` : "";
+  await insertAlert({
+    agencyId,
+    alertType: "interview_event_not_canceled",
+    severity: "high",
+    title: `Interview still on the calendar — ${nameLine}`,
+    message: `${nameLine}'s interview${whenLine} could not be taken off the calendar: ${lastError}. Delete it by hand so the time opens back up. Calendar event id ${eventId}.`,
+    moduleReference: "team",
+    relatedId: who?.candidateId ?? null,
   });
-  return res.ok ? { ok: true } : { ok: false, error: res.error ?? "unknown" };
+  return { ok: false, error: lastError };
+}
+
+// The booking fields that come off a candidate when their time goes back on
+// the board. The calendar event id is the one exception: if the event could
+// NOT be removed from the calendar, the id stays on the row, so the meeting
+// still traces back to a person instead of becoming an orphan nobody can
+// match up. Written once here because four places give a booking back.
+function clearedBookingFields(calendarCanceled: boolean): Record<string, unknown> {
+  const cleared: Record<string, unknown> = {
+    interview_scheduled_start: null,
+    interview_scheduled_end: null,
+    interview_meet_url: null,
+    interview_booked_at: null,
+    interview_confirmed_at: null,
+    interview_reminder_3d_sent_at: null,
+    interview_reminder_1d_sent_at: null,
+    interview_unconfirmed_alerted_at: null,
+  };
+  if (calendarCanceled) cleared.interview_calendar_event_id = null;
+  return cleared;
 }
 
 // -------------------------------------------------------------------------
@@ -1825,19 +1876,15 @@ async function moveBookings(agencyId: string, fromDateKey: string, throughDateKe
   for (const c of rows ?? []) {
     const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
     const oldLocal = formatChicago(c.interview_scheduled_start);
-    await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "none");
+    const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "none", {
+      candidateId: c.id,
+      name: c.candidate_name || firstName,
+      when: oldLocal,
+    });
     const slots = (await computeOfferedSlots(agencyId)) ?? [];
     const token = c.interview_invite_token || newToken();
     const { error: updErr } = await sb.from("hiring_candidates").update({
-      interview_scheduled_start: null,
-      interview_scheduled_end: null,
-      interview_calendar_event_id: null,
-      interview_meet_url: null,
-      interview_booked_at: null,
-      interview_confirmed_at: null,
-      interview_reminder_3d_sent_at: null,
-      interview_reminder_1d_sent_at: null,
-      interview_unconfirmed_alerted_at: null,
+      ...clearedBookingFields(cancel.ok),
       interview_reminder_response: null,
       interview_invite_token: token,
       interview_slots_offered: slots,
@@ -1885,18 +1932,14 @@ async function releaseBooking(agencyId: string, candidateId: string): Promise<Re
   if (error || !c) return jsonResponse({ ok: false, error: "not_found" }, 404);
   if (!c.interview_booked_at && !c.interview_calendar_event_id) return jsonResponse({ ok: true, released: false, reason: "nothing booked" });
 
-  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "none");
-  const { error: updErr } = await sb.from("hiring_candidates").update({
-    interview_scheduled_start: null,
-    interview_scheduled_end: null,
-    interview_calendar_event_id: null,
-    interview_meet_url: null,
-    interview_booked_at: null,
-    interview_confirmed_at: null,
-    interview_reminder_3d_sent_at: null,
-    interview_reminder_1d_sent_at: null,
-    interview_unconfirmed_alerted_at: null,
-  }).eq("id", c.id);
+  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "none", {
+    candidateId: c.id,
+    name: c.candidate_name || "Candidate",
+    when: c.interview_scheduled_start ? formatChicago(c.interview_scheduled_start) : null,
+  });
+  const { error: updErr } = await sb.from("hiring_candidates")
+    .update(clearedBookingFields(cancel.ok))
+    .eq("id", c.id);
   if (updErr) return jsonResponse({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
 
   const earlier = await offerEarlierTimes(agencyId);
@@ -1953,18 +1996,12 @@ async function respond(agencyId: string, token: string, action: RespondAction): 
   }
 
   // reschedule or withdraw: the booked time goes back on the board.
-  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id);
-  const cleared = {
-    interview_scheduled_start: null,
-    interview_scheduled_end: null,
-    interview_calendar_event_id: null,
-    interview_meet_url: null,
-    interview_booked_at: null,
-    interview_confirmed_at: null,
-    interview_reminder_3d_sent_at: null,
-    interview_reminder_1d_sent_at: null,
-    interview_unconfirmed_alerted_at: null,
-  };
+  const cancel = await cancelCalendarEvent(agencyId, c.interview_calendar_event_id, "all", {
+    candidateId: c.id,
+    name: c.candidate_name || firstName,
+    when: c.interview_scheduled_start ? formatChicago(c.interview_scheduled_start) : null,
+  });
+  const cleared = clearedBookingFields(cancel.ok);
 
   if (action === "withdraw") {
     const { error: updErr } = await sb.from("hiring_candidates").update({
