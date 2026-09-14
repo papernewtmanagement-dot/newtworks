@@ -2385,7 +2385,7 @@ function ChecklistTab() {
 
         {personal.length > 0 && (
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Your own items</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Personal checklist</div>
             <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone does these for themselves. Not ticked here — the CPR checks them.</div>
             {personal.map(it => (
               <div key={it.id}>
