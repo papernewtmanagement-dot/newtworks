@@ -972,104 +972,348 @@ function SpotCheck({ isAdmin }) {
 }
 
 // =====================================================================
-// Week view — points table + this week's entries
+// Records panel — one table used in two places (Peter 2026-09-14): the
+// To be issued tab, and the card at the bottom of Scoreboard that used
+// to be "Sales this week". Same table both times. The toggle picks what
+// it lists; the scope decides what shows up.
+//   scope "pending" — what we have not paid on yet: policies that have
+//     not issued, appointments that have not been kept or sold, saves
+//     still counting down. We do not pay on any of it until it is not
+//     going to cancel.
+//   scope "week"    — everything logged in the week being shown.
+// A new Private Passenger auto policy never sits in the pending list: it
+// issues the day it is submitted (trigger trg_rp_auto_issue). Everything
+// else waits until someone confirms it issued with no contingencies.
+//
+// Appointments are ONE record that moves through its states, the same
+// shape as a policy going submitted then issued (Peter 2026-09-11):
+// marked set, then kept, then sold. Setting it pays nothing. Kept and
+// Sold only pay when the appointment was handed to someone else, and the
+// money goes to whoever handed it over, never the seller.
 // =====================================================================
-function IssuedTab({ types, refreshKey }) {
+const RECORD_KINDS = [
+  { key: "appointments", label: "Appointments" },
+  { key: "activities",   label: "Activities" },
+  { key: "sales",        label: "Sales" },
+];
+const SALE_SELECT = "id, team_member_id, sourced_by_team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, gnc_used, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, issued_date, issued_premium, autopay_enrolled)";
+const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, ecrm_url";
+const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
+const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
+const onFileLabel = (k) => k === "replaces" ? "replaced old policy" : k === "added" ? "added to on-file" : "different household";
+const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+const smallInput = { fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box" };
+const apptState = (r) => r.sold_on ? "Sold" : r.no_show_on ? "No show" : r.kept_on ? "Kept" : "Set";
+
+function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, isAdmin, myTeamId, refreshKey, onChanged }) {
+  const [kind, setKind] = useState("sales");
   const [rows, setRows] = useState(null);
-  const [dates, setDates] = useState({});
-  const [prems, setPrems] = useState({});   // issued premium per policy, defaults to what was submitted
-  const [busy, setBusy] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
+  const [busy, setBusy] = useState(null);
+  const [dates, setDates] = useState({});
+  const [prems, setPrems] = useState({});
+  const [editing, setEditing] = useState(null);   // { kind, row }
+  const [adding, setAdding] = useState(false);
+
+  const nameOf = useMemo(() => {
+    const m = new Map();
+    for (const t of roster || []) m.set(t.id, t.first_name);
+    return (id) => m.get(id) || "—";
+  }, [roster]);
+  const actLabel = useMemo(() => {
+    const m = new Map();
+    for (const v of values || []) m.set(v.activity_key, v.label);
+    return (k) => m.get(k) || k;
+  }, [values]);
 
   const load = useCallback(async () => {
-    const r = await supabase.rpc("rp_pending_issue");
-    setRows(Array.isArray(r.data) ? r.data : []);
-  }, []);
+    setLoading(true); setErr("");
+    try {
+      const today = todayCentral();
+      if (kind === "sales") {
+        let q = supabase.from("sales_log").select(SALE_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
+        if (scope === "week") {
+          q = q.eq("week_end_date", weekEnd);
+        } else {
+          const pend = await supabase.from("sales_log_products").select("sales_log_id").eq("agency_id", AGENCY_ID).is("issued_date", null);
+          const ids = Array.from(new Set((pend.data || []).map(r => r.sales_log_id)));
+          if (!ids.length) { setRows([]); return; }
+          q = q.in("id", ids);
+        }
+        const r = await q.order("submitted_date", { ascending: false });
+        if (r.error) throw r.error;
+        setRows(Array.isArray(r.data) ? r.data : []);
+      } else if (kind === "appointments") {
+        let q = supabase.from("appointment_log").select(APPT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
+        if (scope === "week") q = q.eq("week_end_date", weekEnd);
+        else q = q.is("sold_on", null).is("no_show_on", null);
+        const r = await q.order("set_on", { ascending: false });
+        if (r.error) throw r.error;
+        setRows(Array.isArray(r.data) ? r.data : []);
+      } else {
+        let q = supabase.from("retention_activity_log").select(ACT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
+        if (scope === "week") q = q.eq("week_end_date", weekEnd);
+        else q = q.gt("credit_available_on", today);
+        const r = await q.order("occurred_on", { ascending: false });
+        if (r.error) throw r.error;
+        setRows(Array.isArray(r.data) ? r.data : []);
+      }
+    } catch (e) { setErr(errText(e)); setRows([]); } finally { setLoading(false); }
+  }, [kind, scope, weekEnd]);
+
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  const mark = async (row) => {
-    setBusy(row.sale_product_id); setErr(""); setDone("");
-    const prem = prems[row.sale_product_id] === undefined ? String(row.premium ?? "") : prems[row.sale_product_id];
-    if (prem === "" || !(Number(prem) >= 0)) { setBusy(null); setErr("Enter the issued premium first."); return; }
+  const after = () => { if (onChanged) onChanged(); else load(); };
+  const canTouch = (tm) => isAdmin || tm === myTeamId;
+
+  const setAutopay = async (productId, on) => {
+    setBusy(productId); setErr("");
+    const { error } = await supabase.rpc("rp_set_sale_autopay", { p_sale_product_id: productId, p_on: on });
+    setBusy(null);
+    if (error) { setErr(errText(error)); return; }
+    after();
+  };
+
+  const markIssued = async (sale, p) => {
+    const prem = prems[p.id] === undefined ? String(p.premium ?? "") : prems[p.id];
+    if (prem === "" || !(Number(prem) >= 0)) { setErr("Enter the issued premium first."); return; }
+    setBusy(p.id); setErr(""); setDone("");
     const r = await supabase.rpc("rp_mark_issued", {
-      p_items: [{ sale_product_id: row.sale_product_id, issued_date: dates[row.sale_product_id] || todayCentral(), issued_premium: Number(prem) }],
+      p_items: [{ sale_product_id: p.id, issued_date: dates[p.id] || todayCentral(), issued_premium: Number(prem) }],
     });
     setBusy(null);
     if (r.error) { setErr(errText(r.error)); return; }
-    setDone(`${row.customer_label} — ${PRODUCT_SHORT[row.line_of_business] || row.line_of_business} marked issued.`);
-    load();
+    setDone(`${sale.customer_label} — ${typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business} marked issued.`);
+    after();
   };
 
-  if (rows === null) return <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>;
+  const unIssue = async (p) => {
+    if (!window.confirm("Put this policy back in the to-be-issued list?")) return;
+    setBusy(p.id); setErr("");
+    const { data, error } = await supabase.rpc("rp_unmark_issued", { p_sale_product_id: p.id });
+    setBusy(null);
+    if (error || !data?.ok) { setErr(errText(error || data)); return; }
+    after();
+  };
+
+  const moveAppt = async (row, state) => {
+    setBusy(row.id); setErr(""); setDone("");
+    const { data, error } = await supabase.rpc("rp_set_appointment_state", {
+      p_id: row.id, p_state: state, p_on: dates[row.id] || todayCentral(),
+    });
+    setBusy(null);
+    if (error || !data?.ok) { setErr(errText(error || data)); return; }
+    setDone(`${row.customer_label} — appointment marked ${state === "no_show" ? "a no show" : state}.`);
+    after();
+  };
+
+  const removeRow = async (recordKind, id, what) => {
+    if (!window.confirm(`Delete this ${what}? It comes off the week's points.`)) return;
+    const { data, error } = await supabase.rpc("rp_delete_record", { p_kind: recordKind, p_id: id, p_reason: null });
+    if (error || !data?.ok) { window.alert(errText(error || data)); return; }
+    after();
+  };
+
+  const emptyWord = scope === "pending"
+    ? { sales: "Everything submitted has been issued. Nothing waiting.", appointments: "No appointments still open.", activities: "Nothing still counting down." }[kind]
+    : { sales: "No sales logged this week.", appointments: "No appointments set this week.", activities: "No activities logged this week." }[kind];
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ fontSize: 13, color: T.slate500 }}>
-        Policies that have been submitted but are not issued yet. Enter the issued premium, set the date it issued, and mark it.
+    <div style={cardStyle}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{title}{loading ? <span style={{ color: T.slate400, fontWeight: 400, fontSize: 12 }}> · loading…</span> : null}</div>
+          {blurb && <div style={{ fontSize: 12, color: T.slate500 }}>{blurb}</div>}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          {kind === "appointments" && (
+            <button type="button" style={btnGhost} onClick={() => setAdding(true)}>Add appointment</button>
+          )}
+          <div style={chipRow}>
+            {RECORD_KINDS.map(k => (
+              <span key={k.key} onClick={() => setKind(k.key)} style={{ ...chip(kind === k.key), padding: "6px 12px", fontSize: 12 }}>{k.label}</span>
+            ))}
+          </div>
+        </div>
       </div>
+
       {err && <Notice kind="error">{err}</Notice>}
       {done && <Notice kind="ok">{done}</Notice>}
-      {rows.length === 0 ? (
-        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>Everything submitted has been issued. Nothing waiting.</div>
-      ) : (
-        <div style={{ ...cardStyle, overflowX: "auto" }}>
+
+      {rows && rows.length === 0 && !loading && (
+        <div style={{ fontSize: 13, color: T.slate600, padding: "6px 0" }}>{emptyWord}</div>
+      )}
+
+      {rows && rows.length > 0 && (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={tableTh}>Customer</th>
-                <th style={tableTh}>Policy</th>
-                <th style={tableTh}>Submitted</th>
-                <th style={tableTh}>Waiting</th>
-                <th style={tableTh}>Issued premium</th>
-                <th style={tableTh}>Issued</th>
-                <th style={tableTh}></th>
-              </tr>
-            </thead>
+            {kind === "sales" && (
+              <thead><tr>
+                <th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th>
+                <th style={tableTh}>Relationship</th><th style={tableTh}>Policies</th><th style={tableTh}>Cars</th>
+                <th style={tableTh}>Premium</th><th style={tableTh}>Source</th><th style={tableTh}>GNC</th>
+                <th style={tableTh}>Waiting</th><th style={tableTh}></th>
+              </tr></thead>
+            )}
+            {kind === "appointments" && (
+              <thead><tr>
+                <th style={tableTh}>Set</th><th style={tableTh}>Who</th><th style={tableTh}>Handed to</th>
+                <th style={tableTh}>Customer</th><th style={tableTh}>State</th><th style={tableTh}>Move it along</th>
+                <th style={tableTh}>Waiting</th><th style={tableTh}>Note</th><th style={tableTh}></th>
+              </tr></thead>
+            )}
+            {kind === "activities" && (
+              <thead><tr>
+                <th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th>
+                <th style={tableTh}>Activity</th><th style={tableTh}>Policy</th><th style={tableTh}>Points</th>
+                <th style={tableTh}>Clears</th><th style={tableTh}>Note</th><th style={tableTh}></th>
+              </tr></thead>
+            )}
             <tbody>
-              {rows.map(r => (
-                <tr key={r.sale_product_id}>
+              {kind === "sales" && rows.map(r => {
+                const ps = r.sales_log_products || [];
+                const anyOpen = ps.some(p => !p.issued_date);
+                const wait = anyOpen ? daysBetween(r.submitted_date, todayCentral()) : null;
+                return (
+                  <tr key={r.id}>
+                    <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
+                    <td style={tableTd}>
+                      {nameOf(r.team_member_id)}
+                      {r.sourced_by_team_member_id && r.sourced_by_team_member_id !== r.team_member_id
+                        ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}
+                    </td>
+                    <td style={tableTd}>{r.customer_label}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
+                    <td style={tableTd}>
+                      {relLabel(r.household_status)}
+                      {r.on_file_answer && <div style={{ fontSize: 11, color: T.amber }}>{onFileLabel(r.on_file_answer)}</div>}
+                    </td>
+                    <td style={tableTd}>
+                      {ps.map((p, i) => (
+                        <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "2px 0" }}>
+                          <span>
+                            {typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business}
+                            {" $"}{fmtPts(p.premium)}
+                            {p.vehicle_count ? ` · ${plural(p.vehicle_count, "car")}` : ""}
+                          </span>
+                          {p.id && (
+                            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: p.autopay_enrolled ? T.green : T.slate500, cursor: busy === p.id ? "wait" : "pointer" }}
+                              title="Tick this when the customer signs up for automatic payment, even if that happens after the sale. One autopay credit per policy.">
+                              <input type="checkbox" checked={!!p.autopay_enrolled} disabled={busy === p.id}
+                                onChange={e => setAutopay(p.id, e.target.checked)} />
+                              Autopay
+                            </label>
+                          )}
+                          {p.issued_date ? (
+                            <span style={{ fontSize: 11, color: T.green }}>
+                              issued {fmtDate(p.issued_date)}{p.issued_premium != null ? ` · $${fmtPts(p.issued_premium)}` : ""}
+                              {canTouch(r.team_member_id) && <button type="button" style={{ ...miniBtn, marginLeft: 6 }} onClick={() => unIssue(p)}>Undo</button>}
+                            </span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                              <input type="number" inputMode="decimal" min="0" step="0.01" title="Issued premium"
+                                value={prems[p.id] === undefined ? String(p.premium ?? "") : prems[p.id]}
+                                onChange={e => setPrems(d => ({ ...d, [p.id]: e.target.value }))}
+                                style={{ ...smallInput, width: 100, textAlign: "right" }} />
+                              <input type="date" title="Date it issued"
+                                value={dates[p.id] || todayCentral()}
+                                min={r.submitted_date} max={todayCentral()}
+                                onChange={e => setDates(d => ({ ...d, [p.id]: e.target.value }))}
+                                style={smallInput} />
+                              <button type="button" onClick={() => markIssued(r, p)} disabled={busy === p.id}
+                                style={{ padding: "5px 11px", borderRadius: 7, border: "none", cursor: "pointer", background: T.blue, color: "#fff", fontSize: 12, fontWeight: 700, opacity: busy === p.id ? 0.6 : 1 }}>
+                                Issue
+                              </button>
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </td>
+                    <td style={tableTd}>{r.vehicle_count ?? "—"}</td>
+                    <td style={tableTd}>${fmtPts(r.total_premium)}</td>
+                    <td style={tableTd}>{r.marketing_source}</td>
+                    <td style={tableTd}>{r.gnc_used ? "Yes" : "No"}</td>
+                    <td style={{ ...tableTd, color: wait != null && wait > 14 ? T.red : T.slate600, fontWeight: wait != null && wait > 14 ? 700 : 400 }}>
+                      {wait == null ? "—" : `${wait}d`}
+                    </td>
+                    <td style={tableTd}>
+                      {canTouch(r.team_member_id) && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "sale", row: r })}>Edit</button>
+                          <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("sale", r.id, "sale")}>Delete</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {kind === "appointments" && rows.map(r => {
+                const escalated = r.escalated_to_team_member_id && r.escalated_to_team_member_id !== r.team_member_id;
+                return (
+                  <tr key={r.id}>
+                    <td style={tableTd}>{fmtDate(r.set_on)}</td>
+                    <td style={tableTd}>{nameOf(r.team_member_id)}</td>
+                    <td style={tableTd}>
+                      {escalated ? nameOf(r.escalated_to_team_member_id)
+                        : <span style={{ color: T.slate400 }} title="An appointment you keep for yourself pays nothing here. It pays through the sale.">kept it</span>}
+                    </td>
+                    <td style={tableTd}>{r.customer_label}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
+                    <td style={tableTd}>
+                      {apptState(r)}
+                      {r.sold_on ? <div style={{ fontSize: 11, color: T.green }}>sold {fmtDate(r.sold_on)}</div>
+                        : r.no_show_on ? <div style={{ fontSize: 11, color: T.red }}>{fmtDate(r.no_show_on)}</div>
+                        : r.kept_on ? <div style={{ fontSize: 11, color: T.slate500 }}>{fmtDate(r.kept_on)}</div> : null}
+                    </td>
+                    <td style={tableTd}>
+                      {canTouch(r.team_member_id) ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          <input type="date" title="Date it happened"
+                            value={dates[r.id] || todayCentral()} min={r.set_on} max={todayCentral()}
+                            onChange={e => setDates(d => ({ ...d, [r.id]: e.target.value }))} style={smallInput} />
+                          {!r.kept_on && <button type="button" style={miniBtn} disabled={busy === r.id} onClick={() => moveAppt(r, "kept")}>Kept</button>}
+                          {!r.sold_on && <button type="button" style={miniBtn} disabled={busy === r.id} onClick={() => moveAppt(r, "sold")}>Sold</button>}
+                          {!r.no_show_on && !r.sold_on && <button type="button" style={miniBtn} disabled={busy === r.id} onClick={() => moveAppt(r, "no_show")}>No show</button>}
+                          {(r.kept_on || r.sold_on || r.no_show_on) && <button type="button" style={miniBtn} disabled={busy === r.id} onClick={() => moveAppt(r, "open")}>Undo</button>}
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td style={tableTd}>{`${daysBetween(r.set_on, todayCentral())}d`}</td>
+                    <td style={tableTd}>{r.note || "—"}</td>
+                    <td style={tableTd}>
+                      {canTouch(r.team_member_id) && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "appointment", row: r })}>Edit</button>
+                          <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("appointment", r.id, "appointment")}>Delete</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {kind === "activities" && rows.map(r => (
+                <tr key={r.id}>
+                  <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
+                  <td style={tableTd}>{nameOf(r.team_member_id)}</td>
+                  <td style={tableTd}>{r.customer_label || "—"}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
+                  <td style={tableTd}>{actLabel(r.activity_key)}{r.source !== "manual" && <div style={{ fontSize: 11, color: T.slate400 }}>from a sale</div>}</td>
                   <td style={tableTd}>
-                    {r.customer_label}
-                    {r.seller && <div style={{ fontSize: 11, color: T.slate500 }}>{r.seller}</div>}
+                    {r.policy_line
+                      ? <>{typeLabel(types || {}, r.policy_line, r.product_type) || PRODUCT_SHORT[r.policy_line] || r.policy_line}{r.premium != null ? ` · $${fmtPts(r.premium)}` : ""}</>
+                      : "—"}
                   </td>
+                  <td style={tableTd}>${fmtPts(r.points)}</td>
+                  <td style={tableTd}>{r.credit_available_on ? fmtDate(r.credit_available_on) : "—"}</td>
+                  <td style={tableTd}>{r.note || "—"}</td>
                   <td style={tableTd}>
-                    {typeLabel(types || {}, r.line_of_business, r.product_type) || PRODUCT_SHORT[r.line_of_business] || r.line_of_business}
-                    <div style={{ fontSize: 11, color: T.slate500 }}>
-                      ${fmtPts(r.premium)}{r.vehicle_count ? ` · ${r.vehicle_count} car${r.vehicle_count > 1 ? "s" : ""}` : ""}
-                    </div>
-                  </td>
-                  <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
-                  <td style={{ ...tableTd, color: r.days_waiting > 14 ? T.red : T.slate600, fontWeight: r.days_waiting > 14 ? 700 : 400 }}>
-                    {r.days_waiting}d
-                  </td>
-                  <td style={tableTd}>
-                    <input type="number" inputMode="decimal" min="0" step="0.01"
-                      value={prems[r.sale_product_id] === undefined ? String(r.premium ?? "") : prems[r.sale_product_id]}
-                      onChange={e => setPrems(d => ({ ...d, [r.sale_product_id]: e.target.value }))}
-                      style={{ fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, width: 110, textAlign: "right", boxSizing: "border-box" }}
-                    />
-                  </td>
-                  <td style={tableTd}>
-                    <input
-                      type="date"
-                      value={dates[r.sale_product_id] || todayCentral()}
-                      min={r.submitted_date}
-                      max={todayCentral()}
-                      onChange={e => setDates(d => ({ ...d, [r.sale_product_id]: e.target.value }))}
-                      style={{ fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}` }}
-                    />
-                  </td>
-                  <td style={tableTd}>
-                    <button
-                      onClick={() => mark(r)}
-                      disabled={busy === r.sale_product_id}
-                      style={{
-                        padding: "6px 12px", borderRadius: 7, border: "none", cursor: "pointer",
-                        background: T.blue, color: "#fff", fontSize: 13, fontWeight: 700,
-                        opacity: busy === r.sale_product_id ? 0.6 : 1,
-                      }}
-                    >Mark issued</button>
+                    {canTouch(r.team_member_id) && r.source === "manual" && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "activity", row: r })}>Edit</button>
+                        <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("activity", r.id, "entry")}>Delete</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1077,7 +1321,252 @@ function IssuedTab({ types, refreshKey }) {
           </table>
         </div>
       )}
+
+      {adding && (
+        <AddAppointment roster={roster} myTeamId={myTeamId}
+          onClose={() => setAdding(false)}
+          onSaved={(who) => { setAdding(false); setKind("appointments"); setDone(`Appointment set with ${who}.`); after(); }} />
+      )}
+
+      {editing && (
+        <EditRecord
+          kind={editing.kind} row={editing.row} sources={sources} types={types} roster={roster}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); setDone("Saved."); after(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Set an appointment. Who you hand it to is the whole point: an
+// appointment you keep for yourself pays nothing here (Peter 2026-09-11).
+// ---------------------------------------------------------------------
+function AddAppointment({ roster, myTeamId, onClose, onSaved }) {
+  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", phone_last4: "", set_on: todayCentral(), escalated_to: "", note: "" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(d => ({ ...d, [k]: v }));
+
+  const save = async () => {
+    setSaving(true); setErr("");
+    const { data, error } = await supabase.rpc("rp_log_appointment", {
+      p_payload: {
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial,
+        phone_last4: f.phone_last4, set_on: f.set_on,
+        escalated_to_team_member_id: f.escalated_to || null, note: f.note,
+      },
+    });
+    setSaving(false);
+    if (error || !data?.ok) { setErr(errText(error || data)); return; }
+    onSaved(data.customer || f.customer_first);
+  };
+
+  return (
+    <Modal title="Set an appointment" onClose={onClose}>
+      <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+        {err && <Notice kind="error">{err}</Notice>}
+        <div style={gridForm}>
+          <div>
+            <label style={labelStyle}>First name</label>
+            <input value={f.customer_first} onChange={e => set("customer_first", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("afn")} />
+          </div>
+          <div>
+            <label style={labelStyle}>Last initial</label>
+            <input value={f.customer_last_initial} maxLength={1} onChange={e => set("customer_last_initial", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ali")} />
+          </div>
+          <div>
+            <label style={labelStyle}>Phone, last four</label>
+            <input value={f.phone_last4} maxLength={4} inputMode="numeric" onChange={e => set("phone_last4", e.target.value.replace(/\D/g, ""))} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ap4")} />
+          </div>
+          <div>
+            <label style={labelStyle}>Date set</label>
+            <input type="date" value={f.set_on} max={todayCentral()} onChange={e => set("set_on", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+          </div>
+          <div>
+            <label style={labelStyle}>Handed to <span style={hintStyle}>pays only if you hand it over</span></label>
+            <select value={f.escalated_to} onChange={e => set("escalated_to", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+              <option value="">I am keeping it</option>
+              {(roster || []).filter(t => t.id !== myTeamId).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label style={labelStyle}>Note</label>
+          <input value={f.note} onChange={e => set("note", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("anote")} />
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button type="button" style={btnPrimary(saving)} disabled={saving} onClick={save}>{saving ? "Saving…" : "Set it"}</button>
+          <button type="button" style={btnGhost} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Edit a record in place. Never delete and re-create: the change history
+// on the row has to survive (Peter 2026-09-14). Sales edit their policies
+// too; appointments and activities edit the customer, date and note.
+// ---------------------------------------------------------------------
+function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
+  const [f, setF] = useState(() => ({
+    customer_first: row.customer_first_name || "",
+    customer_last_initial: row.customer_last_initial || "",
+    phone_last4: row.phone_last4 || "",
+    on_date: row.submitted_date || row.set_on || row.occurred_on || todayCentral(),
+    relationship: row.household_status || "existing",
+    marketing_source: row.marketing_source || "",
+    gnc_used: !!row.gnc_used,
+    escalated_to: row.escalated_to_team_member_id || "",
+    note: row.note || "",
+    ecrm: row.ecrm_opportunity_url || row.ecrm_url || "",
+    products: (row.sales_log_products || []).map(p => ({ ...p })),
+  }));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(d => ({ ...d, [k]: v }));
+  const setProd = (i, k, v) => setF(d => ({ ...d, products: d.products.map((p, j) => j === i ? { ...p, [k]: v } : p) }));
+
+  const save = async () => {
+    setSaving(true); setErr("");
+    let fn, changes;
+    if (kind === "sale") {
+      fn = "rp_edit_sale";
+      changes = {
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
+        submitted_date: f.on_date, household_status: f.relationship, marketing_source: f.marketing_source,
+        gnc_used: f.gnc_used, note: f.note,
+        products: f.products.map(p => ({
+          id: p.id, line_of_business: p.line_of_business, product_type: p.product_type,
+          premium: String(p.premium ?? ""), policy_count: String(p.policy_count ?? 1),
+          vehicle_count: p.vehicle_count == null ? "" : String(p.vehicle_count),
+          is_new_line: !!p.is_new_line,
+          issued_date: p.issued_date || "", issued_premium: p.issued_premium == null ? "" : String(p.issued_premium),
+          autopay: !!p.autopay_enrolled,
+        })),
+      };
+      if (f.ecrm) changes.ecrm_opportunity_url = f.ecrm;
+    } else if (kind === "appointment") {
+      fn = "rp_edit_appointment";
+      changes = {
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
+        set_on: f.on_date, escalated_to_team_member_id: f.escalated_to || null, note: f.note,
+      };
+    } else {
+      fn = "rp_edit_activity";
+      changes = {
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
+        occurred_on: f.on_date, note: f.note,
+      };
+    }
+    const { data, error } = await supabase.rpc(fn, { p_id: row.id, p_changes: changes });
+    setSaving(false);
+    if (error || !data?.ok) { setErr(errText(error || data)); return; }
+    onSaved();
+  };
+
+  const titleWord = kind === "sale" ? "sale" : kind === "appointment" ? "appointment" : "entry";
+  return (
+    <Modal title={`Edit this ${titleWord}`} onClose={onClose}>
+      <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+        {err && <Notice kind="error">{err}</Notice>}
+        <div style={gridForm}>
+          <div>
+            <label style={labelStyle}>First name</label>
+            <input value={f.customer_first} onChange={e => set("customer_first", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("efn")} />
+          </div>
+          <div>
+            <label style={labelStyle}>Last initial</label>
+            <input value={f.customer_last_initial} maxLength={1} onChange={e => set("customer_last_initial", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("eli")} />
+          </div>
+          <div>
+            <label style={labelStyle}>Phone, last four</label>
+            <input value={f.phone_last4} maxLength={4} inputMode="numeric" onChange={e => set("phone_last4", e.target.value.replace(/\D/g, ""))} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ep4")} />
+          </div>
+          <div>
+            <label style={labelStyle}>Date</label>
+            <input type="date" value={f.on_date} max={todayCentral()} onChange={e => set("on_date", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+          </div>
+          {kind === "appointment" && (
+            <div>
+              <label style={labelStyle}>Handed to</label>
+              <select value={f.escalated_to} onChange={e => set("escalated_to", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="">I am keeping it</option>
+                {(roster || []).filter(t => t.id !== row.team_member_id).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+              </select>
+            </div>
+          )}
+          {kind === "sale" && (
+            <div>
+              <label style={labelStyle}>Relationship</label>
+              <select value={f.relationship} onChange={e => set("relationship", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                {RELATIONSHIPS.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+              </select>
+            </div>
+          )}
+          {kind === "sale" && (
+            <div>
+              <label style={labelStyle}>Marketing source</label>
+              <select value={f.marketing_source} onChange={e => set("marketing_source", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="">Pick one</option>
+                {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {kind === "sale" && f.products.map((p, i) => (
+          <div key={p.id || i} style={policyRow}>
+            <div>
+              <label style={labelStyle}>Policy</label>
+              <select value={p.product_type || ""} onChange={e => setProd(i, "product_type", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                {((types || {})[p.line_of_business] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Premium</label>
+              <input type="number" min="0" step="0.01" value={p.premium ?? ""} onChange={e => setProd(i, "premium", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+            </div>
+            {p.line_of_business === "auto" && (
+              <div>
+                <label style={labelStyle}>Cars</label>
+                <input type="number" min="1" step="1" value={p.vehicle_count ?? 1} onChange={e => setProd(i, "vehicle_count", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {kind === "sale" && (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate800 }}>
+            <input type="checkbox" checked={f.gnc_used} onChange={e => set("gnc_used", e.target.checked)} /> GNC used
+          </label>
+        )}
+
+        <div>
+          <label style={labelStyle}>Note</label>
+          <input value={f.note} onChange={e => set("note", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("enote")} />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button type="button" style={btnPrimary(saving)} disabled={saving} onClick={save}>{saving ? "Saving…" : "Save changes"}</button>
+          <button type="button" style={btnGhost} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function IssuedTab({ values, sources, types, roster, isAdmin, myTeamId, refreshKey, onChanged }) {
+  return (
+    <RecordsPanel
+      scope="pending"
+      title="To be issued"
+      blurb="What we have not paid on yet. A new Private Passenger auto issues by itself the day it is submitted; everything else waits until someone confirms it issued with no contingencies."
+      values={values} sources={sources} types={types} roster={roster}
+      isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged}
+    />
   );
 }
 
@@ -1508,19 +1997,13 @@ function ScoreCard({ title, total, note, people, rankOf, valueOf, subOf, renderI
   );
 }
 
-function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
+function WeekView({ isAdmin, myTeamId, roster, values, sources, types, refreshKey, onChanged }) {
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("week", weekEndOf(todayCentral()));
   const [board, setBoard] = useState(null);
-  const [sales, setSales] = useState([]);
   const [open, setOpen] = useState({});      // card -> team_member_id whose items are showing
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  const nameOf = useMemo(() => {
-    const m = new Map();
-    for (const t of roster || []) m.set(t.id, t.first_name);
-    return (id) => m.get(id) || "—";
-  }, [roster]);
   const unit = (k) => Number(((values || []).find(v => v.activity_key === k) || {}).points || 0);
   const safeWeek = /^\d{4}-\d{2}-\d{2}$/.test(weekEnd || "") ? weekEnd : weekEndOf(todayCentral());
   const weekStart = addDays(safeWeek, -6);
@@ -1528,15 +2011,10 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const [b, s] = await Promise.all([
-        supabase.rpc("rp_week_scoreboard", { p_week_end: safeWeek }),
-        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, on_file_answer, sales_log_products(id, line_of_business, product_type, premium, policy_count, is_new_line, issued_date, autopay_enrolled)")
-          .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("submitted_date", { ascending: false }),
-      ]);
+      const b = await supabase.rpc("rp_week_scoreboard", { p_week_end: safeWeek });
       if (b.error) throw b.error;
       if (b.data && b.data.ok === false) throw new Error(b.data.error || "Could not load the week.");
       setBoard(b.data || null);
-      setSales(Array.isArray(s.data) ? s.data : []);
     } catch (e) { setErr(errText(e)); } finally { setLoading(false); }
   }, [safeWeek]);
 
@@ -1553,15 +2031,6 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
   const toggle = (card) => (id) => setOpen(o => ({ ...o, [card]: o[card] === id ? null : id }));
   const cardN = people.reduce((s, p) => s + Number(p.conversations?.scorecards || 0), 0);
   const teamAvg = cardN ? people.reduce((s, p) => s + Number(p.conversations?.avg || 0) * Number(p.conversations?.scorecards || 0), 0) / cardN : null;
-
-  const [apBusy, setApBusy] = useState(null);   // sale_product_id being saved
-  const setAutopay = async (productId, on) => {
-    setApBusy(productId); setErr("");
-    const { error } = await supabase.rpc("rp_set_sale_autopay", { p_sale_product_id: productId, p_on: on });
-    setApBusy(null);
-    if (error) { setErr(errText(error)); return; }
-    await load();
-  };
 
   const voidRow = async (fn, id, what) => {
     if (!window.confirm(`Remove this ${what}?`)) return;
@@ -1669,43 +2138,17 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
           subOf={p => `${plural(p.conversations?.scorecards || 0, "scored conversation")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
       </div>
 
-      {!reported && (<div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Sales this week</div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th><th style={tableTh}>Relationship</th><th style={tableTh}>Products</th><th style={tableTh}>Cars</th><th style={tableTh}>Premium</th><th style={tableTh}>Source</th><th style={tableTh}>GNC</th><th style={tableTh}></th></tr></thead>
-            <tbody>
-              {sales.map(r => (
-                <tr key={r.id}>
-                  <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
-                  <td style={tableTd}>{nameOf(r.team_member_id)}{r.sourced_by_team_member_id && r.sourced_by_team_member_id !== r.team_member_id ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}</td>
-                  <td style={tableTd}>{r.customer_label}</td>
-                  <td style={tableTd}>{r.household_status === "new" ? "New" : r.household_status === "winback" ? "Winback" : "Existing"}{r.on_file_answer && <div style={{ fontSize: 11, color: T.amber }}>{r.on_file_answer === "replaces" ? "replaced old policy" : r.on_file_answer === "added" ? "added to on-file" : "different household"}</div>}</td>
-                  <td style={tableTd}>{(r.sales_log_products || []).map((p, i) => (
-                    <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "1px 0" }}>
-                      <span>{typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business} ${fmtPts(p.premium)}{p.issued_date ? "" : <span style={{ color: T.amber }}> · not issued</span>}</span>
-                      {p.id && (
-                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: p.autopay_enrolled ? T.green : T.slate500, cursor: apBusy === p.id ? "wait" : "pointer" }}
-                          title="Tick this when the customer signs up for automatic payment, even if that happens after the sale. One autopay credit per policy.">
-                          <input type="checkbox" checked={!!p.autopay_enrolled} disabled={apBusy === p.id}
-                            onChange={e => setAutopay(p.id, e.target.checked)} />
-                          Autopay
-                        </label>
-                      )}
-                    </div>
-                  ))}</td>
-                  <td style={tableTd}>{r.vehicle_count ?? "—"}</td>
-                  <td style={tableTd}>${fmtPts(r.total_premium)}</td>
-                  <td style={tableTd}>{r.marketing_source}</td>
-                  <td style={tableTd}>{r.gnc_used ? "Yes" : "No"}</td>
-                  <td style={tableTd}>{canRemove(r.team_member_id) && <button style={btnGhost} onClick={() => voidRow("rp_void_sale", r.id, "sale")}>Remove</button>}</td>
-                </tr>
-              ))}
-              {!loading && sales.length === 0 && <tr><td style={tableTd} colSpan={10}>No sales logged this week.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>)}
+      {/* This week — same table as To be issued, one toggle away (Peter 2026-09-14). */}
+      {!reported && (
+        <RecordsPanel
+          scope="week"
+          weekEnd={safeWeek}
+          title="This week"
+          blurb="Everything logged in this week. Same format as To be issued."
+          values={values} sources={sources} types={types} roster={roster}
+          isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged || load}
+        />
+      )}
     </div>
   );
 }
@@ -2235,8 +2678,8 @@ export default function ActivityLog({ userRole, userId }) {
 
       {(tab === "log" || tab === "canceled") && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
-      {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
-      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
+      {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} sources={sources} types={types} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "hours" && <TimeHub embedded userRole={userRole} />}
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
