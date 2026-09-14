@@ -58,6 +58,7 @@ const RULES_OF_ROAD = [
   {
     heading: "Recordkeeping",
     items: [
+      { emphasis: "NEVER", rest: "communicate through non-approved communication channels." },
       { emphasis: "ALWAYS", rest: "keep the Microsoft Notepad on your desktop named \"To-Dos\" open.", sub: [
         "Use it for conversation notes during calls.",
         "Copy those notes into a log/task in ECRM after the call.",
@@ -80,6 +81,7 @@ const WHEN_STUCK = [
     heading: "Coverage or policy question",
     items: [
       "Navi search \u2014 do not chat yet.",
+      "If it's not an internal question, ask ChatGPT.",
       "Answers (Auto, Fire, Life, Modernized).",
       "ABS Sections and Searching.",
       "Ask the office.",
@@ -96,6 +98,7 @@ const WHEN_STUCK = [
       "Verify the source of the problem (switch plugs, docks, etc.).",
       "Do a software reset.",
       "Navi search \u2014 do not chat yet.",
+      "If it's not an internal question, ask ChatGPT.",
       "If a non-internal system, Google it.",
       "Ask the office.",
       "Do a hard reset.",
