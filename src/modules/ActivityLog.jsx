@@ -7,6 +7,7 @@ import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
 import { T } from "../lib/theme.js";
 import { mdToHtml } from "../lib/markdown.js";
+import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
 // ============================================================
@@ -2194,7 +2195,9 @@ function splitWrapup(text) {
   return out;
 }
 
-// Small markdown render for the help panels: bold, bullets, numbers, breaks.
+// The help panel renders manual content, so it uses the manual renderer and the
+// manual stylesheet — that is what makes a table in a shared fragment look like
+// a table. The item's own words come first, then the fragment underneath it.
 function HelpPanel({ item }) {
   const [excerpt, setExcerpt] = useState(null);
   useEffect(() => {
@@ -2204,13 +2207,17 @@ function HelpPanel({ item }) {
       .then(r => { if (alive) setExcerpt(r?.data?.content || ""); });
     return () => { alive = false; };
   }, [item.help_excerpt_id]);
-  const body = item.help_text || excerpt;
+  const body = [item.help_text, excerpt].filter(p => (p || "").trim()).join("\n\n");
+  const waiting = !!item.help_excerpt_id && excerpt === null;
+  const box = { margin: "2px 0 10px 26px", padding: "10px 12px", background: T.slate50, borderRadius: 8, fontSize: 12.5, color: T.slate700, lineHeight: 1.6 };
+  if (!body) {
+    return <div style={box}>{waiting ? "Loading…" : <span style={{ color: T.slate500 }}>No extra detail on this one.</span>}</div>;
+  }
   return (
-    <div style={{ margin: "2px 0 10px 26px", padding: "10px 12px", background: T.slate50, borderRadius: 8, fontSize: 12.5, color: T.slate700, lineHeight: 1.6 }}>
-      {body == null && item.help_excerpt_id ? "Loading…"
-        : body ? <span dangerouslySetInnerHTML={{ __html: mdToHtml(body) }} />
-        : <span style={{ color: T.slate500 }}>No extra detail on this one.</span>}
-    </div>
+    <>
+      <ManualBodyStyles />
+      <div className="newtworks-handbook-body" style={box} dangerouslySetInnerHTML={{ __html: mdToHtml(body) }} />
+    </>
   );
 }
 
