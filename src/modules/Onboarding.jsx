@@ -19,6 +19,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { TabLink, useTabParam } from "../lib/routing.jsx";
+import {
+  Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
+  CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
+  subGroups, subAll, trackColumns,
+} from "../lib/onboardingUi.jsx";
+import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 
 // ─── constants ─────────────────────────────────────
 const ADMIN_ROLES = ["owner", "manager"];
@@ -42,129 +48,6 @@ const PHASE_LABELS = {
   65: { name: "Weeks 5-8",                   blurb: "Review cadence begins, Life pipeline starts, half shadow." },
   70: { name: "Weeks 9-13",                  blurb: "Full quote share, weekly claims rhythm, cross-training." },
   75: { name: "Week 14+",                    blurb: "Fully independent. Champions Circle pace, monthly audit rhythm." },
-};
-
-const STAGE_LABELS = {
-  offer:     { label: "Offer stage", fg: T.purple, bg: T.purpleLt },
-  pre_start: { label: "Before Day 1", fg: T.gold,  bg: T.goldLt },
-  ramp:      { label: "On the job",   fg: T.blue,  bg: T.blueLt },
-};
-
-// Sub-items arrive either as a flat list of strings or as groups the old paper
-// checklists used ({ group, items }). Normalize both to groups.
-function subGroups(substeps) {
-  if (!Array.isArray(substeps)) return [];
-  const out = [];
-  let flat = null;
-  substeps.forEach(s => {
-    if (s && typeof s === "object" && Array.isArray(s.items)) {
-      out.push({ group: s.group || null, items: s.items.filter(x => typeof x === "string") });
-    } else if (typeof s === "string") {
-      if (!flat) { flat = { group: null, items: [] }; out.push(flat); }
-      flat.items.push(s);
-    }
-  });
-  return out.filter(g => g.items.length);
-}
-function subAll(substeps) {
-  return subGroups(substeps).reduce((acc, g) => acc.concat(g.items), []);
-}
-
-// A phase with more than one track draws one column per track — the two
-// offer-stage columns both have to finish before the next milestone opens.
-function trackColumns(steps) {
-  const names = [];
-  steps.forEach(s => {
-    const t = s.track || null;
-    if (!names.includes(t)) names.push(t);
-  });
-  if (names.length <= 1) return null;
-  // track_order decides which column sits on the left.
-  const rank = (n) => {
-    const hit = steps.find(s => (s.track || null) === n);
-    return hit && typeof hit.track_order === "number" ? hit.track_order : 0;
-  };
-  names.sort((a, b) => rank(a) - rank(b));
-  return names.map(n => ({
-    name: n,
-    steps: steps
-      .filter(s => (s.track || null) === n)
-      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
-  }));
-}
-
-const trackHeadStyle = {
-  fontSize: 11, fontWeight: 700, color: T.slate600,
-  textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2,
-};
-
-const CATEGORY_COLORS = {
-  licensing:      { fg: T.green,  bg: T.greenLt,  label: "Licensing" },
-  documents:      { fg: T.blue,   bg: T.blueLt,   label: "Documents" },
-  compliance:     { fg: T.red,    bg: T.redLt,    label: "Compliance" },
-  systems:        { fg: T.teal,   bg: T.tealLt,   label: "Systems" },
-  training:       { fg: T.purple, bg: T.purpleLt, label: "Training" },
-  physical_setup: { fg: T.gold,   bg: T.goldLt,   label: "Physical setup" },
-  role_specific:  { fg: T.pink,   bg: T.pinkLt,   label: "Role-specific" },
-};
-
-const STATUS_COLORS = {
-  active:    { fg: T.green,   bg: T.greenLt, label: "Active" },
-  paused:    { fg: T.amber,   bg: T.amberLt, label: "Paused" },
-  completed: { fg: T.slate600, bg: T.slate100, label: "Completed" },
-  archived:  { fg: T.slate500, bg: T.slate100, label: "Archived" },
-};
-
-// ─── shared UI primitives ───────────────────────────────
-const Card = ({ children, style = {} }) => (
-  <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: "16px 18px", ...style }}>
-    {children}
-  </div>
-);
-
-const Pill = ({ children, fg = T.slate700, bg = T.slate100, style = {} }) => (
-  <span style={{
-    display: "inline-block", fontSize: 10, fontWeight: 600,
-    color: fg, background: bg,
-    padding: "3px 8px", borderRadius: 4, letterSpacing: 0.3,
-    textTransform: "uppercase", ...style,
-  }}>{children}</span>
-);
-
-const Button = ({ children, onClick, variant = "primary", disabled = false, style = {} }) => {
-  const styles = {
-    primary:   { bg: T.blue,    fg: T.white,    border: T.blue },
-    secondary: { bg: T.white,   fg: T.slate800, border: T.slate300 },
-    danger:    { bg: T.white,   fg: T.red,      border: T.red },
-    ghost:     { bg: "transparent", fg: T.slate600, border: "transparent" },
-  }[variant] || {};
-  return (
-    <button
-      onClick={onClick} disabled={disabled}
-      style={{
-        padding: "8px 14px", fontSize: 12, fontWeight: 600,
-        color: styles.fg, background: styles.bg,
-        border: `1px solid ${styles.border}`, borderRadius: 8,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-        transition: "all 0.12s",
-        ...style,
-      }}
-    >{children}</button>
-  );
-};
-
-const fieldLabel = {
-  fontSize: 11, fontWeight: 600, color: T.slate700,
-  textTransform: "uppercase", letterSpacing: 0.4,
-  marginBottom: 6, display: "block",
-};
-
-const inputBase = {
-  width: "100%", boxSizing: "border-box", padding: "9px 11px", fontSize: 13,
-  color: T.slate900, background: T.white,
-  border: `1px solid ${T.slate300}`, borderRadius: 8,
-  outline: "none",
 };
 
 // ─── data hooks ─────────────────────────────────────
@@ -949,163 +832,6 @@ function ModuleHeader({ tab, tabHref, onSelectTab, action = null }) {
   );
 }
 
-function appliesToText(t) {
-  const bits = [];
-  if (t.applies_to_roles?.length) bits.push(t.applies_to_roles.join(", "));
-  if (t.applies_to_role_categories?.length) bits.push(t.applies_to_role_categories.join(", "));
-  if (t.applies_to_role_levels?.length) bits.push(t.applies_to_role_levels.join(", "));
-  return bits.length ? bits.join(" · ") : "Everyone";
-}
-
-// Read-only view of onboarding_step_templates — the library each new plan is
-// compiled from. Editing lives in the database for now; this tab is the place
-// the template can actually be read without opening the create-plan popup.
-function TemplateTab({ phaseMeta, ownerName }) {
-  const [state, setState] = useState({ loading: true, error: null, rows: [] });
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!supabase || !AGENCY_ID) {
-      setState({ loading: false, error: "Supabase not configured.", rows: [] });
-      return;
-    }
-    supabase
-      .from("onboarding_step_templates")
-      .select("id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by")
-      .eq("agency_id", AGENCY_ID)
-      .eq("is_active", true)
-      .order("phase", { ascending: true })
-      .order("sort_order", { ascending: true })
-      .then(({ data, error: err }) => {
-        if (cancelled) return;
-        setState({ loading: false, error: err ? err.message : null, rows: data || [] });
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  if (state.loading) {
-    return <div style={{ padding: 30, textAlign: "center", color: T.slate500, fontSize: 13 }}>Loading template…</div>;
-  }
-  if (state.error) {
-    return <Card style={{ background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{state.error}</div></Card>;
-  }
-  if (!state.rows.length) {
-    return (
-      <Card>
-        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800, marginBottom: 6 }}>No template steps yet</div>
-        <div style={{ fontSize: 12, color: T.slate500 }}>Nothing is set up in the step library, so a new plan would come out empty.</div>
-      </Card>
-    );
-  }
-
-  const phases = [...new Set(state.rows.map(r => r.phase))].sort((a, b) => a - b);
-  const titleByKey = new Map(state.rows.map(r => [r.template_key, r.title]));
-
-  return (
-    <div>
-      <Card style={{ marginBottom: 14, background: T.blueLt, border: `1px solid ${T.blue}` }}>
-        <div style={{ fontSize: 12, color: T.slate800, lineHeight: 1.55 }}>
-          {state.rows.length} steps. Creating a plan copies the ones that match that person's role into their own
-          checklist. Changing this list does not change plans that are already running.
-        </div>
-      </Card>
-      {phases.map(ph => {
-        const rows = state.rows.filter(r => r.phase === ph);
-        const label = phaseMeta(ph);
-        return (
-          <Card key={ph} style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{label.name}</div>
-                {label.stage && STAGE_LABELS[label.stage] && (
-                  <Pill fg={STAGE_LABELS[label.stage].fg} bg={STAGE_LABELS[label.stage].bg}>
-                    {STAGE_LABELS[label.stage].label}
-                  </Pill>
-                )}
-                {label.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{label.blurb}</div>}
-              </div>
-              <div style={{ fontSize: 11, color: T.slate500 }}>{rows.length} steps</div>
-            </div>
-
-            {(() => {
-            const renderRow = (r) => {
-                const cat = CATEGORY_COLORS[r.category] || { fg: T.slate700, bg: T.slate100, label: r.category || "Step" };
-                const groups = subGroups(r.substeps);
-                const after = (r.blocked_by || []).map(k => titleByKey.get(k) || k);
-                return (
-                  <div key={r.id} style={{
-                    border: `1px solid ${T.slate200}`, borderRadius: 8,
-                    padding: "10px 12px", boxSizing: "border-box",
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, lineHeight: 1.4 }}>
-                        {r.title}
-                        {!r.is_required && (
-                          <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
-                        )}
-                      </div>
-                      <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                        {r.owner_kind !== "new_hire" && (
-                          <Pill fg={T.purple} bg={T.purpleLt}>{ownerName(r)}</Pill>
-                        )}
-                        <Pill fg={cat.fg} bg={cat.bg}>{cat.label}</Pill>
-                      </div>
-                    </div>
-                    {r.description && (
-                      <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, lineHeight: 1.45 }}>{r.description}</div>
-                    )}
-                    {groups.map((g, gi) => (
-                      <div key={gi} style={{ marginTop: 8 }}>
-                        {g.group && (
-                          <div style={{
-                            fontSize: 10, fontWeight: 700, color: T.slate500,
-                            textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3,
-                          }}>{g.group}</div>
-                        )}
-                        <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
-                          {g.items.map((label2, ix) => (
-                            <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{label2}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                    {after.length > 0 && (
-                      <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
-                        After: {after.join(", ")}
-                      </div>
-                    )}
-                    <div style={{ fontSize: 10, color: T.slate400, marginTop: 6 }}>
-                      {appliesToText(r)}
-                    </div>
-                  </div>
-                );
-            };
-
-            const cols = trackColumns(rows);
-            const gridStyle = {
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: cols ? 16 : 10, alignItems: "start",
-            };
-            if (!cols) return <div style={gridStyle}>{rows.map(renderRow)}</div>;
-            return (
-              <div style={gridStyle}>
-                {cols.map(c => (
-                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start" }}>
-                    {c.name && <div style={trackHeadStyle}>{c.name}</div>}
-                    {c.steps.map(renderRow)}
-                  </div>
-                ))}
-              </div>
-            );
-            })()}
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
@@ -1297,7 +1023,13 @@ export default function Onboarding({ userRole, userId }) {
     return (
       <div style={{ padding: 20 }}>
         <ModuleHeader tab={tab} tabHref={tabHref} onSelectTab={setTab} />
-        <TemplateTab phaseMeta={phaseMeta} ownerName={ownerName} />
+        <OnboardingTemplateEditor
+          phaseMeta={phaseMeta}
+          ownerName={ownerName}
+          team={team}
+          phases={phases}
+          canEdit={isAdmin}
+        />
       </div>
     );
   }
