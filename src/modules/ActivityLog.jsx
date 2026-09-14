@@ -2151,7 +2151,7 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "checklist" && <ChecklistTab />}
       {tab === "issued" && <IssuedTab types={types} refreshKey={refreshKey} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} types={types} refreshKey={refreshKey} />}
-      {tab === "hours" && <TimeHub embedded />}
+      {tab === "hours" && <TimeHub embedded userRole={userRole} />}
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}

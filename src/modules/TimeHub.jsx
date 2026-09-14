@@ -19,20 +19,23 @@ const TABS = [
   { id: "timeoff",   label: "Time Off" }
 ];
 
-export default function TimeHub({ embedded = false }) {
+export default function TimeHub({ embedded = false, userRole = null }) {
   // Param is "hours", not "tab": this now renders inside the Dashboard, whose
   // own tab bar owns ?tab=. Two tab groups may never share a param name.
   const [activeTab, setActiveTab, tabHref] = useTabParam("hours", "timeclock", ["timeclock","timeoff"]);
   // The time clock is for hourly people. Salaried teammates never see it
   // (Peter 2026-09-12) — they still get Time Off. my_pay_type returns only
   // the viewer's own pay type, so nothing else about pay is exposed here.
+  // Owner and manager are the exception (Peter 2026-09-13): they run the clock
+  // for everyone else, so they always see it no matter how they are paid.
   const [payType, setPayType] = useState(null);
   useEffect(() => {
     let alive = true;
     supabase.rpc("my_pay_type").then(r => { if (alive) setPayType(r?.data || ""); });
     return () => { alive = false; };
   }, []);
-  const salaried = String(payType || "").toUpperCase() === "SALARY";
+  const isAdmin = ["owner", "manager"].includes(String(userRole || "").toLowerCase());
+  const salaried = !isAdmin && String(payType || "").toUpperCase() === "SALARY";
   const visibleTabs = salaried ? TABS.filter(t => t.id !== "timeclock") : TABS;
   const shownTab = salaried && activeTab === "timeclock" ? "timeoff" : activeTab;
 

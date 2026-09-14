@@ -98,7 +98,6 @@ const ADMIN_ROLES = ["owner", "manager"];
 const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
 const NAV_ITEMS = [
   { id: "dashboard",   label: "Dashboard",   icon: "grid",          roles: TEAM_VISIBLE_ROLES },
-  { type: "divider",   id: "_div_team_top" },
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
