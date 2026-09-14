@@ -9748,7 +9748,7 @@ export async function processWrapupNoSendMode(
     const body =
 `Hey ${tm.first_name},
 
-Haven't seen your wrap-up email land yet. Send it before Saturday so it lands in this week's CPR.
+Haven't seen your wrap-up yet. Fill it in on the Dashboard, Checklist tab, before Saturday so it lands in this week's CPR.
 
 The six items:
 
@@ -9811,7 +9811,7 @@ Reply here or fire a fresh email — whichever's easier.
   const telegramText =
 `📝 Wrap-up not in yet from: ${missingNames}
 
-Send it before Saturday so it lands in this week's CPR — reply to any wrap-up thread or fire a fresh email.`;
+Fill it in on the Dashboard, Checklist tab, before Saturday so it lands in this week's CPR.`;
 
   let telegramResult: Record<string, unknown>;
   if (dryRun) {
@@ -9890,18 +9890,21 @@ interface OneRefResult {
 // baked into each pattern.
 const PREFIX_RE = /^(?:\s*(?:fwd?|re):\s*)+/i;
 
-// Shape A — Marie: "Reference 2 - Maximus Moody". Number optional, hyphen or
+// Shape A — Marie: "Reference 2 - Maximus Moody". Peter forwards his own
+// as "Reference Check - Bryson Hayman", so ONE qualifying word is allowed
+// between the word reference and the separator. Number optional, hyphen or
 // dash variants, anchored so an ordinary sentence containing the word
 // "reference" cannot match.
-const SUBJECT_LEADING_RE = /^reference\s*(\d+)?\s*[-–—:]\s*(.+?)\s*$/i;
+const SUBJECT_LEADING_RE = /^references?\s*(check|checks|for)?\s*(\d+)?\s*[-–—:]\s*(.+?)\s*$/i;
 
 // Shape B — Stephanie: "Rodney References", "Bryson Reference 2". The name
 // comes first and is usually the first name alone.
 const SUBJECT_TRAILING_RE = /^(.+?)\s*[-–—:]?\s*references?\s*(\d+)?\s*$/i;
 
-// Shape B only. One to four capitalised words — that is what stops "please
-// send references" being read as a candidate called "please send". Shape A
-// needs no such guard: its own anchor already does the work.
+// One to four capitalised words — what stops "please send references" being
+// read as a candidate called "please send". Shape B always uses it. Shape A
+// uses it only when the qualifying word is present, because that form is
+// looser than the bare "Reference - Name" anchor.
 const LOOKS_LIKE_A_NAME_RE = /^[A-Z][\p{L}'’.\-]*(?:\s+[A-Z][\p{L}'’.\-]*){0,3}$/u;
 
 function parseReferenceSubject(
@@ -9910,10 +9913,10 @@ function parseReferenceSubject(
   const bare = subject.replace(PREFIX_RE, "").trim();
 
   const a = SUBJECT_LEADING_RE.exec(bare);
-  if (a) {
+  if (a && (!a[1] || LOOKS_LIKE_A_NAME_RE.test(a[3].trim()))) {
     return {
-      candidateName: a[2].trim(),
-      referenceNumber: a[1] ? parseInt(a[1], 10) : null,
+      candidateName: a[3].trim(),
+      referenceNumber: a[2] ? parseInt(a[2], 10) : null,
     };
   }
 
