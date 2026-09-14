@@ -28,6 +28,7 @@ import { useViewport } from "../lib/hooks.js";
 // ─── Design Tokens ────────────────────────────────────────────
 import { T } from "../lib/theme.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
+import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 
 // ─── Per-manual configuration ─────────────────────────────────
@@ -2422,10 +2423,9 @@ function FragmentEditModal({ stack, setStack, allRows, excerptRows, setExcerptRo
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10 }}>
             Renaming isn't offered here — every marker pointing at this fragment finds it by title. Use the full page editor to rename it safely.
           </div>
-          <textarea
+          <MarkdownTextarea
             value={content}
             onChange={(e) => { setContent(e.target.value); setSaved(false); }}
-            spellCheck={true}
             style={{
               width: "100%", minHeight: 320, padding: "10px 12px", borderRadius: 8,
               border: `1px solid ${T.slate300}`, fontSize: 13, lineHeight: 1.55,
@@ -2597,7 +2597,7 @@ function ManualEditForm({ form, setForm, vp, allRows, currentPageId, mode }) {
       </div>
       <div>
         <label style={labelStyle}>Content (Markdown; HTML like &lt;details&gt; / &lt;blockquote&gt; passes through)</label>
-        <textarea value={form.content} onChange={set("content")} style={taStyle} spellCheck={true} />
+        <MarkdownTextarea value={form.content} onChange={set("content")} style={taStyle} />
       </div>
     </div>
   );
