@@ -1564,6 +1564,53 @@ function KickoffTelegram({ host }) {
   return createPortal(<div style={CHECKLIST_CARD}>{body}</div>, host);
 }
 
+// ─── Today's commits, whole team ──────────────────────────────
+// The bottom of the Daily Kickoff page (Peter 2026-09-14): everyone's commit for
+// today, so the room sees what each person said out loud. Reads the same rows the
+// midday and end-of-day Telegram messages read, through kickoff_commits_today().
+function TeamCommits({ host }) {
+  const [state, setState] = useState(undefined); // undefined = loading, null = none
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error: e } = await supabase.rpc("kickoff_commits_today");
+      if (!alive) return;
+      if (e) { setError(e.message); setState(null); return; }
+      setState(data && typeof data === "object" ? data : null);
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (!host) return null;
+  const people = Array.isArray(state?.people) ? state.people : [];
+  let body;
+  if (error) {
+    body = <div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{error}</div>;
+  } else if (state === undefined) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>Loading today's commits…</div>;
+  } else if (!people.length) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>No commits saved yet today.</div>;
+  } else {
+    body = (
+      <div style={{ display: "grid", gap: 6, fontSize: 13, lineHeight: 1.5 }}>
+        {people.map((p, i) => {
+          const text = String(p?.commit_text || "").trim();
+          const mine = state?.me && p?.team_member_id === state.me;
+          return (
+            <div key={p?.team_member_id || i}>
+              <strong>{p?.name}{mine ? " (you)" : ""}:</strong>{" "}
+              {text
+                ? <>{text}{p.hit === true ? " ✅" : p.hit === false ? " ❌" : ""}</>
+                : <span style={{ color: T.slate500 }}>no commit yet</span>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  return createPortal(<div style={CHECKLIST_CARD}>{body}</div>, host);
+}
+
 function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
@@ -1947,11 +1994,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // Re-found whenever the body HTML is replaced, since that swaps the nodes.
   const [commitHosts, setCommitHosts] = useState({ pick: null, bridge: null });
   // Page hosts: {{daily-checklist}} and {{kickoff-telegram}} (see markdown.js).
-  const [pageHosts, setPageHosts] = useState({ checklist: null, telegram: null });
+  const [pageHosts, setPageHosts] = useState({ checklist: null, telegram: null, teamCommits: null });
   useEffect(() => {
     const root = bodyRef.current;
     const next = { pick: null, bridge: null };
-    const nextPage = { checklist: null, telegram: null };
+    const nextPage = { checklist: null, telegram: null, teamCommits: null };
     if (root) {
       root.querySelectorAll(".nw-commit-host").forEach((el) => {
         const kind = el.getAttribute("data-nw-commit");
@@ -1961,10 +2008,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
         const kind = el.getAttribute("data-nw-host");
         if (kind === "daily-checklist") nextPage.checklist = el;
         if (kind === "kickoff-telegram") nextPage.telegram = el;
+        if (kind === "team-commits") nextPage.teamCommits = el;
       });
     }
     setCommitHosts((prev) => (prev.pick === next.pick && prev.bridge === next.bridge ? prev : next));
-    setPageHosts((prev) => (prev.checklist === nextPage.checklist && prev.telegram === nextPage.telegram ? prev : nextPage));
+    setPageHosts((prev) => (prev.checklist === nextPage.checklist && prev.telegram === nextPage.telegram && prev.teamCommits === nextPage.teamCommits ? prev : nextPage));
   }, [html, mode]);
   // Role play pickers: a random card on load, a random card for whatever
   // springboard is picked, and the refresh button steps to the next one.
@@ -2529,6 +2577,7 @@ What I\'d like to discuss:
       ) : null}
       {pageHosts.checklist ? <DailyChecklistCard host={pageHosts.checklist} /> : null}
       {pageHosts.telegram ? <KickoffTelegram host={pageHosts.telegram} /> : null}
+      {pageHosts.teamCommits ? <TeamCommits host={pageHosts.teamCommits} /> : null}
 
       {isAdmin && fragmentStack.length > 0 && (
         <FragmentEditModal

@@ -2121,6 +2121,7 @@ export default function ActivityLog({ userRole, userId }) {
   const [myTeamId, setMyTeamId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [head, setHead] = useState(null);   // this week's scoreboard, shown beside the title on every tab (your own row; team when you have none)
+  const [commitInfo, setCommitInfo] = useState(null);  // today's commit, shown with the week's points (Peter 2026-09-14)
   const isAdmin = ["owner", "manager"].includes(userRole);
   // Logging on someone else's behalf is the owner's alone. The server enforces
   // it too (rp_resolve_actor), so hiding the picker is not the only thing
@@ -2160,6 +2161,13 @@ export default function ActivityLog({ userRole, userId }) {
     return () => { alive = false; };
   }, [refreshKey, myTeamId]);
 
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("kickoff_commits_mine")
+      .then(r => { if (alive) setCommitInfo(r?.data && typeof r.data === "object" ? r.data : null); });
+    return () => { alive = false; };
+  }, [refreshKey, myTeamId]);
+
   const bump = () => setRefreshKey(k => k + 1);
   // Ordered by how often a tab gets touched (Peter 2026-09-11). Thin dividers
   // separate daily work from weekly work from the occasional stuff.
@@ -2184,6 +2192,7 @@ export default function ActivityLog({ userRole, userId }) {
           <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Dashboard</div>
           <div style={{ fontSize: 13, color: T.slate500 }}>Everything you touch in a day, in one place.</div>
         </div>
+        <div style={{ display: "grid", gap: 6, justifyItems: "start" }}>
         {head && (() => {
           const me = (Array.isArray(head.people) ? head.people : []).find(p => p.team_member_id === myTeamId);
           const t = head.team || {};
@@ -2204,6 +2213,14 @@ export default function ActivityLog({ userRole, userId }) {
           </div>
           );
         })()}
+        {commitInfo?.member_id ? (
+          <div style={{ fontSize: 12, color: T.slate600, maxWidth: 520 }} title="Your commit for today">
+            {commitInfo.today
+              ? <>🎯 {commitInfo.today.commit_text}{commitInfo.today.hit === true ? " ✅" : commitInfo.today.hit === false ? " ❌" : ""}</>
+              : <span style={{ color: T.slate500 }}>🎯 No commit saved today</span>}
+          </div>
+        ) : null}
+        </div>
       </div>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
         {tabs.map(t => (

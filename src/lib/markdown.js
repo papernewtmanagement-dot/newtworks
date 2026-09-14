@@ -1261,10 +1261,14 @@ function expandCommits(md, slots) {
 //                         through daily_checklist_tick(). Same rows the CPR audits.
 //   {{kickoff-telegram}} — today's morning Telegram message, exactly as sent, on
 //                         the Daily Kickoff page (kickoff_morning_message()).
-const PAGE_HOST_RE = /\{\{(daily-checklist|kickoff-telegram)\}\}/gi;
+//   {{team-commits}} — everyone's commit for today at the bottom of the Daily
+//                      Kickoff page (kickoff_commits_today()).
+const PAGE_HOST_RE = /\{\{(daily-checklist|kickoff-telegram|team-commits)\}\}/gi;
 
 function expandPageHosts(md, slots) {
-  if (md.indexOf("{{daily-checklist}}") === -1 && md.indexOf("{{kickoff-telegram}}") === -1) return md;
+  PAGE_HOST_RE.lastIndex = 0;
+  if (!PAGE_HOST_RE.test(md)) return md;
+  PAGE_HOST_RE.lastIndex = 0;
   return md.replace(PAGE_HOST_RE, (_m, kind) => {
     slots.push(`<div class="nw-page-host" data-nw-host="${kind.toLowerCase()}"></div>`);
     return RP_SLOT(slots.length - 1);
