@@ -223,16 +223,6 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
     }
   };
 
-  const setActive = async (active) => {
-    setBusy(true); setErr("");
-    const { error } = await supabase.from("onboarding_step_templates")
-      .update({ is_active: active, updated_at: new Date().toISOString() })
-      .eq("id", row.id);
-    if (error) { setErr(error.message); setBusy(false); return; }
-    await onSaved();
-    onClose();
-  };
-
   const remove = async () => {
     if (!confirm(`Delete "${row.title}" from the template? This cannot be undone. Plans already running keep their copy.`)) return;
     setBusy(true); setErr("");
@@ -481,12 +471,6 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
           borderTop: `1px solid ${T.slate200}`, paddingTop: 14,
         }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {!isNew && row.is_active && (
-              <Button variant="secondary" disabled={busy} onClick={() => setActive(false)}>Hide</Button>
-            )}
-            {!isNew && !row.is_active && (
-              <Button variant="secondary" disabled={busy} onClick={() => setActive(true)}>Restore</Button>
-            )}
             {!isNew && (
               <Button variant="danger" disabled={busy} onClick={remove}>Delete</Button>
             )}
@@ -507,7 +491,6 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
   const [state, setState] = useState({ loading: true, error: null, rows: [] });
   const [editingId, setEditingId, stepHref] = useTabParam("step", null);
   const [addPhase, setAddPhase] = useState(null);
-  const [showHidden, setShowHidden] = useState(false);
   const [moveErr, setMoveErr] = useState("");
 
   const load = useCallback(async () => {
@@ -528,8 +511,10 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
   const rows = state.rows;
   const activeRows = useMemo(() => rows.filter(r => r.is_active), [rows]);
-  const hiddenCount = rows.length - activeRows.length;
-  const visibleRows = showHidden ? rows : activeRows;
+  const retiredCount = rows.length - activeRows.length;
+  // Every row is on the page. Nothing sits behind a toggle — a step that is
+  // not wanted gets deleted, not tucked away where it can come back.
+  const visibleRows = rows;
 
   const people = useMemo(
     () => (team || [])
@@ -663,7 +648,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
             )}
             {!r.is_active && (
-              <span style={{ marginLeft: 8, fontSize: 10, color: T.slate500, fontWeight: 600 }}>hidden</span>
+              <span style={{ marginLeft: 8, fontSize: 10, color: T.red, fontWeight: 700 }}>retired — delete me</span>
             )}
           </div>
           <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
@@ -730,10 +715,11 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             {activeRows.length} steps. Creating a plan copies the ones that match that person's role into their own
             checklist. Changing this list does not change plans that are already running.
           </div>
-          {canEdit && hiddenCount > 0 && (
-            <Button variant="secondary" onClick={() => setShowHidden(s => !s)}>
-              {showHidden ? "Hide hidden" : `Show hidden (${hiddenCount})`}
-            </Button>
+          {canEdit && retiredCount > 0 && (
+            <div style={{ fontSize: 12, color: T.red, fontWeight: 600, flex: "0 1 auto" }}>
+              {retiredCount} retired {retiredCount === 1 ? "step is" : "steps are"} still
+              sitting in the table. They go into no plan. Open one and delete it.
+            </div>
           )}
         </div>
       </Card>
