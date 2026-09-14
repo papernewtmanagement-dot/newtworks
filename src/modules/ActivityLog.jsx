@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
@@ -113,6 +113,14 @@ const inputBase = {
   width: "100%", padding: "10px 12px", borderRadius: 8,
   border: `1px solid ${T.slate300}`, background: T.white, color: T.slate900,
   fontSize: 15, outline: "none", boxSizing: "border-box",
+};
+// Money reads right-aligned so the digits line up column to column.
+const moneyInput = { ...inputBase, textAlign: "right" };
+// A short numeric box looks like a PIN to LastPass, 1Password and Dashlane, so
+// they offer to fill it. These three attributes are each vendor's own opt-out.
+const noPwManager = {
+  type: "tel", inputMode: "numeric", autoComplete: "off",
+  "data-lpignore": "true", "data-1p-ignore": true, "data-form-type": "other",
 };
 const labelStyle = { fontSize: 12, fontWeight: 600, color: T.slate600, marginBottom: 6, display: "block" };
 const hintStyle = { color: T.slate400, fontWeight: 400 };
@@ -249,6 +257,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
   const [suggest, setSuggest] = useState([]);      // customer names on file that match what's typed
+  const [suggestOpen, setSuggestOpen] = useState(false); // the list closes on a pick, on Escape, or on a click away
+  const nameBoxRef = useRef(null);
   const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
   const [relationship, setRelationship] = useState("");
   const [source, setSource] = useState("");
@@ -286,7 +296,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     }, 250);
     return () => { alive = false; clearTimeout(t); };
   }, [first]);
-  const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); setSuggest([]); };
+  // A click or tap anywhere off the name box closes the list. Without this it
+  // sat over the fields below until a name was picked.
+  useEffect(() => {
+    if (!suggestOpen) return undefined;
+    const away = (e) => { if (nameBoxRef.current && !nameBoxRef.current.contains(e.target)) setSuggestOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("touchstart", away);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
+  }, [suggestOpen]);
+  const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); setSuggest([]); setSuggestOpen(false); };
   const phoneOk = /^\d{4}$/.test(phone);
 
   // same household quoted already this week? Logs anyway; the same household counts once for HH quotes.
@@ -379,7 +398,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const oldOnFile = (p) => onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
   const flagged = sold.filter(p => oldOnFile(p));
   const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
-  const showSuggest = suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
+  const showSuggest = suggestOpen && suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
@@ -523,9 +542,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </select>
             </div>
           )}
-          <div style={{ ...field(150), position: "relative" }}>
+          <div ref={nameBoxRef} style={{ ...field(150), position: "relative" }}>
             <label style={labelStyle}>First name</label>
-            <input style={inputBase} value={first} onChange={e => setFirst(e.target.value)} placeholder="Anna" autoComplete="off" />
+            <input style={inputBase} value={first} placeholder="Anna" autoComplete="off"
+              onChange={e => { setFirst(e.target.value); setSuggestOpen(true); }}
+              onFocus={() => setSuggestOpen(true)}
+              onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
             {showSuggest && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
                 {suggest.map(c => (
@@ -537,13 +559,13 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             )}
           </div>
-          <div style={{ flex: "0 0 58px" }}>
+          <div style={{ flex: "0 0 78px" }}>
             <label style={labelStyle}>Initial</label>
-            <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" />
+            <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" autoComplete="off" />
           </div>
-          <div style={{ flex: "0 0 92px" }}>
+          <div style={{ flex: "0 0 126px" }}>
             <label style={labelStyle}>Phone last 4</label>
-            <input style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} inputMode="numeric" onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
+            <input {...noPwManager} style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
           </div>
           <div style={{ flex: "0 1 150px", minWidth: 0 }}>
             <label style={labelStyle}>Relationship</label>
@@ -600,7 +622,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               )}
               <div style={field(130)}>
                 <label style={labelStyle}>Premium</label>
-                <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={a.premium} onChange={e => editActivity(a.id, { premium: e.target.value })} placeholder="0.00" />
+                <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={a.premium} onChange={e => editActivity(a.id, { premium: e.target.value })} placeholder="0.00" />
               </div>
             </div>
           ))}
@@ -660,7 +682,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                   <label style={labelStyle}>Premium{active.status === "canceled" ? (() => { const m = soldMatch(active); return m
                     ? <span style={{ color: T.blue, fontWeight: 400 }}> · on file ${fmtPts(m.premium)}, sold {fmtDate(m.submitted_date)}</span>
                     : <span style={hintStyle}> · no sale on file</span>; })() : null}</label>
-                  <input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={active.premium} onChange={e => editPolicy(active.id, { premium: e.target.value })} placeholder="0.00" />
+                  <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={active.premium} onChange={e => editPolicy(active.id, { premium: e.target.value })} placeholder="0.00" />
                 </div>
               )}
               {needsMoney(active) && active.line === "auto" && (
@@ -1017,7 +1039,7 @@ function IssuedTab({ types, refreshKey }) {
                     <input type="number" inputMode="decimal" min="0" step="0.01"
                       value={prems[r.sale_product_id] === undefined ? String(r.premium ?? "") : prems[r.sale_product_id]}
                       onChange={e => setPrems(d => ({ ...d, [r.sale_product_id]: e.target.value }))}
-                      style={{ fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, width: 110 }}
+                      style={{ fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, width: 110, textAlign: "right", boxSizing: "border-box" }}
                     />
                   </td>
                   <td style={tableTd}>
@@ -1076,6 +1098,8 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
   const today = todayCentral();
   const [q, setQ] = useState("");
   const [suggest, setSuggest] = useState([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const nameBoxRef = useRef(null);
   const [picked, setPicked] = useState(null);      // {customer_first_name, customer_last_initial, customer_label}
   const [onFile, setOnFile] = useState([]);
   const [drafts, setDrafts] = useState({});        // sale_product_id -> {open, date, premium, vehicles, reason}
@@ -1096,6 +1120,13 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
     }, 250);
     return () => { alive = false; clearTimeout(t); };
   }, [q]);
+  useEffect(() => {
+    if (!suggestOpen) return undefined;
+    const away = (e) => { if (nameBoxRef.current && !nameBoxRef.current.contains(e.target)) setSuggestOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("touchstart", away);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
+  }, [suggestOpen]);
   const [cxlPhone, setCxlPhone] = useState("");      // phone last four on the cancelation record
 
   useEffect(() => {
@@ -1157,12 +1188,15 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Who canceled?</div>
         <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12 }}>Start typing the first name. Pick the customer, then the policy.</div>
         <div style={{ ...wrapRow, alignItems: "flex-end" }}>
-          <div style={{ ...field(220), position: "relative" }}>
-            <input style={inputBase} value={q} onChange={e => { setQ(e.target.value); setPicked(null); }} placeholder="Anna" autoComplete="off" />
-            {suggest.length > 0 && !picked && (
+          <div ref={nameBoxRef} style={{ ...field(220), position: "relative" }}>
+            <input style={inputBase} value={q} placeholder="Anna" autoComplete="off"
+              onChange={e => { setQ(e.target.value); setPicked(null); setSuggestOpen(true); }}
+              onFocus={() => setSuggestOpen(true)}
+              onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
+            {suggestOpen && suggest.length > 0 && !picked && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
                 {suggest.map(c => (
-                  <button key={`${c.customer_label}|${c.phone_last4 || ""}`} type="button" onClick={() => { setPicked(c); setQ(c.customer_label); setCxlPhone(c.phone_last4 || ""); setSuggest([]); setOk(""); setErr(""); }}
+                  <button key={`${c.customer_label}|${c.phone_last4 || ""}`} type="button" onClick={() => { setPicked(c); setQ(c.customer_label); setCxlPhone(c.phone_last4 || ""); setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); }}
                     style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
                     {c.customer_label}{c.phone_last4 ? <span style={{ color: T.slate500 }}> ·{c.phone_last4}</span> : null} <span style={{ color: T.slate400, fontSize: 12 }}>{Number(c.policies_on_file) > 0 ? `${c.policies_on_file} on file` : "no policies on file"}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ""}</span>
                   </button>
@@ -1176,9 +1210,9 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
           <div style={{ marginTop: 14 }}>
             <div style={{ ...wrapRow, alignItems: "flex-end", marginBottom: 6 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, paddingBottom: 10 }}>{picked.customer_label}{picked.phone_last4 ? ` ·${picked.phone_last4}` : ""} · on file</div>
-              <div style={{ flex: "0 0 92px" }}>
+              <div style={{ flex: "0 0 126px" }}>
                 <label style={labelStyle}>Phone last 4</label>
-                <input style={{ ...inputBase, textAlign: "center" }} value={cxlPhone} maxLength={4} inputMode="numeric" onChange={e => setCxlPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
+                <input {...noPwManager} style={{ ...inputBase, textAlign: "center" }} value={cxlPhone} maxLength={4} onChange={e => setCxlPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
               </div>
             </div>
             {onFile.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>No sold policies on file. Use "Log the customer" to record the cancelation with the policy details.</div>}
@@ -1196,7 +1230,7 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
                   {d.open && !r.already_canceled && (
                     <div style={{ ...wrapRow, marginTop: 8, padding: 10, background: T.slate50, borderRadius: 8 }}>
                       <div style={field(140)}><label style={labelStyle}>Canceled on</label><input type="date" style={inputBase} value={d.date || today} max={today} min={addDays(today, -90)} onChange={e => edit(r, { date: e.target.value })} /></div>
-                      <div style={field(120)}><label style={labelStyle}>Premium</label><input type="number" inputMode="decimal" min="0" step="0.01" style={inputBase} value={d.premium === undefined ? String(r.premium ?? "") : d.premium} onChange={e => edit(r, { premium: e.target.value })} /></div>
+                      <div style={field(120)}><label style={labelStyle}>Premium</label><input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={d.premium === undefined ? String(r.premium ?? "") : d.premium} onChange={e => edit(r, { premium: e.target.value })} /></div>
                       {r.line_of_business === "auto" && <div style={field(70)}><label style={labelStyle}>Cars</label><input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={d.vehicles === undefined ? String(r.vehicle_count || 1) : d.vehicles} onChange={e => edit(r, { vehicles: e.target.value })} /></div>}
                       <div style={field(200)}><label style={labelStyle}>Why <span style={hintStyle}>(optional)</span></label><input style={inputBase} value={d.reason || ""} onChange={e => edit(r, { reason: e.target.value })} placeholder="what they told us" /></div>
                       <button type="button" style={btnPrimary(busy)} disabled={busy} onClick={() => cancelPolicy(r)}>{busy ? "Saving…" : "Log the cancelation"}</button>
@@ -1488,7 +1522,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
     try {
       const [b, s] = await Promise.all([
         supabase.rpc("rp_week_scoreboard", { p_week_end: safeWeek }),
-        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, on_file_answer, sales_log_products(line_of_business, product_type, premium, policy_count, is_new_line, issued_date)")
+        supabase.from("sales_log").select("id, team_member_id, sourced_by_team_member_id, submitted_date, customer_label, household_status, marketing_source, gnc_used, vehicle_count, total_premium, status, created_at, on_file_answer, sales_log_products(id, line_of_business, product_type, premium, policy_count, is_new_line, issued_date, autopay_enrolled)")
           .eq("agency_id", AGENCY_ID).eq("status", "active").eq("week_end_date", safeWeek).order("submitted_date", { ascending: false }),
       ]);
       if (b.error) throw b.error;
@@ -1506,6 +1540,15 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
   const toggle = (card) => (id) => setOpen(o => ({ ...o, [card]: o[card] === id ? null : id }));
   const cardN = people.reduce((s, p) => s + Number(p.conversations?.scorecards || 0), 0);
   const teamAvg = cardN ? people.reduce((s, p) => s + Number(p.conversations?.avg || 0) * Number(p.conversations?.scorecards || 0), 0) / cardN : null;
+
+  const [apBusy, setApBusy] = useState(null);   // sale_product_id being saved
+  const setAutopay = async (productId, on) => {
+    setApBusy(productId); setErr("");
+    const { error } = await supabase.rpc("rp_set_sale_autopay", { p_sale_product_id: productId, p_on: on });
+    setApBusy(null);
+    if (error) { setErr(errText(error)); return; }
+    await load();
+  };
 
   const voidRow = async (fn, id, what) => {
     if (!window.confirm(`Remove this ${what}?`)) return;
@@ -1624,7 +1667,19 @@ function WeekView({ isAdmin, myTeamId, roster, values, types, refreshKey }) {
                   <td style={tableTd}>{nameOf(r.team_member_id)}{r.sourced_by_team_member_id && r.sourced_by_team_member_id !== r.team_member_id ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}</td>
                   <td style={tableTd}>{r.customer_label}</td>
                   <td style={tableTd}>{r.household_status === "new" ? "New" : r.household_status === "winback" ? "Winback" : "Existing"}{r.on_file_answer && <div style={{ fontSize: 11, color: T.amber }}>{r.on_file_answer === "replaces" ? "replaced old policy" : r.on_file_answer === "added" ? "added to on-file" : "different household"}</div>}</td>
-                  <td style={tableTd}>{(r.sales_log_products || []).map((p, i) => <div key={i}>{typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business} ${fmtPts(p.premium)}{p.issued_date ? "" : <span style={{ color: T.amber }}> · not issued</span>}</div>)}</td>
+                  <td style={tableTd}>{(r.sales_log_products || []).map((p, i) => (
+                    <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "1px 0" }}>
+                      <span>{typeLabel(types || {}, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business} ${fmtPts(p.premium)}{p.issued_date ? "" : <span style={{ color: T.amber }}> · not issued</span>}</span>
+                      {p.id && (
+                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: p.autopay_enrolled ? T.green : T.slate500, cursor: apBusy === p.id ? "wait" : "pointer" }}
+                          title="Tick this when the customer signs up for automatic payment, even if that happens after the sale. One autopay credit per policy.">
+                          <input type="checkbox" checked={!!p.autopay_enrolled} disabled={apBusy === p.id}
+                            onChange={e => setAutopay(p.id, e.target.checked)} />
+                          Autopay
+                        </label>
+                      )}
+                    </div>
+                  ))}</td>
                   <td style={tableTd}>{r.vehicle_count ?? "—"}</td>
                   <td style={tableTd}>${fmtPts(r.total_premium)}</td>
                   <td style={tableTd}>{r.marketing_source}</td>
