@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { mdToHtml } from "../lib/markdown.js";
+import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 // ============================================================
@@ -1887,6 +1888,7 @@ export default function TimeOffRequests() {
           <div style={{ padding: "12px 20px 16px", borderTop: "1px solid #e2e8f0", background: "#fff", fontSize: 14, lineHeight: 1.55 }}>
             {policy ? (
               <>
+                <ManualBodyStyles />
                 <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: policy.html }} />
                 <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9", fontSize: 12, color: "#94a3b8" }}>
                   From handbook · last updated {new Date(policy.updated_at).toLocaleDateString()}

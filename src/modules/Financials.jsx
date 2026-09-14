@@ -4,6 +4,9 @@ import { fmtMoney, fmtMoneyR } from "../lib/format.jsx";
 import CashRegister from "./CashRegister.jsx";
 import Documents from "./Documents.jsx";
 import MonthlyClose from "./MonthlyClose.jsx";
+import { mdToHtml } from "../lib/markdown.js";
+import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
+import { useViewport } from "../lib/hooks.js";
 
 // ============================================================
 // Newtworks FINANCIALS MODULE v1.1
@@ -3460,6 +3463,118 @@ const EntityNav = ({ entity, setEntity, breadcrumb, directChildren }) => {
 };
 
 // ─── Main Financials Module ───────────────────────────────────
+// ─── Bookkeeping slide-out panel (P&L tab) ───────────────────
+// Renders the Bookkeeping Process page beside the P&L instead of on top of
+// it: opening the panel narrows the statement rather than covering it, and
+// closing it hands the width back. The page itself lives in public.manuals
+// under manual_type='financials', which is deliberately absent from
+// MANUAL_CONFIG in Manual.jsx, so it shows here and nowhere else — one copy,
+// one home. Markdown goes through the shared renderer in src/lib/markdown.js
+// and the shared styles in src/lib/manualBodyStyles.jsx; nothing is
+// re-implemented here.
+const BOOKKEEPING_PAGE_ID = "878346407";
+
+const BookkeepingPanel = ({ onClose, fullWidth, width }) => {
+  const [page, setPage] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        if (!supabase) { if (!cancelled) setLoading(false); return; }
+        const { data, error } = await supabase
+          .from("manuals")
+          .select("title, content, icon, updated_at")
+          .eq("agency_id", AGENCY_ID)
+          .eq("confluence_page_id", BOOKKEEPING_PAGE_ID)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error) setLoadError("Could not load the bookkeeping page.");
+        else setPage(data || null);
+      } catch (e) {
+        console.error("Financials — bookkeeping panel load error", e);
+        if (!cancelled) setLoadError("Could not load the bookkeeping page.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const html = page ? mdToHtml(page.content || "") : "";
+  const updated = page?.updated_at ? new Date(page.updated_at) : null;
+  const updatedStr = updated && !isNaN(updated)
+    ? updated.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
+    : null;
+
+  return (
+    <div
+      className="newtworks-no-print"
+      style={{
+        flex: fullWidth ? "1 1 100%" : `0 0 ${width}px`,
+        width: fullWidth ? "100%" : width,
+        maxWidth: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
+        position: fullWidth ? "static" : "sticky",
+        top: 0,
+        alignSelf: "flex-start",
+        maxHeight: fullWidth ? "none" : "calc(100vh - 120px)",
+        overflowY: fullWidth ? "visible" : "auto",
+        WebkitOverflowScrolling: "touch",
+        background: T.white,
+        border: `1px solid ${T.slate200}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+      }}
+    >
+      <ManualBodyStyles />
+
+      <div style={{
+        display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+        gap: 8, marginBottom: 10, paddingBottom: 10,
+        borderBottom: `1px solid ${T.slate100}`,
+        position: "sticky", top: -14, background: T.white, zIndex: 1,
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>
+            {page?.icon ? `${page.icon} ` : ""}{page?.title || "Bookkeeping"}
+          </div>
+          {updatedStr && (
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 2 }}>Updated {updatedStr}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          title="Close"
+          aria-label="Close bookkeeping panel"
+          style={{
+            flexShrink: 0,
+            background: T.white, color: T.slate600,
+            border: `1px solid ${T.slate200}`, borderRadius: 7,
+            padding: "4px 9px", fontSize: 13, lineHeight: 1,
+            cursor: "pointer", boxSizing: "border-box",
+          }}
+        >✕</button>
+      </div>
+
+      {loading && <div style={{ fontSize: 12, color: T.slate500 }}>Loading…</div>}
+      {!loading && loadError && <div style={{ fontSize: 12, color: T.red }}>{loadError}</div>}
+      {!loading && !loadError && !page && (
+        <div style={{ fontSize: 12, color: T.slate500 }}>No bookkeeping page found.</div>
+      )}
+      {!loading && page && (
+        <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </div>
+  );
+};
+
 export default function Financials() {
   const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
   const [period, setPeriod] = useState("mtd");
@@ -3467,6 +3582,13 @@ export default function Financials() {
   // to. Persists in URL so refresh restores; default = Personal (root of tree).
   // See operational_rule "Financials module scope: hierarchical entity tree".
   const [entity, setEntity] = useTabParam("entity", PERSONAL_ROOT_ENTITY_ID);
+  // Bookkeeping slide-out on the P&L tab. URL-backed so a refresh keeps it
+  // open, per the URL-persistence rule.
+  const [book, setBook, bookHref] = useTabParam("book", "closed", ["closed", "open"]);
+  const bookOpen = book === "open" && section === "pl";
+  const _vp = useViewport();
+  const bookFullWidth = bookOpen && _vp.isPhone;
+  const bookWidth = _vp.isTablet ? 340 : 440;
   const { data: liveData, loading, reload } = useFinancialsData(entity);
   if (liveData) MOCK = liveData;
 
@@ -3509,7 +3631,25 @@ export default function Financials() {
           >
             🖨 Print / Save PDF
           </button>
-          
+          {section === "pl" && (
+            <TabLink
+              href={bookHref(bookOpen ? "closed" : "open")}
+              onSelect={() => setBook(bookOpen ? "closed" : "open")}
+              title="Bookkeeping process, beside the P&L"
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                background: bookOpen ? T.slate800 : T.white,
+                color: bookOpen ? T.white : T.slate700,
+                border: `1px solid ${bookOpen ? T.slate800 : T.slate200}`,
+                borderRadius: 7,
+                padding: "6px 12px", fontSize: 11, fontWeight: 600,
+                cursor: "pointer", whiteSpace: "nowrap",
+                textDecoration: "none", boxSizing: "border-box",
+              }}
+            >
+              📚 Bookkeeping
+            </TabLink>
+          )}
         </div>
       </div>
 
@@ -3540,15 +3680,30 @@ export default function Financials() {
       {/* Section Content */}
       {section === "overview" && <OverviewSection period={period} setPeriod={setPeriod} data={MOCK} />}
       {section === "pl"       && (
-        <PLSection
-          data={MOCK}
-          onDataChanged={reload}
-          entity={entity}
-          setEntity={setEntity}
-          breadcrumb={MOCK?.entityContext?.breadcrumb || []}
-          directChildren={MOCK?.entityContext?.directChildren || []}
-          allEntities={MOCK?.entityContext?.allEntities || []}
-        />
+        <div style={{ display: "flex", alignItems: "flex-start", gap: bookOpen ? 16 : 0, flexWrap: bookFullWidth ? "wrap" : "nowrap" }}>
+          {/* On a phone there is no room for two columns, so the panel takes
+              the whole width and the statement steps aside until it closes. */}
+          {!bookFullWidth && (
+            <div style={{ flex: "1 1 0", minWidth: 0 }}>
+              <PLSection
+                data={MOCK}
+                onDataChanged={reload}
+                entity={entity}
+                setEntity={setEntity}
+                breadcrumb={MOCK?.entityContext?.breadcrumb || []}
+                directChildren={MOCK?.entityContext?.directChildren || []}
+                allEntities={MOCK?.entityContext?.allEntities || []}
+              />
+            </div>
+          )}
+          {bookOpen && (
+            <BookkeepingPanel
+              onClose={() => setBook("closed")}
+              fullWidth={bookFullWidth}
+              width={bookWidth}
+            />
+          )}
+        </div>
       )}
       {section === "comp"     && <CompRecapSection data={MOCK} />}
       {section === "payroll"  && <PayrollSection data={MOCK} />}

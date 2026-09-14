@@ -51,6 +51,10 @@ const MANUAL_TYPES = [
   { id: "financial_literacy", label: "Financial Literacy", tint: T.red },
   { id: "investments",        label: "Investments",        tint: T.slate600 },
   { id: "excerpt",            label: "Excerpt",            tint: T.slate500 },
+  // 'financials' pages do not appear in any manual. They render inside the
+  // Financials module (the Bookkeeping panel on the P&L tab). Listed here so
+  // the type dropdown can show and set them like any other page.
+  { id: "financials",         label: "Financials",         tint: T.teal },
 ];
 const typeById = Object.fromEntries(MANUAL_TYPES.map(t => [t.id, t]));
 
