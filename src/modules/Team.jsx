@@ -42,6 +42,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 import { T, BAND } from "../lib/theme.js";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import TeamPayroll from "./TeamPayroll.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
 // Shared with the candidate detail stepper — see src/lib/hiringStages.js.
@@ -3059,7 +3060,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
-  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth","payroll"]);
   const [applicants,  setApplicants]  = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(true);
   const [applicantsError,   setApplicantsError]   = useState(false);
@@ -3245,6 +3246,7 @@ export default function Team({ userRole }) {
   const sections = [
     { id:"members",  label:"Members"  },
     { id:"growth",   label:"Growth"   },
+    { id:"payroll",  label:"Payroll"  },
   ];
 
   return (
@@ -3273,6 +3275,7 @@ export default function Team({ userRole }) {
       {section === "members"  && (
         <StaffDirectory staff={roi?.allActiveStaff || []} />
       )}
+      {section === "payroll" && <TeamPayroll />}
       {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} userRole={userRole} />}
     </div>
   );
