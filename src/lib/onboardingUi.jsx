@@ -128,6 +128,17 @@ export function trackColumns(steps) {
 }
 
 // ─── shared UI primitives ───────────────────────────
+// Sub-items carry long unbreakable URLs. Without this they set the
+// min-content width of their grid track, the track grows past the screen,
+// and the whole page slides sideways. overflowWrap is inherited, so putting
+// it on a step card covers the title, the detail line and every sub-item
+// under it. minWidth:0 is what actually lets a grid or flex child shrink.
+export const wrapLongText = {
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 export const trackHeadStyle = {
   fontSize: 11, fontWeight: 700, color: T.slate600,
   textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2,

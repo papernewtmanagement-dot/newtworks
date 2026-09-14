@@ -22,7 +22,7 @@ import { TabLink, useTabParam } from "../lib/routing.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subAll, trackColumns,
+  subGroups, subAll, trackColumns, wrapLongText,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 
@@ -313,7 +313,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                     background: done ? T.slate50 : T.white,
                     opacity: locked ? 0.55 : 1,
                   }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, ...wrapLongText }}>
                       <button
                         onClick={() => { if (!locked) handleToggle(step); }}
                         disabled={isSaving || locked}
@@ -331,7 +331,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                       </button>
 
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, minWidth: 0 }}>
                           <div
                             onClick={() => setExpandedStep(isExpanded ? null : step.id)}
                             style={{
@@ -386,7 +386,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                         style={{
                                           display: "flex", gap: 7, alignItems: "flex-start",
                                           background: "none", border: "none", padding: 0,
-                                          cursor: "pointer", textAlign: "left", width: "100%",
+                                          cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0,
                                         }}
                                       >
                                         <span style={{
@@ -481,7 +481,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
             return (
               <div style={gridStyle}>
                 {cols.map(c => (
-                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start" }}>
+                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start", minWidth: 0 }}>
                     {c.name && <div style={trackHeadStyle}>{c.name}</div>}
                     {c.steps.map(renderStep)}
                   </div>

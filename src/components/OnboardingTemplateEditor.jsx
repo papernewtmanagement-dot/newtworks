@@ -22,7 +22,7 @@ import { useViewport } from "../lib/hooks.js";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
-  subGroups, substepsToText, textToSubsteps, trackColumns,
+  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText,
 } from "../lib/onboardingUi.jsx";
 
 const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active";
@@ -644,14 +644,14 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         onClick={canEdit ? () => setEditingId(r.id) : undefined}
         style={{
           border: `1px solid ${T.slate200}`, borderRadius: 8,
-          padding: "10px 12px", boxSizing: "border-box",
+          padding: "10px 12px", boxSizing: "border-box", ...wrapLongText,
           background: r.is_active ? T.white : T.slate50,
           opacity: r.is_active ? 1 : 0.72,
           cursor: canEdit ? "pointer" : "default",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, lineHeight: 1.4 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, lineHeight: 1.4, minWidth: 0 }}>
             {canEdit ? (
               <TabLink
                 href={stepHref(r.id)}
@@ -778,7 +778,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             {cols ? (
               <div style={gridStyle}>
                 {cols.map(c => (
-                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start" }}>
+                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start", minWidth: 0 }}>
                     {c.name && <div style={trackHeadStyle}>{c.name}</div>}
                     {c.steps.map(r => renderRow(r, c.steps))}
                   </div>

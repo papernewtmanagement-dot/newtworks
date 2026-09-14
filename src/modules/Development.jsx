@@ -27,7 +27,10 @@ export default function Development({ userRole, userId, embedded = false }) {
   );
 
   return (
-    <div>
+    // overflowX contained here so a stray wide child inside any of the three
+    // tabs cannot make the whole page slide sideways on a phone. Nothing in
+    // these tabs uses position:sticky, so containing it is safe.
+    <div style={{ maxWidth: "100%", overflowX: "hidden" }}>
       <div style={{ padding: embedded ? 0 : "20px 20px 0" }}>
         {!embedded && (
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
