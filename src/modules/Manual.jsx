@@ -1613,6 +1613,45 @@ function TeamCommits({ host }) {
   return createPortal(<div style={CHECKLIST_CARD}>{body}</div>, host);
 }
 
+// ─── Account alphabet split ───────────────────────────────────
+// Who owns which last names, read live from team.account_alpha through
+// team_account_alpha() (Peter 2026-09-14). The Checklists page used to have the
+// names typed into it, so it still said John after he left.
+function AlphaSplit({ host }) {
+  const [rows, setRows] = useState(undefined); // undefined = loading, null = none
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error: e } = await supabase.rpc("team_account_alpha");
+      if (!alive) return;
+      if (e) { setError(e.message); setRows(null); return; }
+      setRows(Array.isArray(data) ? data : null);
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (!host) return null;
+  let body;
+  if (error) {
+    body = <div style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>{error}</div>;
+  } else if (rows === undefined) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>Loading the alphabet split…</div>;
+  } else if (!rows.length) {
+    body = <div style={{ color: T.slate500, fontSize: 12 }}>No alphabet ranges set on the team yet.</div>;
+  } else {
+    body = (
+      <div style={{ display: "grid", gap: 6, fontSize: 13, lineHeight: 1.5 }}>
+        {rows.map((r, i) => (
+          <div key={r?.team_member_id || i}>
+            <strong>{r?.name}:</strong> {r?.account_alpha}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return createPortal(<div style={CHECKLIST_CARD}>{body}</div>, host);
+}
+
 function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selectPage }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "20px 16px 48px" : _vp.isTablet ? "26px 24px 60px" : "32px 40px 80px 40px";
@@ -1996,11 +2035,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // Re-found whenever the body HTML is replaced, since that swaps the nodes.
   const [commitHosts, setCommitHosts] = useState({ pick: null, bridge: null });
   // Page hosts: {{daily-checklist}} and {{kickoff-telegram}} (see markdown.js).
-  const [pageHosts, setPageHosts] = useState({ checklist: null, telegram: null, teamCommits: null });
+  const [pageHosts, setPageHosts] = useState({ checklist: null, telegram: null, teamCommits: null, alphaSplit: null });
   useEffect(() => {
     const root = bodyRef.current;
     const next = { pick: null, bridge: null };
-    const nextPage = { checklist: null, telegram: null, teamCommits: null };
+    const nextPage = { checklist: null, telegram: null, teamCommits: null, alphaSplit: null };
     if (root) {
       root.querySelectorAll(".nw-commit-host").forEach((el) => {
         const kind = el.getAttribute("data-nw-commit");
@@ -2011,10 +2050,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
         if (kind === "daily-checklist") nextPage.checklist = el;
         if (kind === "kickoff-telegram") nextPage.telegram = el;
         if (kind === "team-commits") nextPage.teamCommits = el;
+        if (kind === "alpha-split") nextPage.alphaSplit = el;
       });
     }
     setCommitHosts((prev) => (prev.pick === next.pick && prev.bridge === next.bridge ? prev : next));
-    setPageHosts((prev) => (prev.checklist === nextPage.checklist && prev.telegram === nextPage.telegram && prev.teamCommits === nextPage.teamCommits ? prev : nextPage));
+    setPageHosts((prev) => (prev.checklist === nextPage.checklist && prev.telegram === nextPage.telegram && prev.teamCommits === nextPage.teamCommits && prev.alphaSplit === nextPage.alphaSplit ? prev : nextPage));
   }, [html, mode]);
   // Role play pickers: a random card on load, a random card for whatever
   // springboard is picked, and the refresh button steps to the next one.
@@ -2291,6 +2331,7 @@ What I\'d like to discuss:
       {pageHosts.checklist ? <DailyChecklistCard host={pageHosts.checklist} /> : null}
       {pageHosts.telegram ? <KickoffTelegram host={pageHosts.telegram} /> : null}
       {pageHosts.teamCommits ? <TeamCommits host={pageHosts.teamCommits} /> : null}
+      {pageHosts.alphaSplit ? <AlphaSplit host={pageHosts.alphaSplit} /> : null}
 
       {isAdmin && fragmentStack.length > 0 && (
         <FragmentEditModal

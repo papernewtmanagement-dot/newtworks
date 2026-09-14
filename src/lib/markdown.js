@@ -1263,7 +1263,10 @@ function expandCommits(md, slots) {
 //                         the Daily Kickoff page (kickoff_morning_message()).
 //   {{team-commits}} — everyone's commit for today at the bottom of the Daily
 //                      Kickoff page (kickoff_commits_today()).
-const PAGE_HOST_RE = /\{\{(daily-checklist|kickoff-telegram|team-commits)\}\}/gi;
+//   {{alpha-split}} — who owns which last names, read live from team.account_alpha
+//                     through team_account_alpha() so the Checklists page never
+//                     names a person in plain text (Peter 2026-09-14).
+const PAGE_HOST_RE = /\{\{(daily-checklist|kickoff-telegram|team-commits|alpha-split)\}\}/gi;
 
 function expandPageHosts(md, slots) {
   PAGE_HOST_RE.lastIndex = 0;
