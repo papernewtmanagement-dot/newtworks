@@ -1013,7 +1013,7 @@ const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a
 const smallInput = { fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box" };
 const apptState = (r) => r.sold_on ? "Sold" : r.no_show_on ? "No show" : r.kept_on ? "Kept" : "Set";
 
-function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, isAdmin, myTeamId, refreshKey, onChanged }) {
+function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, nameOf, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [kind, setKind] = useState("sales");
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1025,11 +1025,6 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
   const [editing, setEditing] = useState(null);   // { kind, row }
   const [adding, setAdding] = useState(false);
 
-  const nameOf = useMemo(() => {
-    const m = new Map();
-    for (const t of roster || []) m.set(t.id, t.first_name);
-    return (id) => m.get(id) || "—";
-  }, [roster]);
   const actLabel = useMemo(() => {
     const m = new Map();
     for (const v of values || []) m.set(v.activity_key, v.label);
@@ -1566,13 +1561,13 @@ function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
   );
 }
 
-function IssuedTab({ values, sources, types, roster, isAdmin, myTeamId, refreshKey, onChanged }) {
+function IssuedTab({ values, sources, types, roster, nameOf, isAdmin, myTeamId, refreshKey, onChanged }) {
   return (
     <RecordsPanel
       scope="pending"
       title="Pending"
       blurb="What we have not paid on yet. A new Private Passenger auto issues by itself the day it is submitted; everything else waits until someone confirms it issued with no contingencies."
-      values={values} sources={sources} types={types} roster={roster}
+      values={values} sources={sources} types={types} roster={roster} nameOf={nameOf}
       isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged}
     />
   );
@@ -1599,7 +1594,7 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, onLogged, refreshKey }) {
+function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const today = todayCentral();
   const [q, setQ] = useState("");
   const [suggest, setSuggest] = useState([]);
@@ -1613,8 +1608,6 @@ function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roste
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
-  const nameOf = (id) => (roster || []).find(t => t.id === id)?.first_name || "—";
-
   useEffect(() => {
     const s = q.trim();
     if (s.length < 2) { setSuggest([]); return undefined; }
@@ -1855,12 +1848,11 @@ function changeSummary(r, ctx) {
   }
 }
 
-function ChangesTab({ roster, values, types }) {
+function ChangesTab({ roster, nameOf, values, types }) {
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
-  const nameOf = useCallback((id) => (roster.find(t => t.id === id) || {}).first_name || (id ? "former teammate" : "—"), [roster]);
   const labelOf = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v.label])), [values]);
   const ctx = useMemo(() => ({ nameOf, labelOf, types: types || {} }), [nameOf, labelOf, types]);
 
@@ -2005,7 +1997,7 @@ function ScoreCard({ title, total, note, people, rankOf, valueOf, subOf, renderI
   );
 }
 
-function WeekView({ isAdmin, myTeamId, roster, values, sources, types, refreshKey, onChanged }) {
+function WeekView({ isAdmin, myTeamId, roster, nameOf, values, sources, types, refreshKey, onChanged }) {
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("week", weekEndOf(todayCentral()));
   const [board, setBoard] = useState(null);
   const [open, setOpen] = useState({});      // card -> team_member_id whose items are showing
@@ -2153,7 +2145,7 @@ function WeekView({ isAdmin, myTeamId, roster, values, sources, types, refreshKe
           weekEnd={safeWeek}
           title="This week"
           blurb="Everything logged in this week. Same format as Pending."
-          values={values} sources={sources} types={types} roster={roster}
+          values={values} sources={sources} types={types} roster={roster} nameOf={nameOf}
           isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged || load}
         />
       )}
@@ -2536,7 +2528,7 @@ function ChecklistTab() {
 // Canceled tab is gone: No keeps today's entry page, Yes drops the
 // cancelation search in its place, same code as before, no popup.
 // =====================================================================
-function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, onLogged, refreshKey }) {
+function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [canceling, setCanceling] = useState(false);
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -2548,7 +2540,7 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, on
         </div>
       </div>
       {canceling
-        ? <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />
+        ? <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onLogged} refreshKey={refreshKey} />
         : <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />}
     </div>
   );
@@ -2565,6 +2557,7 @@ export default function ActivityLog({ userRole, userId }) {
   const [sources, setSources] = useState([]);
   const [types, setTypes] = useState({});
   const [roster, setRoster] = useState([]);
+  const [directory, setDirectory] = useState([]);   // everyone who has ever been on the team, so old rows keep a name
   const [myTeamId, setMyTeamId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [head, setHead] = useState(null);   // this week's scoreboard, shown beside the title on every tab (your own row; team when you have none)
@@ -2574,6 +2567,12 @@ export default function ActivityLog({ userRole, userId }) {
   // it too (rp_resolve_actor), so hiding the picker is not the only thing
   // stopping it. isAdmin still governs seeing the whole team's week.
   const isOwner = userRole === "owner";
+  // The only place a team id turns into a name. Every tab uses this one.
+  const nameOf = useMemo(() => {
+    const m = new Map();
+    for (const t of directory) m.set(t.id, t.first_name);
+    return (id) => m.get(id) || (id ? "former teammate" : "—");
+  }, [directory]);
 
   useEffect(() => {
     let alive = true;
@@ -2582,7 +2581,7 @@ export default function ActivityLog({ userRole, userId }) {
         supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("product_types").select("line_of_business, type_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
-        supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category").eq("agency_id", AGENCY_ID).eq("is_active", true).order("first_name"),
+        supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active").eq("agency_id", AGENCY_ID).order("first_name"),
         supabase.rpc("current_team_member_id"),
       ]);
       if (!alive) return;
@@ -2595,7 +2594,12 @@ export default function ActivityLog({ userRole, userId }) {
         (grouped[t.line_of_business] = grouped[t.line_of_business] || []).push(t);
       }
       setTypes(grouped);
-      setRoster((Array.isArray(r.data) ? r.data : []).filter(t => !t.archived_at && !t.is_test_user && !t.is_admin_backoffice && t.category === "agency"));
+      const dir = (Array.isArray(r.data) ? r.data : []).filter(t => !t.is_test_user);
+      setDirectory(dir);
+      // Two different lists on purpose. The roster is who you can pick in a
+      // dropdown today. The directory is everyone ever, so a record left behind
+      // by someone who has since left still shows their name.
+      setRoster(dir.filter(t => t.is_active && !t.archived_at && !t.is_admin_backoffice && t.category === "agency"));
       setMyTeamId(me?.data || null);
     })();
     return () => { alive = false; };
@@ -2680,15 +2684,15 @@ export default function ActivityLog({ userRole, userId }) {
         ))}
       </div>
 
-      {(tab === "log" || tab === "canceled") && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} onLogged={bump} refreshKey={refreshKey} />}
+      {(tab === "log" || tab === "canceled") && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
-      {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
-      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} values={values} sources={sources} types={types} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} values={values} sources={sources} types={types} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "hours" && <TimeHub embedded userRole={userRole} />}
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
-      {tab === "changes" && isAdmin && <ChangesTab roster={roster} values={values} types={types} />}
+      {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} />}
     </div>
   );
 }
