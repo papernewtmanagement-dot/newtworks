@@ -273,9 +273,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [relationship, setRelationship] = useState("");
   const [source, setSource] = useState("");
   const [sourcedBy, setSourcedBy] = useState("");
-  const [activities, setActivities] = useState([]);  // [{id, key}]
-  const [saveLine, setSaveLine] = useState("");
-  const [saveReason, setSaveReason] = useState("");
+  const [activities, setActivities] = useState([]);  // [{id, key, line, type, premium, reason}]
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
   const [cReason, setCReason] = useState("");
@@ -382,7 +380,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const hasSave = activities.some(a => a.key === "cancelation_saved");
   const hasReview = activities.some(a => a.key === "policy_review");
   const activityItems = activities.filter(a => byKey[a.key]).map(a =>
-    a.key === "cancelation_saved" ? { activity_key: a.key, save_line: saveLine, save_reason: saveReason.trim() }
+    a.key === "cancelation_saved" ? { activity_key: a.key, save_line: a.line, product_type: a.type || null, save_reason: (a.reason || "").trim() }
     : a.key === "autopay_enrollment" ? { activity_key: a.key, policy_line: a.line, product_type: a.type || null, premium: a.premium === "" ? null : Number(a.premium) }
     : { activity_key: a.key });
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
@@ -422,10 +420,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if ((hasActivity || hasQuote) && date < addDays(today, -7)) problems.push("Activity and quotes are logged within 7 days. Pick a later date or split the entry.");
   if (hasSale && date < addDays(today, -30)) problems.push("A sale is logged within 30 days of the bind.");
   if (hasCxl && date < addDays(today, -90)) problems.push("A cancelation is logged within 90 days.");
-  if (hasSave) {
-    if (date !== today) problems.push("A save is logged the same business day it comes in. Set the date to today.");
-    if (!saveLine || !saveReason.trim()) problems.push("The save needs the policy line at risk and the reason the customer gave.");
-  }
+  if (hasSave && date !== today) problems.push("A save is logged the same day it comes in. Set the date to today.");
+  if (activities.some(a => a.key === "cancelation_saved" && (!a.line || (needsType(a.line) && !a.type) || !(a.reason || "").trim()))) problems.push("Each save needs the policy line, its type, and the reason the customer gave.");
   if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
   if (!relationship) problems.push("Pick the relationship.");
   if ((hasSale || hasQuote) && !source) problems.push("Pick the marketing source.");
@@ -444,7 +440,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (!keep) { setFirst(""); setInitial(""); setPhone(""); setDate(today); setDateOpen(false); }
     setSuggest([]);
     setRelationship(""); setSource(""); setSourcedBy("");
-    setActivities([]); setSaveLine(""); setSaveReason("");
+    setActivities([]);
     setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote(""); setOnFileAnswer({});
     setAttempted(false);
   };
@@ -636,21 +632,31 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             </div>
           ))}
-          {hasSave && (
-            <div style={{ ...wrapRow, marginTop: 10, padding: 12, background: T.slate50, borderRadius: 8 }}>
-              <div style={field(160)}>
-                <label style={labelStyle}>Policy line at risk</label>
-                <select style={inputBase} value={saveLine} onChange={e => setSaveLine(e.target.value)}>
+          {activities.filter(a => a.key === "cancelation_saved").map(a => (
+            <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
+              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>Saved</div>
+              <div style={field(130)}>
+                <label style={labelStyle}>Line</label>
+                <select style={inputBase} value={a.line} onChange={e => editActivity(a.id, { line: e.target.value, type: "" })}>
                   <option value="">Pick one</option>
-                  {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                  {PRODUCTS.map(pr => <option key={pr.key} value={pr.key}>{pr.label}</option>)}
                 </select>
               </div>
+              {needsType(a.line) && (
+                <div style={field(150)}>
+                  <label style={labelStyle}>Type</label>
+                  <select style={inputBase} value={a.type} onChange={e => editActivity(a.id, { type: e.target.value })}>
+                    <option value="">Pick one</option>
+                    {(types[a.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+                  </select>
+                </div>
+              )}
               <div style={field(260)}>
                 <label style={labelStyle}>Reason the customer gave</label>
-                <input style={inputBase} value={saveReason} onChange={e => setSaveReason(e.target.value)} placeholder="Rate went up at renewal; found a cheaper quote" />
+                <input style={inputBase} value={a.reason || ""} onChange={e => editActivity(a.id, { reason: e.target.value })} placeholder="Rate went up at renewal; found a cheaper quote" />
               </div>
             </div>
-          )}
+          ))}
         </div>
 
         {/* ---- policies: Add dropdown + pills on one row; the pill tapped last is edited below ---- */}
