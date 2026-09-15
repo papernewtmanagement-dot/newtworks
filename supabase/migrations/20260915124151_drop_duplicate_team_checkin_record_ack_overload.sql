@@ -1,0 +1,12 @@
+-- Reactions stopped counting on 2026-09-14 when the 5-argument version of
+-- team_checkin_record_ack (the one that added p_source) was created ALONGSIDE
+-- the old 4-argument version instead of replacing it. The telegram edge
+-- function calls it with four named arguments. Both versions match that call,
+-- because the fifth argument has a default, so PostgREST could not choose one
+-- and every reaction failed. Text replies still worked, because that path
+-- passes p_source and so matches only the 5-argument version.
+-- Thomas reacted to the midday check-in on 2026-09-15 and was still named in
+-- the nag. This is why.
+-- The 4-argument version is dropped. The 5-argument version, which handles both
+-- reactions and text, is the only one left.
+DROP FUNCTION IF EXISTS public.team_checkin_record_ack(bigint, bigint, text, boolean);
