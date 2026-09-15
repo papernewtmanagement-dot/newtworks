@@ -1257,12 +1257,13 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
 // rendered markdown where the Close step and the Bridge step sit.
 //   pick   — the week's commit examples as radio buttons plus "Other" with a
 //            text box. Saving stores today's commit (Central date) for the
-//            signed-in teammate through kickoff_commit_save. Once saved, the
-//            commit shows with a "Hit it" button so the midday and EOD
-//            summaries can carry the mark.
-//   bridge — the next morning: the latest earlier commit (Monday shows
-//            Friday's) with a yes-or-no question. No "not yet": commits are
-//            daily.
+//            signed-in teammate through kickoff_commit_save. Once saved it is
+//            locked: no Change button, and the database refuses a second save
+//            for the same day (Peter 2026-09-14).
+//   bridge — the next morning, at the TOP of the page: the latest earlier
+//            commit (Monday shows Friday's) with a yes-or-no question. This is
+//            the only place a commit is marked hit or missed. No "not yet":
+//            commits are daily.
 // A login with no team record sees the examples as a plain list and nothing
 // to save.
 const COMMIT_BTN = {
@@ -1287,7 +1288,6 @@ function KickoffCommits({ hosts, week }) {
   const [busy, setBusy] = useState(false);
   const [choice, setChoice] = useState(null);  // index into items, or "other"
   const [other, setOther] = useState("");
-  const [changing, setChanging] = useState(false);
 
   const items = useMemo(() => {
     const raw = hosts.pick && typeof hosts.pick.getAttribute === "function" ? hosts.pick.getAttribute("data-nw-items") : null;
@@ -1316,7 +1316,6 @@ function KickoffCommits({ hosts, week }) {
     setBusy(false);
     if (e) { setError(e.message); return; }
     setInfo((prev) => ({ ...(prev || {}), today: data }));
-    setChanging(false);
   };
 
   const mark = async (row, hit) => {
@@ -1362,16 +1361,11 @@ function KickoffCommits({ hosts, week }) {
     pick = items.length ? (
       <ul>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
     ) : null;
-  } else if (today && !changing) {
+  } else if (today) {
     pick = (
       <div style={COMMIT_CARD}>
         <div><strong>Today's commit{today.hit === true ? " ✅" : today.hit === false ? " ❌" : ""}:</strong> {today.commit_text}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          {today.hit == null && (
-            <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy} onClick={() => mark(today, true)}>Hit it ✅</button>
-          )}
-          <button type="button" style={COMMIT_BTN} disabled={busy} onClick={() => { setChanging(true); setChoice(null); setOther(""); }}>Change</button>
-        </div>
+        <div style={{ color: T.slate500, fontSize: 12, marginTop: 6 }}>Saved and locked. You mark it hit or missed at the top of this page tomorrow morning.</div>
         {err}
       </div>
     );
@@ -1404,9 +1398,6 @@ function KickoffCommits({ hosts, week }) {
         </label>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
           <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy || choice == null} onClick={save}>{busy ? "Saving…" : "Save commit"}</button>
-          {changing && today && (
-            <button type="button" style={COMMIT_BTN} disabled={busy} onClick={() => setChanging(false)}>Cancel</button>
-          )}
         </div>
         {err}
       </div>
