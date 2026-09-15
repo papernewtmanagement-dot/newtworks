@@ -1,4 +1,12 @@
-// telegram edge function (v26)
+// telegram edge function (v27)
+// v27 (2026-09-15):
+//   - Leslie's monthly goals answer is now captured. The question goes to the
+//     Paper Newt Management group, which this function used to drop at the door
+//     because it only ever looked at the team group - which is why Marie's
+//     answers never reached the database. It now listens in that one group for
+//     that one thing: a plain message from Marie inside the window after the
+//     question goes out, or /goals <answer> at any time. All the rules live in
+//     public.leslie_monthly_record_reply; this just calls it.
 // v26 (2026-09-14):
 //   - Retired the recoverCheckins action and handleRecoverCheckins. It re-read
 //     typed quote/sales numbers out of old group messages; Production is the
@@ -804,6 +812,44 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
   const text = message.text as string;
   const messageId = message.message_id;
   if (!chatId || !fromUser) return jsonResponse({ ok: true, ignored: "incomplete_message" });
+  // Paper Newt Management group. The bot does not keep everything said in here.
+  // It listens for one thing: the answer to the monthly question about whether
+  // Leslie hit her goals. A plain message from Marie counts inside the window
+  // after the question goes out; /goals <answer> works any time after that, for
+  // when she gets to it later. Everything else in this group is ignored.
+  const mgmtGroupChatIdStr = await getSetting("paper_newt_management_group_chat_id");
+  if (mgmtGroupChatIdStr && String(chatId) === mgmtGroupChatIdStr) {
+    const mgmtCmd = parseBotCommand(text);
+    const isGoalsCmd = mgmtCmd?.command === "goals";
+    if (mgmtCmd && !isGoalsCmd) return jsonResponse({ ok: true, ignored: "mgmt_other_command" });
+    const answer = isGoalsCmd ? mgmtCmd!.args.trim() : text;
+    try {
+      const { data, error } = await sb.rpc("leslie_monthly_record_reply", {
+        p_agency_id: AGENCY_ID,
+        p_telegram_user_id: fromUser.id,
+        p_text: answer,
+        p_message_id: messageId,
+        p_force: isGoalsCmd,
+      });
+      if (error) throw error;
+      const res = data as any;
+      if (res?.recorded) {
+        await sendReply(chatId, "Got it - that is on the payroll page under Leslie's goals.", messageId);
+      } else if (isGoalsCmd) {
+        const why = res?.reason === "nothing_waiting"
+          ? "There is no goals question waiting on an answer right now."
+          : res?.reason === "not_the_answerer"
+          ? "Only Marie can answer the goals question."
+          : "I could not record that. Send /goals followed by the answer.";
+        await sendReply(chatId, why, messageId);
+      }
+      return jsonResponse({ ok: true, mgmt_group: true, result: res });
+    } catch (e) {
+      console.error("leslie goals capture failed:", e);
+      return jsonResponse({ ok: true, mgmt_group: true, error: String(e) });
+    }
+  }
+
   const teamGroupChatIdStr = await getSetting("telegram_team_group_chat_id");
   if (!teamGroupChatIdStr || String(chatId) !== teamGroupChatIdStr) return jsonResponse({ ok: true, ignored: "not_team_group", chat_id: chatId });
   const sender = await ensureUserMapped(fromUser);
