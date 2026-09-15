@@ -3796,6 +3796,25 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
     if (!canEdit && editMode) setEditMode(false);
   }, [canEdit, editMode]);
 
+  // OT Annual comes from public.team_on_time_annual_pay — the one definition
+  // of on-time annual pay, shared with the dashboard Earnings chart so the two
+  // can never disagree. Nothing here recomputes it.
+  const [otAnnualById, setOtAnnualById] = useState({});
+  useEffect(() => {
+    let alive = true;
+    if (!supabase || !weekDate) { setOtAnnualById({}); return undefined; }
+    supabase
+      .rpc("team_on_time_annual_pay", { p_agency_id: AGENCY_ID, p_week_ending_date: weekDate })
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { console.error("team_on_time_annual_pay failed:", error); setOtAnnualById({}); return; }
+        const m = {};
+        (data || []).forEach(r => { if (r?.team_member_id) m[r.team_member_id] = r.on_time_annual; });
+        setOtAnnualById(m);
+      });
+    return () => { alive = false; };
+  }, [weekDate, details]);
+
   if (!details || details.length === 0) {
     return (
       <div>
@@ -4308,26 +4327,10 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate600, fontStyle: "italic" }}>OT Annual</Td>
                 {sorted.map(d => {
-                  // On-Time = (payroll_ytd_paid + this_week_component_total) × 365 / days_employed_this_year + annual_benefits.
-                  // Benefits flat-added (no compounding).
-                  const ytdPaid = (d.payroll_ytd_paid === null || d.payroll_ytd_paid === undefined)
-                    ? null : Number(d.payroll_ytd_paid);
-                  const thisWeekTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? teamBonusNet(d) : d[k]) || 0), 0);
-                  const ytdWithThisWeek = ytdPaid === null ? null : ytdPaid + thisWeekTotal;
-                  const member = (team || []).find(t => t.id === d.team_member_id);
-                  const daysEmployedThisYear = (() => {
-                    if (!weekDate) return 1;
-                    const dt = new Date(weekDate + "T00:00:00Z");
-                    const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-                    const startDateStr = member && (member.start_date || member.hire_date);
-                    const startDt = startDateStr
-                      ? new Date(startDateStr + "T00:00:00Z")
-                      : ys;
-                    const effectiveStart = startDt > ys ? startDt : ys;
-                    return Math.max(1, Math.floor((dt - effectiveStart) / 86400000) + 1);
-                  })();
-                  const annualBenefits = leftDuringWeek(d.__left, weekDate) ? 0 : Number(member?.annual_benefits_value || 0);
-                  const onTimeAnnual = ytdWithThisWeek === null ? null : ((ytdWithThisWeek * 365) / daysEmployedThisYear) + annualBenefits;
+                  // One definition, in public.team_on_time_annual_pay. The
+                  // dashboard Earnings chart reads the same function.
+                  const raw = otAnnualById[d.team_member_id];
+                  const onTimeAnnual = (raw === null || raw === undefined) ? null : Number(raw);
                   return (
                     <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontStyle: "italic" }}>
                       {onTimeAnnual === null ? "—" : fmtMoneyCentsR(onTimeAnnual)}

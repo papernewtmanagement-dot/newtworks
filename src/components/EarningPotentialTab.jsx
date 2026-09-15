@@ -456,10 +456,6 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
           const below = pay < valueAt("total", p.xv);
           return (
             <g key={"pos-" + (p.team_member_id || i)}>
-              <line x1={px} y1={py} x2={px} y2={padT + chartH} stroke={T.purple}
-                strokeWidth="1.5" strokeDasharray="4 3" opacity="0.8" />
-              <line x1={padL} y1={py} x2={px} y2={py} stroke={T.purple}
-                strokeWidth="1.5" strokeDasharray="4 3" opacity="0.8" />
               <circle cx={px} cy={py} r={p.is_me ? 6 : 4.5} fill={T.purple} stroke={T.white} strokeWidth="2" />
               <text x={px} y={py + (below ? 22 + lift : -28 - lift)} textAnchor={anchor} fontSize={isPhone ? 10 : 11.5}
                 fontWeight={800} fill={T.purple}>{p.is_me ? "You" : p.first_name}</text>
@@ -598,10 +594,9 @@ const YearOnePath = ({ path, isPhone }) => {
 };
 
 // ─── Tab ─────────────────────────────────────────────────────
-// Everyone sees Earning Potential (Peter 2026-09-04). The Retention and
-// Life Specialist curves are admin only; a non-admin gets Sales alone and
-// an ?erole= for the other two falls back to sales.
-const ADMIN_ONLY_ROLES = ["retention", "life_specialist"];
+// Everyone sees Earnings (Peter 2026-09-04). A person sees the curve for
+// their own seat and nobody else's, so there is no role switcher on their
+// screen at all (Peter 2026-09-15). Admins still move between all three.
 
 export default function EarningPotentialTab({ isAdmin = false } = {}) {
   const _vp = useViewport();
@@ -648,11 +643,9 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions]);
 
-  // Everyone sees Sales. A person also sees the curve for their own seat,
-  // otherwise their own marker would have nowhere to show up.
-  const allowedRoles = isAdmin
-    ? ROLE_ORDER
-    : ROLE_ORDER.filter(r => !ADMIN_ONLY_ROLES.includes(r) || r === myRole);
+  // An admin moves between all three curves. Anyone else gets exactly one:
+  // the curve for their own seat.
+  const allowedRoles = isAdmin ? ROLE_ORDER : (myRole ? [myRole] : []);
 
   const roles = useMemo(() => {
     const list = (Array.isArray(data?.roles) ? data.roles : []).filter(r => allowedRoles.includes(r.role_key));
@@ -686,6 +679,9 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
   if (loading) {
     return <div style={{ fontSize: 12, color: T.slate400, textAlign: "center", padding: "28px 16px" }}>Loading earnings projection…</div>;
   }
+  if (!isAdmin && !myRole) {
+    return <div style={{ ...card, fontSize: 12, color: T.slate500 }}>There is no earnings chart for your seat yet.</div>;
+  }
   if (!role || tiers.length === 0) {
     return <div style={{ ...card, fontSize: 12, color: T.slate500 }}>No projection rows yet. Add tiers and base-pay ladder rows to populate this page.</div>;
   }
@@ -709,7 +705,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       {/* Role buttons */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {roles.map(r => (
+          {roles.length > 1 && roles.map(r => (
             <TabLink key={r.role_key} href={roleHref(r.role_key)} onSelect={() => setRoleKey(r.role_key)} style={btn(r.role_key === role.role_key)}>{r.role_label}</TabLink>
           ))}
         </div>
@@ -722,7 +718,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the last 13 weeks, pay is what has actually been paid this year on an annual pace." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the last 13 weeks, pay is the same on-time annual figure the weekly CPR shows." : ""}</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
@@ -731,7 +727,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         )}
         {myPos && myPos.role_key === role.role_key && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
-            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over the last 13 weeks{Number.isFinite(Number(myPos.y)) ? ", and your pay so far this year works out to " + fmtMoney(Number(myPos.y)) + " a year" : ""}. Your point on the chart is those two figures together.
+            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over the last 13 weeks{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.
           </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
