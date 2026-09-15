@@ -411,17 +411,16 @@ export default function TeamPayroll() {
         <div style={STEP_H}>Step 4 · Bonuses</div>
         <div style={LI}><strong>Leslie:</strong> paid the first Friday of the month, on the first check date.</div>
         <ul style={UL}>
-          <li style={BULLET}>5Goals — Goals/Profit (Leslie's Goals)</li>
+          <li style={BULLET}>4Goals — Leslie's goals</li>
           <li style={BULLET}>$600 a month in kids' goals bonuses: $300 for Goose if goals are hit, $300 for Duck if goals are hit.</li>
         </ul>
-        <div style={{ ...LI, marginTop: 10 }}>The agent sends the weekly CPR report with the bonuses due, on the sales tab. The codes are:</div>
+        <div style={{ ...LI, marginTop: 10 }}>The codes in use since 11 July. The table below already uses them, so there is nothing to look up.</div>
         <ul style={UL}>
-          <li style={BULLET}>0Advnce — Advance</li>
-          <li style={BULLET}>1Health — Health</li>
-          <li style={BULLET}>2Serve — Service Surge</li>
-          <li style={BULLET}>3True — True Pay</li>
-          <li style={BULLET}>4Manage — Manager</li>
-          <li style={BULLET}>5Goals — Goals/Profit (Agency Profit)</li>
+          <li style={BULLET}>1Comm — Commission</li>
+          <li style={BULLET}>2Team — Team bonus, the sales share and the retention share together</li>
+          <li style={BULLET}>3Market — Marketing, which is the spiff money and is already in dollars</li>
+          <li style={BULLET}>4Goals — Goals and health together</li>
+          <li style={BULLET}>5Manage — Manager</li>
         </ul>
         <div style={{ ...LI, marginTop: 10 }}>Christmas bonus: OT Scorecard × (1 + (Weeks / 100)) × full or part time status.</div>
 
