@@ -1140,10 +1140,16 @@ function renderRoleplay(block, options) {
       order.map((sl) => `<option value="${sl}">${escapeHtml(names.get(sl))}</option>`).join("") +
       `</select>`
     : "";
+  // One label only: there is no dropdown to name it, so the name is written
+  // out as plain text instead. Without this a single-springboard week showed
+  // the refresh button and the card and never said what was being practiced.
+  const only = order.length === 1 && mode !== "pick"
+    ? `<span class="nw-rp-name">${escapeHtml(names.get(order[0]))}</span>`
+    : "";
   const next = block.scenarios.length > 1
     ? `<button type="button" class="nw-rp-next" title="Pick another" aria-label="Pick another">↻</button>`
     : "";
-  const bar = select || next ? `<div class="nw-rp-bar">${select}${next}</div>` : "";
+  const bar = select || only || next ? `<div class="nw-rp-bar">${select}${only}${next}</div>` : "";
   let shown = false;
   const cards = block.scenarios.map((sc) => {
     const slug = openerSlug(sc.label);
