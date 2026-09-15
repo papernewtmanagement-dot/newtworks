@@ -8,18 +8,19 @@ import { currentWeekSaturdayCT, addDaysISO } from "../lib/weeks.js";
 // ─── Payroll ──────────────────────────────────────────────────
 // The old Payroll Process manual page, moved into the Team module (Peter
 // 2026-09-14) and condensed into one table (Peter 2026-09-15). One row per
-// person is one person's pay entry: hours, then the five bonus codes, then what
-// gets added in and what gets taken out. Open a row for the day-by-day hours,
-// that person's paid days off, and their live benefit and deduction lines.
-// The written steps are all still here, tucked into the notes below the table.
+// person is one person's pay entry, left to right in the order it gets typed:
+// hours, pay for the week, the five bonus codes, the stipend added in, the
+// total before deductions, then what comes out. Open a row for the day-by-day
+// hours, that person's paid days off, and their live benefit and deduction
+// lines. The written steps are all still here, in the notes below the table.
 //
-// Everything in the table comes from one function, team_payroll_week, for
-// whichever week is picked at the top (Sunday to Saturday, Central). Worked
-// hours inside it come from get_weekly_cpr_hours, the same function the CPR
-// reads, so the payroll tab and the CPR can never show different numbers. The
-// picked week and the opened row both live in the URL (pweek, pperson), so a
-// refresh or a new tab lands in the same place. The week comes from
-// lib/weeks.js, never from the browser clock.
+// This page computes nothing. Every figure comes from one function,
+// team_payroll_week, for whichever week is picked at the top (Sunday to
+// Saturday, Central). Worked hours inside it come from get_weekly_cpr_hours,
+// the same function the CPR reads, so the payroll tab and the CPR can never
+// show different numbers. The picked week and the opened row both live in the
+// URL (pweek, pperson), so a refresh or a new tab lands in the same place. The
+// week comes from lib/weeks.js, never from the browser clock.
 
 const LINE_TYPES = [
   { id: "life_stipend",    label: "Life stipend (income, not a deduction)" },
@@ -46,7 +47,7 @@ const CODES = [
   { code: "5Manage", note: "Manager" },
 ];
 
-const COL_COUNT = 12;
+const COL_COUNT = 13;
 
 const CARD = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14 };
 const H = { fontSize: 13, fontWeight: 700, color: T.slate900, margin: "0 0 8px 0" };
@@ -244,9 +245,11 @@ function BenefitLines({ personId, lines, onChanged }) {
 // What sits under an opened row: the day-by-day hours, the paid days off, and
 // the live benefit and deduction lines.
 function RowDetail({ row, onChanged }) {
+  const days = Array.isArray(row.days) ? row.days : [];
+  const daysOff = Array.isArray(row.time_off) ? row.time_off : [];
   const byDay = {};
-  (row.hours?.days || []).forEach((d) => { byDay[d.day_label] = d; });
-  const hasDays = (row.hours?.days || []).length > 0;
+  days.forEach((d) => { byDay[d.day_label] = d; });
+  const hasDays = days.length > 0;
 
   return (
     <div style={{ background: T.slate50, borderRadius: 8, padding: 12, margin: "2px 0 8px 0", display: "grid", gap: 12 }}>
@@ -268,11 +271,11 @@ function RowDetail({ row, onChanged }) {
       )}
       <div>
         <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, marginBottom: 6 }}>Paid time off this week</div>
-        {!row.timeOff.length
+        {!daysOff.length
           ? <div style={MUTED}>None.</div>
           : (
             <ul style={UL}>
-              {row.timeOff.map((r, i) => (
+              {daysOff.map((r, i) => (
                 <li key={`${r.work_date}-${i}`} style={BULLET}>
                   {dayLabel(r.work_date)} · {r.label} · {hrs(r.hours)} hours
                 </li>
@@ -304,7 +307,9 @@ function LeslieGoals({ goals }) {
   );
 }
 
-// One row per person. One row is one person's pay entry.
+// One row per person. One row is one person's pay entry, in the order it gets
+// typed: hours, pay, the five codes, what is added in, the total before
+// deductions, then what comes out.
 function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onChanged }) {
   if (!rows.length) return <div style={MUTED}>Nobody to pay this week.</div>;
 
@@ -312,13 +317,14 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
     acc.worked += num(r.worked_hours);
     acc.pto += num(r.paid_time_off_hours);
     acc.overtime += num(r.overtime_hours);
-    CODES.forEach((c) => { acc.codes[c.code] += num(r.codes[c.code]); });
-    acc.bonusTotal += num(r.bonus_total);
+    acc.pay += num(r.pay);
+    CODES.forEach((c) => { acc.codes[c.code] += num(r.codes?.[c.code]); });
     acc.addIn += num(r.add_in);
+    acc.before += num(r.before_deductions);
     acc.takeOut += num(r.take_out);
     return acc;
   }, {
-    worked: 0, pto: 0, overtime: 0, bonusTotal: 0, addIn: 0, takeOut: 0,
+    worked: 0, pto: 0, overtime: 0, pay: 0, addIn: 0, before: 0, takeOut: 0,
     codes: { "1Comm": 0, "2Team": 0, "3Market": 0, "4Goals": 0, "5Manage": 0 },
   });
 
@@ -331,9 +337,10 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
             <th style={THR}>Worked</th>
             <th style={THR}>PTO</th>
             <th style={THR}>Over 40</th>
+            <th style={THR}>Pay</th>
             {CODES.map((c) => <th key={c.code} style={THR} title={c.note}>{c.code}</th>)}
-            <th style={THR}>Bonus total</th>
             <th style={THR}>Add in</th>
+            <th style={{ ...THR, color: T.slate900 }}>Before deductions</th>
             <th style={THR}>Take out</th>
           </tr>
         </thead>
@@ -350,17 +357,18 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
                       style={{ color: T.slate900, textDecoration: "none", fontWeight: 600 }}
                       title={open ? "Close" : "Open the detail"}
                     >
-                      {open ? "▾ " : "▸ "}{r.name}
+                      {open ? "\u25be " : "\u25b8 "}{r.name}
                     </TabLink>
                   </td>
-                  <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{hrs(r.worked_hours)}</td>
+                  <td style={TDR}>{hrs(r.worked_hours)}</td>
                   <td style={TDR}>{hrs(r.paid_time_off_hours)}</td>
                   <td style={{ ...TDR, color: num(r.overtime_hours) > 0 ? T.amber : T.slate500 }}>{hrs(r.overtime_hours)}</td>
+                  <td style={TDR}>{money0(r.pay)}</td>
                   {CODES.map((c) => (
-                    <td key={c.code} style={TDR}>{hasReport ? money0(r.codes[c.code]) : "—"}</td>
+                    <td key={c.code} style={TDR}>{hasReport ? money0(r.codes?.[c.code]) : "\u2014"}</td>
                   ))}
-                  <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{hasReport ? money0(r.bonus_total) : "—"}</td>
                   <td style={{ ...TDR, color: num(r.add_in) > 0 ? T.green : T.slate500 }}>{money0(r.add_in)}</td>
+                  <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{money0(r.before_deductions)}</td>
                   <td style={{ ...TDR, color: num(r.take_out) > 0 ? T.red : T.slate500 }}>{money0(r.take_out)}</td>
                 </tr>
                 {open && (
@@ -375,14 +383,15 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
           })}
           <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
             <td style={{ ...TD, fontWeight: 700, color: T.slate900 }}>Everyone</td>
-            <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{hrs(totals.worked)}</td>
+            <td style={{ ...TDR, fontWeight: 700 }}>{hrs(totals.worked)}</td>
             <td style={{ ...TDR, fontWeight: 700 }}>{hrs(totals.pto)}</td>
             <td style={{ ...TDR, fontWeight: 700 }}>{hrs(totals.overtime)}</td>
+            <td style={{ ...TDR, fontWeight: 700 }}>{money0(totals.pay)}</td>
             {CODES.map((c) => (
-              <td key={c.code} style={{ ...TDR, fontWeight: 700 }}>{hasReport ? money0(totals.codes[c.code]) : "—"}</td>
+              <td key={c.code} style={{ ...TDR, fontWeight: 700 }}>{hasReport ? money0(totals.codes[c.code]) : "\u2014"}</td>
             ))}
-            <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{hasReport ? money0(totals.bonusTotal) : "—"}</td>
             <td style={{ ...TDR, fontWeight: 700 }}>{money0(totals.addIn)}</td>
+            <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{money0(totals.before)}</td>
             <td style={{ ...TDR, fontWeight: 700 }}>{money0(totals.takeOut)}</td>
           </tr>
         </tbody>
@@ -406,20 +415,10 @@ export default function TeamPayroll() {
   const weekIds = useMemo(() => weeks.map((w) => w.id), [weeks]);
   const [pickedWeek, setPickedWeek, hrefForWeek] = useTabParam("pweek", weeks[0].id, weekIds);
   const [openId, setOpenId, hrefForPerson] = useTabParam("pperson", null);
-  const [people, setPeople] = useState(undefined); // undefined = loading
-  const [week, setWeek] = useState(undefined);     // undefined = loading
-  const [error, setError] = useState(null);
+  const [week, setWeek] = useState(undefined); // undefined = loading
   const [weekError, setWeekError] = useState(null);
 
-  const load = useCallback(async () => {
-    const { data, error: e } = await supabase.rpc("team_payroll_lines_list");
-    if (e) { setError(e.message); setPeople(null); return; }
-    setError(null);
-    setPeople(Array.isArray(data) ? data : []);
-  }, []);
-
   const loadWeek = useCallback(async () => {
-    setWeek(undefined);
     const { data, error: e } = await supabase.rpc("team_payroll_week", {
       p_agency_id: AGENCY_ID,
       p_week_ending_date: pickedWeek,
@@ -429,82 +428,9 @@ export default function TeamPayroll() {
     setWeek(data || null);
   }, [pickedWeek]);
 
-  useEffect(() => { load(); }, [load]);
   useEffect(() => { loadWeek(); }, [loadWeek]);
 
-  // One row per person: the active team, plus anyone who has a figure this week
-  // but has already left. Nothing is recalculated here — the hours and the bonus
-  // totals are used exactly as team_payroll_week returned them.
-  const rows = useMemo(() => {
-    const byId = new Map();
-    const put = (id, name) => {
-      if (!id) return null;
-      if (!byId.has(id)) {
-        byId.set(id, {
-          team_member_id: id,
-          name: name || "",
-          onRoster: false,
-          lines: [],
-          timeOff: [],
-          hours: null,
-          worked_hours: 0,
-          paid_time_off_hours: 0,
-          overtime_hours: 0,
-          bonus_total: 0,
-          add_in: 0,
-          take_out: 0,
-          codes: { "1Comm": 0, "2Team": 0, "3Market": 0, "4Goals": 0, "5Manage": 0 },
-        });
-      }
-      const r = byId.get(id);
-      if (!r.name && name) r.name = name;
-      return r;
-    };
-
-    (Array.isArray(people) ? people : []).forEach((p) => {
-      const r = put(p.team_member_id, p.name);
-      if (!r) return;
-      r.onRoster = true;
-      r.lines = Array.isArray(p.lines) ? p.lines : [];
-      r.add_in = r.lines.filter((l) => l.line_type === "life_stipend").reduce((s, l) => s + num(l.weekly_amount), 0);
-      r.take_out = r.lines.filter((l) => l.line_type !== "life_stipend").reduce((s, l) => s + num(l.weekly_amount), 0);
-    });
-
-    (Array.isArray(week?.hours) ? week.hours : []).forEach((h) => {
-      const r = put(h.team_member_id, h.name);
-      if (!r) return;
-      r.hours = h;
-      r.worked_hours = num(h.worked_hours);
-      r.paid_time_off_hours = num(h.paid_time_off_hours);
-      r.overtime_hours = num(h.overtime_hours);
-    });
-
-    (Array.isArray(week?.bonuses) ? week.bonuses : []).forEach((b) => {
-      const r = put(b.team_member_id, b.name);
-      if (!r) return;
-      r.bonus_total = num(b.total);
-      (Array.isArray(b.lines) ? b.lines : []).forEach((l) => {
-        if (l.code in r.codes) r.codes[l.code] = num(l.amount);
-      });
-    });
-
-    (Array.isArray(week?.time_off) ? week.time_off : []).forEach((t) => {
-      const r = put(t.team_member_id, t.name);
-      if (!r) return;
-      r.timeOff.push(t);
-      // Salaried people are not in the hours table, so their paid days off would
-      // otherwise have nowhere to show.
-      if (!r.hours) r.paid_time_off_hours += num(t.hours);
-    });
-
-    const hasFigure = (r) =>
-      r.worked_hours || r.paid_time_off_hours || r.bonus_total || r.add_in || r.take_out || r.lines.length;
-
-    return [...byId.values()]
-      .filter((r) => r.onRoster || hasFigure(r))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [people, week]);
-
+  const rows = Array.isArray(week?.people) ? week.people : [];
   const weekText = week ? weekLabel(week.week_start_date, week.week_ending_date) : "";
   const hasReport = !!week?.has_cpr_report;
   const pickedIdx = Math.max(0, weekIds.indexOf(pickedWeek));
@@ -540,15 +466,14 @@ export default function TeamPayroll() {
       </div>
 
       {weekError && <div style={{ color: T.red, fontSize: 12, fontWeight: 600, marginBottom: 10 }}>{weekError}</div>}
-      {error && <div style={{ color: T.red, fontSize: 12, fontWeight: 600, marginBottom: 10 }}>{error}</div>}
 
       <div style={CARD}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-          <div style={H}>What to enter{weekText ? ` · ${weekText}` : ""}</div>
+          <div style={H}>What to enter{weekText ? ` \u00b7 ${weekText}` : ""}</div>
           <div style={MUTED}>Open a name for the day-by-day hours, days off and deductions.</div>
         </div>
 
-        {week === undefined || people === undefined
+        {week === undefined
           ? <div style={MUTED}>Loading the week…</div>
           : (
             <>
@@ -558,7 +483,7 @@ export default function TeamPayroll() {
                 openId={openId}
                 setOpenId={setOpenId}
                 hrefForPerson={hrefForPerson}
-                onChanged={load}
+                onChanged={loadWeek}
               />
               {!hasReport && <div style={{ ...MUTED, marginTop: 8 }}>No CPR for this week yet, so the bonus columns are empty.</div>}
               <LeslieGoals goals={week?.leslie_goals || null} />
@@ -581,7 +506,7 @@ export default function TeamPayroll() {
         <div style={LI}>
           Life stipends are added as income from the dropdown so the benefit is taxed. Medical, dental and vision come out automatically, so just check they are on the right-hand side. Open a name in the table to add, edit or remove someone's lines.
         </div>
-        <div style={LI}>Add in is the life stipend. Take out is everything else on file for that person.</div>
+        <div style={LI}>Pay is the wages for the week. Add in is the life stipend. Before deductions is the pay plus the bonuses plus the stipend. Take out is everything else on file for that person, and it comes off after that.</div>
       </Note>
 
       <Note title="Bonuses and codes">
