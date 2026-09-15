@@ -16,7 +16,10 @@ import { currentWeekSaturdayCT, addDaysISO } from "../lib/weeks.js";
 //
 // This page computes nothing. Every figure comes from one function,
 // team_payroll_week, for whichever week is picked at the top (Sunday to
-// Saturday, Central). Worked hours inside it come from get_weekly_cpr_hours,
+// Saturday, Central). Once the payroll summary for a week arrives, that function
+// switches every money column over to the frozen paycheck line items, which is
+// the same source the CPR pool math reads, so the two pages can never disagree
+// about a week that has been paid. Worked hours inside it come from get_weekly_cpr_hours,
 // the same function the CPR reads, so the payroll tab and the CPR can never
 // show different numbers. The picked week and the opened row both live in the
 // URL (pweek, pperson), so a refresh or a new tab lands in the same place. The
@@ -434,6 +437,7 @@ export default function TeamPayroll() {
   const rows = Array.isArray(week?.people) ? week.people : [];
   const weekText = week ? weekLabel(week.week_start_date, week.week_ending_date) : "";
   const hasReport = !!week?.has_cpr_report;
+  const payrollIn = !!week?.payroll_received;
   const pickedIdx = Math.max(0, weekIds.indexOf(pickedWeek));
   const olderId = pickedIdx + 1 < weeks.length ? weeks[pickedIdx + 1].id : null;
   const newerId = pickedIdx > 0 ? weeks[pickedIdx - 1].id : null;
@@ -486,7 +490,8 @@ export default function TeamPayroll() {
                 hrefForPerson={hrefForPerson}
                 onChanged={loadWeek}
               />
-              {!hasReport && <div style={{ ...MUTED, marginTop: 8 }}>No CPR for this week yet, so the bonus columns are empty.</div>}
+              {payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>Payroll for this week has come in. Every figure above is what was actually paid, not what was worked out beforehand.</div>}
+              {!hasReport && !payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>No CPR for this week yet, so the bonus columns are empty.</div>}
               <LeslieGoals goals={week?.leslie_goals || null} />
             </>
           )}
