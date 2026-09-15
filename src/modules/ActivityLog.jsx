@@ -981,7 +981,7 @@ function SpotCheck({ isAdmin }) {
 
 // =====================================================================
 // Records panel — one table used in two places (Peter 2026-09-14): the
-// To be issued tab, and the card at the bottom of Scoreboard that used
+// To Issue tab, and the card at the bottom of Scoreboard that used
 // to be "Sales this week". Same table both times. The toggle picks what
 // it lists; the scope decides what shows up.
 //   scope "pending" — what we have not paid on yet: policies that have
@@ -1570,7 +1570,7 @@ function IssuedTab({ values, sources, types, roster, isAdmin, myTeamId, refreshK
   return (
     <RecordsPanel
       scope="pending"
-      title="To be issued"
+      title="To Issue"
       blurb="What we have not paid on yet. A new Private Passenger auto issues by itself the day it is submitted; everything else waits until someone confirms it issued with no contingencies."
       values={values} sources={sources} types={types} roster={roster}
       isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged}
@@ -2146,13 +2146,13 @@ function WeekView({ isAdmin, myTeamId, roster, values, sources, types, refreshKe
           subOf={p => `${plural(p.conversations?.scorecards || 0, "scored conversation")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
       </div>
 
-      {/* This week — same table as To be issued, one toggle away (Peter 2026-09-14). */}
+      {/* This week — same table as To Issue, one toggle away (Peter 2026-09-14). */}
       {!reported && (
         <RecordsPanel
           scope="week"
           weekEnd={safeWeek}
           title="This week"
-          blurb="Everything logged in this week. Same format as To be issued."
+          blurb="Everything logged in this week. Same format as To Issue."
           values={values} sources={sources} types={types} roster={roster}
           isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged || load}
         />
@@ -2625,7 +2625,7 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "deposits", label: "Deposits" },
     { type: "divider", id: "_dv_week" },
     { id: "week", label: "Scoreboard" },
-    { id: "issued", label: "To be issued" },
+    { id: "issued", label: "To Issue" },
     { type: "divider", id: "_dv_rare" },
     { id: "development", label: "Development" },
     { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
