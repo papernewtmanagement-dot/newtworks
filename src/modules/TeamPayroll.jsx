@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { fmtMoney } from "../lib/format.jsx";
+import { useTabParam, TabLink } from "../lib/routing.jsx";
 
 // ─── Payroll ──────────────────────────────────────────────────
 // The old Payroll Process manual page, moved into the Team module (Peter
@@ -10,9 +11,11 @@ import { fmtMoney } from "../lib/format.jsx";
 // the page. Life stipends write back to team.weekly_life_benefit_agency_paid,
 // which is the column the CPR benefits row and the comp pool already read.
 //
-// Steps 1, 2 and 4 read one function, team_payroll_week, for the current week
-// (Sunday to Saturday, Central): hours for anyone paid by the hour, every paid
-// day off in the week, and the bonuses due off that week's CPR. Worked hours
+// Steps 1, 2 and 4 read one function, team_payroll_week, for whichever week is
+// picked at the top (Sunday to Saturday, Central): hours for anyone paid by the
+// hour, every paid day off in the week, and the bonuses due off that week's CPR.
+// The picked week lives in the URL as pweek, so a refresh or a new tab lands on
+// the same week. Worked hours
 // come from get_weekly_cpr_hours, the same function the CPR itself reads, so
 // the payroll tab and the CPR can never show different numbers.
 
@@ -39,6 +42,9 @@ const UL = { fontSize: 13, color: T.slate700, lineHeight: 1.6, margin: "0 0 4px 
 const BULLET = { margin: "0 0 4px 0" };
 const INPUT = { padding: "6px 8px", fontSize: 12, border: `1px solid ${T.slate200}`, borderRadius: 6, width: "100%" };
 const BTN = { padding: "6px 12px", fontSize: 12, fontWeight: 600, borderRadius: 7, border: "none", cursor: "pointer" };
+const ARROW = { ...BTN, background: T.slate100, color: T.slate700, padding: "7px 12px", fontSize: 14, lineHeight: 1 };
+const ARROW_OFF = { ...ARROW, color: T.slate200, cursor: "default" };
+const SELECT = { ...INPUT, width: "auto", maxWidth: "100%" };
 const TABLE_WRAP = { overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 };
 const TH = { fontSize: 11, fontWeight: 700, color: T.slate500, textAlign: "left", padding: "6px 10px 6px 0", whiteSpace: "nowrap" };
 const TD = { fontSize: 13, color: T.slate700, padding: "6px 10px 6px 0", whiteSpace: "nowrap", boxSizing: "border-box" };
@@ -68,6 +74,31 @@ function weekLabel(startIso, endIso) {
   if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return `${startIso} to ${endIso}`;
   const opts = { month: "short", day: "numeric" };
   return `${a.toLocaleDateString("en-US", opts)} to ${b.toLocaleDateString("en-US", opts)}`;
+}
+
+// The week-ending Saturdays to choose from, newest first. Sunday to Saturday,
+// the same boundary every other week-bounded figure in Newtworks uses.
+const WEEKS_TO_OFFER = 27;
+
+function isoDate(d) {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function buildWeekOptions() {
+  const now = new Date();
+  const thisSat = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  thisSat.setDate(thisSat.getDate() + ((6 - thisSat.getDay()) % 7));
+  const out = [];
+  for (let i = 0; i < WEEKS_TO_OFFER; i++) {
+    const end = new Date(thisSat.getFullYear(), thisSat.getMonth(), thisSat.getDate() - i * 7);
+    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
+    const range = weekLabel(isoDate(start), isoDate(end));
+    const tag = i === 0 ? " · this week" : i === 1 ? " · last week" : "";
+    out.push({ id: isoDate(end), label: `${range}${tag}` });
+  }
+  return out;
 }
 
 function typeLabel(id) {
@@ -279,6 +310,9 @@ function BonusTable({ rows, hasReport }) {
 }
 
 export default function TeamPayroll() {
+  const weeks = useMemo(() => buildWeekOptions(), []);
+  const weekIds = useMemo(() => weeks.map((w) => w.id), [weeks]);
+  const [pickedWeek, setPickedWeek, hrefForWeek] = useTabParam("pweek", weeks[0].id, weekIds);
   const [people, setPeople] = useState(undefined); // undefined = loading
   const [week, setWeek] = useState(undefined);     // undefined = loading
   const [error, setError] = useState(null);
@@ -292,14 +326,15 @@ export default function TeamPayroll() {
   }, []);
 
   const loadWeek = useCallback(async () => {
+    setWeek(undefined);
     const { data, error: e } = await supabase.rpc("team_payroll_week", {
       p_agency_id: AGENCY_ID,
-      p_week_ending_date: null,
+      p_week_ending_date: pickedWeek,
     });
     if (e) { setWeekError(e.message); setWeek(null); return; }
     setWeekError(null);
     setWeek(data || null);
-  }, []);
+  }, [pickedWeek]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadWeek(); }, [loadWeek]);
@@ -308,12 +343,40 @@ export default function TeamPayroll() {
   const timeOffRows = Array.isArray(week?.time_off) ? week.time_off : [];
   const bonusRows = Array.isArray(week?.bonuses) ? week.bonuses : [];
   const weekText = week ? weekLabel(week.week_start_date, week.week_ending_date) : "";
+  const pickedIdx = Math.max(0, weekIds.indexOf(pickedWeek));
+  const olderId = pickedIdx + 1 < weeks.length ? weeks[pickedIdx + 1].id : null;
+  const newerId = pickedIdx > 0 ? weeks[pickedIdx - 1].id : null;
 
   return (
     <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+        <TabLink
+          href={olderId ? hrefForWeek(olderId) : "#"}
+          onSelect={() => { if (olderId) setPickedWeek(olderId); }}
+          disabled={!olderId}
+          style={olderId ? ARROW : ARROW_OFF}
+          title="Earlier week"
+          ariaLabel="Earlier week"
+        >
+          ‹
+        </TabLink>
+        <select style={SELECT} value={pickedWeek} onChange={(ev) => setPickedWeek(ev.target.value)}>
+          {weeks.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+        </select>
+        <TabLink
+          href={newerId ? hrefForWeek(newerId) : "#"}
+          onSelect={() => { if (newerId) setPickedWeek(newerId); }}
+          disabled={!newerId}
+          style={newerId ? ARROW : ARROW_OFF}
+          title="Later week"
+          ariaLabel="Later week"
+        >
+          ›
+        </TabLink>
+      </div>
       {weekText && (
         <div style={{ ...MUTED, marginBottom: 10 }}>
-          This week: {weekText}. Hours, paid time off and bonuses below are live.
+          Hours, paid time off and bonuses below are for {weekText}.
         </div>
       )}
       {weekError && <div style={{ color: T.red, fontSize: 12, fontWeight: 600, marginBottom: 10 }}>{weekError}</div>}
