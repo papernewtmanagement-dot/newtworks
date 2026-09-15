@@ -2306,7 +2306,7 @@ function HelpPanel({ item }) {
 // One checklist row, used by the team list AND the personal list, so the row
 // only ever has one shape to change. Owner-only controls (move up, move down,
 // edit) appear on the same row while the list is in edit mode.
-const miniBtn = {
+const checklistRowBtn = {
   flexShrink: 0, width: 22, height: 20, lineHeight: "18px", textAlign: "center", padding: 0,
   borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
   boxSizing: "border-box", border: `1px solid ${T.slate300}`, background: T.white, color: T.slate600,
@@ -2333,9 +2333,9 @@ function ChecklistRow({ item, checked, byLabel, busy, onToggle, openHelp, setOpe
         {byLabel && <span style={{ fontSize: 11, color: T.slate400, textAlign: "right", whiteSpace: editMode ? "nowrap" : "normal", flexShrink: 0 }}>{byLabel}</span>}
         {editMode && (
           <>
-            <button type="button" title="Move up" aria-label="Move up" onClick={() => onMove(item, "up")} style={miniBtn}>↑</button>
-            <button type="button" title="Move down" aria-label="Move down" onClick={() => onMove(item, "down")} style={miniBtn}>↓</button>
-            <button type="button" title="Edit this item" aria-label="Edit this item" onClick={() => onEdit(item)} style={{ ...miniBtn, borderColor: T.blue, color: T.blue }}>✎</button>
+            <button type="button" title="Move up" aria-label="Move up" onClick={() => onMove(item, "up")} style={checklistRowBtn}>↑</button>
+            <button type="button" title="Move down" aria-label="Move down" onClick={() => onMove(item, "down")} style={checklistRowBtn}>↓</button>
+            <button type="button" title="Edit this item" aria-label="Edit this item" onClick={() => onEdit(item)} style={{ ...checklistRowBtn, borderColor: T.blue, color: T.blue }}>✎</button>
           </>
         )}
         <button type="button" title="What this means" aria-label="What this means"
