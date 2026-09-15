@@ -441,22 +441,31 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
         .sort((a, b) => a.xv - b.xv)
         .map((p, i, arr) => {
           const px = xFor(p.xv);
-          const py = yFor(valueAt("total", p.xv));
+          // Actual pay, on an annual pace, off the most recent week. Only if
+          // that figure is missing does the point fall back to what the curve
+          // says the pace should pay.
+          const pay = Number.isFinite(Number(p?.y)) ? Number(p.y) : valueAt("total", p.xv);
+          const py = yFor(pay);
           // Two people close together would stack their labels on top of each
           // other, so the second one rides higher.
           const crowded = i > 0 && Math.abs(px - xFor(arr[i - 1].xv)) < 70;
           const lift = crowded ? 24 : 0;
           const anchor = px > padL + chartW - 44 ? "end" : px < padL + 44 ? "start" : "middle";
+          // Keep the label out of the pay lines: under the point when it sits
+          // below the top line, over it when it sits above.
+          const below = pay < valueAt("total", p.xv);
           return (
             <g key={"pos-" + (p.team_member_id || i)}>
               <line x1={px} y1={py} x2={px} y2={padT + chartH} stroke={T.purple}
                 strokeWidth="1.5" strokeDasharray="4 3" opacity="0.8" />
+              <line x1={padL} y1={py} x2={px} y2={py} stroke={T.purple}
+                strokeWidth="1.5" strokeDasharray="4 3" opacity="0.8" />
               <circle cx={px} cy={py} r={p.is_me ? 6 : 4.5} fill={T.purple} stroke={T.white} strokeWidth="2" />
-              <text x={px} y={py - 28 - lift} textAnchor={anchor} fontSize={isPhone ? 10 : 11.5}
+              <text x={px} y={py + (below ? 22 + lift : -28 - lift)} textAnchor={anchor} fontSize={isPhone ? 10 : 11.5}
                 fontWeight={800} fill={T.purple}>{p.is_me ? "You" : p.first_name}</text>
-              <text x={px} y={py - 17 - lift} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
+              <text x={px} y={py + (below ? 33 + lift : -17 - lift)} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
                 fontWeight={600} fill={T.purple}>
-                {(isPremium ? fmtK(p.xv) : Math.round(p.xv) + " pts") + " \u00b7 " + fmtK(valueAt("total", p.xv))}
+                {(isPremium ? fmtK(p.xv) : Math.round(p.xv) + " pts") + " \u00b7 " + fmtK(pay)}
               </text>
             </g>
           );
@@ -713,7 +722,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple markers show where people actually sit, from their last 13 weeks of production." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the last 13 weeks, pay is what has actually been paid this year on an annual pace." : ""}</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
@@ -722,7 +731,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         )}
         {myPos && myPos.role_key === role.role_key && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
-            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over the last 13 weeks. Your marker sits at what that pace pays.
+            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over the last 13 weeks{Number.isFinite(Number(myPos.y)) ? ", and your pay so far this year works out to " + fmtMoney(Number(myPos.y)) + " a year" : ""}. Your point on the chart is those two figures together.
           </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
