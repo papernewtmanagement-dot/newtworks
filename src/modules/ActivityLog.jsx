@@ -255,7 +255,7 @@ function summarizeEntry(data) {
 // Entry page — one customer, one contact, everything that happened, on
 // one flat page. One Log button; one RPC that saves all of it or none.
 // =====================================================================
-function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "" }) {
+function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "", editing = null, onCloseEdit }) {
   const today = todayCentral();
   const [first, setFirst] = useState(presetFirst || "");
   const statuses = allowCancel ? STATUSES : STATUSES.filter(st => st.key !== "canceled");
@@ -292,6 +292,62 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const items = useMemo(() => (values || []).filter(v => v.category === "logged")
     .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values]);
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
+
+  // ---- Edit mode ----------------------------------------------------------
+  // Peter 2026-09-14. There is ONE entry form. Editing opens this same form on a
+  // record that already exists: rp_entry_for_edit fills it, and Save hands only
+  // the keys that record owns to the matching rp_edit_* function.
+  const [editRec, setEditRec] = useState(null);
+  const isEdit = !!editRec;
+  useEffect(() => {
+    if (!editing?.id) { setEditRec(null); return undefined; }
+    let alive = true;
+    (async () => {
+      const r = await supabase.rpc("rp_entry_for_edit", { p_kind: editing.kind, p_id: editing.id });
+      if (!alive) return;
+      if (r.error) { setErr(errText(r.error)); return; }
+      const d = r.data || {};
+      setEditRec(d);
+      setFirst(d.customer_first || ""); setInitial(d.customer_last_initial || "");
+      setPhone(d.phone_last4 || ""); setDate(d.date || today); setDateOpen(true);
+      setRelationship(d.relationship || ""); setSource(d.marketing_source || "");
+      setSourcedBy(d.sourced_by_team_member_id || ""); setEcrm(d.ecrm_url || "");
+      setNote(d.note || "");
+      setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); setAttempted(false); setLast(null);
+      setActivities([]); setPolicies([]); setActivePolicy(null); setScores({}); setCReason("");
+      setRecTurned(false); setRecUrl(""); setOnFileAnswer({});
+      if (d.kind === "sale" || d.kind === "quote") {
+        setPolicies((d.products || []).map(x => ({
+          id: newPolicyId(), dbId: x.id, line: x.line_of_business, type: x.product_type || "",
+          status: d.kind === "sale" ? "sold" : "quoted",
+          premium: x.premium == null ? "" : String(x.premium),
+          vehicles: x.vehicle_count == null ? "" : String(x.vehicle_count),
+          isNewLine: x.is_new_line !== false, addedToExisting: !!x.added_to_existing, autopay: !!x.autopay,
+        })));
+      } else if (d.kind === "cancelation") {
+        setPolicies([{ id: newPolicyId(), dbId: null, line: d.policy_line, type: d.product_type || "",
+          status: "canceled", premium: d.premium == null ? "" : String(d.premium),
+          vehicles: d.vehicle_count == null ? "" : String(d.vehicle_count),
+          isNewLine: false, addedToExisting: false, autopay: false }]);
+        setCReason(d.reason || "");
+      } else if (d.kind === "activity") {
+        setActivities([{ id: newPolicyId(), key: d.activity_key,
+          line: d.save_line || d.policy_line || "", type: d.product_type || "",
+          premium: d.premium == null ? "" : String(d.premium), reason: d.save_reason || "" }]);
+      } else if (d.kind === "scorecard") {
+        setScores(Object.fromEntries(Object.entries(d.scores || {}).filter(([, v]) => v != null)));
+        setRecTurned(!!d.recording_turned_in); setRecUrl(d.recording_url || "");
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.kind, editing?.id]);
+
+  // Which parts of the form belong to the record being edited. Logging shows them all.
+  const showActivityBlock = !isEdit || editRec.kind === "activity";
+  const showPolicyBlock   = !isEdit || editRec.kind === "sale" || editRec.kind === "quote" || editRec.kind === "cancelation";
+  const showBottomRow     = !isEdit || editRec.kind !== "scorecard";
+  const showCardBlock     = !isEdit || editRec.kind === "scorecard";
 
   // name suggestions: two letters in, a quarter-second pause, at most eight back
   useEffect(() => {
@@ -404,7 +460,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const needsMoney = (p) => isSold(p) || p.status === "canceled";
   const showDate = dateOpen || date !== today;
   const oldOnFile = (p) => onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
-  const flagged = sold.filter(p => oldOnFile(p));
+  const flagged = isEdit ? [] : sold.filter(p => oldOnFile(p));   // a record being edited would match itself
   const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
   const showSuggest = suggestOpen && suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
@@ -443,6 +499,76 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setActivities([]);
     setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote(""); setOnFileAnswer({});
     setAttempted(false);
+  };
+
+  // Only the keys this record owns go back. rp_edit_* applies what it is given and
+  // leaves the rest alone, so a field nobody touched stays exactly as it was.
+  const submitEdit = async () => {
+    setErr(""); setOk(""); setAttempted(true);
+    if (busy || !editRec) return;
+    const k = editRec.kind;
+    const who = { customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone };
+    const gate = [];
+    if (!first.trim()) gate.push("First name.");
+    if (k !== "scorecard" && !/^[A-Za-z]$/.test(initial.trim())) gate.push("Last initial.");
+    if (!phoneOk) gate.push("Customer phone, last four digits.");
+    if (k === "sale" && sold.length === 0) gate.push("A sale needs at least one sold policy.");
+    if (k === "quote" && quoted.length === 0) gate.push("A quote needs at least one quoted policy.");
+    if (k === "cancelation" && policies.length !== 1) gate.push("A cancelation is one policy. Log a second one separately.");
+    if (k === "sale" && sold.some(p => p.premium === "" || !(Number(p.premium) >= 0))) gate.push("Every sold policy needs a premium.");
+    if (k === "sale" && !ecrm.trim()) gate.push("A sale needs the ECRM opportunity link.");
+    if (gate.length) { setErr(gate.join(" ")); return; }
+    setBusy(true);
+    try {
+      let fn, changes;
+      if (k === "sale") {
+        fn = "rp_edit_sale";
+        changes = { ...who, submitted_date: date, household_status: relationship || undefined,
+          marketing_source: source || undefined,
+          sourced_by_team_member_id: isReferral ? (sourcedBy || "") : "",
+          ecrm_opportunity_url: ecrm.trim(), note: note.trim(), gnc_used: scores.setup_gnc_score === 3,
+          products: sold.map(p => ({ id: p.dbId || null, line_of_business: p.line, product_type: p.type || null,
+            premium: Number(p.premium), policy_count: 1,
+            vehicle_count: p.line === "auto" ? Number(p.vehicles) : null,
+            added_to_existing: p.line === "auto" && !!p.addedToExisting,
+            is_new_line: !!p.isNewLine, autopay: !!p.autopay })) };
+      } else if (k === "quote") {
+        fn = "rp_edit_quote";
+        changes = { ...who, quote_date: date, relationship_type: relationship || undefined,
+          marketing_source: source || undefined,
+          sourced_by_team_member_id: isReferral ? (sourcedBy || "") : "",
+          ecrm_opportunity_url: ecrm.trim(), note: note.trim(),
+          products: quoted.map(p => ({ id: p.dbId || null, line_of_business: p.line, product_type: p.type || null })) };
+      } else if (k === "cancelation") {
+        const one = policies[0] || {};
+        fn = "rp_edit_cancelation";
+        changes = { ...who, canceled_on: date, policy_line: one.line, product_type: one.type || null,
+          premium: one.premium === "" ? null : Number(one.premium),
+          vehicle_count: one.line === "auto" && one.vehicles !== "" ? Number(one.vehicles) : null,
+          reason: cReason.trim(), note: note.trim() };
+      } else if (k === "activity") {
+        const a = activities[0] || {};
+        fn = "rp_edit_activity";
+        const isSave = a.key === "cancelation_saved";
+        changes = { ...who, occurred_on: date, activity_key: a.key, note: note.trim(), ecrm_url: ecrm.trim(),
+          ...(isSave
+            ? { save_line: a.line || "", save_reason: (a.reason || "").trim(), product_type: a.type || "" }
+            : { policy_line: a.line || "", product_type: a.type || "",
+                premium: a.premium === "" ? null : Number(a.premium) }) };
+      } else {
+        fn = "rp_edit_scorecard";
+        changes = { customer_first_name: first.trim(), phone_last4: phone, scorecard_date: date,
+          notes: note.trim(), recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || "") : "",
+          ...Object.fromEntries(CARD_PARTS.map(pt => [pt.key, scores[pt.key] == null ? null : Number(scores[pt.key])])) };
+      }
+      const { data, error } = await supabase.rpc(fn, { p_id: editRec.id, p_changes: changes });
+      if (error) { setErr(errText(error)); return; }
+      if (data && data.ok === false) { setErr(errText(data)); return; }
+      onLogged?.();
+      onCloseEdit?.(data?.moved_from_historical
+        ? "Saved. That record left the historical load and sits in the production log now."
+        : "Saved.");
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
   const submit = async () => {
@@ -534,12 +660,22 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   return (
     <div>
       <div style={cardStyle}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>What happened with this customer?</div>
-        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>Add what happened. One button saves it all.</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
+          {isEdit ? `Editing this ${editRec.kind === "scorecard" ? "conversation score" : editRec.kind}` : "What happened with this customer?"}
+        </div>
+        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <span>{isEdit ? "Change what needs changing and save." : "Add what happened. One button saves it all."}</span>
+          {isEdit && editRec.entry_source === "historical_backfill" && (
+            <span style={{ padding: "3px 9px", borderRadius: 999, background: T.amberLt, color: T.amber, fontSize: 12, fontWeight: 700 }}>
+              Saving moves this out of the historical load and into the production log
+            </span>
+          )}
+          {isEdit && <button type="button" style={linkBtn} onClick={() => onCloseEdit?.("")}>Cancel</button>}
+        </div>
 
         {/* ---- row 1: every first field, wrapping ---- */}
         <div style={wrapRow}>
-          {isOwner && (
+          {isOwner && !isEdit && (
             <div style={{ flex: "0 1 120px", minWidth: 0 }}>
               <label style={labelStyle}>Log for</label>
               <select style={inputBase} value={logFor || ""} onChange={e => setLogFor(e.target.value || null)}>
@@ -594,6 +730,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         )}
 
         {/* ---- retention activity: Add dropdown + pills on one wrapping row ---- */}
+        {showActivityBlock && (
         <div style={blockStyle}>
           <div style={{ ...wrapRow, alignItems: "center" }}>
             <select style={addSelect} value="" onChange={e => addActivity(e.target.value)}>
@@ -658,8 +795,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           ))}
         </div>
+        )}
 
         {/* ---- policies: Add dropdown + pills on one row; the pill tapped last is edited below ---- */}
+        {showPolicyBlock && (
         <div style={blockStyle}>
           <div style={{ ...wrapRow, alignItems: "center" }}>
             <select style={addSelect} value="" onChange={e => addPolicy(e.target.value)}>
@@ -753,7 +892,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             );
           })}
-          {hasQuote && dupQuotes.length > 0 && (
+          {!isEdit && hasQuote && dupQuotes.length > 0 && (
             <div style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
               {preview} was already quoted this week ({dupQuotes.map(d => `${(roster || []).find(t => t.id === d.team_member_id)?.first_name || "someone"} on ${fmtDate(d.quote_date)}`).join(", ")}). It still logs; the same household counts once for HH quotes.
             </div>
@@ -764,8 +903,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           )}
         </div>
+        )}
 
         {/* ---- bottom row: ECRM link (sale), marketing source (quote or sale), lead source (referral), note ---- */}
+        {showBottomRow && (
         <div style={{ ...wrapRow, ...blockStyle }}>
           {hasSale && (
             <div style={field(200)}>
@@ -796,8 +937,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
           </div>
         </div>
+        )}
 
         {/* ---- scorecard: one compact row, 10 parts, x / 1 / 2 / 3; every part on a quote or sale ---- */}
+        {showCardBlock && (
         <div style={{ marginTop: 14 }}>
           <div style={{ ...labelStyle, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
             <span>Scorecard {cardAvg != null ? <span style={{ color: T.blue }}>· {cardAvg.toFixed(2)}</span> : null}{needsCard ? <span style={{ color: T.red }}> (every part)</span> : null}</span>
@@ -828,11 +971,15 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           )}
         </div>
+        )}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 18, position: "sticky", bottom: 8, background: T.white, padding: "8px 0", zIndex: 3 }}>
-          <button style={btnPrimary(busy)} disabled={busy} onClick={submit}>{busy ? "Saving…" : `Log it${activityTotal ? ` · $${fmtPts(activityTotal)}` : ""}`}</button>
+          <button style={btnPrimary(busy)} disabled={busy} onClick={isEdit ? submitEdit : submit}>
+            {busy ? "Saving…" : isEdit ? "Save changes" : `Log it${activityTotal ? ` · $${fmtPts(activityTotal)}` : ""}`}
+          </button>
+          {isEdit && <button type="button" style={btnGhost} disabled={busy} onClick={() => onCloseEdit?.("")}>Cancel</button>}
         </div>
-        {attempted && problems.length > 0 && (
+        {attempted && !isEdit && problems.length > 0 && (
           <div style={{ marginTop: 12, fontSize: 12, color: T.slate600, lineHeight: 1.6 }}>
             <div style={{ fontWeight: 700, color: T.slate700 }}>Still needed</div>
             {problems.map((p, i) => <div key={i}>· {p}</div>)}
@@ -847,7 +994,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           </div>
         )}
       </div>
-      <PendingSaves refreshKey={refreshKey} />
+      {!isEdit && <PendingSaves refreshKey={refreshKey} />}
     </div>
   );
 }
@@ -1894,7 +2041,60 @@ function changeSummary(r, ctx) {
   }
 }
 
+// One day at a time, arrows to move. Rows that came from a single click on the
+// Log tab collapse to one line. These are the same lines the daily alert and the
+// Telegram note carry, because all three read production_changes_for_day. The
+// Telegram link lands here: ?tab=changes&day=YYYY-MM-DD
+function ChangeDay({ day, setDay }) {
+  const [lines, setLines] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setErr(""); setLines(null);
+      const r = await supabase.rpc("production_changes_for_day", { p_agency_id: AGENCY_ID, p_day: day });
+      if (!alive) return;
+      if (r.error) { setErr(errText(r.error)); setLines([]); return; }
+      setLines(Array.isArray(r.data) ? r.data : []);
+    })();
+    return () => { alive = false; };
+  }, [day]);
+
+  const today = todayCentral();
+  const arrow = { ...btnGhost, padding: "6px 12px", fontSize: 15, lineHeight: 1 };
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
+          {day === today ? "Today" : fmtDate(day)}
+          {lines && lines.length > 0 ? <span style={{ color: T.slate500, fontWeight: 600, fontSize: 13 }}> &middot; {plural(lines.length, "change")}</span> : null}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button style={arrow} onClick={() => setDay(addDays(day, -1))} aria-label="previous day">&lsaquo;</button>
+          <input type="date" style={{ ...inputBase, width: "auto", fontSize: 13, padding: "6px 10px" }} value={day} max={today}
+            onChange={e => { if (e.target.value) setDay(e.target.value); }} />
+          <button style={arrow} disabled={day >= today} onClick={() => setDay(addDays(day, 1))} aria-label="next day">&rsaquo;</button>
+        </div>
+      </div>
+      {err && <Notice kind="error">{err}</Notice>}
+      {lines === null ? (
+        <div style={{ color: T.slate500, fontSize: 13 }}>Loading&hellip;</div>
+      ) : lines.length === 0 ? (
+        <div style={{ color: T.slate600, fontSize: 14 }}>Nothing was edited or removed on this day.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {lines.map(l => (
+            <div key={l.txid} style={{ fontSize: 13, color: T.slate800, padding: "8px 10px", background: T.slate50, borderRadius: 8 }}>{l.line}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChangesTab({ roster, nameOf, values, types, onChanged }) {
+  const [day, setDay] = useTabParam("day", "");
+  const [view, setView] = useState("day");
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
@@ -1947,11 +2147,24 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
     if (onChanged) onChanged();
   };
 
+  if (view === "day") {
+    return (
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 13, color: T.slate500 }}>Edits and removals, one day at a time.</div>
+          <button style={btnGhost} onClick={() => setView("all")}>See every change</button>
+        </div>
+        <ChangeDay day={day || todayCentral()} setDay={setDay} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: 13, color: T.slate500 }}>Who changed what, and when. Everything on this module, newest first.</div>
         <div style={{ display: "flex", gap: 8 }}>
+          <button style={btnGhost} onClick={() => setView("day")}>Back to one day</button>
           <select value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
             <option value="">Everyone</option>
             {roster.map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
@@ -2734,6 +2947,24 @@ function ChecklistTab() {
 // =====================================================================
 function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [canceling, setCanceling] = useState(false);
+  const [editing, setEditing] = useState(null);   // {kind, id} while a record is open for editing
+  const [flash, setFlash] = useState("");
+  const [listKey, setListKey] = useState(0);
+  const closeEdit = (msg) => { setEditing(null); setFlash(msg || ""); setListKey(k => k + 1); };
+  const openEdit = (target) => {
+    setFlash(""); setCanceling(false); setEditing(target);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Editing takes the whole tab: one record, one form, nothing else to trip over.
+  if (editing) {
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+          onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={editing} onCloseEdit={closeEdit} />
+      </div>
+    );
+  }
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ ...cardStyle, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
@@ -2746,6 +2977,125 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, na
       {canceling
         ? <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onLogged} refreshKey={refreshKey} />
         : <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />}
+      <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
+    </div>
+  );
+}
+
+// =====================================================================
+// Recent entries — what was logged, with Edit and Delete (Peter 2026-09-14).
+// rp_recent_entries decides per row whether this person may change it, so a
+// button only appears where the server would allow the change anyway.
+// Typing in the search box reaches all the way back, which is how the
+// historical load gets edited: editing one moves it into the production log.
+// =====================================================================
+const KIND_LABEL = { sale: "Sale", quote: "Quote", cancelation: "Cancelation", activity: "Activity", scorecard: "Conversation score" };
+const KIND_COLOR = { sale: T.green, quote: T.blue, cancelation: T.red, activity: T.purple, scorecard: T.teal };
+
+function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
+  const [rows, setRows] = useState(null);
+  const [who, setWho] = useState("");
+  const [q, setQ] = useState("");
+  const [term, setTerm] = useState("");
+  const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 300); return () => clearTimeout(t); }, [q]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setErr("");
+      const r = await supabase.rpc("rp_recent_entries", {
+        p_days: 14, p_team_member_id: who || null, p_limit: 200, p_search: term || null,
+      });
+      if (!alive) return;
+      if (r.error) { setErr(errText(r.error)); setRows([]); return; }
+      setRows(Array.isArray(r.data) ? r.data : []);
+    })();
+    return () => { alive = false; };
+  }, [who, term, refreshKey]);
+
+  const remove = async (row) => {
+    const what = (KIND_LABEL[row.kind] || row.kind).toLowerCase();
+    if (!window.confirm(`Delete this ${what} for ${row.customer_label || "this customer"}? It stops counting straight away.`)) return;
+    setBusyId(row.id); setErr("");
+    try {
+      const { data, error } = await supabase.rpc("rp_delete_record", { p_kind: row.kind, p_id: row.id, p_reason: null });
+      if (error) { setErr(errText(error)); return; }
+      if (data && data.ok === false) { setErr(errText(data)); return; }
+      setRows(list => (list || []).filter(x => !(x.id === row.id && x.kind === row.kind)));
+    } catch (e) { setErr(errText(e)); } finally { setBusyId(null); }
+  };
+
+  const selectStyle = { ...inputBase, width: "auto", fontSize: 13, padding: "7px 10px" };
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Recent entries</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>The last two weeks. Search a name to go further back.</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {isAdmin && (
+            <select value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
+              <option value="">Everyone</option>
+              {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+            </select>
+          )}
+          <input style={{ ...selectStyle, width: 190 }} value={q} placeholder="Search a customer"
+            onChange={e => setQ(e.target.value)} {...noPwManager("r1")} />
+        </div>
+      </div>
+      {flash && <Notice kind="ok">{flash}</Notice>}
+      {err && <Notice kind="error">{err}</Notice>}
+      {rows === null ? (
+        <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ color: T.slate600, fontSize: 14 }}>{term ? `Nothing on file for “${term}”.` : "Nothing logged in the last two weeks."}</div>
+      ) : (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={tableTh}>Date</th>
+                <th style={tableTh}>What</th>
+                <th style={tableTh}>Customer</th>
+                {isAdmin && <th style={tableTh}>Who</th>}
+                <th style={tableTh}>Details</th>
+                <th style={tableTh}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={`${r.kind}:${r.id}`}>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                    <span style={{ fontWeight: 700, color: KIND_COLOR[r.kind] || T.slate700 }}>{KIND_LABEL[r.kind] || r.kind}</span>
+                    {r.entry_source === "historical_backfill" && (
+                      <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: T.slate100, color: T.slate600, fontSize: 11, fontWeight: 700 }}>Historical</span>
+                    )}
+                  </td>
+                  <td style={tableTd}>{r.customer_label || "—"}{r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}</td>
+                  {isAdmin && <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{r.who}</td>}
+                  <td style={tableTd}>
+                    {r.summary || "—"}
+                    {r.amount != null && r.kind !== "scorecard" ? <span style={{ color: T.slate500 }}> · ${fmtPts(r.amount)}</span> : null}
+                  </td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap", textAlign: "right" }}>
+                    {r.can_change ? (
+                      <>
+                        <button style={{ ...miniBtn, marginRight: 6 }} disabled={busyId === r.id} onClick={() => onEdit({ kind: r.kind, id: r.id })}>Edit</button>
+                        <button style={{ ...miniBtn, color: T.red }} disabled={busyId === r.id} onClick={() => remove(r)}>Delete</button>
+                      </>
+                    ) : <span style={{ color: T.slate400, fontSize: 12 }}>closed</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
