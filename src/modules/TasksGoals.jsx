@@ -229,9 +229,49 @@ const formatDueLabel = (task) => {
   return task?.due_date || "";
 };
 
+// ─── Planner Helpers ──────────────────────────────────────────
+// Hours are numeric(…) on the row, so they arrive as strings. One reader, used everywhere.
+const hoursNum = (h) => {
+  const n = Number(h);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+const hoursLabel = (h) => {
+  const n = hoursNum(h);
+  if (!n) return null;
+  return (Math.round(n * 100) / 100).toString().replace(/\.0+$/, "") + "h";
+};
+const isoDate = (d) => {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+};
+// Agency weeks run Sunday to Saturday. This returns the Sunday that starts the given date's week.
+const weekStartSunday = (d = new Date()) => {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - x.getDay());
+  return x;
+};
+// The Sunday the next planned week starts on. On a Sunday that is today.
+const nextPlanningSunday = () => {
+  const today = new Date();
+  return today.getDay() === 0 ? weekStartSunday(today) : (() => {
+    const s = weekStartSunday(today);
+    s.setDate(s.getDate() + 7);
+    return s;
+  })();
+};
+const dayHeading = (iso) => {
+  if (!iso) return "No day set";
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "No day set";
+  return d.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" });
+};
+const firstNameOf = (s) => (s || "").trim().split(" ")[0];
+
 // ─── Task Card Component ──────────────────────────────────────
-const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, isExpanded=false, onToggleExpand, canEdit=false, onEdit, onDelete, onReopen }) => {
+const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFocus, isExpanded=false, onToggleExpand, canEdit=false, onEdit, onDelete, onReopen, onSavePlanner, onReleaseLock }) => {
   // Expansion state is lifted to TasksList (expandedIds) so it can drive both description and children visibility.
+  // Planner draft — null means not editing. No effect needed: the draft is seeded on the click that opens it.
+  const [plannerDraft, setPlannerDraft] = useState(null);
   const pr = PRIORITY[task.priority] || PRIORITY.medium;
   const cat = categoryConfig(task.task_category);
   const typ = typeConfig(task.task_type || "task");
@@ -243,14 +283,23 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
   const parent = (task.parent_task_id && Array.isArray(allTasks))
     ? allTasks.find(t => t.id === task.parent_task_id) : null;
   const children = (Array.isArray(allTasks) && (task.task_type === "epic" || task.task_type === "story"))
-    ? allTasks.filter(t => t.parent_task_id === task.id) : [];
+    ? allTasks.filter(t => t.parent_task_id === task.id && t.backlog_state !== "checklist") : [];
   const childOpen = children.filter(c => c.status !== "completed").length;
+  // Checklist children belong to a standing commitment. They never compete for a weekly slot,
+  // so they stay out of the tree and live in this card's own checklist panel instead.
+  const checklistKids = Array.isArray(allTasks)
+    ? allTasks.filter(t => t.parent_task_id === task.id && t.backlog_state === "checklist") : [];
+  const checklistLeft = checklistKids.filter(c => c.status !== "completed");
+  const isStanding = checklistKids.length > 0;
+  const priorityLocked = task.priority_source === "manual";
+  const hoursLocked    = task.estimated_hours_source === "manual";
+  const hrs = hoursLabel(task.estimated_hours);
   // Direct-children counts power the pill label (drill-down: each level's toggle reveals its own children).
   const childStories = children.filter(c => c.task_type === "story").length;
   const childTasks   = children.filter(c => (c.task_type || "task") === "task").length;
   const hasDescription = !!task.description;
   const hasChildren    = children.length > 0 && (task.task_type === "epic" || task.task_type === "story");
-  const showPill       = hasChildren || hasDescription;
+  const showPill       = hasChildren || hasDescription || isStanding;
   // Indent based on depth in nested view (max 2 levels visible)
   const indent = Math.min(depth, 2) * 18;
 
@@ -314,6 +363,16 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
+            {hrs && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>{hrs}</span>}
+            {(priorityLocked || hoursLocked) && (
+              <span
+                title={priorityLocked && hoursLocked ? "Priority and hours are set by hand. The Sunday run leaves them alone."
+                      : priorityLocked ? "Priority is set by hand. The Sunday run leaves it alone."
+                      : "Hours are set by hand. The Sunday run leaves them alone."}
+                style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate500, border:`1px solid ${T.slate200}` }}>
+                🔒 Set by hand
+              </span>
+            )}
             {showPill && (() => {
               // Build label: "N stories" / "N tasks" / "Details" depending on what expanding reveals.
               const labelParts = [];
@@ -322,6 +381,9 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
               }
               if ((task.task_type === "epic" || task.task_type === "story") && childTasks > 0) {
                 labelParts.push(`${childTasks} ${childTasks === 1 ? "task" : "tasks"}`);
+              }
+              if (isStanding) {
+                labelParts.push(`${checklistLeft.length} of ${checklistKids.length} on the checklist`);
               }
               if (labelParts.length === 0 && hasDescription) {
                 labelParts.push("Details");
@@ -456,12 +518,82 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
         </button>
       </div>
 
-      {isExpanded && task.description && (
+      {isExpanded && (task.description || isStanding || (canEdit && onSavePlanner)) && (
         <div style={{ padding:"0 12px 12px 46px", borderTop:`1px solid ${T.slate100}` }}>
-          <div style={{ fontSize:12, color:T.slate600, lineHeight:1.6, marginTop:8, marginBottom:8 }}>
-            {task.description}
-          </div>
-          
+          {task.description && (
+            <div style={{ fontSize:12, color:T.slate600, lineHeight:1.6, marginTop:8, marginBottom:8 }}>
+              {task.description}
+            </div>
+          )}
+
+          {/* Planner fields — priority and hours, and the lock that keeps the Sunday run off them */}
+          {canEdit && onSavePlanner && !isCompleted && (
+            plannerDraft ? (
+              <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap", marginTop:10, marginBottom:4 }}>
+                <div>
+                  <label style={{ fontSize:10, fontWeight:600, color:T.slate500, display:"block", marginBottom:4 }}>PRIORITY</label>
+                  <select value={plannerDraft.priority} onChange={e => setPlannerDraft(d => ({ ...d, priority:e.target.value }))}
+                    style={{ padding:"6px 8px", fontSize:11, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:7, background:T.white, outline:"none" }}>
+                    {Object.keys(PRIORITY).map(p => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize:10, fontWeight:600, color:T.slate500, display:"block", marginBottom:4 }}>HOURS</label>
+                  <input type="number" min="0" step="0.25" value={plannerDraft.hours}
+                    onChange={e => setPlannerDraft(d => ({ ...d, hours:e.target.value }))}
+                    style={{ width:80, padding:"6px 8px", fontSize:11, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:7, outline:"none", boxSizing:"border-box" }} />
+                </div>
+                <button
+                  onClick={() => { onSavePlanner(task.id, plannerDraft.priority, plannerDraft.hours); setPlannerDraft(null); }}
+                  style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>
+                  Save
+                </button>
+                <button onClick={() => setPlannerDraft(null)}
+                  style={{ padding:"7px 12px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginTop:10, marginBottom:4 }}>
+                <button
+                  onClick={() => setPlannerDraft({ priority: task.priority || "medium", hours: hoursNum(task.estimated_hours) || "" })}
+                  style={{ padding:"6px 12px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:`1px solid ${T.slate200}`, borderRadius:7, cursor:"pointer" }}>
+                  Set priority &amp; hours
+                </button>
+                {(priorityLocked || hoursLocked) && onReleaseLock && (
+                  <button onClick={() => onReleaseLock(task.id)}
+                    title="Hand these back to the Sunday run"
+                    style={{ padding:"6px 12px", fontSize:11, fontWeight:600, color:T.slate500, background:"transparent", border:`1px solid ${T.slate200}`, borderRadius:7, cursor:"pointer" }}>
+                    Hand back to the planner
+                  </button>
+                )}
+              </div>
+            )
+          )}
+
+          {/* Checklist panel — standing commitment children, ticked off one at a time */}
+          {isStanding && (
+            <div style={{ marginTop:12 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.slate600, marginBottom:6 }}>
+                Checklist · {checklistLeft.length} left of {checklistKids.length}
+              </div>
+              <div style={{ maxHeight:260, overflowY:"auto", border:`1px solid ${T.slate200}`, borderRadius:8 }}>
+                {checklistKids.map(c => {
+                  const done = c.status === "completed";
+                  return (
+                    <div key={c.id} style={{ display:"flex", alignItems:"center", gap:9, padding:"7px 10px", borderBottom:`1px solid ${T.slate100}`, boxSizing:"border-box" }}>
+                      <input type="checkbox" checked={done} disabled={done}
+                        onChange={() => !done && onComplete && onComplete(c.id)}
+                        style={{ flexShrink:0, cursor: done ? "default" : "pointer" }} />
+                      <span style={{ fontSize:11, color: done ? T.slate400 : T.slate700, textDecoration: done ? "line-through" : "none" }}>
+                        {c.title}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -636,99 +768,259 @@ const TaskModal = ({
   );
 };
 
-// ─── Section: This Week's To-Dos ──────────────────────────────
-const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus, canEdit, onEdit, onDelete, onReopen }) => {
-  const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed");
+// ─── Modal: closing a parent with open children ───────────────
+// Peter's ruling: no cascade and no block. The user ticks off what is actually done,
+// and the parent closes with whatever was ticked. Nothing starts ticked.
+const ParentCloseModal = ({ task, openChildren, onConfirm, onCancel }) => {
+  const [ticked, setTicked] = useState(() => new Set());
+  const toggle = (id) => setTicked(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const allOn = openChildren.length > 0 && ticked.size === openChildren.length;
 
-  // Local expand state — independent of Overview's expandedIds. Non-persistent: a fresh
-  // weekly-focus view each session matches the "working list" mental model.
-  const [todoExpanded, setTodoExpanded] = useState(() => new Set());
-  const toggleTodoExpand = (id) => setTodoExpanded(prev => {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
+      <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:520, boxShadow:"0 20px 60px rgba(0,0,0,0.2)", overflow:"hidden" }}>
+        <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}` }}>
+          <div style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>Close this and tick off what is done</div>
+          <div style={{ fontSize:11, color:T.slate500, marginTop:4 }}>{task.title}</div>
+        </div>
+
+        <div style={{ padding:"12px 20px 4px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, gap:10, flexWrap:"wrap" }}>
+            <span style={{ fontSize:11, color:T.slate500 }}>
+              {openChildren.length} still open · {ticked.size} will close with it
+            </span>
+            <button
+              onClick={() => setTicked(allOn ? new Set() : new Set(openChildren.map(c => c.id)))}
+              style={{ padding:"5px 10px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
+              {allOn ? "Clear all" : "Tick all"}
+            </button>
+          </div>
+          <div style={{ maxHeight:300, overflowY:"auto", border:`1px solid ${T.slate200}`, borderRadius:8 }}>
+            {openChildren.map(c => (
+              <label key={c.id} style={{ display:"flex", alignItems:"center", gap:9, padding:"8px 10px", borderBottom:`1px solid ${T.slate100}`, cursor:"pointer", boxSizing:"border-box" }}>
+                <input type="checkbox" checked={ticked.has(c.id)} onChange={() => toggle(c.id)} style={{ flexShrink:0 }} />
+                <span style={{ fontSize:11, color:T.slate700 }}>{c.title}</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ fontSize:10, color:T.slate400, marginTop:8 }}>
+            Anything left unticked stays open.
+          </div>
+        </div>
+
+        <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8, marginTop:8 }}>
+          <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
+          <button onClick={() => onConfirm(Array.from(ticked))}
+            style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:T.blue, border:"none", borderRadius:7, cursor:"pointer" }}>
+            Close {ticked.size > 0 ? `+ ${ticked.size}` : "on its own"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Section: This Week ───────────────────────────────────────
+// One person, one week, one budget. Items come from the Sunday run (scheduled_day set)
+// or from starring anything by hand (no day, shown at the bottom).
+const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, canEdit, onEdit, onDelete, onReopen, onSavePlanner, onReleaseLock, onProposeWeek, onApproveWeek }) => {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleExpand = (id) => setExpanded(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
-  // Top-level focus items: focused items whose parent is NOT also focused.
-  // Ensures we render the highest focused ancestor and let expansion reveal the rest.
-  // A child that's also starred appears once (under its parent), never twice.
-  const focusIds = new Set(focusOpen.map(t => t.id));
-  const topLevel = focusOpen.filter(t => !t.parent_task_id || !focusIds.has(t.parent_task_id));
+  const [planWeek]    = useState(() => isoDate(nextPlanningSunday()));
+  const [proposal, setProposal] = useState(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planError, setPlanError] = useState("");
 
-  const byCat = {};
+  const runPropose = async () => {
+    setPlanBusy(true); setPlanError("");
+    try { setProposal(await onProposeWeek(planWeek)); }
+    catch (e) { setPlanError(e?.message || "The planner could not run."); }
+    finally { setPlanBusy(false); }
+  };
+  const runApprove = async () => {
+    setPlanBusy(true); setPlanError("");
+    try { await onApproveWeek(planWeek); setProposal(null); }
+    catch (e) { setPlanError(e?.message || "Writing the week failed."); }
+    finally { setPlanBusy(false); }
+  };
+
+  // Checklist rows never take a weekly slot, so they never show here.
+  const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed" && t.backlog_state !== "checklist");
+  const focusIds  = new Set(focusOpen.map(t => t.id));
+  const topLevel  = focusOpen.filter(t => !t.parent_task_id || !focusIds.has(t.parent_task_id));
+
+  // Group by person, then by the day the planner gave them.
+  const people = [];
+  const byPerson = new Map();
   for (const t of topLevel) {
-    const k = t.task_category || "_uncategorized";
-    (byCat[k] = byCat[k] || []).push(t);
+    const name = t.assigned_to_name || "Unassigned";
+    if (!byPerson.has(name)) { byPerson.set(name, []); people.push(name); }
+    byPerson.get(name).push(t);
   }
-  const orderedKeys = [
-    ...TASK_CATEGORY_ORDER.filter(k => byCat[k]),
-    ...(byCat._uncategorized ? ["_uncategorized"] : []),
-  ];
+  people.sort((a, b) => a.localeCompare(b));
 
-  // Recursive renderer: top-level focused items + ALL uncompleted descendants when
-  // their parent is expanded. Children appear regardless of in_weekly_focus status —
-  // starring the parent implies committing to its breakdown.
-  const renderTodoTree = (task, depth) => {
-    const isOpen = todoExpanded.has(task.id);
+  const renderTree = (task, depth) => {
+    const isOpen = expanded.has(task.id);
     const kids = (task.task_type === "epic" || task.task_type === "story")
-      ? tasks.filter(c => c.parent_task_id === task.id && c.status !== "completed")
+      ? tasks.filter(c => c.parent_task_id === task.id && c.status !== "completed" && c.backlog_state !== "checklist")
       : [];
     return (
       <div key={task.id} style={{ display:"flex", flexDirection:"column", gap:4 }}>
         <TaskCard
-          task={task}
-          allTasks={tasks}
-          depth={depth}
-          onComplete={onComplete}
-          onNavigate={onNavigate}
-          onToggleFocus={onToggleFocus}
-          isExpanded={isOpen}
-          onToggleExpand={toggleTodoExpand}
-          canEdit={canEdit}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onReopen={onReopen}
+          task={task} allTasks={tasks} depth={depth}
+          onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
+          isExpanded={isOpen} onToggleExpand={toggleExpand}
+          canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} onReopen={onReopen}
+          onSavePlanner={onSavePlanner} onReleaseLock={onReleaseLock}
         />
-        {isOpen && kids.length > 0 && kids.map(k => renderTodoTree(k, depth + 1))}
+        {isOpen && kids.length > 0 && kids.map(k => renderTree(k, depth + 1))}
       </div>
     );
   };
 
-  const askContext = `My this-week to-dos:\n${focusOpen.map(t => `• [${t.task_category || "uncategorized"}] ${t.title} (${t.priority}, due ${t.due_date || "no date"})`).join("\n")}\n\nHelp me sequence these for the week.`;
-
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, gap:10, flexWrap:"wrap" }}>
+      {/* Header + the Sunday run */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:14, gap:10, flexWrap:"wrap" }}>
         <div>
-          <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>This week&rsquo;s to-dos</div>
+          <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>This week</div>
           <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
-            {focusOpen.length} open · star ☆ any task in the Tasks tab to add it here · grouped by category
+            {focusOpen.length} open · star ☆ anything in Tasks to add it by hand
           </div>
         </div>
-        
+        {canEdit && onProposeWeek && (
+          <button onClick={runPropose} disabled={planBusy}
+            style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background: planBusy ? "#94A3B8" : T.blue, border:"none", borderRadius:8, cursor: planBusy ? "not-allowed" : "pointer" }}>
+            {planBusy ? "Working…" : `Plan the week of ${dayHeading(planWeek)}`}
+          </button>
+        )}
       </div>
+
+      {planError && (
+        <Card style={{ marginBottom:14, borderColor:T.red }}>
+          <div style={{ fontSize:12, color:T.red }}>{planError}</div>
+        </Card>
+      )}
+
+      {/* Proposed week — nothing is written until it is approved */}
+      {proposal && (
+        <Card style={{ marginBottom:16, borderColor:T.blue }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:T.slate800 }}>Proposed week of {dayHeading(planWeek)}</div>
+              <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
+                {proposal.length} items · nothing is saved until you approve it
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setProposal(null)}
+                style={{ padding:"7px 12px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
+                Discard
+              </button>
+              <button onClick={runApprove} disabled={planBusy}
+                style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background: planBusy ? "#94A3B8" : T.green, border:"none", borderRadius:7, cursor: planBusy ? "not-allowed" : "pointer" }}>
+                {planBusy ? "Writing…" : "Approve"}
+              </button>
+            </div>
+          </div>
+
+          {proposal.length === 0 ? (
+            <div style={{ fontSize:12, color:T.slate500 }}>The planner proposed nothing for this week.</div>
+          ) : (
+            (() => {
+              const whoOrder = [];
+              const byWho = new Map();
+              for (const r of proposal) {
+                const w = r.who || "Unassigned";
+                if (!byWho.has(w)) { byWho.set(w, []); whoOrder.push(w); }
+                byWho.get(w).push(r);
+              }
+              return whoOrder.map(w => {
+                const rows = byWho.get(w);
+                const total = rows.reduce((s, r) => s + hoursNum(r.est_hours), 0);
+                const budget = budgets[firstNameOf(w).toLowerCase()] || 0;
+                return (
+                  <div key={w} style={{ marginBottom:12 }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:T.slate700, marginBottom:6 }}>
+                      {w} — {rows.length} items, {Math.round(total * 100) / 100}h{budget ? ` of ${budget}h` : ""}
+                    </div>
+                    <div style={{ overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.task_id} style={{ borderTop:`1px solid ${T.slate100}` }}>
+                              <td style={{ padding:"6px 8px", color:T.slate400, whiteSpace:"nowrap" }}>{r.scheduled_day ? dayHeading(r.scheduled_day).split(",")[0] : "—"}</td>
+                              <td style={{ padding:"6px 8px", color:T.slate700 }}>{r.task_title}</td>
+                              <td style={{ padding:"6px 8px", color:T.slate500, whiteSpace:"nowrap", textAlign:"right" }}>{hoursLabel(r.est_hours) || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              });
+            })()
+          )}
+        </Card>
+      )}
 
       {focusOpen.length === 0 ? (
         <Card>
           <div style={{ fontSize:13, color:T.slate500, textAlign:"center", padding:"24px 12px" }}>
-            Nothing pushed to this week&rsquo;s to-dos yet.<br />
-            <span style={{ fontSize:11, color:T.slate400 }}>Open the Tasks tab and tap ☆ on anything you want surfaced here.</span>
+            Nothing on this week yet.<br />
+            <span style={{ fontSize:11, color:T.slate400 }}>Run the planner above, or star ☆ anything in the Tasks tab.</span>
           </div>
         </Card>
-      ) : orderedKeys.map(key => {
-        const cat = TASK_CATEGORIES[key];
-        const list = byCat[key];
+      ) : people.map(name => {
+        const mine   = byPerson.get(name);
+        const total  = mine.reduce((s, t) => s + hoursNum(t.estimated_hours), 0);
+        const budget = budgets[firstNameOf(name).toLowerCase()] || 0;
+        const over   = budget > 0 && total > budget;
+        const barPct = budget > 0 ? Math.min(100, Math.round((total / budget) * 100)) : 0;
+
+        // Day buckets, in date order. Anything with no day sits at the end.
+        const dayOrder = [];
+        const byDay = new Map();
+        for (const t of mine) {
+          const k = t.scheduled_day || "";
+          if (!byDay.has(k)) { byDay.set(k, []); dayOrder.push(k); }
+          byDay.get(k).push(t);
+        }
+        dayOrder.sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+
         return (
-          <div key={key} style={{ marginBottom:14 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-              <span style={{ fontSize:12, fontWeight:700, color:cat?cat.color:T.slate500 }}>
-                {cat ? `${cat.icon} ${cat.label}` : "Uncategorized"}
+          <div key={name} style={{ marginBottom:20 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10, flexWrap:"wrap", marginBottom:6 }}>
+              <span style={{ fontSize:13, fontWeight:700, color:T.slate800 }}>{name}</span>
+              <span style={{ fontSize:11, fontWeight:600, color: over ? T.red : T.slate500 }}>
+                {Math.round(total * 100) / 100}h{budget ? ` of ${budget}h` : ""} · {mine.length} items
               </span>
-              <span style={{ fontSize:10, color:T.slate400 }}>({list.length})</span>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-              {list.map(task => renderTodoTree(task, 0))}
-            </div>
+            {budget > 0 && (
+              <div style={{ marginBottom:10 }}>
+                <ProgressBar value={total} max={budget} color={over ? T.red : T.green} height={6} />
+              </div>
+            )}
+            {dayOrder.map(day => (
+              <div key={day || "none"} style={{ marginBottom:10 }}>
+                <div style={{ fontSize:11, fontWeight:700, color: day ? T.slate600 : T.slate400, marginBottom:5 }}>
+                  {dayHeading(day)}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  {byDay.get(day).map(t => renderTree(t, 0))}
+                </div>
+              </div>
+            ))}
           </div>
         );
       })}
@@ -737,7 +1029,7 @@ const ToDosSection = ({ tasks, onComplete, onNavigate, onToggleFocus, canEdit, o
 };
 
 // ─── Section: Tasks List ──────────────────────────────────────
-const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, userRole, userId, adminUsers = [], canEdit, onEdit, onDelete }) => {
+const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, userRole, userId, adminUsers = [], canEdit, onEdit, onDelete, onSavePlanner, onReleaseLock }) => {
   const isOwner = userRole === "owner";
   // Owner picks All / Mine / each other admin. Managers see only own via RLS; chips hidden.
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -783,7 +1075,11 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
   // expandAll/collapseAll removed — per-card chevron is the only expand mechanism.
   // Modal state lifted to <TasksGoals> — a single modal instance handles both create and edit.
 
+  // Checklist rows live under their standing commitment, not in this list.
+  const pool = tasks.filter(t => t.backlog_state !== "checklist");
+
   const statusPriorityCatPass = (t) => {
+    if (t.backlog_state === "checklist") return false;
     if (filter === "open"        && t.status === "completed")  return false;
     if (filter === "completed"   && t.status !== "completed")  return false;
     if (filter === "in_progress" && t.status !== "in_progress")return false;
@@ -894,7 +1190,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
         <div style={{ display:"flex", gap:2, background:T.slate100, borderRadius:8, padding:3 }}>
           {[{id:"open",label:"Open"},{id:"in_progress",label:"In Progress"},{id:"completed",label:"Completed"}].map(f => (
             <button key={f.id} onClick={() => setFilter(f.id)} style={{ padding:"6px 12px", fontSize:11, fontWeight:filter===f.id?600:400, color:filter===f.id?T.slate900:T.slate500, background:filter===f.id?T.white:"transparent", border:"none", borderRadius:6, cursor:"pointer", boxShadow:filter===f.id?"0 1px 3px rgba(0,0,0,0.08)":"none" }}>
-              {f.label} ({tasks.filter(t => f.id==="open"?t.status==="open":f.id==="in_progress"?t.status==="in_progress":t.status==="completed").length})
+              {f.label} ({pool.filter(t => f.id==="open"?t.status==="open":f.id==="in_progress"?t.status==="in_progress":t.status==="completed").length})
             </button>
           ))}
         </div>
@@ -918,11 +1214,11 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
       {isOwner && adminUsers.length > 1 && (
         <div style={{ display:"flex", gap:6, marginBottom:10, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
           {[
-            { key:"all",  label:"All",  count: tasks.length },
-            { key:"mine", label:"Mine", count: tasks.filter(t => t.assigned_to === userId).length },
+            { key:"all",  label:"All",  count: pool.length },
+            { key:"mine", label:"Mine", count: pool.filter(t => t.assigned_to === userId).length },
             ...adminUsers
               .filter(u => u.id !== userId)
-              .map(u => ({ key: u.id, label: (u.full_name || u.email || "Unknown").split(" ")[0], count: tasks.filter(t => t.assigned_to === u.id).length })),
+              .map(u => ({ key: u.id, label: (u.full_name || u.email || "Unknown").split(" ")[0], count: pool.filter(t => t.assigned_to === u.id).length })),
           ].map(c => {
             const active = assigneeFilter === c.key;
             return (
@@ -949,7 +1245,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
       {/* Category chips — one tap to filter; horizontal scroll on phone */}
       <div style={{ display:"flex", gap:6, marginBottom:14, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
         {(() => {
-          const baseFiltered = tasks.filter(t => {
+          const baseFiltered = pool.filter(t => {
             if (filter === "open"        && t.status === "completed")  return false;
             if (filter === "completed"   && t.status !== "completed")  return false;
             if (filter === "in_progress" && t.status !== "in_progress")return false;
@@ -997,13 +1293,15 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
               onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
               isExpanded={expandedIds.has(task.id)}
               onToggleExpand={toggleExpand}
-              canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} />
+              canEdit={canEdit} onEdit={onEdit} onDelete={onDelete}
+              onSavePlanner={onSavePlanner} onReleaseLock={onReleaseLock} />
           ))
         ) : (
           filtered.map(task => (
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={0}
               onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
-              canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} />
+              canEdit={canEdit} onEdit={onEdit} onDelete={onDelete}
+              onSavePlanner={onSavePlanner} onReleaseLock={onReleaseLock} />
           ))
         )}
       </div>
@@ -1169,6 +1467,32 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
     return () => { cancelled = true; };
   }, []);
 
+  // Weekly hour budgets live in task_scoring_rules as settings named weekly_hours_<first name>.
+  const [budgets, setBudgets] = useState({});
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("task_scoring_rules")
+        .select("match_pattern, hours_value")
+        .eq("agency_id", AGENCY_ID)
+        .eq("rule_kind", "setting")
+        .eq("is_active", true);
+      if (cancelled) return;
+      if (error) { console.error("[TasksGoals] budgets load failed:", error); return; }
+      const next = {};
+      for (const r of (data || [])) {
+        if (r?.match_pattern?.startsWith("weekly_hours_")) {
+          const n = Number(r.hours_value);
+          if (Number.isFinite(n)) next[r.match_pattern.slice("weekly_hours_".length)] = n;
+        }
+      }
+      setBudgets(next);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [tasks, setTasks] = useState(useMockData ? MOCK_TASKS : []);
   useEffect(() => {
     if (liveTasks && liveTasks.length > 0) {
@@ -1223,6 +1547,8 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
   const [modalInitialTask, setModalInitialTask] = useState(null);
   const [modalDefaultType, setModalDefaultType] = useState("task");
   const [modalDefaultParentId, setModalDefaultParentId] = useState(null);
+  // Parent close: { task, children } while the tick-off panel is open.
+  const [closeTarget, setCloseTarget] = useState(null);
 
   if (tasksLoading || goalsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading tasks and goals…</div>;
   // Same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep):
@@ -1237,22 +1563,88 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
   }
   if (tasks.length === 0 && goals.length === 0) return <EmptyState module="tasks" />;
 
-  const completeTask = async (id) => {
-    // Optimistic UI: flip to completed locally.
+  // Single closer for one id or many. Every close in this module goes through it.
+  const closeTaskIds = async (ids) => {
+    const list = (ids || []).filter(Boolean);
+    if (list.length === 0) return;
+    const stamp = new Date();
     const prevSnapshot = tasks;
-    setTasks(prev => prev.map(t => t.id === id
-      ? { ...t, status:"completed", completed_at:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) }
+    // Optimistic UI: flip to completed locally.
+    setTasks(prev => prev.map(t => list.includes(t.id)
+      ? { ...t, status:"completed", completed_at:stamp.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) }
       : t
     ));
     // Persist to Supabase (DB status vocabulary is 'closed').
-    if (supabase && typeof id === "string") {
+    if (supabase && list.every(id => typeof id === "string")) {
       const { error } = await supabase
         .from("tasks")
-        .update({ status:"closed", completed_at:new Date().toISOString() })
+        .update({ status:"closed", completed_at:stamp.toISOString() })
+        .in("id", list)
+        .eq("agency_id", AGENCY_ID);
+      if (error) { console.error("[TasksGoals] closeTaskIds failed:", error); setTasks(prevSnapshot); }
+    }
+  };
+
+  // A tick on a parent opens the tick-off panel instead of closing anything on its own.
+  const requestComplete = (id) => {
+    const target = tasks.find(t => t.id === id);
+    const openKids = tasks.filter(c => c.parent_task_id === id && c.status !== "completed");
+    if (target && openKids.length > 0) { setCloseTarget({ task: target, children: openKids }); return; }
+    closeTaskIds([id]);
+  };
+  const confirmParentClose = async (tickedIds) => {
+    const target = closeTarget;
+    setCloseTarget(null);
+    if (!target) return;
+    await closeTaskIds([target.task.id, ...(tickedIds || [])]);
+  };
+
+  // One writer for a partial patch on one task. Optimistic, rolls back on failure.
+  const writeTaskPatch = async (id, patch) => {
+    if (!id || !patch) return;
+    const prevSnapshot = tasks;
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+    if (supabase && typeof id === "string" && !useMockData) {
+      const { error } = await supabase
+        .from("tasks")
+        .update(patch)
         .eq("id", id)
         .eq("agency_id", AGENCY_ID);
-      if (error) { console.error("[TasksGoals] completeTask failed:", error); setTasks(prevSnapshot); }
+      if (error) { console.error("[TasksGoals] writeTaskPatch failed:", error); setTasks(prevSnapshot); }
     }
+  };
+  // Setting either field by hand locks both against the Sunday run.
+  const savePlanner = (id, priority, hours) => {
+    const n = Number(hours);
+    return writeTaskPatch(id, {
+      priority: priority || "medium",
+      estimated_hours: Number.isFinite(n) && n > 0 ? n : null,
+      priority_source: "manual",
+      estimated_hours_source: "manual",
+    });
+  };
+  const releasePlannerLock = (id) => writeTaskPatch(id, {
+    priority_source: "auto",
+    estimated_hours_source: "auto",
+  });
+
+  // Sunday run. Propose scores a fresh pass and asks for the week without writing it.
+  const proposeWeek = async (weekOf) => {
+    const scored = await supabase.rpc("score_tasks", { p_agency_id: AGENCY_ID, p_force: false });
+    if (scored.error) throw scored.error;
+    const { data, error } = await supabase.rpc("build_weekly_focus", {
+      p_agency_id: AGENCY_ID, p_week_of: weekOf, p_dry_run: true,
+    });
+    if (error) throw error;
+    return data || [];
+  };
+  const approveWeek = async (weekOf) => {
+    const { data, error } = await supabase.rpc("build_weekly_focus", {
+      p_agency_id: AGENCY_ID, p_week_of: weekOf, p_dry_run: false,
+    });
+    if (error) throw error;
+    refetchTasks();
+    return data || [];
   };
 
   // ── Task edit/delete/reopen — access gate ──
@@ -1419,10 +1811,10 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
     }
   };
 
-  const focusCount = tasks.filter(t => t.in_weekly_focus && t.status !== "completed").length;
+  const focusCount = tasks.filter(t => t.in_weekly_focus && t.status !== "completed" && t.backlog_state !== "checklist").length;
 
   const sections = [
-    { id:"todos",     label:`To-Dos${focusCount?` (${focusCount})`:""}` },
+    { id:"todos",     label:`This Week${focusCount?` (${focusCount})`:""}` },
     { id:"overview",  label:"Overview"                   },
     { id:"goals",     label:"Goals"                      },
     { id:"completed", label:"Completed"                  },
@@ -1435,7 +1827,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Tasks & Goals</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {tasks.filter(t=>t.status!=="completed").length} open tasks · {goals.length} active goals · {tasks.filter(t=>t.status==="completed").length} completed this month
+            {tasks.filter(t=>t.status!=="completed" && t.backlog_state!=="checklist").length} open tasks · {goals.length} active goals · {tasks.filter(t=>t.status==="completed").length} completed this month
           </div>
         </div>
         
@@ -1451,10 +1843,19 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       </div>
 
       {/* Section Content */}
-      {section === "todos"     && <ToDosSection      tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onReopen={reopenTask} />}
-      {section === "overview"  && <TasksList         tasks={tasksWithDisplay} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} onOpenNew={openNewTaskModal} onToggleFocus={toggleFocus} userRole={userRole} userId={userId} adminUsers={adminUsers} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} />}
+      {section === "todos"     && <WeekSection       tasks={tasksWithDisplay} budgets={budgets} onComplete={requestComplete} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onReopen={reopenTask} onSavePlanner={savePlanner} onReleaseLock={releasePlannerLock} onProposeWeek={proposeWeek} onApproveWeek={approveWeek} />}
+      {section === "overview"  && <TasksList         tasks={tasksWithDisplay} onComplete={requestComplete} onNavigate={onNavigate||(()=>{})} onOpenNew={openNewTaskModal} onToggleFocus={toggleFocus} userRole={userRole} userId={userId} adminUsers={adminUsers} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onSavePlanner={savePlanner} onReleaseLock={releasePlannerLock} />}
       {section === "goals"     && <GoalsSection      goals={goals} />}
       {section === "completed" && <CompletedSection  tasks={tasksWithDisplay} canEdit={canEdit} onReopen={reopenTask} />}
+
+      {closeTarget && (
+        <ParentCloseModal
+          task={closeTarget.task}
+          openChildren={closeTarget.children}
+          onConfirm={confirmParentClose}
+          onCancel={() => setCloseTarget(null)}
+        />
+      )}
 
       {modalOpen && (
         <TaskModal
