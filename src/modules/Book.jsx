@@ -15,7 +15,7 @@ import { fmtMoney } from "../lib/format.jsx";
 //                Reads: v_agency_growth_summary, v_agency_snapshot_with_changes.
 //   • Assignments — alphabet split of household service
 //                   assignments across the team. Snapshot-per-date.
-//                   Reads: book_alpha_split, team.
+//                   Reads: book_alpha via rp_book_alpha, team.
 // ============================================================
 
 // ─── Local Design Tokens & Helpers ────────────────────────────

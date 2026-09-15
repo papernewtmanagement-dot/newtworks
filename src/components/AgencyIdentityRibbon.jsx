@@ -138,12 +138,11 @@ function parseIdentity(rawContent) {
   return out;
 }
 
-// ---- Who Handles What (live from public.book_alpha_split) ----
-// Fetches on mount inside expanded ribbon only.
-// Renders range only (e.g. "A-K"), no nicknames, defensive against any data quirk.
+// ---- Who Handles What (live from public.book_alpha) ----
+// Same source as the Book module's alphabet split, through the same function,
+// so the two can never drift. Range only, no nicknames.
 function AlphaSplitLive() {
-  const [rows, setRows] = useState([]);
-  const [snapshotDate, setSnapshotDate] = useState(null);
+  const [people, setPeople] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -151,29 +150,10 @@ function AlphaSplitLive() {
     let cancelled = false;
     (async () => {
       try {
-        const { data: latest, error: e1 } = await supabase
-          .from("book_alpha_split")
-          .select("snapshot_date")
-          .eq("agency_id", AGENCY_ID)
-          .not("snapshot_date", "is", null)
-          .order("snapshot_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const { data, error: e1 } = await supabase.rpc("rp_book_alpha");
         if (cancelled) return;
-        if (e1) { setError(e1.message || "load failed"); setLoading(false); return; }
-        const d = latest && latest.snapshot_date;
-        if (!d) { setLoading(false); return; }
-        setSnapshotDate(d);
-
-        const { data, error: e2 } = await supabase
-          .from("book_alpha_split")
-          .select("letter_bucket, account_count, team_member_id, team:team_member_id(first_name, last_name)")
-          .eq("agency_id", AGENCY_ID)
-          .eq("snapshot_date", d)
-          .order("letter_bucket", { ascending: true });
-        if (cancelled) return;
-        if (e2) { setError(e2.message || "load failed"); setLoading(false); return; }
-        setRows(Array.isArray(data) ? data : []);
+        if (e1 || !data || !data.ok) { setError((e1 && e1.message) || "load failed"); setLoading(false); return; }
+        setPeople(Array.isArray(data.people) ? data.people : []);
         setLoading(false);
       } catch (err) {
         if (!cancelled) { setError((err && err.message) || String(err)); setLoading(false); }
@@ -184,53 +164,30 @@ function AlphaSplitLive() {
 
   if (loading) return <p style={{ fontSize: 12.5, color: T.slate500, fontStyle: "italic", margin: 0 }}>Loading alpha split…</p>;
   if (error)   return <p style={{ fontSize: 12.5, color: "#b91c1c", margin: 0 }}>Couldn't load alpha split: {error}</p>;
-  if (!rows.length) return <p style={{ fontSize: 12.5, color: T.slate500, fontStyle: "italic", margin: 0 }}>No alpha split snapshot found.</p>;
+  if (!people.length) return <p style={{ fontSize: 12.5, color: T.slate500, fontStyle: "italic", margin: 0 }}>Nobody has letters assigned yet.</p>;
 
-  // Group by team member. Compute range as first-letter of first bucket to last-letter of last bucket.
-  let groupList = [];
-  try {
-    const groups = new Map();
-    for (const r of rows) {
-      const key = r && r.team_member_id ? r.team_member_id : "unassigned";
-      if (!groups.has(key)) {
-        const t = (r && r.team) || null;
-        const name = t
-          ? `${t.first_name || ""} ${t.last_name || ""}`.trim()
-          : "Unassigned";
-        groups.set(key, { name, buckets: [], total: 0 });
-      }
-      const g = groups.get(key);
-      if (r && r.letter_bucket) g.buckets.push(String(r.letter_bucket));
-      g.total += Number(r && r.account_count) || 0;
-    }
-    groupList = Array.from(groups.values()).sort((a, b) => {
-      const ab = (a.buckets[0] || "");
-      const bb = (b.buckets[0] || "");
-      return ab.localeCompare(bb);
-    });
-  } catch (_) {
-    return <p style={{ fontSize: 12.5, color: "#b91c1c", margin: 0 }}>Couldn't parse alpha split data.</p>;
-  }
-
-  const rangeOf = (buckets) => {
-    if (!buckets || !buckets.length) return "";
-    const first = buckets[0];
-    const last = buckets[buckets.length - 1];
-    const startChar = first.charAt(0);
-    const endChar = last.charAt(last.length - 1);
+  const rangeOf = (letters) => {
+    const ls = (letters || []).map(l => String(l.letter || "")).filter(Boolean);
+    if (!ls.length) return "";
+    const startChar = ls[0].charAt(0);
+    const lastBucket = ls[ls.length - 1];
+    const endChar = lastBucket.charAt(lastBucket.length - 1);
     return startChar === endChar ? startChar : `${startChar}-${endChar}`;
   };
+
+  const ordered = [...people].sort((a, b) =>
+    rangeOf(a.letters).localeCompare(rangeOf(b.letters)));
 
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", rowGap: 3 }}>
-        {groupList.map((g, idx) => (
-          <div key={`${g.name}-${idx}`} style={{ fontSize: 11, lineHeight: 1.4, color: T.slate900 }}>
+        {ordered.map((g, idx) => (
+          <div key={`${g.team_member_id || g.name}-${idx}`} style={{ fontSize: 11, lineHeight: 1.4, color: T.slate900 }}>
             <span style={{ fontWeight: 600 }}>{g.name}</span>
             <span style={{ color: T.slate500 }}> — </span>
-            <span>{rangeOf(g.buckets)}</span>
+            <span>{rangeOf(g.letters)}</span>
             <span style={{ color: T.slate300, margin: "0 6px" }}>·</span>
-            <span style={{ color: T.slate500 }}>{g.total.toLocaleString()} accounts</span>
+            <span style={{ color: T.slate500 }}>{Number(g.total_households || 0).toLocaleString()} households</span>
           </div>
         ))}
       </div>
