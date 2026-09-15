@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
+import { currentWeekSaturdayCT } from "../lib/weeks.js";
 
 // ============================================================
 // CPR LIST — Sidebar-routed index of past Weekly CPR Recaps
@@ -37,28 +38,8 @@ function fmtRange(satISO) {
     return `${start.toLocaleDateString("en-US", opts)} – ${end.toLocaleDateString("en-US", opts)}`;
   } catch { return satISO; }
 }
-function addDaysISO(iso, days) {
-  if (!isValidISODate(iso)) return null;
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-// Current Sun–Sat week's ending Saturday, in America/Chicago. Returns ISO YYYY-MM-DD.
-// Used to gate the "current week" CPR from non-admin viewers.
-function currentCPRWeekSaturdayCT() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
-  }).formatToParts(new Date());
-  const y = parts.find(p => p.type === "year").value;
-  const m = parts.find(p => p.type === "month").value;
-  const d = parts.find(p => p.type === "day").value;
-  const wd = parts.find(p => p.type === "weekday").value;
-  const dayIdx = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
-  const daysToSat = 6 - dayIdx; // 0 on Saturday, 6 on Sunday
-  const todayISO = `${y}-${m}-${d}`;
-  return addDaysISO(todayISO, daysToSat);
-}
+// The current Sun–Sat week's ending Saturday, used to gate the current week's
+// CPR from non-admin viewers, comes from lib/weeks.js.
 
 // ── Roles ──────────────────────────────────────────────────────────────────────
 // Admin tier sees every CPR (including the current week). Team tier sees prior
@@ -147,7 +128,7 @@ export default function CPRList({ userRole = null }) {
         // policy on weekly_cpr_reports is not affected.
         let rows = data || [];
         if (!isAdmin) {
-          const currentSat = currentCPRWeekSaturdayCT();
+          const currentSat = currentWeekSaturdayCT();
           rows = rows.filter(r => r.week_ending_date < currentSat);
         }
         // Show the full recap history for all time (Peter 2026-08-25). This

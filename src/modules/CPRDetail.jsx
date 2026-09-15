@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, Fragment } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T, BAND } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
+import { addDaysISO, currentWeekSaturdayCT } from "../lib/weeks.js";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
@@ -24,13 +25,6 @@ const BAND_BADGE = {
 // ── Date helpers ─────────────────────────────────────────────
 function isValidISODate(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
-
-function addDaysISO(iso, days) {
-  if (!isValidISODate(iso)) return null;
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 function todayISO() {
@@ -327,23 +321,10 @@ const EDIT_ROLES = new Set(["owner"]);
 // filter lives in CPRList.jsx (list view hides current-week row for team).
 const ADMIN_ROLES = new Set(["owner", "manager"]);
 
-// Current Sun–Sat week's ending Saturday, in America/Chicago. ISO YYYY-MM-DD.
-function currentCPRWeekSaturdayCT() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
-  }).formatToParts(new Date());
-  const y = parts.find(p => p.type === "year").value;
-  const m = parts.find(p => p.type === "month").value;
-  const d = parts.find(p => p.type === "day").value;
-  const wd = parts.find(p => p.type === "weekday").value;
-  const dayIdx = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
-  const daysToSat = 6 - dayIdx; // 0 on Saturday, 6 on Sunday
-  return addDaysISO(`${y}-${m}-${d}`, daysToSat);
-}
+// The current Sun–Sat week's ending Saturday comes from lib/weeks.js.
 function isCurrentOrFutureCPRWeek(weekEndingISO) {
   if (!weekEndingISO) return false;
-  return weekEndingISO >= currentCPRWeekSaturdayCT();
+  return weekEndingISO >= currentWeekSaturdayCT();
 }
 
 // Weeks BEFORE the current quarter are read-only for everyone, including the

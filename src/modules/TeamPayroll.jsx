@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { fmtMoney } from "../lib/format.jsx";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import { currentWeekSaturdayCT, addDaysISO } from "../lib/weeks.js";
 
 // ─── Payroll ──────────────────────────────────────────────────
 // The old Payroll Process manual page, moved into the Team module (Peter
@@ -76,27 +77,20 @@ function weekLabel(startIso, endIso) {
   return `${a.toLocaleDateString("en-US", opts)} to ${b.toLocaleDateString("en-US", opts)}`;
 }
 
-// The week-ending Saturdays to choose from, newest first. Sunday to Saturday,
-// the same boundary every other week-bounded figure in Newtworks uses.
+// The week-ending Saturdays to choose from, newest first. Sunday to Saturday in
+// Central, the same boundary every other week-bounded figure in Newtworks uses.
+// The week comes from lib/weeks.js, so the browser's own clock and time zone
+// never decide which week is this week.
 const WEEKS_TO_OFFER = 27;
 
-function isoDate(d) {
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
-}
-
 function buildWeekOptions() {
-  const now = new Date();
-  const thisSat = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  thisSat.setDate(thisSat.getDate() + ((6 - thisSat.getDay()) % 7));
+  const thisSat = currentWeekSaturdayCT();
   const out = [];
   for (let i = 0; i < WEEKS_TO_OFFER; i++) {
-    const end = new Date(thisSat.getFullYear(), thisSat.getMonth(), thisSat.getDate() - i * 7);
-    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
-    const range = weekLabel(isoDate(start), isoDate(end));
+    const end = addDaysISO(thisSat, -i * 7);
+    const start = addDaysISO(end, -6);
     const tag = i === 0 ? " · this week" : i === 1 ? " · last week" : "";
-    out.push({ id: isoDate(end), label: `${range}${tag}` });
+    out.push({ id: end, label: `${weekLabel(start, end)}${tag}` });
   }
   return out;
 }
