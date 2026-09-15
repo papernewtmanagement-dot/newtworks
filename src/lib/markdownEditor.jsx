@@ -99,6 +99,21 @@ export function shiftIndent(value, selStart, selEnd, dir) {
   return { value: v.slice(0, start) + next + v.slice(end), selStart: start, selEnd: start + next.length };
 }
 
+// Drop a horizontal line in as its own block. Markdown only reads three
+// dashes as a line when they sit alone with a blank line either side, so
+// the text around the cursor gets tidied to make room.
+export function insertRule(value, selStart, selEnd) {
+  const v = value || "";
+  const { end } = lineBounds(v, selStart, selEnd);
+  const before = v.slice(0, end).replace(/\s+$/, "");
+  const after = v.slice(end).replace(/^\s+/, "");
+  const head = before ? before + "\n\n" : "";
+  const tail = after ? "\n\n" + after : "\n";
+  const next = head + "---" + tail;
+  const caret = head.length + 3 + (after ? 2 : 1);
+  return { value: next, selStart: caret, selEnd: caret };
+}
+
 // Enter / Tab / Shift+Tab behaviour. Returns null to let the browser
 // do its normal thing, which is the case on any line that is not a
 // list item — Tab must still move focus for keyboard users.
@@ -189,6 +204,7 @@ export function MarkdownTextarea({ value, onChange, style, spellCheck = true, pl
         <button type="button" style={btnStyle} title="Numbered list" onClick={() => act((v, a, b) => toggleList(v, a, b, "ol"))}>1. Numbers</button>
         <button type="button" style={btnStyle} title="Indent (Tab)" onClick={() => act((v, a, b) => shiftIndent(v, a, b, 1))}>→ Indent</button>
         <button type="button" style={btnStyle} title="Outdent (Shift+Tab)" onClick={() => act((v, a, b) => shiftIndent(v, a, b, -1))}>← Outdent</button>
+        <button type="button" style={btnStyle} title="Horizontal line" onClick={() => act(insertRule)}>─ Line</button>
       </div>
       <textarea
         id={id}
