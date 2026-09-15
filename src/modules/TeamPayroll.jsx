@@ -9,8 +9,8 @@ import { currentWeekSaturdayCT, addDaysISO } from "../lib/weeks.js";
 // The old Payroll Process manual page, moved into the Team module (Peter
 // 2026-09-14) and condensed into one table (Peter 2026-09-15). One row per
 // person is one person's pay entry, left to right in the order it gets typed:
-// hours, pay for the week, the five bonus codes, the stipend added in, the
-// total before deductions, then what comes out. Open a row for the day-by-day
+// hours, pay for the week, the five bonus codes, the life stipend, the total,
+// then what comes out. Open a row for the day-by-day
 // hours, that person's paid days off, and their live benefit and deduction
 // lines. The written steps are all still here, in the notes below the table.
 //
@@ -292,7 +292,8 @@ function RowDetail({ row, onChanged }) {
 // whether the kids' goals were hit, so it belongs next to the bonus numbers.
 function LeslieGoals({ goals }) {
   const answered = !!goals?.answered;
-  const dot = { width: 8, height: 8, borderRadius: 8, marginTop: 5, flexShrink: 0, background: answered ? T.green : T.amber, boxSizing: "border-box" };
+  const paid = !!goals?.bonus_paid;
+  const dot = { width: 8, height: 8, borderRadius: 8, marginTop: 5, flexShrink: 0, background: answered && paid ? T.green : answered ? T.blue : T.amber, boxSizing: "border-box" };
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 12, paddingTop: 10, borderTop: `1px solid ${T.slate200}`, fontSize: 13, color: T.slate700, flexWrap: "wrap" }}>
       <span style={dot} />
@@ -300,7 +301,7 @@ function LeslieGoals({ goals }) {
         {!goals
           ? <><strong>Leslie's goals.</strong> No question has gone out yet.</>
           : answered
-            ? <><strong>Leslie's goals for {monthLabel(goals.review_month)}.</strong> Marie answered: {goals.marie_reply_text}</>
+            ? <><strong>Leslie's goals for {monthLabel(goals.review_month)}.</strong> Marie answered: {goals.marie_reply_text}. {paid ? "Bonus paid." : "Bonus not paid yet."}</>
             : <><strong>Leslie's goals for {monthLabel(goals.review_month)}.</strong> Still waiting on Marie's answer.</>}
       </div>
     </div>
@@ -339,8 +340,8 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
             <th style={THR}>Over 40</th>
             <th style={THR}>Pay</th>
             {CODES.map((c) => <th key={c.code} style={THR} title={c.note}>{c.code}</th>)}
-            <th style={THR}>Add in</th>
-            <th style={{ ...THR, color: T.slate900 }}>Before deductions</th>
+            <th style={THR}>LIFE</th>
+            <th style={{ ...THR, color: T.slate900 }}>Total</th>
             <th style={THR}>Take out</th>
           </tr>
         </thead>
@@ -506,7 +507,7 @@ export default function TeamPayroll() {
         <div style={LI}>
           Life stipends are added as income from the dropdown so the benefit is taxed. Medical, dental and vision come out automatically, so just check they are on the right-hand side. Open a name in the table to add, edit or remove someone's lines.
         </div>
-        <div style={LI}>Pay is the wages for the week. Add in is the life stipend. Before deductions is the pay plus the bonuses plus the stipend. Take out is everything else on file for that person, and it comes off after that.</div>
+        <div style={LI}>Pay is the wages for the week. LIFE is the life stipend. Total is the pay plus the bonuses plus the stipend. Take out is everything else on file for that person, and it comes off after that.</div>
       </Note>
 
       <Note title="Bonuses and codes">
