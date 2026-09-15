@@ -36,6 +36,8 @@ import { fmtMoney } from "../lib/format.jsx";
 import { T } from "../lib/theme.js";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+// Week arithmetic lives in one place for the whole front end. Central, Sunday to Saturday.
+import { todayISOCentral, dayOfWeekISO, addDaysISO } from "../lib/weeks.js";
 // ─── Priority Config ──────────────────────────────────────────
 const PRIORITY = {
   critical: { color:T.red,    bg:T.redLt,    label:"Critical", dot:"🔴" },
@@ -240,24 +242,11 @@ const hoursLabel = (h) => {
   if (!n) return null;
   return (Math.round(n * 100) / 100).toString().replace(/\.0+$/, "") + "h";
 };
-const isoDate = (d) => {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-};
-// Agency weeks run Sunday to Saturday. This returns the Sunday that starts the given date's week.
-const weekStartSunday = (d = new Date()) => {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  x.setDate(x.getDate() - x.getDay());
-  return x;
-};
 // The Sunday the next planned week starts on. On a Sunday that is today.
-const nextPlanningSunday = () => {
-  const today = new Date();
-  return today.getDay() === 0 ? weekStartSunday(today) : (() => {
-    const s = weekStartSunday(today);
-    s.setDate(s.getDate() + 7);
-    return s;
-  })();
+const nextPlanningSundayISO = () => {
+  const today = todayISOCentral();
+  const thisSunday = addDaysISO(today, -dayOfWeekISO(today));
+  return dayOfWeekISO(today) === 0 ? thisSunday : addDaysISO(thisSunday, 7);
 };
 const dayHeading = (iso) => {
   if (!iso) return "No day set";
@@ -835,7 +824,7 @@ const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, ca
     return next;
   });
 
-  const [planWeek]    = useState(() => isoDate(nextPlanningSunday()));
+  const [planWeek]    = useState(() => nextPlanningSundayISO());
   const [proposal, setProposal] = useState(null);
   const [planBusy, setPlanBusy] = useState(false);
   const [planError, setPlanError] = useState("");
