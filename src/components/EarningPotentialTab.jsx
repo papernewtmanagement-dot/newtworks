@@ -103,7 +103,7 @@ const CURVE_LINES = [
 // meaningless.
 const GRID_POINT_STEP = 50;
 
-const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
+const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) => {
   const points = Array.isArray(curve?.points) ? curve.points : [];
   const bands  = Array.isArray(curve?.bands)  ? curve.bands  : [];
   const xMax   = Number(curve?.x_max) || 0;
@@ -299,10 +299,16 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
     }
     return out;
   };
+  // A person's marker carries its own dollar figure, so the total line's
+  // own label gets out of the way wherever a marker stands.
+  const markerXs = (Array.isArray(positions) ? positions : [])
+    .map(p => Math.min(Math.max(Number(p?.x) || 0, 0), xMax));
+  const clearOfMarkers = (xs) =>
+    xs.filter(x => !markerXs.some(m => Math.abs(xFor(m) - xFor(x)) < minGapPx + 12));
   const labelXs = {
     base:      dropRepeats("base",      thin([...gridXs, ...bandXs, ...raiseXs])),
     base_comm: dropRepeats("base_comm", thin([...gridXs, ...bandXs])),
-    total:     dropRepeats("total",     thin(gridXs, bandXs)),
+    total:     clearOfMarkers(dropRepeats("total", thin(gridXs, bandXs))),
   };
 
 
@@ -429,6 +435,32 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone }) => {
           </g>
         );
       })}
+      {/* Where each person actually sits, from their last 13 weeks */}
+      {(Array.isArray(positions) ? positions : [])
+        .map(p => ({ ...p, xv: Math.min(Math.max(Number(p?.x) || 0, 0), xMax) }))
+        .sort((a, b) => a.xv - b.xv)
+        .map((p, i, arr) => {
+          const px = xFor(p.xv);
+          const py = yFor(valueAt("total", p.xv));
+          // Two people close together would stack their labels on top of each
+          // other, so the second one rides higher.
+          const crowded = i > 0 && Math.abs(px - xFor(arr[i - 1].xv)) < 70;
+          const lift = crowded ? 24 : 0;
+          const anchor = px > padL + chartW - 44 ? "end" : px < padL + 44 ? "start" : "middle";
+          return (
+            <g key={"pos-" + (p.team_member_id || i)}>
+              <line x1={px} y1={py} x2={px} y2={padT + chartH} stroke={T.purple}
+                strokeWidth="1.5" strokeDasharray="4 3" opacity="0.8" />
+              <circle cx={px} cy={py} r={p.is_me ? 6 : 4.5} fill={T.purple} stroke={T.white} strokeWidth="2" />
+              <text x={px} y={py - 28 - lift} textAnchor={anchor} fontSize={isPhone ? 10 : 11.5}
+                fontWeight={800} fill={T.purple}>{p.is_me ? "You" : p.first_name}</text>
+              <text x={px} y={py - 17 - lift} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
+                fontWeight={600} fill={T.purple}>
+                {(isPremium ? fmtK(p.xv) : Math.round(p.xv) + " pts") + " \u00b7 " + fmtK(valueAt("total", p.xv))}
+              </text>
+            </g>
+          );
+        })}
       {/* Legend */}
       <g>
         {CURVE_LINES.map((l, i) => (
@@ -564,11 +596,12 @@ const ADMIN_ONLY_ROLES = ["retention", "life_specialist"];
 
 export default function EarningPotentialTab({ isAdmin = false } = {}) {
   const _vp = useViewport();
-  const allowedRoles = isAdmin ? ROLE_ORDER : ROLE_ORDER.filter(r => !ADMIN_ONLY_ROLES.includes(r));
-  const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", allowedRoles);
+  const [roleKey, setRoleKey, roleHref] = useTabParam("erole", "sales", ROLE_ORDER);
   const [highlighted, setHighlighted] = useState("rock");
   const [data, setData] = useState(null);
   const [y1, setY1] = useState(null);
+  const [positions, setPositions] = useState(null);
+  const [rolePicked, setRolePicked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
@@ -580,18 +613,54 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
     const { data: p1, error: e1 } = await supabase.rpc("year_one_path_to_100k", { p_agency_id: AGENCY_ID });
     if (e1) { console.error("year_one_path_to_100k failed:", e1); setY1(null); }
     else setY1(p1 || null);
+    // Where people actually sit on the curve. An admin gets the whole team
+    // back, anyone else gets themselves and nobody else -- the scoping lives
+    // inside the function, not here.
+    const { data: pos, error: e2 } = await supabase.rpc("earnings_curve_positions", { p_agency_id: AGENCY_ID });
+    if (e2) { console.error("earnings_curve_positions failed:", e2); setPositions([]); }
+    else setPositions(Array.isArray(pos) ? pos : []);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
 
+  const myPos  = (Array.isArray(positions) ? positions : []).find(p => p?.is_me) || null;
+  const myRole = myPos?.role_key || null;
+
+  // Land on the curve for the viewer's own seat, unless the address bar
+  // already names one. Runs once, as soon as the markers arrive.
+  useEffect(() => {
+    if (rolePicked || !Array.isArray(positions)) return;
+    setRolePicked(true);
+    try {
+      if (new URLSearchParams(window.location.search).get("erole")) return;
+    } catch { return; }
+    const mine = positions.find(p => p?.is_me);
+    if (mine?.role_key && mine.role_key !== roleKey) setRoleKey(mine.role_key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions]);
+
+  // Everyone sees Sales. A person also sees the curve for their own seat,
+  // otherwise their own marker would have nowhere to show up.
+  const allowedRoles = isAdmin
+    ? ROLE_ORDER
+    : ROLE_ORDER.filter(r => !ADMIN_ONLY_ROLES.includes(r) || r === myRole);
+
   const roles = useMemo(() => {
     const list = (Array.isArray(data?.roles) ? data.roles : []).filter(r => allowedRoles.includes(r.role_key));
     return [...list].sort((a, b) => ROLE_ORDER.indexOf(a.role_key) - ROLE_ORDER.indexOf(b.role_key));
-  }, [data, isAdmin]);
-  const role = roles.find(r => r.role_key === roleKey) || roles[0] || null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, isAdmin, myRole]);
+  const role = roles.find(r => r.role_key === roleKey)
+            || roles.find(r => r.role_key === myRole)
+            || roles[0] || null;
   const tiers = Array.isArray(role?.tiers) ? role.tiers : [];
   const curve = role?.curve || null;
   const hotTier = tiers.find(t => t.tier_key === highlighted) || tiers[0] || null;
+  const rolePositions = useMemo(
+    () => (Array.isArray(positions) ? positions : [])
+      .filter(p => p?.role_key === role?.role_key && Number.isFinite(Number(p?.x))),
+    [positions, role]
+  );
 
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "14px 16px" : "16px 20px";
   const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: _pad };
@@ -644,12 +713,17 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple markers show where people actually sit, from their last 13 weeks of production." : ""}</div>
         </div>
         {curve ? (
-          <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} />
+          <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
         ) : (
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
+        )}
+        {myPos && myPos.role_key === role.role_key && (
+          <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
+            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over the last 13 weeks. Your marker sits at what that pace pays.
+          </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
           {role.role_key === "sales" ? "Held at a steady production pace. The table below shows how a first year can build up to it." : "Held at a steady production pace. Years one and two typically run lower — the year-by-year table below shows the ramp."}
