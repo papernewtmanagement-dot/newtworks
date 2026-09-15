@@ -272,7 +272,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
   const [relationship, setRelationship] = useState("");
   const [source, setSource] = useState("");
-  const [sourcedBy, setSourcedBy] = useState("");
   const [activities, setActivities] = useState([]);  // [{id, key, line, type, premium, reason}]
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
@@ -353,7 +352,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const addPolicy = (line) => {
     if (!line) return;
     const id = newPolicyId();
-    setPolicies(list => [...list, { id, line, type: "", status: "", premium: "", vehicles: "1", isNewLine: true }]);
+    setPolicies(list => [...list, { id, line, type: "", status: "", premium: "", vehicles: "1", isNewLine: true, addedToExisting: false }]);
     setActivePolicy(id);
   };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
@@ -397,7 +396,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
-  const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
   const needsType = (line) => (types[line] || []).length > 0;
   const isSold = (p) => p.status === "sold" || p.status === "quoted_sold";
@@ -460,11 +458,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         relationship_type: relationship || null,
         gnc_used: scores.setup_gnc_score === 3,
         marketing_source: source || null,
-        sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? {
-          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay })),
+          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, added_to_existing: p.line === "auto" && !!p.addedToExisting, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay })),
           on_file_answer: flagged.length ? (replaces.length ? "replaces" : flagged.some(p => onFileAnswer[p.id] === "added") ? "added" : "different") : null,
           replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
         } : null,
@@ -707,6 +704,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                   <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={active.vehicles} onChange={e => editPolicy(active.id, { vehicles: e.target.value })} />
                 </div>
               )}
+              {isSold(active) && active.line === "auto" && (
+                <div style={field(190)}>
+                  <label style={labelStyle}>Auto policy</label>
+                  <select style={inputBase} value={active.addedToExisting ? "added" : "new"}
+                          onChange={e => editPolicy(active.id, { addedToExisting: e.target.value === "added" })}>
+                    <option value="new">A new policy</option>
+                    <option value="added">Added to one they had</option>
+                  </select>
+                </div>
+              )}
               {isSold(active) && (
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700, paddingBottom: 10, flex: "0 0 auto" }} title="The policy went on automatic payment as you set it up. One autopay credit per policy.">
                   <input type="checkbox" checked={!!active.autopay} onChange={e => editPolicy(active.id, { autopay: e.target.checked })} />
@@ -769,15 +776,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
                 <option value="">Pick one</option>
                 {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
-              </select>
-            </div>
-          )}
-          {(hasSale || hasQuote) && isReferral && (
-            <div style={{ flex: "0 1 140px", minWidth: 0 }}>
-              <label style={labelStyle}>Lead source</label>
-              <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
-                <option value="">{logFor ? "The person logged for" : "Me"}</option>
-                {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
               </select>
             </div>
           )}
@@ -1004,7 +1002,7 @@ const RECORD_KINDS = [
   { key: "activities",   label: "Activities" },
   { key: "sales",        label: "Sales" },
 ];
-const SALE_SELECT = "id, team_member_id, sourced_by_team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, gnc_used, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, issued_date, issued_premium, autopay_enrolled)";
+const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, gnc_used, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
 const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, ecrm_url";
 const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
@@ -1184,8 +1182,6 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                     <td style={tableTd}>{fmtDate(r.submitted_date)}</td>
                     <td style={tableTd}>
                       {nameOf(r.team_member_id)}
-                      {r.sourced_by_team_member_id && r.sourced_by_team_member_id !== r.team_member_id
-                        ? <div style={{ fontSize: 11, color: T.slate400 }}>sourced by {nameOf(r.sourced_by_team_member_id)}</div> : null}
                     </td>
                     <td style={tableTd}>{r.customer_label}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                     <td style={tableTd}>
@@ -1426,7 +1422,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     owner: row.team_member_id || "",
     note: row.note || "",
     ecrm: row.ecrm_opportunity_url || row.ecrm_url || "",
-    products: (row.sales_log_products || []).map(p => ({ ...p })),
+    products: (row.sales_log_products || []).map(p => ({ ...p, added_to_existing: !!p.is_added_to_existing })),
   }));
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -1447,6 +1443,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
           premium: String(p.premium ?? ""), policy_count: String(p.policy_count ?? 1),
           vehicle_count: p.vehicle_count == null ? "" : String(p.vehicle_count),
           is_new_line: !!p.is_new_line,
+          added_to_existing: p.line_of_business === "auto" && !!p.added_to_existing,
           issued_date: p.issued_date || "", issued_premium: p.issued_premium == null ? "" : String(p.issued_premium),
           autopay: !!p.autopay_enrolled,
         })),
@@ -1553,6 +1550,17 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
               <div>
                 <label style={labelStyle}>Cars</label>
                 <input type="number" min="1" step="1" value={p.vehicle_count ?? 1} onChange={e => setProd(i, "vehicle_count", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+              </div>
+            )}
+            {p.line_of_business === "auto" && (
+              <div>
+                <label style={labelStyle}>Auto policy</label>
+                <select value={p.added_to_existing ? "added" : "new"}
+                        onChange={e => setProd(i, "added_to_existing", e.target.value === "added")}
+                        style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                  <option value="new">A new policy</option>
+                  <option value="added">Added to one they had</option>
+                </select>
               </div>
             )}
           </div>
@@ -1814,7 +1822,8 @@ const CHANGE_LABEL = {
   save_reason: "save reason", reason: "reason", week_end_date: "week", credited_week_end_date: "credited week",
   credit_available_on: "clears on", products_discussed: "products discussed", is_existing_customer: "existing customer",
   gnc_used: "GNC used", ecrm_opportunity_url: "ECRM link", ecrm_url: "ECRM link", team_member_id: "person",
-  sourced_by_team_member_id: "sourced by", saves_voided: "saves voided", chargeback_points: "chargeback",
+  saves_voided: "saves voided", chargeback_points: "chargeback",
+  is_added_to_existing: "added to a policy they had",
   window_fraction_left: "window left", verified_at: "verified", scorecard_date: "date", average_score: "average",
   recording_turned_in: "recording turned in", recording_url: "recording", opportunity_ref: "opportunity",
 };
@@ -1829,6 +1838,14 @@ const CHANGE_WINDOWS = [
 function changeLabel(key) {
   return CHANGE_LABEL[key] || key.replace(/_score$/, "").replace(/_/g, " ");
 }
+const RESTORE_KIND = {
+  sales_log: "sale",
+  quote_log: "quote",
+  retention_activity_log: "activity",
+  appointment_log: "appointment",
+  cancelation_log: "cancelation",
+};
+
 function changeWhen(ts) {
   const d = new Date(ts);
   return isNaN(d) ? "—" : d.toLocaleString("en-US", { timeZone: "America/Chicago", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -1865,84 +1882,13 @@ function changeSummary(r, ctx) {
   }
 }
 
-// Removing a record has always set it aside rather than erased it. This is the
-// way back. Same window as the change list under it.
-function RemovedPanel({ nameOf, days, onRestored }) {
-  const [rows, setRows] = useState(null);
-  const [err, setErr] = useState("");
-  const [busyId, setBusyId] = useState(null);
-
-  const load = useCallback(async () => {
-    setErr("");
-    const r = await supabase.rpc("rp_list_removed", { p_days: days });
-    if (r.error || !r.data?.ok) { setErr(errText(r.error || r.data)); setRows([]); return; }
-    setRows(Array.isArray(r.data.rows) ? r.data.rows : []);
-  }, [days]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const restore = async (row) => {
-    if (!window.confirm(`Put this ${row.kind} back for ${row.customer_label || "this customer"}? It goes back on the week's points.`)) return;
-    setBusyId(row.id);
-    const r = await supabase.rpc("rp_restore_record", { p_kind: row.kind, p_id: row.id });
-    setBusyId(null);
-    if (r.error || !r.data?.ok) { window.alert(errText(r.error || r.data)); return; }
-    await load();
-    if (onRestored) onRestored();
-  };
-
-  if (rows !== null && rows.length === 0) return null;
-
-  return (
-    <div style={cardStyle}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Removed</div>
-      <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>
-        Nothing removed is ever thrown away. Put any of these back and the points come back with it.
-      </div>
-      {err && <Notice kind="error">{err}</Notice>}
-      {rows === null ? (
-        <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={tableTh}>Removed</th>
-                <th style={tableTh}>Who</th>
-                <th style={tableTh}>What</th>
-                <th style={tableTh}>Customer</th>
-                <th style={tableTh}>Date on it</th>
-                <th style={tableTh} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={`${r.kind}-${r.id}`}>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{changeWhen(r.voided_at)}</td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{nameOf(r.team_member_id)}</td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{r.kind}</td>
-                  <td style={tableTd}>{r.customer_label || "—"}</td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{r.on_date ? fmtDate(r.on_date) : "—"}</td>
-                  <td style={{ ...tableTd, textAlign: "right" }}>
-                    <button type="button" style={miniBtn} disabled={busyId === r.id} onClick={() => restore(r)}>
-                      {busyId === r.id ? "Putting back…" : "Restore"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ChangesTab({ roster, nameOf, values, types, onChanged }) {
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [reload, setReload] = useState(0);
   const labelOf = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v.label])), [values]);
   const ctx = useMemo(() => ({ nameOf, labelOf, types: types || {} }), [nameOf, labelOf, types]);
 
@@ -1956,10 +1902,38 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
       setRows(Array.isArray(r.data) ? r.data : []);
     })();
     return () => { alive = false; };
-  }, [days, who]);
+  }, [days, who, reload]);
 
   const selectStyle = { ...inputBase, width: "auto", fontSize: 13, padding: "7px 10px" };
   const verb = { insert: "Added", update: "Changed", delete: "Removed" };
+
+  // Where a record stands right now. Rows come newest first, so the first time
+  // a record shows a status is its current one.
+  const statusNow = useMemo(() => {
+    const m = new Map();
+    for (const r of rows || []) {
+      const st = (r.new_row || {}).status;
+      if (st && !m.has(r.row_id)) m.set(r.row_id, st);
+    }
+    return m;
+  }, [rows]);
+
+  // A change that took a record out, on a record that is still out.
+  const removedHere = (r) => !!RESTORE_KIND[r.table_name]
+    && (r.new_row || {}).status === "void"
+    && (r.old_row || {}).status !== "void"
+    && statusNow.get(r.row_id) === "void";
+
+  const restore = async (r) => {
+    const kind = RESTORE_KIND[r.table_name];
+    if (!window.confirm(`Put this ${kind} back for ${r.subject || "this customer"}? It goes back on the week's points.`)) return;
+    setBusyId(r.id);
+    const res = await supabase.rpc("rp_restore_record", { p_kind: kind, p_id: r.row_id });
+    setBusyId(null);
+    if (res.error || !res.data?.ok) { window.alert(errText(res.error || res.data)); return; }
+    setReload(n => n + 1);
+    if (onChanged) onChanged();
+  };
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -1976,7 +1950,6 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
         </div>
       </div>
       {err && <Notice kind="error">{err}</Notice>}
-      <RemovedPanel nameOf={nameOf} days={days} onRestored={onChanged} />
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : rows.length === 0 ? (
@@ -1991,6 +1964,7 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
                 <th style={tableTh}>What</th>
                 <th style={tableTh}>Customer</th>
                 <th style={tableTh}>Details</th>
+                <th style={tableTh} />
               </tr>
             </thead>
             <tbody>
@@ -2014,6 +1988,13 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
                           </div>
                         )) : <span style={{ color: T.slate500 }}>{(r.changed_fields || []).map(changeLabel).join(", ") || "—"}</span>
                       ) : changeSummary(r, ctx)}
+                    </td>
+                    <td style={{ ...tableTd, textAlign: "right", whiteSpace: "nowrap" }}>
+                      {removedHere(r) && (
+                        <button type="button" style={miniBtn} disabled={busyId === r.id} onClick={() => restore(r)}>
+                          {busyId === r.id ? "Putting back…" : "Restore"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
