@@ -835,7 +835,8 @@ const BucketEditor = ({ buckets, draft, setDraft, teamList }) => {
 
 const BookAssignmentsSection = () => {
   const [allRows, setAllRows] = useState([]);
-  const [teamList, setTeamList] = useState([]);
+  const [teamList, setTeamList] = useState([]);       // who you can assign a letter to today
+  const [everyone, setEveryone] = useState([]);       // everyone ever, so old snapshots keep a name
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // URL-persisted so refresh keeps the same snapshot date open.
@@ -858,10 +859,8 @@ const BookAssignmentsSection = () => {
         .order("snapshot_date", { ascending: false }),
       supabase
         .from("team")
-        .select("id, first_name, last_name, nickname")
+        .select("id, first_name, last_name, nickname, is_active, archived_at, is_admin_backoffice")
         .eq("agency_id", AGENCY_ID)
-        .eq("is_active", true)
-        .eq("is_admin_backoffice", false)
         .order("last_name"),
     ]);
     if (rowsRes?.error || teamRes?.error) {
@@ -872,7 +871,10 @@ const BookAssignmentsSection = () => {
     const rows = Array.isArray(rowsRes?.data) ? rowsRes.data : [];
     const team = Array.isArray(teamRes?.data) ? teamRes.data : [];
     setAllRows(rows);
-    setTeamList(team);
+    setEveryone(team);
+    // Only people still here go in the picker. Everyone stays in `everyone`, so a
+    // letter assigned to somebody who has since left still shows their name.
+    setTeamList(team.filter(t => t.is_active && !t.archived_at && !t.is_admin_backoffice));
     setSelectedDate(prev => prev || (rows.length ? rows[0].snapshot_date : null));
     setLoading(false);
   };
@@ -907,7 +909,7 @@ const BookAssignmentsSection = () => {
   }, [allRows, priorDate]);
 
   const findRow = (rows, bucket) => (rows || []).find(r => r.letter_bucket === bucket);
-  const memberById = (id) => (teamList || []).find(t => t.id === id);
+  const memberById = (id) => (everyone || []).find(t => t.id === id);
 
   const rollup = useMemo(() => {
     const map = new Map();
