@@ -1013,7 +1013,7 @@ const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a
 const smallInput = { fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box" };
 const apptState = (r) => r.sold_on ? "Sold" : r.no_show_on ? "No show" : r.kept_on ? "Kept" : "Set";
 
-function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, nameOf, isAdmin, myTeamId, refreshKey, onChanged }) {
+function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, nameOf, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [kind, setKind] = useState("sales");
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1333,7 +1333,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
 
       {editing && (
         <EditRecord
-          kind={editing.kind} row={editing.row} sources={sources} types={types} roster={roster}
+          kind={editing.kind} row={editing.row} sources={sources} types={types} roster={roster} isOwner={isOwner}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); setDone("Saved."); after(); }}
         />
@@ -1413,7 +1413,7 @@ function AddAppointment({ roster, myTeamId, onClose, onSaved }) {
 // on the row has to survive (Peter 2026-09-14). Sales edit their policies
 // too; appointments and activities edit the customer, date and note.
 // ---------------------------------------------------------------------
-function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
+function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSaved }) {
   const [f, setF] = useState(() => ({
     customer_first: row.customer_first_name || "",
     customer_last_initial: row.customer_last_initial || "",
@@ -1423,6 +1423,7 @@ function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
     marketing_source: row.marketing_source || "",
     gnc_used: !!row.gnc_used,
     escalated_to: row.escalated_to_team_member_id || "",
+    owner: row.team_member_id || "",
     note: row.note || "",
     ecrm: row.ecrm_opportunity_url || row.ecrm_url || "",
     products: (row.sales_log_products || []).map(p => ({ ...p })),
@@ -1465,8 +1466,14 @@ function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
       };
     }
     const { data, error } = await supabase.rpc(fn, { p_id: row.id, p_changes: changes });
+    if (error || !data?.ok) { setSaving(false); setErr(errText(error || data)); return; }
+    // Moving it to someone else is its own call — the edit functions do not own
+    // who a record belongs to.
+    if (isOwner && f.owner && f.owner !== row.team_member_id) {
+      const mv = await supabase.rpc("rp_reassign_record", { p_kind: kind, p_id: row.id, p_team_member_id: f.owner });
+      if (mv.error || !mv.data?.ok) { setSaving(false); setErr(errText(mv.error || mv.data)); return; }
+    }
     setSaving(false);
-    if (error || !data?.ok) { setErr(errText(error || data)); return; }
     onSaved();
   };
 
@@ -1492,6 +1499,16 @@ function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
             <label style={labelStyle}>Date</label>
             <input type="date" value={f.on_date} max={todayCentral()} onChange={e => set("on_date", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
           </div>
+          {isOwner && (
+            <div>
+              <label style={labelStyle}>Belongs to</label>
+              <select value={f.owner} onChange={e => set("owner", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+                {!(roster || []).some(t => t.id === f.owner) && f.owner
+                  ? <option value={f.owner}>{row.owner_name || "former teammate"}</option> : null}
+              </select>
+            </div>
+          )}
           {kind === "appointment" && (
             <div>
               <label style={labelStyle}>Handed to</label>
@@ -1561,13 +1578,13 @@ function EditRecord({ kind, row, sources, types, roster, onClose, onSaved }) {
   );
 }
 
-function IssuedTab({ values, sources, types, roster, nameOf, isAdmin, myTeamId, refreshKey, onChanged }) {
+function IssuedTab({ values, sources, types, roster, nameOf, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   return (
     <RecordsPanel
       scope="pending"
       title="Pending"
       blurb="What we have not paid on yet. A new Private Passenger auto issues by itself the day it is submitted; everything else waits until someone confirms it issued with no contingencies."
-      values={values} sources={sources} types={types} roster={roster} nameOf={nameOf}
+      values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner}
       isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged}
     />
   );
@@ -1848,7 +1865,80 @@ function changeSummary(r, ctx) {
   }
 }
 
-function ChangesTab({ roster, nameOf, values, types }) {
+// Removing a record has always set it aside rather than erased it. This is the
+// way back. Same window as the change list under it.
+function RemovedPanel({ nameOf, days, onRestored }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    setErr("");
+    const r = await supabase.rpc("rp_list_removed", { p_days: days });
+    if (r.error || !r.data?.ok) { setErr(errText(r.error || r.data)); setRows([]); return; }
+    setRows(Array.isArray(r.data.rows) ? r.data.rows : []);
+  }, [days]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const restore = async (row) => {
+    if (!window.confirm(`Put this ${row.kind} back for ${row.customer_label || "this customer"}? It goes back on the week's points.`)) return;
+    setBusyId(row.id);
+    const r = await supabase.rpc("rp_restore_record", { p_kind: row.kind, p_id: row.id });
+    setBusyId(null);
+    if (r.error || !r.data?.ok) { window.alert(errText(r.error || r.data)); return; }
+    await load();
+    if (onRestored) onRestored();
+  };
+
+  if (rows !== null && rows.length === 0) return null;
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Removed</div>
+      <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>
+        Nothing removed is ever thrown away. Put any of these back and the points come back with it.
+      </div>
+      {err && <Notice kind="error">{err}</Notice>}
+      {rows === null ? (
+        <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={tableTh}>Removed</th>
+                <th style={tableTh}>Who</th>
+                <th style={tableTh}>What</th>
+                <th style={tableTh}>Customer</th>
+                <th style={tableTh}>Date on it</th>
+                <th style={tableTh} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={`${r.kind}-${r.id}`}>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{changeWhen(r.voided_at)}</td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{nameOf(r.team_member_id)}</td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{r.kind}</td>
+                  <td style={tableTd}>{r.customer_label || "—"}</td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{r.on_date ? fmtDate(r.on_date) : "—"}</td>
+                  <td style={{ ...tableTd, textAlign: "right" }}>
+                    <button type="button" style={miniBtn} disabled={busyId === r.id} onClick={() => restore(r)}>
+                      {busyId === r.id ? "Putting back…" : "Restore"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChangesTab({ roster, nameOf, values, types, onChanged }) {
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
@@ -1886,6 +1976,7 @@ function ChangesTab({ roster, nameOf, values, types }) {
         </div>
       </div>
       {err && <Notice kind="error">{err}</Notice>}
+      <RemovedPanel nameOf={nameOf} days={days} onRestored={onChanged} />
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : rows.length === 0 ? (
@@ -1997,7 +2088,7 @@ function ScoreCard({ title, total, note, people, rankOf, valueOf, subOf, renderI
   );
 }
 
-function WeekView({ isAdmin, myTeamId, roster, nameOf, values, sources, types, refreshKey, onChanged }) {
+function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources, types, refreshKey, onChanged }) {
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("week", weekEndOf(todayCentral()));
   const [board, setBoard] = useState(null);
   const [open, setOpen] = useState({});      // card -> team_member_id whose items are showing
@@ -2145,7 +2236,7 @@ function WeekView({ isAdmin, myTeamId, roster, nameOf, values, sources, types, r
           weekEnd={safeWeek}
           title="This week"
           blurb="Everything logged in this week. Same format as Pending."
-          values={values} sources={sources} types={types} roster={roster} nameOf={nameOf}
+          values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner}
           isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged || load}
         />
       )}
@@ -2686,13 +2777,13 @@ export default function ActivityLog({ userRole, userId }) {
 
       {(tab === "log" || tab === "canceled") && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
-      {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
-      {tab === "week" && <WeekView isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} values={values} sources={sources} types={types} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "week" && <WeekView isAdmin={isAdmin} isOwner={isOwner} myTeamId={myTeamId} roster={roster} nameOf={nameOf} values={values} sources={sources} types={types} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "hours" && <TimeHub embedded userRole={userRole} />}
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
-      {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} />}
+      {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
     </div>
   );
 }
