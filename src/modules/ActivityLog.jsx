@@ -2303,6 +2303,85 @@ function HelpPanel({ item }) {
   );
 }
 
+// One checklist row, used by the team list AND the personal list, so the row
+// only ever has one shape to change. Owner-only controls (move up, move down,
+// edit) appear on the same row while the list is in edit mode.
+const miniBtn = {
+  flexShrink: 0, width: 22, height: 20, lineHeight: "18px", textAlign: "center", padding: 0,
+  borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+  boxSizing: "border-box", border: `1px solid ${T.slate300}`, background: T.white, color: T.slate600,
+};
+
+function ChecklistRow({ item, checked, byLabel, busy, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, children }) {
+  const open = openHelp === item.id;
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px", borderBottom: open || children ? "none" : `1px solid ${T.slate100}` }}>
+        <input
+          type="checkbox"
+          id={`chk_${item.id}`}
+          checked={!!checked}
+          onChange={() => onToggle(item, !checked)}
+          disabled={busy}
+          style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
+        />
+        <label htmlFor={`chk_${item.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: busy ? "wait" : "pointer", color: checked ? T.slate500 : T.slate800 }}>{item.title}</label>
+        {item.link_url && (
+          <a href={item.link_url} target="_blank" rel="noopener noreferrer" title="Open the link for this item"
+             style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: T.blue, textDecoration: "none", marginTop: 1 }}>open ↗</a>
+        )}
+        {byLabel && <span style={{ fontSize: 11, color: T.slate400, textAlign: "right", whiteSpace: editMode ? "nowrap" : "normal", flexShrink: 0 }}>{byLabel}</span>}
+        {editMode && (
+          <>
+            <button type="button" title="Move up" aria-label="Move up" onClick={() => onMove(item, "up")} style={miniBtn}>↑</button>
+            <button type="button" title="Move down" aria-label="Move down" onClick={() => onMove(item, "down")} style={miniBtn}>↓</button>
+            <button type="button" title="Edit this item" aria-label="Edit this item" onClick={() => onEdit(item)} style={{ ...miniBtn, borderColor: T.blue, color: T.blue }}>✎</button>
+          </>
+        )}
+        <button type="button" title="What this means" aria-label="What this means"
+          onClick={() => setOpenHelp(h => (h === item.id ? null : item.id))}
+          style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${open ? T.blue : T.slate300}`, background: open ? T.blueLt : T.white, color: open ? T.blue : T.slate500 }}>i</button>
+      </div>
+      {children}
+      {open && !children && <HelpPanel item={item} />}
+    </div>
+  );
+}
+
+// The owner's editor for one item: its title, its link, and its explanation,
+// each edited on its own. The character count is there because the morning
+// kickoff prints the first 30 characters of the title and nothing more.
+function ChecklistEditor({ draft, onChange, onSave, onCancel, saving, err }) {
+  const title = draft.title || "";
+  return (
+    <div style={{ margin: "2px 0 12px 26px", padding: 12, background: T.slate50, borderRadius: 8, display: "grid", gap: 10 }}>
+      <div>
+        <label style={labelStyle}>Title</label>
+        <input value={title} maxLength={80} onChange={e => onChange({ ...draft, title: e.target.value })}
+               style={{ ...inputBase, fontSize: 13, padding: "8px 10px" }} />
+        <div style={{ fontSize: 11, marginTop: 4, color: title.length > 30 ? T.amber : T.slate500 }}>
+          {title.length} characters{title.length > 30 ? " · the kickoff will cut this to the first 30" : " · fits the kickoff on one line"}
+        </div>
+      </div>
+      <div>
+        <label style={labelStyle}>Link <span style={hintStyle}>optional</span></label>
+        <input value={draft.link_url || ""} placeholder="https://" onChange={e => onChange({ ...draft, link_url: e.target.value })}
+               style={{ ...inputBase, fontSize: 13, padding: "8px 10px" }} />
+      </div>
+      <div>
+        <label style={labelStyle}>Explanation <span style={hintStyle}>what shows behind the i</span></label>
+        <textarea rows={8} value={draft.help_text || ""} onChange={e => onChange({ ...draft, help_text: e.target.value })}
+                  style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }} />
+      </div>
+      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button type="button" onClick={onSave} disabled={saving} style={btnPrimary(saving)}>{saving ? "Saving…" : "Save"}</button>
+        <button type="button" onClick={onCancel} style={btnGhost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function ChecklistTab() {
   const _vp = useViewport();
   const [state, setState] = useState(null);
@@ -2319,6 +2398,12 @@ function ChecklistTab() {
   const [ok, setOk] = useState("");
   const [tickKey, setTickKey] = useState(0);
   const [flagKey, setFlagKey] = useState(0);
+  // Editing the list itself is the owner's alone. The server says so too
+  // (checklist_require_owner), so hiding the controls is not the only guard.
+  const [editMode, setEditMode] = useState(false);
+  const [editing, setEditing] = useState(null);    // {id, title, link_url, help_text}
+  const [itemSaving, setItemSaving] = useState(false);
+  const [itemErr, setItemErr] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -2358,6 +2443,35 @@ function ChecklistTab() {
     setTickKey(k => k + 1);
   };
 
+  const startEdit = (item) => {
+    setItemErr("");
+    setOpenHelp(null);
+    setEditing({ id: item.id, title: item.title || "", link_url: item.link_url || "", help_text: item.help_text || "" });
+  };
+
+  const saveItem = async () => {
+    if (!editing) return;
+    if (!editing.title.trim()) { setItemErr("The title cannot be empty."); return; }
+    setItemSaving(true); setItemErr("");
+    const { error } = await supabase.rpc("checklist_item_save", {
+      p_id: editing.id,
+      p_title: editing.title.trim(),
+      p_help_text: editing.help_text || "",
+      p_link_url: editing.link_url || "",
+    });
+    setItemSaving(false);
+    if (error) { setItemErr(error.message || "Could not save that item."); return; }
+    setEditing(null);
+    setTickKey(k => k + 1);
+  };
+
+  const moveItem = async (item, direction) => {
+    setItemErr("");
+    const { error } = await supabase.rpc("checklist_item_move", { p_id: item.id, p_direction: direction });
+    if (error) { setItemErr(error.message || "Could not move that item."); return; }
+    setTickKey(k => k + 1);
+  };
+
   const save = async () => {
     setSaving(true); setErr(""); setOk("");
     const { data, error } = await supabase.rpc("my_wrapup_save", {
@@ -2388,6 +2502,7 @@ function ChecklistTab() {
     setFlagKey(k => k + 1);
   };
 
+  const canEdit = !!state?.can_edit;
   const items = Array.isArray(state?.items) ? state.items : [];
   const cleared = items.filter(i => i.ticked_at).length;
   const personal = Array.isArray(state?.personal) ? state.personal : [];
@@ -2414,9 +2529,16 @@ function ChecklistTab() {
               {state?.label || "Loading"}{state?.leader ? ` · ${state.leader} leads this week` : ""}
             </div>
           </div>
-          <span style={{ fontSize: 12, fontWeight: 700, color: cleared === items.length && items.length ? T.green : T.slate600 }}>
-            {cleared} of {items.length} cleared
-          </span>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexShrink: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: cleared === items.length && items.length ? T.green : T.slate600 }}>
+              {cleared} of {items.length} cleared
+            </span>
+            {canEdit && (
+              <button type="button" onClick={() => { setEditMode(v => !v); setEditing(null); setItemErr(""); }} style={linkBtn}>
+                {editMode ? "Done editing" : "Edit list"}
+              </button>
+            )}
+          </div>
         </div>
 
         {Number(state?.at_risk_count || 0) > 0 && (
@@ -2429,26 +2551,25 @@ function ChecklistTab() {
           {items.length === 0
             ? <div style={{ fontSize: 13, color: T.slate500 }}>No items for this day.</div>
             : items.map(it => (
-                <div key={it.id}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px", borderBottom: openHelp === it.id ? "none" : `1px solid ${T.slate100}` }}>
-                    <input
-                      type="checkbox"
-                      id={`chk_${it.id}`}
-                      checked={!!it.ticked_at}
-                      onChange={() => toggle(it, !it.ticked_at)}
-                      disabled={busy}
-                      style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
-                    />
-                    <label htmlFor={`chk_${it.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: busy ? "wait" : "pointer", color: it.ticked_at ? T.slate500 : T.slate800 }}>{it.title}</label>
-                    {it.ticked_at && (
-                      <span style={{ fontSize: 11, color: T.slate400, whiteSpace: "nowrap", flexShrink: 0 }}>{it.ticked_by}</span>
-                    )}
-                    <button type="button" title="What this means" aria-label="What this means"
-                      onClick={() => setOpenHelp(h => (h === it.id ? null : it.id))}
-                      style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${openHelp === it.id ? T.blue : T.slate300}`, background: openHelp === it.id ? T.blueLt : T.white, color: openHelp === it.id ? T.blue : T.slate500 }}>i</button>
-                  </div>
-                  {openHelp === it.id && <HelpPanel item={it} />}
-                </div>
+                <ChecklistRow
+                  key={it.id}
+                  item={it}
+                  checked={!!it.ticked_at}
+                  byLabel={it.ticked_at ? it.ticked_by : null}
+                  busy={busy}
+                  onToggle={toggle}
+                  openHelp={openHelp}
+                  setOpenHelp={setOpenHelp}
+                  editMode={editMode}
+                  onEdit={startEdit}
+                  onMove={moveItem}
+                >
+                  {editing?.id === it.id && (
+                    <ChecklistEditor draft={editing} onChange={setEditing} onSave={saveItem}
+                                     onCancel={() => { setEditing(null); setItemErr(""); }}
+                                     saving={itemSaving} err={itemErr} />
+                  )}
+                </ChecklistRow>
               ))}
         </div>
 
@@ -2457,26 +2578,25 @@ function ChecklistTab() {
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Personal checklist</div>
             <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
             {personal.map(it => (
-              <div key={it.id}>
-                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 2px", borderBottom: openHelp === it.id ? "none" : `1px solid ${T.slate100}` }}>
-                  <input
-                    type="checkbox"
-                    id={`chk_${it.id}`}
-                    checked={!!it.mine}
-                    onChange={() => toggle(it, !it.mine)}
-                    disabled={busy}
-                    style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
-                  />
-                  <label htmlFor={`chk_${it.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: busy ? "wait" : "pointer", color: it.mine ? T.slate500 : T.slate800 }}>{it.title}</label>
-                  {Array.isArray(it.ticked_by) && it.ticked_by.length > 0 && (
-                    <span style={{ fontSize: 11, color: T.slate400, textAlign: "right", flexShrink: 0 }}>{it.ticked_by.join(", ")}</span>
-                  )}
-                  <button type="button" title="What this means" aria-label="What this means"
-                    onClick={() => setOpenHelp(h => (h === it.id ? null : it.id))}
-                    style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${openHelp === it.id ? T.blue : T.slate300}`, background: openHelp === it.id ? T.blueLt : T.white, color: openHelp === it.id ? T.blue : T.slate500 }}>i</button>
-                </div>
-                {openHelp === it.id && <HelpPanel item={it} />}
-              </div>
+              <ChecklistRow
+                key={it.id}
+                item={it}
+                checked={!!it.mine}
+                byLabel={Array.isArray(it.ticked_by) && it.ticked_by.length > 0 ? it.ticked_by.join(", ") : null}
+                busy={busy}
+                onToggle={toggle}
+                openHelp={openHelp}
+                setOpenHelp={setOpenHelp}
+                editMode={editMode}
+                onEdit={startEdit}
+                onMove={moveItem}
+              >
+                {editing?.id === it.id && (
+                  <ChecklistEditor draft={editing} onChange={setEditing} onSave={saveItem}
+                                   onCancel={() => { setEditing(null); setItemErr(""); }}
+                                   saving={itemSaving} err={itemErr} />
+                )}
+              </ChecklistRow>
             ))}
           </div>
         )}
