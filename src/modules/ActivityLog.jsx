@@ -273,6 +273,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [relationship, setRelationship] = useState("");
   const [source, setSource] = useState("");
   const [activities, setActivities] = useState([]);  // [{id, key, line, type, premium, reason}]
+  const [sourcedBy, setSourcedBy] = useState("");   // quotes only: who sourced the referral
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
   const [cReason, setCReason] = useState("");
@@ -396,6 +397,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
+  const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
   const needsType = (line) => (types[line] || []).length > 0;
   const isSold = (p) => p.status === "sold" || p.status === "quoted_sold";
@@ -458,6 +460,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         relationship_type: relationship || null,
         gnc_used: scores.setup_gnc_score === 3,
         marketing_source: source || null,
+        sourced_by_team_member_id: hasQuote && isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? {
@@ -776,6 +779,15 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <select style={inputBase} value={source} onChange={e => setSource(e.target.value)}>
                 <option value="">Pick one</option>
                 {(sources || []).map(s => <option key={s.source_key} value={s.source_key}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
+          {hasQuote && isReferral && (
+            <div style={{ flex: "0 1 140px", minWidth: 0 }}>
+              <label style={labelStyle}>Lead source</label>
+              <select style={inputBase} value={sourcedBy} onChange={e => setSourcedBy(e.target.value)}>
+                <option value="">{logFor ? "The person logged for" : "Me"}</option>
+                {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
               </select>
             </div>
           )}
