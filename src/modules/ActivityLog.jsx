@@ -1944,7 +1944,7 @@ function ChangesTab({ roster, values, types }) {
 }
 
 // =====================================================================
-// Scoreboard — the week's standings (Peter 2026-09-11). Everyone sees the whole
+// Score — the week's standings (Peter 2026-09-11). Everyone sees the whole
 // team, and every list is ranked. rp_week_scoreboard brings each
 // teammate's Marketing Points, HH Quotes, Sales Points, Retention Points
 // and conversation scorecards for the week, with the items behind every
@@ -2624,11 +2624,11 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "hours", label: "Hours" },
     { id: "deposits", label: "Deposits" },
     { type: "divider", id: "_dv_week" },
-    { id: "week", label: "Scoreboard" },
+    { id: "week", label: "Score" },
     { id: "issued", label: "To Issue" },
     { type: "divider", id: "_dv_rare" },
     { id: "development", label: "Development" },
-    { id: "earnings", label: "Earning Potential" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
+    { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
   ];
 
