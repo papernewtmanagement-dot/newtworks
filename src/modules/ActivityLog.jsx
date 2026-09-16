@@ -2451,18 +2451,6 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.v)}`}</Bullet></div>);
     }
     rows.push(<div key="qtd"><Divider /><HeadLine label="Quarter to date" value={fmtPts(m.qtd_points)} /></div>);
-    if (items.length) {
-      rows.push(<div key="d2"><Divider /></div>);
-      for (const it of items) {
-        rows.push(
-          <div key={it.id} style={{ ...itemLine, color: T.slate500 }}>
-            <span>{fmtDate(it.on_date)}</span><span>{it.customer || "\u2014"}</span>
-            <span>{it.label}{Number(it.nth) > 1 ? <span style={{ color: T.slate400 }}> \u00b7 {nth(Number(it.nth))} this year</span> : null}</span>
-            <strong style={{ color: T.slate700 }}>{fmtPts(it.points)}</strong>
-          </div>
-        );
-      }
-    }
     return rows;
   };
   const quoteItems = (p) => {
@@ -2525,27 +2513,12 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
   };
   const retentionItems = (p) => {
     const r = p.retention || {};
-    const items = r.items || [];
     const rows = [<div key="h"><HeadLine label="Net this week" value={fmtMoney(r.net)} /></div>];
     rows.push(<div key="g"><NoteLine>{`${fmtMoney(r.gross)} gross${Number(r.reduction_pct) > 0 ? `, less ${fmtPts(r.reduction_pct)}% for ${fmtPts(r.missed_pct)}% missed calls` : ""}`}</NoteLine></div>);
     rows.push(<div key="hrs"><Bullet>{`Hours in office: ${fmtPts(r.hours_in_office)} = ${fmtMoney(r.hour_points)}`}</Bullet></div>);
     rows.push(<div key="cal"><Bullet>{`Calls answered: ${r.calls_answered || 0} = ${fmtMoney(r.call_points)}`}</Bullet></div>);
-    for (const g of byLabel(items, it => it.label, it => it.points)) {
+    for (const g of byLabel(r.items, it => it.label, it => it.points)) {
       rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtMoney(g.v)}`}</Bullet></div>);
-    }
-    if (items.length) {
-      rows.push(<div key="d2"><Divider /></div>);
-      for (const it of items) {
-        rows.push(
-          <div key={it.id} style={{ ...itemLine, color: T.slate500 }}>
-            <span>{fmtDate(it.on_date)}</span><span>{it.customer || "\u2014"}</span>
-            <span>{it.label}{it.clears_on ? <span style={{ color: T.amber }}> \u00b7 clears {fmtDate(it.clears_on)}</span> : null}</span>
-            {it.note && <span style={{ color: T.slate400 }}>{it.note}</span>}
-            <strong style={{ color: T.slate700 }}>{fmtMoney(it.points)}</strong>
-            {it.source === "manual" && canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_activity", it.id, "entry")}>Remove</button>}
-          </div>
-        );
-      }
     }
     return rows;
   };
