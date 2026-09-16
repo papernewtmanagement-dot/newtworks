@@ -514,7 +514,9 @@ async function processAssessed(agencyId: string, candidateId?: string): Promise<
   const { data: candidates, error } = await query;
   if (error) return jsonResponse({ ok: false, error: error.message }, 500);
 
-  const gmailCreds = await getComposioGmailCreds(agencyId);
+  // No Gmail credentials fetched here any more: processAssessed does not send
+  // an email itself. The decline letter is the decline-notice trigger's job
+  // and the CTS letter is SQL's.
   const results: any[] = [];
 
   for (const c of candidates ?? []) {
@@ -547,42 +549,30 @@ async function processAssessed(agencyId: string, candidateId?: string): Promise<
     }
 
     if (verdict === "consider" || verdict === "pass") {
+      // THE CTS GATE. Peter 2026-09-15: no CTS result on file, no interview
+      // invite. Clearing the assessment verdict no longer books anything — it
+      // sends the sales profile link and stops here. The interview invite is
+      // fired later by trg_dispatch_cts_result, when record_cts_result()
+      // stamps cts_completed_at. See sendInterviewInvite below.
+      //
+      // The letter itself lives in SQL (send_cts_invite_to_candidate) because
+      // the hourly sweep sends the same letter to anyone this path missed.
+      // One wording, two callers, no second copy.
       if (!c.email) {
-        results.push({ id: c.id, name: c.candidate_name, action: "skipped_invite", reason: "no email" });
+        results.push({ id: c.id, name: c.candidate_name, action: "skipped_cts", reason: "no email" });
         continue;
       }
-      const slots = await computeOfferedSlots(agencyId);
-      if (!slots) {
-        results.push({ id: c.id, name: c.candidate_name, action: "skipped_invite", reason: "calendar creds missing" });
-        continue;
-      }
-      const token = newToken();
-      const expiresAt = new Date(Date.now() + BOOKING_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
-      const { error: updErr } = await sb.from("hiring_candidates").update({
-        status: "interview",
-        interview_invite_token: token,
-        interview_slots_offered: slots,
-        interview_invite_sent_at: new Date().toISOString(),
-        interview_booking_expires_at: expiresAt,
-      }).eq("id", c.id);
-      if (updErr) { results.push({ id: c.id, name: c.candidate_name, action: "invite_update_failed", error: updErr.message }); continue; }
-
-      const bookingUrl = `${BOOKING_BASE_URL}/${token}`;
-      let emailSent = false;
-      if (gmailCreds.ok) {
-        const letter = await renderEmail(agencyId, "interview_invite", {
-          first_name: escHtml(firstName),
-          booking_url: escHtml(bookingUrl),
-        });
-        const sendRes = await sendGmail({
-          creds: gmailCreds.creds,
-          to: c.email,
-          subject: letter.subject,
-          html: letter.html,
-        });
-        emailSent = sendRes.ok;
-      }
-      results.push({ id: c.id, name: c.candidate_name, action: "invited", email_sent: emailSent, composite: v.composite, slots_offered: slots.length, booking_url: bookingUrl });
+      const { data: ctsRes, error: ctsErr } = await sb.rpc("send_cts_invite_to_candidate", {
+        p_agency_id: agencyId,
+        p_candidate_id: c.id,
+      });
+      results.push({
+        id: c.id,
+        name: c.candidate_name,
+        action: "cts_sent_awaiting_result",
+        composite: v.composite,
+        cts: ctsErr ? { ok: false, error: ctsErr.message } : ctsRes,
+      });
       continue;
     }
 
@@ -590,6 +580,97 @@ async function processAssessed(agencyId: string, candidateId?: string): Promise<
   }
 
   return jsonResponse({ ok: true, processed: results.length, results });
+}
+
+// -------------------------------------------------------------------------
+// mode=send_interview_invite  (internal, shared_secret gated)
+// -------------------------------------------------------------------------
+// The only place an interview invite is created. Nothing calls it on a
+// schedule; the database trigger trg_dispatch_cts_result fires it the moment
+// a CTS result is recorded on a candidate still waiting at the gate.
+//
+// It re-checks the gate itself rather than trusting the caller. A trigger can
+// be re-fired, a result can be recorded twice, and an invite sent twice means
+// two booking tokens and two emails to the same person.
+async function sendInterviewInvite(agencyId: string, candidateId: string): Promise<Response> {
+  const { data: c, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, position, status, decision_at, interview_invite_token, cts_completed_at, is_test_candidate")
+    .eq("id", candidateId)
+    .eq("agency_id", agencyId)
+    .maybeSingle();
+  if (error) return jsonResponse({ ok: false, error: error.message }, 500);
+  if (!c) return jsonResponse({ ok: false, error: "not_found" }, 404);
+  if (c.is_test_candidate === true) return jsonResponse({ ok: true, action: "skipped", reason: "test candidate" });
+  if (c.decision_at) return jsonResponse({ ok: true, action: "skipped", reason: "already decided" });
+  if (c.interview_invite_token) return jsonResponse({ ok: true, action: "skipped", reason: "already invited" });
+  if (!c.cts_completed_at) return jsonResponse({ ok: true, action: "skipped", reason: "no CTS result on file" });
+
+  const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+  const name = c.candidate_name || firstName;
+
+  if (!c.email) {
+    await insertAlert({
+      agencyId, alertType: "interview_invite_send_failed", severity: "high",
+      title: `Interview invite not sent — no email for ${name}`,
+      message: `${name} has a CTS result on file and is ready for an interview, but there is no email address on the record. Add one and record the result again, or invite them by hand.`,
+      moduleReference: "team", relatedId: c.id,
+    });
+    return jsonResponse({ ok: false, action: "skipped", reason: "no email" });
+  }
+
+  const slots = await computeOfferedSlots(agencyId);
+  if (!slots) return jsonResponse({ ok: false, action: "skipped", reason: "calendar creds missing" }, 500);
+
+  const token = newToken();
+  const expiresAt = new Date(Date.now() + BOOKING_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+  const { error: updErr } = await sb.from("hiring_candidates").update({
+    status: "interview",
+    interview_invite_token: token,
+    interview_slots_offered: slots,
+    interview_invite_sent_at: new Date().toISOString(),
+    interview_booking_expires_at: expiresAt,
+  }).eq("id", c.id);
+  if (updErr) return jsonResponse({ ok: false, error: "db_update_failed", detail: updErr.message }, 500);
+
+  const bookingUrl = `${BOOKING_BASE_URL}/${token}`;
+  const gmailCreds = await getComposioGmailCreds(agencyId);
+  let emailSent = false;
+  let emailError: string | null = null;
+  if (gmailCreds.ok) {
+    const letter = await renderEmail(agencyId, "interview_invite", {
+      first_name: escHtml(firstName),
+      booking_url: escHtml(bookingUrl),
+    });
+    const sendRes = await sendGmail({
+      creds: gmailCreds.creds,
+      to: c.email,
+      subject: letter.subject,
+      html: letter.html,
+    });
+    emailSent = sendRes.ok;
+    if (!sendRes.ok) emailError = sendRes.error;
+  } else {
+    emailError = gmailCreds.error;
+  }
+
+  // The status write already happened, so a failed letter leaves a candidate
+  // sitting in Interview holding a booking link nobody sent them. Say it out
+  // loud instead of letting them wait.
+  if (!emailSent) {
+    await insertAlert({
+      agencyId, alertType: "interview_invite_send_failed", severity: "high",
+      title: `Interview invite not sent — ${name}`,
+      message: `${name} cleared the CTS gate and was moved to Interview, but the booking email did not send: ${emailError}. Their booking link still works: ${bookingUrl}`,
+      moduleReference: "team", relatedId: c.id,
+    });
+  }
+
+  return jsonResponse({
+    ok: true, action: "invited", name,
+    email_sent: emailSent, email_error: emailError,
+    slots_offered: slots.length, booking_url: bookingUrl,
+  });
 }
 
 // -------------------------------------------------------------------------
@@ -1619,6 +1700,13 @@ Deno.serve(async (req: Request) => {
     if (denied) return denied;
     if (!body.candidate_id) return jsonResponse({ ok: false, error: "missing candidate_id" }, 400);
     return await sendOfferLetter(agencyId, body.candidate_id);
+  }
+
+  if (mode === "send_interview_invite") {
+    const denied = await requireSharedSecret(agencyId, body.shared_secret);
+    if (denied) return denied;
+    if (!body.candidate_id) return jsonResponse({ ok: false, error: "missing candidate_id" }, 400);
+    return await sendInterviewInvite(agencyId, body.candidate_id);
   }
 
   if (mode === "process_assessed") {
