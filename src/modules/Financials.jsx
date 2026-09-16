@@ -3575,8 +3575,126 @@ const BookkeepingPanel = ({ onClose, fullWidth, width }) => {
   );
 };
 
+// ─── Reconciliation Section ────────────────────────────────────────
+// Statement arithmetic check. Reads public.v_statement_reconciliation live —
+// nothing is stored, so what shows here is always the current truth. Replaces
+// the old alerts-table version, which held stale rows long after the
+// underlying account had been fixed.
+const ReconciliationSection = () => {
+  const _vp = useViewport();
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase
+        .from("v_statement_reconciliation")
+        .select("*")
+        .order("statement_period_end", { ascending: false });
+      if (!alive) return;
+      if (error) { setErr(error.message || String(error)); setRows([]); return; }
+      setRows(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const all        = Array.isArray(rows) ? rows : [];
+  const variances  = all.filter(r => r?.finding === "variance");
+  const unknowns   = all.filter(r => r?.finding === "unknown_transaction_type");
+  const ties       = all.filter(r => r?.finding === "ties").length;
+  const noTxns     = all.filter(r => r?.finding === "no_transactions").length;
+  const problems   = [...variances, ...unknowns];
+
+  const card = {
+    background: T.white, border: `1px solid ${T.slate200}`,
+    borderRadius: 10, padding: _vp.isPhone ? 12 : 16, boxSizing: "border-box",
+  };
+
+  if (rows === null) {
+    return <div style={{ ...card, color: T.slate500, fontSize: 12 }}>Checking every statement period…</div>;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>Statement Reconciliation</div>
+        <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
+          Every statement period, checked against the transactions recorded for it. Recalculated each time you open this tab.
+        </div>
+      </div>
+
+      {err && (
+        <div style={{ ...card, borderColor: T.red, color: T.red, fontSize: 12, marginBottom: 12 }}>
+          Could not load the check: {err}
+        </div>
+      )}
+
+      {problems.length === 0 && !err && (
+        <div style={{ ...card, borderColor: T.green, background: T.greenLt, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>Everything closes.</div>
+          <div style={{ fontSize: 12, color: T.slate700, marginTop: 3 }}>
+            No statement period is out of balance right now.
+          </div>
+        </div>
+      )}
+
+      {problems.length > 0 && (
+        <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: T.slate50 }}>
+                  <th style={{ textAlign: "left",  padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Account</th>
+                  <th style={{ textAlign: "left",  padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Period ending</th>
+                  <th style={{ textAlign: "right", padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Statement says</th>
+                  <th style={{ textAlign: "right", padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>We compute</th>
+                  <th style={{ textAlign: "right", padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Off by</th>
+                  <th style={{ textAlign: "left",  padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>What to look at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {problems.map(r => {
+                  const unknown = r?.finding === "unknown_transaction_type";
+                  return (
+                    <tr key={`${r?.statement_balance_id}`} style={{ borderTop: `1px solid ${T.slate200}` }}>
+                      <td style={{ padding: "9px 12px", color: T.slate900, whiteSpace: "nowrap" }}>
+                        <span style={{ fontWeight: 600 }}>{r?.account_code || "—"}</span>
+                        <span style={{ color: T.slate500 }}> {r?.account_name || ""}</span>
+                      </td>
+                      <td style={{ padding: "9px 12px", color: T.slate700, whiteSpace: "nowrap" }}>{r?.statement_period_end || "—"}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "right", color: T.slate700, whiteSpace: "nowrap" }}>
+                        {unknown ? "—" : fmtMoney(r?.closing_balance)}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "right", color: T.slate700, whiteSpace: "nowrap" }}>
+                        {unknown ? "—" : fmtMoney(r?.computed_closing)}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "right", color: T.red, fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {unknown ? "—" : fmtMoney(r?.variance)}
+                      </td>
+                      <td style={{ padding: "9px 12px", color: T.slate600 }}>
+                        {unknown
+                          ? "A transaction on this statement has a type we do not recognize, so the period could not be added up."
+                          : `${r?.transaction_count ?? 0} transaction(s) recorded for this period. Either one is missing, one is duplicated, or an amount is wrong.`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: T.slate500 }}>
+        {ties} period(s) balance. {noTxns} period(s) had no transactions to check.
+      </div>
+    </div>
+  );
+};
+
 export default function Financials() {
-  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents","reconciliation"]);
   const [period, setPeriod] = useState("mtd");
   // Phase 3 (entity hierarchy): which entity the Financials views are scoped
   // to. Persists in URL so refresh restores; default = Personal (root of tree).
@@ -3605,6 +3723,7 @@ export default function Financials() {
     { id: "cashregister", label: "Cash Register" },
     { id: "documents",    label: "Documents"     },
     { id: "monthlyclose", label: "Monthly Close" },
+    { id: "reconciliation", label: "Reconciliation" },
   ];
   const sections = [...viewSections, ...toolSections];
 
@@ -3715,6 +3834,7 @@ export default function Financials() {
       {section === "cashregister" && <CashRegister />}
       {section === "documents"    && <Documents />}
       {section === "monthlyclose" && <MonthlyClose />}
+      {section === "reconciliation" && <ReconciliationSection />}
 
       {/* CPA-style print package — hidden on screen, rendered for print/PDF */}
       <PrintPackage data={MOCK} periodLabel={period} />
