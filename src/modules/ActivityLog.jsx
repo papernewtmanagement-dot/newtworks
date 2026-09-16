@@ -2458,7 +2458,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       rows.push(<div key={`q-${g.kind}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.points)}`}</Bullet></div>);
     }
     if (Number(m.qtd_reported)) {
-      rows.push(<div key="qrep"><Bullet>{`Weekly report, before events were logged one by one: ${fmtPts(m.qtd_reported)}`}</Bullet></div>);
+      rows.push(<div key="qrep"><Bullet>{`Weekly report, not itemised: ${fmtPts(m.qtd_reported)}`}</Bullet></div>);
     }
     if (!mix.length && !Number(m.qtd_reported)) rows.push(<div key="none"><NoteLine>Nothing this quarter.</NoteLine></div>);
     return rows;
