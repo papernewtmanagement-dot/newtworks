@@ -155,6 +155,11 @@ const chip = (on) => ({
   border: `1px solid ${on ? T.blue : T.slate300}`, background: on ? T.blueLt : T.white, color: on ? T.blue : T.slate700,
 });
 const chipRow = { display: "flex", flexWrap: "wrap", gap: 8 };
+// A Non-Owned auto policy covers the driver, not a car, so it never carries a
+// car count. Every other auto type does. One place decides, so the form, the
+// saver and the edit screens all agree.
+const hasCars = (line, type) => line === "auto" && type !== "non_owned";
+
 const gridForm = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 };
 const policyRow = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, background: T.slate50, borderRadius: 8, alignItems: "end" };
 const removeBtn = { ...btnGhost, color: T.red, borderColor: T.slate300, alignSelf: "center", whiteSpace: "nowrap" };
@@ -510,7 +515,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
   if (policies.some(p => needsType(p.line) && !p.type)) problems.push("Each Auto or Fire policy needs its type.");
   if (policies.some(p => needsMoney(p) && (p.premium === "" || !(Number(p.premium) >= 0)))) problems.push("Each sold or canceled policy needs its premium.");
-  if (policies.some(p => needsMoney(p) && p.line === "auto" && !(Number(p.vehicles) >= 1))) problems.push("Each sold or canceled auto policy needs its number of cars.");
+  if (policies.some(p => needsMoney(p) && hasCars(p.line, p.type) && !(Number(p.vehicles) >= 1))) problems.push("Each sold or canceled auto policy needs its number of cars.");
   if ((hasActivity || hasQuote) && date < addDays(today, -7)) problems.push("Activity and quotes are logged within 7 days. Pick a later date or split the entry.");
   if (hasSale && date < addDays(today, -30)) problems.push("A sale is logged within 30 days of the bind.");
   if (hasCxl && date < addDays(today, -90)) problems.push("A cancelation is logged within 90 days.");
@@ -573,7 +578,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           ecrm_opportunity_url: ecrm.trim(), note: note.trim(),
           products: sold.map(p => ({ id: p.dbId || null, line_of_business: p.line, product_type: p.type || null,
             premium: Number(p.premium), policy_count: 1,
-            vehicle_count: p.line === "auto" ? Number(p.vehicles) : null,
+            vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null,
             added_to_existing: p.line === "auto" && !!p.addedToExisting,
             is_new_line: !!p.isNewLine, autopay: !!p.autopay })) };
       } else if (k === "quote") {
@@ -588,7 +593,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         fn = "rp_edit_cancelation";
         changes = { ...who, canceled_on: date, policy_line: one.line, product_type: one.type || null,
           premium: one.premium === "" ? null : Number(one.premium),
-          vehicle_count: one.line === "auto" && one.vehicles !== "" ? Number(one.vehicles) : null,
+          vehicle_count: hasCars(one.line, one.type) && one.vehicles !== "" ? Number(one.vehicles) : null,
           reason: cReason.trim(), note: note.trim() };
       } else if (k === "activity") {
         const a = activities[0] || {};
@@ -622,7 +627,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setBusy(true);
     try {
       const row = (p) => ({ line_of_business: p.line, product_type: p.type || null });
-      const money = (p) => ({ premium: Number(p.premium), vehicle_count: p.line === "auto" ? Number(p.vehicles) : null });
+      const money = (p) => ({ premium: Number(p.premium), vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null });
       const matched = (p) => ({ matched_sale_product_id: p.matchedId || null });
       const payload = {
         customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date,
@@ -661,7 +666,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       if (replaces.length) {
         // the confirmed replacements cancel the old policies now, in the same click; no chargeback (the household kept the line)
         const items = replaces.map(p => { const o = oldOnFile(p); return { line_of_business: o.line_of_business, product_type: o.product_type || null, premium: Number(o.premium ?? 0),
-          vehicle_count: o.line_of_business === "auto" ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
+          vehicle_count: hasCars(o.line_of_business, o.product_type) ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
         const c = await supabase.rpc("rp_log_entry", { p_payload: {
           customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
           cancelation: { items, reason: "Replaced by the new policy logged with the sale" },
@@ -911,7 +916,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                   <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={active.premium} onChange={e => editPolicy(active.id, { premium: e.target.value })} placeholder="0.00" />
                 </div>
               )}
-              {needsMoney(active) && active.line === "auto" && (
+              {needsMoney(active) && hasCars(active.line, active.type) && (
                 <div style={field(70)}>
                   <label style={labelStyle}>Cars</label>
                   <input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={active.vehicles} onChange={e => editPolicy(active.id, { vehicles: e.target.value })} />
@@ -1963,7 +1968,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
               <label style={labelStyle}>Premium</label>
               <input type="number" min="0" step="0.01" value={p.premium ?? ""} onChange={e => setProd(i, "premium", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
             </div>
-            {p.line_of_business === "auto" && (
+            {hasCars(p.line_of_business, p.product_type) && (
               <div>
                 <label style={labelStyle}>Cars</label>
                 <input type="number" min="1" step="1" value={p.vehicle_count ?? 1} onChange={e => setProd(i, "vehicle_count", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
