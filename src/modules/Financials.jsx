@@ -3576,119 +3576,226 @@ const BookkeepingPanel = ({ onClose, fullWidth, width }) => {
 };
 
 // ─── Reconciliation Section ────────────────────────────────────────
-// Statement arithmetic check. Reads public.v_statement_reconciliation live —
-// nothing is stored, so what shows here is always the current truth. Replaces
-// the old alerts-table version, which held stale rows long after the
-// underlying account had been fixed.
+// Every financial exception check in one place, all computed live from views.
+// Nothing is stored. Replaces the old alerts table, which held rows long after
+// the underlying problem had been fixed — 25 open statement alerts against 3
+// real ones on the day it was retired.
+const ReconCard = ({ title, blurb, count, allClear, children }) => {
+  const _vp = useViewport();
+  return (
+    <div style={{
+      background: T.white, border: `1px solid ${count > 0 ? T.amber : T.slate200}`,
+      borderRadius: 10, marginBottom: 12, overflow: "hidden", boxSizing: "border-box",
+    }}>
+      <div style={{ padding: _vp.isPhone ? "10px 12px" : "12px 16px", borderBottom: count > 0 ? `1px solid ${T.slate200}` : "none" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>{title}</div>
+          <div style={{ fontSize: 11, color: count > 0 ? T.amber : T.green, fontWeight: 600 }}>
+            {count > 0 ? `${count} to look at` : allClear}
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: T.slate500, marginTop: 3 }}>{blurb}</div>
+      </div>
+      {count > 0 && (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>{children}</div>
+      )}
+    </div>
+  );
+};
+
+const th = { textAlign: "left", padding: "8px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap", fontSize: 11 };
+const thR = { ...th, textAlign: "right" };
+const td = { padding: "8px 12px", color: T.slate700, fontSize: 12 };
+const tdR = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+
 const ReconciliationSection = () => {
   const _vp = useViewport();
-  const [rows, setRows] = useState(null);
+  const [state, setState] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data, error } = await supabase
-        .from("v_statement_reconciliation")
-        .select("*")
-        .order("statement_period_end", { ascending: false });
-      if (!alive) return;
-      if (error) { setErr(error.message || String(error)); setRows([]); return; }
-      setRows(Array.isArray(data) ? data : []);
+      try {
+        const [recon, dups, notOn, dormant] = await Promise.all([
+          supabase.from("v_statement_reconciliation").select("*").order("statement_period_end", { ascending: false }),
+          supabase.from("v_ledger_dup_candidates").select("*").eq("agency_id", AGENCY_ID).order("transaction_date", { ascending: false }),
+          supabase.from("v_not_on_statement").select("*").eq("agency_id", AGENCY_ID).order("statement_period_end", { ascending: false }),
+          supabase.from("v_dormant_gl_rules").select("*").eq("agency_id", AGENCY_ID).order("rule_name"),
+        ]);
+        if (!alive) return;
+        const firstErr = [recon, dups, notOn, dormant].find(r => r?.error);
+        if (firstErr) setErr(firstErr.error.message || String(firstErr.error));
+        setState({
+          recon:   Array.isArray(recon?.data)   ? recon.data   : [],
+          dups:    Array.isArray(dups?.data)    ? dups.data    : [],
+          notOn:   Array.isArray(notOn?.data)   ? notOn.data   : [],
+          dormant: Array.isArray(dormant?.data) ? dormant.data : [],
+        });
+      } catch (e) {
+        if (alive) { setErr(e?.message || String(e)); setState({ recon: [], dups: [], notOn: [], dormant: [] }); }
+      }
     })();
     return () => { alive = false; };
   }, []);
 
-  const all        = Array.isArray(rows) ? rows : [];
-  const variances  = all.filter(r => r?.finding === "variance");
-  const unknowns   = all.filter(r => r?.finding === "unknown_transaction_type");
-  const ties       = all.filter(r => r?.finding === "ties").length;
-  const noTxns     = all.filter(r => r?.finding === "no_transactions").length;
-  const problems   = [...variances, ...unknowns];
-
-  const card = {
-    background: T.white, border: `1px solid ${T.slate200}`,
-    borderRadius: 10, padding: _vp.isPhone ? 12 : 16, boxSizing: "border-box",
-  };
-
-  if (rows === null) {
-    return <div style={{ ...card, color: T.slate500, fontSize: 12 }}>Checking every statement period…</div>;
+  if (state === null) {
+    return (
+      <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 16, color: T.slate500, fontSize: 12 }}>
+        Running every check…
+      </div>
+    );
   }
+
+  const variances = (state.recon || []).filter(r => r?.finding === "variance");
+  const unknowns  = (state.recon || []).filter(r => r?.finding === "unknown_transaction_type");
+  const gaps      = [...variances, ...unknowns];
+  const ties      = (state.recon || []).filter(r => r?.finding === "ties").length;
 
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>Statement Reconciliation</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>Reconciliation</div>
         <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
-          Every statement period, checked against the transactions recorded for it. Recalculated each time you open this tab.
+          Four checks on the books, recalculated every time you open this tab. Nothing here is stored, so a fixed problem disappears on its own.
         </div>
       </div>
 
       {err && (
-        <div style={{ ...card, borderColor: T.red, color: T.red, fontSize: 12, marginBottom: 12 }}>
-          Could not load the check: {err}
+        <div style={{ background: T.white, border: `1px solid ${T.red}`, borderRadius: 10, padding: 14, color: T.red, fontSize: 12, marginBottom: 12 }}>
+          One of the checks could not run: {err}
         </div>
       )}
 
-      {problems.length === 0 && !err && (
-        <div style={{ ...card, borderColor: T.green, background: T.greenLt, marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>Everything closes.</div>
-          <div style={{ fontSize: 12, color: T.slate700, marginTop: 3 }}>
-            No statement period is out of balance right now.
-          </div>
-        </div>
-      )}
-
-      {problems.length > 0 && (
-        <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 12 }}>
-          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: T.slate50 }}>
-                  <th style={{ textAlign: "left",  padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Account</th>
-                  <th style={{ textAlign: "left",  padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Period ending</th>
-                  <th style={{ textAlign: "right", padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Statement says</th>
-                  <th style={{ textAlign: "right", padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>We compute</th>
-                  <th style={{ textAlign: "right", padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>Off by</th>
-                  <th style={{ textAlign: "left",  padding: "9px 12px", color: T.slate600, fontWeight: 600, whiteSpace: "nowrap" }}>What to look at</th>
+      <ReconCard
+        title="Statements that do not close"
+        blurb={`Opening balance plus the period's transactions should land on the closing balance. ${ties} period(s) balance.`}
+        count={gaps.length}
+        allClear="Everything closes"
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr style={{ background: T.slate50 }}>
+            <th style={th}>Account</th><th style={th}>Period ending</th>
+            <th style={thR}>Statement says</th><th style={thR}>We compute</th><th style={thR}>Off by</th>
+            <th style={th}>What to look at</th>
+          </tr></thead>
+          <tbody>
+            {gaps.map(r => {
+              const unknown = r?.finding === "unknown_transaction_type";
+              return (
+                <tr key={r?.statement_balance_id} style={{ borderTop: `1px solid ${T.slate200}` }}>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    <span style={{ fontWeight: 600, color: T.slate900 }}>{r?.account_code || "—"}</span>
+                    <span style={{ color: T.slate500 }}> {r?.account_name || ""}</span>
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{r?.statement_period_end || "—"}</td>
+                  <td style={tdR}>{unknown ? "—" : fmtMoney(r?.closing_balance)}</td>
+                  <td style={tdR}>{unknown ? "—" : fmtMoney(r?.computed_closing)}</td>
+                  <td style={{ ...tdR, color: T.red, fontWeight: 600 }}>{unknown ? "—" : fmtMoney(r?.variance)}</td>
+                  <td style={{ ...td, color: T.slate600 }}>
+                    {unknown
+                      ? "A transaction on this statement has a type we do not recognize, so the period could not be added up."
+                      : `${r?.transaction_count ?? 0} transaction(s) recorded. Either one is missing, one is duplicated, or an amount is wrong.`}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {problems.map(r => {
-                  const unknown = r?.finding === "unknown_transaction_type";
-                  return (
-                    <tr key={`${r?.statement_balance_id}`} style={{ borderTop: `1px solid ${T.slate200}` }}>
-                      <td style={{ padding: "9px 12px", color: T.slate900, whiteSpace: "nowrap" }}>
-                        <span style={{ fontWeight: 600 }}>{r?.account_code || "—"}</span>
-                        <span style={{ color: T.slate500 }}> {r?.account_name || ""}</span>
-                      </td>
-                      <td style={{ padding: "9px 12px", color: T.slate700, whiteSpace: "nowrap" }}>{r?.statement_period_end || "—"}</td>
-                      <td style={{ padding: "9px 12px", textAlign: "right", color: T.slate700, whiteSpace: "nowrap" }}>
-                        {unknown ? "—" : fmtMoney(r?.closing_balance)}
-                      </td>
-                      <td style={{ padding: "9px 12px", textAlign: "right", color: T.slate700, whiteSpace: "nowrap" }}>
-                        {unknown ? "—" : fmtMoney(r?.computed_closing)}
-                      </td>
-                      <td style={{ padding: "9px 12px", textAlign: "right", color: T.red, fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {unknown ? "—" : fmtMoney(r?.variance)}
-                      </td>
-                      <td style={{ padding: "9px 12px", color: T.slate600 }}>
-                        {unknown
-                          ? "A transaction on this statement has a type we do not recognize, so the period could not be added up."
-                          : `${r?.transaction_count ?? 0} transaction(s) recorded for this period. Either one is missing, one is duplicated, or an amount is wrong.`}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+              );
+            })}
+          </tbody>
+        </table>
+      </ReconCard>
 
-      <div style={{ fontSize: 11, color: T.slate500 }}>
-        {ties} period(s) balance. {noTxns} period(s) had no transactions to check.
-      </div>
+      <ReconCard
+        title="Possible duplicate entries"
+        blurb="Same account, same date, same amount, captured more than once. Usually a statement parsed twice."
+        count={(state.dups || []).length}
+        allClear="No duplicates"
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr style={{ background: T.slate50 }}>
+            <th style={th}>Date</th><th style={thR}>Amount</th><th style={thR}>Copies</th>
+            <th style={th}>Where</th><th style={th}>Description</th>
+          </tr></thead>
+          <tbody>
+            {(state.dups || []).map(r => {
+              const amts = Array.isArray(r?.amounts) ? r.amounts.map(Number) : [];
+              const signFlip = amts.some(a => a > 0) && amts.some(a => a < 0);
+              return (
+                <tr key={`${r?.source_table}-${(r?.row_ids || [])[0]}`} style={{ borderTop: `1px solid ${T.slate200}` }}>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{r?.transaction_date || "—"}</td>
+                  <td style={tdR}>{fmtMoney(r?.abs_amount)}</td>
+                  <td style={tdR}>{r?.n ?? 0}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap", color: T.slate500 }}>{r?.source_table || "—"}</td>
+                  <td style={{ ...td, color: T.slate600 }}>
+                    {(Array.isArray(r?.descriptions) ? r.descriptions[0] : "") || "—"}
+                    {signFlip && (
+                      <span style={{ marginLeft: 6, padding: "1px 5px", background: T.redLt, color: T.red, borderRadius: 3, fontSize: 10, fontWeight: 600 }}>
+                        opposite signs
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </ReconCard>
+
+      <ReconCard
+        title="Seen at the bank, never on a statement"
+        blurb="The statement covering these arrived and did not include them."
+        count={(state.notOn || []).length}
+        allClear="All accounted for"
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr style={{ background: T.slate50 }}>
+            <th style={th}>Account</th><th style={th}>Statement period</th>
+            <th style={thR}>Count</th><th style={thR}>Total</th><th style={th}>Kind</th>
+          </tr></thead>
+          <tbody>
+            {(state.notOn || []).map(r => (
+              <tr key={`${r?.statement_balance_id}-${r?.finding}`} style={{ borderTop: `1px solid ${T.slate200}` }}>
+                <td style={{ ...td, whiteSpace: "nowrap", color: T.slate900 }}>{r?.account_name || "—"}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>{r?.statement_period_start} to {r?.statement_period_end}</td>
+                <td style={tdR}>{r?.n ?? 0}</td>
+                <td style={tdR}>{fmtMoney(r?.total_amount)}</td>
+                <td style={{ ...td, color: T.slate600 }}>
+                  {r?.finding === "possible_transfer"
+                    ? "Flagged as a move between our own accounts, never confirmed"
+                    : "Posted to the ledger, never claimed by a statement line"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ReconCard>
+
+      <ReconCard
+        title="Ledger rules that are not matching"
+        blurb="Active classification rules that have stopped catching transactions, or never caught one."
+        count={(state.dormant || []).length}
+        allClear="All rules working"
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr style={{ background: T.slate50 }}>
+            <th style={th}>Rule</th><th style={th}>Last match</th><th style={th}>What is happening</th>
+          </tr></thead>
+          <tbody>
+            {(state.dormant || []).map(r => (
+              <tr key={r?.rule_id} style={{ borderTop: `1px solid ${T.slate200}` }}>
+                <td style={{ ...td, color: T.slate900 }}>{r?.rule_name || "—"}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  {r?.last_used_at ? String(r.last_used_at).slice(0, 10) : "never"}
+                </td>
+                <td style={{ ...td, color: T.slate600 }}>
+                  {r?.finding === "went_quiet"
+                    ? "Matched before and has gone quiet for over a month. Check the merchant name is still right."
+                    : "Switched on and has never matched anything. Either the pattern is wrong or it was a one-off. Worth switching off."}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ReconCard>
     </div>
   );
 };
