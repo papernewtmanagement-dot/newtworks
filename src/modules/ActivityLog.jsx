@@ -1293,7 +1293,15 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
       if (kind === "sales") {
         let q = supabase.from("sales_log").select(SALE_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
         if (scope === "week") {
-          q = q.eq("week_end_date", weekEnd);
+          // Points are earned the week a policy ISSUES, not the week it was
+          // written (Peter 2026-09-16). Keyed on the submitted week, this card
+          // showed policies that were not earning yet and hid ones that were.
+          const iss = await supabase.from("sales_log_products").select("sales_log_id")
+            .eq("agency_id", AGENCY_ID).gte("issued_date", addDays(weekEnd, -6)).lte("issued_date", weekEnd);
+          if (iss.error) throw iss.error;
+          const ids = Array.from(new Set((iss.data || []).map(r => r.sales_log_id)));
+          if (!ids.length) { setRows([]); return; }
+          q = q.in("id", ids);
         } else {
           const pend = await supabase.from("sales_log_products").select("sales_log_id").eq("agency_id", AGENCY_ID).is("issued_date", null);
           const ids = Array.from(new Set((pend.data || []).map(r => r.sales_log_id)));
@@ -1382,7 +1390,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
 
   const emptyWord = scope === "pending"
     ? { sales: "Everything submitted has been issued. Nothing waiting.", appointments: "No appointments still open.", activities: "Nothing still counting down." }[kind]
-    : { sales: "No sales logged this week.", appointments: "No appointments set this week.", activities: "No activities logged this week." }[kind];
+    : { sales: "Nothing issued this week.", appointments: "No appointments set this week.", activities: "No activities logged this week." }[kind];
 
   return (
     <div style={cardStyle}>
@@ -2320,7 +2328,7 @@ const rowBtn = { display: "flex", alignItems: "center", gap: 6, width: "100%", p
 const itemLine = { fontSize: 12, color: T.slate600, display: "flex", flexWrap: "wrap", gap: "2px 8px", alignItems: "center" };
 const miniBtn = { ...btnGhost, padding: "2px 7px", fontSize: 11 };
 const fmtMoney = (n) => `$${fmtPts(n)}`;
-const ratePct = (r) => r == null ? "—" : `${(Number(r) * 100).toFixed(2)}%`;
+const ratePct = (r) => r == null ? "—" : `${Number((Number(r) * 100).toFixed(3))}%`;
 const nth = (n) => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 const plural = (n, w) => `${n} ${w}${Number(n) === 1 ? "" : "s"}`;
 
@@ -2432,18 +2440,64 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       </div>
     ));
   };
-  const salesItems = (p) => {
+  // Tap a name on Sales Points and you get the summary of the quarter: how much
+  // of the total is P&C, how much is life, the rate each sits at, and the issued
+  // business that got them there. The policy-by-policy detail for the week moved
+  // to the This week card at the bottom (Peter 2026-09-16). Every number here is
+  // read straight off the board. Nothing is worked out on this page.
+  const salesSummary = (p) => {
     const s = p.sales || {};
-    const rows = (s.items || []).map(it => (
-      <div key={it.id} style={itemLine}>
-        <span>{fmtDate(it.issued_on)}</span><span>{it.customer || "—"}{it.phone ? <span style={{ color: T.slate400 }}> ·{it.phone}</span> : null}</span>
-        <span>{it.type}{it.vehicles ? ` · ${plural(it.vehicles, "car")}` : ""}</span>
-        {it.on_file_answer && <span style={{ color: T.amber, fontWeight: 700 }}>{it.on_file_answer === "replaces" ? "replaced the old one" : it.on_file_answer === "added" ? "added to what's on file" : "different household"}</span>}
-        <strong style={{ color: T.slate900 }}>{fmtMoney(it.premium)}</strong>
+    const t = s.tiers, u = s.units || {}, rt = s.rates || {};
+    if (!t) return [
+      <div key="rep" style={itemLine}>
+        <span>From what was reported at the time.</span>
+        <strong style={{ color: T.slate900 }}>{fmtPts(s.qtd_points)} this quarter</strong>
+      </div>,
+    ];
+
+    const n = (v) => Number(v || 0);
+    const atCap = (steps, cap) => cap != null && n(steps) >= n(cap) ? ` (at the ${cap} cap)` : "";
+    const capped = (raw, cap) => n(raw) > n(cap) ? ` \u00b7 capped at ${ratePct(cap)}` : "";
+    const pcSteps = n(t.auto_tiers_at_6) + n(t.fire_tiers_at_3) + n(t.life_tiers_pc_at_200);
+
+    const from = [];
+    if (n(u.auto_apps)) from.push(`${plural(n(u.auto_apps), "car")} = ${t.auto_tiers_at_6}${atCap(t.auto_tiers_at_6, t.auto_rep_cap)}`);
+    if (n(u.fire_apps)) from.push(`${plural(n(u.fire_apps), "fire app")} = ${t.fire_tiers_at_3}${atCap(t.fire_tiers_at_3, t.fire_rep_cap)}`);
+    if (n(u.life_premium)) from.push(`${fmtMoney(u.life_premium)} life = ${t.life_tiers_pc_at_200}`);
+
+    const line = (label, value) => (
+      <div style={itemLine}>
+        <span style={{ flex: 1, minWidth: 90, fontWeight: 700, color: T.slate800 }}>{label}</span>
+        <strong style={{ color: T.slate900 }}>{value}</strong>
       </div>
-    ));
-    if (!rows.length) rows.push(<div key="none" style={itemLine}>Nothing issued this week.</div>);
-    rows.push(<div key="qtd" style={{ ...itemLine, color: T.slate400 }}>Quarter to date {fmtPts(s.qtd_points)} · P&C rate {ratePct(s.pc_rate)} · L&H rate {ratePct(s.lh_rate)}</div>);
+    );
+    const sub = (text) => <div style={{ ...itemLine, color: T.slate500, paddingLeft: 10 }}>{text}</div>;
+
+    const rows = [];
+    rows.push(<div key="pc">{line("P&C", fmtPts(s.pc_points))}</div>);
+    if (n(s.pc_premium)) {
+      rows.push(<div key="pc1">{sub(`${ratePct(s.pc_rate)} of ${fmtMoney(s.pc_premium)} issued`)}</div>);
+      rows.push(<div key="pc2">{sub(`${ratePct(rt.pc_base_pct)} to start, plus ${ratePct(rt.pc_step_pct)} a step \u00b7 ${plural(pcSteps, "step")}${capped(rt.pc_rate_raw, rt.pc_rate_capped)}`)}</div>);
+      if (from.length) rows.push(<div key="pc3">{sub(`Steps from ${from.join(" \u00b7 ")}`)}</div>);
+    } else {
+      rows.push(<div key="pc0">{sub("No auto or fire issued this quarter.")}</div>);
+    }
+
+    rows.push(<div key="lh">{line("Life & Health", fmtPts(s.lh_points))}</div>);
+    if (n(s.lh_premium)) {
+      rows.push(<div key="lh1">{sub(`${ratePct(s.lh_rate)} of ${fmtMoney(s.lh_premium)} issued`)}</div>);
+      rows.push(<div key="lh2">{sub(`${ratePct(rt.lh_base_pct)} to start, plus ${ratePct(rt.lh_step_pct)} a step \u00b7 ${plural(n(t.life_tiers_lh_at_200), "step")}${capped(rt.lh_rate_raw, rt.lh_rate_capped)}`)}</div>);
+      if (n(u.life_premium)) rows.push(<div key="lh3">{sub(`Steps from ${fmtMoney(u.life_premium)} life, one every ${fmtMoney(t.life_dollar_step)}`)}</div>);
+    } else {
+      rows.push(<div key="lh0">{sub("No life or health issued this quarter.")}</div>);
+    }
+
+    rows.push(
+      <div key="qtd" style={{ ...itemLine, borderTop: `1px solid ${T.slate100}`, paddingTop: 5 }}>
+        <span style={{ flex: 1, minWidth: 90, fontWeight: 700, color: T.slate800 }}>Quarter to date</span>
+        <strong style={{ color: T.slate900 }}>{fmtPts(s.qtd_points)}</strong>
+      </div>
+    );
     return rows;
   };
   const retentionItems = (p) => {
@@ -2498,7 +2552,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
         <ScoreCard title="Sales Points" total={fmtPts(team.sales)} note="Counted the week a policy issues." people={people}
           rankOf={p => Number(p.sales?.points || 0)} valueOf={p => fmtPts(p.sales?.points)}
           subOf={p => `${fmtPts(p.sales?.qtd_points)} this quarter`}
-          renderItems={salesItems} open={open.s} onToggle={toggle("s")} />
+          renderItems={salesSummary} open={open.s} onToggle={toggle("s")} />
         {show.retention && <ScoreCard title="Retention Points" total={fmtMoney(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
           rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtMoney(p.retention?.net)}
           subOf={p => `${fmtMoney(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
@@ -2514,7 +2568,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
           scope="week"
           weekEnd={safeWeek}
           title="This week"
-          blurb="Everything logged in this week. Same format as Pending."
+          blurb="Everything that moved points this week. Policies show up the week they issue."
           values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner}
           isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged || load}
         />
