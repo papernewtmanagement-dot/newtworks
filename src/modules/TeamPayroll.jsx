@@ -416,7 +416,7 @@ function LockBadge({ locked }) {
       boxSizing: "border-box", whiteSpace: "nowrap",
       background: T.slate100, color: T.slate700,
     }}>
-      \u{1F512} Locked \u00b7 paid
+      🔒 Locked · paid
     </span>
   );
 }
