@@ -96,7 +96,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "checklist", "canceled", "hours", "deposits", "week", "issued", "development", "changes"];
+const TABS = ["log", "checklist", "canceled", "hours", "deposits", "week", "issued", "development", "changes", "history"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -532,7 +532,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         changes = { ...who, submitted_date: date, household_status: relationship || undefined,
           marketing_source: source || undefined,
           sourced_by_team_member_id: isReferral ? (sourcedBy || "") : "",
-          ecrm_opportunity_url: ecrm.trim(), note: note.trim(), gnc_used: scores.setup_gnc_score === 3,
+          ecrm_opportunity_url: ecrm.trim(), note: note.trim(),
           products: sold.map(p => ({ id: p.dbId || null, line_of_business: p.line, product_type: p.type || null,
             premium: Number(p.premium), policy_count: 1,
             vehicle_count: p.line === "auto" ? Number(p.vehicles) : null,
@@ -590,7 +590,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
         relationship_type: relationship || null,
-        gnc_used: scores.setup_gnc_score === 3,
         marketing_source: source || null,
         sourced_by_team_member_id: hasQuote && isReferral && sourcedBy ? sourcedBy : null,
         activity: hasActivity ? { items: activityItems } : null,
@@ -1167,7 +1166,7 @@ const RECORD_KINDS = [
   { key: "activities",   label: "Activities" },
   { key: "sales",        label: "Sales" },
 ];
-const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, gnc_used, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
+const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
 const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, ecrm_url";
 const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
@@ -1208,21 +1207,21 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
           if (!ids.length) { setRows([]); return; }
           q = q.in("id", ids);
         }
-        const r = await q.order("submitted_date", { ascending: false });
+        const r = await q.order("submitted_date", { ascending: scope === "pending" });
         if (r.error) throw r.error;
         setRows(Array.isArray(r.data) ? r.data : []);
       } else if (kind === "appointments") {
         let q = supabase.from("appointment_log").select(APPT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
         if (scope === "week") q = q.eq("week_end_date", weekEnd);
         else q = q.is("sold_on", null).is("no_show_on", null);
-        const r = await q.order("set_on", { ascending: false });
+        const r = await q.order("set_on", { ascending: scope === "pending" });
         if (r.error) throw r.error;
         setRows(Array.isArray(r.data) ? r.data : []);
       } else {
         let q = supabase.from("retention_activity_log").select(ACT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
         if (scope === "week") q = q.eq("week_end_date", weekEnd);
         else q = q.gt("credit_available_on", today);
-        const r = await q.order("occurred_on", { ascending: false });
+        const r = await q.order("occurred_on", { ascending: scope === "pending" });
         if (r.error) throw r.error;
         setRows(Array.isArray(r.data) ? r.data : []);
       }
@@ -1581,7 +1580,6 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     on_date: row.submitted_date || row.set_on || row.occurred_on || todayCentral(),
     relationship: row.household_status || "existing",
     marketing_source: row.marketing_source || "",
-    gnc_used: !!row.gnc_used,
     escalated_to: row.escalated_to_team_member_id || "",
     owner: row.team_member_id || "",
     note: row.note || "",
@@ -1615,7 +1613,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
       changes = {
         customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
         submitted_date: f.on_date, household_status: f.relationship, marketing_source: f.marketing_source,
-        gnc_used: f.gnc_used, note: f.note,
+        note: f.note,
         products: f.products.map(p => ({
           id: p.id, line_of_business: p.line_of_business, product_type: p.product_type,
           premium: String(p.premium ?? ""), policy_count: String(p.policy_count ?? 1),
@@ -2005,7 +2003,7 @@ const CHANGE_LABEL = {
   save_line: "line", product_type: "product", is_new_line: "new line", points: "points", activity_key: "activity",
   save_reason: "save reason", reason: "reason", week_end_date: "week", credited_week_end_date: "credited week",
   credit_available_on: "clears on", products_discussed: "products discussed", is_existing_customer: "existing customer",
-  gnc_used: "GNC used", ecrm_opportunity_url: "ECRM link", ecrm_url: "ECRM link", team_member_id: "person",
+  ecrm_opportunity_url: "ECRM link", ecrm_url: "ECRM link", team_member_id: "person",
   saves_voided: "saves voided", chargeback_points: "chargeback",
   is_added_to_existing: "added to a policy they had",
   window_fraction_left: "window left", verified_at: "verified", scorecard_date: "date", average_score: "average",
@@ -2443,6 +2441,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       <div style={cardGrid}>
         <ScoreCard title="Marketing Points" total={fmtPts(team.marketing)} people={people}
           rankOf={p => Number(p.marketing?.points || 0)} valueOf={p => fmtPts(p.marketing?.points)}
+          subOf={p => `${fmtPts(p.marketing?.qtd_points)} this quarter`}
           renderItems={marketingItems} open={open.m} onToggle={toggle("m")} />
         {show.quotes && <ScoreCard title="HH Quotes" total={Number(team.quotes || 0)} people={people}
           rankOf={p => Number(p.quotes?.count || 0)} valueOf={p => Number(p.quotes?.count || 0)}
@@ -2972,24 +2971,6 @@ function ChecklistTab() {
 // =====================================================================
 function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [canceling, setCanceling] = useState(false);
-  const [editing, setEditing] = useState(null);   // {kind, id} while a record is open for editing
-  const [flash, setFlash] = useState("");
-  const [listKey, setListKey] = useState(0);
-  const closeEdit = (msg) => { setEditing(null); setFlash(msg || ""); setListKey(k => k + 1); };
-  const openEdit = (target) => {
-    setFlash(""); setCanceling(false); setEditing(target);
-    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  // Editing takes the whole tab: one record, one form, nothing else to trip over.
-  if (editing) {
-    return (
-      <div style={{ display: "grid", gap: 16 }}>
-        <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
-          onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={editing} onCloseEdit={closeEdit} />
-      </div>
-    );
-  }
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ ...cardStyle, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
@@ -3002,6 +2983,34 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, na
       {canceling
         ? <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onLogged} refreshKey={refreshKey} />
         : <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />}
+    </div>
+  );
+}
+
+// =====================================================================
+// History — every record, with Edit and Delete (Peter 2026-09-15). Its own
+// tab now; it used to sit under the entry form on Log. Editing takes over
+// the tab: one record, one form, nothing else to trip over.
+// =====================================================================
+function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
+  const [editing, setEditing] = useState(null);
+  const [flash, setFlash] = useState("");
+  const [listKey, setListKey] = useState(0);
+  const closeEdit = (msg) => { setEditing(null); setFlash(msg || ""); setListKey(k => k + 1); };
+  const openEdit = (target) => {
+    setFlash(""); setEditing(target);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  if (editing) {
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+          onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={editing} onCloseEdit={closeEdit} />
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
       <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
     </div>
   );
@@ -3071,7 +3080,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Records</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>History</div>
           <div style={{ fontSize: 13, color: T.slate500 }}>The last two weeks. Search a name, or set a From date, to go further back.</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -3154,7 +3163,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
 export default function ActivityLog({ userRole, userId }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
-  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings"]);
+  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings", "history"]);
   const [values, setValues] = useState([]);
   const [sources, setSources] = useState([]);
   const [types, setTypes] = useState({});
@@ -3222,20 +3231,21 @@ export default function ActivityLog({ userRole, userId }) {
   }, [refreshKey, myTeamId]);
 
   const bump = () => setRefreshKey(k => k + 1);
-  // Ordered by how often a tab gets touched (Peter 2026-09-11). Thin dividers
-  // separate daily work from weekly work from the occasional stuff.
+  // Peter 2026-09-15: the production run of tabs first — what you log, how it
+  // scored, what it could earn, what is waiting, what changed, and the whole
+  // record behind it. Then a divider, then everything else.
   const tabs = [
     { id: "log", label: "Log" },
+    { id: "week", label: "Score" },
+    { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
+    { id: "issued", label: "Pending" },
+    ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
+    { id: "history", label: "History" },
+    { type: "divider", id: "_dv_rest" },
     { id: "checklist", label: "Checklist" },
     { id: "hours", label: "Hours" },
     { id: "deposits", label: "Deposits" },
-    { type: "divider", id: "_dv_week" },
-    { id: "week", label: "Score" },
-    { id: "issued", label: "Pending" },
-    { type: "divider", id: "_dv_rare" },
     { id: "development", label: "Development" },
-    { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
-    ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
   ];
 
   return (
@@ -3295,6 +3305,7 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
+      {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
   );
 }
