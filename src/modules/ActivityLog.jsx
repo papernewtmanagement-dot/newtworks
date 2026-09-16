@@ -507,16 +507,22 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setErr(""); setOk(""); setAttempted(true);
     if (busy || !editRec) return;
     const k = editRec.kind;
-    const who = { customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone };
+    // A historical sale usually has no phone on file. Only insist on one when the
+    // record already carried one, or when something has been typed into the box.
+    const who = { customer_first: first.trim(), customer_last_initial: initial.trim() };
+    if (phoneOk) who.phone_last4 = phone;
     const gate = [];
     if (!first.trim()) gate.push("First name.");
     if (k !== "scorecard" && !/^[A-Za-z]$/.test(initial.trim())) gate.push("Last initial.");
-    if (!phoneOk) gate.push("Customer phone, last four digits.");
+    if (phone && !phoneOk) gate.push("Customer phone: four digits, or leave it blank.");
+    if (!phone && editRec.phone_last4) gate.push("Customer phone, last four digits.");
     if (k === "sale" && sold.length === 0) gate.push("A sale needs at least one sold policy.");
     if (k === "quote" && quoted.length === 0) gate.push("A quote needs at least one quoted policy.");
     if (k === "cancelation" && policies.length !== 1) gate.push("A cancelation is one policy. Log a second one separately.");
     if (k === "sale" && sold.some(p => p.premium === "" || !(Number(p.premium) >= 0))) gate.push("Every sold policy needs a premium.");
-    if (k === "sale" && !ecrm.trim()) gate.push("A sale needs the ECRM opportunity link.");
+    if (k === "sale" && !ecrm.trim()) gate.push(editRec.entry_source === "historical_backfill"
+      ? "Moving this into the production log needs the ECRM opportunity link."
+      : "A sale needs the ECRM opportunity link.");
     if (gate.length) { setErr(gate.join(" ")); return; }
     setBusy(true);
     try {
@@ -557,7 +563,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                 premium: a.premium === "" ? null : Number(a.premium) }) };
       } else {
         fn = "rp_edit_scorecard";
-        changes = { customer_first_name: first.trim(), phone_last4: phone, scorecard_date: date,
+        changes = { customer_first_name: first.trim(), ...(phoneOk ? { phone_last4: phone } : {}), scorecard_date: date,
           notes: note.trim(), recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || "") : "",
           ...Object.fromEntries(CARD_PARTS.map(pt => [pt.key, scores[pt.key] == null ? null : Number(scores[pt.key])])) };
       }
