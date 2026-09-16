@@ -1251,19 +1251,18 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
 }
 
 // ─── Daily Kickoff commits ────────────────────────────────────
-// One commit per person per day (Peter 2026-09-11). The page renders two empty
-// host elements (see [Commits] and {{commit-bridge}} in markdown.js); the
-// picker below is mounted into them with portals, so it lives inside the
-// rendered markdown where the Close step and the Bridge step sit.
-//   pick   — the week's commit examples as radio buttons plus "Other" with a
-//            text box. Saving stores today's commit (Central date) for the
-//            signed-in teammate through kickoff_commit_save. Once saved it is
-//            locked: no Change button, and the database refuses a second save
-//            for the same day (Peter 2026-09-14).
-//   bridge — the next morning, at the TOP of the page: the latest earlier
-//            commit (Monday shows Friday's) with a yes-or-no question. This is
-//            the only place a commit is marked hit or missed. No "not yet":
-//            commits are daily.
+// One commit per person per day (Peter 2026-09-11). The page renders one empty
+// host element (see [Commits] in markdown.js); the picker below is mounted into
+// it with a portal, so it lives inside the rendered markdown where the Close
+// step sits. The week's commit examples show as radio buttons plus "Other" with
+// a text box. Saving stores today's commit (Central date) for the signed-in
+// teammate through kickoff_commit_save. Once saved it is locked: no Change
+// button, and the database refuses a second save for the same day
+// (Peter 2026-09-14).
+// Marking a commit hit or missed is not here any more (Peter 2026-09-16). It is
+// a checkbox on the personal checklist, on the Checklist tab of the Dashboard,
+// and it marks today's commit at the end of the day rather than yesterday's the
+// next morning.
 // A login with no team record sees the examples as a plain list and nothing
 // to save.
 const COMMIT_BTN = {
@@ -1273,17 +1272,8 @@ const COMMIT_BTN = {
 const COMMIT_BTN_PRIMARY = { ...COMMIT_BTN, background: T.blue, borderColor: T.blue, color: T.white, fontWeight: 700 };
 const COMMIT_CARD = { background: "#F8FAF3", borderRadius: 7, padding: "10px 12px", margin: "8px 0 14px 0" };
 
-function nwCommitDayLabel(dateStr, todayStr) {
-  const d = new Date(`${dateStr}T12:00:00`);
-  const t = new Date(`${todayStr}T12:00:00`);
-  if (isNaN(d) || isNaN(t)) return "Last commit";
-  const days = Math.round((t - d) / 86400000);
-  if (days === 1) return "Yesterday's commit";
-  return `${d.toLocaleDateString("en-US", { weekday: "long" })}'s commit`;
-}
-
 function KickoffCommits({ hosts, week }) {
-  const [info, setInfo] = useState(null);      // { member_id, today_date, today, prior }
+  const [info, setInfo] = useState(null);      // { member_id, today_date, today }
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [choice, setChoice] = useState(null);  // index into items, or "other"
@@ -1318,43 +1308,9 @@ function KickoffCommits({ hosts, week }) {
     setInfo((prev) => ({ ...(prev || {}), today: data }));
   };
 
-  const mark = async (row, hit) => {
-    if (!row || !row.id) return;
-    setBusy(true); setError(null);
-    const { data, error: e } = await supabase.rpc("kickoff_commit_mark", { p_id: row.id, p_hit: hit });
-    setBusy(false);
-    if (e) { setError(e.message); return; }
-    setInfo((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev };
-      if (prev.today && prev.today.id === row.id) next.today = data;
-      if (prev.prior && prev.prior.id === row.id) next.prior = data;
-      return next;
-    });
-  };
-
   const today = info?.today || null;
-  const prior = info?.prior || null;
   const canSave = !!info?.member_id;
   const err = error ? <div style={{ color: T.red, fontSize: 12, fontWeight: 600, marginTop: 6 }}>{error}</div> : null;
-
-  const bridge = prior ? (
-    <div style={COMMIT_CARD}>
-      <div><strong>{nwCommitDayLabel(prior.commit_date, info?.today_date)}:</strong> {prior.commit_text}</div>
-      {prior.hit === true ? (
-        <div style={{ marginTop: 4 }}>✅ Hit it</div>
-      ) : prior.hit === false ? (
-        <div style={{ marginTop: 4 }}>❌ Missed it</div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          <span>Did you hit it?</span>
-          <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy} onClick={() => mark(prior, true)}>Yes</button>
-          <button type="button" style={COMMIT_BTN} disabled={busy} onClick={() => mark(prior, false)}>No</button>
-        </div>
-      )}
-      {err}
-    </div>
-  ) : null;
 
   let pick;
   if (!canSave) {
@@ -1365,7 +1321,7 @@ function KickoffCommits({ hosts, week }) {
     pick = (
       <div style={COMMIT_CARD}>
         <div><strong>Today's commit{today.hit === true ? " ✅" : today.hit === false ? " ❌" : ""}:</strong> {today.commit_text}</div>
-        <div style={{ color: T.slate500, fontSize: 12, marginTop: 6 }}>Saved and locked. You mark it hit or missed at the top of this page tomorrow morning.</div>
+        <div style={{ color: T.slate500, fontSize: 12, marginTop: 6 }}>Saved and locked. Tick it off on your personal checklist at the end of the day.</div>
         {err}
       </div>
     );
@@ -1404,12 +1360,7 @@ function KickoffCommits({ hosts, week }) {
     );
   }
 
-  return (
-    <>
-      {hosts.bridge ? createPortal(bridge, hosts.bridge) : null}
-      {hosts.pick ? createPortal(pick, hosts.pick) : null}
-    </>
-  );
+  return hosts.pick ? createPortal(pick, hosts.pick) : null;
 }
 
 // ─── Daily team checklist ─────────────────────────────────────
@@ -2021,20 +1972,20 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => {
     nwEnableSmoothDetails(bodyRef.current);
   }, [html]);
-  // Daily Kickoff commits: the markdown renders empty host elements (see
-  // [Commits] in markdown.js); KickoffCommits mounts the picker into them.
+  // Daily Kickoff commits: the markdown renders an empty host element (see
+  // [Commits] in markdown.js); KickoffCommits mounts the picker into it.
   // Re-found whenever the body HTML is replaced, since that swaps the nodes.
-  const [commitHosts, setCommitHosts] = useState({ pick: null, bridge: null });
+  const [commitHosts, setCommitHosts] = useState({ pick: null });
   // Page hosts: {{daily-checklist}} and {{kickoff-telegram}} (see markdown.js).
   const [pageHosts, setPageHosts] = useState({ checklist: null, telegram: null, teamCommits: null, alphaSplit: null });
   useEffect(() => {
     const root = bodyRef.current;
-    const next = { pick: null, bridge: null };
+    const next = { pick: null };
     const nextPage = { checklist: null, telegram: null, teamCommits: null, alphaSplit: null };
     if (root) {
       root.querySelectorAll(".nw-commit-host").forEach((el) => {
         const kind = el.getAttribute("data-nw-commit");
-        if (kind === "pick" || kind === "bridge") next[kind] = el;
+        if (kind === "pick") next.pick = el;
       });
       root.querySelectorAll(".nw-page-host").forEach((el) => {
         const kind = el.getAttribute("data-nw-host");
@@ -2044,7 +1995,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
         if (kind === "alpha-split") nextPage.alphaSplit = el;
       });
     }
-    setCommitHosts((prev) => (prev.pick === next.pick && prev.bridge === next.bridge ? prev : next));
+    setCommitHosts((prev) => (prev.pick === next.pick ? prev : next));
     setPageHosts((prev) => (prev.checklist === nextPage.checklist && prev.telegram === nextPage.telegram && prev.teamCommits === nextPage.teamCommits && prev.alphaSplit === nextPage.alphaSplit ? prev : nextPage));
   }, [html, mode]);
   // Role play pickers: a random card on load, a random card for whatever
@@ -2316,7 +2267,7 @@ What I\'d like to discuss:
         )}
       </div>
 
-      {(commitHosts.pick || commitHosts.bridge) ? (
+      {commitHosts.pick ? (
         <KickoffCommits hosts={commitHosts} week={activeWeek} />
       ) : null}
       {pageHosts.checklist ? <DailyChecklistCard host={pageHosts.checklist} /> : null}

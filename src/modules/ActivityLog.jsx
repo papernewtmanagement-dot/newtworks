@@ -2658,6 +2658,9 @@ function HelpPanel({ item }) {
 // One checklist row, used by the team list AND the personal list, so the row
 // only ever has one shape to change. Owner-only controls (move up, move down,
 // edit) appear on the same row while the list is in edit mode.
+// What shows behind the i on the commit row of the personal list.
+const COMMIT_HELP = "The commit you made at this morning's kickoff.\n\nTick it when you have done it. Leave it unticked if you did not get there. The next morning's kickoff message shows a tick against every commit that was hit and a cross against every one that was not.";
+
 const checklistRowBtn = {
   flexShrink: 0, width: 22, height: 20, lineHeight: "18px", textAlign: "center", padding: 0,
   borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
@@ -2750,6 +2753,10 @@ function ChecklistTab() {
   const [ok, setOk] = useState("");
   const [tickKey, setTickKey] = useState(0);
   const [flagKey, setFlagKey] = useState(0);
+  // Today's commit from the morning kickoff. It is ticked off here, on the
+  // personal list, instead of being answered on the kickoff page the next
+  // morning (Peter 2026-09-16).
+  const [commit, setCommit] = useState(null);
   // Editing the list itself is the owner's alone. The server says so too
   // (checklist_require_owner), so hiding the controls is not the only guard.
   const [editMode, setEditMode] = useState(false);
@@ -2761,6 +2768,13 @@ function ChecklistTab() {
     let alive = true;
     supabase.rpc("daily_checklist_state", { p_date: null })
       .then(r => { if (alive) setState(r?.data || null); });
+    return () => { alive = false; };
+  }, [tickKey]);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("kickoff_commits_mine")
+      .then(r => { if (alive) setCommit(r?.data?.today || null); });
     return () => { alive = false; };
   }, [tickKey]);
 
@@ -2792,6 +2806,18 @@ function ChecklistTab() {
     });
     setBusy(false);
     if (error) { setErr(error.message || "Could not save that tick."); return; }
+    setTickKey(k => k + 1);
+  };
+
+  // Ticked means you did it, unticked means you did not. Same two answers the
+  // kickoff page used to ask for, so the morning message still prints a tick or
+  // a cross against yesterday's commit.
+  const toggleCommit = async (row, on) => {
+    if (!row?.id || busy) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.rpc("kickoff_commit_mark", { p_id: row.id, p_hit: on });
+    setBusy(false);
+    if (error) { setErr(error.message || "Could not save that."); return; }
     setTickKey(k => k + 1);
   };
 
@@ -2925,10 +2951,24 @@ function ChecklistTab() {
               ))}
         </div>
 
-        {personal.length > 0 && (
+        {(personal.length > 0 || commit) && (
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Personal checklist</div>
             <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
+            {commit && (
+              <ChecklistRow
+                item={{ id: commit.id, title: `Commit completed \u2014 ${commit.commit_text}`, help_text: COMMIT_HELP }}
+                checked={commit.hit === true}
+                byLabel={commit.hit === false ? "missed" : null}
+                busy={busy}
+                onToggle={(_it, on) => toggleCommit(commit, on)}
+                openHelp={openHelp}
+                setOpenHelp={setOpenHelp}
+                editMode={false}
+                onEdit={() => {}}
+                onMove={() => {}}
+              />
+            )}
             {personal.map(it => (
               <ChecklistRow
                 key={it.id}

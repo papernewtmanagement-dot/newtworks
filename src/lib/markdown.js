@@ -1220,8 +1220,10 @@ function expandRoleplays(md, options, slots) {
 // lines survive the filter above. This renders an empty host element carrying
 // those lines; Manual.jsx mounts the picker into it (radio buttons plus
 // "Other"), saves the choice to daily_commits, and shows what is on file.
-// {{commit-bridge}} renders a second host where the next-morning question
-// ("did you hit it?") goes, usually under the Bridge step in Open.
+// {{commit-bridge}} is retired (Peter 2026-09-16). A commit is marked hit or
+// missed with a checkbox on the personal checklist, on the Checklist tab of the
+// Dashboard. The marker is stripped from any page still carrying it, so nothing
+// shows in its place.
 const COMMITS_START_RE = /^[ \t]*\*?\[Commits\]\*?[ \t]*$/i;
 const COMMITS_END_RE = /^[ \t]*\*?\[Commits end\]\*?[ \t]*$/i;
 const COMMIT_BRIDGE_RE = /\{\{commit-bridge\}\}/gi;
@@ -1254,10 +1256,7 @@ function expandCommits(md, slots) {
     slots.push(renderCommitHost("pick", items));
     kept.push(RP_SLOT(slots.length - 1));
   }
-  return kept.join("\n").replace(COMMIT_BRIDGE_RE, () => {
-    slots.push(renderCommitHost("bridge", []));
-    return RP_SLOT(slots.length - 1);
-  });
+  return kept.join("\n").replace(COMMIT_BRIDGE_RE, "");
 }
 
 // ─── Page hosts ───────────────────────────────────────────────
