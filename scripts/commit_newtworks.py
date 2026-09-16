@@ -190,6 +190,63 @@ def fetch_file_at(path, ref):
     return {"sha": data["sha"], "content": content}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Pre-commit gate
+# ─────────────────────────────────────────────────────────────────────────
+
+FRONTEND_EXTS = (".jsx", ".tsx")
+_HOOK_MOD = None
+
+
+def _hook_checker():
+    """Load scripts/check_react_hooks.py, fetching it from main if missing.
+
+    This script is often bootstrapped on its own into a bare sandbox, so the
+    checker will not be sitting next to it. Fetch it rather than skip the
+    gate — a gate that quietly turns itself off is not a gate.
+    """
+    global _HOOK_MOD
+    if _HOOK_MOD is not None:
+        return _HOOK_MOD
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    local = os.path.join(here, "check_react_hooks.py")
+    if not os.path.exists(local):
+        got = fetch_file_at("scripts/check_react_hooks.py", "main")
+        if not got:
+            die("pre-commit: could not load scripts/check_react_hooks.py from main. "
+                "Nothing committed.")
+        text = got["content"]
+        if isinstance(text, bytes):
+            text = text.decode("utf-8")
+        with open(local, "w", encoding="utf-8") as f:
+            f.write(text)
+    spec = importlib.util.spec_from_file_location("check_react_hooks", local)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _HOOK_MOD = mod
+    return mod
+
+
+def precommit_gate(path, new_content):
+    """Abort the commit if a frontend file calls a React hook it never imports.
+
+    esbuild parses such a file happily and it then throws
+    "useMemo is not defined" in the browser on first render. That shipped
+    once. Called from every write path so it cannot be routed around.
+    """
+    if not path.endswith(FRONTEND_EXTS):
+        return
+    if isinstance(new_content, bytes):
+        return
+    problems = _hook_checker().check_source(new_content)
+    if not problems:
+        return
+    for hook, line in problems:
+        print(f"[hook-check] {path}:{line}: {hook} is called but never imported from react")
+    die(f"[hook-check] {path}: React hook(s) used without an import. Nothing committed.")
+
+
 def run_batch(manifest_path, message, branch, dry_run):
     """Land several files in ONE commit via the Git Data API.
 
@@ -283,6 +340,7 @@ def run_batch(manifest_path, message, branch, dry_run):
         if current is not None and new_content == current["content"]:
             print(f"[skip] {path} unchanged")
             continue
+        precommit_gate(path, new_content)
         verb = "create" if current is None else "update"
         print(f"[{verb}] {path} - {len(new_content)} bytes")
         staged.append((path, new_content, False))
@@ -382,6 +440,7 @@ def main():
             die("--create requires --content-file")
         with open(args.content_file, "rb") as f:
             new_content = f.read().decode("utf-8")
+        precommit_gate(args.path, new_content)
         new_sha256 = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
         print(f"[create] {args.path} — {len(new_content)} bytes (sha256={new_sha256[:12]})")
         if args.dry_run:
@@ -408,6 +467,7 @@ def main():
         print("[skip] Content unchanged, nothing to commit.")
         return
 
+    precommit_gate(args.path, new_content)
     new_sha256 = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
     print(f"[diff] {len(current['content'])} → {len(new_content)} bytes (sha256={new_sha256[:12]})")
 
