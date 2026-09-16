@@ -413,6 +413,19 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setActivePolicy(id);
   };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
+  // Policies this customer still has, that are not already sitting in this entry.
+  // One tap drops one in as canceled, with its premium, cars, type and the sale it
+  // will be matched to already filled from what we recorded when it sold.
+  const cancelable = !allowCancel ? [] : onFile.filter(r => !r.already_canceled
+    && !policies.some(p => p.matchedId === r.sale_product_id));
+  const cancelOnFile = (r) => {
+    const id = newPolicyId();
+    setPolicies(list => [...list, { id, line: r.line_of_business, type: r.product_type || "",
+      status: "canceled", premium: String(r.premium ?? ""),
+      vehicles: r.line_of_business === "auto" ? String(r.vehicle_count || 1) : "1",
+      isNewLine: false, addedToExisting: false, matchedId: r.sale_product_id }]);
+    setActivePolicy(id);
+  };
   // Canceled: bring in the premium and cars we recorded on the sale, editable; blank when nothing is on file
   const setStatus = (p, status) => {
     const patch = { status };
@@ -800,6 +813,21 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           ))}
         </div>
+        )}
+
+        {!isEdit && cancelable.length > 0 && (
+          <div style={blockStyle}>
+            <div style={labelStyle}>On file for this customer — tap what canceled</div>
+            <div style={chipRow}>
+              {cancelable.map(r => (
+                <span key={r.sale_product_id} style={chip(false)} onClick={() => cancelOnFile(r)}>
+                  {PRODUCT_SHORT[r.line_of_business] || r.line_of_business}
+                  {r.product_type ? ` ${r.product_type}` : ""}
+                  {r.premium != null ? ` · $${fmtPts(r.premium)}` : ""}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* ---- policies: Add dropdown + pills on one row; the pill tapped last is edited below ---- */}
@@ -3029,9 +3057,11 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, na
           <span onClick={() => setCanceling(true)} style={chip(canceling)}>Yes</span>
         </div>
       </div>
-      {canceling
-        ? <CanceledTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onLogged} refreshKey={refreshKey} />
-        : <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} onLogged={onLogged} refreshKey={refreshKey} />}
+      {/* Peter 2026-09-15: canceling still gets the whole standard log, because the same
+          visit often has a review or other activity to record. Saying Yes only turns on the
+          Canceled status and the one-tap list of policies already on file. */}
+      <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+        onLogged={onLogged} refreshKey={refreshKey} allowCancel={canceling} />
     </div>
   );
 }
