@@ -238,6 +238,27 @@ const toDatetimeLocalString = (d) => {
 };
 
 // Human-readable due label — datetime-aware. Falls back to task.due_date string.
+// "Complete at" helpers. complete_at is the time you plan to actually do the task.
+// Default offer: the due date at 9am, or 9am tomorrow when there is no due date.
+const defaultCompleteAt = (dueDateIso) => {
+  let d;
+  if (dueDateIso) {
+    d = new Date(dueDateIso + "T09:00:00");
+  } else {
+    d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+  }
+  if (!Number.isFinite(d.getTime())) return "";
+  return toDatetimeLocalString(d);
+};
+const completeAtLabel = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return "";
+  return d.toLocaleString("en-US", { weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit" });
+};
+
 const formatDueLabel = (task) => {
   if (task?.due_at_raw) {
     const d = new Date(task.due_at_raw);
@@ -374,6 +395,12 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
               <span title="This repeats. Closing it creates the next one."
                 style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.blueLt, color:T.blue }}>
                 🔁 {repeatLabel(task.repeat_every, task.repeat_interval)}
+              </span>
+            )}
+            {task.complete_at && (
+              <span title="Booked on the calendar"
+                style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.tealLt, color:T.teal }}>
+                📅 {completeAtLabel(task.complete_at)}
               </span>
             )}
             {(priorityLocked || hoursLocked) && (
@@ -643,6 +670,9 @@ const TaskModal = ({
     // Recurrence. Empty repeat_every = does not repeat.
     repeat_every:    initialTask?.repeat_every || "",
     repeat_interval: initialTask?.repeat_interval || 1,
+    // "Complete at" holds "YYYY-MM-DDTHH:mm" for <input type="datetime-local">, local TZ.
+    // Empty = no calendar event.
+    complete_at:     initialTask?.complete_at ? toDatetimeLocalString(new Date(initialTask.complete_at)) : "",
   });
   const set = (k, v) => setForm(f => {
     const next = { ...f, [k]:v };
@@ -778,6 +808,18 @@ const TaskModal = ({
                   <option key={u.key} value={u.key}>{Number(form.repeat_interval) === 1 ? u.one : u.many}</option>
                 ))}
               </select>
+            </div>
+          ) : null}
+          <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:T.slate700, cursor:"pointer", padding:"6px 0" }}>
+            <input type="checkbox" checked={!!form.complete_at}
+              onChange={e => set("complete_at", e.target.checked ? defaultCompleteAt(form.due_date) : "")} />
+            <span>📅 Set a time to do this — it goes on the calendar and invites whoever it is assigned to</span>
+          </label>
+          {form.complete_at ? (
+            <div style={{ padding:"0 0 6px 26px" }}>
+              <input type="datetime-local" value={form.complete_at}
+                onChange={e => set("complete_at", e.target.value)}
+                style={{ width:"100%", maxWidth:260, padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
             </div>
           ) : null}
         </div>
@@ -1732,6 +1774,11 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       assigned_to:         form.assigned_to || userId || null,
       repeat_every:        form.repeat_every || null,
       repeat_interval:     Math.min(99, Math.max(1, parseInt(form.repeat_interval, 10) || 1)),
+      complete_at:         (() => {
+                             if (!form.complete_at) return null;
+                             const d = new Date(form.complete_at);
+                             return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+                           })(),
     };
   };
 
