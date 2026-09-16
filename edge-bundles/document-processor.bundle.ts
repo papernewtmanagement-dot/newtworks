@@ -1562,6 +1562,7 @@ export type DocType =
   | "team_production"
   | "careerplug_applicant"
   | "resume_manual_batch"
+  | "cts_profile"
   | "archive_bundle"
   | "skip";
 
@@ -1646,6 +1647,27 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       decommissioned -- Peter confirmed he is no longer forwarding CTS
   //       profile PDFs. Resumes from Peter's SF mailbox now flow through
   //       this same route like every other hand-forwarded resume. -----
+  // ----- CTS SALES PROFILE RESULT (2026-09-16) — the vendor's result PDF,
+  //       "CTS Profile - <Name> - YYYYMMDD.pdf". It arrives in the inbox and
+  //       is what opens the interview gate, so it gets its own route to
+  //       parsers/cts_profile.ts.
+  //
+  //       A route for these existed once and was REMOVED 2026-08-06 on the
+  //       belief that the old CTS instrument was decommissioned and Peter had
+  //       stopped forwarding the PDFs (see the note on the resume batch rule
+  //       below). That is reversed: Peter confirmed 2026-09-15 that the CTS
+  //       result comes into the inbox, and the CTS gate shipped the same day
+  //       depends on it. Do not remove this rule on the strength of that old
+  //       note.
+  //
+  //       Ordering is load-bearing: this sits BEFORE the hand-forwarded resume
+  //       rule so a report whose filename happens to carry the word "resume"
+  //       cannot be taken for one. -----
+  { docType: "cts_profile",
+    test: (i) => /\.pdf$/i.test(i.fileName) &&
+                 /cts\s*profile|sales\s*profile(\s*report)?/i.test(
+                   filenameBase(i.fileName) + " " + i.subject) },
+
   { docType: "resume_manual_batch",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
                  /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) },
@@ -11243,6 +11265,7 @@ const DRIVE_FOLDER_BY_DOCTYPE: Record<DocType, string> = {
   // resume_manual_batch, which would have hit the same hole.
   careerplug_applicant: "applicant-resumes",
   resume_manual_batch: "applicant-resumes",
+  cts_profile: "cts-profiles",
   archive_bundle: "_archive-bundles",
   skip: "unsorted",
 };
@@ -11526,6 +11549,33 @@ async function markDocument(
     processed_at: new Date().toISOString(),
     notes: notes ?? undefined,
   }).eq("id", documentId);
+}
+
+/**
+ * A CTS report landed but could not be recorded. Say so loudly and point at
+ * the filed copy, because the fallback is a human opening the PDF and typing
+ * the numbers into the Record CTS Result form on the candidate page — and
+ * nobody does that for a document they were never told about.
+ */
+async function ctsNeedsHandAlert(
+  agencyId: string, fileName: string, candidateName: string | null,
+  reason: string, driveUrl: string | null,
+): Promise<void> {
+  try {
+    await sb.from("alerts").insert({
+      agency_id: agencyId,
+      alert_type: "cts_result_needs_hand_entry",
+      severity: "warning",
+      title: `CTS result could not be read: ${candidateName ?? fileName}`,
+      message:
+        `${reason}\n\nThe PDF is filed${driveUrl ? ` at ${driveUrl}` : ""}. ` +
+        `Open it and use Record CTS Result on the candidate page. ` +
+        `The interview invite does not go out until a result is recorded.`,
+      module_reference: "hiring",
+      is_read: false,
+      is_resolved: false,
+    });
+  } catch (_e) { /* alerting must never break processing */ }
 }
 
 // ---- Text extraction -------------------------------------------------------
@@ -12615,6 +12665,133 @@ async function processOneAttachment(
             error: r.error, sourceLabel: uploadSource,
           });
         }
+        break;
+      }
+      case "cts_profile": {
+        // CTS Sales Profile result. A recorded result is what opens the
+        // interview gate (see the CTS gate operational rule), so this is the
+        // automatic half of the recording path. The Record CTS Result form on
+        // the candidate page is the other half, for when the read refuses.
+        //
+        // record_cts_result() is the only writer. It is idempotent and it
+        // refuses a payload missing most of the nine primary traits, so
+        // re-reading the same document cannot re-open the gate and a bad read
+        // cannot half-fill a candidate. The whole read goes into the single
+        // cts_result jsonb column; nothing here writes any other cts_ column.
+        //
+        // preserveFormat is on: the default path reinjects newlines using a
+        // pattern shaped for State Farm's own PDFs, and this is a different
+        // vendor's layout.
+        const ex = await extractText(ctx, att, bytesB64, true);
+        if (!ex.ok) {
+          await markDocument(documentId, "error", 0, [], ex.error);
+          await ctsNeedsHandAlert(ctx.agencyId, att.fileName, null, ex.error, drive?.driveUrl ?? null);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: ex.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+
+        const parsed = await parseCtsProfile({
+          agencyId: ctx.agencyId,
+          composioApiKey: ctx.composioApiKey,
+          composioUserId: ctx.composioUserId,
+          documentId,
+          reportText: ex.text,
+          fileName: att.fileName,
+        });
+
+        if (!parsed.ok) {
+          await markDocument(documentId, "error", 0, [], parsed.error);
+          await ctsNeedsHandAlert(
+            ctx.agencyId, att.fileName, parsed.candidateName, parsed.error, drive?.driveUrl ?? null);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: parsed.error, sourceLabel: uploadSource,
+          });
+          break;
+        }
+
+        const name = parsed.candidateName;
+        if (!name) {
+          const why = "the report carries no candidate name";
+          await markDocument(documentId, "error", 0, [], why);
+          await ctsNeedsHandAlert(ctx.agencyId, att.fileName, null, why, drive?.driveUrl ?? null);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: why, sourceLabel: uploadSource,
+          });
+          break;
+        }
+
+        const match = await matchCtsCandidate(ctx.agencyId, name);
+        if (!match.candidateId) {
+          const why = match.matchCount === 0
+            ? `"${name}" matches no candidate record`
+            : `"${name}" matches ${match.matchCount} candidate records instead of one`;
+          await markDocument(documentId, "error", 0, [], why);
+          await ctsNeedsHandAlert(ctx.agencyId, att.fileName, name, why, drive?.driveUrl ?? null);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: why, sourceLabel: uploadSource,
+          });
+          break;
+        }
+
+        const { data: rec, error: recErr } = await sb.rpc("record_cts_result", {
+          p_candidate_id: match.candidateId,
+          p_payload: parsed.payload,
+          p_source: "drive_pdf",
+          p_recorded_by: "document-processor",
+        });
+        const recOk = !recErr && (rec as any)?.ok === true;
+        if (!recOk) {
+          const why = recErr?.message ?? (rec as any)?.error ?? "record_cts_result refused the result";
+          await markDocument(documentId, "error", 0, [], why);
+          await ctsNeedsHandAlert(ctx.agencyId, att.fileName, name, why, drive?.driveUrl ?? null);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "error", jeCount: 0, suspenseCount: 0,
+            error: why, sourceLabel: uploadSource,
+          });
+          break;
+        }
+
+        const action = (rec as any)?.action ?? "recorded";
+        await markDocument(documentId, "processed", 1, ["hiring_candidates"],
+          `CTS result ${action} for ${name} (${(rec as any)?.primary_traits_recorded ?? "?"} of 9 primary traits); candidate ${match.candidateId}`);
+        await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
+
+        // The interview invite fires off the trigger on cts_completed_at, not
+        // from here. This alert is so Peter sees the score arrive.
+        try {
+          await sb.from("alerts").insert({
+            agency_id: ctx.agencyId,
+            alert_type: "cts_result_recorded",
+            severity: "info",
+            title: `CTS result recorded: ${name}`,
+            message:
+              `CTS score ${parsed.payload.cts_score ?? "n/a"}, ego drive ${parsed.payload.ego_drive ?? "n/a"}, ` +
+              `empathy ${parsed.payload.empathy ?? "n/a"}. Reliability ${parsed.payload.reliability ?? "n/a"}, ` +
+              `response distortion ${parsed.payload.response_distortion ?? "n/a"}.` +
+              (action === "skipped" ? "\n\nA result was already on this candidate, so nothing changed." : ""),
+            module_reference: "hiring",
+            related_id: match.candidateId,
+            is_read: false,
+            is_resolved: false,
+          });
+        } catch (_e) { /* alerting must never break processing */ }
+
+        results.push({
+          documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+          docType, status: "processed", jeCount: 0, suspenseCount: 0,
+          sourceLabel: uploadSource,
+        });
         break;
       }
       case "careerplug_applicant": {
