@@ -232,10 +232,17 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       Ordering is load-bearing: this sits BEFORE the hand-forwarded resume
   //       rule so a report whose filename happens to carry the word "resume"
   //       cannot be taken for one. -----
+  //       The subject test is deliberately the standalone word "CTS" and NOT
+  //       "sales profile". Peter's own invite goes out under the subject
+  //       "Next step: sales profile assessment at Peter Story State Farm", so
+  //       matching that phrase in the subject would take EVERY pdf attached to
+  //       a reply on one of those threads - a resume a candidate sends back,
+  //       for instance - and send it down this route to fail. The filename
+  //       carries the marker on the real thing.
   { docType: "cts_profile",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
-                 /cts\s*profile|sales\s*profile(\s*report)?/i.test(
-                   filenameBase(i.fileName) + " " + i.subject) },
+                 (/cts\s*profile|sales\s*profile(\s*report)?/i.test(filenameBase(i.fileName)) ||
+                  /\bcts\b/i.test(i.subject)) },
 
   { docType: "resume_manual_batch",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
