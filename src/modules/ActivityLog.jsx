@@ -2457,6 +2457,14 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.v)}`}</Bullet></div>);
     }
     rows.push(<div key="qtd"><Divider /><HeadLine label="Quarter to date" value={fmtPts(m.qtd_points)} /></div>);
+    // How the quarter total was built: every event kind since the cycle started,
+    // plus whatever was reported weekly before events were logged one by one.
+    for (const g of (m.qtd_mix || [])) {
+      rows.push(<div key={`q-${g.kind}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.points)}`}</Bullet></div>);
+    }
+    if (Number(m.qtd_reported)) {
+      rows.push(<div key="qrep"><Bullet>{`Weekly report, before events were logged one by one: ${fmtPts(m.qtd_reported)}`}</Bullet></div>);
+    }
     return rows;
   };
   const quoteItems = (p) => {
