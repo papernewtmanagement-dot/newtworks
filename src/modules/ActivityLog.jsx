@@ -228,12 +228,18 @@ function fmtPts(n) {
   const x = Number(n);
   return isFinite(x) ? x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
 }
+// Weekly points are shown whole and rounded DOWN (Peter 2026-09-16). Quarter-to-date
+// and the breakdown lines keep their cents so the detail still adds up.
+function fmtWk(n) {
+  const x = Number(n);
+  return isFinite(x) ? Math.floor(x).toLocaleString() : "0";
+}
 function errText(e) {
   return e?.message || e?.error || (typeof e === "string" ? e : "Something went wrong.");
 }
 let _pid = 0;
 const newPolicyId = () => `p${++_pid}`;
-const itemLabel = (v) => Number(v.points) > 0 ? `${v.label} · $${fmtPts(v.points)}` : v.label;
+const itemLabel = (v) => Number(v.points) > 0 ? `${v.label} · ${fmtPts(v.points)} pts` : v.label;
 
 // ---------- shared field blocks ----------
 
@@ -257,7 +263,7 @@ function summarizeEntry(data) {
   if (a) {
     const n = (a.items || []).length;
     const pend = (a.items || []).filter(i => i.credit_available_on);
-    parts.push(`${n} activity item${n === 1 ? "" : "s"} for $${fmtPts(a.points_total)}` +
+    parts.push(`${n} activity item${n === 1 ? "" : "s"} for ${fmtPts(a.points_total)} points` +
       (pend.length ? ` (save clears ${fmtDate(pend[0].credit_available_on)})` : ""));
   }
   const q = data?.quote;
@@ -2445,7 +2451,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
   const marketingItems = (p) => {
     const m = p.marketing || {};
     const items = m.items || [];
-    const rows = [<div key="h"><HeadLine label="This week" value={fmtPts(m.points)} /></div>];
+    const rows = [<div key="h"><HeadLine label="This week" value={fmtWk(m.points)} /></div>];
     if (!items.length) rows.push(<div key="none"><NoteLine>Nothing this week.</NoteLine></div>);
     for (const g of byLabel(items, it => it.label, it => it.points)) {
       rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.v)}`}</Bullet></div>);
@@ -2513,12 +2519,12 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
   };
   const retentionItems = (p) => {
     const r = p.retention || {};
-    const rows = [<div key="h"><HeadLine label="Net this week" value={fmtMoney(r.net)} /></div>];
-    rows.push(<div key="g"><NoteLine>{`${fmtMoney(r.gross)} gross${Number(r.reduction_pct) > 0 ? `, less ${fmtPts(r.reduction_pct)}% for ${fmtPts(r.missed_pct)}% missed calls` : ""}`}</NoteLine></div>);
-    rows.push(<div key="hrs"><Bullet>{`Hours in office: ${fmtPts(r.hours_in_office)} = ${fmtMoney(r.hour_points)}`}</Bullet></div>);
-    rows.push(<div key="cal"><Bullet>{`Calls answered: ${r.calls_answered || 0} = ${fmtMoney(r.call_points)}`}</Bullet></div>);
+    const rows = [<div key="h"><HeadLine label="Net this week" value={fmtWk(r.net)} /></div>];
+    rows.push(<div key="g"><NoteLine>{`${fmtPts(r.gross)} gross${Number(r.reduction_pct) > 0 ? `, less ${fmtPts(r.reduction_pct)}% for ${fmtPts(r.missed_pct)}% missed calls` : ""}`}</NoteLine></div>);
+    rows.push(<div key="hrs"><Bullet>{`Hours in office: ${fmtPts(r.hours_in_office)} = ${fmtPts(r.hour_points)}`}</Bullet></div>);
+    rows.push(<div key="cal"><Bullet>{`Calls answered: ${r.calls_answered || 0} = ${fmtPts(r.call_points)}`}</Bullet></div>);
     for (const g of byLabel(r.items, it => it.label, it => it.points)) {
-      rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtMoney(g.v)}`}</Bullet></div>);
+      rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.v)}`}</Bullet></div>);
     }
     return rows;
   };
@@ -2544,20 +2550,20 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       {err && <Notice kind="error">{err}</Notice>}
 
       <div style={cardGrid}>
-        <ScoreCard title="Marketing Points" total={fmtPts(team.marketing)} people={people}
-          rankOf={p => Number(p.marketing?.points || 0)} valueOf={p => fmtPts(p.marketing?.points)}
+        <ScoreCard title="Marketing Points" total={fmtWk(team.marketing)} people={people}
+          rankOf={p => Number(p.marketing?.points || 0)} valueOf={p => fmtWk(p.marketing?.points)}
           subOf={p => `${fmtPts(p.marketing?.qtd_points)} this quarter`}
           renderItems={marketingItems} open={open.m} onToggle={toggle("m")} />
         {show.quotes && <ScoreCard title="HH Quotes" total={Number(team.quotes || 0)} people={people}
           rankOf={p => Number(p.quotes?.count || 0)} valueOf={p => Number(p.quotes?.count || 0)}
           renderItems={quoteItems} open={open.q} onToggle={toggle("q")} />}
-        <ScoreCard title="Sales Points" total={fmtPts(team.sales)} note="Counted the week a policy issues." people={people}
-          rankOf={p => Number(p.sales?.points || 0)} valueOf={p => fmtPts(p.sales?.points)}
+        <ScoreCard title="Sales Points" total={fmtWk(team.sales)} note="Counted the week a policy issues." people={people}
+          rankOf={p => Number(p.sales?.points || 0)} valueOf={p => fmtWk(p.sales?.points)}
           subOf={p => `${fmtPts(p.sales?.qtd_points)} this quarter`}
           renderItems={salesSummary} open={open.s} onToggle={toggle("s")} />
-        {show.retention && <ScoreCard title="Retention Points" total={fmtMoney(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
-          rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtMoney(p.retention?.net)}
-          subOf={p => `${fmtMoney(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
+        {show.retention && <ScoreCard title="Retention Points" total={fmtWk(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
+          rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtWk(p.retention?.net)}
+          subOf={p => `${fmtPts(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
           renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />}
         <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Conversation score, 1 to 3. Pivots are tracked, not paid." people={people}
           rankOf={p => Number(p.conversations?.avg || 0)} valueOf={p => p.conversations?.avg == null ? "—" : Number(p.conversations.avg).toFixed(2)}
@@ -3370,8 +3376,8 @@ export default function ActivityLog({ userRole, userId }) {
           const teamAvg = cardN ? (head.people || []).reduce((s, p) => s + Number(p.conversations?.avg || 0) * Number(p.conversations?.scorecards || 0), 0) / cardN : null;
           const conv = me ? me.conversations?.avg : teamAvg;
           const chips = me
-            ? [["Marketing", fmtPts(me.marketing?.points)], ["HH Quotes", Number(me.quotes?.count || 0)], ["Sales Pts", fmtPts(me.sales?.points)], ["Retention", `$${fmtPts(me.retention?.net)}`]]
-            : [["Marketing", fmtPts(t.marketing)], ["HH Quotes", Number(t.quotes || 0)], ["Sales Pts", fmtPts(t.sales)], ["Retention", `$${fmtPts(t.retention_net)}`]];
+            ? [["Marketing", fmtWk(me.marketing?.points)], ["HH Quotes", Number(me.quotes?.count || 0)], ["Sales Pts", fmtWk(me.sales?.points)], ["Retention", fmtWk(me.retention?.net)]]
+            : [["Marketing", fmtWk(t.marketing)], ["HH Quotes", Number(t.quotes || 0)], ["Sales Pts", fmtWk(t.sales)], ["Retention", fmtWk(t.retention_net)]];
           chips.push(["Conversations", conv == null ? "—" : Number(conv).toFixed(2)]);
           return (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }} title={me ? "Your week so far" : "Team, this week so far"}>
