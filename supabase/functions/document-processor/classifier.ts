@@ -131,6 +131,7 @@ export type DocType =
   | "team_production"
   | "careerplug_applicant"
   | "resume_manual_batch"
+  | "cts_profile"
   | "archive_bundle"
   | "skip";
 
@@ -215,6 +216,27 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       decommissioned -- Peter confirmed he is no longer forwarding CTS
   //       profile PDFs. Resumes from Peter's SF mailbox now flow through
   //       this same route like every other hand-forwarded resume. -----
+  // ----- CTS SALES PROFILE RESULT (2026-09-16) — the vendor's result PDF,
+  //       "CTS Profile - <Name> - YYYYMMDD.pdf". It arrives in the inbox and
+  //       is what opens the interview gate, so it gets its own route to
+  //       parsers/cts_profile.ts.
+  //
+  //       A route for these existed once and was REMOVED 2026-08-06 on the
+  //       belief that the old CTS instrument was decommissioned and Peter had
+  //       stopped forwarding the PDFs (see the note on the resume batch rule
+  //       below). That is reversed: Peter confirmed 2026-09-15 that the CTS
+  //       result comes into the inbox, and the CTS gate shipped the same day
+  //       depends on it. Do not remove this rule on the strength of that old
+  //       note.
+  //
+  //       Ordering is load-bearing: this sits BEFORE the hand-forwarded resume
+  //       rule so a report whose filename happens to carry the word "resume"
+  //       cannot be taken for one. -----
+  { docType: "cts_profile",
+    test: (i) => /\.pdf$/i.test(i.fileName) &&
+                 /cts\s*profile|sales\s*profile(\s*report)?/i.test(
+                   filenameBase(i.fileName) + " " + i.subject) },
+
   { docType: "resume_manual_batch",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
                  /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) },
