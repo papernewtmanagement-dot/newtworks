@@ -1167,13 +1167,19 @@ const RECORD_KINDS = [
   { key: "sales",        label: "Sales" },
 ];
 const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
-const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, ecrm_url";
+const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, line_of_business, product_type, note, ecrm_url";
 const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
 const onFileLabel = (k) => k === "replaces" ? "replaced old policy" : k === "added" ? "added to on-file" : "different household";
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
 const smallInput = { fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box" };
 const apptState = (r) => r.sold_on ? "Sold" : r.no_show_on ? "No show" : r.kept_on ? "Kept" : "Set";
+// Whoever the appointment was handed to. Nobody took it over, it belongs to
+// the person who set it. Only that person marks it kept, a no show or sold:
+// the setter is the one who gets paid for it, so the setter does not get to
+// mark their own (Peter 2026-09-13). The server enforces the same rule.
+const apptHost = (r) => (r.escalated_to_team_member_id && r.escalated_to_team_member_id !== r.team_member_id)
+  ? r.escalated_to_team_member_id : r.team_member_id;
 
 function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, nameOf, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [kind, setKind] = useState("sales");
@@ -1325,7 +1331,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
             {kind === "appointments" && (
               <thead><tr>
                 <th style={tableTh}>Set</th><th style={tableTh}>Who</th><th style={tableTh}>Handed to</th>
-                <th style={tableTh}>Customer</th><th style={tableTh}>State</th><th style={tableTh}>Move it along</th>
+                <th style={tableTh}>Customer</th><th style={tableTh}>About</th><th style={tableTh}>State</th><th style={tableTh}>Move it along</th>
                 <th style={tableTh}>Waiting</th><th style={tableTh}>Note</th><th style={tableTh}></th>
               </tr></thead>
             )}
@@ -1423,13 +1429,18 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                     </td>
                     <td style={tableTd}>{r.customer_label}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                     <td style={tableTd}>
+                      {r.line_of_business
+                        ? (typeLabel(types || {}, r.line_of_business, r.product_type) || PRODUCT_SHORT[r.line_of_business] || r.line_of_business)
+                        : <span style={{ color: T.slate400 }}>—</span>}
+                    </td>
+                    <td style={tableTd}>
                       {apptState(r)}
                       {r.sold_on ? <div style={{ fontSize: 11, color: T.green }}>sold {fmtDate(r.sold_on)}</div>
                         : r.no_show_on ? <div style={{ fontSize: 11, color: T.red }}>{fmtDate(r.no_show_on)}</div>
                         : r.kept_on ? <div style={{ fontSize: 11, color: T.slate500 }}>{fmtDate(r.kept_on)}</div> : null}
                     </td>
                     <td style={tableTd}>
-                      {canTouch(r.team_member_id) ? (
+                      {canTouch(apptHost(r)) ? (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                           <input type="date" title="Date it happened"
                             value={dates[r.id] || todayCentral()} min={r.set_on} max={todayCentral()}
@@ -1485,7 +1496,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
       )}
 
       {adding && (
-        <AddAppointment roster={roster} myTeamId={myTeamId}
+        <AddAppointment roster={roster} myTeamId={myTeamId} types={types}
           onClose={() => setAdding(false)}
           onSaved={(who) => { setAdding(false); setKind("appointments"); setDone(`Appointment set with ${who}.`); after(); }} />
       )}
@@ -1505,8 +1516,8 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
 // Set an appointment. Who you hand it to is the whole point: an
 // appointment you keep for yourself pays nothing here (Peter 2026-09-11).
 // ---------------------------------------------------------------------
-function AddAppointment({ roster, myTeamId, onClose, onSaved }) {
-  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", phone_last4: "", set_on: todayCentral(), escalated_to: "", note: "" });
+function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
+  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", phone_last4: "", set_on: todayCentral(), escalated_to: "", line_of_business: "", product_type: "", note: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const set = (k, v) => setF(d => ({ ...d, [k]: v }));
@@ -1517,6 +1528,7 @@ function AddAppointment({ roster, myTeamId, onClose, onSaved }) {
       p_payload: {
         customer_first: f.customer_first, customer_last_initial: f.customer_last_initial,
         phone_last4: f.phone_last4, set_on: f.set_on,
+        line_of_business: f.line_of_business, product_type: f.product_type || null,
         escalated_to_team_member_id: f.escalated_to || null, note: f.note,
       },
     });
@@ -1546,6 +1558,22 @@ function AddAppointment({ roster, myTeamId, onClose, onSaved }) {
             <label style={labelStyle}>Date set</label>
             <input type="date" value={f.set_on} max={todayCentral()} onChange={e => set("set_on", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
           </div>
+          <div>
+            <label style={labelStyle}>About</label>
+            <select value={f.line_of_business} onChange={e => setF(d => ({ ...d, line_of_business: e.target.value, product_type: "" }))} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+              <option value="">Pick one</option>
+              {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+          </div>
+          {((types || {})[f.line_of_business] || []).length > 0 && (
+            <div>
+              <label style={labelStyle}>Type</label>
+              <select value={f.product_type} onChange={e => set("product_type", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="">Pick one</option>
+                {((types || {})[f.line_of_business] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label style={labelStyle}>Handed to <span style={hintStyle}>pays only if you hand it over</span></label>
             <select value={f.escalated_to} onChange={e => set("escalated_to", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
@@ -1581,6 +1609,8 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     relationship: row.household_status || "existing",
     marketing_source: row.marketing_source || "",
     escalated_to: row.escalated_to_team_member_id || "",
+    appt_line: row.line_of_business || "",
+    appt_type: row.product_type || "",
     owner: row.team_member_id || "",
     note: row.note || "",
     ecrm: row.ecrm_opportunity_url || row.ecrm_url || "",
@@ -1630,6 +1660,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
       changes = {
         customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
         set_on: f.on_date, escalated_to_team_member_id: f.escalated_to || null, note: f.note,
+        line_of_business: f.appt_line, product_type: f.appt_type || null,
       };
     } else {
       fn = "rp_edit_activity";
@@ -1684,6 +1715,24 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
                 {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
                 {!(roster || []).some(t => t.id === f.owner) && f.owner
                   ? <option value={f.owner}>{row.owner_name || "former teammate"}</option> : null}
+              </select>
+            </div>
+          )}
+          {kind === "appointment" && (
+            <div>
+              <label style={labelStyle}>About</label>
+              <select value={f.appt_line} onChange={e => setF(d => ({ ...d, appt_line: e.target.value, appt_type: "" }))} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="">Pick one</option>
+                {PRODUCTS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+            </div>
+          )}
+          {kind === "appointment" && ((types || {})[f.appt_line] || []).length > 0 && (
+            <div>
+              <label style={labelStyle}>Type</label>
+              <select value={f.appt_type} onChange={e => set("appt_type", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="">Pick one</option>
+                {((types || {})[f.appt_line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
               </select>
             </div>
           )}
