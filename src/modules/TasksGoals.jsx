@@ -75,6 +75,23 @@ const TASK_TYPES = {
 const TASK_TYPE_ORDER = ["epic","story","task"];
 const typeConfig = (key) => TASK_TYPES[key] || TASK_TYPES.task;
 
+// --- Recurrence -----------------------------------------------
+// Mirrors tasks.repeat_every / tasks.repeat_interval. The database does the work:
+// closing a repeating task spawns the next one (trigger zz_tasks_spawn_next_occurrence).
+// Next due comes off the schedule, not the close date, so closing late does not drift it.
+const REPEAT_UNITS = [
+  { key:"day",   one:"day",   many:"days" },
+  { key:"week",  one:"week",  many:"weeks" },
+  { key:"month", one:"month", many:"months" },
+  { key:"year",  one:"year",  many:"years" },
+];
+const repeatLabel = (every, interval) => {
+  const u = REPEAT_UNITS.find(x => x.key === every);
+  if (!u) return "";
+  const n = Number(interval) || 1;
+  return n === 1 ? `Every ${u.one}` : `Every ${n} ${u.many}`;
+};
+
 // ─── Goal Category Config ─────────────────────────────────────
 const GOAL_CATS = {
   aipp:       { label:"AIPP",       color:T.green,  icon:"🎯" },
@@ -353,6 +370,12 @@ const TaskCard = ({ task, allTasks, depth=0, onComplete, onNavigate, onToggleFoc
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:pr.bg, color:pr.color }}>{pr.label}</span>
             {cat && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:cat.color+"20", color:cat.color }}>{cat.icon} {cat.label}</span>}
             {hrs && <span style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.slate100, color:T.slate600 }}>{hrs}</span>}
+            {task.repeat_every && (
+              <span title="This repeats. Closing it creates the next one."
+                style={{ fontSize:9, fontWeight:600, padding:"2px 7px", borderRadius:20, background:T.blueLt, color:T.blue }}>
+                🔁 {repeatLabel(task.repeat_every, task.repeat_interval)}
+              </span>
+            )}
             {(priorityLocked || hoursLocked) && (
               <span
                 title={priorityLocked && hoursLocked ? "Priority and hours are set by hand. The Sunday run leaves them alone."
@@ -617,6 +640,9 @@ const TaskModal = ({
     assigned_to:     initialTask?.assigned_to || currentUserId || "",
     task_type:       initialTask?.task_type || defaultType,
     parent_task_id:  initialTask?.parent_task_id || defaultParentId || "",
+    // Recurrence. Empty repeat_every = does not repeat.
+    repeat_every:    initialTask?.repeat_every || "",
+    repeat_interval: initialTask?.repeat_interval || 1,
   });
   const set = (k, v) => setForm(f => {
     const next = { ...f, [k]:v };
@@ -736,6 +762,24 @@ const TaskModal = ({
             <input type="checkbox" checked={!!form.remind_via_telegram} onChange={e => set("remind_via_telegram", e.target.checked)} />
             <span>🔔 Remind me via Telegram (requires a due date &amp; time)</span>
           </label>
+          <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:T.slate700, cursor:"pointer", padding:"6px 0" }}>
+            <input type="checkbox" checked={!!form.repeat_every} onChange={e => set("repeat_every", e.target.checked ? "week" : "")} />
+            <span>🔁 Repeats — closing this one creates the next</span>
+          </label>
+          {form.repeat_every ? (
+            <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", padding:"0 0 6px 26px" }}>
+              <span style={{ fontSize:12, color:T.slate600 }}>Every</span>
+              <input type="number" min={1} max={99} value={form.repeat_interval}
+                onChange={e => set("repeat_interval", e.target.value)}
+                style={{ width:64, padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+              <select value={form.repeat_every} onChange={e => set("repeat_every", e.target.value)}
+                style={{ padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
+                {REPEAT_UNITS.map(u => (
+                  <option key={u.key} value={u.key}>{Number(form.repeat_interval) === 1 ? u.one : u.many}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8 }}>
           <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
@@ -1686,6 +1730,8 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       due_at:              dueAtIso,
       remind_via_telegram: remind,
       assigned_to:         form.assigned_to || userId || null,
+      repeat_every:        form.repeat_every || null,
+      repeat_interval:     Math.min(99, Math.max(1, parseInt(form.repeat_interval, 10) || 1)),
     };
   };
 
