@@ -109,10 +109,21 @@ interleaved out of reading order. Two specific layout facts:
    Gets Decisions / Handles Objections / Referrals, Receives Coaching,
    Positively Influences Team.
 
-The Reliability and Response Distortion values are single words - low,
-moderate or high - printed beside the paragraphs that explain what each of
-the three words means. Report the word that is the candidate's actual result,
-not the words used in the explanations.
+The Reliability and Response Distortion results are each a single word - low,
+moderate or high. The report prints them in a gutter beside the paragraph
+that explains what all three words mean, so in the text each one lands as a
+stray capitalised word that breaks the sentence it is sitting inside. Find
+the word that does not belong to the sentence around it. Two real examples:
+
+  "...Do not use these results. Moderate"
+      -> Reliability is moderate
+
+  "...an open and vulnerable Low  personality that usually recognizes..."
+      -> Response Distortion is low
+
+The word that opens each bullet ("Low Reliability indicates",
+"Moderate Reliability suggests", "High Response Distortion Indicates") is
+part of the explanation and is never the result.
 
 The LSS tables have three numbers per row in this column order:
 ideal minimum, ideal maximum, candidate. Accuracy rows are counts. Speed rows
@@ -196,6 +207,40 @@ function ctsScore0to100(v: unknown): number | null {
   const n = ctsNum(v);
   if (n === null) return null;
   return n >= 0 && n <= 100 ? n : null;
+}
+
+/**
+ * Pull the Reliability / Response Distortion result out of the report text
+ * directly.
+ *
+ * Both are printed in a gutter next to the paragraph explaining what the
+ * three possible words mean, so the extracted text carries the result as a
+ * stray word wedged into a sentence it does not belong to, surrounded by
+ * three decoy uses of the same vocabulary. The decoys are identifiable: every
+ * one of them is immediately followed by the name of the index it explains
+ * ("Low Reliability indicates...", "High Response Distortion Indicates...").
+ * Anything else is the result.
+ *
+ * This is a backstop, not the primary read - the model gets asked first. It
+ * exists because these two fields sit behind the same prose in every report,
+ * so a model that misses them once will miss them every time, and a validity
+ * index that silently reads null is worse than useless: low reliability means
+ * the vendor's own instruction is to throw the results away.
+ */
+export function ctsValidityFromText(text: string, index: "Reliability" | "Response Distortion"): string | null {
+  const start = text.search(new RegExp(`The\\s+${index}\\s+Index`, "i"));
+  if (start < 0) return null;
+  // The reliability block runs until the distortion block starts; the
+  // distortion block runs to the end of that section of the page.
+  const rest = text.slice(start);
+  const end = index === "Reliability"
+    ? rest.search(/The\s+Response\s+Distortion\s+Index/i)
+    : -1;
+  const block = end > 0 ? rest.slice(0, end) : rest;
+
+  const re = /\b(Low|Moderate|High)\b(?!\s+(?:Reliability|Response\s+Distortion))/g;
+  const m = re.exec(block);
+  return m ? m[1].toLowerCase() : null;
 }
 
 function ctsValidityWord(v: unknown): string | null {
@@ -306,8 +351,10 @@ export async function parseCtsProfile(input: CtsParseInput): Promise<CtsParseRes
     cts_score: ctsScore0to100(j.cts_score),
     ego_drive: ctsScore0to100(j.ego_drive),
     empathy: ctsScore0to100(j.empathy),
-    reliability: ctsValidityWord(j.reliability),
-    response_distortion: ctsValidityWord(j.response_distortion),
+    reliability: ctsValidityWord(j.reliability)
+      ?? ctsValidityFromText(input.reportText, "Reliability"),
+    response_distortion: ctsValidityWord(j.response_distortion)
+      ?? ctsValidityFromText(input.reportText, "Response Distortion"),
     primary_traits: traits.values,
     sales_competencies: comps.values,
     lss_accuracy: lssAccuracy,
