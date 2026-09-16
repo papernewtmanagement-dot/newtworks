@@ -3017,7 +3017,7 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, na
 const KIND_LABEL = { sale: "Sale", quote: "Quote", cancelation: "Cancelation", activity: "Activity", scorecard: "Conversation score" };
 const KIND_COLOR = { sale: T.green, quote: T.blue, cancelation: T.red, activity: T.purple, scorecard: T.teal };
 
-const RECORD_KINDS = [
+const ENTRY_KIND_FILTERS = [
   { key: "", label: "Everything" },
   { key: "sale", label: "Sales" },
   { key: "quote", label: "Quotes" },
@@ -3076,7 +3076,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <select value={recKind} onChange={e => setRecKind(e.target.value)} style={selectStyle}>
-            {RECORD_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+            {ENTRY_KIND_FILTERS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
           </select>
           <input type="date" value={from} max={to || todayCentral()} title="From"
             onChange={e => setFrom(e.target.value)} style={selectStyle} />
