@@ -404,6 +404,19 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
   );
 }
 
+// Locked means the payroll summary for this week has arrived and the figures are
+// frozen at what was actually paid. Open means they are still moving.
+function LockBadge({ locked }) {
+  const s = {
+    display: "inline-flex", alignItems: "center", gap: 4,
+    fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
+    boxSizing: "border-box", whiteSpace: "nowrap",
+    background: locked ? T.slate100 : T.amberLt,
+    color: locked ? T.slate700 : T.slate900,
+  };
+  return <span style={s}>{locked ? "\u{1F512} Locked \u00b7 paid" : "\u{1F513} Open \u00b7 still moving"}</span>;
+}
+
 // The written steps, kept word for word, out of the way until they are wanted.
 function Note({ title, children }) {
   return (
@@ -438,6 +451,7 @@ export default function TeamPayroll() {
   const weekText = week ? weekLabel(week.week_start_date, week.week_ending_date) : "";
   const hasReport = !!week?.has_cpr_report;
   const payrollIn = !!week?.payroll_received;
+  const locked = !!week?.lock?.locked;
   const pickedIdx = Math.max(0, weekIds.indexOf(pickedWeek));
   const olderId = pickedIdx + 1 < weeks.length ? weeks[pickedIdx + 1].id : null;
   const newerId = pickedIdx > 0 ? weeks[pickedIdx - 1].id : null;
@@ -474,7 +488,10 @@ export default function TeamPayroll() {
 
       <div style={CARD}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-          <div style={H}>What to enter{weekText ? ` \u00b7 ${weekText}` : ""}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ ...H, margin: 0 }}>What to enter{weekText ? ` \u00b7 ${weekText}` : ""}</div>
+            <LockBadge locked={locked} />
+          </div>
           <div style={MUTED}>Open a name for the day-by-day hours, days off and deductions.</div>
         </div>
 
@@ -491,6 +508,7 @@ export default function TeamPayroll() {
                 onChanged={loadWeek}
               />
               {payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>Payroll for this week has come in. Every figure above is what was actually paid, not what was worked out beforehand.</div>}
+              {!payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>Payroll for this week has not come in yet, so these figures can still move.</div>}
               {!hasReport && !payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>No CPR for this week yet, so the bonus columns are empty.</div>}
               <LeslieGoals goals={week?.leslie_goals || null} />
             </>
