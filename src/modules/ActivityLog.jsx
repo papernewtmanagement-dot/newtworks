@@ -96,7 +96,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "history"];
+const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "history"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -1141,8 +1141,13 @@ function PendingSaves({ refreshKey }) {
 }
 
 // =====================================================================
-// Monthly spot-check (core principle 450). Admin only. Ten random
-// self-logged entries from the chosen month, stable until verified.
+// Monthly spot-check (core principle 450). Owner and managers only, and it
+// sits on its own tab — Peter 2026-09-16 took it off the top of the Score
+// tab. Ten random self-logged entries from the chosen month, stable until
+// verified. "Self-logged" means the person who earned the points typed them
+// in: rp_spot_check_sample drops anything backfilled (no created_by) or
+// logged for someone else, so the historical records Peter seeded himself
+// are never checked back.
 // Verify stamps verified_at; Remove is the same void the tables use.
 // =====================================================================
 function SpotCheck({ isAdmin }) {
@@ -2535,7 +2540,6 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <SpotCheck isAdmin={isAdmin} />
       <div style={cardStyle}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
           <div>
@@ -3408,6 +3412,7 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     { id: "issued", label: "Pending" },
     ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
+    ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
     { id: "history", label: "History" },
     { type: "divider", id: "_dv_rest" },
     { id: "checklist", label: "Checklist" },
@@ -3473,6 +3478,7 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
+      {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} />}
       {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
   );
