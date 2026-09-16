@@ -404,17 +404,21 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
   );
 }
 
-// Locked means the payroll summary for this week has arrived and the figures are
-// frozen at what was actually paid. Open means they are still moving.
+// A badge only when the week is locked, meaning the payroll summary has arrived
+// and the figures are frozen at what was actually paid. An unlocked week gets no
+// badge at all -- nothing on screen is the signal that it is still moving.
 function LockBadge({ locked }) {
-  const s = {
-    display: "inline-flex", alignItems: "center", gap: 4,
-    fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
-    boxSizing: "border-box", whiteSpace: "nowrap",
-    background: locked ? T.slate100 : T.amberLt,
-    color: locked ? T.slate700 : T.slate900,
-  };
-  return <span style={s}>{locked ? "\u{1F512} Locked \u00b7 paid" : "\u{1F513} Open \u00b7 still moving"}</span>;
+  if (!locked) return null;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
+      boxSizing: "border-box", whiteSpace: "nowrap",
+      background: T.slate100, color: T.slate700,
+    }}>
+      \u{1F512} Locked \u00b7 paid
+    </span>
+  );
 }
 
 // The written steps, kept word for word, out of the way until they are wanted.
@@ -508,7 +512,6 @@ export default function TeamPayroll() {
                 onChanged={loadWeek}
               />
               {payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>Payroll for this week has come in. Every figure above is what was actually paid, not what was worked out beforehand.</div>}
-              {!payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>Payroll for this week has not come in yet, so these figures can still move.</div>}
               {!hasReport && !payrollIn && <div style={{ ...MUTED, marginTop: 8 }}>No CPR for this week yet, so the bonus columns are empty.</div>}
               <LeslieGoals goals={week?.leslie_goals || null} />
             </>
