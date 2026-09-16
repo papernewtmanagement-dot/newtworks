@@ -2324,7 +2324,7 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
 // teammate's Marketing Points, HH Quotes, Sales Points, Retention Points
 // and conversation scorecards for the week, with the items behind every
 // number. Marketing Points come from marketing_point_values (base plus a
-// step for each prior event this year); Sales Points from
+// step for each prior event this quarter); Sales Points from
 // compute_sp_from_production on issued policies quarter to date (this
 // week = the quarter's total after this week minus after last week);
 // Retention Points from compute_weekly_retention_points.
@@ -2448,23 +2448,19 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
     load();
   };
 
+  // Quarter to date only (Peter 2026-09-16). The week's number is already on the
+  // row; the expander exists to show how the quarter total was built.
   const marketingItems = (p) => {
     const m = p.marketing || {};
-    const items = m.items || [];
-    const rows = [<div key="h"><HeadLine label="This week" value={fmtWk(m.points)} /></div>];
-    if (!items.length) rows.push(<div key="none"><NoteLine>Nothing this week.</NoteLine></div>);
-    for (const g of byLabel(items, it => it.label, it => it.points)) {
-      rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.v)}`}</Bullet></div>);
-    }
-    rows.push(<div key="qtd"><Divider /><HeadLine label="Quarter to date" value={fmtPts(m.qtd_points)} /></div>);
-    // How the quarter total was built: every event kind since the cycle started,
-    // plus whatever was reported weekly before events were logged one by one.
-    for (const g of (m.qtd_mix || [])) {
+    const mix = m.qtd_mix || [];
+    const rows = [<div key="qtd"><HeadLine label="Quarter to date" value={fmtPts(m.qtd_points)} /></div>];
+    for (const g of mix) {
       rows.push(<div key={`q-${g.kind}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.points)}`}</Bullet></div>);
     }
     if (Number(m.qtd_reported)) {
       rows.push(<div key="qrep"><Bullet>{`Weekly report, before events were logged one by one: ${fmtPts(m.qtd_reported)}`}</Bullet></div>);
     }
+    if (!mix.length && !Number(m.qtd_reported)) rows.push(<div key="none"><NoteLine>Nothing this quarter.</NoteLine></div>);
     return rows;
   };
   const quoteItems = (p) => {
