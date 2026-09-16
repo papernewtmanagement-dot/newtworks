@@ -1253,6 +1253,11 @@ function TriviaPlayTab({ userId, isAdmin }) {
   // when a game is actually running and we treat it like any other live game.
   const [sharedActive, setSharedActive] = useState(false);
 
+  // Hangman and Scavenger Hunt own their own state the same way. They tell us
+  // when a game is genuinely running so the rest of the lobby steps aside.
+  const [hangmanActive, setHangmanActive] = useState(false);
+  const [huntActive, setHuntActive] = useState(false);
+
   // The Grid is the first card wired to the in-card choice: "multi" is the
   // shared-screen game that used to sit on its own tab. Kept in the URL so a
   // refresh mid-game lands back on the right branch.
@@ -2336,6 +2341,8 @@ function TriviaPlayTab({ userId, isAdmin }) {
     : (gridPhase === "board" || gridPhase === "finishing" || sharedActive) ? "grid"
     : (spinPhase === "playing" || spinPhase === "finishing"
        || spinRoomStatus === "playing" || spinRoomStatus === "finished") ? "spin"
+    : hangmanActive ? "hangman"
+    : huntActive ? "hunt"
     : (duelMode === "playing" || duelMode === "starting") ? "duel"
     : (dfPhase === "playing" || dfPhase === "finishing"
        || dailyRoomStatus === "playing" || dailyRoomStatus === "finished") ? "daily"
@@ -2343,6 +2350,7 @@ function TriviaPlayTab({ userId, isAdmin }) {
   const stageTitles = {
     night: "Trivia Night", gate: "Training", grid: "The Grid",
     spin: "Spin & Solve", duel: "Duel", daily: "Daily Five",
+    hangman: "Hangman", hunt: "Scavenger Hunt",
   };
   const shows = (key) => !activeGame || activeGame === key;
   const boxStyle = (key) => (activeGame === key ? s.stageCard : s.playCard);
@@ -2846,6 +2854,20 @@ function TriviaPlayTab({ userId, isAdmin }) {
           )}
           </>
           )}
+        </div>
+        )}
+
+        {/* ── Hangman card ── */}
+        {shows("hangman") && (
+        <div style={boxStyle("hangman")}>
+          <TriviaHangmanCard onActiveChange={setHangmanActive} />
+        </div>
+        )}
+
+        {/* ── Scavenger Hunt card ── */}
+        {shows("hunt") && (
+        <div style={boxStyle("hunt")}>
+          <TriviaHuntCard onActiveChange={setHuntActive} />
         </div>
         )}
 
@@ -4890,5 +4912,524 @@ function QuestionRunner({ itemIds, itemsById, attemptId, secondsPerQuestion, onS
         </>
       )}
     </div>
+  );
+}
+
+// ── Hangman ────────────────────────────────────────────────────────────────
+// One screen for the room. The host is the only person signed in; players are
+// just typed names. Players take turns calling a letter; a hit pays ten points
+// a copy and the caller keeps going, a miss passes the turn. Six misses ends
+// the term. Every score comes from the server — the screen never reports one.
+const HANGMAN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+function TriviaHangmanCard({ onActiveChange }) {
+  const vp = useViewport();
+  const [hmSessionId, setHmSessionId] = useTabParam("hmsession", null);
+  const [hmPhase, setHmPhase] = useState("checking"); // checking | setup | playing | error
+  const [hmState, setHmState] = useState(null);
+  const [hmNames, setHmNames] = useState(["", ""]);
+  const [hmError, setHmError] = useState(null);
+  const [hmBusy, setHmBusy] = useState(false);
+  const [hmSolveText, setHmSolveText] = useState("");
+  const [hmSolveOpen, setHmSolveOpen] = useState(false);
+  const [hmLast, setHmLast] = useState(null);
+
+  useEffect(() => {
+    if (typeof onActiveChange === "function") onActiveChange(hmPhase === "playing");
+  }, [hmPhase, onActiveChange]);
+
+  const loadState = useCallback(async (sid) => {
+    if (!sid) return;
+    const { data, error } = await supabase.rpc("quiz_hangman_state", { p_session_id: sid });
+    if (error) {
+      setHmError(error.message || "Could not load that game.");
+      setHmPhase("error");
+      return;
+    }
+    setHmState(data);
+    setHmPhase(data?.status === "finished" ? "playing" : "playing");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (hmSessionId) { await loadState(hmSessionId); return; }
+      setHmPhase("checking");
+      const { data, error } = await supabase.rpc("quiz_hangman_my_active_session");
+      if (cancelled) return;
+      if (!error && data) {
+        setHmSessionId(data);
+        await loadState(data);
+      } else {
+        setHmPhase("setup");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hmSessionId]);
+
+  const updateName = (i, val) => setHmNames(prev => prev.map((n, idx) => (idx === i ? val : n)));
+  const addNameField = () => setHmNames(prev => (prev.length >= 8 ? prev : [...prev, ""]));
+  const removeNameField = (i) => setHmNames(prev => prev.filter((_, idx) => idx !== i));
+
+  const startGame = async () => {
+    const cleaned = hmNames.map(n => n.trim()).filter(Boolean);
+    if (cleaned.length === 0) { setHmError("Name at least one player."); return; }
+    setHmBusy(true); setHmError(null);
+    const { data, error } = await supabase.rpc("quiz_hangman_start", { p_player_names: cleaned });
+    setHmBusy(false);
+    if (error) { setHmError(error.message || "Could not start the game."); return; }
+    setHmLast(null);
+    setHmSessionId(data);
+    await loadState(data);
+  };
+
+  const callLetter = async (letter) => {
+    if (hmBusy || !hmSessionId) return;
+    setHmBusy(true); setHmError(null);
+    const { data, error } = await supabase.rpc("quiz_hangman_guess", { p_session_id: hmSessionId, p_letter: letter });
+    setHmBusy(false);
+    if (error) { setHmError(error.message || "Could not call that letter."); return; }
+    setHmState(data);
+    setHmLast({ kind: "letter", letter, hits: data?.hits || 0, points: data?.points_awarded || 0 });
+  };
+
+  const sendSolve = async () => {
+    if (hmBusy || !hmSessionId || !hmSolveText.trim()) return;
+    setHmBusy(true); setHmError(null);
+    const { data, error } = await supabase.rpc("quiz_hangman_solve", { p_session_id: hmSessionId, p_guess: hmSolveText });
+    setHmBusy(false);
+    if (error) { setHmError(error.message || "Could not enter that solve."); return; }
+    setHmState(data);
+    setHmLast({ kind: "solve", correct: !!data?.solve_correct, points: data?.points_awarded || 0 });
+    setHmSolveText("");
+    setHmSolveOpen(false);
+  };
+
+  const nextTerm = async () => {
+    if (hmBusy || !hmSessionId) return;
+    setHmBusy(true); setHmError(null);
+    const { data, error } = await supabase.rpc("quiz_hangman_next_round", { p_session_id: hmSessionId });
+    setHmBusy(false);
+    if (error) { setHmError(error.message || "Could not start the next term."); return; }
+    setHmState(data);
+    setHmLast(null);
+  };
+
+  const endGame = async () => {
+    if (!hmSessionId) return;
+    if (!window.confirm("End this game? The scores will be closed out.")) return;
+    setHmBusy(true);
+    const { error } = await supabase.rpc("quiz_hangman_finish", { p_session_id: hmSessionId });
+    setHmBusy(false);
+    if (error) { setHmError(error.message || "Could not end the game."); return; }
+    setHmSessionId(null);
+    setHmState(null);
+    setHmNames(["", ""]);
+    setHmLast(null);
+    setHmPhase("setup");
+  };
+
+  const startAnother = () => {
+    setHmSessionId(null);
+    setHmState(null);
+    setHmNames(["", ""]);
+    setHmLast(null);
+    setHmPhase("setup");
+  };
+
+  const players = Array.isArray(hmState?.players) ? hmState.players : [];
+  const guessed = Array.isArray(hmState?.guessed_letters) ? hmState.guessed_letters : [];
+  const turnName = players[hmState?.current_player_index]?.name || "";
+  const isHost = hmState?.is_host !== false;
+  const roundOver = !!hmState?.round_over;
+  const finished = hmState?.status === "finished";
+  const masked = hmState?.masked || "";
+  const missesLeft = Math.max(0, (hmState?.max_misses || 6) - (hmState?.misses || 0));
+  const tileSize = vp.isPhone ? 22 : 30;
+
+  return (
+    <>
+      <div style={s.playCardTitle}>Hangman</div>
+
+      {hmError && <div style={s.errorBanner}>{hmError}</div>}
+
+      {hmPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking for a game…</div>}
+
+      {hmPhase === "setup" && (
+        <>
+          <div style={s.playCardDesc}>
+            One screen for the room. Name the players, then take turns calling letters to uncover the term.
+          </div>
+          {hmNames.map((n, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+              <input
+                style={{ ...s.editInput, flex: 1, minWidth: 0 }}
+                value={n}
+                placeholder={`Player ${i + 1}`}
+                onChange={(e) => updateName(i, e.target.value)}
+              />
+              {hmNames.length > 1 && (
+                <button type="button" style={s.ghostBtn} onClick={() => removeNameField(i)}>Remove</button>
+              )}
+            </div>
+          ))}
+          <div style={s.actionsRow}>
+            <button type="button" style={s.ghostBtn} onClick={addNameField} disabled={hmNames.length >= 8}>Add player</button>
+            <button type="button" style={s.primaryBtn} onClick={startGame} disabled={hmBusy}>
+              {hmBusy ? "Starting…" : "Start the game"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {hmPhase === "playing" && hmState && (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+            <span style={s.pill(T.blue)}>{hmState.category || "term"}</span>
+            <span style={s.smallLabel}>Term {hmState.round}</span>
+            <span style={s.timerPill(missesLeft <= 2)}>
+              {missesLeft} wrong {missesLeft === 1 ? "guess" : "guesses"} left
+            </span>
+          </div>
+
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 14,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          }}>
+            {masked.split("").map((ch, i) => (
+              <span
+                key={i}
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  boxSizing: "border-box",
+                  width: ch === " " ? tileSize / 2 : tileSize,
+                  height: tileSize + 8,
+                  fontSize: vp.isPhone ? 15 : 19, fontWeight: 700,
+                  color: ch === "_" ? T.slate300 : T.slate900,
+                  background: ch === " " ? "transparent" : "#fff",
+                  border: ch === " " ? "none" : `1px solid ${T.slate200}`,
+                  borderBottom: ch === " " ? "none" : `2px solid ${ch === "_" ? T.slate300 : T.blue}`,
+                  borderRadius: 4,
+                }}
+              >
+                {ch === "_" ? "" : ch}
+              </span>
+            ))}
+          </div>
+
+          {!roundOver && !finished && (
+            <div style={{ fontSize: 13, color: T.slate700, marginBottom: 10 }}>
+              <strong>{turnName}</strong> is up.
+            </div>
+          )}
+
+          {hmLast && hmLast.kind === "letter" && (
+            <div style={{ fontSize: 12, color: hmLast.hits > 0 ? T.green : T.red, marginBottom: 8 }}>
+              {hmLast.hits > 0
+                ? `${hmLast.letter} — ${hmLast.hits} of them, ${hmLast.points} points.`
+                : `No ${hmLast.letter}.`}
+            </div>
+          )}
+          {hmLast && hmLast.kind === "solve" && (
+            <div style={{ fontSize: 12, color: hmLast.correct ? T.green : T.red, marginBottom: 8 }}>
+              {hmLast.correct ? `Solved — ${hmLast.points} points.` : "Not it."}
+            </div>
+          )}
+
+          {!roundOver && !finished && isHost && (
+            <>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 12 }}>
+                {HANGMAN_LETTERS.map(L => {
+                  const used = guessed.includes(L);
+                  return (
+                    <button
+                      key={L}
+                      type="button"
+                      disabled={used || hmBusy}
+                      onClick={() => callLetter(L)}
+                      style={{
+                        boxSizing: "border-box",
+                        width: vp.isPhone ? 30 : 34, height: vp.isPhone ? 32 : 36,
+                        borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                        cursor: used ? "default" : "pointer",
+                        border: `1px solid ${used ? T.slate200 : T.slate300}`,
+                        background: used ? T.slate50 : "#fff",
+                        color: used ? T.slate300 : T.slate800,
+                      }}
+                    >
+                      {L}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!hmSolveOpen && (
+                <button type="button" style={s.ghostBtn} onClick={() => setHmSolveOpen(true)}>
+                  {turnName || "This player"} wants to solve
+                </button>
+              )}
+              {hmSolveOpen && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                  <input
+                    style={{ ...s.editInput, flex: 1, minWidth: 160 }}
+                    value={hmSolveText}
+                    placeholder="Type the whole term"
+                    onChange={(e) => setHmSolveText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") sendSolve(); }}
+                  />
+                  <button type="button" style={s.primaryBtn} onClick={sendSolve} disabled={hmBusy}>Solve</button>
+                  <button type="button" style={s.ghostBtn} onClick={() => { setHmSolveOpen(false); setHmSolveText(""); }}>Cancel</button>
+                </div>
+              )}
+              <div style={{ ...s.smallLabel, marginTop: 6 }}>
+                A wrong solve costs a guess and passes the turn.
+              </div>
+            </>
+          )}
+
+          {(roundOver || finished) && (
+            <div style={{ marginTop: 6 }}>
+              <div style={s.bigStat}>{hmState.solved ? "Solved" : "Out of guesses"}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginTop: 6 }}>{hmState.phrase}</div>
+              {hmState.stem && <div style={s.explanationBox}>{hmState.stem}</div>}
+              {hmState.explanation && <div style={s.explanationBox}>{hmState.explanation}</div>}
+              {!finished && isHost && (
+                <div style={s.actionsRow}>
+                  <button type="button" style={s.primaryBtn} onClick={nextTerm} disabled={hmBusy}>Next term</button>
+                  <button type="button" style={s.ghostBtn} onClick={endGame}>End the game</button>
+                </div>
+              )}
+              {finished && (
+                <div style={s.actionsRow}>
+                  <button type="button" style={s.primaryBtn} onClick={startAnother}>New game</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <div style={s.groupTitle}>Scores</div>
+            {players.map((p, i) => (
+              <div key={i} style={s.standingsRow}>
+                <span style={{ fontWeight: i === hmState.current_player_index && !roundOver ? 700 : 400 }}>
+                  {p.name}{i === hmState.current_player_index && !roundOver && !finished ? " — up now" : ""}
+                </span>
+                <span style={{ fontWeight: 700 }}>{p.score} pts</span>
+              </div>
+            ))}
+          </div>
+
+          {!roundOver && !finished && isHost && (
+            <div style={s.actionsRow}>
+              <button type="button" style={s.ghostBtn} onClick={endGame}>End the game</button>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+// ── Scavenger Hunt ─────────────────────────────────────────────────────────
+// Six passages lifted out of live manual pages. Say which page each came from.
+// Nothing here is authored — the stops are generated from the manual itself, so
+// they stay current, and a stop nobody can place says the page is hard to find.
+const HUNT_BASE_PATH = { handbook: "/handbook", processes: "/processes", admin: "/admin" };
+
+function TriviaHuntCard({ onActiveChange }) {
+  const vp = useViewport();
+  const [huSessionId, setHuSessionId] = useTabParam("husession", null);
+  const [huPhase, setHuPhase] = useState("checking"); // checking | setup | playing | error
+  const [huState, setHuState] = useState(null);
+  const [huViewIndex, setHuViewIndex] = useState(0);
+  const [huError, setHuError] = useState(null);
+  const [huBusy, setHuBusy] = useState(false);
+  const [huAvailable, setHuAvailable] = useState(null);
+
+  useEffect(() => {
+    if (typeof onActiveChange === "function") onActiveChange(huPhase === "playing");
+  }, [huPhase, onActiveChange]);
+
+  // The stop on screen is held here, not derived from "first unanswered" — the
+  // reveal has to stay up until the player moves on, or answering a stop would
+  // skip straight past the result.
+  const loadState = useCallback(async (sid) => {
+    if (!sid) return;
+    const { data, error } = await supabase.rpc("quiz_hunt_state", { p_session_id: sid });
+    if (error) {
+      setHuError(error.message || "Could not load that hunt.");
+      setHuPhase("error");
+      return;
+    }
+    const list = Array.isArray(data?.stops) ? data.stops : [];
+    const firstOpen = list.findIndex(st => !st?.answered);
+    setHuViewIndex(firstOpen === -1 ? Math.max(0, list.length - 1) : firstOpen);
+    setHuState(data);
+    setHuPhase("playing");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (huSessionId) { await loadState(huSessionId); return; }
+      setHuPhase("checking");
+      const [mine, avail] = await Promise.all([
+        supabase.rpc("quiz_hunt_my_active_session"),
+        supabase.rpc("quiz_hunt_available"),
+      ]);
+      if (cancelled) return;
+      if (!avail.error) setHuAvailable(Number(avail.data) || 0);
+      if (!mine.error && mine.data) {
+        setHuSessionId(mine.data);
+        await loadState(mine.data);
+      } else {
+        setHuPhase("setup");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [huSessionId]);
+
+  const startHunt = async () => {
+    setHuBusy(true); setHuError(null);
+    const { data, error } = await supabase.rpc("quiz_hunt_start");
+    setHuBusy(false);
+    if (error) { setHuError(error.message || "Could not start the hunt."); return; }
+    setHuViewIndex(0);
+    setHuSessionId(data);
+    await loadState(data);
+  };
+
+  const answerStop = async (stopIndex, optionIndex) => {
+    if (huBusy || !huSessionId) return;
+    setHuBusy(true); setHuError(null);
+    const { data, error } = await supabase.rpc("quiz_hunt_answer", {
+      p_session_id: huSessionId, p_stop_index: stopIndex, p_option_index: optionIndex,
+    });
+    setHuBusy(false);
+    if (error) { setHuError(error.message || "Could not record that answer."); return; }
+    setHuState(data); // view index deliberately unchanged so the reveal stays up
+  };
+
+  const startAnother = () => {
+    setHuSessionId(null);
+    setHuState(null);
+    setHuViewIndex(0);
+    setHuPhase("setup");
+  };
+
+  const stops = Array.isArray(huState?.stops) ? huState.stops : [];
+  const stopCount = Number(huState?.stop_count) || stops.length;
+  const finished = huState?.status === "finished";
+  const stop = stops[huViewIndex] || null;
+  const hasNext = huViewIndex < stops.length - 1;
+
+  return (
+    <>
+      <div style={s.playCardTitle}>Scavenger Hunt</div>
+
+      {huError && <div style={s.errorBanner}>{huError}</div>}
+
+      {huPhase === "checking" && <div style={{ fontSize: 13, color: T.slate500 }}>Checking…</div>}
+
+      {huPhase === "setup" && (
+        <>
+          <div style={s.playCardDesc}>
+            Six passages pulled straight out of the manuals. Say which page each one came from.
+          </div>
+          {huAvailable !== null && huAvailable < 8 ? (
+            <div style={{ fontSize: 13, color: T.slate500 }}>
+              The manuals need a few more full pages before a hunt can be built.
+            </div>
+          ) : (
+            <button type="button" style={s.primaryBtn} onClick={startHunt} disabled={huBusy}>
+              {huBusy ? "Setting up…" : "Start a hunt"}
+            </button>
+          )}
+        </>
+      )}
+
+      {huPhase === "playing" && huState && (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+            <span style={s.smallLabel}>Stop {Math.min(huViewIndex + 1, stopCount)} of {stopCount}</span>
+            <span style={s.timerPill(false)}>{huState.score} pts</span>
+          </div>
+
+          {stop && (
+            <>
+              <div style={{
+                padding: vp.isPhone ? 12 : 16, background: T.slate50, borderRadius: 8,
+                border: `1px solid ${T.slate200}`, boxSizing: "border-box",
+                fontSize: 13, lineHeight: 1.6, color: T.slate800, marginBottom: 12,
+              }}>
+                …{stop.snippet}…
+              </div>
+
+              <div style={{ ...s.smallLabel, marginBottom: 8 }}>Which page is this from?</div>
+
+              {(stop.options || []).map((opt, oi) => {
+                let state = "default";
+                if (stop.answered) {
+                  if (oi === stop.correct_index) state = "revealCorrect";
+                  else if (oi === stop.chosen) state = "selectedWrong";
+                  else state = "revealDim";
+                }
+                return (
+                  <button
+                    key={oi}
+                    type="button"
+                    disabled={stop.answered || huBusy}
+                    style={s.qOptionBtn(state)}
+                    onClick={() => answerStop(huViewIndex, oi)}
+                  >
+                    {opt}
+                  </button>
+                );
+              })}
+
+              {stop.answered && (
+                <div style={s.explanationBox}>
+                  {stop.correct ? "Right — " : "It was "}
+                  <strong>{(stop.options || [])[stop.correct_index]}</strong>
+                  {stop.page_id && HUNT_BASE_PATH[stop.manual_type] && (
+                    <>
+                      {" · "}
+                      <a
+                        href={`${HUNT_BASE_PATH[stop.manual_type]}/${encodeURIComponent(stop.page_id)}`}
+                        style={{ color: T.blue, fontWeight: 700 }}
+                      >
+                        open the page
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {stop?.answered && hasNext && (
+            <div style={s.actionsRow}>
+              <button type="button" style={s.primaryBtn} onClick={() => setHuViewIndex(huViewIndex + 1)}>
+                Next stop
+              </button>
+            </div>
+          )}
+
+          {finished && !hasNext && (
+            <div style={{ marginTop: 14 }}>
+              <div style={s.bigStat}>{huState.score} pts</div>
+              <div style={s.smallLabel}>
+                {stops.filter(st => st?.correct).length} of {stopCount} placed correctly
+              </div>
+              <div style={s.actionsRow}>
+                <button type="button" style={s.primaryBtn} onClick={startAnother}>Hunt again</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
   );
 }
