@@ -96,7 +96,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "checklist", "canceled", "hours", "deposits", "week", "issued", "development", "changes", "history"];
+const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "history"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -1858,12 +1858,6 @@ function IssuedTab({ values, sources, types, roster, nameOf, isOwner, isAdmin, m
 }
 
 
-// =====================================================================
-// Canceled — its own tab (Peter 2026-09-11). Search the customer, pick the
-// policy that canceled, log it in two taps. Not on file? The full entry
-// page opens in a popup with the Canceled option turned on; the standard
-// Log tab does not offer Canceled at all.
-// =====================================================================
 function Modal({ title, onClose, children }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 8px", overflowY: "auto" }}>
@@ -1874,192 +1868,6 @@ function Modal({ title, onClose, children }) {
         </div>
         {children}
       </div>
-    </div>
-  );
-}
-
-function CanceledTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
-  const today = todayCentral();
-  const [q, setQ] = useState("");
-  const [suggest, setSuggest] = useState([]);
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  const nameBoxRef = useRef(null);
-  const [picked, setPicked] = useState(null);      // {customer_first_name, customer_last_initial, customer_label}
-  const [onFile, setOnFile] = useState([]);
-  const [drafts, setDrafts] = useState({});        // sale_product_id -> {open, date, premium, vehicles, reason}
-  const [recent, setRecent] = useState([]);
-  const [popup, setPopup] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-  useEffect(() => {
-    const s = q.trim();
-    if (s.length < 2) { setSuggest([]); return undefined; }
-    let alive = true;
-    const t = setTimeout(async () => {
-      const { data } = await supabase.rpc("rp_customer_suggest2", { p_prefix: s });
-      if (alive) setSuggest(Array.isArray(data) ? data : []);
-    }, 250);
-    return () => { alive = false; clearTimeout(t); };
-  }, [q]);
-  useEffect(() => {
-    if (!suggestOpen) return undefined;
-    const away = (e) => { if (nameBoxRef.current && !nameBoxRef.current.contains(e.target)) setSuggestOpen(false); };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("touchstart", away);
-    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
-  }, [suggestOpen]);
-  const [cxlPhone, setCxlPhone] = useState("");      // phone last four on the cancelation record
-
-  useEffect(() => {
-    if (!picked) { setOnFile([]); return undefined; }
-    let alive = true;
-    (async () => {
-      const { data } = await supabase.rpc("rp_sold_on_file2", { p_customer_first: picked.customer_first_name, p_customer_last_initial: picked.customer_last_initial, p_phone_last4: picked.phone_last4 || null });
-      if (alive) setOnFile(Array.isArray(data) ? data : []);
-    })();
-    return () => { alive = false; };
-  }, [picked, refreshKey]);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const { data } = await supabase.from("cancelation_log").select("id, team_member_id, canceled_on, customer_label, policy_line, premium, reason, status")
-        .eq("agency_id", AGENCY_ID).eq("status", "active").gte("canceled_on", addDays(todayCentral(), -30)).order("canceled_on", { ascending: false }).limit(50);
-      if (alive) setRecent(Array.isArray(data) ? data : []);
-    })();
-    return () => { alive = false; };
-  }, [refreshKey]);
-
-  const draft = (r) => drafts[r.sale_product_id] || {};
-  const edit = (r, patch) => setDrafts(d => ({ ...d, [r.sale_product_id]: { ...(d[r.sale_product_id] || {}), ...patch } }));
-  const cancelPolicy = async (r) => {
-    const d = draft(r);
-    const premium = d.premium === undefined ? String(r.premium ?? "") : d.premium;
-    const vehicles = d.vehicles === undefined ? String(r.vehicle_count || 1) : d.vehicles;
-    if (premium === "" || !(Number(premium) >= 0)) { setErr("Enter the premium."); return; }
-    if (r.line_of_business === "auto" && !(Number(vehicles) >= 1)) { setErr("How many cars were on it?"); return; }
-    if (!/^\d{4}$/.test(cxlPhone)) { setErr("Customer phone, last four digits."); return; }
-    setBusy(true); setErr(""); setOk("");
-    try {
-      const payload = {
-        customer_first: picked.customer_first_name, customer_last_initial: picked.customer_last_initial, phone_last4: cxlPhone, occurred_on: d.date || today,
-        relationship_type: "existing", team_member_id: null,
-        cancelation: { items: [{ line_of_business: r.line_of_business, product_type: r.product_type || null, premium: Number(premium),
-                                 vehicle_count: r.line_of_business === "auto" ? Number(vehicles) : null, matched_sale_product_id: r.sale_product_id }],
-                       reason: (d.reason || "").trim() || null },
-      };
-      const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
-      if (error) { setErr(errText(error)); return; }
-      if (!data?.ok) { setErr(errText(data)); return; }
-      setOk(summarizeEntry(data));
-      setDrafts(x => ({ ...x, [r.sale_product_id]: {} }));
-      onLogged?.();
-    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
-  };
-  const removeCancel = async (id) => {
-    if (!window.confirm("Remove this cancelation?")) return;
-    const { data, error } = await supabase.rpc("rp_void_cancelation", { p_id: id, p_reason: null });
-    if (error || !data?.ok) { window.alert(errText(error || data)); return; }
-    onLogged?.();
-  };
-
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div style={cardStyle}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Who canceled?</div>
-        <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12 }}>Start typing the first name. Pick the customer, then the policy.</div>
-        <div style={{ ...wrapRow, alignItems: "flex-end" }}>
-          <div ref={nameBoxRef} style={{ ...field(220), position: "relative" }}>
-            <input {...noPwManager("b1")} style={inputBase} value={q} placeholder="Anna"
-              onChange={e => { setQ(e.target.value); setPicked(null); setSuggestOpen(true); }}
-              onFocus={() => setSuggestOpen(true)}
-              onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
-            {suggestOpen && suggest.length > 0 && !picked && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
-                {suggest.map(c => (
-                  <button key={`${c.customer_label}|${c.phone_last4 || ""}`} type="button" onClick={() => { setPicked(c); setQ(c.customer_label); setCxlPhone(c.phone_last4 || ""); setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); }}
-                    style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
-                    {c.customer_label}{c.phone_last4 ? <span style={{ color: T.slate500 }}> ·{c.phone_last4}</span> : null} <span style={{ color: T.slate400, fontSize: 12 }}>{Number(c.policies_on_file) > 0 ? `${c.policies_on_file} on file` : "no policies on file"}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ""}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button type="button" style={{ ...btnGhost, padding: "10px 14px" }} onClick={() => setPopup(true)}>Not on file? Log the customer</button>
-        </div>
-        {picked && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ ...wrapRow, alignItems: "flex-end", marginBottom: 6 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, paddingBottom: 10 }}>{picked.customer_label}{picked.phone_last4 ? ` ·${picked.phone_last4}` : ""} · on file</div>
-              <div style={{ flex: "0 0 126px" }}>
-                <label style={labelStyle}>Phone last 4</label>
-                <input {...noPwManager("b2")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={cxlPhone} maxLength={4} onChange={e => setCxlPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
-              </div>
-            </div>
-            {onFile.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>No sold policies on file. Use "Log the customer" to record the cancelation with the policy details.</div>}
-            {onFile.map(r => {
-              const d = draft(r);
-              const label = typeLabel(types || {}, r.line_of_business, r.product_type) || PRODUCT_SHORT[r.line_of_business] || r.line_of_business;
-              return (
-                <div key={r.sale_product_id} style={{ borderTop: `1px solid ${T.slate100}`, padding: "8px 0" }}>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                    <span style={{ fontWeight: 600, color: T.slate800 }}>{label}</span>
-                    <span style={{ fontSize: 12, color: T.slate500 }}>${fmtPts(r.premium)}{r.vehicle_count ? ` · ${plural(r.vehicle_count, "car")}` : ""} · sold {fmtDate(r.submitted_date)}</span>
-                    {r.already_canceled ? <span style={{ fontSize: 12, color: T.red, fontWeight: 600 }}>canceled</span>
-                      : <button type="button" style={btnGhost} onClick={() => edit(r, { open: !d.open })}>{d.open ? "Never mind" : "Canceled"}</button>}
-                  </div>
-                  {d.open && !r.already_canceled && (
-                    <div style={{ ...wrapRow, marginTop: 8, padding: 10, background: T.slate50, borderRadius: 8 }}>
-                      <div style={field(140)}><label style={labelStyle}>Canceled on</label><input type="date" style={inputBase} value={d.date || today} max={today} min={addDays(today, -90)} onChange={e => edit(r, { date: e.target.value })} /></div>
-                      <div style={field(120)}><label style={labelStyle}>Premium</label><input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={d.premium === undefined ? String(r.premium ?? "") : d.premium} onChange={e => edit(r, { premium: e.target.value })} /></div>
-                      {r.line_of_business === "auto" && <div style={field(70)}><label style={labelStyle}>Cars</label><input type="number" inputMode="numeric" min="1" step="1" style={inputBase} value={d.vehicles === undefined ? String(r.vehicle_count || 1) : d.vehicles} onChange={e => edit(r, { vehicles: e.target.value })} /></div>}
-                      <div style={field(200)}><label style={labelStyle}>Why <span style={hintStyle}>(optional)</span></label><input style={inputBase} value={d.reason || ""} onChange={e => edit(r, { reason: e.target.value })} placeholder="what they told us" /></div>
-                      <button type="button" style={btnPrimary(busy)} disabled={busy} onClick={() => cancelPolicy(r)}>{busy ? "Saving…" : "Log the cancelation"}</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <Notice kind="error">{err}</Notice>
-        <Notice kind="ok">{ok}</Notice>
-      </div>
-
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 10 }}>Canceled in the last 30 days <span style={{ color: T.slate400, fontWeight: 400 }}>· {recent.length}</span></div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th><th style={tableTh}>Line</th><th style={tableTh}>Premium</th><th style={tableTh}>Why</th><th style={tableTh}></th></tr></thead>
-            <tbody>
-              {recent.map(r => (
-                <tr key={r.id}>
-                  <td style={tableTd}>{fmtDate(r.canceled_on)}</td>
-                  <td style={tableTd}>{nameOf(r.team_member_id)}</td>
-                  <td style={tableTd}>{r.customer_label}</td>
-                  <td style={tableTd}>{PRODUCT_SHORT[r.policy_line] || r.policy_line}</td>
-                  <td style={tableTd}>${fmtPts(r.premium)}</td>
-                  <td style={{ ...tableTd, maxWidth: 320 }}>{r.reason || "—"}</td>
-                  <td style={tableTd}>{(isAdmin || r.team_member_id === myTeamId) && <button style={btnGhost} onClick={() => removeCancel(r.id)}>Remove</button>}</td>
-                </tr>
-              ))}
-              {recent.length === 0 && <tr><td style={tableTd} colSpan={7}>Nothing canceled in the last 30 days.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {popup && (
-        <div style={cardStyle}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Log the customer</div>
-            <button type="button" style={linkBtn} onClick={() => setPopup(false)}>Close</button>
-          </div>
-          <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} refreshKey={refreshKey} allowCancel presetFirst={picked ? "" : q.trim()}
-            onLogged={() => { onLogged?.(); }} />
-        </div>
-      )}
     </div>
   );
 }
@@ -3375,7 +3183,7 @@ export default function ActivityLog({ userRole, userId }) {
         ))}
       </div>
 
-      {(tab === "log" || tab === "canceled") && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "log" && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
       {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "week" && <WeekView isAdmin={isAdmin} isOwner={isOwner} myTeamId={myTeamId} roster={roster} nameOf={nameOf} values={values} sources={sources} types={types} refreshKey={refreshKey} onChanged={bump} />}
