@@ -11,146 +11,22 @@
 //
 // Flow mirrors indeed-apply-webhook but adjusted for ZR conventions.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { sb, AGENCY_ID_DEFAULT } from "../_shared/supabase.ts";
+import {
+  verifyHmacSignature,
+  pickString,
+  extractApplicant,
+  mapAnswersToScreener,
+} from "../_shared/applicant_intake.ts";
 
-const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
-
-const supabase = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-);
-
-// ─────────────────────────────────────────────────────────────────────────
-// HMAC-SHA256 verify (constant-time compare, hex-encoded)
-// ─────────────────────────────────────────────────────────────────────────
-
-async function verifyZipSignature(rawBody: string, signature: string, secret: string): Promise<boolean> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const macBuf = await crypto.subtle.sign("HMAC", key, enc.encode(rawBody));
-  const macBytes = new Uint8Array(macBuf);
-  const expectedHex = Array.from(macBytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-
-  // ZR sends either raw hex or "sha256=<hex>" prefixed. Accept both.
-  const sigNorm = signature.replace(/^sha256=/i, "").trim().toLowerCase();
-
-  if (expectedHex.length !== sigNorm.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expectedHex.length; i++) {
-    diff |= expectedHex.charCodeAt(i) ^ sigNorm.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Payload extraction — flexible about field naming
-// ─────────────────────────────────────────────────────────────────────────
-
-function pickString(...candidates: unknown[]): string | null {
-  for (const c of candidates) {
-    if (c == null) continue;
-    const s = String(c).trim();
-    if (s) return s;
-  }
-  return null;
-}
-
-function splitFullName(fullName: string | null): { first: string | null; last: string | null } {
-  if (!fullName) return { first: null, last: null };
-  const trimmed = fullName.trim();
-  const lastSpace = trimmed.lastIndexOf(" ");
-  if (lastSpace < 0) return { first: trimmed, last: null };
-  return { first: trimmed.slice(0, lastSpace).trim(), last: trimmed.slice(lastSpace + 1).trim() };
-}
-
-function extractResumeUrl(resume: any, applicant: any): string | null {
-  // ZR variants seen in the wild:
-  //   applicant.resume: "https://..."          (plain URL string)
-  //   applicant.resume: { url: "..." }
-  //   applicant.resumeUrl: "..."
-  //   applicant.resume_url: "..."
-  if (typeof resume === "string" && resume.trim()) return resume.trim();
-  if (resume?.url) return String(resume.url);
-  return pickString(applicant?.resumeUrl, applicant?.resume_url);
-}
-
-function extractApplicant(payload: any): {
-  firstName: string | null; lastName: string | null;
-  email: string | null; phone: string | null;
-  resumeUrl: string | null; coverLetter: string | null;
-} {
-  const a = payload?.applicant || payload?.candidate || {};
-
-  // Name may be split or combined
-  let firstName = pickString(a.firstName, a.first_name, a.givenName);
-  let lastName = pickString(a.lastName, a.last_name, a.familyName);
-  if (!firstName && !lastName) {
-    const full = pickString(a.name, a.fullName, a.full_name);
-    const split = splitFullName(full);
-    firstName = split.first;
-    lastName = split.last;
-  }
-
-  return {
-    firstName,
-    lastName,
-    email: pickString(a.email, a.emailAddress, a.email_address),
-    phone: pickString(a.phone, a.phoneNumber, a.phone_number, a.mobile),
-    resumeUrl: extractResumeUrl(a.resume, a),
-    coverLetter: pickString(a.coverLetter, a.cover_letter, a.coverletter),
-  };
-}
-
-function mapAnswersToScreener(
-  zipQuestions: any[],
-  screenerBank: Array<{ question_code: string; question_text: string; knockout_on: string[] | null }>,
-): { answers: Record<string, string>; knockoutReason: string | null } {
-  const answers: Record<string, string> = {};
-  let knockoutReason: string | null = null;
-
-  for (const zq of zipQuestions || []) {
-    const rawAnswer = pickString(zq?.answer, zq?.response, zq?.value) || "";
-    const normalized = rawAnswer.toLowerCase();
-
-    // Try id/questionId/code match first
-    const idCandidate = pickString(zq?.id, zq?.questionId, zq?.code, zq?.question_id);
-    let matched = idCandidate
-      ? screenerBank.find((q) => q.question_code === idCandidate)
-      : null;
-
-    // Fall back to 40-char question-text prefix match
-    if (!matched) {
-      const qText = pickString(zq?.question, zq?.questionText, zq?.text)?.slice(0, 40);
-      if (qText) {
-        matched = screenerBank.find((q) => q.question_text.slice(0, 40) === qText);
-      }
-    }
-
-    if (matched) {
-      answers[matched.question_code] = normalized;
-      if (matched.knockout_on && matched.knockout_on.includes(normalized)) {
-        knockoutReason = matched.question_code;
-      }
-    } else {
-      const label = pickString(zq?.id, zq?.question, zq?.text) || "unknown";
-      answers[`_unmapped_${label.slice(0, 20)}`] = rawAnswer;
-    }
-  }
-
-  return { answers, knockoutReason };
-}
+const AGENCY_ID = AGENCY_ID_DEFAULT;
+const supabase = sb;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Main handler
 // ─────────────────────────────────────────────────────────────────────────
+
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
@@ -181,7 +57,11 @@ Deno.serve(async (req) => {
     return new Response("Missing signature", { status: 401 });
   }
 
-  const valid = await verifyZipSignature(rawBody, signature, secret);
+  const valid = await verifyHmacSignature(rawBody, signature, secret, {
+    hash: "SHA-256",
+    encoding: "hex",
+    stripPrefix: /^sha256=/i,
+  });
   if (!valid) {
     console.warn("zip-apply-webhook: signature mismatch");
     return new Response("Invalid signature", { status: 401 });

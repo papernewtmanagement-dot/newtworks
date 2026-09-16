@@ -13,117 +13,22 @@
 //   7. If clean: insert hiring_candidates row, backfill hiring_candidate_id + routed_at.
 //   8. Return 200. Non-200 triggers Indeed retry — reserve for real ingestion errors.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { sb, AGENCY_ID_DEFAULT } from "../_shared/supabase.ts";
+import {
+  verifyHmacSignature,
+  splitFullName,
+  extractResumeUrl,
+  mapAnswersToScreener,
+} from "../_shared/applicant_intake.ts";
 
-const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
-
-const supabase = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-);
-
-// ─────────────────────────────────────────────────────────────────────────
-// HMAC-SHA1 verify (constant-time compare)
-// ─────────────────────────────────────────────────────────────────────────
-
-async function verifyIndeedSignature(rawBody: string, signature: string, secret: string): Promise<boolean> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-1" },
-    false,
-    ["sign"],
-  );
-  const macBuf = await crypto.subtle.sign("HMAC", key, enc.encode(rawBody));
-  const macBytes = new Uint8Array(macBuf);
-  const expected = btoa(String.fromCharCode(...macBytes));
-
-  // Constant-time compare — length mismatch is short-circuit safe here
-  // since attackers can already observe length via signature header.
-  if (expected.length !== signature.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Payload extraction
-// ─────────────────────────────────────────────────────────────────────────
-
-// Indeed's applicant.fullName is a single string — split on last space so
-// last-name-with-suffix (e.g. "Mary Van Buren") folds into last_name.
-function splitFullName(fullName: string | undefined | null): { first: string | null; last: string | null } {
-  if (!fullName) return { first: null, last: null };
-  const trimmed = fullName.trim();
-  const lastSpace = trimmed.lastIndexOf(" ");
-  if (lastSpace < 0) return { first: trimmed, last: null };
-  return { first: trimmed.slice(0, lastSpace).trim(), last: trimmed.slice(lastSpace + 1).trim() };
-}
-
-// Indeed returns applicant.resume as either { url: "..." } or { text: "..." }
-// or { file: "<base64>", fileName, contentType }. We store url when we have
-// it, and drop the raw file content into raw_payload for later handling.
-function extractResumeUrl(resume: any): string | null {
-  if (!resume) return null;
-  if (typeof resume === "string") return resume;
-  if (resume.url) return String(resume.url);
-  return null;
-}
-
-// Indeed sends questions in one of two shapes depending on whether the feed
-// used indeed-apply-questions metadata:
-//   [{ id, question, answer }, ...]                 (id-tagged path)
-//   [{ question, answer }, ...]                     (text-only fallback)
-// We prefer id match against our question_code. On text-only fallback we
-// substring-match question text against our screener bank as a best-effort.
-function mapAnswersToScreener(
-  indeedQuestions: any[],
-  screenerBank: Array<{ question_code: string; question_text: string; knockout_on: string[] | null }>,
-): { answers: Record<string, string>; knockoutReason: string | null } {
-  const answers: Record<string, string> = {};
-  let knockoutReason: string | null = null;
-
-  for (const iq of indeedQuestions || []) {
-    const rawAnswer = String(iq?.answer ?? "").trim();
-    const normalized = rawAnswer.toLowerCase();
-
-    // Prefer id/questionId → code match
-    const idCandidate = String(iq?.id ?? iq?.questionId ?? "").trim();
-    let matched = idCandidate
-      ? screenerBank.find((q) => q.question_code === idCandidate)
-      : null;
-
-    // Fall back: match on question_text prefix (first 40 chars of Indeed's
-    // echoed question). Screener question texts are long enough that a
-    // 40-char prefix is unambiguous within our small bank.
-    if (!matched) {
-      const iqText = String(iq?.question ?? "").trim().slice(0, 40);
-      if (iqText) {
-        matched = screenerBank.find((q) => q.question_text.slice(0, 40) === iqText);
-      }
-    }
-
-    if (matched) {
-      answers[matched.question_code] = normalized;
-      if (matched.knockout_on && matched.knockout_on.includes(normalized)) {
-        knockoutReason = matched.question_code;
-      }
-    } else {
-      // Unknown question — preserve verbatim so the raw_payload retains
-      // full context but knockout logic ignores it.
-      answers[`_unmapped_${(iq?.id || iq?.question || "").slice(0, 20)}`] = rawAnswer;
-    }
-  }
-
-  return { answers, knockoutReason };
-}
+const AGENCY_ID = AGENCY_ID_DEFAULT;
+const supabase = sb;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Main handler
 // ─────────────────────────────────────────────────────────────────────────
+
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
@@ -153,7 +58,7 @@ Deno.serve(async (req) => {
   if (!signature) {
     return new Response("Missing signature", { status: 401 });
   }
-  const valid = await verifyIndeedSignature(rawBody, signature, secret);
+  const valid = await verifyHmacSignature(rawBody, signature, secret, { hash: "SHA-1", encoding: "base64" });
   if (!valid) {
     console.warn("indeed-apply-webhook: signature mismatch");
     return new Response("Invalid signature", { status: 401 });
