@@ -7947,7 +7947,7 @@ async function starMessage(ctx: CareerplugCtx, messageId: string): Promise<void>
       toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
       toolArguments: {
         message_id: messageId,
-        label_ids: ["STARRED"],
+        add_label_ids: ["STARRED"],
         user_id: "me",
       },
     });
