@@ -1167,7 +1167,7 @@ const RECORD_KINDS = [
   { key: "activities",   label: "Activities" },
   { key: "sales",        label: "Sales" },
 ];
-const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, gnc_used, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
+const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, gnc_used, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
 const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, ecrm_url";
 const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
@@ -1594,8 +1594,22 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
   const set = (k, v) => setF(d => ({ ...d, [k]: v }));
   const setProd = (i, k, v) => setF(d => ({ ...d, products: d.products.map((p, j) => j === i ? { ...p, [k]: v } : p) }));
 
+  // A sale in the production log carries the ECRM opportunity link. A historical
+  // row has none, and saving moves it into the production log, so the link is
+  // what that move costs. Say so here rather than let the table's own check
+  // constraint throw its name at the screen.
   const save = async () => {
-    setSaving(true); setErr("");
+    setErr("");
+    if (kind === "sale" && !f.ecrm.trim()) {
+      setErr(row.entry_source === "historical_backfill"
+        ? "Moving this into the production log needs the ECRM opportunity link."
+        : "A sale needs the ECRM opportunity link.");
+      return;
+    }
+    if (kind === "sale" && !/^https?:\/\//i.test(f.ecrm.trim())) {
+      setErr("The ECRM link must start with http."); return;
+    }
+    setSaving(true);
     let fn, changes;
     if (kind === "sale") {
       fn = "rp_edit_sale";
@@ -1613,7 +1627,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
           autopay: !!p.autopay_enrolled,
         })),
       };
-      if (f.ecrm) changes.ecrm_opportunity_url = f.ecrm;
+      changes.ecrm_opportunity_url = f.ecrm.trim();
     } else if (kind === "appointment") {
       fn = "rp_edit_appointment";
       changes = {
@@ -1644,6 +1658,11 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     <Modal title={`Edit this ${titleWord}`} onClose={onClose}>
       <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
         {err && <Notice kind="error">{err}</Notice>}
+        {kind === "sale" && row.entry_source === "historical_backfill" && (
+          <div style={{ justifySelf: "start", padding: "3px 9px", borderRadius: 999, background: T.amberLt, color: T.amber, fontSize: 12, fontWeight: 700 }}>
+            Saving moves this out of the historical load and into the production log
+          </div>
+        )}
         <div style={gridForm}>
           <div>
             <label style={labelStyle}>First name</label>
@@ -1735,6 +1754,13 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate800 }}>
             <input type="checkbox" checked={f.gnc_used} onChange={e => set("gnc_used", e.target.checked)} /> GNC used
           </label>
+        )}
+
+        {kind === "sale" && (
+          <div>
+            <label style={labelStyle}>ECRM opportunity link</label>
+            <input value={f.ecrm} onChange={e => set("ecrm", e.target.value)} placeholder="https://…" style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("eecrm")} />
+          </div>
         )}
 
         <div>
