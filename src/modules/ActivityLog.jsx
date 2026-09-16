@@ -1319,7 +1319,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
               <thead><tr>
                 <th style={tableTh}>Date</th><th style={tableTh}>Who</th><th style={tableTh}>Customer</th>
                 <th style={tableTh}>Relationship</th><th style={tableTh}>Policies</th><th style={tableTh}>Cars</th>
-                <th style={tableTh}>Premium</th><th style={tableTh}>Source</th><th style={tableTh}>GNC</th>
+                <th style={tableTh}>Premium</th><th style={tableTh}>Source</th>
                 <th style={tableTh}>Waiting</th><th style={tableTh}></th>
               </tr></thead>
             )}
@@ -1397,7 +1397,6 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                     <td style={tableTd}>{r.vehicle_count ?? "—"}</td>
                     <td style={tableTd}>${fmtPts(r.total_premium)}</td>
                     <td style={tableTd}>{r.marketing_source}</td>
-                    <td style={tableTd}>{r.gnc_used ? "Yes" : "No"}</td>
                     <td style={{ ...tableTd, color: wait != null && wait > 14 ? T.red : T.slate600, fontWeight: wait != null && wait > 14 ? 700 : 400 }}>
                       {wait == null ? "—" : `${wait}d`}
                     </td>
@@ -1749,12 +1748,6 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
             )}
           </div>
         ))}
-
-        {kind === "sale" && (
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.slate800 }}>
-            <input type="checkbox" checked={f.gnc_used} onChange={e => set("gnc_used", e.target.checked)} /> GNC used
-          </label>
-        )}
 
         {kind === "sale" && (
           <div>
@@ -3024,11 +3017,23 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, na
 const KIND_LABEL = { sale: "Sale", quote: "Quote", cancelation: "Cancelation", activity: "Activity", scorecard: "Conversation score" };
 const KIND_COLOR = { sale: T.green, quote: T.blue, cancelation: T.red, activity: T.purple, scorecard: T.teal };
 
+const RECORD_KINDS = [
+  { key: "", label: "Everything" },
+  { key: "sale", label: "Sales" },
+  { key: "quote", label: "Quotes" },
+  { key: "cancelation", label: "Cancelations" },
+  { key: "activity", label: "Activities" },
+  { key: "scorecard", label: "Conversation scores" },
+];
+
 function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
   const [rows, setRows] = useState(null);
   const [who, setWho] = useState("");
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [recKind, setRecKind] = useState("");
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
 
@@ -3040,13 +3045,14 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       setErr("");
       const r = await supabase.rpc("rp_recent_entries", {
         p_days: 14, p_team_member_id: who || null, p_limit: 200, p_search: term || null,
+        p_from: from || null, p_to: to || null, p_kind: recKind || null,
       });
       if (!alive) return;
       if (r.error) { setErr(errText(r.error)); setRows([]); return; }
       setRows(Array.isArray(r.data) ? r.data : []);
     })();
     return () => { alive = false; };
-  }, [who, term, refreshKey]);
+  }, [who, term, from, to, recKind, refreshKey]);
 
   const remove = async (row) => {
     const what = (KIND_LABEL[row.kind] || row.kind).toLowerCase();
@@ -3065,10 +3071,20 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Recent entries</div>
-          <div style={{ fontSize: 13, color: T.slate500 }}>The last two weeks. Search a name to go further back.</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Records</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>The last two weeks. Search a name, or set a From date, to go further back.</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <select value={recKind} onChange={e => setRecKind(e.target.value)} style={selectStyle}>
+            {RECORD_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+          </select>
+          <input type="date" value={from} max={to || todayCentral()} title="From"
+            onChange={e => setFrom(e.target.value)} style={selectStyle} />
+          <input type="date" value={to} min={from || undefined} max={todayCentral()} title="To"
+            onChange={e => setTo(e.target.value)} style={selectStyle} />
+          {(from || to || recKind) && (
+            <button type="button" style={miniBtn} onClick={() => { setFrom(""); setTo(""); setRecKind(""); }}>Clear</button>
+          )}
           {isAdmin && (
             <select value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
               <option value="">Everyone</option>
@@ -3084,7 +3100,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       {rows === null ? (
         <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : rows.length === 0 ? (
-        <div style={{ color: T.slate600, fontSize: 14 }}>{term ? `Nothing on file for “${term}”.` : "Nothing logged in the last two weeks."}</div>
+        <div style={{ color: T.slate600, fontSize: 14 }}>{term ? `Nothing on file for “${term}”.` : (from || to || recKind) ? "Nothing matches those filters." : "Nothing logged in the last two weeks."}</div>
       ) : (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
