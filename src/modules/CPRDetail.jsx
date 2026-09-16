@@ -3742,6 +3742,26 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 
 
 
+// Locked means the payroll summary for this week has arrived and every figure
+// below is frozen at what was actually paid. Open means they can still move.
+function PayLockBadge({ lock }) {
+  if (!lock) return null;
+  const locked = !!lock.locked;
+  return (
+    <div style={{ margin: "0 0 8px 0" }}>
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
+        boxSizing: "border-box", whiteSpace: "nowrap",
+        background: locked ? T.slate100 : T.amberLt,
+        color: locked ? T.slate700 : T.slate900,
+      }}>
+        {locked ? "🔒 Locked · paid" : "🔓 Open · still moving"}
+      </span>
+    </div>
+  );
+}
+
 // 19 — Payroll v2 (per-person columns, residual-pool components as rows)
 // Admin can toggle Edit mode to enter payroll_ytd_paid (cumulative $
 // paid year-to-date through SurePayroll, through end of last pay period).
@@ -3752,6 +3772,18 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
   // Commission row expander — shows per-teammate cycle-view commission chart (small multiples).
   const [commissionExpanded, setCommissionExpanded] = useState(false);
+  // Locked means the payroll summary for this week has arrived and these figures
+  // are frozen at what was actually paid. Same source the Team > Payroll tab
+  // reads (week_pay_lock), so the two pages can never disagree.
+  const [payLock, setPayLock] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    if (!weekDate) { setPayLock(null); return undefined; }
+    supabase
+      .rpc("week_pay_lock", { p_agency_id: AGENCY_ID, p_week_end_date: weekDate })
+      .then(({ data }) => { if (alive) setPayLock(data || null); });
+    return () => { alive = false; };
+  }, [weekDate]);
   const cycleWeeks = computeCycleWeekList(cycleStartISO, weekDate);
   // v2 payroll (residual pool + carveouts + marketing pool). Rollout 2026-07-11.
   // 2026-07-11 update: Team Pool → split into Sales Share + Retention Share rows,
@@ -3967,6 +3999,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   return (
     <div>
       <SectionHeader icon="💰" title="Payroll" />
+      <PayLockBadge lock={payLock} />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         {/* Edit toolbar — owner-only, hidden on historical weeks (canEdit=false). */}
         {canEdit && (
