@@ -42,6 +42,7 @@ const hasAnyLicense = (m) => !!(m && (m.license_pc || m.license_lh || m.license_
 import { T, BAND } from "../lib/theme.js";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import TeamForms from "../components/TeamForms.jsx";
 import TeamPayroll from "./TeamPayroll.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
@@ -695,6 +696,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
 const StaffDirectory = ({ staff }) => {
   const [expanded, setExpanded] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [formsId, setFormsId] = useState(null);   // which member's hiring forms are open
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -2394,6 +2396,12 @@ const StaffDirectory = ({ staff }) => {
                     </button>
                   )}
                   <button
+                    onClick={(e) => { e.stopPropagation(); setFormsId(formsId === member.id ? null : member.id); }}
+                    title="Onboarding form, non-compete, I-9, handbook and annual certification. Also where the payroll details are destroyed."
+                    style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.white, border:`1px solid ${T.slate200}`, borderRadius:7, cursor:"pointer" }}>
+                    📄 Forms
+                  </button>
+                  <button
                     onClick={(e) => { e.stopPropagation(); startTerminate(member); }}
                     title="Document and execute end of employment. Deactivates linked user login."
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.white, border:`1px solid ${T.red}`, borderRadius:7, cursor:"pointer", marginLeft:"auto" }}>
@@ -2401,6 +2409,18 @@ const StaffDirectory = ({ staff }) => {
                   </button>
                   
                 </div>
+              </div>
+            )}
+
+            {formsId === member.id && (
+              <div style={{ marginTop:14, paddingTop:14, borderTop:`2px solid ${T.blue}` }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:T.blue, textTransform:"uppercase", letterSpacing:"0.04em" }}>
+                    📄 Hiring Forms — {member.first_name} {member.last_name}
+                  </div>
+                  <button onClick={() => setFormsId(null)} style={{ padding:"4px 10px", fontSize:11, color:T.slate600, background:T.slate100, border:"none", borderRadius:6, cursor:"pointer" }}>Close</button>
+                </div>
+                <TeamForms teamId={member.id} embedded />
               </div>
             )}
 

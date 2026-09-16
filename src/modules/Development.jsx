@@ -14,16 +14,18 @@ import { TabLink, useTabParam } from "../lib/routing.jsx";
 import Onboarding from "./Onboarding.jsx";
 import Trivia from "./Trivia.jsx";
 import Licensing from "./Licensing.jsx";
+import TeamForms from "../components/TeamForms.jsx";
 
 const AREAS = [
   { id: "onboarding", label: "Onboarding" },
+  { id: "forms",      label: "Forms" },
   { id: "trivia",     label: "Trivia" },
   { id: "licensing",  label: "Licensing" },
 ];
 
 export default function Development({ userRole, userId, embedded = false }) {
   const [area, setArea, areaHref] = useTabParam(
-    "area", "onboarding", ["onboarding", "trivia", "licensing"]
+    "area", "onboarding", ["onboarding", "forms", "trivia", "licensing"]
   );
 
   return (
@@ -63,6 +65,7 @@ export default function Development({ userRole, userId, embedded = false }) {
 
       {area === "onboarding" && <Onboarding userRole={userRole} userId={userId} embedded />}
       {area === "trivia"     && <Trivia userRole={userRole} userId={userId} embedded />}
+      {area === "forms"      && <TeamForms embedded />}
       {area === "licensing"  && <Licensing userRole={userRole} userId={userId} embedded />}
     </div>
   );
