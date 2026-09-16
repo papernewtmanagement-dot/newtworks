@@ -179,6 +179,23 @@ const STATUSES = [
 function todayCentral() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 }
+// A time typed on this page means that time in San Antonio, whatever clock the
+// phone is set to. Work out how far Central sits from UTC on that date, then
+// apply it, so 10:00 is 10:00 in the office from anywhere.
+function centralIso(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = timeStr.split(":").map(Number);
+  const guess = Date.UTC(y, m - 1, d, hh, mm);
+  const shown = new Date(guess).toLocaleString("en-US", {
+    timeZone: "America/Chicago", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const [dpart, tpart] = shown.split(", ");
+  const [mo, da, yr] = dpart.split("/").map(Number);
+  const [h2, mi2] = tpart.split(":").map(Number);
+  const offset = guess - Date.UTC(yr, mo - 1, da, h2 % 24, mi2);
+  return new Date(guess + offset).toISOString();
+}
 function addDays(iso, n) {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + n));
@@ -255,14 +272,14 @@ function summarizeEntry(data) {
 // Entry page — one customer, one contact, everything that happened, on
 // one flat page. One Log button; one RPC that saves all of it or none.
 // =====================================================================
-function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "", editing = null, onCloseEdit }) {
+function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "", editing = null, onCloseEdit, appointment = null }) {
   const today = todayCentral();
-  const [first, setFirst] = useState(presetFirst || "");
+  const [first, setFirst] = useState(appointment?.customer_first_name || presetFirst || "");
   const statuses = allowCancel ? STATUSES : STATUSES.filter(st => st.key !== "canceled");
   const [dupQuotes, setDupQuotes] = useState([]);   // this week's quotes already on file for this household
   const [onFileAnswer, setOnFileAnswer] = useState({}); // policy id -> "replaces" | "added" | "different" when the household already has that line
-  const [initial, setInitial] = useState("");
-  const [phone, setPhone] = useState("");            // customer phone, last four digits: part of the household key
+  const [initial, setInitial] = useState(appointment?.customer_last_initial || "");
+  const [phone, setPhone] = useState(appointment?.phone_last4 || "");   // customer phone, last four digits: part of the household key
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
@@ -619,6 +636,19 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       if (error) { setErr(errText(error)); return; }
       if (!data?.ok) { setErr(errText(data)); return; }
       let summary = summarizeEntry(data);
+      // Logged from inside an appointment row: point the sale (or the quote) at
+      // it, which is what marks the appointment sold or kept. Only the person it
+      // was handed to can move the state, so the link is recorded either way.
+      if (appointment?.id && (data.sale?.sale_id || data.quote?.quote_id)) {
+        const at = await supabase.rpc("rp_attach_entry_to_appointment", {
+          p_appointment_id: appointment.id,
+          p_sale_id: data.sale?.sale_id || null,
+          p_quote_id: data.quote?.quote_id || null,
+        });
+        if (at.error || !at.data?.ok) summary += ` It did not attach to the appointment: ${errText(at.error || at.data)}.`;
+        else if (at.data.marked) summary += ` The appointment is marked ${at.data.state}.`;
+        else summary += ` Attached to the appointment, but not marked: ${at.data.why_not || "only the person it was handed to can mark it"}.`;
+      }
       let cxlResult = null;
       if (replaces.length) {
         // the confirmed replacements cancel the old policies now, in the same click; no chargeback (the household kept the line)
@@ -1195,7 +1225,7 @@ const RECORD_KINDS = [
   { key: "sales",        label: "Sales" },
 ];
 const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
-const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, line_of_business, product_type, note, ecrm_url";
+const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, line_of_business, product_type, starts_at, duration_minutes, is_video, meet_url, calendar_error, note, ecrm_url";
 const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
 const onFileLabel = (k) => k === "replaces" ? "replaced old policy" : k === "added" ? "added to on-file" : "different household";
@@ -1208,6 +1238,21 @@ const apptState = (r) => r.sold_on ? "Sold" : r.no_show_on ? "No show" : r.kept_
 // mark their own (Peter 2026-09-13). The server enforces the same rule.
 const apptHost = (r) => (r.escalated_to_team_member_id && r.escalated_to_team_member_id !== r.team_member_id)
   ? r.escalated_to_team_member_id : r.team_member_id;
+const fmtWhen = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d)
+    ? d.toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : "—";
+};
+const howFarOff = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d)) return "";
+  const days = Math.round((d - new Date()) / 86400000);
+  if (days > 1) return `in ${days}d`;
+  if (days === 1) return "tomorrow";
+  if (days === 0) return "today";
+  return `${-days}d ago`;
+};
 
 function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, roster, nameOf, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [kind, setKind] = useState("sales");
@@ -1220,6 +1265,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
   const [prems, setPrems] = useState({});
   const [editing, setEditing] = useState(null);   // { kind, row }
   const [adding, setAdding] = useState(false);
+  const [logging, setLogging] = useState(null);   // appointment whose sale is being logged
 
   const actLabel = useMemo(() => {
     const m = new Map();
@@ -1248,7 +1294,8 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
         let q = supabase.from("appointment_log").select(APPT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
         if (scope === "week") q = q.eq("week_end_date", weekEnd);
         else q = q.is("sold_on", null).is("no_show_on", null);
-        const r = await q.order("set_on", { ascending: scope === "pending" });
+        // Soonest first while it is still waiting; newest first once the week is done.
+        const r = await q.order("starts_at", { ascending: scope === "pending", nullsFirst: false });
         if (r.error) throw r.error;
         setRows(Array.isArray(r.data) ? r.data : []);
       } else {
@@ -1358,9 +1405,9 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
             )}
             {kind === "appointments" && (
               <thead><tr>
-                <th style={tableTh}>Set</th><th style={tableTh}>Who</th><th style={tableTh}>Handed to</th>
+                <th style={tableTh}>When</th><th style={tableTh}>Who</th><th style={tableTh}>Handed to</th>
                 <th style={tableTh}>Customer</th><th style={tableTh}>About</th><th style={tableTh}>State</th><th style={tableTh}>Move it along</th>
-                <th style={tableTh}>Waiting</th><th style={tableTh}>Note</th><th style={tableTh}></th>
+                <th style={tableTh}>Set</th><th style={tableTh}>Note</th><th style={tableTh}></th>
               </tr></thead>
             )}
             {kind === "activities" && (
@@ -1449,7 +1496,15 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                 const escalated = r.escalated_to_team_member_id && r.escalated_to_team_member_id !== r.team_member_id;
                 return (
                   <tr key={r.id}>
-                    <td style={tableTd}>{fmtDate(r.set_on)}</td>
+                    <td style={tableTd}>
+                      {fmtWhen(r.starts_at)}
+                      <div style={{ fontSize: 11, color: T.slate400 }}>
+                        {howFarOff(r.starts_at)}{r.is_video ? " · Google Meet" : ""}
+                      </div>
+                      {r.calendar_error
+                        ? <div style={{ fontSize: 11, color: T.red }}>not on the calendar: {r.calendar_error}</div>
+                        : null}
+                    </td>
                     <td style={tableTd}>{nameOf(r.team_member_id)}</td>
                     <td style={tableTd}>
                       {escalated ? nameOf(r.escalated_to_team_member_id)
@@ -1480,15 +1535,20 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                         </span>
                       ) : "—"}
                     </td>
-                    <td style={tableTd}>{`${daysBetween(r.set_on, todayCentral())}d`}</td>
+                    <td style={tableTd}>{fmtDate(r.set_on)}</td>
                     <td style={tableTd}>{r.note || "—"}</td>
                     <td style={tableTd}>
-                      {canTouch(r.team_member_id) && (
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "appointment", row: r })}>Edit</button>
-                          <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("appointment", r.id, "appointment")}>Delete</button>
-                        </div>
-                      )}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {canTouch(apptHost(r)) && !r.sold_on && (
+                          <button type="button" style={miniBtn} onClick={() => setLogging(r)}>Log the sale</button>
+                        )}
+                        {canTouch(r.team_member_id) && (
+                          <>
+                            <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "appointment", row: r })}>Edit</button>
+                            <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("appointment", r.id, "appointment")}>Delete</button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1526,7 +1586,20 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
       {adding && (
         <AddAppointment roster={roster} myTeamId={myTeamId} types={types}
           onClose={() => setAdding(false)}
-          onSaved={(who) => { setAdding(false); setKind("appointments"); setDone(`Appointment set with ${who}.`); after(); }} />
+          onSaved={(who, d) => {
+            setAdding(false); setKind("appointments");
+            setDone(`Appointment set with ${who}.` + (d?.on_calendar
+              ? " It is on the calendar."
+              : ` It is not on the calendar: ${d?.calendar_error || "the calendar did not answer"}.`));
+            after();
+          }} />
+      )}
+
+      {logging && (
+        <Modal title={`What came off the appointment with ${logging.customer_label}`} onClose={() => setLogging(null)}>
+          <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+            refreshKey={refreshKey} appointment={logging} onLogged={after} />
+        </Modal>
       )}
 
       {editing && (
@@ -1545,24 +1618,29 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
 // appointment you keep for yourself pays nothing here (Peter 2026-09-11).
 // ---------------------------------------------------------------------
 function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
-  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", phone_last4: "", set_on: todayCentral(), escalated_to: "", line_of_business: "", product_type: "", note: "" });
+  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", phone_last4: "", set_on: todayCentral(),
+    when_date: todayCentral(), when_time: "10:00", duration_minutes: "30", is_video: false,
+    escalated_to: "", line_of_business: "", product_type: "", note: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const set = (k, v) => setF(d => ({ ...d, [k]: v }));
 
   const save = async () => {
+    const startsAt = centralIso(f.when_date, f.when_time);
+    if (!startsAt) { setErr("When is the appointment?"); return; }
     setSaving(true); setErr("");
     const { data, error } = await supabase.rpc("rp_log_appointment", {
       p_payload: {
         customer_first: f.customer_first, customer_last_initial: f.customer_last_initial,
         phone_last4: f.phone_last4, set_on: f.set_on,
         line_of_business: f.line_of_business, product_type: f.product_type || null,
+        starts_at: startsAt, duration_minutes: f.duration_minutes, is_video: !!f.is_video,
         escalated_to_team_member_id: f.escalated_to || null, note: f.note,
       },
     });
     setSaving(false);
     if (error || !data?.ok) { setErr(errText(error || data)); return; }
-    onSaved(data.customer || f.customer_first);
+    onSaved(data.customer || f.customer_first, data);
   };
 
   return (
@@ -1585,6 +1663,30 @@ function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
           <div>
             <label style={labelStyle}>Date set</label>
             <input type="date" value={f.set_on} max={todayCentral()} onChange={e => set("set_on", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+          </div>
+          <div>
+            <label style={labelStyle}>Appointment date</label>
+            <input type="date" value={f.when_date} min={todayCentral()} onChange={e => set("when_date", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+          </div>
+          <div>
+            <label style={labelStyle}>Time <span style={hintStyle}>San Antonio</span></label>
+            <input type="time" value={f.when_time} onChange={e => set("when_time", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+          </div>
+          <div>
+            <label style={labelStyle}>How long</label>
+            <select value={f.duration_minutes} onChange={e => set("duration_minutes", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="45">45 minutes</option>
+              <option value="60">1 hour</option>
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Where</label>
+            <select value={f.is_video ? "video" : "office"} onChange={e => set("is_video", e.target.value === "video")} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+              <option value="office">In the office</option>
+              <option value="video">Google Meet</option>
+            </select>
           </div>
           <div>
             <label style={labelStyle}>About</label>
