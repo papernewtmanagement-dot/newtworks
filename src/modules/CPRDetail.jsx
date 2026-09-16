@@ -3742,21 +3742,20 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 
 
 
-// Locked means the payroll summary for this week has arrived and every figure
-// below is frozen at what was actually paid. Open means they can still move.
+// A badge only when the week is locked, meaning the payroll summary has arrived
+// and every figure below is frozen at what was actually paid. An unlocked week
+// gets no badge at all.
 function PayLockBadge({ lock }) {
-  if (!lock) return null;
-  const locked = !!lock.locked;
+  if (!lock || !lock.locked) return null;
   return (
     <div style={{ margin: "0 0 8px 0" }}>
       <span style={{
         display: "inline-flex", alignItems: "center", gap: 4,
         fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
         boxSizing: "border-box", whiteSpace: "nowrap",
-        background: locked ? T.slate100 : T.amberLt,
-        color: locked ? T.slate700 : T.slate900,
+        background: T.slate100, color: T.slate700,
       }}>
-        {locked ? "🔒 Locked · paid" : "🔓 Open · still moving"}
+        🔒 Locked · paid
       </span>
     </div>
   );
