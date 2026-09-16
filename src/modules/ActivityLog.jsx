@@ -182,6 +182,14 @@ function todayCentral() {
 // A time typed on this page means that time in San Antonio, whatever clock the
 // phone is set to. Work out how far Central sits from UTC on that date, then
 // apply it, so 10:00 is 10:00 in the office from anywhere.
+function centralParts(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d)) return { date: todayCentral(), time: "10:00" };
+  const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    .formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {});
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour % 24}`.padStart(2, "0") + `:${p.minute}` };
+}
 function centralIso(dateStr, timeStr) {
   if (!dateStr || !timeStr) return null;
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -1359,6 +1367,11 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
     if (!window.confirm(`Delete this ${what}? It comes off the week's points.`)) return;
     const { data, error } = await supabase.rpc("rp_delete_record", { p_kind: recordKind, p_id: id, p_reason: null });
     if (error || !data?.ok) { window.alert(errText(error || data)); return; }
+    if (data.off_calendar === false) {
+      setErr(`Deleted here, but it is still on the calendar: ${data.calendar_error || "the calendar did not answer"}. Take it off by hand.`);
+    } else if (data.off_calendar === true) {
+      setDone("Deleted, and taken off the calendar.");
+    }
     after();
   };
 
@@ -1606,7 +1619,13 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
         <EditRecord
           kind={editing.kind} row={editing.row} sources={sources} types={types} roster={roster} isOwner={isOwner}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); setDone("Saved."); after(); }}
+          onSaved={(d) => {
+            setEditing(null);
+            setDone("Saved." + (d?.on_calendar === false
+              ? ` The calendar did not move with it: ${d.calendar_error || "the calendar did not answer"}.`
+              : d?.on_calendar === true ? " The calendar moved with it." : ""));
+            after();
+          }}
         />
       )}
     </div>
@@ -1741,6 +1760,10 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     escalated_to: row.escalated_to_team_member_id || "",
     appt_line: row.line_of_business || "",
     appt_type: row.product_type || "",
+    appt_when_date: centralParts(row.starts_at).date,
+    appt_when_time: centralParts(row.starts_at).time,
+    appt_minutes: String(row.duration_minutes || 30),
+    appt_video: !!row.is_video,
     owner: row.team_member_id || "",
     note: row.note || "",
     ecrm: row.ecrm_opportunity_url || row.ecrm_url || "",
@@ -1791,6 +1814,8 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
         customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
         set_on: f.on_date, escalated_to_team_member_id: f.escalated_to || null, note: f.note,
         line_of_business: f.appt_line, product_type: f.appt_type || null,
+        starts_at: centralIso(f.appt_when_date, f.appt_when_time),
+        duration_minutes: f.appt_minutes, is_video: !!f.appt_video,
       };
     } else {
       fn = "rp_edit_activity";
@@ -1808,7 +1833,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
       if (mv.error || !mv.data?.ok) { setSaving(false); setErr(errText(mv.error || mv.data)); return; }
     }
     setSaving(false);
-    onSaved();
+    onSaved(data);
   };
 
   const titleWord = kind === "sale" ? "sale" : kind === "appointment" ? "appointment" : "entry";
@@ -1863,6 +1888,38 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
               <select value={f.appt_type} onChange={e => set("appt_type", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
                 <option value="">Pick one</option>
                 {((types || {})[f.appt_line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+              </select>
+            </div>
+          )}
+          {kind === "appointment" && (
+            <div>
+              <label style={labelStyle}>Appointment date</label>
+              <input type="date" value={f.appt_when_date} onChange={e => set("appt_when_date", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+            </div>
+          )}
+          {kind === "appointment" && (
+            <div>
+              <label style={labelStyle}>Time <span style={hintStyle}>San Antonio</span></label>
+              <input type="time" value={f.appt_when_time} onChange={e => set("appt_when_time", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} />
+            </div>
+          )}
+          {kind === "appointment" && (
+            <div>
+              <label style={labelStyle}>How long</label>
+              <select value={f.appt_minutes} onChange={e => set("appt_minutes", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="45">45 minutes</option>
+                <option value="60">1 hour</option>
+              </select>
+            </div>
+          )}
+          {kind === "appointment" && (
+            <div>
+              <label style={labelStyle}>Where</label>
+              <select value={f.appt_video ? "video" : "office"} onChange={e => set("appt_video", e.target.value === "video")} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
+                <option value="office">In the office</option>
+                <option value="video">Google Meet</option>
               </select>
             </div>
           )}
