@@ -2327,6 +2327,32 @@ const cardGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minma
 const rowBtn = { display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "8px 0", border: "none", background: "transparent", fontFamily: "inherit", fontSize: 13, textAlign: "left" };
 const itemLine = { fontSize: 12, color: T.slate600, display: "flex", flexWrap: "wrap", gap: "2px 8px", alignItems: "center" };
 const miniBtn = { ...btnGhost, padding: "2px 7px", fontSize: 11 };
+// One shape for every points breakdown on this page (Peter 2026-09-16): a header
+// line carrying the total, a note line under it, then a bullet for each thing
+// that built the total. Sales, Marketing and Retention all read the same way.
+const HeadLine = ({ label, value }) => (
+  <div style={itemLine}>
+    <span style={{ flex: 1, minWidth: 90, fontWeight: 700, color: T.slate800 }}>{label}</span>
+    <strong style={{ color: T.slate900 }}>{value}</strong>
+  </div>
+);
+const NoteLine = ({ children }) => <div style={{ ...itemLine, color: T.slate500, paddingLeft: 10 }}>{children}</div>;
+const Bullet = ({ children }) => (
+  <div style={{ ...itemLine, color: T.slate600, paddingLeft: 10 }}>
+    <span style={{ color: T.slate400 }}>•</span><span>{children}</span>
+  </div>
+);
+const Divider = () => <div style={{ borderTop: `1px solid ${T.slate100}`, marginTop: 3 }} />;
+// Roll a list of items up into one row per label, biggest first.
+const byLabel = (rows, labelOf, valueOf) => {
+  const m = new Map();
+  for (const r of rows || []) {
+    const k = labelOf(r) || "Other";
+    const cur = m.get(k) || { n: 0, v: 0 };
+    m.set(k, { n: cur.n + 1, v: cur.v + Number(valueOf(r) || 0) });
+  }
+  return Array.from(m, ([label, x]) => ({ label, ...x })).sort((a, b) => b.v - a.v);
+};
 const fmtMoney = (n) => `$${fmtPts(n)}`;
 const ratePct = (r) => r == null ? "—" : `${Number((Number(r) * 100).toFixed(3))}%`;
 const nth = (n) => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
@@ -2417,15 +2443,27 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
   };
 
   const marketingItems = (p) => {
-    const items = p.marketing?.items || [];
-    if (!items.length) return <div style={itemLine}>Nothing this week.</div>;
-    return items.map(it => (
-      <div key={it.id} style={itemLine}>
-        <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
-        <span>{it.label}{Number(it.nth) > 1 ? <span style={{ color: T.slate400 }}> · {nth(Number(it.nth))} this year</span> : null}</span>
-        <strong style={{ color: T.slate900 }}>{fmtPts(it.points)}</strong>
-      </div>
-    ));
+    const m = p.marketing || {};
+    const items = m.items || [];
+    const rows = [<div key="h"><HeadLine label="This week" value={fmtPts(m.points)} /></div>];
+    if (!items.length) rows.push(<div key="none"><NoteLine>Nothing this week.</NoteLine></div>);
+    for (const g of byLabel(items, it => it.label, it => it.points)) {
+      rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtPts(g.v)}`}</Bullet></div>);
+    }
+    rows.push(<div key="qtd"><Divider /><HeadLine label="Quarter to date" value={fmtPts(m.qtd_points)} /></div>);
+    if (items.length) {
+      rows.push(<div key="d2"><Divider /></div>);
+      for (const it of items) {
+        rows.push(
+          <div key={it.id} style={{ ...itemLine, color: T.slate500 }}>
+            <span>{fmtDate(it.on_date)}</span><span>{it.customer || "\u2014"}</span>
+            <span>{it.label}{Number(it.nth) > 1 ? <span style={{ color: T.slate400 }}> \u00b7 {nth(Number(it.nth))} this year</span> : null}</span>
+            <strong style={{ color: T.slate700 }}>{fmtPts(it.points)}</strong>
+          </div>
+        );
+      }
+    }
+    return rows;
   };
   const quoteItems = (p) => {
     const items = p.quotes?.items || [];
@@ -2456,68 +2494,59 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
     ];
 
     const n = (v) => Number(v || 0);
-    const atCap = (steps, cap) => cap != null && n(steps) >= n(cap) ? ` (at the ${cap} cap)` : "";
+    const atCap = (tiers, cap) => cap != null && n(tiers) >= n(cap) ? ` (at the ${cap} cap)` : "";
     const capped = (raw, cap) => n(raw) > n(cap) ? ` \u00b7 capped at ${ratePct(cap)}` : "";
-    const pcSteps = n(t.auto_tiers_at_6) + n(t.fire_tiers_at_3) + n(t.life_tiers_pc_at_200);
-
-    const from = [];
-    if (n(u.auto_apps)) from.push(`${plural(n(u.auto_apps), "car")} = ${t.auto_tiers_at_6}${atCap(t.auto_tiers_at_6, t.auto_rep_cap)}`);
-    if (n(u.fire_apps)) from.push(`${plural(n(u.fire_apps), "fire app")} = ${t.fire_tiers_at_3}${atCap(t.fire_tiers_at_3, t.fire_rep_cap)}`);
-    if (n(u.life_premium)) from.push(`${fmtMoney(u.life_premium)} life = ${t.life_tiers_pc_at_200}`);
-
-    const line = (label, value) => (
-      <div style={itemLine}>
-        <span style={{ flex: 1, minWidth: 90, fontWeight: 700, color: T.slate800 }}>{label}</span>
-        <strong style={{ color: T.slate900 }}>{value}</strong>
-      </div>
-    );
-    const sub = (text) => <div style={{ ...itemLine, color: T.slate500, paddingLeft: 10 }}>{text}</div>;
+    const pcTiers = n(t.auto_tiers_at_6) + n(t.fire_tiers_at_3) + n(t.life_tiers_pc_at_200);
+    const tierWord = (k) => plural(n(k), "tier");
 
     const rows = [];
-    rows.push(<div key="pc">{line("P&C", fmtPts(s.pc_points))}</div>);
+    rows.push(<div key="pc"><HeadLine label="P&C" value={fmtPts(s.pc_points)} /></div>);
     if (n(s.pc_premium)) {
-      rows.push(<div key="pc1">{sub(`${ratePct(s.pc_rate)} of ${fmtMoney(s.pc_premium)} issued`)}</div>);
-      rows.push(<div key="pc2">{sub(`${ratePct(rt.pc_base_pct)} to start, plus ${ratePct(rt.pc_step_pct)} a step \u00b7 ${plural(pcSteps, "step")}${capped(rt.pc_rate_raw, rt.pc_rate_capped)}`)}</div>);
-      if (from.length) rows.push(<div key="pc3">{sub(`Steps from ${from.join(" \u00b7 ")}`)}</div>);
+      rows.push(<div key="pc1"><NoteLine>{`${ratePct(s.pc_rate)} of ${fmtMoney(s.pc_premium)} issued`}</NoteLine></div>);
+      rows.push(<div key="pc2"><NoteLine>{`${ratePct(rt.pc_base_pct)} base + ${ratePct(rt.pc_step_pct)} / ${tierWord(pcTiers)}${capped(rt.pc_rate_raw, rt.pc_rate_capped)}`}</NoteLine></div>);
+      if (n(u.auto_apps)) rows.push(<div key="pcA"><Bullet>{`Auto: ${plural(n(u.auto_apps), "car")} = ${tierWord(t.auto_tiers_at_6)}${atCap(t.auto_tiers_at_6, t.auto_rep_cap)}`}</Bullet></div>);
+      if (n(u.fire_apps)) rows.push(<div key="pcF"><Bullet>{`Fire: ${plural(n(u.fire_apps), "app")} = ${tierWord(t.fire_tiers_at_3)}${atCap(t.fire_tiers_at_3, t.fire_rep_cap)}`}</Bullet></div>);
+      if (n(u.life_premium)) rows.push(<div key="pcL"><Bullet>{`Life: ${fmtMoney(u.life_premium)} = ${tierWord(t.life_tiers_pc_at_200)}`}</Bullet></div>);
     } else {
-      rows.push(<div key="pc0">{sub("No auto or fire issued this quarter.")}</div>);
+      rows.push(<div key="pc0"><NoteLine>No auto or fire issued this quarter.</NoteLine></div>);
     }
 
-    rows.push(<div key="lh">{line("Life & Health", fmtPts(s.lh_points))}</div>);
+    rows.push(<div key="lh"><HeadLine label="Life & Health" value={fmtPts(s.lh_points)} /></div>);
     if (n(s.lh_premium)) {
-      rows.push(<div key="lh1">{sub(`${ratePct(s.lh_rate)} of ${fmtMoney(s.lh_premium)} issued`)}</div>);
-      rows.push(<div key="lh2">{sub(`${ratePct(rt.lh_base_pct)} to start, plus ${ratePct(rt.lh_step_pct)} a step \u00b7 ${plural(n(t.life_tiers_lh_at_200), "step")}${capped(rt.lh_rate_raw, rt.lh_rate_capped)}`)}</div>);
-      if (n(u.life_premium)) rows.push(<div key="lh3">{sub(`Steps from ${fmtMoney(u.life_premium)} life, one every ${fmtMoney(t.life_dollar_step)}`)}</div>);
+      rows.push(<div key="lh1"><NoteLine>{`${ratePct(s.lh_rate)} of ${fmtMoney(s.lh_premium)} issued`}</NoteLine></div>);
+      rows.push(<div key="lh2"><NoteLine>{`${ratePct(rt.lh_base_pct)} base + ${ratePct(rt.lh_step_pct)} / ${tierWord(t.life_tiers_lh_at_200)}${capped(rt.lh_rate_raw, rt.lh_rate_capped)}`}</NoteLine></div>);
+      if (n(u.life_premium)) rows.push(<div key="lhL"><Bullet>{`Life: ${fmtMoney(u.life_premium)} = ${tierWord(t.life_tiers_lh_at_200)}`}</Bullet></div>);
     } else {
-      rows.push(<div key="lh0">{sub("No life or health issued this quarter.")}</div>);
+      rows.push(<div key="lh0"><NoteLine>No life or health issued this quarter.</NoteLine></div>);
     }
 
-    rows.push(
-      <div key="qtd" style={{ ...itemLine, borderTop: `1px solid ${T.slate100}`, paddingTop: 5 }}>
-        <span style={{ flex: 1, minWidth: 90, fontWeight: 700, color: T.slate800 }}>Quarter to date</span>
-        <strong style={{ color: T.slate900 }}>{fmtPts(s.qtd_points)}</strong>
-      </div>
-    );
+    rows.push(<div key="qtd"><Divider /><HeadLine label="Quarter to date" value={fmtPts(s.qtd_points)} /></div>);
     return rows;
   };
   const retentionItems = (p) => {
     const r = p.retention || {};
-    const rows = [
-      <div key="hours" style={itemLine}><span>Hours in office</span><span>{fmtPts(r.hours_in_office)} × {fmtMoney(unit("hour_in_office"))}</span><strong style={{ color: T.slate900 }}>{fmtMoney(r.hour_points)}</strong></div>,
-      <div key="calls" style={itemLine}><span>Calls answered</span><span>{r.calls_answered} × {fmtMoney(unit("call_answered"))}</span><strong style={{ color: T.slate900 }}>{fmtMoney(r.call_points)}</strong></div>,
-    ];
-    for (const it of r.items || []) {
-      rows.push(
-        <div key={it.id} style={itemLine}>
-          <span>{fmtDate(it.on_date)}</span><span>{it.customer || "—"}</span>
-          <span>{it.label}{it.clears_on ? <span style={{ color: T.amber }}> · clears {fmtDate(it.clears_on)}</span> : null}</span>
-          {it.note && <span style={{ color: T.slate400 }}>{it.note}</span>}
-          <strong style={{ color: T.slate900 }}>{fmtMoney(it.points)}</strong>
-          {it.source === "manual" && canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_activity", it.id, "entry")}>Remove</button>}
-        </div>
-      );
+    const items = r.items || [];
+    const rows = [<div key="h"><HeadLine label="Net this week" value={fmtMoney(r.net)} /></div>];
+    rows.push(<div key="g"><NoteLine>{`${fmtMoney(r.gross)} gross${Number(r.reduction_pct) > 0 ? `, less ${fmtPts(r.reduction_pct)}% for ${fmtPts(r.missed_pct)}% missed calls` : ""}`}</NoteLine></div>);
+    rows.push(<div key="hrs"><Bullet>{`Hours in office: ${fmtPts(r.hours_in_office)} = ${fmtMoney(r.hour_points)}`}</Bullet></div>);
+    rows.push(<div key="cal"><Bullet>{`Calls answered: ${r.calls_answered || 0} = ${fmtMoney(r.call_points)}`}</Bullet></div>);
+    for (const g of byLabel(items, it => it.label, it => it.points)) {
+      rows.push(<div key={`g-${g.label}`}><Bullet>{`${g.label}: ${g.n} = ${fmtMoney(g.v)}`}</Bullet></div>);
     }
-    if (Number(r.reduction_pct) > 0) rows.push(<div key="red" style={{ ...itemLine, color: T.red }}><span>Missed {fmtPts(r.missed_pct)}% calls</span><strong>−{fmtPts(r.reduction_pct)}% of gross</strong></div>);
+    if (items.length) {
+      rows.push(<div key="d2"><Divider /></div>);
+      for (const it of items) {
+        rows.push(
+          <div key={it.id} style={{ ...itemLine, color: T.slate500 }}>
+            <span>{fmtDate(it.on_date)}</span><span>{it.customer || "\u2014"}</span>
+            <span>{it.label}{it.clears_on ? <span style={{ color: T.amber }}> \u00b7 clears {fmtDate(it.clears_on)}</span> : null}</span>
+            {it.note && <span style={{ color: T.slate400 }}>{it.note}</span>}
+            <strong style={{ color: T.slate700 }}>{fmtMoney(it.points)}</strong>
+            {it.source === "manual" && canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_activity", it.id, "entry")}>Remove</button>}
+          </div>
+        );
+      }
+    }
     return rows;
   };
 
