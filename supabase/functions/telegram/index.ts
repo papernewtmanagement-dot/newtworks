@@ -540,6 +540,7 @@ async function handleBotCommand(
       }
       const submittedAt = new Date().toISOString();
       const healthWritten: any[] = [];
+      const healthRejected: { for: string; reason: string }[] = [];
       for (const p of parsed) {
         const targetTeamId = aliasToTeamId.get(p.matched_alias.toLowerCase());
         if (!targetTeamId) continue;
@@ -555,11 +556,18 @@ async function handleBotCommand(
           submitted_by_team_id: sender.team_id, submitted_by_telegram_user_id: fromUser.id,
           source_message_id: messageId, submitted_at: submittedAt,
         };
-        if (existing) await sb.from("team_health_checkins").update(payload).eq("id", existing.id);
-        else await sb.from("team_health_checkins").insert(payload);
+        const { error: writeErr } = existing
+          ? await sb.from("team_health_checkins").update(payload).eq("id", existing.id)
+          : await sb.from("team_health_checkins").insert(payload);
+        if (writeErr) {
+          console.error("team_health_checkins write rejected:", writeErr.message);
+          healthRejected.push({ for: targetFirstName, reason: writeErr.message || "" });
+          continue;
+        }
         healthWritten.push({ for: targetFirstName, hit_today: p.hit_today, override: p.week_total_override, proxy: !isOwnSubmission });
       }
       await ackHealth(chatId, messageId, healthWritten);
+      if (healthRejected.length > 0) await sendRejectedNotes(chatId, messageId, healthRejected);
       if (healthWritten.length > 0) ctx.messageType = "checkin_health";
       return jsonResponse({ ok: true, command: cmd, written_count: healthWritten.length, details: healthWritten });
     }
@@ -636,6 +644,20 @@ async function ackWork(chatId: number, messageId: number, written: any[], checki
   await sendReply(chatId, `✅ Logged:\n${lines.join("\n")}`, messageId);
 }
 
+async function sendRejectedNotes(chatId: number, messageId: number, rejected: { for: string; reason: string }[]): Promise<void> {
+  // A Supabase write can be refused by a trigger (LICENSE_REQUIRED is the live one)
+  // and the client only reports it on .error. These paths used to push to the
+  // written list regardless, so the bot replied with a tick for a row that was
+  // never saved. Say what actually happened instead.
+  if (rejected.length === 0) return;
+  const lines = rejected.map((r) =>
+    (r.reason || "").startsWith("LICENSE_REQUIRED")
+      ? `❌ Can't log SP or quotes for ${r.for} — no active license on file. Talk to Peter.`
+      : `❌ Couldn't save ${r.for}'s check-in — nothing was logged. Tell Peter.`
+  );
+  await sendReply(chatId, lines.join("\n"), messageId);
+}
+
 async function ackHealth(chatId: number, messageId: number, written: any[]): Promise<void> {
   if (written.length === 0) return;
   if (written.length === 1 && !written[0].proxy) {
@@ -702,9 +724,8 @@ async function handleConversation(text: string, sender: { team_id: string | null
   try {
     const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }))
       .toISOString().slice(0, 10);
-    const { data, error } = await sb.rpc("render_team_status_block", {
-      p_agency_id: AGENCY_ID, p_as_of_date: today, p_fresh_type: "eod",
-      p_header_label: "Where the team stands", p_wtw_as_of_date: today,
+    const { data, error } = await sb.rpc("render_team_stats_block", {
+      p_agency_id: AGENCY_ID, p_display_date: today, p_fresh_type: "eod",
     });
     const blockText = Array.isArray(data) ? data[0]?.block_text : (data as any)?.block_text;
     if (!error && blockText) standingsLine = blockText;
@@ -879,6 +900,7 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
     const active = await findActiveCheckin();
     const workWritten: any[] = [];
     const healthWritten: any[] = [];
+    const writeRejected: { for: string; reason: string }[] = [];
     if (active) {
       const { data: allTeam } = await sb.from("team")
         .select("id, first_name, nickname, include_in_team_checkins, include_in_health_checkins, category, role")
@@ -931,8 +953,14 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
             submitted_by_team_id: sender.team_id, submitted_by_telegram_user_id: fromUser.id,
             source_message_id: messageId, submitted_at: submittedAt,
           };
-          if (existing) await sb.from("team_health_checkins").update(payload).eq("id", existing.id);
-          else await sb.from("team_health_checkins").insert(payload);
+          const { error: writeErr } = existing
+            ? await sb.from("team_health_checkins").update(payload).eq("id", existing.id)
+            : await sb.from("team_health_checkins").insert(payload);
+          if (writeErr) {
+            console.error("team_health_checkins write rejected:", writeErr.message);
+            writeRejected.push({ for: targetFirstName, reason: writeErr.message || "" });
+            continue;
+          }
           healthWritten.push({ for: targetFirstName, hit_today: p.hit_today, override: p.week_total_override, proxy: !isOwnSubmission });
         }
       } else {
@@ -951,12 +979,20 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
             submitted_by_team_id: sender.team_id, submitted_by_telegram_user_id: fromUser.id,
             source_message_id: messageId, received_at: submittedAt,
           };
-          if (existing) await sb.from("team_checkins").update(payload).eq("id", existing.id);
-          else await sb.from("team_checkins").insert(payload);
+          const { error: writeErr } = existing
+            ? await sb.from("team_checkins").update(payload).eq("id", existing.id)
+            : await sb.from("team_checkins").insert(payload);
+          if (writeErr) {
+            console.error("team_checkins write rejected:", writeErr.message);
+            writeRejected.push({ for: targetFirstName, reason: writeErr.message || "" });
+            continue;
+          }
           workWritten.push({ for: targetFirstName, team_id: targetTeamId, quotes: p.quotes, sales: p.sales_points, proxy: !isOwnSubmission });
         }
       }
     }
+
+    if (writeRejected.length > 0) await sendRejectedNotes(chatId, messageId, writeRejected);
 
     if (workWritten.length > 0) ctx.messageType = "checkin_work";
     else if (healthWritten.length > 0) ctx.messageType = "checkin_health";
