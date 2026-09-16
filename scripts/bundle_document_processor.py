@@ -81,6 +81,7 @@ ORDER = [
     "parsers/reference_ingest.ts",
     "parsers/paypal_print_sales.ts",
     "parsers/amazon_order_email.ts",
+    "parsers/cts_profile.ts",
     "index.ts",
 ]
 
@@ -163,7 +164,28 @@ def strip_imports(text: str, externals_seen: "dict[str, str]") -> str:
     return "\n".join(out)
 
 
+def check_order_covers_parsers(source_dir: Path) -> None:
+    """Every parser on disk must be listed in ORDER.
+
+    ORDER is hand-maintained, so a parser added to the directory and imported
+    by index.ts is NOT automatically in the bundle. The result is the worst
+    kind of failure: the bundle builds, validates, deploys and reports ACTIVE,
+    and then throws "X is not defined" the first time that code path runs —
+    which for a rarely-triggered parser can be weeks later. That is exactly
+    what happened to parsers/cts_profile.ts on 2026-09-16. This check turns a
+    silent omission into a build error.
+    """
+    on_disk = {f"parsers/{p.name}" for p in sorted((source_dir / "parsers").glob("*.ts"))}
+    missing = sorted(on_disk - set(ORDER))
+    if missing:
+        raise ValueError(
+            f"parser files not listed in ORDER: {missing} — add them to ORDER "
+            f"(before index.ts) or they will be missing from the bundle"
+        )
+
+
 def build_bundle(source_dir: Path) -> str:
+    check_order_covers_parsers(source_dir)
     externals_seen = {}
     processed = {}
     for rel in ORDER:
