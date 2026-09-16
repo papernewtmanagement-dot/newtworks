@@ -474,8 +474,8 @@ function renderFaqAnswer(answer) {
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
   if (lines.length === 0) return "";
-  if (lines.length === 1) return `<p>${escapeHtml(lines[0])}</p>`;
-  return `<ul>` + lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("") + `</ul>`;
+  if (lines.length === 1) return `<p style="${SAY_STYLE}">${escapeHtml(lines[0])}</p>`;
+  return `<ul style="${SAY_STYLE}">` + lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("") + `</ul>`;
 }
 
 // Q&A pairs only — no wrapper, no INFO line, no tag line. Those all stay in
@@ -484,7 +484,7 @@ function renderFaqAnswer(answer) {
 function renderFaqGroup(rows) {
   const parts = [];
   for (const item of rows) {
-    parts.push(`<p><strong>${escapeHtml(item.question || "")}</strong></p>`);
+    parts.push(`<p><strong style="${THEM_STYLE}">${escapeHtml(item.question || "")}</strong></p>`);
     parts.push(renderFaqAnswer(item.answer));
   }
   return parts.join("");
