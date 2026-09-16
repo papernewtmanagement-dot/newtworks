@@ -2758,6 +2758,9 @@ function ChecklistTab() {
   // personal list, instead of being answered on the kickoff page the next
   // morning (Peter 2026-09-16).
   const [commit, setCommit] = useState(null);
+  // Everyone's commit for today, so the row names who has ticked theirs off —
+  // same visibility the rest of the personal list has (Peter 2026-09-16).
+  const [commitPeople, setCommitPeople] = useState([]);
   // Editing the list itself is the owner's alone. The server says so too
   // (checklist_require_owner), so hiding the controls is not the only guard.
   const [editMode, setEditMode] = useState(false);
@@ -2776,6 +2779,13 @@ function ChecklistTab() {
     let alive = true;
     supabase.rpc("kickoff_commits_mine")
       .then(r => { if (alive) setCommit(r?.data?.today || null); });
+    return () => { alive = false; };
+  }, [tickKey]);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("kickoff_commits_today")
+      .then(r => { if (alive) setCommitPeople(Array.isArray(r?.data?.people) ? r.data.people : []); });
     return () => { alive = false; };
   }, [tickKey]);
 
@@ -2885,6 +2895,7 @@ function ChecklistTab() {
   const items = Array.isArray(state?.items) ? state.items : [];
   const cleared = items.filter(i => i.ticked_at).length;
   const personal = Array.isArray(state?.personal) ? state.personal : [];
+  const commitHitNames = commitPeople.filter(p => p.hit === true).map(p => p.name).join(", ");
   const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
   const answered = parts.filter(p => (p || "").trim()).length;
   // The cue: the wrap-up opens itself on the last workday of the week and
@@ -2959,7 +2970,7 @@ function ChecklistTab() {
             <ChecklistRow
               item={{ id: commit ? commit.id : "nocommit", title: commit ? `Commit completed \u2014 ${commit.commit_text}` : "Commit completed", help_text: COMMIT_HELP }}
               checked={!!commit && commit.hit === true}
-              byLabel={commit ? (commit.hit === false ? "missed" : null) : "no commit saved today"}
+              byLabel={commitHitNames || null}
               busy={busy}
               disabled={!commit}
               onToggle={(_it, on) => toggleCommit(commit, on)}
