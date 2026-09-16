@@ -2667,8 +2667,9 @@ const checklistRowBtn = {
   boxSizing: "border-box", border: `1px solid ${T.slate300}`, background: T.white, color: T.slate600,
 };
 
-function ChecklistRow({ item, checked, byLabel, busy, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, children }) {
+function ChecklistRow({ item, checked, byLabel, busy, disabled, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, children }) {
   const open = openHelp === item.id;
+  const off = !!busy || !!disabled;
   return (
     <div>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px", borderBottom: open || children ? "none" : `1px solid ${T.slate100}` }}>
@@ -2677,10 +2678,10 @@ function ChecklistRow({ item, checked, byLabel, busy, onToggle, openHelp, setOpe
           id={`chk_${item.id}`}
           checked={!!checked}
           onChange={() => onToggle(item, !checked)}
-          disabled={busy}
-          style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: busy ? "wait" : "pointer" }}
+          disabled={off}
+          style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue, boxSizing: "border-box", cursor: disabled ? "default" : busy ? "wait" : "pointer" }}
         />
-        <label htmlFor={`chk_${item.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: busy ? "wait" : "pointer", color: checked ? T.slate500 : T.slate800 }}>{item.title}</label>
+        <label htmlFor={`chk_${item.id}`} style={{ flex: 1, fontSize: 13, lineHeight: 1.4, cursor: disabled ? "default" : busy ? "wait" : "pointer", color: checked || disabled ? T.slate500 : T.slate800 }}>{item.title}</label>
         {item.link_url && (
           <a href={item.link_url} target="_blank" rel="noopener noreferrer" title="Open the link for this item"
              style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: T.blue, textDecoration: "none", marginTop: 1 }}>open ↗</a>
@@ -2951,24 +2952,23 @@ function ChecklistTab() {
               ))}
         </div>
 
-        {(personal.length > 0 || commit) && (
+        {(
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Personal checklist</div>
             <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
-            {commit && (
-              <ChecklistRow
-                item={{ id: commit.id, title: `Commit completed \u2014 ${commit.commit_text}`, help_text: COMMIT_HELP }}
-                checked={commit.hit === true}
-                byLabel={commit.hit === false ? "missed" : null}
-                busy={busy}
-                onToggle={(_it, on) => toggleCommit(commit, on)}
-                openHelp={openHelp}
-                setOpenHelp={setOpenHelp}
-                editMode={false}
-                onEdit={() => {}}
-                onMove={() => {}}
-              />
-            )}
+            <ChecklistRow
+              item={{ id: commit ? commit.id : "nocommit", title: commit ? `Commit completed \u2014 ${commit.commit_text}` : "Commit completed", help_text: COMMIT_HELP }}
+              checked={!!commit && commit.hit === true}
+              byLabel={commit ? (commit.hit === false ? "missed" : null) : "no commit saved today"}
+              busy={busy}
+              disabled={!commit}
+              onToggle={(_it, on) => toggleCommit(commit, on)}
+              openHelp={openHelp}
+              setOpenHelp={setOpenHelp}
+              editMode={false}
+              onEdit={() => {}}
+              onMove={() => {}}
+            />
             {personal.map(it => (
               <ChecklistRow
                 key={it.id}
