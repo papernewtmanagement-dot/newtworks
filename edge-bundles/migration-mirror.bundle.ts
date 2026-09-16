@@ -167,6 +167,56 @@ async function requireSharedSecret(
   return null;
 }
 
+// -------------------------------------------------------------------------
+// Caller-identity gate for admin actions fired from the browser
+// -------------------------------------------------------------------------
+// Some functions serve BOTH public token-gated traffic — which forces
+// verify_jwt to stay false at the platform level — AND admin-only actions
+// triggered from inside the Newtworks app. Those admin actions get no help
+// from the platform gate, so they check the caller here instead: the bearer
+// token has to identify a real signed-in user, and that user's public.users
+// row has to be an owner or manager of the agency being acted on.
+//
+// Same two-step check invite-team-member does inline. This is the shared copy
+// so the next function that needs it does not write a third one.
+//
+// A shared secret would NOT do the job here. The call comes from a browser,
+// and anything the browser can send, anyone reading the page can read.
+
+const ADMIN_ROLES = ["owner", "manager"];
+
+async function requireOwnerOrManager(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
+  if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
+
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!anonKey) return corsJson({ ok: false, error: "auth unavailable" }, 500);
+
+  // The anon key is also what an unauthenticated caller sends as its bearer
+  // token, so getUser() failing here is the normal "nobody is signed in" path,
+  // not an infrastructure problem.
+  const caller = createClient(SUPABASE_URL, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: who, error: whoErr } = await caller.auth.getUser();
+  if (whoErr || !who?.user) return corsJson({ ok: false, error: "invalid or expired session" }, 401);
+
+  const { data: row, error: rowErr } = await sb
+    .from("users")
+    .select("role, agency_id")
+    .eq("auth_user_id", who.user.id)
+    .maybeSingle();
+  if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
+  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+    return corsJson({ ok: false, error: "not permitted" }, 403);
+  }
+  return null;
+}
+
 // ==================== _shared/alerts.ts ====================
 // =========================================================================
 // _shared/alerts.ts
@@ -425,6 +475,159 @@ Deno.serve(async (req: Request) => {
   try {
     const token = await getSetting(agencyId, "github_pat_newtworks_commit");
     if (!token) throw new Error("settings.github_pat_newtworks_commit is not set");
+
+    // --- prune: delete repo files that are provably redundant --------------
+    if (mode === "prune") {
+      const ref = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
+      const headSha: string = ref.object.sha;
+      const headCommit = await gh(token, `/repos/${GH_REPO}/git/commits/${headSha}`);
+      const baseTree: string = headCommit.tree.sha;
+      const files = await listMigrationFiles(token, baseTree);
+      const present = new Set(files.map((f) => f.path));
+
+      const { data: prunable, error: prErr } = await sb.rpc("migration_mirror_prunable", {
+        p_agency_id: agencyId,
+      });
+      if (prErr) throw new Error(`migration_mirror_prunable failed: ${prErr.message}`);
+
+      // The migrations subtree listing yields BARE FILENAMES (tree entry paths
+      // are relative to the subtree), and that is what the audit table stores.
+      // Tree writes are rooted at the repo, so the directory must go back on —
+      // without it GitHub is asked to delete a path at the repo root that does
+      // not exist, and answers 422 GitRPC::BadObjectState.
+      const fullPath = (p: string) =>
+        p.startsWith(`${MIG_DIR}/`) ? p : `${MIG_DIR}/${p}`;
+
+      const paths = (prunable ?? [])
+        .map((p: any) => p.repo_path)
+        .filter((p: string) => present.has(p) || present.has(p.split("/").pop() ?? p));
+
+      const take = Math.min(Math.max(Number(body.prune_limit ?? 700), 1), 900);
+      const chunkSize = Math.min(Math.max(Number(body.prune_chunk ?? 100), 1), 200);
+      const slice = paths.slice(0, take);
+
+      if (dryRun || slice.length === 0) {
+        return jsonResponse({
+          ok: true, mode: "prune", dry_run: dryRun,
+          prunable: (prunable ?? []).length,
+          present_in_tree: paths.length,
+          would_delete: slice.length,
+          elapsed_ms: Date.now() - started,
+        });
+      }
+
+      // One tree call carrying 658 deletions returns 422 GitRPC::BadObjectState.
+      // The entry shape is correct (it matches the proven commit script); the
+      // volume is what GitHub rejects. Delete in chunks, each its own commit,
+      // re-reading the branch head every time so a concurrent push cannot be
+      // clobbered.
+      const pruneCommits: Array<{ sha: string; files: number }> = [];
+      let deleted = 0;
+      for (let i = 0; i < slice.length; i += chunkSize) {
+        const chunk = slice.slice(i, i + chunkSize);
+
+        const curRef = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
+        const curSha: string = curRef.object.sha;
+        const curCommit = await gh(token, `/repos/${GH_REPO}/git/commits/${curSha}`);
+
+        const t = await gh(token, `/repos/${GH_REPO}/git/trees`, {
+          method: "POST",
+          body: {
+            base_tree: curCommit.tree.sha,
+            tree: chunk.map((p: string) => ({ path: fullPath(p), mode: "100644", type: "blob", sha: null })),
+          },
+        });
+
+        const c = await gh(token, `/repos/${GH_REPO}/git/commits`, {
+          method: "POST",
+          body: {
+            message: `migration mirror: prune ${chunk.length} redundant migration file(s)`,
+            tree: t.sha,
+            parents: [curSha],
+          },
+        });
+
+        await gh(token, `/repos/${GH_REPO}/git/refs/heads/${branch}`, {
+          method: "PATCH",
+          body: { sha: c.sha, force: false },
+        });
+
+        pruneCommits.push({ sha: c.sha, files: chunk.length });
+        deleted += chunk.length;
+        await sleep(1200);
+      }
+
+      return jsonResponse({
+        ok: true, mode: "prune", dry_run: false,
+        prunable: (prunable ?? []).length,
+        deleted,
+        commits: pruneCommits,
+        elapsed_ms: Date.now() - started,
+      });
+    }
+
+    // --- adopt: register repo files whose SQL is nowhere in the ledger ------
+    if (mode === "adopt") {
+      const ref = await gh(token, `/repos/${GH_REPO}/git/ref/heads/${branch}`);
+      const headCommit = await gh(token, `/repos/${GH_REPO}/git/commits/${ref.object.sha}`);
+      const files = await listMigrationFiles(token, headCommit.tree.sha);
+      const shaByPath = new Map(files.map((f) => [f.path, f.sha]));
+
+      // The audit already decided which files have no ledger counterpart.
+      const { data: unmatched, error: unErr } = await sb
+        .from("migration_mirror_audit")
+        .select("repo_version, repo_path")
+        .eq("agency_id", agencyId)
+        .is("ledger_match_version", null)
+        .order("repo_path");
+      if (unErr) throw new Error(`audit read failed: ${unErr.message}`);
+
+      const offset = Math.max(Number(body.offset ?? 0), 0);
+      const take = Math.min(Math.max(Number(body.adopt_limit ?? 100), 1), 250);
+      const slice = (unmatched ?? []).slice(offset, offset + take);
+
+      const rows: Array<{ version: string; name: string; sql_text: string }> = [];
+      const missing: string[] = [];
+      for (let i = 0; i < slice.length; i += 8) {
+        const win = slice.slice(i, i + 8);
+        const done = await Promise.all(win.map(async (u: any) => {
+          const blobSha = shaByPath.get(u.repo_path);
+          if (!blobSha) return { missing: u.repo_path };
+          const blob = await gh(token, `/repos/${GH_REPO}/git/blobs/${blobSha}`);
+          const raw = new TextDecoder().decode(
+            Uint8Array.from(atob(blob.content.replace(/\n/g, "")), (c) => c.charCodeAt(0)),
+          );
+          // Filename is <14-digit version>_<name>.sql — recover the name part.
+          const base = u.repo_path.split("/").pop() ?? "";
+          const name = base.replace(/^\d{14}_?/, "").replace(/\.sql$/i, "") || "adopted";
+          return { row: { version: u.repo_version, name, sql_text: raw.replace(/\n$/, "") } };
+        }));
+        for (const d of done) {
+          if ((d as any).missing) missing.push((d as any).missing);
+          else rows.push((d as any).row);
+        }
+      }
+
+      let result: any = null;
+      if (rows.length && !dryRun) {
+        const { data: ad, error: adErr } = await sb.rpc("migration_mirror_adopt", { p_rows: rows });
+        if (adErr) throw new Error(`migration_mirror_adopt failed: ${adErr.message}`);
+        result = ad?.[0] ?? null;
+      }
+
+      return jsonResponse({
+        ok: true,
+        mode: "adopt",
+        dry_run: dryRun,
+        candidates: (unmatched ?? []).length,
+        offset,
+        prepared: rows.length,
+        missing_in_tree: missing,
+        result,
+        next_offset: offset + slice.length < (unmatched ?? []).length ? offset + slice.length : null,
+        elapsed_ms: Date.now() - started,
+      });
+    }
 
     // --- audit: fingerprint every repo migration with no ledger row ---------
     if (mode === "audit") {

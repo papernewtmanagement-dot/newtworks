@@ -1,3 +1,14 @@
+// =========================================================================
+// gbp-review-checker bundle (auto-generated)
+// Source of truth: supabase/functions/gbp-review-checker/ + supabase/functions/_shared/
+// This single-file bundle is what gets deployed to the Supabase edge runtime.
+// Do NOT hand-edit. Regenerate via `python3 scripts/bundle_edge_fn.py gbp-review-checker`.
+// =========================================================================
+
+import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+// ==================== gbp-review-checker/index.ts ====================
 // =============================================================================
 // gbp-review-checker — Google review watcher + reply drafter (v10, 2026-08-21)
 // =============================================================================
@@ -47,8 +58,6 @@
 //   - verify_jwt resets to true on every deploy of some functions — this one
 //     deploys with verify_jwt=false; confirm after deploy.
 // =============================================================================
-import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;

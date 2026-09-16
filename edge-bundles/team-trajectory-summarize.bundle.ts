@@ -181,6 +181,11 @@ interface GroqChatResult {
   raw: string;            // assistant content when ok, "" otherwise
   error: string | null;
   httpStatus: number;     // 0 on network failure
+  // "length" means the model ran out of answer budget and the content is CUT
+  // OFF mid-stream. A caller that JSON.parses the content must check this
+  // first, otherwise a truncation is misreported as malformed JSON and the
+  // real cause (budget, not the model's output shape) stays hidden.
+  finishReason?: string | null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -196,6 +201,14 @@ async function callGroqChat(opts: {
   temperature?: number;    // default 0.1
   jsonObject?: boolean;    // request response_format json_object
   retries?: number;        // extra attempts on 429/5xx; default 0
+  // gpt-oss models are REASONING models: Groq bills their hidden thinking
+  // tokens against max_tokens, so thinking silently eats the answer budget.
+  // Measured live 2026-08-18 on AMEX Discretionary 26-08: max_tokens 2623,
+  // visible answer stopped at ~365 tokens (~1459 chars, mid-string) because
+  // roughly 2250 tokens went to thinking. Set "low" for mechanical extraction
+  // (statement parsing, field pulls) where thinking buys nothing. Omit to keep
+  // the provider default.
+  reasoningEffort?: "none" | "low" | "medium" | "high";
 }): Promise<GroqChatResult> {
   const body: Record<string, unknown> = {
     model: opts.model,
@@ -207,6 +220,7 @@ async function callGroqChat(opts: {
     max_tokens: opts.maxTokens ?? 4000,
   };
   if (opts.jsonObject) body.response_format = { type: "json_object" };
+  if (opts.reasoningEffort) body.reasoning_effort = opts.reasoningEffort;
 
   const attempts = 1 + Math.max(0, opts.retries ?? 0);
   let lastErr = "unknown";
@@ -243,11 +257,12 @@ async function callGroqChat(opts: {
     catch (e) {
       return { ok: false, raw: text, error: `Groq returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
     }
+    const finishReason = parsed?.choices?.[0]?.finish_reason ?? null;
     const content = parsed?.choices?.[0]?.message?.content ?? "";
     if (!content || typeof content !== "string") {
-      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status };
+      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status, finishReason };
     }
-    return { ok: true, raw: content, error: null, httpStatus: res.status };
+    return { ok: true, raw: content, error: null, httpStatus: res.status, finishReason };
   }
 
   return { ok: false, raw: "", error: `Groq exhausted retries: ${lastErr}`, httpStatus: lastStatus };
@@ -278,6 +293,56 @@ async function requireSharedSecret(
   const expected = await getSettingOrNull(agencyId, "automation_runner_cron_secret");
   if (!expected || provided !== expected) {
     return jsonResponse({ ok: false, error: "unauthorized" }, 401);
+  }
+  return null;
+}
+
+// -------------------------------------------------------------------------
+// Caller-identity gate for admin actions fired from the browser
+// -------------------------------------------------------------------------
+// Some functions serve BOTH public token-gated traffic — which forces
+// verify_jwt to stay false at the platform level — AND admin-only actions
+// triggered from inside the Newtworks app. Those admin actions get no help
+// from the platform gate, so they check the caller here instead: the bearer
+// token has to identify a real signed-in user, and that user's public.users
+// row has to be an owner or manager of the agency being acted on.
+//
+// Same two-step check invite-team-member does inline. This is the shared copy
+// so the next function that needs it does not write a third one.
+//
+// A shared secret would NOT do the job here. The call comes from a browser,
+// and anything the browser can send, anyone reading the page can read.
+
+const ADMIN_ROLES = ["owner", "manager"];
+
+async function requireOwnerOrManager(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
+  if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
+
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!anonKey) return corsJson({ ok: false, error: "auth unavailable" }, 500);
+
+  // The anon key is also what an unauthenticated caller sends as its bearer
+  // token, so getUser() failing here is the normal "nobody is signed in" path,
+  // not an infrastructure problem.
+  const caller = createClient(SUPABASE_URL, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: who, error: whoErr } = await caller.auth.getUser();
+  if (whoErr || !who?.user) return corsJson({ ok: false, error: "invalid or expired session" }, 401);
+
+  const { data: row, error: rowErr } = await sb
+    .from("users")
+    .select("role, agency_id")
+    .eq("auth_user_id", who.user.id)
+    .maybeSingle();
+  if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
+  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+    return corsJson({ ok: false, error: "not permitted" }, 403);
   }
   return null;
 }
