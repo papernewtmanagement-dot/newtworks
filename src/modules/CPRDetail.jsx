@@ -5373,7 +5373,7 @@ function CrossingsBanner({ team, weekDate, crossings = [] }) {
 //   - Selected prize is persisted (winner_team_member_id + won_on).
 //   - The other N-1 stay unwon in the cart (“go back”).
 //   - Once MVP has claimed a prize this week, banner button disables.
-function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }) {
+function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh, viewerTeamMemberId = null }) {
   const [spinnerOpen, setSpinnerOpen] = useState(false);
   if (!mvpThisWeek || !report || report.won_the_week !== true) return null;
   const teamById = Object.fromEntries((team || []).map(t => [t.id, t]));
@@ -5387,7 +5387,12 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
     p.won_on === weekDate
   );
   const unwonPrizes = cart.filter(p => !p.winner_team_member_id);
-  const canOpen = drawsAllotted > 0 && !hasClaimedThisWeek && unwonPrizes.length > 0;
+  // Only the MVP may spin. The database refuses a draw and a claim from anyone
+  // else, so showing the button to the rest of the team just handed them a
+  // control that errors. No viewer id yet means no button, which is the safe way
+  // round: the MVP sees it a moment later, nobody else sees it at all.
+  const isMvpViewer = Boolean(viewerTeamMemberId) && viewerTeamMemberId === mvpThisWeek.team_member_id;
+  const canOpen = isMvpViewer && drawsAllotted > 0 && !hasClaimedThisWeek && unwonPrizes.length > 0;
   let buttonLabel;
   if (hasClaimedThisWeek) buttonLabel = "🏆 Prize claimed";
   else if (unwonPrizes.length === 0) buttonLabel = "Cart empty";
@@ -5423,7 +5428,7 @@ function MVPBanner({ mvpThisWeek, team, report, prizeCart, weekDate, onRefresh }
               {drawsAllotted}{hasClaimedThisWeek ? " ✓" : ""}
             </div>
           </div>
-          {drawsAllotted > 0 && (
+          {drawsAllotted > 0 && isMvpViewer && (
             <button
               onClick={() => setSpinnerOpen(true)}
               disabled={!canOpen}
@@ -6342,7 +6347,7 @@ function EditModeBar({ totalDirty, saving, saveError, onSave, onCancel }) {
 // ─────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────
-export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek = null, userRole = null }) {
+export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek = null, userRole = null, viewerTeamMemberId = null }) {
   const data = useCPRData(weekDate);
   const edit = useEditForm();
   // Edit rights = owner role AND current-or-future quarter. Historical weeks
@@ -6748,6 +6753,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         prizeCart={data.prizeCart}
         weekDate={weekDate}
         onRefresh={data.refresh}
+        viewerTeamMemberId={viewerTeamMemberId}
       />
 
       {/* Crossings Banner — renders whenever any Trailblazer / new leaderboard / All-Star crossing landed

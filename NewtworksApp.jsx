@@ -980,6 +980,20 @@ export default function NewtworksApp() {
         profile = (rows && rows[0]) || null;
       }
 
+      // The team row behind that profile. Anything that has to know WHO is
+      // looking, not just what role they hold, needs this. First use: the MVP
+      // prize cart, which only the MVP may open.
+      let teamMemberId = null;
+      if (profile?.id) {
+        const { data: tmRows } = await supabase
+          .from("team")
+          .select("id")
+          .eq("agency_id", AGENCY_ID)
+          .eq("user_id", profile.id)
+          .limit(1);
+        teamMemberId = (tmRows && tmRows[0]?.id) || null;
+      }
+
       // SECURITY: default to "staff" (team-tier, restricted) if no profile row.
       // Previously fell back to "owner" — meant any authed user without a users
       // row got full admin access. Standing rule: deny by default.
@@ -990,6 +1004,7 @@ export default function NewtworksApp() {
         agentCode: ag?.state_farm_agent_code || AGENCY_DEFAULTS.agentCode,
         user: {
           id: profile?.id || null,
+          teamMemberId,
           name: displayName,
           initials: (displayName || "?").split(" ").map(n => n?.[0] || "").join("").toUpperCase().slice(0,2),
           role,
@@ -1233,7 +1248,7 @@ export default function NewtworksApp() {
           <main style={css.main}>
             <div style={{ ...css.mainInner, padding: viewport.isPhone ? "12px 12px" : viewport.isTablet ? "16px 18px" : "20px 24px" }}>
               {cprWeekDate ? (
-                <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} /></ErrorBoundary>
+                <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} viewerTeamMemberId={agency?.user?.teamMemberId || null} /></ErrorBoundary>
               ) : (
                 <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} userId={agency.user.id} />
               )}
