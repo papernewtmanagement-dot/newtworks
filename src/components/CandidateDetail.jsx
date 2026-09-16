@@ -5,6 +5,7 @@ import { useViewport, useVerdictThresholds } from "../lib/hooks.js";
 import { STAGES, PIPELINE_STAGES, stageLabel } from "../lib/hiringStages.js";
 import OfferLetterModal from "./OfferLetterModal.jsx";
 import MeetGreetModal from "./MeetGreetModal.jsx";
+import CtsResultPanel from "./CtsResultPanel.jsx";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -3011,6 +3012,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
           gated on version, the opposite of what this page should do. The v2
           role-fit + gate display in the Assessment layer above is the verdict
           surface now, for every candidate. */}
+      {/* CTS Sales Profile — the vendor's sales profile, and the gate that opens
+          the interview. The document processor records a result automatically
+          when the report arrives by email; the panel's form is the fallback for
+          when that read refuses. Both go through record_cts_result(), which is
+          the only writer of a result. Always rendered: an empty panel is how
+          Peter sees a result has not landed yet. */}
+      <Section title="CTS Sales Profile">
+        <CtsResultPanel candidateId={detail?.id} isPhone={isPhone} />
+      </Section>
+
       {detail?.notes && detail.notes.trim().length > 0 && (
         <Section title="Notes">
           <div style={{
